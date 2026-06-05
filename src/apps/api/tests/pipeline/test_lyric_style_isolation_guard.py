@@ -1,7 +1,7 @@
 """Strict-isolation contract guard for Line lyric code.
 
 This test FAILS the build whenever anyone edits the frozen `_inject_line`
-range in `app/pipeline/lyric_injector.py` (lines 797..1299, which covers
+range in `app/pipeline/lyric_injector.py` (lines 1154..1657, which covers
 the line-style injector AND the dynamic-crossfade post-pass `§1c`/`§1g`
 reconciliation). It does NOT prevent the edit — it forces the editor to
 acknowledge they're touching Line code and update the locked SHA below
@@ -21,7 +21,7 @@ How to legitimately update the SHA
      pytest tests/pipeline/test_lyric_injector_no_stacking.py -v
    It must all pass.
 3. Recompute the new SHA:
-     sed -n '797,1299p' app/pipeline/lyric_injector.py | shasum -a 256
+     sed -n '1154,1657p' app/pipeline/lyric_injector.py | shasum -a 256
 4. Replace _LINE_FROZEN_RANGE_SHA256 below with the new value.
 5. In the PR description, name the invariant you reverified and link to
    the test run output.
@@ -39,7 +39,7 @@ _LYRIC_INJECTOR_PATH = (
 )
 
 # Inclusive line range covering `_inject_line` and the dynamic-crossfade
-# post-pass. Line 797 starts with `def _inject_line(`; line 1299 is the
+# post-pass. Line 1154 starts with `def _inject_line(`; line 1657 is the
 # last line before `def _finalize_lyric_audible_window(` (the next public
 # function). Range moved through 644..1146 → 677..1179 (PR Beauty-And-A-Beat,
 # 2026-05-27) → 679..1181 (insertion of _INJECTOR_ALLOWED_SOURCES) → 720..1222
@@ -48,12 +48,14 @@ _LYRIC_INJECTOR_PATH = (
 # the content of `_inject_line` + post-pass is byte-identical (same SHA) →
 # 797..1299 after post-merge helper growth above `_inject_line` (PR #414) →
 # 814..1316 after per-word-pop helper growth above `_inject_line` →
-# 822..1325 after karaoke finalization metadata growth above `_inject_line`;
-# verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-04.
+# 822..1325 after karaoke finalization metadata growth above `_inject_line` →
+# 1154..1657 after pop-up-only helper growth above `_inject_line`; SHA remains
+# byte-identical to the prior locked Line range. Verified with
+# `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-05.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 822
-_LINE_FROZEN_RANGE_END: int = 1325
+_LINE_FROZEN_RANGE_START: int = 1154
+_LINE_FROZEN_RANGE_END: int = 1657
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.

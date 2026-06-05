@@ -96,6 +96,16 @@ class _SlotWindow:
 # would overlap the next stage and glitch the screen.
 _MIN_OVERLAY_DURATION_S = 0.18
 _WORD_POP_LINE_CLEAR_GAP_S = 1.0 / 30.0
+_WORD_POP_NESTED_LINE_MAX_WORDS = 2
+_WORD_POP_NESTED_LINE_TOLERANCE_S = 0.05
+_WORD_POP_SHORT_LINE_OVERLAP_DROP_S = 0.05
+_WORD_POP_SHORT_LINE_OVERLAP_DROP_RATIO = 0.30
+_WORD_POP_REPAIR_MIN_COLLAPSED_WORDS = 4
+_WORD_POP_MALFORMED_LINE_MAX_LEADING_GAP_S = 1.0
+_WORD_POP_MALFORMED_LINE_TARGET_GAP_S = 0.6
+_WORD_POP_PARTIAL_SENTENCE_PREFIX_MAX_WORDS = 3
+_WORD_POP_PARTIAL_SENTENCE_MIN_SUFFIX_WORDS = 3
+_WORD_POP_PARTIAL_START_EPS_S = 0.001
 
 # `_LAST_WORD_DWELL_S` and `_MIN_RENDERABLE_S` are re-exported from
 # `text_reveal` (above) so existing callers/tests that import these names from
@@ -544,6 +554,8 @@ def _select_section_lines(
                 "original_start_s_song": ls,
                 "original_end_s_song": le,
                 "original_words": original_words,
+                "clamped_from_start": ls < best_start_s,
+                "clamped_from_end": le > best_end_s,
             }
         )
 
@@ -735,9 +747,11 @@ def _inject_per_word_pop(
     base["position_x_frac"] = float(cfg.get("position_x_frac") or 0.06)
     base["preserve_font_size"] = True
     injected = 0
+    section_lines = _drop_nested_word_pop_lines(section_lines)
 
     for line_idx, line in enumerate(section_lines):
         word_dicts = [w for w in line.get("words", []) if (w.get("text") or "").strip()]
+        word_dicts = _drop_leading_partial_sentence_fragment(line, word_dicts)
         if not word_dicts:
             continue
         words = [
@@ -749,6 +763,18 @@ def _inject_per_word_pop(
             for w in word_dicts
         ]
         line_end_s = float(line["end_s"])
+        previous_line_end_s = float(section_lines[line_idx - 1]["end_s"]) if line_idx > 0 else None
+        words = _repair_word_pop_late_malformed_line_start(
+            words,
+            previous_line_end_s=previous_line_end_s,
+            line_end_s=line_end_s,
+            line_text=str(line.get("text", "")),
+        )
+        words = _repair_word_pop_collapsed_timings(
+            words,
+            line_end_s=line_end_s,
+            line_text=str(line.get("text", "")),
+        )
         dwell_s = _LAST_WORD_DWELL_S
         if line_idx + 1 < len(section_lines):
             next_line_start_s = float(section_lines[line_idx + 1]["start_s"])
@@ -817,6 +843,312 @@ def _inject_per_word_pop(
             injected += 1
 
     return injected
+
+
+def _repair_word_pop_collapsed_timings(
+    words: list[_RevealWord],
+    *,
+    line_end_s: float,
+    line_text: str,
+) -> list[_RevealWord]:
+    """Spread a collapsed timing cluster so pop-up reveal stays in word order.
+
+    Whisper occasionally assigns a whole fast phrase to one tiny timestamp
+    window, and can even put a later word's start before earlier siblings. For
+    karaoke this is a bad highlight sweep; for pop-up it is worse: the
+    cumulative builder drops sub-renderable stages and then reveals half the
+    line at once. Repair only large clusters so legitimately fast two-word hits
+    keep their source timing.
+    """
+    if len(words) < _WORD_POP_REPAIR_MIN_COLLAPSED_WORDS:
+        return words
+
+    repaired = list(words)
+    i = 0
+    changed = False
+    while i < len(repaired) - 1:
+        gap_s = repaired[i + 1].start_s - repaired[i].start_s
+        if gap_s >= _MIN_RENDERABLE_S:
+            i += 1
+            continue
+
+        run_start = i
+        run_end = i + 1
+        while run_end < len(repaired) - 1:
+            next_gap_s = repaired[run_end + 1].start_s - repaired[run_end].start_s
+            if next_gap_s >= _MIN_RENDERABLE_S:
+                break
+            run_end += 1
+
+        run_len = run_end - run_start + 1
+        if run_len < _WORD_POP_REPAIR_MIN_COLLAPSED_WORDS:
+            i = run_end + 1
+            continue
+
+        repair_start = run_start
+        repair_end = run_end
+        span_start_s = repaired[repair_start].start_s
+        next_start_s = (
+            repaired[repair_end + 1].start_s if repair_end + 1 < len(repaired) else line_end_s
+        )
+        span_end_s = max(next_start_s, span_start_s)
+        repair_words = repaired[repair_start : repair_end + 1]
+        min_span_s = _MIN_RENDERABLE_S * len(repair_words)
+        if span_end_s - span_start_s < min_span_s:
+            i = run_end + 1
+            continue
+
+        weights = [1 for _word in repair_words]
+        total_weight = float(sum(weights))
+        cursor_weight = 0.0
+        redistributed: list[_RevealWord] = []
+        for idx, word in enumerate(repair_words):
+            start_s = span_start_s + ((cursor_weight / total_weight) * (span_end_s - span_start_s))
+            cursor_weight += weights[idx]
+            if idx + 1 < len(repair_words):
+                end_s = span_start_s + (
+                    (cursor_weight / total_weight) * (span_end_s - span_start_s)
+                )
+            else:
+                end_s = span_end_s
+            redistributed.append(
+                _RevealWord(
+                    text=word.text,
+                    start_s=round(start_s, 3),
+                    end_s=round(max(end_s, start_s + _MIN_RENDERABLE_S), 3),
+                )
+            )
+
+        repaired[repair_start : repair_end + 1] = redistributed
+        changed = True
+        log.info(
+            "lyric_word_pop_collapsed_timing_repaired",
+            line_text=line_text[:80],
+            words=[w.text for w in repair_words],
+            start_s=round(span_start_s, 3),
+            end_s=round(span_end_s, 3),
+        )
+        i = repair_end + 1
+
+    return repaired if changed else words
+
+
+def _repair_word_pop_late_malformed_line_start(
+    words: list[_RevealWord],
+    *,
+    previous_line_end_s: float | None,
+    line_end_s: float,
+    line_text: str,
+) -> list[_RevealWord]:
+    """Pull a malformed pop-up line earlier when its leading gap is implausible.
+
+    This targets LRCLIB/Whisper drift where one line has a collapsed timing
+    cluster and also starts far after the previous well-timed line. We only
+    repair when both signals are present; real musical rests with clean word
+    timings are left alone.
+    """
+    if previous_line_end_s is None or len(words) < _WORD_POP_REPAIR_MIN_COLLAPSED_WORDS:
+        return words
+    if not _has_word_pop_collapsed_timing_cluster(words):
+        return words
+
+    current_start_s = words[0].start_s
+    leading_gap_s = current_start_s - previous_line_end_s
+    if leading_gap_s <= _WORD_POP_MALFORMED_LINE_MAX_LEADING_GAP_S:
+        return words
+
+    target_start_s = previous_line_end_s + _WORD_POP_MALFORMED_LINE_TARGET_GAP_S
+    if target_start_s >= current_start_s:
+        return words
+    span_s = line_end_s - target_start_s
+    min_span_s = _MIN_RENDERABLE_S * len(words)
+    if span_s < min_span_s:
+        return words
+
+    repaired = _redistribute_word_pop_words(
+        words,
+        span_start_s=target_start_s,
+        span_end_s=line_end_s,
+    )
+    log.info(
+        "lyric_word_pop_late_malformed_line_start_repaired",
+        line_text=line_text[:80],
+        previous_line_end_s=round(previous_line_end_s, 3),
+        old_start_s=round(current_start_s, 3),
+        new_start_s=round(target_start_s, 3),
+        leading_gap_s=round(leading_gap_s, 3),
+    )
+    return repaired
+
+
+def _has_word_pop_collapsed_timing_cluster(words: list[_RevealWord]) -> bool:
+    run_len = 1
+    for idx in range(len(words) - 1):
+        gap_s = words[idx + 1].start_s - words[idx].start_s
+        if gap_s < _MIN_RENDERABLE_S:
+            run_len += 1
+            if run_len >= _WORD_POP_REPAIR_MIN_COLLAPSED_WORDS:
+                return True
+        else:
+            run_len = 1
+    return False
+
+
+def _redistribute_word_pop_words(
+    words: list[_RevealWord],
+    *,
+    span_start_s: float,
+    span_end_s: float,
+) -> list[_RevealWord]:
+    weights = [1 for _word in words]
+    total_weight = float(sum(weights))
+    cursor_weight = 0.0
+    redistributed: list[_RevealWord] = []
+    for idx, word in enumerate(words):
+        start_s = span_start_s + ((cursor_weight / total_weight) * (span_end_s - span_start_s))
+        cursor_weight += weights[idx]
+        if idx + 1 < len(words):
+            end_s = span_start_s + ((cursor_weight / total_weight) * (span_end_s - span_start_s))
+        else:
+            end_s = span_end_s
+        redistributed.append(
+            _RevealWord(
+                text=word.text,
+                start_s=round(start_s, 3),
+                end_s=round(max(end_s, start_s + _MIN_RENDERABLE_S), 3),
+            )
+        )
+    return redistributed
+
+
+def _drop_leading_partial_sentence_fragment(line: dict, word_dicts: list[dict]) -> list[dict]:
+    """Drop a clipped sentence tail from a pop-up line at the section start.
+
+    Preview windows can begin in the middle of a cached lyric line. When the
+    surviving words start with a tiny tail from the previous sentence
+    (``do you? You men...``), Pop-up renders that tail as the opening scene.
+    Keep normal mid-sentence suffixes, and only trim when a sentence boundary
+    appears within the first few surviving words with a meaningful phrase after
+    it.
+    """
+    if not word_dicts or not bool(line.get("clamped_from_start")):
+        return word_dicts
+    try:
+        line_start_s = float(line.get("start_s", 0.0))
+    except (TypeError, ValueError):
+        return word_dicts
+    if line_start_s > _WORD_POP_PARTIAL_START_EPS_S:
+        return word_dicts
+
+    original_text = str(line.get("original_text") or line.get("text") or "")
+    token_matches = list(_LYRIC_TOKEN_RE.finditer(original_text))
+    if not token_matches:
+        return word_dicts
+
+    token_norms = [_normalize_token(match.group(0)) for match in token_matches]
+    word_norms = [_normalize_token(str(w.get("text", ""))) for w in word_dicts]
+    word_norms = [norm for norm in word_norms if norm]
+    if not word_norms:
+        return word_dicts
+
+    best_start = -1
+    best_len = 0
+    for token_idx, token_norm in enumerate(token_norms):
+        if token_norm != word_norms[0]:
+            continue
+        matched = 0
+        while (
+            matched < len(word_norms)
+            and token_idx + matched < len(token_norms)
+            and token_norms[token_idx + matched] == word_norms[matched]
+        ):
+            matched += 1
+        if matched > best_len:
+            best_start = token_idx
+            best_len = matched
+
+    if best_start < 0 or best_len < 2:
+        return word_dicts
+
+    max_prefix = min(best_len, _WORD_POP_PARTIAL_SENTENCE_PREFIX_MAX_WORDS)
+    for word_idx in range(max_prefix):
+        token_idx = best_start + word_idx
+        next_token_start = (
+            token_matches[token_idx + 1].start()
+            if token_idx + 1 < len(token_matches)
+            else len(original_text)
+        )
+        suffix = original_text[token_matches[token_idx].end() : next_token_start]
+        if not any(ch in suffix for ch in ".!?…"):
+            continue
+        suffix_word_count = len(word_dicts) - (word_idx + 1)
+        if suffix_word_count < _WORD_POP_PARTIAL_SENTENCE_MIN_SUFFIX_WORDS:
+            continue
+        log.info(
+            "lyric_word_pop_leading_partial_sentence_dropped",
+            line_text=original_text[:80],
+            dropped_words=[str(w.get("text", "")) for w in word_dicts[: word_idx + 1]],
+        )
+        return word_dicts[word_idx + 1 :]
+
+    return word_dicts
+
+
+def _drop_nested_word_pop_lines(section_lines: list[dict]) -> list[dict]:
+    """Drop short ad-lib lines that collide with a longer pop-up line.
+
+    Per-word-pop has one visual lane: a cumulative main line and a short nested
+    line cannot both be readable. Keep the longer line as the canonical lyric
+    band and suppress tiny ad-libs like "Ok" / "Ok stop" that would otherwise
+    render as a second pop-in event over the main sentence.
+    """
+    if len(section_lines) <= 1:
+        return section_lines
+
+    drop_idxs: set[int] = set()
+    windows: list[tuple[int, float, float, int]] = []
+    for idx, line in enumerate(section_lines):
+        try:
+            start_s = float(line.get("start_s", 0.0))
+            end_s = float(line.get("end_s", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if end_s <= start_s:
+            continue
+        word_count = len([w for w in line.get("words", []) if (w.get("text") or "").strip()])
+        windows.append((idx, start_s, end_s, word_count))
+
+    for idx, start_s, end_s, word_count in windows:
+        if word_count > _WORD_POP_NESTED_LINE_MAX_WORDS:
+            continue
+        for other_idx, other_start, other_end, other_word_count in windows:
+            if idx == other_idx or other_word_count <= word_count:
+                continue
+            contained = (
+                start_s >= other_start - _WORD_POP_NESTED_LINE_TOLERANCE_S
+                and end_s <= other_end + _WORD_POP_NESTED_LINE_TOLERANCE_S
+            )
+            overlap_s = min(end_s, other_end) - max(start_s, other_start)
+            duration_s = end_s - start_s
+            overlaps_longer_line = (
+                overlap_s >= _WORD_POP_SHORT_LINE_OVERLAP_DROP_S
+                and overlap_s >= duration_s * _WORD_POP_SHORT_LINE_OVERLAP_DROP_RATIO
+            )
+            if not contained and not overlaps_longer_line:
+                continue
+            drop_idxs.add(idx)
+            log.info(
+                "lyric_word_pop_nested_line_dropped",
+                line_text=str(section_lines[idx].get("text", ""))[:80],
+                containing_line_text=str(section_lines[other_idx].get("text", ""))[:80],
+                line_start_s=round(start_s, 3),
+                line_end_s=round(end_s, 3),
+            )
+            break
+
+    if not drop_idxs:
+        return section_lines
+    return [line for idx, line in enumerate(section_lines) if idx not in drop_idxs]
 
 
 def _inject_line(
@@ -1495,11 +1827,7 @@ def _enforce_finalized_karaoke_no_stacking(overlays: list[dict]) -> list[dict]:
     if len(overlays) <= 1:
         return overlays
 
-    karaoke_idxs = [
-        idx
-        for idx, ov in enumerate(overlays)
-        if ov.get("effect") == "karaoke-line"
-    ]
+    karaoke_idxs = [idx for idx, ov in enumerate(overlays) if ov.get("effect") == "karaoke-line"]
     if len(karaoke_idxs) <= 1:
         return overlays
 

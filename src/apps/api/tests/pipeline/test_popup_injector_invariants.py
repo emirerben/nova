@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from app.pipeline.lyric_word_resync import resync_slot_overlays
 from tests.pipeline._lyric_invariant_helpers import inject_overlays_for_style
 
@@ -42,6 +44,39 @@ def _three_word_fixture() -> list[dict]:
                 {"text": "I", "start_s": 2.0, "end_s": 2.5},
                 {"text": "love", "start_s": 2.5, "end_s": 3.4},
                 {"text": "you", "start_s": 3.4, "end_s": 5.0},
+            ],
+        },
+    ]
+
+
+def _nested_adlib_fixture() -> list[dict]:
+    return [
+        {
+            "text": "I swear to God I don't even know why I put up with",
+            "start_s": 1.0,
+            "end_s": 4.2,
+            "words": [
+                {"text": "I", "start_s": 1.0, "end_s": 1.12},
+                {"text": "swear", "start_s": 1.12, "end_s": 1.35},
+                {"text": "to", "start_s": 1.35, "end_s": 1.46},
+                {"text": "God", "start_s": 1.46, "end_s": 1.68},
+                {"text": "I", "start_s": 1.68, "end_s": 1.78},
+                {"text": "don't", "start_s": 1.78, "end_s": 2.05},
+                {"text": "even", "start_s": 2.05, "end_s": 2.32},
+                {"text": "know", "start_s": 2.32, "end_s": 2.58},
+                {"text": "why", "start_s": 2.58, "end_s": 2.8},
+                {"text": "I", "start_s": 2.8, "end_s": 2.9},
+                {"text": "put", "start_s": 2.9, "end_s": 3.12},
+                {"text": "up", "start_s": 3.12, "end_s": 3.34},
+                {"text": "with", "start_s": 3.34, "end_s": 4.2},
+            ],
+        },
+        {
+            "text": "Ok",
+            "start_s": 1.32,
+            "end_s": 1.85,
+            "words": [
+                {"text": "Ok", "start_s": 1.32, "end_s": 1.85},
             ],
         },
     ]
@@ -124,6 +159,305 @@ def test_popup_stage_durations_are_non_zero() -> None:
             f"zero-duration stage {ov.get('text')!r} survived the helper's "
             f"renderable check (start {ov['start_s']}, end {ov['end_s']})"
         )
+
+
+# ── cross-line overlap invariants ──────────────────────────────────────────
+
+
+def test_popup_drops_nested_short_adlib_line() -> None:
+    """A one-word ad-lib inside a longer line shares the same pop-up lane.
+    Rendering both at once makes unreadable overlapping text, so the short
+    nested line must be suppressed and the canonical main lyric kept.
+    """
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=5.0,
+        lines=_nested_adlib_fixture(),
+    )
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    assert "Ok" not in texts
+    assert any(text.endswith("why I put up with") for text in texts)
+
+
+def test_popup_nested_adlib_no_longer_creates_simultaneous_active_lines() -> None:
+    """Regression for job 1b23fc80: at 1.34s the old injector emitted
+    both the main cumulative line and the nested "Ok" line.
+    """
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=5.0,
+        lines=_nested_adlib_fixture(),
+    )
+    active = [ov for ov in overlays if float(ov["start_s"]) <= 1.34 < float(ov["end_s"])]
+    assert len(active) == 1
+    assert str(active[0].get("text", "")).startswith("I swear")
+
+
+def test_popup_drops_short_adlib_that_overlaps_long_line_tail() -> None:
+    """Exact production shape from preview job 1b23fc80: the short ad-lib
+    starts before the long line clears and extends slightly past it. It is not
+    fully contained, but still shares the same one-lane pop-up surface.
+    """
+    lines = [
+        {
+            "text": "I swear to God I don't even know why I put up with you",
+            "start_s": 9.04,
+            "end_s": 12.53,
+            "words": [
+                {"text": "I", "start_s": 9.04, "end_s": 9.48},
+                {"text": "swear", "start_s": 9.48, "end_s": 9.907},
+                {"text": "to", "start_s": 9.907, "end_s": 10.333},
+                {"text": "God", "start_s": 10.333, "end_s": 10.74},
+                {"text": "I", "start_s": 10.74, "end_s": 11.1},
+                {"text": "don't", "start_s": 11.1, "end_s": 11.2},
+                {"text": "even", "start_s": 11.2, "end_s": 11.3},
+                {"text": "know", "start_s": 11.3, "end_s": 11.4},
+                {"text": "why", "start_s": 11.4, "end_s": 11.5},
+                {"text": "I", "start_s": 11.5, "end_s": 11.6},
+                {"text": "put", "start_s": 11.6, "end_s": 11.8},
+                {"text": "up", "start_s": 11.8, "end_s": 12.0},
+                {"text": "with", "start_s": 12.0, "end_s": 12.28},
+                {"text": "you", "start_s": 12.28, "end_s": 12.53},
+            ],
+        },
+        {
+            "text": "Ok stop",
+            "start_s": 12.23,
+            "end_s": 13.08,
+            "words": [
+                {"text": "Ok", "start_s": 12.23, "end_s": 12.48},
+                {"text": "stop", "start_s": 12.48, "end_s": 13.08},
+            ],
+        },
+    ]
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=14.0,
+        lines=lines,
+    )
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    assert "Ok" not in texts
+    assert "Ok stop" not in texts
+    active = [ov for ov in overlays if float(ov["start_s"]) <= 12.4 < float(ov["end_s"])]
+    assert len(active) == 1
+    assert str(active[0].get("text", "")).startswith("I swear")
+
+
+def test_popup_drops_leading_sentence_tail_from_clamped_preview_start() -> None:
+    """Exact opening shape from job 1b23fc80.
+
+    The preview window starts mid-line, leaving the tail ``do you?`` before the
+    actual opening phrase ``You men are all alike``. Pop-up should start on the
+    meaningful phrase, not on a clipped previous sentence fragment.
+    """
+    lines = [
+        {
+            "text": "You don't even realize what you did, do you? You men are all alike",
+            "original_text": "You don't even realize what you did, do you? You men are all alike",
+            "start_s": -1.88,
+            "end_s": 1.16,
+            "words": [
+                {"text": "do", "start_s": -0.07, "end_s": 0.1},
+                {"text": "you", "start_s": 0.12, "end_s": 0.32},
+                {"text": "You", "start_s": 0.34, "end_s": 0.39},
+                {"text": "men", "start_s": 0.32, "end_s": 0.48},
+                {"text": "are", "start_s": 0.48, "end_s": 0.56},
+                {"text": "all", "start_s": 0.56, "end_s": 0.84},
+                {"text": "alike", "start_s": 0.84, "end_s": 1.16},
+            ],
+        }
+    ]
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=2.0,
+        lines=lines,
+    )
+
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    assert texts
+    assert not any(text.startswith("do") for text in texts)
+    assert any(text.startswith("You men") for text in texts)
+    assert texts[-1] == "You men are all alike"
+
+
+def test_popup_repairs_collapsed_non_monotonic_word_timings_for_sync() -> None:
+    """Regression for job 1b23fc80 at ~12s.
+
+    The cached word timings collapsed ``don't`` through ``up`` into one 50ms
+    window and made ``with`` start before them. The pop-up builder used to drop
+    those sub-renderable stages and reveal half the line at once, making the
+    lyric visibly late/out of sync with the audio.
+    """
+    words = [
+        {"text": "I", "start_s": 9.04, "end_s": 9.46},
+        {"text": "swear", "start_s": 9.48, "end_s": 9.867},
+        {"text": "to", "start_s": 9.907, "end_s": 10.293},
+        {"text": "God", "start_s": 10.333, "end_s": 10.72},
+        {"text": "I", "start_s": 10.74, "end_s": 11.5},
+        {"text": "don't", "start_s": 11.52, "end_s": 11.57},
+        {"text": "even", "start_s": 11.52, "end_s": 11.57},
+        {"text": "know", "start_s": 11.52, "end_s": 11.57},
+        {"text": "why", "start_s": 11.52, "end_s": 11.57},
+        {"text": "I", "start_s": 11.52, "end_s": 11.57},
+        {"text": "put", "start_s": 11.52, "end_s": 11.57},
+        {"text": "up", "start_s": 11.52, "end_s": 11.57},
+        {"text": "with", "start_s": 11.5, "end_s": 12.26},
+        {"text": "you", "start_s": 12.28, "end_s": 12.53},
+    ]
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=14.0,
+        lines=[
+            {
+                "text": "I swear to God I don't even know why I put up with you",
+                "start_s": 9.04,
+                "end_s": 12.53,
+                "words": words,
+            }
+        ],
+    )
+
+    assert len(overlays) == len(words)
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    for expected in (
+        "I swear to God I don't",
+        "I swear to God I don't even",
+        "I swear to God I don't even know",
+        "I swear to God I don't even know why",
+        "I swear to God I don't even know why I put",
+        "I swear to God I don't even know why I put up",
+        "I swear to God I don't even know why I put up with",
+    ):
+        assert expected in texts
+
+    stage_by_text = {str(ov.get("text", "")).strip(): ov for ov in overlays}
+    assert abs(float(stage_by_text["I swear to God I"]["end_s"]) - 11.52) <= 0.002
+    assert abs(float(stage_by_text["I swear to God I don't"]["start_s"]) - 11.52) <= 0.002
+
+    for i in range(len(overlays) - 1):
+        assert float(overlays[i]["start_s"]) <= float(overlays[i + 1]["start_s"])
+        gap = float(overlays[i + 1]["start_s"]) - float(overlays[i]["end_s"])
+        assert abs(gap) <= _BUTT_JOIN_EPSILON_S
+
+
+def test_popup_repairs_late_malformed_line_start_after_large_gap() -> None:
+    """Regression for job 1b23fc80 around 8s.
+
+    The previous line is well-timed, then a malformed line with collapsed word
+    timings starts 1.64s later. Pop-up should not leave that whole blank gap
+    and then burst into the phrase late.
+    """
+    lines = [
+        {
+            "text": "What's really important like my feelings",
+            "start_s": 4.7,
+            "end_s": 7.4,
+            "words": [
+                {"text": "What's", "start_s": 4.7, "end_s": 5.06},
+                {"text": "really", "start_s": 5.06, "end_s": 5.34},
+                {"text": "important", "start_s": 5.34, "end_s": 5.94},
+                {"text": "like", "start_s": 6.18, "end_s": 6.54},
+                {"text": "my", "start_s": 6.54, "end_s": 6.92},
+                {"text": "feelings", "start_s": 6.92, "end_s": 7.4},
+            ],
+        },
+        {
+            "text": "I swear to God I don't even know why I put up with you",
+            "start_s": 9.04,
+            "end_s": 12.53,
+            "words": [
+                {"text": "I", "start_s": 9.04, "end_s": 9.46},
+                {"text": "swear", "start_s": 9.48, "end_s": 9.867},
+                {"text": "to", "start_s": 9.907, "end_s": 10.293},
+                {"text": "God", "start_s": 10.333, "end_s": 10.72},
+                {"text": "I", "start_s": 10.74, "end_s": 11.5},
+                {"text": "don't", "start_s": 11.52, "end_s": 11.57},
+                {"text": "even", "start_s": 11.52, "end_s": 11.57},
+                {"text": "know", "start_s": 11.52, "end_s": 11.57},
+                {"text": "why", "start_s": 11.52, "end_s": 11.57},
+                {"text": "I", "start_s": 11.52, "end_s": 11.57},
+                {"text": "put", "start_s": 11.52, "end_s": 11.57},
+                {"text": "up", "start_s": 11.52, "end_s": 11.57},
+                {"text": "with", "start_s": 11.5, "end_s": 12.26},
+                {"text": "you", "start_s": 12.28, "end_s": 12.53},
+            ],
+        },
+    ]
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=14.0,
+        lines=lines,
+    )
+
+    stage_by_text = {str(ov.get("text", "")).strip(): ov for ov in overlays}
+    assert float(stage_by_text["I"]["start_s"]) == pytest.approx(8.0, abs=0.002)
+    assert float(stage_by_text["I swear to God"]["start_s"]) == pytest.approx(8.971, abs=0.002)
+    assert float(stage_by_text["I swear to God I don't"]["start_s"]) == pytest.approx(
+        9.618, abs=0.002
+    )
+
+
+def test_popup_keeps_short_line_that_is_not_nested() -> None:
+    """A standalone short lyric is valid pop-up content; only contained
+    ad-libs are dropped.
+    """
+    lines = _three_word_fixture() + [
+        {
+            "text": "Ok",
+            "start_s": 5.3,
+            "end_s": 5.8,
+            "words": [
+                {"text": "Ok", "start_s": 5.3, "end_s": 5.8},
+            ],
+        },
+    ]
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=8.0,
+        lines=lines,
+    )
+    assert any(str(ov.get("text", "")).strip() == "Ok" for ov in overlays)
+
+
+def test_popup_keeps_adjacent_short_line_with_tiny_boundary_overlap() -> None:
+    """Real lyric lines can have small alignment overlap at a boundary.
+
+    A two-word line that starts a few frames before the previous long line ends
+    is not an ad-lib sitting on top of the phrase; it is the next lyric and must
+    still render.
+    """
+    lines = [
+        {
+            "text": "I keep waiting for the morning",
+            "start_s": 0.0,
+            "end_s": 2.06,
+            "words": [
+                {"text": "I", "start_s": 0.0, "end_s": 0.2},
+                {"text": "keep", "start_s": 0.2, "end_s": 0.6},
+                {"text": "waiting", "start_s": 0.6, "end_s": 1.2},
+                {"text": "for", "start_s": 1.2, "end_s": 1.5},
+                {"text": "the", "start_s": 1.5, "end_s": 1.7},
+                {"text": "morning", "start_s": 1.7, "end_s": 2.06},
+            ],
+        },
+        {
+            "text": "so long",
+            "start_s": 2.0,
+            "end_s": 2.8,
+            "words": [
+                {"text": "so", "start_s": 2.0, "end_s": 2.35},
+                {"text": "long", "start_s": 2.35, "end_s": 2.8},
+            ],
+        },
+    ]
+    overlays = inject_overlays_for_style(
+        style="per-word-pop",
+        target_duration_s=4.0,
+        lines=lines,
+    )
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    assert "so" in texts
+    assert "so long" in texts
 
 
 # ── stamp invariants ───────────────────────────────────────────────────────
