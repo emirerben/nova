@@ -802,19 +802,48 @@ def _inject_per_word_pop(
             dwell_s=dwell_s,
         )
 
-        for stage in stages:
+        terminal_stage_idx = len(stages) - 1
+        for stage_idx, stage in enumerate(stages):
             slot_win = _slot_for_time(stage.start_s, windows)
             if slot_win is None:
                 continue
             slot_dur = slot_win.end_s - slot_win.start_s
             rel_start = max(0.0, stage.start_s - slot_win.start_s)
             rel_end = min(slot_dur, stage.end_s - slot_win.start_s)
+            is_terminal_stage = stage_idx == terminal_stage_idx
+            clipped_by_slot_tail = stage.start_s < slot_win.end_s < stage.end_s
+            rescued_terminal_stage = False
 
             # Defensive: a stage that survives the helper's renderable check
             # could still end up too short here if `_slot_for_time` clipped it
-            # to the slot boundary. Drop rather than floor-clamp — floor would
-            # overlap the next stage. Warn so user reports of "missing word X"
-            # can be traced back to this boundary clip.
+            # to the slot boundary. Middle stages still drop rather than
+            # floor-clamp, because overlap would glitch the cumulative line.
+            # Terminal stages get one exception: if the word started inside the
+            # rendered window, pull it just early enough to show the final word.
+            if rel_end - rel_start < _MIN_RENDERABLE_S:
+                if is_terminal_stage and clipped_by_slot_tail and rel_end > 0.0:
+                    old_rel_start = rel_start
+                    rel_start = max(0.0, rel_end - _MIN_RENDERABLE_S)
+                    rescued_terminal_stage = True
+                    log.info(
+                        "lyric_word_pop_terminal_stage_rescued_from_slot_clip",
+                        word=stage.pop_animated_suffix,
+                        old_rel_duration=round(rel_end - old_rel_start, 4),
+                        new_rel_duration=round(rel_end - rel_start, 4),
+                        stage_start_s=stage.start_s,
+                        slot_start_s=slot_win.start_s,
+                        slot_end_s=slot_win.end_s,
+                    )
+                else:
+                    log.warning(
+                        "lyric_stage_dropped_by_slot_clip",
+                        word=stage.pop_animated_suffix,
+                        rel_duration=rel_end - rel_start,
+                        stage_start_s=stage.start_s,
+                        slot_start_s=slot_win.start_s,
+                        slot_end_s=slot_win.end_s,
+                    )
+                    continue
             if rel_end - rel_start < _MIN_RENDERABLE_S:
                 log.warning(
                     "lyric_stage_dropped_by_slot_clip",
@@ -849,7 +878,41 @@ def _inject_per_word_pop(
                     "section_end_anchor_s": round(stage.end_s, 3),
                 }
             )
-            _ensure_overlay_list(slots[slot_win.index]).append(overlay)
+            overlay_list = _ensure_overlay_list(slots[slot_win.index])
+            if rescued_terminal_stage and overlay_list:
+                prev = overlay_list[-1]
+                prev_end_anchor = prev.get("section_end_anchor_s")
+                same_line_previous_stage = False
+                try:
+                    same_line_previous_stage = (
+                        prev.get("effect") == "pop-in"
+                        and stage.text.startswith(str(prev.get("text") or ""))
+                        and abs(float(prev_end_anchor) - stage.start_s) <= 1e-3
+                    )
+                except (TypeError, ValueError):
+                    same_line_previous_stage = False
+
+                if same_line_previous_stage and float(prev.get("end_s", 0.0)) > rel_start:
+                    old_prev_end = float(prev.get("end_s", 0.0))
+                    prev["end_s"] = round(rel_start, 3)
+                    if float(prev["end_s"]) - float(prev.get("start_s", 0.0)) < _MIN_RENDERABLE_S:
+                        overlay_list.pop()
+                        injected -= 1
+                        log.info(
+                            "lyric_word_pop_previous_stage_dropped_for_terminal_rescue",
+                            word=stage.pop_animated_suffix,
+                            old_prev_end_s=round(old_prev_end, 4),
+                            new_terminal_start_s=round(rel_start, 4),
+                        )
+                    else:
+                        log.info(
+                            "lyric_word_pop_previous_stage_trimmed_for_terminal_rescue",
+                            word=stage.pop_animated_suffix,
+                            old_prev_end_s=round(old_prev_end, 4),
+                            new_prev_end_s=round(float(prev["end_s"]), 4),
+                        )
+
+            overlay_list.append(overlay)
             injected += 1
 
     dropped = 0
@@ -867,9 +930,7 @@ def _inject_per_word_pop(
 
 def _count_word_pop_overlays(overlays: list[dict]) -> int:
     return sum(
-        1
-        for overlay in overlays
-        if isinstance(overlay, dict) and _is_word_pop_overlay(overlay)
+        1 for overlay in overlays if isinstance(overlay, dict) and _is_word_pop_overlay(overlay)
     )
 
 
@@ -936,9 +997,7 @@ def _enforce_word_pop_no_stacking(overlays: list[dict]) -> list[dict]:
         return overlays
 
     out = list(overlays)
-    word_pop_idxs.sort(
-        key=lambda idx: (_coerce_finite_float(out[idx].get("start_s")) or 0.0, idx)
-    )
+    word_pop_idxs.sort(key=lambda idx: (_coerce_finite_float(out[idx].get("start_s")) or 0.0, idx))
     dropped: set[int] = set()
     prev_by_slot: dict[tuple[object, ...], int] = {}
     for next_idx in word_pop_idxs:

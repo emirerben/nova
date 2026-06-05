@@ -430,6 +430,50 @@ def test_per_word_pop_drops_sub_renderable_middle_stage() -> None:
     assert overlays[1]["start_s"] == pytest.approx(0.52, abs=1e-6)
 
 
+def test_per_word_pop_keeps_terminal_word_started_before_preview_end() -> None:
+    """The last audible pop-up word must survive a short preview-tail clip.
+
+    Regression for lyrics-preview job 8c5793b6: "open" started inside the
+    preview window, but its cumulative stage clipped to less than the render
+    floor at the synthetic one-slot boundary, so the preview ended on
+    "Body moving heart is".
+    """
+    recipe = _make_recipe([1.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                "Body moving heart is open",
+                0.0,
+                1.3,
+                [
+                    ("Body", 0.0, 0.2),
+                    ("moving", 0.2, 0.45),
+                    ("heart", 0.45, 0.72),
+                    ("is", 0.72, 0.97),
+                    ("open", 0.97, 1.3),
+                ],
+            )
+        ]
+    )
+
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        1.0,
+        {"enabled": True, "style": "per-word-pop"},
+    )
+    overlays = out["slots"][0]["text_overlays"]
+
+    assert overlays[-1]["text"] == "Body moving heart is open"
+    assert overlays[-1]["pop_animated_suffix"] == "open"
+    assert overlays[-2]["end_s"] == pytest.approx(overlays[-1]["start_s"], abs=1e-6)
+    assert overlays[-1]["end_s"] == pytest.approx(1.0, abs=1e-6)
+    assert overlays[-1]["end_s"] - overlays[-1]["start_s"] >= lyric_injector._MIN_RENDERABLE_S
+    for prev, cur in zip(overlays, overlays[1:], strict=False):
+        assert float(prev["end_s"]) <= float(cur["start_s"]) + 1e-6
+
+
 def test_section_filter_drops_lines_outside_window() -> None:
     """A line that ends before best_start_s or starts after best_end_s drops."""
     recipe = _make_recipe([5.0])

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.pipeline.lyrics_alignment import align, align_with_line_anchors
 from app.services.lrclib_client import SyncedLine
 from app.services.whisper_lyrics import WhisperWord
@@ -128,6 +130,117 @@ def test_anchored_exact_word_count_uses_fast_zip_path() -> None:
 
     # Confidence = 100% — every canonical word matched a whisper word.
     assert result.confidence == 1.0
+
+
+def test_anchored_exact_word_count_repairs_isolated_canonical_mismatch() -> None:
+    """Exact-count windows still need word-agreement checks.
+
+    Regression for lyrics-preview job 8c5793b6: the LRCLIB row had "Myself"
+    where the audio/Whisper word was "body". Count-only zipping stamped the
+    wrong canonical word onto the audible timing and reported full confidence.
+    When the surrounding phrase agrees, trust the isolated Whisper disagreement
+    for display instead of burning a word the listener never hears.
+    """
+    anchors = [SyncedLine(start_s=0.0, text="Myself moving heart is open")]
+    whisper = [
+        _ww("body", 0.1, 0.3),
+        _ww("moving", 0.3, 0.6),
+        _ww("heart", 0.6, 0.9),
+        _ww("is", 0.9, 1.0),
+        _ww("open", 1.0, 1.3),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+
+    assert len(result.lines) == 1
+    line = result.lines[0]
+    assert line.text == "Body moving heart is open"
+    assert [w.text for w in line.words] == ["Body", "moving", "heart", "is", "open"]
+    assert line.words[0].start_s == pytest.approx(0.1, abs=1e-3)
+    assert result.confidence == pytest.approx(0.8, abs=1e-6)
+
+
+def test_anchored_exact_word_count_rejects_multiple_canonical_mismatches() -> None:
+    """Do not let Whisper author multiple displayed words in a canonical line."""
+    anchors = [SyncedLine(start_s=0.0, text="Myself dancing heart is open")]
+    whisper = [
+        _ww("body", 0.1, 0.3),
+        _ww("moving", 0.3, 0.6),
+        _ww("heart", 0.6, 0.9),
+        _ww("is", 0.9, 1.0),
+        _ww("open", 1.0, 1.3),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+
+    assert len(result.lines) == 1
+    line = result.lines[0]
+    assert line.text == "Myself dancing heart is open"
+    assert [w.text for w in line.words[:2]] == ["Myself", "dancing"]
+    assert result.confidence == pytest.approx(0.6, abs=1e-6)
+
+
+def test_anchored_window_repairs_missing_leading_whisper_prefix() -> None:
+    """A short audible prefix can be missing from the lyric source.
+
+    Regression shape from lyrics-preview job 8c5793b6: one repeated chorus
+    line displayed "moving heart is open" even though Whisper/audio contained
+    "body moving heart is open". If the canonical suffix fully agrees with
+    Whisper, keep the short leading Whisper prefix for display.
+    """
+    anchors = [SyncedLine(start_s=0.0, text="moving heart is open")]
+    whisper = [
+        _ww("body", 0.0, 0.25),
+        _ww("moving", 0.25, 0.55),
+        _ww("heart", 0.55, 0.8),
+        _ww("is", 0.8, 0.95),
+        _ww("open", 0.95, 1.25),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=2.0)
+
+    assert len(result.lines) == 1
+    line = result.lines[0]
+    assert line.text == "Body moving heart is open"
+    assert [w.text for w in line.words] == ["Body", "moving", "heart", "is", "open"]
+    assert line.words[0].start_s == pytest.approx(0.0, abs=1e-3)
+    assert result.confidence == pytest.approx(1.0, abs=1e-6)
+
+
+def test_anchored_window_rejects_weak_one_word_suffix_prefix_repair() -> None:
+    """Do not author a prefix when only one canonical suffix token matches."""
+    anchors = [SyncedLine(start_s=0.0, text="open")]
+    whisper = [
+        _ww("is", 0.0, 0.15),
+        _ww("open", 0.15, 0.45),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=1.0)
+
+    assert len(result.lines) == 1
+    line = result.lines[0]
+    assert line.text == "open"
+    assert [w.text for w in line.words] == ["open"]
+
+
+def test_anchored_window_rejects_distant_leading_whisper_prefix() -> None:
+    """A stray word far before the suffix is not an omitted lyric prefix."""
+    anchors = [SyncedLine(start_s=0.0, text="moving heart is open")]
+    whisper = [
+        _ww("body", 0.0, 0.25),
+        _ww("moving", 1.3, 1.6),
+        _ww("heart", 1.6, 1.85),
+        _ww("is", 1.85, 2.0),
+        _ww("open", 2.0, 2.3),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=3.0)
+
+    assert len(result.lines) == 1
+    line = result.lines[0]
+    assert line.text == "moving heart is open"
+    assert [w.text for w in line.words] == ["moving", "heart", "is", "open"]
+    assert line.words[0].start_s == pytest.approx(1.3, abs=1e-3)
 
 
 def test_anchored_count_mismatch_falls_back_to_fuzzy_align() -> None:

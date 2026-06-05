@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.78.2] - 2026-06-05
+
+### Fixed
+- **Pop-up lyric previews now repeat the full audible chorus phrase instead of stale lyric-source fragments.** Anchored lyric alignment verifies exact-count word agreement, repairs only one isolated canonical mismatch from Whisper, and admits a short leading Whisper prefix only when a multi-word canonical suffix fully matches. Preview job `8c5793b6-a510-43b9-a275-b5ab28c060af` now renders `Body moving heart is open`, clears it, and restarts the same full phrase when it is sung again.
+- **Final pop-up words that start before the preview tail now stay visible long enough to render.** The per-word pop injector rescues a terminal cumulative stage clipped by the slot boundary and trims the prior same-line stage if needed, so the final `open` is shown instead of dropping as a sub-frame flash.
+
 ## [0.4.78.1] - 2026-06-05
 
 ### Fixed

@@ -82,3 +82,42 @@ def test_late_lrclib_anchor_prefix_repair_keeps_following_anchor_local() -> None
     assert repaired.start_s == 231.28
     assert [word.start_s for word in repaired.words[:4]] == [231.28, 231.38, 231.88, 232.08]
     assert following.start_s == 235.7
+
+
+def test_repeated_popup_chorus_repairs_bad_source_fragments() -> None:
+    """Eval guard for lyrics-preview job 8c5793b6's repeated chorus cache."""
+    result = align_with_line_anchors(
+        [
+            SyncedLine(start_s=0.0, text="Myself moving heart is open"),
+            SyncedLine(start_s=3.85, text="moving heart is open"),
+            SyncedLine(start_s=8.1, text="Body moving heart is open"),
+            SyncedLine(start_s=11.45, text="Body moving heart is open"),
+        ],
+        [
+            WhisperWord(text="body", start_s=0.0, end_s=0.35),
+            WhisperWord(text="moving", start_s=1.35, end_s=1.75),
+            WhisperWord(text="heart", start_s=2.05, end_s=2.35),
+            WhisperWord(text="is", start_s=2.45, end_s=2.75),
+            WhisperWord(text="open", start_s=3.3, end_s=3.7),
+            WhisperWord(text="body", start_s=3.85, end_s=4.15),
+            WhisperWord(text="moving", start_s=4.45, end_s=4.85),
+            WhisperWord(text="heart", start_s=5.45, end_s=5.8),
+            WhisperWord(text="is", start_s=6.0, end_s=6.25),
+            WhisperWord(text="open", start_s=6.55, end_s=7.3),
+            WhisperWord(text="body", start_s=8.1, end_s=8.45),
+            WhisperWord(text="moving", start_s=8.65, end_s=9.0),
+            WhisperWord(text="heart", start_s=9.35, end_s=9.7),
+            WhisperWord(text="is", start_s=10.05, end_s=10.25),
+            WhisperWord(text="open", start_s=10.5, end_s=11.1),
+            WhisperWord(text="body", start_s=11.45, end_s=11.8),
+            WhisperWord(text="moving", start_s=12.15, end_s=12.5),
+            WhisperWord(text="heart", start_s=12.95, end_s=13.3),
+            WhisperWord(text="is", start_s=13.7, end_s=13.92),
+            WhisperWord(text="open", start_s=14.27, end_s=14.45),
+        ],
+        track_end_s=14.333,
+    )
+
+    assert [line.text for line in result.lines] == ["Body moving heart is open"] * 4
+    assert [line.start_s for line in result.lines] == [0.0, 3.85, 8.1, 11.45]
+    assert [line.words[0].text for line in result.lines] == ["Body"] * 4
