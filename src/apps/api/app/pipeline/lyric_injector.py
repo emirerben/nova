@@ -2471,6 +2471,7 @@ def _finalize_one_karaoke_line(
         rebuilt = _align_audible_words_to_original_text(
             original_text=original_text,
             audible_words=audible_words,
+            drop_dangling_parenthetical_prefix=True,
         )
         if rebuilt is not None:
             candidate_text = rebuilt
@@ -2632,7 +2633,8 @@ def _apply_finalized_karaoke(
     span_s = new_end_s - new_start_s
     word_timings: list[dict] = []
     prev_end_rel = 0.0
-    for w in audible_words:
+    render_words = _trim_audible_words_to_display_text(audible_words, display_text)
+    for w in render_words:
         text = str(w.get("text", "")).strip()
         if not text:
             continue
@@ -2724,12 +2726,12 @@ def _align_audible_words_to_original_text(
     which is safer than silently dropping a real audible word into the
     substring slice.
 
-    `drop_dangling_parenthetical_prefix` is line-style-only cleanup for clipped
-    backing-vocal parentheticals: if a section starts mid-line and the exact
-    slice would render a single dangling word before a parenthetical hook
+    `drop_dangling_parenthetical_prefix` cleans up clipped backing-vocal
+    parentheticals: if a section starts mid-line and the exact slice would
+    render a single dangling word before a parenthetical hook
     (`day (we've lost dancing`), return just the parenthetical phrase. Karaoke
-    callers leave this false because they must keep text and word timings in
-    lockstep.
+    callers must also trim their `word_timings` to the returned display text so
+    text and timing rows stay in lockstep.
 
     Returns None on:
       - audible_words count < 2
@@ -2852,3 +2854,46 @@ def _drop_dangling_parenthetical_prefix(
         return None
 
     return original_text[parenthetical_tokens[0][0] : last_end_char].strip() or None
+
+
+def _trim_audible_words_to_display_text(audible_words: list[dict], display_text: str) -> list[dict]:
+    """Return the contiguous audible-word subset represented by display_text.
+
+    Karaoke finalization rebuilds renderer-facing `word_timings` from
+    `audible_words`. When punctuation-preserving alignment drops a stale prefix
+    from `display_text` (for example Marea's dangling pre-parenthetical
+    ``day``), the timing rows must drop the same prefix or the renderer will
+    still draw it. If we cannot prove a contiguous token match, keep the
+    original list; rendering every audible word is safer than silently removing
+    a real vocal.
+    """
+    if not audible_words:
+        return audible_words
+
+    display_norm = [token[2] for token in _tokenize_lyric_text(display_text)]
+    display_norm = [token for token in display_norm if token]
+    if not display_norm or len(display_norm) >= len(audible_words):
+        return audible_words
+
+    audible_indexed_norm = [
+        (idx, token)
+        for idx, w in enumerate(audible_words)
+        if (token := _normalize_token(str(w.get("text", ""))))
+    ]
+    if len(display_norm) > len(audible_indexed_norm):
+        return audible_words
+
+    audible_norm = [token for _, token in audible_indexed_norm]
+    for start_idx in range(0, len(audible_norm) - len(display_norm) + 1):
+        end_idx = start_idx + len(display_norm)
+        if audible_norm[start_idx:end_idx] == display_norm:
+            first_word_idx = audible_indexed_norm[start_idx][0]
+            last_word_idx = audible_indexed_norm[end_idx - 1][0]
+            return audible_words[first_word_idx : last_word_idx + 1]
+
+    log.info(
+        "karaoke_trim_display_text_no_word_match",
+        display_text=display_text[:80],
+        audible_words=[str(w.get("text", "")) for w in audible_words[:10]],
+    )
+    return audible_words
