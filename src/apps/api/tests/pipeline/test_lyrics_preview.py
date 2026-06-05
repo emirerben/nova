@@ -202,6 +202,88 @@ def test_preview_popup_drops_nested_short_adlib_line() -> None:
     assert len(active) == 1
 
 
+def test_preview_popup_repeats_repaired_chorus_line() -> None:
+    """Lyrics-preview job 8c5793b6 shape: repeated pop-up chorus phrase.
+
+    The preview should render the complete phrase, clear it, then restart it
+    when the phrase is sung again. The first two lines cover the bad source
+    shapes from the job: "Myself" where audio says "Body", and a later
+    "moving heart is open" row that omitted the audible leading "Body".
+    """
+    from app.pipeline.lyrics_alignment import align_with_line_anchors  # noqa: PLC0415
+    from app.services.lrclib_client import SyncedLine  # noqa: PLC0415
+    from app.services.whisper_lyrics import WhisperWord  # noqa: PLC0415
+
+    anchors = [
+        SyncedLine(start_s=0.0, text="Myself moving heart is open"),
+        SyncedLine(start_s=3.85, text="moving heart is open"),
+        SyncedLine(start_s=8.1, text="Body moving heart is open"),
+        SyncedLine(start_s=11.45, text="Body moving heart is open"),
+    ]
+    whisper = [
+        WhisperWord(text="body", start_s=0.0, end_s=0.35),
+        WhisperWord(text="moving", start_s=1.35, end_s=1.75),
+        WhisperWord(text="heart", start_s=2.05, end_s=2.35),
+        WhisperWord(text="is", start_s=2.45, end_s=2.75),
+        WhisperWord(text="open", start_s=3.3, end_s=3.7),
+        WhisperWord(text="body", start_s=3.85, end_s=4.15),
+        WhisperWord(text="moving", start_s=4.45, end_s=4.85),
+        WhisperWord(text="heart", start_s=5.45, end_s=5.8),
+        WhisperWord(text="is", start_s=6.0, end_s=6.25),
+        WhisperWord(text="open", start_s=6.55, end_s=7.3),
+        WhisperWord(text="body", start_s=8.1, end_s=8.45),
+        WhisperWord(text="moving", start_s=8.65, end_s=9.0),
+        WhisperWord(text="heart", start_s=9.35, end_s=9.7),
+        WhisperWord(text="is", start_s=10.05, end_s=10.25),
+        WhisperWord(text="open", start_s=10.5, end_s=11.1),
+        WhisperWord(text="body", start_s=11.45, end_s=11.8),
+        WhisperWord(text="moving", start_s=12.15, end_s=12.5),
+        WhisperWord(text="heart", start_s=12.95, end_s=13.3),
+        WhisperWord(text="is", start_s=13.7, end_s=13.92),
+        WhisperWord(text="open", start_s=14.27, end_s=14.45),
+    ]
+
+    aligned = align_with_line_anchors(anchors, whisper, track_end_s=14.333)
+    lyrics_cached = {
+        "source": "lrclib_synced+whisper",
+        "lines": [
+            {
+                "text": line.text,
+                "start_s": line.start_s,
+                "end_s": min(14.6, max(word.end_s for word in line.words) + 0.35),
+                "words": [
+                    {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+                    for word in line.words
+                ],
+            }
+            for line in aligned.lines
+        ],
+    }
+    track = _track(
+        duration_s=14.333,
+        track_config={"best_start_s": 0.0, "best_end_s": 14.333},
+        lyrics_cached=lyrics_cached,
+    )
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "per-word-pop"})
+    overlays = recipe["slots"][0]["text_overlays"]
+
+    body_starts = [
+        float(ov["start_s"])
+        for ov in overlays
+        if ov.get("text") == "Body" and ov.get("pop_animated_suffix") == "Body"
+    ]
+    full_phrase = [
+        ov
+        for ov in overlays
+        if ov.get("text") == "Body moving heart is open" and ov.get("pop_animated_suffix") == "open"
+    ]
+
+    assert body_starts == pytest.approx([0.0, 3.85, 8.1, 11.45], abs=1e-3)
+    assert len(full_phrase) == 4
+    assert full_phrase[-1]["end_s"] == pytest.approx(14.333, abs=1e-3)
+
+
 def test_preview_recipe_falls_back_to_best_end_s_when_duration_unknown_dict_shape() -> None:
     """When `duration_s` is missing or non-positive, the recipe falls back to
     `track_config.best_end_s` and clamps that against the preview window.
