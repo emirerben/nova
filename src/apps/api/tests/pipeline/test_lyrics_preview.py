@@ -154,6 +154,54 @@ def test_preview_recipe_at_exact_window_boundary() -> None:
     assert recipe["slots"][0]["target_duration_s"] == PREVIEW_WINDOW_S
 
 
+def test_preview_popup_drops_nested_short_adlib_line() -> None:
+    """Regression for Pop-up preview job 1b23fc80: a one-word nested ad-lib
+    rendered over the main cumulative lyric line in the same visual lane.
+    """
+    track = _track(
+        duration_s=6.0,
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "I swear to God I don't even know why I put up with",
+                    "start_s": 1.0,
+                    "end_s": 4.2,
+                    "words": [
+                        {"text": "I", "start_s": 1.0, "end_s": 1.12},
+                        {"text": "swear", "start_s": 1.12, "end_s": 1.35},
+                        {"text": "to", "start_s": 1.35, "end_s": 1.46},
+                        {"text": "God", "start_s": 1.46, "end_s": 1.68},
+                        {"text": "I", "start_s": 1.68, "end_s": 1.78},
+                        {"text": "don't", "start_s": 1.78, "end_s": 2.05},
+                        {"text": "even", "start_s": 2.05, "end_s": 2.32},
+                        {"text": "know", "start_s": 2.32, "end_s": 2.58},
+                        {"text": "why", "start_s": 2.58, "end_s": 2.8},
+                        {"text": "I", "start_s": 2.8, "end_s": 2.9},
+                        {"text": "put", "start_s": 2.9, "end_s": 3.12},
+                        {"text": "up", "start_s": 3.12, "end_s": 3.34},
+                        {"text": "with", "start_s": 3.34, "end_s": 4.2},
+                    ],
+                },
+                {
+                    "text": "Ok",
+                    "start_s": 1.32,
+                    "end_s": 1.85,
+                    "words": [{"text": "Ok", "start_s": 1.32, "end_s": 1.85}],
+                },
+            ],
+        },
+    )
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "per-word-pop"})
+    overlays = recipe["slots"][0]["text_overlays"]
+
+    texts = [str(ov.get("text", "")).strip() for ov in overlays]
+    assert "Ok" not in texts
+    assert any(text.endswith("why I put up with") for text in texts)
+    active = [ov for ov in overlays if float(ov["start_s"]) <= 1.34 < float(ov["end_s"])]
+    assert len(active) == 1
+
+
 def test_preview_recipe_falls_back_to_best_end_s_when_duration_unknown_dict_shape() -> None:
     """When `duration_s` is missing or non-positive, the recipe falls back to
     `track_config.best_end_s` and clamps that against the preview window.
