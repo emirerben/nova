@@ -347,6 +347,77 @@ def test_patch_track_rejects_enable_lyrics_when_extracting(client: TestClient) -
     assert resp.status_code == 422
 
 
+def test_patch_track_rejects_enable_lyrics_when_ready_but_whisper_only(
+    client: TestClient,
+) -> None:
+    """``lyrics_status='ready'`` alone is not enough after the LRCLIB migration.
+
+    Legacy drift rows can still have ``lyrics_cached.source='whisper_only'`` with
+    real lines. Those lines are not production-publishable and must not be
+    accepted by the enable gate.
+    """
+    track = MagicMock()
+    track.id = "x"
+    track.lyrics_status = "ready"
+    track.lyrics_cached = {
+        "source": "whisper_only",
+        "lines": [{"text": "hello", "start_s": 1.0, "end_s": 2.0}],
+    }
+    track.beat_timestamps_s = None
+    track.track_config = {"lyrics_config": {"enabled": False, "style": "line"}}
+    track.published_at = None
+    track.archived_at = None
+
+    override, _session = _override_db(track)
+    app.dependency_overrides[get_db] = override
+    try:
+        resp = client.patch(
+            f"/admin/music-tracks/{track.id}",
+            json={"track_config": {"lyrics_config": {"enabled": True, "style": "line"}}},
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "not renderable lyrics" in detail
+    assert "whisper_only" in detail
+
+
+def test_patch_track_allows_enable_lyrics_with_legacy_genius_cache(
+    client: TestClient,
+) -> None:
+    """Pre-LRCLIB cached rows are renderer-compatible and should not hit this gate."""
+
+    track = MagicMock()
+    track.id = "x"
+    track.lyrics_status = "ready"
+    track.lyrics_cached = {
+        "source": "genius+whisper",
+        "genius_url": "https://genius.com/old-song",
+        "lines": [{"text": "hello", "start_s": 1.0, "end_s": 2.0}],
+    }
+    track.beat_timestamps_s = None
+    track.track_config = {"lyrics_config": {"enabled": False, "style": "line"}}
+    track.published_at = None
+    track.archived_at = None
+
+    override, _session = _override_db(track)
+    app.dependency_overrides[get_db] = override
+    try:
+        resp = client.patch(
+            f"/admin/music-tracks/{track.id}",
+            json={"track_config": {"lyrics_config": {"enabled": True, "style": "line"}}},
+            headers=_admin_headers(),
+        )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    detail = resp.json().get("detail") if resp.status_code == 422 else ""
+    assert "not renderable lyrics" not in str(detail)
+
+
 def _is_lyrics_enable_gate_response(resp) -> bool:
     """True iff the response is the 422 emitted by the lyrics-enable gate.
 

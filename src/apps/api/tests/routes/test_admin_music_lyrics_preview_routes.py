@@ -241,6 +241,102 @@ def test_post_lyrics_preview_rejects_empty_lines_array(client: TestClient) -> No
     assert "no lyric lines" in resp.json()["detail"]
 
 
+def test_post_lyrics_preview_accepts_legacy_genius_cache_with_lines(
+    client: TestClient,
+) -> None:
+    """Legacy pre-LRCLIB rows are still renderable cached lyrics."""
+
+    track = _track(
+        lyrics_cached={
+            "source": "genius+whisper",
+            "genius_url": "https://genius.com/old-song",
+            "lines": [
+                {
+                    "text": "hello",
+                    "start_s": 1.0,
+                    "end_s": 2.0,
+                    "words": [{"text": "hello", "start_s": 1.0, "end_s": 2.0}],
+                }
+            ],
+        }
+    )
+    override, _session = _override_db(track)
+    new_job = MagicMock()
+    new_job.id = uuid4()
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job", return_value=new_job) as mock_job,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_enqueue.return_value = str(new_job.id)
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/lyrics-preview",
+                json={},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 202, resp.text
+    mock_job.assert_called_once()
+    mock_enqueue.assert_awaited_once()
+
+
+def test_post_lyrics_preview_rejects_whisper_only_cache_with_lines(
+    client: TestClient,
+) -> None:
+    """Regression for lyrics-preview job 32d7ea20.
+
+    A legacy row had ``lyrics_status='ready'`` and 19 cached Whisper-only lines,
+    but no LRCLIB source/prompt version. The route queued a preview because it
+    only checked ``lines``; the worker later failed during stale-cache refresh.
+    """
+    track = _track(
+        lyrics_cached={
+            "source": "whisper_only",
+            "prompt_version": None,
+            "lines": [
+                {
+                    "text": "hello",
+                    "start_s": 1.0,
+                    "end_s": 2.0,
+                    "words": [{"text": "hello", "start_s": 1.0, "end_s": 2.0}],
+                }
+            ],
+        }
+    )
+    override, session = _override_db(track)
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job") as mock_job,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/lyrics-preview",
+                json={},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "not renderable lyrics" in detail
+    assert "whisper_only" in detail
+    mock_job.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+    mock_enqueue.assert_not_called()
+
+
 def test_post_lyrics_preview_rejects_missing_audio(client: TestClient) -> None:
     track = _track(audio_gcs_path=None)
     override, _session = _override_db(track)

@@ -51,6 +51,7 @@ from app.agents._schemas.song_sections import (
     SongSection,
     cap_song_section_duration,
 )
+from app.agents.lyrics import RENDERABLE_CACHED_LYRICS_SOURCES
 from app.auth import SYNTHETIC_USER_ID
 from app.config import settings
 from app.database import get_db
@@ -305,6 +306,26 @@ def _compute_generative_matchable(t: MusicTrack) -> bool:
         and t.section_version == CURRENT_SECTION_VERSION
         and current_best_section_for_track(t) is not None
     )
+
+
+def _cached_lyrics_renderability_error(lyrics_cached: dict | None) -> str | None:
+    if not lyrics_cached:
+        return "Music track has no cached lyrics."
+    cached_lines = lyrics_cached.get("lines") if isinstance(lyrics_cached, dict) else None
+    if not cached_lines:
+        return (
+            "Music track has cached lyrics metadata but no lyric lines — "
+            "re-run extraction from the Config tab."
+        )
+    cached_source = (lyrics_cached.get("source") or "") if isinstance(lyrics_cached, dict) else ""
+    if cached_source not in RENDERABLE_CACHED_LYRICS_SOURCES:
+        source_label = cached_source or "unknown"
+        return (
+            "Music track cached lyrics are not renderable lyrics "
+            f"(source: {source_label}). Paste an LRCLIB row ID or re-run "
+            "lyric extraction before enabling lyrics or rendering a preview."
+        )
+    return None
 
 
 def _to_response(t: MusicTrack) -> MusicTrackResponse:
@@ -1368,19 +1389,22 @@ async def update_music_track(
         # incoming request (not the merged config), so legitimate edits to
         # other lyrics_config keys on an already-enabled track still work.
         req_lyrics_cfg = req.track_config.get("lyrics_config") or {}
-        if (
-            isinstance(req_lyrics_cfg, dict)
-            and req_lyrics_cfg.get("enabled") is True
-            and track.lyrics_status != "ready"
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"Cannot enable lyrics on this track: lyrics_status is "
-                    f"{track.lyrics_status!r}, must be 'ready'. Resolve the "
-                    "extraction first (paste an LRCLIB ID or re-extract)."
-                ),
-            )
+        if isinstance(req_lyrics_cfg, dict) and req_lyrics_cfg.get("enabled") is True:
+            if track.lyrics_status != "ready":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Cannot enable lyrics on this track: lyrics_status is "
+                        f"{track.lyrics_status!r}, must be 'ready'. Resolve the "
+                        "extraction first (paste an LRCLIB ID or re-extract)."
+                    ),
+                )
+            renderability_error = _cached_lyrics_renderability_error(track.lyrics_cached)
+            if renderability_error:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Cannot enable lyrics on this track: {renderability_error}",
+                )
         merged_config = {**(track.track_config or {}), **req.track_config}
         if merged_config.get("best_end_s", 0) <= merged_config.get("best_start_s", 0):
             raise HTTPException(
@@ -1485,26 +1509,15 @@ async def create_admin_lyrics_preview(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Music track has no audio file to preview.",
         )
-    if not track.lyrics_cached:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Music track has no cached lyrics to preview.",
-        )
     # Defense in depth: `lyrics_cached` can be a truthy dict that carries
-    # metadata (source, language, lrclib_id) but an empty `lines` list — that
-    # passed the previous guard and burned a worker on a job that always failed
-    # with "no renderable lyric overlays". Reject upfront so the dashboard
-    # shows a clear, actionable error instead.
-    cached_lines = (
-        track.lyrics_cached.get("lines") if isinstance(track.lyrics_cached, dict) else None
-    )
-    if not cached_lines:
+    # metadata (source, language, lrclib_id) but is still not safe to render:
+    # empty lines waste a worker, and legacy `whisper_only` rows must never burn
+    # admin-facing previews as if they were LRCLIB-backed lyrics.
+    renderability_error = _cached_lyrics_renderability_error(track.lyrics_cached)
+    if renderability_error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                "Music track has cached lyrics metadata but no lyric lines — "
-                "re-run extraction from the Config tab."
-            ),
+            detail=renderability_error,
         )
 
     override = non_null_model_dict(req.lyrics_config_override)

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.78.1] - 2026-06-05
+
+### Fixed
+- **Lyric preview jobs now reject stale non-renderable cached lyrics before queueing a render.** Admin preview and enable-lyrics routes share the injector's renderable source allowlist, so Whisper-only cache drift surfaces an actionable LRCLIB/manual-recovery error instead of failing later in the worker. Legacy `genius+whisper` caches remain renderable.
+- **Stale LRCLIB refresh failures now leave tracks in the manual recovery state.** When a render-time stale refresh cannot produce publishable LRCLIB lyrics, the cache is cleared, the Whisper draft is preserved, and diagnostics are recorded so admins can recover with a forced LRCLIB row instead of retrying the same failed preview.
+
 ## [0.4.78.0] - 2026-06-05
 
 ### Fixed

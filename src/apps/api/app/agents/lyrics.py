@@ -85,6 +85,17 @@ PUBLISHABLE_LYRICS_SOURCES: frozenset[str] = frozenset(
     }
 )
 
+# Cached blobs that are safe for the renderer to burn. This is intentionally
+# wider than the forward publishability set: legacy `genius+whisper` rows still
+# exist in prod until re-extracted, and `manual` is reserved for the future admin
+# override. `whisper_only` stays excluded.
+RENDERABLE_CACHED_LYRICS_SOURCES: frozenset[str] = PUBLISHABLE_LYRICS_SOURCES | frozenset(
+    {
+        "genius+whisper",
+        "manual",
+    }
+)
+
 
 # ── I/O schema ────────────────────────────────────────────────────────────────
 

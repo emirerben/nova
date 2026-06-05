@@ -47,6 +47,7 @@ from typing import Any
 
 import structlog
 
+from app.agents.lyrics import RENDERABLE_CACHED_LYRICS_SOURCES
 from app.pipeline.text_reveal import (
     LAST_WORD_DWELL_S as _LAST_WORD_DWELL_S,
 )
@@ -63,21 +64,10 @@ from app.pipeline.text_reveal import (
 log = structlog.get_logger()
 
 
-# Sources that the injector will burn into output. The agent's
-# `PUBLISHABLE_LYRICS_SOURCES` set covers the forward path; this set adds
-# the legacy `genius+whisper` rows that pre-date the LRCLIB cutover (still
-# in prod DB until they're re-extracted) and the future `manual` admin
-# override. `whisper_only` is INTENTIONALLY excluded — defense in depth
-# against a stale or drift-state row sneaking through, even though the
-# orchestrator never writes whisper_only to lyrics_cached now.
-_INJECTOR_ALLOWED_SOURCES: frozenset[str] = frozenset(
-    {
-        "lrclib_synced+whisper",
-        "lrclib_plain+whisper",
-        "genius+whisper",  # legacy, pre-LRCLIB cutover
-        "manual",  # admin override (future)
-    }
-)
+# Sources that the injector will burn into output. Kept as an internal alias so
+# older tests/comments that refer to the injector allowlist still point at the
+# same renderer policy.
+_INJECTOR_ALLOWED_SOURCES = RENDERABLE_CACHED_LYRICS_SOURCES
 
 
 @dataclass(frozen=True, slots=True)
