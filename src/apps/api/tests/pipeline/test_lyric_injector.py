@@ -286,6 +286,65 @@ def test_per_word_pop_terminal_dwell_clears_before_next_line_first_word() -> Non
     assert body["end_s"] == pytest.approx(2.067, abs=1e-3)
 
 
+def test_per_word_pop_truncates_overlapping_line_before_next_line() -> None:
+    """Regression for lyrics-preview job 20ebb8b8 (Billie Jean popup).
+
+    The backing-vocal line's own end overlapped the next lead-vocal line by
+    ~420ms, so the final "Ah hoo" popup stage and the first "She" stage rendered
+    at once in the same visual lane.
+    """
+    recipe = _make_recipe([6.0])
+    cache = _make_lyrics_cache(
+        [
+            (
+                "Don't think twice Do think twice Ah hoo",
+                0.0,
+                2.77,
+                [
+                    ("Don't", 0.0, 0.23),
+                    ("think", 0.25, 0.57),
+                    ("twice", 0.57, 0.87),
+                    ("Do", 0.87, 1.23),
+                    ("think", 1.23, 1.57),
+                    ("twice", 1.59, 1.97),
+                    ("Ah", 1.99, 2.37),
+                    ("hoo", 2.39, 2.77),
+                ],
+            ),
+            (
+                "She told my baby",
+                2.35,
+                4.0,
+                [
+                    ("She", 2.35, 3.03),
+                    ("told", 3.03, 3.45),
+                    ("my", 3.45, 3.71),
+                    ("baby", 3.71, 4.0),
+                ],
+            ),
+        ]
+    )
+
+    out = inject_lyric_overlays(
+        recipe,
+        cache,
+        0.0,
+        6.0,
+        {"enabled": True, "style": "per-word-pop"},
+    )
+
+    overlays = out["slots"][0]["text_overlays"]
+    she = next(o for o in overlays if o["text"] == "She")
+    outgoing = [o for o in overlays if o["text"].startswith("Don't think twice")]
+    assert outgoing
+    assert all(o["end_s"] <= she["start_s"] for o in outgoing)
+    assert max(o["end_s"] for o in outgoing) == pytest.approx(
+        she["start_s"] - lyric_injector._WORD_POP_LINE_CLEAR_GAP_S,
+        abs=1e-3,
+    )
+    assert not any(o["pop_animated_suffix"] == "hoo" for o in outgoing)
+
+
 def test_per_word_pop_forces_left_anchor_even_with_centered_style_set() -> None:
     """REGRESSION: cumulative pop-up lyrics must grow from a fixed left edge.
 

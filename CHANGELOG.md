@@ -8,6 +8,11 @@ All notable changes to this project will be documented in this file.
 - **Karaoke lyric previews now start on the audible hook text instead of stale repeated context.** When a preview begins inside a parenthetical lyric such as Marea's `"Day by day (we've lost dancing)"`, karaoke word timings now trim the same dropped prefix as the displayed line, so the first scene renders `"we've lost dancing"` without the stray `"day"`.
 - **Karaoke preview highlights now hit word onsets instead of lagging through the word duration.** The ASS preview path keeps `\kt` anchored to the real word start and uses a short highlight ramp, so phrases like `"What comes next"` are already yellow when they have been sung while preserving the following lyric sequence.
 
+## [0.4.77.1] - 2026-06-05
+
+### Fixed
+- **Pop-up lyric previews now clear overlapping lyric lines before the next vocal line appears.** The per-word pop injector truncates an outgoing cumulative line when the next lyric line starts before that row's own end time, preventing the Billie Jean preview job `20ebb8b8-b604-435d-961e-6ff1f6873b96` from rendering `She` on top of the previous `Do think twice Ah-hoo` popup. Regression coverage locks the one-frame clear gap and verifies the Line-style frozen range still points at unchanged Line code.
+
 ## [0.4.76.1] - 2026-06-05
 
 ### Fixed
