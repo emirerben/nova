@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.77.1] - 2026-06-05
+
+### Fixed
+- **Pop-up lyric previews now clear overlapping lyric lines before the next vocal line appears.** The per-word pop injector truncates an outgoing cumulative line when the next lyric line starts before that row's own end time, preventing the Billie Jean preview job `20ebb8b8-b604-435d-961e-6ff1f6873b96` from rendering `She` on top of the previous `Do think twice Ah-hoo` popup. Regression coverage locks the one-frame clear gap and verifies the Line-style frozen range still points at unchanged Line code.
+
 ## [0.4.76.1] - 2026-06-05
 
 ### Fixed
