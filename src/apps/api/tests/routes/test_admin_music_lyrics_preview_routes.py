@@ -191,6 +191,114 @@ def test_post_lyrics_preview_strips_line_only_keys_for_alt_styles(
     assert effective["style"] == "karaoke"
 
 
+def test_post_lyrics_preview_resets_line_tuning_for_alt_style_defaults(
+    client: TestClient,
+) -> None:
+    """Alternate style slots should not inherit stale Line preview tuning.
+
+    Regression for lyrics-preview job b9192f96: the saved Line config carried
+    sync_offset_s=0.8 plus medium/sans/#FFFF00 styling into the Karaoke preview.
+    That made the vocal arrive ahead of the yellow word animation and skipped
+    the approved default karaoke look.
+    """
+    track = _track(
+        track_config={
+            "lyrics_config": {
+                "enabled": True,
+                "style": "line",
+                "sync_offset_s": 0.8,
+                "font_style": "sans",
+                "text_size": "medium",
+                "text_color": "#FFFFFF",
+                "highlight_color": "#FFFF00",
+                "outline_px": 2,
+            }
+        }
+    )
+    override, _session = _override_db(track)
+    new_job = MagicMock()
+    new_job.id = uuid4()
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job", return_value=new_job) as mock_job,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_enqueue.return_value = str(new_job.id)
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/lyrics-preview",
+                json={"style": "karaoke"},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 202, resp.text
+    effective = mock_job.call_args.kwargs["assembly_plan"]["lyrics_config_effective"]
+    assert effective["style"] == "karaoke"
+    assert effective["style_set_id"] == "default"
+    for reset in (
+        "font_style",
+        "text_size",
+        "text_color",
+        "highlight_color",
+        "outline_px",
+        "sync_offset_s",
+    ):
+        assert reset not in effective, f"{reset!r} should not leak into alt-style preview"
+
+
+def test_post_lyrics_preview_preserves_explicit_alt_style_sync_offset(
+    client: TestClient,
+) -> None:
+    """A fresh per-render sync override is still honored for Karaoke tuning."""
+    track = _track(
+        track_config={
+            "lyrics_config": {
+                "enabled": True,
+                "style": "line",
+                "sync_offset_s": 0.8,
+                "font_style": "sans",
+                "text_size": "medium",
+                "highlight_color": "#FFFF00",
+            }
+        }
+    )
+    override, _session = _override_db(track)
+    new_job = MagicMock()
+    new_job.id = uuid4()
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job", return_value=new_job) as mock_job,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_enqueue.return_value = str(new_job.id)
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/lyrics-preview",
+                json={
+                    "style": "karaoke",
+                    "lyrics_config_override": {"sync_offset_s": -0.25},
+                },
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 202, resp.text
+    effective = mock_job.call_args.kwargs["assembly_plan"]["lyrics_config_effective"]
+    assert effective["style"] == "karaoke"
+    assert effective["style_set_id"] == "default"
+    assert effective["sync_offset_s"] == -0.25
+    assert "highlight_color" not in effective
+
+
 def test_post_lyrics_preview_rejects_unknown_style(client: TestClient) -> None:
     """Top-level ``style`` is validated against the literal union. An unknown
     style returns 422, never reaches the renderer.

@@ -51,6 +51,7 @@ LYRICS_CONFIG_KEYS = {
     "hold_to_next_threshold_ms",
     "sync_offset_s",
     "font_family",
+    "style_set_id",
 }
 
 LINE_ONLY_KEYS = frozenset(
