@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-06-06 — interview_turns replaces flat fields as primary input; added
+#              signature_quote output field for the aha-moment reveal.
 # 2026-06-05 — added posts_per_week (int 1-7) so the plan agent can emit the right
 #              number of ideas per week; resolve_posts_per_week() provides a legacy
 #              fallback for personas that predate this field.
@@ -26,11 +28,16 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-06-05"
+PERSONA_PROMPT_VERSION = "2026-06-06"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
 _MAX_TOPICS = 20
+
+
+class InterviewTurn(BaseModel):
+    role: str  # "agent" | "user"
+    content: str
 
 
 class PersonaQuestionnaire(BaseModel):
@@ -43,8 +50,11 @@ class PersonaQuestionnaire(BaseModel):
     hobbies: str = ""
     travels: str = ""
     passions: str = ""
-    # Optional handle the user can paste; never fetched in v1 (TikTok API deferred).
+    # Optional handle the user can paste; set by TikTok pre-screen.
     tiktok_handle: str = ""
+    # Chat interview turns — set by the new onboarding chat flow.
+    # Takes precedence over the flat fields above when present.
+    interview_turns: list[InterviewTurn] = []
     # Feedback-loop rollup (Phase 2): empty on first onboarding; set only when the
     # user clicks "update persona from feedback" (services/feedback_summary). Steers
     # the regenerated lane toward what they reacted well to. NOT stored on the
@@ -70,6 +80,10 @@ class Persona(BaseModel):
     # read-only in the dashboard. Optional so a user edit that drops it never
     # fails validation; the generator's prompt reliably fills it (structural-checked).
     rationale: str = ""
+    # The single most revealing thing the creator said in the chat interview —
+    # shown verbatim as "You said: '...'" on the persona reveal (aha moment).
+    # Empty for personas generated from the old flat-field questionnaire.
+    signature_quote: str = ""
 
     def to_dict(self) -> dict:
         return self.model_dump()

@@ -10,6 +10,8 @@ PATCH /personas/{id}   — hand-edit persona fields. Also the escape hatch when
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import uuid
 
 import structlog
@@ -63,6 +65,7 @@ class PersonaResponse(BaseModel):
     questionnaire: dict | None
     persona: dict | None
     error_detail: str | None
+    tiktok_profile: dict | None = None
 
     @classmethod
     def of(cls, row: PersonaRow) -> PersonaResponse:
@@ -72,10 +75,56 @@ class PersonaResponse(BaseModel):
             questionnaire=row.questionnaire,
             persona=row.persona,
             error_detail=row.error_detail,
+            tiktok_profile=row.tiktok_profile,
         )
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
+
+class TikTokScrapeBody(BaseModel):
+    handle: str
+
+
+@router.post("/tiktok-scrape", response_model=PersonaResponse, status_code=status.HTTP_202_ACCEPTED)
+async def tiktok_scrape(
+    body: TikTokScrapeBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PersonaResponse:
+    """Pre-screen: accept a TikTok handle, fire async scrape, return persona row.
+
+    Creates the persona row (status 'chat_pending') if one doesn't exist yet.
+    The scrape runs in the background; the frontend polls GET /personas until
+    tiktok_profile is populated (or a 10s timeout, whichever comes first).
+    """
+    from app.services.tiktok_profile import normalize_handle  # noqa: PLC0415
+    from app.tasks.persona_build import scrape_tiktok_profile  # noqa: PLC0415
+
+    clean_handle = normalize_handle(body.handle)
+
+    existing = (
+        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    ).scalar_one_or_none()
+
+    if existing is None:
+        row = PersonaRow(
+            user_id=user.id,
+            questionnaire={"tiktok_handle": clean_handle},
+            persona_status="chat_pending",
+        )
+        db.add(row)
+    else:
+        q = dict(existing.questionnaire or {})
+        q["tiktok_handle"] = clean_handle
+        existing.questionnaire = q
+        row = existing
+
+    await db.commit()
+    await db.refresh(row)
+
+    scrape_tiktok_profile.delay(str(row.id), clean_handle)
+    return PersonaResponse.of(row)
 
 
 @router.post("", response_model=PersonaResponse, status_code=status.HTTP_201_CREATED)
@@ -218,3 +267,271 @@ async def retune_persona_from_feedback(
     retune_task.delay(str(row.id))
     await db.refresh(row)
     return PersonaResponse.of(row)
+
+
+# ── Chat interview routes ─────────────────────────────────────────────────────
+
+
+def _tiktok_summary(profile: dict) -> str:
+    """Format a scraped TikTok profile dict into a text summary for the interviewer."""
+    parts: list[str] = []
+    if profile.get("handle"):
+        parts.append(f"@{profile['handle']}")
+    if profile.get("follower_count"):
+        c = profile["follower_count"]
+        parts.append(f"{c / 1000:.1f}K followers" if c >= 1000 else f"{c} followers")
+    if profile.get("video_count"):
+        parts.append(f"{profile['video_count']} videos")
+    header = " · ".join(parts) if parts else "(profile loaded)"
+    lines = [header]
+    if profile.get("top_hashtags"):
+        lines.append("Top hashtags: " + ", ".join(profile["top_hashtags"][:5]))
+    if profile.get("top_captions"):
+        lines.append("Sample captions: " + "; ".join(profile["top_captions"][:3]))
+    return "\n".join(lines)
+
+
+class ChatStartResponse(BaseModel):
+    persona_id: str
+    question: str
+    suggestions: list[str] = []
+    turn_number: int
+    turn_label: str
+    tiktok_context: dict | None = None
+    persona_status: str
+
+
+class ChatTurnBody(BaseModel):
+    persona_id: str
+    answer: str
+
+
+class ChatTurnResponse(BaseModel):
+    question: str | None = None
+    suggestions: list[str] = []
+    is_final: bool
+    turn_number: int
+    turn_label: str
+    persona_status: str
+
+
+@router.post("/chat/start", response_model=ChatStartResponse)
+async def chat_start(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ChatStartResponse:
+    """Start (or resume) the onboarding chat interview.
+
+    Gets or creates the Persona row (status 'chat_pending'). If the user
+    has already begun and the last unanswered turn is an agent question,
+    resumes from there (no extra LLM call). Otherwise calls InterviewerAgent
+    for the first question. Suggestions + turn_label are stored in the turn
+    dict so resume is free.
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.interviewer_agent import (  # noqa: PLC0415
+        ConversationTurn,
+        InterviewerAgent,
+        InterviewerInput,
+    )
+
+    existing = (
+        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    ).scalar_one_or_none()
+
+    if existing is None:
+        row = PersonaRow(
+            user_id=user.id,
+            questionnaire={"interview_turns": []},
+            persona_status="chat_pending",
+        )
+        db.add(row)
+        try:
+            await db.commit()
+            await db.refresh(row)
+        except IntegrityError:
+            # tiktok_scrape beat us to the INSERT — re-fetch the row it created.
+            await db.rollback()
+            row = (
+                await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+            ).scalar_one()
+    else:
+        await db.refresh(existing)
+        row = existing
+
+    # If already past the chat stage, surface the status so the frontend can redirect
+    # without crashing (empty question; persona_status drives the routing decision).
+    if row.persona_status in ("generating", "ready", "edited"):
+        return ChatStartResponse(
+            persona_id=str(row.id),
+            question="",
+            persona_status=row.persona_status,
+            turn_number=0,
+            turn_label="",
+        )
+
+    q = copy.deepcopy(row.questionnaire or {})
+    turns_raw: list[dict] = q.get("interview_turns", [])
+
+    # Resume: last turn is an unanswered agent question — return it without re-calling.
+    if turns_raw and turns_raw[-1].get("role") == "agent":
+        last_agent = turns_raw[-1]
+        agent_count = sum(1 for t in turns_raw if t.get("role") == "agent")
+        return ChatStartResponse(
+            persona_id=str(row.id),
+            question=last_agent["content"],
+            suggestions=last_agent.get("suggestions", []),
+            turn_number=agent_count,
+            turn_label=last_agent.get("turn_label") or f"~{agent_count} OF ~6",
+            tiktok_context=row.tiktok_profile,
+            persona_status=row.persona_status,
+        )
+
+    # Fresh start or crash-recovery (last turn was user) — call agent for next Q.
+    tiktok_summary = _tiktok_summary(row.tiktok_profile) if row.tiktok_profile else None
+    conv_turns = [ConversationTurn(role=t["role"], content=t["content"]) for t in turns_raw]
+    agent_count = sum(1 for t in turns_raw if t.get("role") == "agent")
+
+    result = await asyncio.to_thread(
+        InterviewerAgent(default_client()).run,
+        InterviewerInput(
+            turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count + 1
+        ),
+    )
+
+    # Compute turn_label server-side — LLM value is inconsistent (tildes drop, counter freezes).
+    computed_label = f"~{agent_count + 1} OF ~6"
+
+    # Store Q + metadata so resume is free (no re-call on page refresh).
+    turns_raw.append(
+        {
+            "role": "agent",
+            "content": result.question,
+            "suggestions": result.suggestions,
+            "turn_label": computed_label,
+        }
+    )
+    q["interview_turns"] = turns_raw
+    row.questionnaire = q
+    await db.commit()
+
+    return ChatStartResponse(
+        persona_id=str(row.id),
+        question=result.question,
+        suggestions=result.suggestions,
+        turn_number=agent_count + 1,
+        turn_label=computed_label,
+        tiktok_context=row.tiktok_profile,
+        persona_status=row.persona_status,
+    )
+
+
+@router.post("/chat/turn", response_model=ChatTurnResponse)
+async def chat_turn(
+    body: ChatTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ChatTurnResponse:
+    """Submit a chat answer and get the next question (or finalize).
+
+    Appends the user answer to interview_turns, calls InterviewerAgent for the
+    next Q. If the agent signals is_final (or the hard cap of 8 agent turns is
+    reached), fires generate_persona.delay() and returns is_final=True.
+    """
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.interviewer_agent import (  # noqa: PLC0415
+        _HARD_CAP,
+        ConversationTurn,
+        InterviewerAgent,
+        InterviewerInput,
+    )
+
+    try:
+        pid = uuid.UUID(body.persona_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="bad persona_id"
+        ) from exc
+
+    row = await db.get(PersonaRow, pid)
+    if row is None or row.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+    if row.persona_status not in ("chat_pending", "failed"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Chat not active (status: {row.persona_status})",
+        )
+
+    q = copy.deepcopy(row.questionnaire or {})
+    turns_raw: list[dict] = q.get("interview_turns", [])
+
+    # If the previous stored agent turn was already marked final, this answer
+    # is the last one — generate without asking the agent again.
+    last_agent_was_final = (
+        bool(turns_raw)
+        and turns_raw[-1].get("role") == "agent"
+        and turns_raw[-1].get("is_final", False)
+    )
+
+    turns_raw.append({"role": "user", "content": _sanitize_text(body.answer)})
+    agent_count = sum(1 for t in turns_raw if t.get("role") == "agent")
+
+    from app.tasks.persona_build import generate_persona  # noqa: PLC0415
+
+    # Finalize: hard cap hit, or user just answered the stored final question.
+    if agent_count >= _HARD_CAP or last_agent_was_final:
+        q["interview_turns"] = turns_raw
+        row.questionnaire = q
+        row.persona_status = "generating"
+        await db.commit()
+        generate_persona.delay(str(row.id))
+        return ChatTurnResponse(
+            is_final=True,
+            turn_number=agent_count,
+            turn_label=f"~{agent_count} OF ~{_HARD_CAP}",
+            persona_status="generating",
+        )
+
+    tiktok_summary = _tiktok_summary(row.tiktok_profile) if row.tiktok_profile else None
+    conv_turns = [ConversationTurn(role=t["role"], content=t["content"]) for t in turns_raw]
+
+    result = await asyncio.to_thread(
+        InterviewerAgent(default_client()).run,
+        InterviewerInput(
+            turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count + 1
+        ),
+    )
+
+    new_agent_count = agent_count + 1
+    agent_is_final = result.is_final or new_agent_count >= _HARD_CAP
+
+    # Compute turn_label server-side — LLM value is inconsistent (tildes drop, counter freezes).
+    computed_label = f"~{new_agent_count} OF ~6"
+
+    # Store the question; if agent flagged it as final, mark it so the NEXT
+    # answer triggers generation (deferred — user must answer this Q first).
+    turns_raw.append(
+        {
+            "role": "agent",
+            "content": result.question,
+            "suggestions": result.suggestions,
+            "turn_label": computed_label,
+            "is_final": agent_is_final,
+        }
+    )
+    q["interview_turns"] = turns_raw
+    row.questionnaire = q
+    await db.commit()
+
+    # Always return is_final=False so the frontend shows the question and waits
+    # for the user's answer before transitioning to the generating state.
+    return ChatTurnResponse(
+        question=result.question,
+        suggestions=result.suggestions,
+        is_final=False,
+        turn_number=new_agent_count,
+        turn_label=computed_label,
+        persona_status="chat_pending",
+    )

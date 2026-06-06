@@ -2,11 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.81.0] - 2026-06-06
+## [0.4.82.0] - 2026-06-06
 
 ### Changed
-- **Landing page: 6 design fixes (header, marquee, outro, calendar, copy, video infra).** Cream `bg-[#fafaf8]` on the home header (black body was bleeding through the transparent `h-14` band). Marquee cards use `h-[240px]`/`md:flex-1` sizing — no vertical bleed and no horizontal scrollbar at any breakpoint including the `md` floor (768px). Blank text-only outro replaced with a full "04" process step: copy left, fanned 3-phone composition right (`lg+`), flat row below `lg`; step-03 gains a `border-b`. Calendar extends `CalCell` state to `"film" | "post"` — outlined lime film days, solid lime-600 post days, legend with `flex-wrap`, footer "3 film days → 11 posts". Copy: "learns about you" ×3; H2 gains a fourth beat ("then edits everything"). Video infra: `ShowcaseMarquee` client component (IntersectionObserver in-view autoplay, TemplateTile `play().catch()` pattern, gradient fallback); `GET /landing-clips` FastAPI route server-signs `landing/*` GCS keys on read (corrects the D2 hardcoded-public-URL plan, which was infeasible on this UBLA bucket); `page.tsx` resolves signed URLs at server-render time. Videos activate once clips are uploaded to `gs://$STORAGE_BUCKET/landing/` — see PR for the `gsutil cp` step.
+- **Landing page: 6 design fixes (header, marquee, outro, calendar, copy, video infra).** Cream `bg-[#fafaf8]` on the home header (black body was bleeding through the transparent `h-14` band). Marquee cards use `h-[240px]`/`md:flex-1` sizing — no vertical bleed and no horizontal scrollbar at any breakpoint including the `md` floor (768px). Blank text-only outro replaced with a full "04" process step: copy left, fanned 3-phone composition right (`lg+`), flat row below `lg`; step-03 gains a `border-b`. Calendar extends `CalCell` state to `"film" | "post"` — outlined lime film days, solid lime-600 post days, legend with `flex-wrap`, footer "3 film days → 11 posts". Copy: "learns about you" ×3; H2 gains a fourth beat ("then edits everything"). Video infra: `ShowcaseMarquee` client component (IntersectionObserver in-view autoplay, TemplateTile `play().catch()` pattern, gradient fallback); `GET /landing-clips` FastAPI route server-signs `landing/*` GCS keys on read; `page.tsx` resolves signed URLs at server-render time. Proof strip (3 min / 30 days / ~10 min stats) and closing CTA ("Stop guessing what to post") removed. Step 04 fan container widened 360→440px to clear outer tiles at `translateX(±130px)`.
 
+## [0.4.81.0] - 2026-06-06
+
+### Added
+- **AI chat onboarding replaces the 8-question fixed form.** Users are now interviewed by an adaptive AI that asks 4–7 focused questions (hard cap 8) before generating the persona. The interviewer adapts to each answer and signals completion with "One last thing —" on the final question.
+- **TikTok pre-screen.** New optional first step accepts a @handle and fires an async profile scrape (`POST /personas/tiktok-scrape`, `scrape_tiktok_profile` Celery task). The interviewer skips questions the profile already answers and goes deeper on gaps.
+- **Aha-moment reveal.** For TikTok users: a stat line ("We analyzed N of your videos. @handle · N followers") fades in 100ms before the persona summary. For non-TikTok users: the most revealing verbatim quote from the interview ("You said: '…'") is shown first using a new `signature_quote` field in the persona output.
+- **`PersonaGeneratorAgent` reads interview history.** The `interview_turns` list in `Persona.questionnaire` is now the primary input to the persona generator; the legacy flat questionnaire fields (`work`, `school`, etc.) are still used as fallback for personas generated before this release.
+- **Chat resume.** If a user abandons mid-interview and returns, `POST /personas/chat/start` resumes from the last unanswered agent question without an extra LLM call.
+- **"Update my answers →" link** in `PersonaEditor.tsx` lets returning users restart the pre-screen to regenerate their persona from a new interview.
+- **New API routes:** `POST /personas/chat/start`, `POST /personas/chat/turn`, `POST /personas/tiktok-scrape`.
+- **New DB column:** `personas.tiktok_profile JSONB NULL` (migration 0048).
+
+### Changed
+- Persona generating shimmer copy updated: "Reading everything you shared…" replaces "Crafting your persona…" when the persona was generated from a chat interview.
+- `PersonaStatus` type now includes `"chat_pending"` for users in the middle of onboarding chat.
 ## [0.4.80.0] - 2026-06-06
 
 ### Changed
@@ -16,7 +31,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Pop-up lyric previews now recover missing repeated-hook tails from audio-backed Whisper timings.** When a synced LRCLIB row matches only a low-confidence prefix and its canonical tail diverges from the recording, lyrics alignment preserves the trusted prefix and replaces the bad tail with unused Whisper words from the same line window. The lyric extractor prompt version was bumped so stale cached rows refresh before production renders reuse old timing blobs. Regression coverage locks the production preview job `9cc0cb15-9cc0-4302-9ef6-661ce63e2a3d` and negative guardrails for loose mid-window speech.
-
 ## [0.4.79.1] - 2026-06-05
 
 ### Fixed
