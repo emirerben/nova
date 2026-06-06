@@ -11,7 +11,7 @@ clamps/dedupes before this task ever sees items.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import structlog
 
@@ -91,6 +91,8 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 )
             )
         plan.plan_status = "ready"
+        if plan.start_date is None:
+            plan.start_date = date.today()
         plan.prompt_version = CONTENT_PLAN_PROMPT_VERSION
         user = session.get(User, plan.user_id)
         if user is not None and user.onboarding_status in ("pending", "persona_ready"):
@@ -236,6 +238,8 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 )
             )
         plan.plan_status = "ready"
+        if plan.start_date is None:
+            plan.start_date = date.today()
         plan.prompt_version = CONTENT_PLAN_PROMPT_VERSION
         session.commit()
     log.info(

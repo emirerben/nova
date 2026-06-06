@@ -11,7 +11,7 @@ GET  /content-plans   — the user's latest plan with its items. Each item's liv
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -60,6 +60,7 @@ class ContentPlanResponse(BaseModel):
     activation_status: str = "none"
     seed_clip_count: int = 0
     generation_started_at: datetime | None = None
+    start_date: date | None = None
 
 
 def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
@@ -72,6 +73,8 @@ def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
         activation_status=plan.activation_status,
         seed_clip_count=len(plan.seed_clip_paths or []),
         generation_started_at=plan.generation_started_at,
+        start_date=plan.start_date
+        or (plan.generation_started_at.date() if plan.generation_started_at else None),
     )
 
 

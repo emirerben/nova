@@ -230,6 +230,7 @@ export interface ContentPlan {
   activation_status: ActivationStatus;
   seed_clip_count: number;
   generation_started_at?: string | null;
+  start_date?: string | null;
 }
 
 /** Create a plan from the user's ready persona + optional events; generation runs async. */
