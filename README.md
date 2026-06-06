@@ -18,6 +18,7 @@ docker-compose up        # starts web + api + worker + redis + db
 src/apps/web/   — Next.js frontend
 src/apps/api/   — Python FastAPI + Celery
 agents/         — agent context (read before working on video processing)
+DESIGN.md       — design-system tokens, loading rules, anti-slop rules, a11y baseline
 ```
 
 ## Features
