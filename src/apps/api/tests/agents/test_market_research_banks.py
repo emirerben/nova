@@ -214,8 +214,9 @@ def test_intro_writer_prompt_injects_success_factors():
 def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-05-31: added gap-in-market-founder-01 archetype (nermozdemir origin-story pattern).
     # Bump 2026-06-05: added posts_per_week field (structured post frequency 1-7).
+    # Bump 2026-06-06: interview_turns replaces flat fields as primary input; added signature_quote.
     assert archetypes_version() == "2026-05-31"
-    assert PERSONA_PROMPT_VERSION == "2026-06-05"
+    assert PERSONA_PROMPT_VERSION == "2026-06-06"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -235,12 +236,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     from app.agents.intro_writer import IntroTextWriterAgent
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
-    # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-06-05
-    # (posts_per_week field), content plan to 2026-06-05 (posts_per_week alignment —
-    # $posts_per_week + $target_item_count + parse cap), and intro_writer to 2026-05-31
-    # (new overlay bank).
+    # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-06-06
+    # (interview_turns + signature_quote), content plan to 2026-06-05 (posts_per_week
+    # alignment — $posts_per_week + $target_item_count + parse cap), and intro_writer
+    # to 2026-05-31 (new overlay bank).
     assert success_factors_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-06-05"
+    assert PERSONA_PROMPT_VERSION == "2026-06-06"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-05.1"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-05-31"
 

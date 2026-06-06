@@ -544,8 +544,12 @@ class Persona(Base):
     # optional tiktok_handle). UNTRUSTED free text — sanitized before any agent call.
     questionnaire: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Editable AI output: {summary, content_pillars[], tone, audience,
-    # posting_cadence, sample_topics[]}.
+    # posting_cadence, sample_topics[], signature_quote}.
     persona: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Scraped public TikTok profile from the onboarding pre-screen.
+    # {handle, follower_count, video_count, top_captions[], top_hashtags[], analyzed_at}
+    # NULL when user skipped the TikTok step or scrape failed.
+    tiktok_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # generating | ready | failed | edited
     persona_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)

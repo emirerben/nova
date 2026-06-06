@@ -45,9 +45,22 @@ export interface PersonaContent {
   // The AI's "why this lane" — shown read-only in the dashboard. Optional:
   // personas generated before this field shipped won't have it.
   rationale?: string;
+  // The single most revealing thing the creator said in the chat interview —
+  // shown verbatim as "You said: '...'" on the persona reveal. Empty for
+  // personas generated from the old flat-field questionnaire.
+  signature_quote?: string;
 }
 
-export type PersonaStatus = "generating" | "ready" | "failed" | "edited";
+export type PersonaStatus = "generating" | "ready" | "failed" | "edited" | "chat_pending";
+
+export interface TikTokProfile {
+  handle: string;
+  follower_count?: number | null;
+  video_count?: number | null;
+  top_captions?: string[];
+  top_hashtags?: string[];
+  analyzed_at?: string;
+}
 
 export interface PersonaResponse {
   id: string;
@@ -55,6 +68,49 @@ export interface PersonaResponse {
   questionnaire: PersonaQuestionnaire | null;
   persona: PersonaContent | null;
   error_detail: string | null;
+  tiktok_profile?: TikTokProfile | null;
+}
+
+// ── Chat interview ────────────────────────────────────────────────────────────
+
+export interface ChatStartResponse {
+  persona_id: string;
+  question: string;
+  suggestions: string[];
+  turn_number: number;
+  turn_label: string;
+  tiktok_context?: TikTokProfile | null;
+  persona_status: string;
+}
+
+export interface ChatTurnResponse {
+  question?: string | null;
+  suggestions: string[];
+  is_final: boolean;
+  turn_number: number;
+  turn_label: string;
+  persona_status: string;
+}
+
+/** Accept a TikTok handle; fires async scrape and returns the persona row. */
+export function tiktokScrape(handle: string): Promise<PersonaResponse> {
+  return request<PersonaResponse>("/personas/tiktok-scrape", {
+    method: "POST",
+    body: JSON.stringify({ handle }),
+  });
+}
+
+/** Start (or resume) the onboarding chat interview; returns the first unanswered Q. */
+export function chatStart(): Promise<ChatStartResponse> {
+  return request<ChatStartResponse>("/personas/chat/start", { method: "POST" });
+}
+
+/** Submit a chat answer; returns the next Q or is_final=true when done. */
+export function chatTurn(personaId: string, answer: string): Promise<ChatTurnResponse> {
+  return request<ChatTurnResponse>("/personas/chat/turn", {
+    method: "POST",
+    body: JSON.stringify({ persona_id: personaId, answer }),
+  });
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
