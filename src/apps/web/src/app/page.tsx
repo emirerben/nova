@@ -18,12 +18,12 @@ export const dynamic = "force-dynamic";
 // Keep clips ~720×1280 H.264, ≤ ~5 MB each, preload="metadata".
 // ─────────────────────────────────────────────────────────────────────────────
 const SHOWCASE_CLIPS = [
-  { title: "a week of mornings in my studio", from: "#32230d", to: "#0a0805" },
-  { title: "what i actually eat as a med student", from: "#11202b", to: "#05080a" },
-  { title: "POV: your first gallery show", from: "#2b1118", to: "#0a0507" },
-  { title: "everything i packed for tokyo", from: "#1a2415", to: "#060805" },
-  { title: "closing the shop at midnight", from: "#241a2e", to: "#080609" },
-  { title: "my 5am open, sped up", from: "#0d2420", to: "#050807" },
+  { title: "a week of mornings in my studio", from: "#32230d", to: "#0a0805", key: "landing/clip-overnight.mp4" },
+  { title: "what i actually eat as a med student", from: "#11202b", to: "#05080a", key: "landing/clip-bad-bunny.mp4" },
+  { title: "POV: your first gallery show", from: "#2b1118", to: "#0a0507", key: "landing/clip-montagem.mp4" },
+  { title: "everything i packed for tokyo", from: "#1a2415", to: "#060805", key: "landing/clip-again.mp4" },
+  { title: "closing the shop at midnight", from: "#241a2e", to: "#080609", key: "landing/clip-travis.mp4" },
+  { title: "my 5am open, sped up", from: "#0d2420", to: "#050807", key: "landing/clip-success.mp4" },
 ] satisfies { title: string; from: string; to: string; key?: string }[];
 
 // Resolve signed URLs for any clips that have a GCS key.
@@ -38,7 +38,7 @@ async function resolveClipUrls(
     process.env.API_URL ??
     process.env.NEXT_PUBLIC_API_URL ??
     "http://localhost:8000";
-  const qs = keys.map((k) => `keys[]=${encodeURIComponent(k)}`).join("&");
+  const qs = keys.map((k) => `keys=${encodeURIComponent(k)}`).join("&");
   try {
     const res = await fetch(`${apiBase}/landing-clips?${qs}`, {
       cache: "no-store",
@@ -356,7 +356,7 @@ export default async function HomePage() {
             <div className="md:flex-1">
               {/* Desktop fan (lg+) */}
               <div className="hidden lg:block">
-                <div className="relative mx-auto flex h-[300px] w-[360px] items-center justify-center overflow-hidden">
+                <div className="relative mx-auto flex h-[300px] w-[440px] items-center justify-center">
                   {/* Left tile — song lyrics */}
                   <div
                     className="absolute h-[260px] w-[118px] overflow-hidden rounded-[14px] shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
@@ -485,43 +485,6 @@ export default async function HomePage() {
           </div>
         </FadeInOnScroll>
       </div>
-
-      {/* ── PROOF STRIP ── */}
-      <section className="border-y border-zinc-200 bg-white px-6 py-20 md:px-12">
-        <div className="flex flex-col items-center gap-10 text-center md:flex-row md:justify-center md:gap-[72px]">
-          {[
-            { big: "3 min", lbl: "to your first plan" },
-            { big: "30 days", lbl: "scripted at once" },
-            { big: "~10 min", lbl: "of filming per day" },
-          ].map(({ big, lbl }) => (
-            <div key={lbl}>
-              <p className="font-display text-[36px] font-medium text-[#0c0c0e]">
-                {big}
-              </p>
-              <p className="mt-1.5 text-[11px] uppercase tracking-[0.15em] text-[#a1a1aa]">
-                {lbl}
-              </p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── CLOSING CTA ── */}
-      <section className="px-6 py-[110px] text-center md:px-12">
-        <h2 className="font-display mb-3 text-[44px] font-medium leading-snug">
-          Stop guessing{" "}
-          <em className="italic text-lime-600">what to post.</em>
-        </h2>
-        <p className="mb-7 text-[15px] text-[#71717a]">
-          Your agent already knows.
-        </p>
-        <Link
-          href="/plan"
-          className="inline-block rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
-        >
-          Build my plan
-        </Link>
-      </section>
 
       {/* ── FOOTER ── */}
       <footer className="flex items-center justify-between border-t border-zinc-200 bg-white px-6 py-8 text-[13px] text-[#a1a1aa] md:px-12">
