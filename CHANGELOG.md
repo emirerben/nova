@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.87.0] — 2026-06-06
+
+### Fixed
+- **Repeated chorus lyric previews now sync to the first sung phrase.** Pop-up and Karaoke previews no longer wait for the later in-window "But I love it" repeat when the actual line starts before a stale LRCLIB anchor.
+- **Lyrics caches refresh for the repeated-chorus fix.** The lyrics extraction prompt version now includes the boundary-sync decoy-prefix repair so existing cached alignments get regenerated on the next preview or render.
+- **Global lyric re-anchoring stays eligible when lookback is rejected.** A pre-anchor candidate is only marked as a local timing repair after it actually moves the line window, preserving whole-track drift detection for stronger in-window matches.
+
 ## [0.4.86.0] — 2026-06-06
 
 ### Added

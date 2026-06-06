@@ -295,10 +295,12 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
         # Previous: 2026-06-06.repeated-chorus-prefix-lookback: expand anchored
         # prefix lookback for repeated chorus lines whose first phrase starts
         # more than 1.5s before a stale LRCLIB anchor.
-        # Current: trim duplicated next-line prefixes and repair late anchors
-        # whose local transcript has the right timing but mishears a short
-        # leading word.
-        prompt_version="2026-06-06.boundary-sync",
+        # Previous: 2026-06-06.boundary-sync: trim duplicated next-line prefixes
+        # and repair late anchors whose local transcript has the right timing
+        # but mishears a short leading word.
+        # Current: let safe pre-anchor repeated prefixes beat matching
+        # in-window decoy prefixes from the same chorus line.
+        prompt_version="2026-06-06.boundary-sync-decoy-prefix",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.

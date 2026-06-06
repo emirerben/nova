@@ -1116,11 +1116,18 @@ def align_with_line_anchors(
         effective_window_start = window_start
         prefix_match: _PrefixLookbackMatch | None = None
 
-        # If the line's own prefix is already visible inside the normal
-        # anchor window, keep the LRCLIB anchor as-is. The lookback is only
-        # for the bug class where a late anchor chopped off the line start.
+        # If the line's own prefix is missing inside the normal anchor window,
+        # the LRC anchor likely chopped off the real line start. Repeated
+        # chorus lines have a second wrinkle: the normal window may contain a
+        # later repeated prefix that looks valid but is only the tail phrase.
+        # Once a previous lyric line has been aligned, the lookback floor below
+        # prevents word reuse, so a pre-anchor prefix at least as strong as the
+        # in-window prefix is the safer audio-backed start.
         in_window_prefix_count, _, _ = _count_ordered_prefix_matches(expected, words_in_window)
-        if in_window_prefix_count < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES:
+        should_check_lookback = (
+            in_window_prefix_count < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES or bool(aligned_lines)
+        )
+        if should_check_lookback:
             lookback_floor_s = anchor_lines[i - 1].start_s if i > 0 else 0.0
             if aligned_lines:
                 lookback_floor_s = max(
@@ -1132,12 +1139,17 @@ def align_with_line_anchors(
                 window_start - _ANCHOR_PREFIX_LOOKBACK_S,
             )
             lookback_words = [w for w in whisper_list if lookback_start <= w.start_s < window_start]
-            prefix_match = _find_pre_anchor_prefix_match(
+            prefix_candidate = _find_pre_anchor_prefix_match(
                 expected,
                 lookback_words,
                 anchor_start_s=window_start,
             )
-            if prefix_match is not None:
+            should_apply_lookback = prefix_candidate is not None and (
+                in_window_prefix_count < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES
+                or prefix_candidate.matched_count >= in_window_prefix_count
+            )
+            if should_apply_lookback and prefix_candidate is not None:
+                prefix_match = prefix_candidate
                 effective_window_start = prefix_match.start_s
                 words_in_window = [
                     w for w in whisper_list if effective_window_start <= w.start_s < window_end

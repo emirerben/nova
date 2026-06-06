@@ -505,6 +505,137 @@ def test_preview_line_style_keeps_audible_initial_partial_line() -> None:
     assert karaoke[0]["word_timings"][0]["start_s"] == 0.0
 
 
+def test_preview_popup_and_karaoke_use_repeated_chorus_decoy_prefix_fix() -> None:
+    """Production preview path must consume the fixed repeated-chorus timings.
+
+    This is the exact shape behind the Can Feel My Face preview bug: the
+    LRCLIB anchor for "But I love it..." lands after the first sung phrase,
+    while the normal anchor window contains a second repeated prefix that can
+    look valid. Alignment must move the cached line to the first phrase, and
+    both Pop-up and Karaoke previews must render from that fixed cache.
+    """
+    from app.pipeline.lyrics_alignment import align_with_line_anchors  # noqa: PLC0415
+    from app.services.lrclib_client import SyncedLine  # noqa: PLC0415
+    from app.services.whisper_lyrics import WhisperWord  # noqa: PLC0415
+
+    def ww(text: str, start: float, end: float) -> WhisperWord:
+        return WhisperWord(text=text, start_s=start, end_s=end)
+
+    preview_start_s = 41.0
+    anchors = [
+        SyncedLine(start_s=44.99, text="I can't feel my face when I'm with you"),
+        SyncedLine(start_s=49.94, text="But I love it, but I love it, oh"),
+        SyncedLine(start_s=53.06, text="I can't feel my face when I'm with you"),
+        SyncedLine(start_s=59.16, text="But I love it, but I love it, oh"),
+    ]
+    whisper = [
+        ww("I", 44.00, 44.62),
+        ww("can", 44.62, 44.86),
+        ww("feel", 44.86, 45.16),
+        ww("my", 45.16, 45.40),
+        ww("face", 45.40, 45.72),
+        ww("when", 45.72, 45.98),
+        ww("I'm", 45.98, 46.44),
+        ww("with", 46.44, 46.54),
+        ww("you", 46.54, 46.90),
+        ww("But", 47.82, 48.44),
+        ww("I", 48.44, 48.64),
+        ww("love", 48.64, 48.94),
+        ww("it", 48.94, 49.38),
+        ww("But", 50.02, 50.70),
+        ww("I", 50.70, 50.90),
+        ww("love", 50.90, 51.24),
+        ww("it", 51.24, 51.66),
+        ww("oh", 51.66, 52.60),
+        ww("I", 52.60, 53.74),
+        ww("can", 53.74, 54.02),
+        ww("feel", 54.02, 54.26),
+        ww("my", 54.26, 54.62),
+        ww("face", 54.62, 54.86),
+        ww("when", 54.86, 55.32),
+        ww("I'm", 55.32, 55.42),
+        ww("with", 55.42, 55.82),
+        ww("you", 55.82, 56.18),
+        ww("But", 56.74, 57.36),
+        ww("I", 57.36, 57.56),
+        ww("love", 57.56, 57.98),
+        ww("it", 57.98, 58.28),
+        ww("But", 58.58, 59.58),
+        ww("I", 59.58, 59.88),
+        ww("love", 59.88, 60.14),
+        ww("it", 60.14, 60.50),
+    ]
+    aligned = align_with_line_anchors(anchors, whisper, track_end_s=61.0)
+    aligned_lines = [
+        {
+            "text": line.text,
+            "start_s": line.start_s,
+            "end_s": line.end_s,
+            "words": [
+                {"text": word.text, "start_s": word.start_s, "end_s": word.end_s}
+                for word in line.words
+            ],
+        }
+        for line in aligned.lines
+    ]
+    track = _track(
+        duration_s=218.449,
+        track_config={"best_start_s": preview_start_s, "best_end_s": 60.3},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "prompt_version": "2026-06-06.boundary-sync-decoy-prefix",
+            "lines": [
+                {
+                    "text": 'She told me, "You\'ll never be alone", oh, oh, woo',
+                    "start_s": 38.66,
+                    "end_s": 44.19,
+                    "words": [
+                        {"text": "be", "start_s": 41.1, "end_s": 42.0},
+                        {"text": "alone", "start_s": 42.0, "end_s": 43.08},
+                        {"text": "oh", "start_s": 43.1, "end_s": 43.45},
+                        {"text": "oh", "start_s": 43.47, "end_s": 43.82},
+                        {"text": "woo", "start_s": 43.84, "end_s": 44.19},
+                    ],
+                },
+                *aligned_lines,
+            ],
+        },
+    )
+
+    assert _resolve_preview_window(track) == (preview_start_s, 19.95)
+
+    popup_recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "per-word-pop"})
+    popup = popup_recipe["slots"][0]["text_overlays"]
+    first_but = next(
+        ov for ov in popup if ov.get("text") == "But" and ov.get("pop_animated_suffix") == "But"
+    )
+    full_first_line = next(
+        ov
+        for ov in popup
+        if ov.get("text") == "But I love it but I love it oh"
+        and ov.get("pop_animated_suffix") == "oh"
+    )
+
+    assert first_but["start_s"] == pytest.approx(47.82 - preview_start_s, abs=1e-3)
+    assert full_first_line["end_s"] <= (53.06 - preview_start_s) + 1e-3
+
+    karaoke_recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "karaoke"})
+    karaoke = [
+        ov
+        for ov in karaoke_recipe["slots"][0]["text_overlays"]
+        if ov.get("effect") == "karaoke-line"
+    ]
+    karaoke_by_anchor = {round(float(ov["section_anchor_s"]), 3): ov for ov in karaoke}
+
+    first_anchor_s = round(47.82 - preview_start_s, 3)
+    second_anchor_s = round(56.74 - preview_start_s, 3)
+    assert first_anchor_s in karaoke_by_anchor
+    assert second_anchor_s in karaoke_by_anchor
+    assert karaoke_by_anchor[first_anchor_s]["start_s"] == pytest.approx(first_anchor_s, abs=1e-3)
+    assert karaoke_by_anchor[first_anchor_s]["word_timings"][0]["text"] == "But"
+    assert karaoke_by_anchor[first_anchor_s]["word_timings"][0]["start_s"] == 0.0
+
+
 def test_preview_window_falls_back_when_section_has_no_lyrics() -> None:
     """Section contains no lyrics → falls back to first-vocal-of-song policy.
 
