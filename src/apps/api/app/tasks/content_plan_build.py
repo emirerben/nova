@@ -11,6 +11,7 @@ clamps/dedupes before this task ever sees items.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import structlog
 
@@ -399,6 +400,8 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             for it in plan.items
         ]
         persona_data = _load_persona_data(session, plan)
+        plan.activation_started_at = datetime.now(UTC)
+        plan.activation_phase = "matching_clips"
         _set_activation(session, plan, "activating")
 
     if not items:
@@ -452,11 +455,17 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
     for a in matched.assignments:
         by_item.setdefault(a.item_id, []).append(a.clip_gcs_path)
 
+    with sync_session() as session:
+        plan = session.get(ContentPlan, pid)
+        if plan is not None:
+            _set_activation_phase(session, plan, "picking_days")
+
     dispatched = 0
     with sync_session() as session:
         plan = session.get(ContentPlan, pid)
         if plan is None:
             return
+        _set_activation_phase(session, plan, "starting_renders")
         for item_id, paths in by_item.items():
             item = session.get(PlanItem, uuid.UUID(item_id))
             if item is None or item.content_plan_id != plan.id:
@@ -482,4 +491,10 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
 
 def _set_activation(session, plan: ContentPlan, status_value: str) -> None:  # noqa: ANN001
     plan.activation_status = status_value
+    session.commit()
+
+
+def _set_activation_phase(session, plan: ContentPlan, phase: str) -> None:  # noqa: ANN001
+    plan.activation_phase = phase
+    session.add(plan)
     session.commit()

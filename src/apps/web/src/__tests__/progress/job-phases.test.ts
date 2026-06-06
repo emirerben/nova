@@ -176,3 +176,30 @@ describe("generative phase exports", () => {
     expect(TEMPLATE_PHASE_ORDER).toEqual(EXPECTED_PHASE_ORDER);
   });
 });
+
+// ===== Activation phase exports from job-phases.ts (PR4) =====
+
+import {
+  ACTIVATION_PHASE_ORDER,
+  ACTIVATION_PHASE_LABEL,
+} from "../../lib/job-phases";
+
+describe("activation phase exports", () => {
+  it("ACTIVATION_PHASE_ORDER has exactly 3 entries", () => {
+    expect(ACTIVATION_PHASE_ORDER).toHaveLength(3);
+  });
+
+  it("ACTIVATION_PHASE_ORDER entries are matching_clips, picking_days, starting_renders", () => {
+    expect(ACTIVATION_PHASE_ORDER[0]).toBe("matching_clips");
+    expect(ACTIVATION_PHASE_ORDER[1]).toBe("picking_days");
+    expect(ACTIVATION_PHASE_ORDER[2]).toBe("starting_renders");
+  });
+
+  it("ACTIVATION_PHASE_LABEL has all 3 keys with non-empty string values", () => {
+    for (const phase of ACTIVATION_PHASE_ORDER) {
+      expect(ACTIVATION_PHASE_LABEL).toHaveProperty(phase);
+      expect(typeof ACTIVATION_PHASE_LABEL[phase]).toBe("string");
+      expect(ACTIVATION_PHASE_LABEL[phase].length).toBeGreaterThan(0);
+    }
+  });
+});

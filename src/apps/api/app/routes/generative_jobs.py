@@ -135,8 +135,8 @@ class GenerativeJobStatusResponse(BaseModel):
     # variant dict. Carried for verification + Lane E UI; the current UI ignores it.
     edit_format: str | None = None
     # Phase tracking (D2/D6 — instrumented by PR2).
-    # Null for content_plan jobs that don't have phase instrumentation yet;
-    # the frontend handles null gracefully.
+    # content_plan-mode jobs run through orchestrate_generative_job and carry full phase fields;
+    # null only for pre-0015 legacy rows or deploy-skew window.
     current_phase: str | None = None
     phase_log: list[dict] | None = None
     started_at: datetime | None = None

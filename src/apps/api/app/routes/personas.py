@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import uuid
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -66,6 +67,7 @@ class PersonaResponse(BaseModel):
     persona: dict | None
     error_detail: str | None
     tiktok_profile: dict | None = None
+    generation_started_at: datetime | None = None
 
     @classmethod
     def of(cls, row: PersonaRow) -> PersonaResponse:
@@ -76,6 +78,7 @@ class PersonaResponse(BaseModel):
             persona=row.persona,
             error_detail=row.error_detail,
             tiktok_profile=row.tiktok_profile,
+            generation_started_at=row.generation_started_at,
         )
 
 
@@ -147,6 +150,7 @@ async def create_persona(
         existing.questionnaire = questionnaire
         existing.persona = None
         existing.persona_status = "generating"
+        existing.generation_started_at = datetime.now(UTC)
         existing.error_detail = None
         row = existing
     else:
@@ -154,6 +158,7 @@ async def create_persona(
             user_id=user.id,
             questionnaire=questionnaire,
             persona_status="generating",
+            generation_started_at=datetime.now(UTC),
         )
         db.add(row)
     await db.commit()
@@ -260,6 +265,7 @@ async def retune_persona_from_feedback(
         )
 
     row.persona_status = "generating"
+    row.generation_started_at = datetime.now(UTC)
     await db.commit()
 
     from app.tasks.persona_build import retune_persona_from_feedback as retune_task  # noqa: PLC0415
@@ -485,6 +491,7 @@ async def chat_turn(
         q["interview_turns"] = turns_raw
         row.questionnaire = q
         row.persona_status = "generating"
+        row.generation_started_at = datetime.now(UTC)
         await db.commit()
         generate_persona.delay(str(row.id))
         return ChatTurnResponse(

@@ -79,6 +79,21 @@ export function computeAnchors(
   return result;
 }
 
+// ===== ACTIVATION PHASES (SeedUploadCard inline theater) =====
+export const ACTIVATION_PHASE_ORDER = [
+  "matching_clips",
+  "picking_days",
+  "starting_renders",
+] as const;
+
+export type ActivationPhase = (typeof ACTIVATION_PHASE_ORDER)[number];
+
+export const ACTIVATION_PHASE_LABEL: Record<ActivationPhase, string> = {
+  matching_clips: "Matching your clips",
+  picking_days: "Picking the best days",
+  starting_renders: "Starting your first video",
+};
+
 /**
  * Damped bar position between two anchor points.
  * Pure function of timestamps — NEVER accumulated animation state.

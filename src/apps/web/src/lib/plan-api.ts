@@ -69,6 +69,7 @@ export interface PersonaResponse {
   persona: PersonaContent | null;
   error_detail: string | null;
   tiktok_profile?: TikTokProfile | null;
+  generation_started_at?: string | null;
 }
 
 // ── Chat interview ────────────────────────────────────────────────────────────
@@ -228,6 +229,7 @@ export interface ContentPlan {
   items: PlanItem[];
   activation_status: ActivationStatus;
   seed_clip_count: number;
+  generation_started_at?: string | null;
 }
 
 /** Create a plan from the user's ready persona + optional events; generation runs async. */
@@ -335,6 +337,9 @@ export interface PlanItemVariant {
   // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
   intro_text_size_px?: number | null;
   intro_size_source?: "computed" | "user" | null;
+  render_started_at?: string | null;
+  render_finished_at?: string | null;
+  error_class?: string | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
@@ -423,9 +428,30 @@ export interface ActivationState {
   seed_clip_count: number;
   generating_item_ids: string[];
   ready_item_ids: string[];
+  activation_phase?: string | null;
+  activation_started_at?: string | null;
+  expected_phase_durations?: Record<string, number> | null;
 }
 
 /** Poll target while activation runs. */
 export function getActivation(planId: string): Promise<ActivationState> {
   return request<ActivationState>(`/content-plans/${planId}/activation`);
+}
+
+// ── Plan-item job status (for ProgressTheater on the item page) ────────────────
+
+export interface PlanItemJobStatus {
+  status: string | null;
+  variants: PlanItemVariant[];
+  current_phase?: string | null;
+  phase_log?: Array<{ name: string; ts: string; elapsed_ms?: number }> | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  expected_phase_durations?: Record<string, number> | null;
+  created_at?: string | null;
+}
+
+export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {
+  const res = await request<PlanItemJobStatus>(`/generative-jobs/${jobId}/status`);
+  return res;
 }
