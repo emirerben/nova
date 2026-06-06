@@ -29,6 +29,9 @@ def _owned_plan(user_id: uuid.UUID, *, status="ready", activation="none", seed=N
     plan.horizon_days = 30
     plan.events = None
     plan.items = []
+    # Explicit None so Pydantic doesn't try to validate the MagicMock attr as a date
+    plan.start_date = None
+    plan.generation_started_at = None
     return plan
 
 
