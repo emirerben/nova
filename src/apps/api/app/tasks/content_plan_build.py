@@ -502,3 +502,97 @@ def _set_activation_phase(session, plan: ContentPlan, phase: str) -> None:  # no
     plan.activation_phase = phase
     session.add(plan)
     session.commit()
+
+
+@celery_app.task(
+    name="app.tasks.content_plan_build.reroll_plan_item",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=10,
+)
+def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
+    """Re-generate the idea for a single plan item.
+
+    Mirrors _dedup_and_replace: runs ContentPlanGeneratorAgent with all
+    current plan ideas excluded, picks one fresh replacement via
+    choose_replacements, patches the target item in-place preserving
+    day_index. Failure is best-effort — resets item_status to 'idea' so
+    the user's original idea survives.
+    """
+    with sync_session() as session:
+        item = session.get(PlanItem, uuid.UUID(str(item_id)))
+        if item is None:
+            log.warning("reroll_plan_item.missing_item", item_id=item_id)
+            return
+        plan = session.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            log.warning("reroll_plan_item.missing_plan", item_id=item_id)
+            return
+
+        # Collect all current ideas to exclude so the fresh idea is distinct.
+        all_ideas = [it.idea for it in plan.items if it.idea]
+
+        persona_row = session.get(PersonaRow, plan.persona_id)
+        persona = (
+            Persona(**persona_row.persona)
+            if persona_row is not None and persona_row.persona
+            else Persona(
+                summary="",
+                content_pillars=[],
+                tone="",
+                audience="",
+                posting_cadence="",
+                sample_topics=[],
+            )
+        )
+        agent_input = ContentPlanInput(
+            persona=persona,
+            events=str((plan.events or {}).get("text", "") or ""),
+            horizon_days=plan.horizon_days or 30,
+            exclude_ideas=all_ideas,
+        )
+        original_day_index = item.day_index
+
+    try:
+        agent = ContentPlanGeneratorAgent(default_client())
+        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        replacements = choose_replacements(1, list(output.items), all_ideas)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("reroll_plan_item.failed", item_id=item_id, error=str(exc))
+        with sync_session() as session:
+            item = session.get(PlanItem, uuid.UUID(str(item_id)))
+            if item is not None:
+                item.item_status = "idea"
+                session.commit()
+        raise self.retry(exc=exc) from exc
+
+    with sync_session() as session:
+        item = session.get(PlanItem, uuid.UUID(str(item_id)))
+        if item is None:
+            return
+
+        if not replacements:
+            # Generator returned nothing usable — silently keep old idea.
+            log.info("reroll_plan_item.no_replacement", item_id=item_id)
+            item.item_status = "idea"
+            session.commit()
+            return
+
+        fresh = replacements[0]
+        # Patch the item in-place, keeping day_index.
+        item.theme = fresh.theme
+        item.idea = fresh.idea
+        item.filming_suggestion = fresh.filming_suggestion or None
+        item.rationale = fresh.rationale or None
+        item.filming_guide = [s.model_dump() for s in (fresh.filming_guide or [])]
+        item.edit_format = fresh.edit_format or "montage"
+        item.item_status = "idea"
+        item.user_edited = False
+        session.commit()
+
+    log.info(
+        "reroll_plan_item.done",
+        item_id=item_id,
+        day_index=original_day_index,
+        new_idea=replacements[0].idea if replacements else None,
+    )

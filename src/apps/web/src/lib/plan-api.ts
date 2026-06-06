@@ -185,7 +185,8 @@ export type PlanItemStatus =
   | "awaiting_clips"
   | "generating"
   | "ready"
-  | "failed";
+  | "failed"
+  | "rerolling";
 
 /** One concrete shot in a filming guide. */
 export interface FilmingShot {
@@ -268,6 +269,10 @@ export function updatePlanItem(
     method: "PATCH",
     body: JSON.stringify(edit),
   });
+}
+
+export function rerollPlanItem(id: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${id}/reroll`, { method: "POST" });
 }
 
 // ── Themed uploads + per-item generation (Phase 5) ────────────────────────────

@@ -10,6 +10,8 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.agents._schemas.content_plan import PlanItemSpec
 from app.models import ContentPlan, PlanItem
 from app.models import Persona as PersonaRow
@@ -455,3 +457,145 @@ def test_persona_posts_per_week_reaches_plan_input() -> None:
 
     plan_input = ContentPlanInput(persona=persona, horizon_days=30)
     assert plan_input.persona.posts_per_week == 3
+
+
+# ── reroll_plan_item task tests ──────────────────────────────────────────────
+
+
+from app.tasks.content_plan_build import reroll_plan_item  # noqa: E402
+
+
+def _reroll_session(item, plan, persona_row=None) -> MagicMock:
+    """sync_session context mock that routes get() by model class."""
+    session = MagicMock()
+
+    def _get(model, _pk):  # noqa: ANN001
+        return {PlanItem: item, ContentPlan: plan, PersonaRow: persona_row}.get(model)
+
+    session.get = MagicMock(side_effect=_get)
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+    return ctx
+
+
+def _idea_item(day: int = 3, idea: str = "film the 5am start") -> MagicMock:
+    it = MagicMock()
+    it.id = uuid.uuid4()
+    it.content_plan_id = uuid.uuid4()
+    it.day_index = day
+    it.theme = "morning routine"
+    it.idea = idea
+    it.filming_suggestion = None
+    it.rationale = None
+    it.filming_guide = []
+    it.item_status = "rerolling"
+    it.user_edited = False
+    return it
+
+
+def _plan_with_items(items) -> MagicMock:
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+    plan.events = None
+    plan.horizon_days = 30
+    plan.items = items
+    return plan
+
+
+def _persona_row() -> MagicMock:
+    row = MagicMock()
+    row.persona = _valid_persona()
+    return row
+
+
+def test_reroll_patches_item_fields_preserving_day_index() -> None:
+    """Fresh spec is applied to the item in-place; day_index is untouched."""
+    item = _idea_item(day=7, idea="old idea")
+    sibling = MagicMock()
+    sibling.idea = "sibling idea"
+    plan = _plan_with_items([item, sibling])
+
+    fresh_spec = PlanItemSpec(day_index=14, theme="new theme", idea="brand new idea")
+    output = MagicMock()
+    output.items = [fresh_spec]
+    agent = MagicMock()
+    agent.run = MagicMock(return_value=output)
+
+    ctx = _reroll_session(item, plan, _persona_row())
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.default_client"),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent", return_value=agent),
+        patch(
+            "app.tasks.content_plan_build.choose_replacements",
+            return_value=[fresh_spec],
+        ),
+    ):
+        reroll_plan_item.run(str(item.id))
+
+    # Fields patched
+    assert item.theme == "new theme"
+    assert item.idea == "brand new idea"
+    assert item.item_status == "idea"
+    assert item.user_edited is False
+    # day_index must be preserved (we never write it)
+    assert item.day_index == 7
+
+
+def test_reroll_resets_to_idea_on_failure() -> None:
+    """Agent throws; item_status must be reset to 'idea' (best-effort)."""
+    item = _idea_item()
+    plan = _plan_with_items([item])
+
+    ctx = _reroll_session(item, plan, _persona_row())
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.default_client"),
+        patch(
+            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
+            side_effect=RuntimeError("boom"),
+        ),
+        pytest.raises(Exception),  # retry re-raises
+    ):
+        reroll_plan_item.run(str(item.id))
+
+    assert item.item_status == "idea"
+
+
+def test_reroll_exclude_list_is_all_plan_ideas() -> None:
+    """ContentPlanInput.exclude_ideas must include all plan item ideas."""
+    item = _idea_item(idea="film the dark start")
+    other = MagicMock()
+    other.idea = "cook a quick meal"
+    plan = _plan_with_items([item, other])
+
+    captured_inputs: list[ContentPlanInput] = []
+
+    output = MagicMock()
+    output.items = []
+    agent = MagicMock()
+
+    def _run(agent_input, ctx):  # noqa: ANN001, ARG001
+        captured_inputs.append(agent_input)
+        return output
+
+    agent.run = MagicMock(side_effect=_run)
+
+    ctx = _reroll_session(item, plan, _persona_row())
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.default_client"),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent", return_value=agent),
+        patch("app.tasks.content_plan_build.choose_replacements", return_value=[]),
+    ):
+        reroll_plan_item.run(str(item.id))
+
+    assert len(captured_inputs) == 1
+    excluded = captured_inputs[0].exclude_ideas
+    assert "film the dark start" in excluded
+    assert "cook a quick meal" in excluded
