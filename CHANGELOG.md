@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.88.0] — 2026-06-06
+
+### Fixed
+- **Lyrics previews now recover from transient LRCLIB refresh outages without losing their last good synced lyrics.** When a stale cache refresh hits an LRCLIB transport error, the render fails retryably and leaves the publishable cached lyrics intact instead of clearing the track into manual-recovery state.
+
 ## [0.4.87.0] — 2026-06-06
 
 ### Fixed
