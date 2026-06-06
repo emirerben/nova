@@ -143,10 +143,6 @@ export default async function HomePage() {
           >
             Build my plan
           </Link>
-          <span className="mt-3 block text-[12.5px] text-[#71717a]">
-            Eight questions about you. Three minutes. A month of content,
-            scripted.
-          </span>
         </section>
       </FadeInOnScroll>
 
@@ -333,10 +329,10 @@ export default async function HomePage() {
           </div>
         </FadeInOnScroll>
 
-        {/* Step 4 — outro */}
+        {/* Step 4 — phone fan left, text right on desktop (mirrors 02) */}
         <FadeInOnScroll>
-          <div className="flex flex-col gap-10 pt-16 md:flex-row md:items-center md:gap-16">
-            {/* Left: step copy */}
+          <div className="flex flex-col gap-10 pt-16 md:flex-row-reverse md:items-center md:gap-16">
+            {/* Right on desktop: step copy */}
             <div className="md:flex-1">
               <span className="font-display text-[44px] italic text-zinc-200">
                 04
@@ -352,7 +348,7 @@ export default async function HomePage() {
               </p>
             </div>
 
-            {/* Right: fanned phone mockups — lg+ only; flat row below lg */}
+            {/* Left on desktop: fanned phone mockups — lg+ only; flat row below lg */}
             <div className="md:flex-1">
               {/* Desktop fan (lg+) */}
               <div className="hidden lg:block">
