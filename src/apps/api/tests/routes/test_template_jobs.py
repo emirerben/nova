@@ -1,5 +1,6 @@
 """Unit tests for routes/template_jobs.py — template job creation and status."""
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ def client():
 
 def _db_with_template(template: object | None):
     """Return a DB dependency override that returns the given template."""
+
     async def _gen():
         mock_db = AsyncMock()
         mock_result = MagicMock()
@@ -26,6 +28,7 @@ def _db_with_template(template: object | None):
         mock_db.commit = AsyncMock()
         mock_db.refresh = AsyncMock()
         yield mock_db
+
     return _gen
 
 
@@ -51,11 +54,14 @@ class TestCreateTemplateJobValidation:
         """The pydantic validator requires ≥1 clip at the schema level."""
         app.dependency_overrides[get_db] = _db_with_template(_make_template())
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [],  # empty list
-                "selected_platforms": ["tiktok"],
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [],  # empty list
+                    "selected_platforms": ["tiktok"],
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 422
@@ -64,31 +70,40 @@ class TestCreateTemplateJobValidation:
         """The pydantic validator caps at 20 clips."""
         app.dependency_overrides[get_db] = _db_with_template(_make_template())
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(25)],  # > 20
-                "selected_platforms": ["tiktok"],
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(25)],  # > 20
+                    "selected_platforms": ["tiktok"],
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 422
 
     def test_invalid_platform_returns_422(self, client):
-        res = client.post("/template-jobs", json={
-            "template_id": "template-123",
-            "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
-            "selected_platforms": ["snapchat"],  # not valid
-        })
+        res = client.post(
+            "/template-jobs",
+            json={
+                "template_id": "template-123",
+                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
+                "selected_platforms": ["snapchat"],  # not valid
+            },
+        )
         assert res.status_code == 422
 
     def test_template_not_found_returns_404(self, client):
         app.dependency_overrides[get_db] = _db_with_template(None)
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "nonexistent",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
-                "selected_platforms": ["tiktok"],
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "nonexistent",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
+                    "selected_platforms": ["tiktok"],
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 404
@@ -96,11 +111,14 @@ class TestCreateTemplateJobValidation:
     def test_template_not_ready_returns_409(self, client):
         app.dependency_overrides[get_db] = _db_with_template(_make_template(status="analyzing"))
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
-                "selected_platforms": ["tiktok"],
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
+                    "selected_platforms": ["tiktok"],
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 409
@@ -109,11 +127,14 @@ class TestCreateTemplateJobValidation:
     def test_below_template_min_clips_returns_422(self, client):
         app.dependency_overrides[get_db] = _db_with_template(_make_template(min_clips=7))
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],  # < min 7
-                "selected_platforms": ["tiktok"],
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],  # < min 7
+                    "selected_platforms": ["tiktok"],
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 422
@@ -122,11 +143,14 @@ class TestCreateTemplateJobValidation:
     def test_above_template_max_clips_returns_422(self, client):
         app.dependency_overrides[get_db] = _db_with_template(_make_template(max_clips=3))
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],  # > max 3
-                "selected_platforms": ["tiktok"],
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],  # > max 3
+                    "selected_platforms": ["tiktok"],
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 422
@@ -215,12 +239,15 @@ class TestCreateTemplateJobInputs:
         tpl = _make_template(min_clips=7, max_clips=10)
         app.dependency_overrides[get_db] = _db_with_template(tpl)
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
-                "selected_platforms": ["tiktok"],
-                "inputs": {},
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
+                    "selected_platforms": ["tiktok"],
+                    "inputs": {},
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 422
@@ -229,12 +256,15 @@ class TestCreateTemplateJobInputs:
         tpl = _make_template(min_clips=2, max_clips=3)
         app.dependency_overrides[get_db] = _db_with_template(tpl)
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
-                "selected_platforms": ["tiktok"],
-                "inputs": {},
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
+                    "selected_platforms": ["tiktok"],
+                    "inputs": {},
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 422
@@ -247,12 +277,15 @@ class TestCreateTemplateJobInputs:
         tpl = _make_template(min_clips=2, max_clips=10)
         app.dependency_overrides[get_db] = _db_with_template(tpl)
         try:
-            res = client.post("/template-jobs", json={
-                "template_id": "template-123",
-                "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
-                "selected_platforms": ["tiktok"],
-                "inputs": {},
-            })
+            res = client.post(
+                "/template-jobs",
+                json={
+                    "template_id": "template-123",
+                    "clip_gcs_paths": [f"gcs/clip_{i}.mp4" for i in range(5)],
+                    "selected_platforms": ["tiktok"],
+                    "inputs": {},
+                },
+            )
         finally:
             app.dependency_overrides.pop(get_db, None)
         assert res.status_code == 201
@@ -286,6 +319,7 @@ class TestInputsWhitespaceStrip:
 
     def test_strips_leading_and_trailing_whitespace(self):
         from app.routes.template_jobs import CreateTemplateJobRequest
+
         req = CreateTemplateJobRequest(
             template_id="t",
             clip_gcs_paths=["gcs/a.mp4"],
@@ -295,6 +329,7 @@ class TestInputsWhitespaceStrip:
 
     def test_preserves_internal_whitespace(self):
         from app.routes.template_jobs import CreateTemplateJobRequest
+
         req = CreateTemplateJobRequest(
             template_id="t",
             clip_gcs_paths=["gcs/a.mp4"],
@@ -304,6 +339,7 @@ class TestInputsWhitespaceStrip:
 
     def test_strips_tabs_and_newlines(self):
         from app.routes.template_jobs import CreateTemplateJobRequest
+
         req = CreateTemplateJobRequest(
             template_id="t",
             clip_gcs_paths=["gcs/a.mp4"],
@@ -315,6 +351,7 @@ class TestInputsWhitespaceStrip:
         """Edge case: '   ' strips to ''. Downstream _validate_inputs's
         `value.strip()` check catches this for required fields."""
         from app.routes.template_jobs import CreateTemplateJobRequest
+
         req = CreateTemplateJobRequest(
             template_id="t",
             clip_gcs_paths=["gcs/a.mp4"],
@@ -324,6 +361,7 @@ class TestInputsWhitespaceStrip:
 
     def test_empty_inputs_dict_passes(self):
         from app.routes.template_jobs import CreateTemplateJobRequest
+
         req = CreateTemplateJobRequest(
             template_id="t",
             clip_gcs_paths=["gcs/a.mp4"],
@@ -343,6 +381,7 @@ class TestInputsControlCharScrubbing:
 
     def _build(self, value: str) -> str:
         from app.routes.template_jobs import CreateTemplateJobRequest
+
         req = CreateTemplateJobRequest(
             template_id="t",
             clip_gcs_paths=["gcs/a.mp4"],
@@ -388,3 +427,78 @@ class TestInputsControlCharScrubbing:
         """LF is preserved here; sanitize_ass_text converts it to ASS \\\\N
         line break downstream."""
         assert self._build("Tok\nyo") == "Tok\nyo"
+
+
+class TestTemplateJobStatusExpectedPhaseDurations:
+    """PR6: expected_phase_durations included in the status response (D18 ETA ladder)."""
+
+    def _db_with_job(self, job_obj):
+        async def _gen():
+            mock_db = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = job_obj
+            mock_db.execute = AsyncMock(return_value=mock_result)
+            yield mock_db
+
+        return _gen
+
+    def _make_job(self):
+        import uuid
+        from datetime import datetime
+
+        job = MagicMock()
+        job.id = uuid.uuid4()
+        job.job_type = "template"
+        job.status = "analyzing_clips"
+        job.template_id = "tmpl-abc"
+        job.assembly_plan = None
+        job.error_detail = None
+        job.failure_reason = None
+        job.current_phase = "analyze_clips"
+        job.phase_log = []
+        job.started_at = datetime.now(UTC)
+        job.finished_at = None
+        job.created_at = datetime.now(UTC)
+        job.updated_at = datetime.now(UTC)
+        return job
+
+    def test_status_includes_expected_phase_durations(self, client):
+        """Status response includes expected_phase_durations with template baselines."""
+        job = self._make_job()
+        app.dependency_overrides[get_db] = self._db_with_job(job)
+        try:
+            res = client.get(f"/template-jobs/{job.id}/status")
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        data = res.json()
+        assert "expected_phase_durations" in data
+        epd = data["expected_phase_durations"]
+        assert epd is not None
+        assert "download_clips" in epd
+        assert "finalize" in epd
+        # queued intentionally excluded (D9)
+        assert "queued" not in epd
+        assert all(isinstance(v, int) and v > 0 for v in epd.values())
+
+    def test_status_expected_phase_durations_covers_all_template_phases(self, client):
+        """All 8 template pipeline phases are present in the returned baselines."""
+        job = self._make_job()
+        app.dependency_overrides[get_db] = self._db_with_job(job)
+        try:
+            res = client.get(f"/template-jobs/{job.id}/status")
+        finally:
+            app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        epd = res.json()["expected_phase_durations"]
+        expected_phases = {
+            "download_clips",
+            "analyze_clips",
+            "match_clips",
+            "assemble",
+            "mix_audio",
+            "generate_copy",
+            "upload",
+            "finalize",
+        }
+        assert expected_phases == set(epd.keys())

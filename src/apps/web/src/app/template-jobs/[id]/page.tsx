@@ -7,16 +7,11 @@ import {
   rerollTemplateJob,
   type AssemblyPlanData,
   type JobFailureReason,
-  type PhaseLogEntry,
   type TemplateJobStatusResponse,
 } from "@/lib/api";
 import { useJobStream } from "@/hooks/useJobStream";
-import {
-  humanisePhase,
-  phaseProgress,
-  PHASE_LABEL,
-  PHASE_ORDER,
-} from "@/lib/template-job-phases";
+import { ProgressTheater, PayoffField } from "@/components/progress";
+import { TEMPLATE_PHASE_ORDER, TEMPLATE_PHASE_LABEL } from "@/lib/job-phases";
 
 // User-facing copy per structured failure reason. Keep these short and
 // actionable — they replace "Something went wrong" for failures the API
@@ -64,8 +59,10 @@ export default function TemplateJobPage() {
   const { id } = useParams<{ id: string }>();
   const { data: job, error } = useJobStream(id);
 
+  const status = job?.status ?? "queued";
+
   if (error) return <ErrorScreen message={error} jobId={id} />;
-  if (!job) return <ProgressScreen job={null} />;
+  if (!job) return <ProgressScreen job={null} status="queued" />;
   if (job.status === "processing_failed") {
     return (
       <ErrorScreen
@@ -86,7 +83,7 @@ export default function TemplateJobPage() {
     );
   }
   if (job.status !== "template_ready" || !job.assembly_plan?.output_url) {
-    return <ProgressScreen job={job} />;
+    return <ProgressScreen job={job} status={status} />;
   }
 
   return <ResultView job={job} plan={job.assembly_plan} />;
@@ -94,132 +91,53 @@ export default function TemplateJobPage() {
 
 // ── Progress + Error screens ─────────────────────────────────────────────────
 
+// Local label cleanup: strip trailing "…" from phase labels for chip display.
+// This is a local transform only — template-job-phases.ts is NOT modified.
+const cleanedTemplateLabels = Object.fromEntries(
+  Object.entries(TEMPLATE_PHASE_LABEL).map(([k, v]) => [k, v.replace(/…$/, "")]),
+);
+
 /**
- * Live progress UI. Shows the current pipeline phase + a percent-style bar
- * driven off `phaseProgress(current_phase)`. Renders a queued placeholder
- * until the worker writes the first phase event. The bar fills smoothly
- * thanks to CSS `transition-all`; SSE delivers updates every ~750ms so the
- * user sees motion every couple of seconds during a 60s render.
+ * Live progress UI powered by ProgressTheater.
+ *
+ * useJobStream (SSE + polling fallback) feeds the theater props unchanged.
+ * isTerminal is always false here — the top-level router in TemplateJobPage
+ * swaps to ResultView on template_ready BEFORE ProgressScreen would see it.
+ * This means no D12 celebration animation plays (simplest no-jump-cut).
  */
-function ProgressScreen({ job }: { job: TemplateJobStatusResponse | null }) {
-  const currentPhase = job?.current_phase ?? null;
-  const status = job?.status ?? "queued";
-  // Treat "queued" status as 0% — the worker hasn't picked it up yet.
-  // Once a phase fires we lean on the phase index for the bar position.
-  const progress = status === "queued" ? 0.02 : phaseProgress(currentPhase);
-  const label =
-    status === "queued"
-      ? PHASE_LABEL.queued
-      : humanisePhase(currentPhase);
+function ProgressScreen({ job, status }: { job: TemplateJobStatusResponse | null; status: string }) {
+  // D9: "queued" chip when no started_at yet
+  const currentPhase =
+    job?.current_phase ??
+    (status === "queued" ? "queued" : null);
 
-  const completedPhases = new Set(
-    (job?.phase_log ?? []).map((entry) => entry.name),
-  );
+  // Normalize PhaseLogEntry.elapsed_ms from null → undefined so it matches
+  // ProgressTheater's internal interface (which uses optional, not nullable).
+  const phaseLog = job?.phase_log
+    ? job.phase_log.map((e) => ({ ...e, elapsed_ms: e.elapsed_ms ?? undefined }))
+    : null;
 
   return (
-    <main className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-4">
-      <div className="w-full max-w-md flex flex-col items-center gap-6">
-        <div className="w-10 h-10 border-2 border-zinc-600 border-t-white rounded-full animate-spin" />
-        <p className="text-zinc-200 text-base text-center">{label}</p>
-
-        {/* Bar */}
-        <div className="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-white transition-all duration-700 ease-out"
-            style={{ width: `${Math.round(progress * 100)}%` }}
-          />
-        </div>
-
-        {/* Per-phase chips. Render the phases the user can actually see —
-            queued is implicit, and we hide phases that don't apply to this
-            template kind (single_video skips match_clips/mix_audio). */}
-        <PhaseChips
-          phaseLog={job?.phase_log ?? []}
-          currentPhase={currentPhase}
-          completedPhases={completedPhases}
-        />
-
-        {job?.started_at && (
-          <ElapsedTimer startedAt={job.started_at} />
-        )}
-      </div>
-    </main>
-  );
-}
-
-function PhaseChips({
-  phaseLog,
-  currentPhase,
-  completedPhases,
-}: {
-  phaseLog: PhaseLogEntry[];
-  currentPhase: string | null;
-  completedPhases: Set<string>;
-}) {
-  // Hide queued + finalize — they're internal book-ends, not user-meaningful
-  // progress markers.
-  const visible = PHASE_ORDER.filter(
-    (p) => p !== "queued" && p !== "finalize",
-  );
-  if (!completedPhases.size && !currentPhase) return null;
-
-  return (
-    <div className="flex flex-wrap gap-1.5 justify-center w-full">
-      {visible.map((phase) => {
-        const isDone = completedPhases.has(phase);
-        const isActive = phase === currentPhase;
-        const entry = phaseLog.find((e) => e.name === phase);
-        return (
-          <span
-            key={phase}
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] transition-colors ${
-              isDone
-                ? "bg-zinc-800 text-zinc-400"
-                : isActive
-                  ? "bg-white/10 text-white border border-white/30"
-                  : "bg-zinc-900 text-zinc-600"
-            }`}
-            title={
-              entry?.elapsed_ms != null
-                ? `Took ${(entry.elapsed_ms / 1000).toFixed(1)}s`
-                : undefined
-            }
-          >
-            {isDone && (
-              <span aria-hidden="true" className="text-green-400">✓</span>
-            )}
-            {isActive && (
-              <span
-                aria-hidden="true"
-                className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"
-              />
-            )}
-            {PHASE_LABEL[phase].replace(/…$/, "")}
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-/** Ticking elapsed clock since the worker stamped started_at. Light-weight —
- *  1Hz update, only re-renders this small subtree. */
-function ElapsedTimer({ startedAt }: { startedAt: string }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const startMs = new Date(startedAt).getTime();
-  if (Number.isNaN(startMs)) return null;
-  const elapsedS = Math.max(0, Math.round((now - startMs) / 1000));
-  const mm = Math.floor(elapsedS / 60);
-  const ss = elapsedS % 60;
-  const formatted = mm > 0
-    ? `${mm}:${ss.toString().padStart(2, "0")}`
-    : `${ss}s`;
-  return (
-    <p className="text-xs text-zinc-600 tabular-nums">{formatted}</p>
+    <ProgressTheater
+      phases={TEMPLATE_PHASE_ORDER}
+      phaseLabels={cleanedTemplateLabels}
+      currentPhase={currentPhase}
+      expectedPhaseMs={job?.expected_phase_durations ?? null}
+      phaseLog={phaseLog}
+      startedAt={job?.started_at ?? null}
+      jobCreatedAt={job?.created_at ?? new Date().toISOString()}
+      isTerminal={false}
+      isSuccess={false}
+      size="full"
+    >
+      {/* Single-output pipeline: show a shimmer placeholder until the video is ready.
+          The page swaps to ResultView on template_ready — the theater never sees terminal. */}
+      <PayoffField
+        variants={null}
+        renderCard={() => null}
+        emptyText="Your video will appear here"
+      />
+    </ProgressTheater>
   );
 }
 
