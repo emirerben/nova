@@ -395,7 +395,9 @@ async def chat_start(
 
     result = await asyncio.to_thread(
         InterviewerAgent(default_client()).run,
-        InterviewerInput(turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count),
+        InterviewerInput(
+            turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count + 1
+        ),
     )
 
     # Store Q + metadata so resume is free (no re-call on page refresh).
@@ -485,7 +487,9 @@ async def chat_turn(
 
     result = await asyncio.to_thread(
         InterviewerAgent(default_client()).run,
-        InterviewerInput(turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count),
+        InterviewerInput(
+            turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count + 1
+        ),
     )
 
     new_agent_count = agent_count + 1

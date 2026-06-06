@@ -28,7 +28,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-06-06"
+INTERVIEWER_PROMPT_VERSION = "2026-06-06.1"
 _HARD_CAP = 8
 
 
@@ -90,7 +90,7 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
         max_attempts=3,
         backoff_s=(2.0, 6.0),
         timeout_s=20.0,
-        thinking_budget=256,
+        thinking_budget=1024,
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
     )
