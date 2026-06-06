@@ -120,6 +120,8 @@ _ANCHOR_PREFIX_LOOKBACK_MAX_WORDS = 5
 _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES = 3
 _ANCHOR_PREFIX_LOOKBACK_MIN_SHIFT_S = 0.2
 _ANCHOR_PREFIX_LOOKBACK_LINE_GAP_S = 1e-6
+_ANCHOR_PREFIX_LEADING_MISHEAR_SUFFIX_MATCHES = 2
+_ANCHOR_PREFIX_LEADING_MISHEAR_MAX_GAP_S = 0.65
 
 # Exact-count windows are only a fast path when count AND content agree. If a
 # single LRCLIB token disagrees with Whisper inside an otherwise matching phrase,
@@ -131,6 +133,7 @@ _EXACT_COUNT_REPAIR_MIN_MATCHES = 2
 # Repair only a single isolated token; multiple transcript-authored words are
 # too much trust to place in Whisper when the canonical lyric source disagrees.
 _EXACT_COUNT_REPAIR_MAX_MISMATCHES = 1
+_EXACT_COUNT_CANONICAL_LEADING_MISHEAR_MIN_FOLLOWING_MATCHES = 2
 _LEADING_WHISPER_PREFIX_MAX_WORDS = 2
 _LEADING_WHISPER_PREFIX_MAX_GAP_S = 0.75
 
@@ -144,6 +147,7 @@ _LOW_CONFIDENCE_WHISPER_TAIL_MIN_PREFIX_SIMILARITY = 0.95
 _LOW_CONFIDENCE_WHISPER_TAIL_MIN_UNUSED_WORDS = 2
 _LOW_CONFIDENCE_WHISPER_TAIL_MAX_END_GAP_S = 1.25
 _LOW_CONFIDENCE_WHISPER_TAIL_MAX_SIMILARITY = 0.80
+_NEXT_ANCHOR_PREFIX_TRIM_MAX_WORDS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +346,43 @@ def _find_pre_anchor_prefix_match(
         elif candidate.matched_count == best.matched_count and candidate.start_s < best.start_s:
             best = candidate
 
+    # Whisper can mishear a short leading word in a clean prefix while the
+    # following canonical words are clearly present before a late LRCLIB
+    # anchor. Use the leading token's timing as the start, but keep the
+    # canonical display text later in exact-count repair.
+    if len(expected_words) >= _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES:
+        for cursor in range(max(0, len(lookback_words) - 1)):
+            matched_count, first_idx, matched_words = _count_ordered_prefix_matches(
+                expected_words[1:],
+                lookback_words,
+                cursor=cursor + 1,
+            )
+            if (
+                matched_count < _ANCHOR_PREFIX_LEADING_MISHEAR_SUFFIX_MATCHES
+                or first_idx != cursor + 1
+            ):
+                continue
+            lead = lookback_words[cursor]
+            first_match = lookback_words[first_idx]
+            lead_gap_s = first_match.start_s - lead.start_s
+            if not 0 < lead_gap_s <= _ANCHOR_PREFIX_LEADING_MISHEAR_MAX_GAP_S:
+                continue
+            if anchor_start_s - lead.start_s < _ANCHOR_PREFIX_LOOKBACK_MIN_SHIFT_S:
+                continue
+
+            candidate = _PrefixLookbackMatch(
+                start_s=lead.start_s,
+                matched_count=matched_count + 1,
+                matched_words=(expected_words[0], *matched_words),
+            )
+            if best is None:
+                best = candidate
+                continue
+            if candidate.matched_count > best.matched_count:
+                best = candidate
+            elif candidate.matched_count == best.matched_count and candidate.start_s < best.start_s:
+                best = candidate
+
     return best
 
 
@@ -372,6 +413,72 @@ def _replace_line_tokens(line: str, replacement_tokens: list[str]) -> str:
         cursor = match.end()
     chunks.append(line[cursor:])
     return "".join(chunks).strip()
+
+
+def _trim_trailing_next_anchor_prefix(
+    line: AlignedLine,
+    next_anchor_text: str | None,
+) -> tuple[AlignedLine, int]:
+    """Drop a duplicated next-line prefix from the current aligned line.
+
+    LRCLIB rows occasionally place the next line's opening token at the end of
+    the previous line. If we cache that boundary duplicate, every renderer sees
+    a lyric that was never part of the current phrase.
+    """
+    if not next_anchor_text or not line.words:
+        return line, 0
+
+    next_prefix = [_normalize(token) for token in _tokenize(next_anchor_text)]
+    next_prefix = [token for token in next_prefix if token]
+    current = [_normalize(word.text) for word in line.words]
+    if not next_prefix or not current:
+        return line, 0
+
+    max_overlap = min(len(next_prefix), len(current) - 1, _NEXT_ANCHOR_PREFIX_TRIM_MAX_WORDS)
+    for count in range(max_overlap, 0, -1):
+        if current[-count:] != next_prefix[:count]:
+            continue
+        trimmed_words = line.words[:-count]
+        if not trimmed_words:
+            return line, 0
+        trimmed_text = _replace_line_tokens(line.text, [word.text for word in trimmed_words])
+        trimmed = AlignedLine(
+            text=trimmed_text,
+            start_s=trimmed_words[0].start_s,
+            end_s=trimmed_words[-1].end_s,
+            words=trimmed_words,
+        )
+        log.warning(
+            "lyrics_alignment_trailing_next_anchor_prefix_trimmed",
+            original_line=line.text.strip()[:80],
+            trimmed_line=trimmed_text[:80],
+            next_line=next_anchor_text.strip()[:80],
+            removed_tokens=[word.text for word in line.words[-count:]],
+        )
+        return trimmed, count
+
+    return line, 0
+
+
+def _should_preserve_canonical_leading_mishear(
+    idx: int,
+    expected_words: list[str],
+    whisper_words_in_window: list[WhisperWord],
+    pair_matches: list[bool],
+) -> bool:
+    """Keep canonical text when only the leading word was locally misheard."""
+    if idx != 0 or pair_matches[0]:
+        return False
+    if not expected_words or not whisper_words_in_window:
+        return False
+    first_expected = _normalize(expected_words[0])
+    first_heard = _normalize(whisper_words_in_window[0].text)
+    if len(first_expected) > 3 or len(first_heard) > 3:
+        return False
+    following = pair_matches[1 : 1 + _EXACT_COUNT_CANONICAL_LEADING_MISHEAR_MIN_FOLLOWING_MATCHES]
+    return len(following) == _EXACT_COUNT_CANONICAL_LEADING_MISHEAR_MIN_FOLLOWING_MATCHES and all(
+        following
+    )
 
 
 def _align_exact_count_window(
@@ -410,6 +517,12 @@ def _align_exact_count_window(
         display_words = [
             expected
             if pair_matches[idx]
+            or _should_preserve_canonical_leading_mishear(
+                idx,
+                expected_words,
+                whisper_words_in_window,
+                pair_matches,
+            )
             else _case_like(expected, whisper_words_in_window[idx].text)
             for idx, expected in enumerate(expected_words)
         ]
@@ -977,12 +1090,16 @@ def align_with_line_anchors(
     for i, anchor in enumerate(anchor_lines):
         window_start = anchor.start_s
         if i + 1 < len(anchor_lines):
+            next_anchor_text = anchor_lines[i + 1].text
             window_end = anchor_lines[i + 1].start_s
         elif track_end_s is not None:
+            next_anchor_text = None
             window_end = track_end_s
         elif whisper_list:
+            next_anchor_text = None
             window_end = whisper_list[-1].end_s + _LAST_WORD_TAIL_PAD_S
         else:
+            next_anchor_text = None
             window_end = window_start + _FALLBACK_TRAILING_WINDOW_S
 
         # Guard against malformed input — anchors out of order would yield a
@@ -1043,6 +1160,10 @@ def align_with_line_anchors(
             window_end,
         )
         if line is not None:
+            line, trimmed_count = _trim_trailing_next_anchor_prefix(line, next_anchor_text)
+            if trimmed_count:
+                total_words -= trimmed_count
+                matched_in_line = min(matched_in_line, len(line.words))
             aligned_lines.append(line)
             matched_counts.append(matched_in_line)
             local_anchor_adjusted.append(prefix_match is not None)

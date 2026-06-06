@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.85.2] — 2026-06-06
+
+### Fixed
+- **Lyrics preview boundary words now stay on their own line.** Pop-up and karaoke previews drop duplicated next-line words at LRCLIB row boundaries, so the selected phrase no longer shows a stray "when" before the next lyric starts.
+- **Lyrics preview audio now stops at the final main phrase.** Preview windows cut trailing parenthetical or ad-lib tails past the selected section while preserving later valid lyrics that still start inside the section.
+- **Short leading-word mishears no longer rewrite canonical lyrics.** The aligner can use a local Whisper word for timing when the following canonical words match, while keeping the lyric-source display text.
+
 ## [0.4.85.1] — 2026-06-06
 
 ### Fixed

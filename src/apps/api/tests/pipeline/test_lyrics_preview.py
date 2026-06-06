@@ -547,9 +547,11 @@ def test_preview_window_clamps_anchor_at_section_start() -> None:
     assert duration_s == round(141.0 - 127.2, 3)  # 13.8
 
 
-def test_preview_window_duration_capped_by_section_end() -> None:
-    """Section span is only 14s → preview duration is 14s, not 20s. The window
-    must never exceed best_end_s even when PREVIEW_WINDOW_S is larger.
+def test_preview_window_duration_capped_by_section_end_when_no_started_line_tail() -> None:
+    """Section span is only 14s → preview duration is 14s, not 20s.
+
+    The window stays capped by best_end_s when no lyric line that has already
+    started in the section continues past it.
     """
     track = _track_with_lines(
         [128.0],
@@ -560,6 +562,218 @@ def test_preview_window_duration_capped_by_section_end() -> None:
     # 128 - 2 = 126 < 127.2 → anchor clamps at 127.2; available = 141.2 - 127.2 = 14.0
     assert start_s == 127.2
     assert duration_s == 14.0
+
+
+def test_preview_window_extends_to_finish_started_lyric_line_tail() -> None:
+    """Do not cut off a lyric line that starts before best_end_s.
+
+    Regression for the Highest in the Room lyric preview: the selected section
+    ended while the final vocal line was still in progress, so the preview
+    displayed only the opening words and made both karaoke and pop-up styles
+    look late/truncated.
+    """
+    track = _track_with_lines(
+        [129.0, 139.0],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.2},
+    )
+    # Second line starts inside the section but finishes after it.
+    track.lyrics_cached["lines"][1]["end_s"] = 144.0
+    track.lyrics_cached["lines"][1]["words"][0]["end_s"] = 144.0
+
+    start_s, duration_s = _resolve_preview_window(track)
+
+    assert start_s == 127.2
+    assert duration_s == 16.8
+
+
+def test_preview_window_does_not_pull_line_starting_at_section_end() -> None:
+    """A new line at best_end_s belongs to the next section, not this preview."""
+    track = _track_with_lines(
+        [129.0, 141.2],
+        duration_s=300.0,
+        track_config={"best_start_s": 127.2, "best_end_s": 141.2},
+    )
+    track.lyrics_cached["lines"][1]["end_s"] = 144.0
+    track.lyrics_cached["lines"][1]["words"][0]["end_s"] = 144.0
+
+    start_s, duration_s = _resolve_preview_window(track)
+
+    assert start_s == 127.2
+    assert duration_s == 14.0
+
+
+def test_preview_recipe_extends_started_tail_without_next_section_line() -> None:
+    """Extended preview duration must not admit a new post-section lyric row."""
+    track = _track(
+        duration_s=30.0,
+        track_config={"best_start_s": 10.0, "best_end_s": 11.0},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "alpha beta gamma",
+                    "start_s": 10.0,
+                    "end_s": 12.0,
+                    "words": [
+                        {"text": "alpha", "start_s": 10.0, "end_s": 10.5},
+                        {"text": "beta", "start_s": 10.5, "end_s": 11.0},
+                        {"text": "gamma", "start_s": 11.0, "end_s": 12.0},
+                    ],
+                },
+                {
+                    "text": "delta epsilon",
+                    "start_s": 11.5,
+                    "end_s": 12.5,
+                    "words": [
+                        {"text": "delta", "start_s": 11.5, "end_s": 12.0},
+                        {"text": "epsilon", "start_s": 12.0, "end_s": 12.5},
+                    ],
+                },
+            ],
+        },
+    )
+
+    assert _resolve_preview_window(track) == (10.0, 2.0)
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "karaoke"})
+    overlays = recipe["slots"][0]["text_overlays"]
+    overlay_text = " ".join(str(overlay.get("text", "")) for overlay in overlays)
+
+    assert "alpha" in overlay_text
+    assert "gamma" in overlay_text
+    assert "delta" not in overlay_text
+    assert "epsilon" not in overlay_text
+
+
+def test_preview_window_cuts_before_trailing_parenthetical_tail_past_section() -> None:
+    """Do not keep audio alive just for hidden trailing ad-lib text."""
+    track = _track(
+        duration_s=90.0,
+        track_config={"best_start_s": 48.87, "best_end_s": 58.87},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "first section line",
+                    "start_s": 49.04,
+                    "end_s": 51.0,
+                    "words": [
+                        {"text": "first", "start_s": 49.04, "end_s": 49.6},
+                        {"text": "section", "start_s": 49.6, "end_s": 50.5},
+                        {"text": "line", "start_s": 50.5, "end_s": 51.0},
+                    ],
+                },
+                {
+                    "text": "main phrase lands here (ooh yeah)",
+                    "start_s": 55.14,
+                    "end_s": 60.52,
+                    "words": [
+                        {"text": "main", "start_s": 55.14, "end_s": 55.58},
+                        {"text": "phrase", "start_s": 55.58, "end_s": 55.84},
+                        {"text": "lands", "start_s": 55.84, "end_s": 56.2},
+                        {"text": "here", "start_s": 56.2, "end_s": 57.34},
+                        {"text": "ooh", "start_s": 59.74, "end_s": 60.12},
+                        {"text": "yeah", "start_s": 60.14, "end_s": 60.52},
+                    ],
+                },
+            ],
+        },
+    )
+
+    start_s, duration_s = _resolve_preview_window(track)
+
+    assert start_s == 48.87
+    assert duration_s == pytest.approx(57.34 - 48.87)
+
+
+def test_preview_recipe_cuts_trailing_parenthetical_tail_words() -> None:
+    """Karaoke preview should not display words after the shortened audio end."""
+    track = _track(
+        duration_s=90.0,
+        track_config={"best_start_s": 48.87, "best_end_s": 58.87},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "first section line",
+                    "start_s": 49.04,
+                    "end_s": 51.0,
+                    "words": [
+                        {"text": "first", "start_s": 49.04, "end_s": 49.6},
+                        {"text": "section", "start_s": 49.6, "end_s": 50.5},
+                        {"text": "line", "start_s": 50.5, "end_s": 51.0},
+                    ],
+                },
+                {
+                    "text": "main phrase lands here (ooh yeah)",
+                    "start_s": 55.14,
+                    "end_s": 60.52,
+                    "words": [
+                        {"text": "main", "start_s": 55.14, "end_s": 55.58},
+                        {"text": "phrase", "start_s": 55.58, "end_s": 55.84},
+                        {"text": "lands", "start_s": 55.84, "end_s": 56.2},
+                        {"text": "here", "start_s": 56.2, "end_s": 57.34},
+                        {"text": "ooh", "start_s": 59.74, "end_s": 60.12},
+                        {"text": "yeah", "start_s": 60.14, "end_s": 60.52},
+                    ],
+                },
+            ],
+        },
+    )
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "karaoke"})
+    overlays = recipe["slots"][0]["text_overlays"]
+    last = overlays[-1]
+
+    assert last["text"] == "main phrase lands here"
+    assert [word["text"] for word in last["word_timings"]] == [
+        "main",
+        "phrase",
+        "lands",
+        "here",
+    ]
+    assert last["end_s"] == pytest.approx(57.34 - 48.87)
+
+
+def test_preview_window_parenthetical_cut_does_not_drop_later_section_line() -> None:
+    """A parenthetical tail can only shorten its own lyric line.
+
+    The preview must not end early when a later non-parenthetical line also
+    starts inside the selected section.
+    """
+    track = _track(
+        duration_s=90.0,
+        track_config={"best_start_s": 10.0, "best_end_s": 20.0},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": "intro phrase (adlib)",
+                    "start_s": 10.0,
+                    "end_s": 21.0,
+                    "words": [
+                        {"text": "intro", "start_s": 10.0, "end_s": 10.5},
+                        {"text": "phrase", "start_s": 11.0, "end_s": 12.0},
+                        {"text": "adlib", "start_s": 20.5, "end_s": 21.0},
+                    ],
+                },
+                {
+                    "text": "real in section line",
+                    "start_s": 15.0,
+                    "end_s": 18.0,
+                    "words": [
+                        {"text": "real", "start_s": 15.0, "end_s": 15.5},
+                        {"text": "in", "start_s": 15.5, "end_s": 16.0},
+                        {"text": "section", "start_s": 16.0, "end_s": 16.5},
+                        {"text": "line", "start_s": 17.0, "end_s": 18.0},
+                    ],
+                },
+            ],
+        },
+    )
+
+    assert _resolve_preview_window(track) == (10.0, 10.0)
 
 
 def test_preview_window_anchor_does_not_leak_outside_section_when_lead_in_negative() -> None:

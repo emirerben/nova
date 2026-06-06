@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -72,6 +73,8 @@ LEAD_IN_S: float = 2.0
 # future tweak forces a conscious choice (encoder policy locks preset class,
 # not the CRF literal — see test_lyrics_preview.py for the assertion).
 PREVIEW_CRF: str = "20"
+_TRAILING_PARENTHETICAL_RE = re.compile(r"\s*\([^()]*\)\s*$")
+_WORD_RE = re.compile(r"[\w']+", flags=re.UNICODE)
 
 
 class LyricsPreviewInputError(ValueError):
@@ -257,6 +260,106 @@ def _first_lyric_in_section(
     return min(starts)
 
 
+def _section_end_with_started_lyric_tail(
+    lyrics_cached: Any,
+    *,
+    section_start_s: float,
+    section_end_s: float,
+    track_duration_s: float,
+) -> float:
+    """Return section_end_s extended to finish any already-started lyric line.
+
+    The admin-selected section is still the preview anchor and primary bound,
+    but lyric previews should not cut off a vocal phrase whose line began before
+    `best_end_s`. Lines that start at or after `best_end_s` remain outside the
+    preview so we do not pull in the next section.
+    """
+    capped_section_end_s = min(track_duration_s, section_end_s)
+    if not isinstance(lyrics_cached, dict):
+        return capped_section_end_s
+
+    lines = lyrics_cached.get("lines") or []
+    latest_effective_line_end_s: float | None = None
+    last_started_line: tuple[float, float, bool] | None = None
+    for line in lines:
+        if not isinstance(line, dict):
+            continue
+        line_start = _coerce_finite(line.get("start_s"))
+        line_end = _coerce_finite(line.get("end_s"))
+        if line_start is None or line_end is None or line_end <= line_start:
+            continue
+        if line_start < section_end_s and line_end > section_start_s:
+            main_phrase_end_s = _line_end_before_trailing_parenthetical(line)
+            cuts_trailing_parenthetical = (
+                main_phrase_end_s is not None
+                and line_end > section_end_s
+                and main_phrase_end_s > section_start_s
+            )
+            effective_line_end_s = main_phrase_end_s if cuts_trailing_parenthetical else line_end
+            effective_line_end_s = min(track_duration_s, effective_line_end_s)
+            latest_effective_line_end_s = max(
+                latest_effective_line_end_s or 0.0, effective_line_end_s
+            )
+            if last_started_line is None or line_start >= last_started_line[0]:
+                last_started_line = (
+                    line_start,
+                    effective_line_end_s,
+                    cuts_trailing_parenthetical,
+                )
+
+    if last_started_line is not None and last_started_line[2]:
+        return latest_effective_line_end_s or capped_section_end_s
+    return max(capped_section_end_s, latest_effective_line_end_s or capped_section_end_s)
+
+
+def _line_end_before_trailing_parenthetical(line: dict) -> float | None:
+    """Return the last main-phrase word end before a trailing parenthetical."""
+    text = str(line.get("text") or "")
+    match = _TRAILING_PARENTHETICAL_RE.search(text)
+    if match is None:
+        return None
+    main_word_count = len(_WORD_RE.findall(text[: match.start()]))
+    if main_word_count <= 0:
+        return None
+    words = line.get("words")
+    if not isinstance(words, list) or len(words) < main_word_count:
+        return None
+    main_word = words[main_word_count - 1]
+    if not isinstance(main_word, dict):
+        return None
+    return _coerce_finite(main_word.get("end_s"))
+
+
+def _filter_lines_starting_before(
+    lyrics_cached: Any,
+    cutoff_s: float,
+) -> Any:
+    """Return a cache copy excluding lines that start at/after cutoff_s."""
+    if not isinstance(lyrics_cached, dict):
+        return lyrics_cached
+    lines = lyrics_cached.get("lines")
+    if not isinstance(lines, list):
+        return lyrics_cached
+
+    filtered: list[Any] = []
+    changed = False
+    for line in lines:
+        if not isinstance(line, dict):
+            filtered.append(line)
+            continue
+        line_start = _coerce_finite(line.get("start_s"))
+        if line_start is not None and line_start >= cutoff_s:
+            changed = True
+            continue
+        filtered.append(line)
+
+    if not changed:
+        return lyrics_cached
+    out = dict(lyrics_cached)
+    out["lines"] = filtered
+    return out
+
+
 def _resolve_preview_window_with_policy(
     track: Any,
 ) -> tuple[float, float, str, str | None]:
@@ -320,7 +423,13 @@ def _resolve_preview_window_with_policy(
             # as 0s — but the math downstream (`available`, `duration_s`)
             # would be off.
             anchor = max(0.0, section_start_s, first_in_section - LEAD_IN_S)
-            available = min(track_duration_s, section_end_s) - anchor
+            preview_end_s = _section_end_with_started_lyric_tail(
+                lyrics_cached,
+                section_start_s=section_start_s,
+                section_end_s=section_end_s,
+                track_duration_s=track_duration_s,
+            )
+            available = preview_end_s - anchor
             if available > 0:
                 duration_s = min(PREVIEW_WINDOW_S, available)
                 return (
@@ -374,7 +483,19 @@ def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> di
     lyrics_cached = getattr(track, "lyrics_cached", None)
     if not lyrics_cached:
         raise LyricsPreviewInputError("Music track has no cached lyrics to preview.")
-    preview_start_s, preview_duration_s = _resolve_preview_window(track)
+    preview_start_s, preview_duration_s, policy, _reason = _resolve_preview_window_with_policy(
+        track
+    )
+    section_start_s, section_end_s = _read_best_bounds(getattr(track, "track_config", None))
+    lyrics_for_recipe = lyrics_cached
+    if (
+        policy == "section"
+        and section_start_s is not None
+        and section_end_s is not None
+        and section_end_s > section_start_s
+        and preview_start_s + preview_duration_s > section_end_s
+    ):
+        lyrics_for_recipe = _filter_lines_starting_before(lyrics_cached, section_end_s)
 
     recipe = {
         "slots": [
@@ -389,7 +510,7 @@ def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> di
     cfg.setdefault("style", "line")
     recipe = inject_lyric_overlays(
         recipe,
-        lyrics_cached,
+        lyrics_for_recipe,
         best_start_s=preview_start_s,
         best_end_s=preview_start_s + preview_duration_s,
         lyrics_config=cfg,

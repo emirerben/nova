@@ -473,6 +473,56 @@ def test_anchored_prefix_lookback_requires_strong_prefix(monkeypatch) -> None:
     assert not rec.events_named("lyrics_alignment_anchor_prefix_lookback_applied")
 
 
+def test_anchored_prefix_lookback_preserves_canonical_leading_mishear() -> None:
+    """Use a misheard leading token for timing without caching that text."""
+    anchors = [
+        SyncedLine(start_s=55.86, text="You told me stories"),
+        SyncedLine(start_s=59.62, text="next line"),
+    ]
+    whisper = [
+        _ww("We", 55.14, 55.58),
+        _ww("told", 55.58, 55.84),
+        _ww("me", 55.84, 56.1),
+        _ww("stories", 56.1, 56.38),
+        _ww("next", 59.7, 59.9),
+        _ww("line", 59.9, 60.1),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=61.0)
+
+    line = result.lines[0]
+    assert line.text == "You told me stories"
+    assert line.start_s == 55.14
+    assert [word.text for word in line.words] == ["You", "told", "me", "stories"]
+
+
+def test_anchored_prefix_lookback_rejects_distant_leading_mishear(monkeypatch) -> None:
+    """A distant unrelated word must not pull a line before the anchor."""
+    from app.pipeline import lyrics_alignment
+
+    rec = _LogRecorder()
+    monkeypatch.setattr(lyrics_alignment, "log", rec)
+
+    anchors = [
+        SyncedLine(start_s=55.86, text="You told me stories"),
+        SyncedLine(start_s=59.62, text="next line"),
+    ]
+    whisper = [
+        _ww("We", 54.5, 54.7),
+        _ww("told", 55.58, 55.84),
+        _ww("me", 55.84, 56.1),
+        _ww("stories", 56.1, 56.38),
+        _ww("next", 59.7, 59.9),
+        _ww("line", 59.9, 60.1),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=61.0)
+
+    line = result.lines[0]
+    assert line.start_s > 55.0
+    assert not rec.events_named("lyrics_alignment_anchor_prefix_lookback_applied")
+
+
 def test_anchored_low_confidence_line_uses_unused_whisper_tail() -> None:
     """Regression for popup preview job 9cc0cb15.
 
@@ -516,6 +566,68 @@ def test_anchored_low_confidence_line_uses_unused_whisper_tail() -> None:
     ]
     assert "might" not in {w.text for w in repaired.words}
     assert repaired.end_s <= 60.72
+
+
+def test_anchored_trims_duplicated_next_line_prefix_from_current_line() -> None:
+    """Regression for lyrics preview jobs 481a50d2 / ca2fd867.
+
+    The current LRCLIB row already contained the next row's opening ``when``.
+    Both karaoke and pop-up previews consume this shared aligned line, so the
+    aligner must remove the boundary duplicate before the cache is stored.
+    """
+    anchors = [
+        SyncedLine(start_s=10.0, text="Hope we make it outta here when"),
+        SyncedLine(start_s=13.4, text="when the night starts falling"),
+    ]
+    whisper = [
+        _ww("Hope", 10.1, 10.35),
+        _ww("we", 10.35, 10.55),
+        _ww("make", 10.55, 10.8),
+        _ww("it", 10.8, 10.95),
+        _ww("outta", 10.95, 11.2),
+        _ww("here", 11.2, 11.55),
+        _ww("when", 13.45, 13.7),
+        _ww("the", 13.7, 13.9),
+        _ww("night", 13.9, 14.2),
+        _ww("starts", 14.2, 14.5),
+        _ww("falling", 14.5, 14.9),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=15.5)
+
+    line = result.lines[0]
+    assert line.text == "Hope we make it outta here"
+    assert [word.text for word in line.words] == ["Hope", "we", "make", "it", "outta", "here"]
+    assert result.lines[1].text == "when the night starts falling"
+
+
+def test_anchored_low_confidence_tail_repair_trims_next_line_prefix() -> None:
+    """The Whisper-tail repair must not steal the next line's opening word."""
+    anchors = [
+        SyncedLine(start_s=10.0, text="Hope stale stale stale stale stale"),
+        SyncedLine(start_s=13.4, text="when the night starts falling"),
+    ]
+    whisper = [
+        _ww("Hope", 10.1, 10.35),
+        _ww("we", 10.35, 10.55),
+        _ww("make", 10.55, 10.8),
+        _ww("it", 10.8, 10.95),
+        _ww("outta", 10.95, 11.2),
+        _ww("here", 11.2, 11.55),
+        _ww("when", 13.05, 13.3),
+        _ww("when", 13.45, 13.7),
+        _ww("the", 13.7, 13.9),
+        _ww("night", 13.9, 14.2),
+        _ww("starts", 14.2, 14.5),
+        _ww("falling", 14.5, 14.9),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=15.5)
+
+    line = result.lines[0]
+    assert line.text == "Hope we make it outta here"
+    assert [word.text for word in line.words] == ["Hope", "we", "make", "it", "outta", "here"]
+    assert result.lines[1].text == "when the night starts falling"
 
 
 def test_anchored_low_confidence_tail_repair_requires_tail_near_next_anchor() -> None:
