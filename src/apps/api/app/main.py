@@ -20,6 +20,7 @@ from app.routes import (
     clips,
     content_plans,
     generative_jobs,
+    landing,
     me,
     music,
     music_jobs,
@@ -109,6 +110,7 @@ app.include_router(presigned.router, prefix="/presigned-urls", tags=["presigned"
 app.include_router(clips.router, prefix="/clips", tags=["clips"])
 app.include_router(templates.router, prefix="/templates", tags=["templates"])
 app.include_router(waitlist.router, tags=["waitlist"])
+app.include_router(landing.router, prefix="/landing-clips", tags=["landing"])
 
 
 @app.get("/health")

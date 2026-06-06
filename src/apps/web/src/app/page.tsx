@@ -3,41 +3,81 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import FadeInOnScroll from "@/components/FadeInOnScroll";
+import ShowcaseMarquee from "@/components/ShowcaseMarquee";
 
 export const dynamic = "force-dynamic";
 
+// ── SHOWCASE CLIPS ────────────────────────────────────────────────────────────
+// To add real videos:
+//   1. gsutil cp <output.mp4> gs://$STORAGE_BUCKET/landing/<slug>.mp4
+//      (no ACL grant needed — UBLA + /landing-clips endpoint handles auth)
+//   2. Add the GCS object path as `key` below (e.g. "landing/my-clip.mp4")
+//   3. The server fetches a fresh signed URL at render time via GET /landing-clips
+//
+// Clips without a `key` fall back to their CSS gradient (current state).
+// Keep clips ~720×1280 H.264, ≤ ~5 MB each, preload="metadata".
+// ─────────────────────────────────────────────────────────────────────────────
 const SHOWCASE_CLIPS = [
-  { title: "a week of mornings in my studio", from: "#32230d", to: "#0a0805" },
-  { title: "what i actually eat as a med student", from: "#11202b", to: "#05080a" },
-  { title: "POV: your first gallery show", from: "#2b1118", to: "#0a0507" },
-  { title: "everything i packed for tokyo", from: "#1a2415", to: "#060805" },
-  { title: "closing the shop at midnight", from: "#241a2e", to: "#080609" },
-  { title: "my 5am open, sped up", from: "#0d2420", to: "#050807" },
-] as const;
+  { title: "a week of mornings in my studio", from: "#32230d", to: "#0a0805", key: "landing/clip-overnight.mp4" },
+  { title: "what i actually eat as a med student", from: "#11202b", to: "#05080a", key: "landing/clip-bad-bunny.mp4" },
+  { title: "POV: your first gallery show", from: "#2b1118", to: "#0a0507", key: "landing/clip-montagem.mp4" },
+  { title: "everything i packed for tokyo", from: "#1a2415", to: "#060805", key: "landing/clip-again.mp4" },
+  { title: "closing the shop at midnight", from: "#241a2e", to: "#080609", key: "landing/clip-travis.mp4" },
+  { title: "my 5am open, sped up", from: "#0d2420", to: "#050807", key: "landing/clip-success.mp4" },
+] satisfies { title: string; from: string; to: string; key?: string }[];
 
-type CalCell = { d: string; state: "done" | "planned" | "empty" };
+// Resolve signed URLs for any clips that have a GCS key.
+// Server-side only (force-dynamic) — fresh URL every render, never stale.
+async function resolveClipUrls(
+  clips: { title: string; from: string; to: string; key?: string }[],
+): Promise<{ title: string; from: string; to: string; src?: string }[]> {
+  const keys = clips.map((c) => c.key).filter(Boolean) as string[];
+  if (keys.length === 0) return clips;
+
+  const apiBase =
+    process.env.API_URL ??
+    process.env.NEXT_PUBLIC_API_URL ??
+    "http://localhost:8000";
+  const qs = keys.map((k) => `keys=${encodeURIComponent(k)}`).join("&");
+  try {
+    const res = await fetch(`${apiBase}/landing-clips?${qs}`, {
+      cache: "no-store",
+    });
+    if (!res.ok) return clips;
+    const signed: { key: string; src: string | null }[] = await res.json();
+    const srcByKey = Object.fromEntries(
+      signed.map(({ key, src }) => [key, src ?? undefined]),
+    );
+    return clips.map((c) => ({ ...c, src: c.key ? srcByKey[c.key] : undefined }));
+  } catch {
+    // Best-effort: if the backend is unreachable, fall back to gradients.
+    return clips;
+  }
+}
+
+type CalCell = { d: string; state: "done" | "film" | "post" | "empty" };
 
 const CAL_CELLS: CalCell[] = [
   { d: "1", state: "done" },
   { d: "2", state: "done" },
-  { d: "3", state: "planned" },
-  { d: "4", state: "empty" },
-  { d: "5", state: "planned" },
-  { d: "6", state: "empty" },
-  { d: "7", state: "planned" },
-  { d: "8", state: "planned" },
-  { d: "9", state: "empty" },
-  { d: "10", state: "planned" },
-  { d: "11", state: "empty" },
-  { d: "12", state: "planned" },
-  { d: "13", state: "empty" },
-  { d: "14", state: "planned" },
-  { d: "15", state: "empty" },
-  { d: "16", state: "planned" },
-  { d: "17", state: "empty" },
-  { d: "18", state: "planned" },
+  { d: "3", state: "film" },
+  { d: "4", state: "post" },
+  { d: "5", state: "post" },
+  { d: "6", state: "post" },
+  { d: "7", state: "film" },
+  { d: "8", state: "post" },
+  { d: "9", state: "post" },
+  { d: "10", state: "post" },
+  { d: "11", state: "film" },
+  { d: "12", state: "post" },
+  { d: "13", state: "post" },
+  { d: "14", state: "post" },
+  { d: "15", state: "post" },
+  { d: "16", state: "post" },
+  { d: "17", state: "post" },
+  { d: "18", state: "empty" },
   { d: "19", state: "empty" },
-  { d: "20", state: "planned" },
+  { d: "20", state: "empty" },
   { d: "21", state: "empty" },
 ];
 
@@ -77,6 +117,8 @@ export default async function HomePage() {
   const session = await getServerSession(authOptions);
   if (session) redirect("/plan");
 
+  const resolvedClips = await resolveClipUrls(SHOWCASE_CLIPS);
+
   return (
     <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
       {/* ── HERO ── */}
@@ -109,35 +151,7 @@ export default async function HomePage() {
       </FadeInOnScroll>
 
       {/* ── VIDEO MARQUEE ── */}
-      <section
-        className="mt-[72px] flex items-end gap-[18px] overflow-x-auto md:overflow-x-hidden px-9 pb-0 touch-pan-x"
-        aria-label="Videos created by Nova"
-      >
-        {SHOWCASE_CLIPS.map((clip, i) => (
-          <div
-            key={clip.title}
-            role="img"
-            aria-label={`${clip.title} — edited by Nova`}
-            className={`relative aspect-[9/16] shrink-0 overflow-hidden rounded-[18px] border border-zinc-200 shadow-[0_4px_20px_rgba(0,0,0,0.08)] md:flex-1 ${
-              i % 2 === 0 ? "translate-y-7" : ""
-            }`}
-            style={{
-              background: `linear-gradient(165deg, ${clip.from}, ${clip.to})`,
-              minWidth: "clamp(100px, 28vw, 180px)",
-            }}
-          >
-            <span className="absolute left-[15px] right-[15px] top-[26px] font-display text-[15px] italic leading-snug text-white">
-              {clip.title}
-            </span>
-            <span className="absolute bottom-[14px] left-[15px] text-[9px] uppercase tracking-[0.14em] text-white/50">
-              edited by nova
-            </span>
-          </div>
-        ))}
-      </section>
-      <p className="mt-[52px] text-center text-[11.5px] uppercase tracking-[0.2em] text-[#a1a1aa]">
-        Created by Nova — real videos, edited by the agent
-      </p>
+      <ShowcaseMarquee clips={resolvedClips} />
 
       {/* ── PROCESS SECTION ── */}
       <div className="mt-[72px] border-y border-zinc-200 bg-white px-6 py-24 md:px-16">
@@ -149,11 +163,14 @@ export default async function HomePage() {
             <h2 className="font-display text-[36px] font-medium leading-snug">
               It learns you, plans your month,
               <br />
-              and tells you{" "}
-              <em className="italic text-lime-600">what to film.</em>
+              tells you{" "}
+              <em className="italic text-lime-600">what to film,</em>
+              <br />
+              then edits{" "}
+              <em className="italic text-lime-600">everything.</em>
             </h2>
             <p className="mt-3 text-sm text-[#71717a]">
-              The more Nova knows about you, the more specific your plan gets.
+              The more Nova learns about you, the more specific your plan gets.
             </p>
           </div>
         </FadeInOnScroll>
@@ -166,8 +183,8 @@ export default async function HomePage() {
                 01
               </span>
               <h3 className="font-display mb-3 mt-1 text-[28px] font-medium leading-snug">
-                It gets to{" "}
-                <em className="italic text-lime-600">know you.</em>
+                It{" "}
+                <em className="italic text-lime-600">learns about you.</em>
               </h3>
               <p className="text-[15px] leading-relaxed text-[#71717a]">
                 Eight short questions — your work, your people, the things you
@@ -178,7 +195,7 @@ export default async function HomePage() {
             <div className="md:flex-1">
               <div className="rounded-2xl border border-zinc-200 bg-[#fafaf8] p-5 shadow-sm">
                 <p className="mb-4 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]">
-                  It knows you
+                  It learns about you
                 </p>
                 {INTERVIEW.map(({ q, a }) => (
                   <div key={q} className="mb-4 last:mb-0">
@@ -211,7 +228,8 @@ export default async function HomePage() {
               </h3>
               <p className="text-[15px] leading-relaxed text-[#71717a]">
                 Thirty days of video ideas from your actual life — filmable
-                moments laid out on a calendar. Not recycled hooks.
+                moments laid out on a calendar. Not recycled hooks. Film once,
+                post all week. Every post is its own idea.
               </p>
             </div>
             <div className="md:flex-1">
@@ -219,31 +237,45 @@ export default async function HomePage() {
                 <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]">
                   Your June, planned
                 </p>
+                {/* Legend */}
+                <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                  <span className="flex items-center gap-1 text-[10px] text-[#a1a1aa]">
+                    <span className="inline-block h-2 w-2 rounded-[2px] border border-lime-200 bg-lime-50" />
+                    film day
+                  </span>
+                  <span className="flex items-center gap-1 text-[10px] text-[#a1a1aa]">
+                    <span className="inline-block h-2 w-2 rounded-[2px] bg-lime-600" />
+                    post day
+                  </span>
+                  <span className="flex items-center gap-1 text-[10px] text-[#a1a1aa]">
+                    <span className="inline-block h-2 w-2 rounded-[2px] bg-zinc-200" />
+                    done
+                  </span>
+                </div>
                 <div className="mb-2 grid grid-cols-7 gap-[5px]">
                   {CAL_CELLS.map(({ d, state }) => (
                     <div
                       key={d}
-                      className={`flex aspect-square flex-col items-center justify-center gap-[1px] rounded-[7px] text-[9px] ${
+                      className={`flex aspect-square flex-col items-center justify-center rounded-[7px] text-[9px] ${
                         state === "done"
                           ? "bg-zinc-200 text-[#3f3f46]"
-                          : state === "planned"
+                          : state === "film"
                             ? "border border-lime-200 bg-lime-50 text-lime-800"
-                            : "bg-zinc-100 text-[#a1a1aa]"
+                            : state === "post"
+                              ? "bg-lime-600 text-white"
+                              : "bg-zinc-100 text-[#a1a1aa]"
                       }`}
                     >
                       <span>{d}</span>
                       {state === "done" && (
                         <span className="text-[7px]">✓</span>
                       )}
-                      {state === "planned" && (
-                        <span className="text-[7px] opacity-70">film</span>
-                      )}
                     </div>
                   ))}
                 </div>
                 <div className="flex justify-between text-[10px] text-[#a1a1aa]">
-                  <span className="text-lime-600">12 shoot days planned</span>
-                  <span>18 remaining</span>
+                  <span className="text-lime-600">3 film days → 11 posts</span>
+                  <span>each post is its own video</span>
                 </div>
               </div>
             </div>
@@ -252,7 +284,7 @@ export default async function HomePage() {
 
         {/* Step 3 — text left, shot list right */}
         <FadeInOnScroll>
-          <div className="flex flex-col gap-10 pt-16 md:flex-row md:items-center md:gap-16">
+          <div className="flex flex-col gap-10 border-b border-zinc-100 pt-16 pb-16 md:flex-row md:items-center md:gap-16">
             <div className="md:flex-1">
               <span className="font-display text-[44px] italic text-zinc-200">
                 03
@@ -301,56 +333,158 @@ export default async function HomePage() {
           </div>
         </FadeInOnScroll>
 
-        {/* Outro */}
-        <div className="mt-16 text-center">
-          <p className="font-display text-[22px] font-medium text-[#0c0c0e]">
-            Then it edits{" "}
-            <em className="italic text-lime-600">everything</em> you filmed —
-            and learns what worked.
-          </p>
-          <p className="mt-2 text-[13px] text-[#71717a]">
-            Music, pacing, text overlays. Several finished versions per shoot —
-            pick one, post it.
-          </p>
-        </div>
-      </div>
-
-      {/* ── PROOF STRIP ── */}
-      <section className="border-y border-zinc-200 bg-white px-6 py-20 md:px-12">
-        <div className="flex flex-col items-center gap-10 text-center md:flex-row md:justify-center md:gap-[72px]">
-          {[
-            { big: "3 min", lbl: "to your first plan" },
-            { big: "30 days", lbl: "scripted at once" },
-            { big: "~10 min", lbl: "of filming per day" },
-          ].map(({ big, lbl }) => (
-            <div key={lbl}>
-              <p className="font-display text-[36px] font-medium text-[#0c0c0e]">
-                {big}
-              </p>
-              <p className="mt-1.5 text-[11px] uppercase tracking-[0.15em] text-[#a1a1aa]">
-                {lbl}
+        {/* Step 4 — outro */}
+        <FadeInOnScroll>
+          <div className="flex flex-col gap-10 pt-16 md:flex-row md:items-center md:gap-16">
+            {/* Left: step copy */}
+            <div className="md:flex-1">
+              <span className="font-display text-[44px] italic text-zinc-200">
+                04
+              </span>
+              <h3 className="font-display mb-3 mt-1 text-[28px] font-medium leading-snug">
+                Then it edits{" "}
+                <em className="italic text-lime-600">everything.</em>
+              </h3>
+              <p className="text-[15px] leading-relaxed text-[#71717a]">
+                Music, pacing, text overlays — several finished versions per
+                shoot, each cut a different way. Pick the one that feels like
+                you, post it, and your agent learns what worked.
               </p>
             </div>
-          ))}
-        </div>
-      </section>
 
-      {/* ── CLOSING CTA ── */}
-      <section className="px-6 py-[110px] text-center md:px-12">
-        <h2 className="font-display mb-3 text-[44px] font-medium leading-snug">
-          Stop guessing{" "}
-          <em className="italic text-lime-600">what to post.</em>
-        </h2>
-        <p className="mb-7 text-[15px] text-[#71717a]">
-          Your agent already knows.
-        </p>
-        <Link
-          href="/plan"
-          className="inline-block rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
-        >
-          Build my plan
-        </Link>
-      </section>
+            {/* Right: fanned phone mockups — lg+ only; flat row below lg */}
+            <div className="md:flex-1">
+              {/* Desktop fan (lg+) */}
+              <div className="hidden lg:block">
+                <div className="relative mx-auto flex h-[300px] w-[440px] items-center justify-center">
+                  {/* Left tile — song lyrics */}
+                  <div
+                    className="absolute h-[260px] w-[118px] overflow-hidden rounded-[14px] shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
+                    style={{
+                      transform: "rotate(-7deg) translateX(-130px)",
+                      background: "linear-gradient(165deg,#1a1a22,#0d0d12)",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="flex h-full flex-col items-center justify-center gap-1 px-3">
+                      <p className="font-display text-center text-[11px] italic leading-snug text-white/40">
+                        sunday morning
+                      </p>
+                      <p className="font-display text-center text-[11px] italic leading-snug text-lime-400">
+                        i&apos;m still here
+                      </p>
+                      <p className="font-display text-center text-[11px] italic leading-snug text-white/40">
+                        waiting on you
+                      </p>
+                    </div>
+                  </div>
+                  {/* Center tile — selected (lime outline) */}
+                  <div
+                    className="relative z-10 h-[260px] w-[118px] overflow-hidden rounded-[14px] shadow-[0_12px_30px_rgba(0,0,0,0.18)] outline outline-2 outline-offset-2 outline-lime-500"
+                    style={{
+                      background: "linear-gradient(165deg,#1a2215,#0a0f09)",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="flex h-full flex-col items-center justify-center px-3 text-center">
+                      <p className="font-display text-[13px] font-medium leading-snug text-white">
+                        POV: your agent edited all of this
+                      </p>
+                    </div>
+                  </div>
+                  {/* Right tile — caption */}
+                  <div
+                    className="absolute h-[260px] w-[118px] overflow-hidden rounded-[14px] shadow-[0_12px_30px_rgba(0,0,0,0.18)]"
+                    style={{
+                      transform: "rotate(7deg) translateX(130px)",
+                      background: "linear-gradient(165deg,#221a1a,#120d0d)",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="flex h-full flex-col items-end justify-end px-3 pb-4">
+                      <p className="font-display text-right text-[10px] italic leading-relaxed text-white/60">
+                        tuesday, 7:42am — the shop opens
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {/* Variant labels + pill */}
+                <div className="mt-4 text-center">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-[#a1a1aa]">
+                    song lyrics · song text · original text
+                  </p>
+                  <span className="mt-3 inline-block rounded-full border border-lime-200 bg-lime-50 px-4 py-1.5 text-[12px] font-medium text-lime-800">
+                    post this one
+                  </span>
+                </div>
+              </div>
+
+              {/* Mobile flat row (below lg) */}
+              <div className="lg:hidden">
+                <div className="flex items-end gap-3">
+                  {/* Left tile */}
+                  <div
+                    className="h-[200px] w-[80px] flex-shrink-0 overflow-hidden rounded-[10px] shadow-md"
+                    style={{
+                      background: "linear-gradient(165deg,#1a1a22,#0d0d12)",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="flex h-full flex-col items-center justify-center gap-0.5 px-2">
+                      <p className="font-display text-center text-[9px] italic leading-snug text-white/40">
+                        sunday morning
+                      </p>
+                      <p className="font-display text-center text-[9px] italic leading-snug text-lime-400">
+                        i&apos;m still here
+                      </p>
+                      <p className="font-display text-center text-[9px] italic leading-snug text-white/40">
+                        waiting on you
+                      </p>
+                    </div>
+                  </div>
+                  {/* Center tile — selected */}
+                  <div
+                    className="h-[220px] w-[90px] flex-shrink-0 overflow-hidden rounded-[10px] shadow-md outline outline-2 outline-offset-2 outline-lime-500"
+                    style={{
+                      background: "linear-gradient(165deg,#1a2215,#0a0f09)",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="flex h-full flex-col items-center justify-center px-2 text-center">
+                      <p className="font-display text-[10px] font-medium leading-snug text-white">
+                        POV: your agent edited all of this
+                      </p>
+                    </div>
+                  </div>
+                  {/* Right tile */}
+                  <div
+                    className="h-[200px] w-[80px] flex-shrink-0 overflow-hidden rounded-[10px] shadow-md"
+                    style={{
+                      background: "linear-gradient(165deg,#221a1a,#120d0d)",
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="flex h-full flex-col items-end justify-end px-2 pb-3">
+                      <p className="font-display text-right text-[9px] italic leading-relaxed text-white/60">
+                        tuesday, 7:42am — the shop opens
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                {/* Variant labels + pill */}
+                <div className="mt-3">
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-[#a1a1aa]">
+                    song lyrics · song text · original text
+                  </p>
+                  <span className="mt-2 inline-block rounded-full border border-lime-200 bg-lime-50 px-4 py-1.5 text-[12px] font-medium text-lime-800">
+                    post this one
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </FadeInOnScroll>
+      </div>
 
       {/* ── FOOTER ── */}
       <footer className="flex items-center justify-between border-t border-zinc-200 bg-white px-6 py-8 text-[13px] text-[#a1a1aa] md:px-12">

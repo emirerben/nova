@@ -23,6 +23,14 @@ jest.mock("@/components/FadeInOnScroll", () => ({
   default: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
+// ShowcaseMarquee also uses IntersectionObserver + HTMLMediaElement.play(),
+// neither of which exists in jsdom. Stub it to render a labelled region so
+// the page still mounts cleanly.
+jest.mock("@/components/ShowcaseMarquee", () => ({
+  __esModule: true,
+  default: () => <section aria-label="Videos created by Nova" />,
+}));
+
 const mockGetServerSession = getServerSession as jest.MockedFunction<
   typeof getServerSession
 >;

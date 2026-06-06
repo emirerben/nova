@@ -653,3 +653,12 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 
 ### Fix `test_active_font_renders_with_ass` smoke test on FFmpeg 8.1.1
 **Completed:** v0.4.75.3 (2026-06-04) — detected libass-capable ffmpeg-full via `_find_libass_ffmpeg()`; escaped paths with `escape_ffmpeg_filter_path()` matching `single_pass.py`. All 33 font parametrize cases pass.
+
+## Landing page design system
+
+### Create DESIGN.md via /design-consultation
+**What:** Codify the Nova landing/product design system — cream `#fafaf8` background, lime-600/lime-50/lime-200 accent, olive/ink `#0c0c0e` text, Playfair Display for editorial serifs (`font-display`), `rounded-2xl border border-zinc-200 shadow-sm` card tokens, anti-slop rules (no candy gradients, no rainbow palettes, editorial restraint). Run `/design-consultation` to produce `DESIGN.md` with the full token set, usage rules, and calibration examples.
+**Why:** Three consecutive design review sessions have reverse-engineered the same token set from `page.tsx` and memory entries. A DESIGN.md (or equivalent) means future `/plan-design-review` runs calibrate against a stated system, not guesswork.
+**How:** Invoke `/design-consultation` with the current landing + product pages as input. Persist the result as `DESIGN.md` (or `docs/DESIGN.md`) at the repo root. Reference from CLAUDE.md.
+**Effort:** XS (CC: ~15min)
+**Priority:** P3
