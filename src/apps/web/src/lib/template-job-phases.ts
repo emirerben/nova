@@ -1,8 +1,11 @@
 /**
- * Canonical pipeline phase names (mirrored from app/services/job_phases.py)
- * and their user-facing copy. Single source of truth — the result page reads
- * from here, and any new phase added on the backend just needs a row here to
- * get a friendly label.
+ * SOURCE OF TRUTH for template pipeline phases.
+ * Mirrored from app/services/job_phases.py — the result page reads from here,
+ * and any new phase added on the backend just needs a row here for a friendly label.
+ *
+ * Re-exported (read-only shim) by lib/job-phases.ts for the unified progress system.
+ * DO NOT change existing exports — the template screen imports them directly and
+ * the regression invariant requires them to stay byte-identical.
  */
 
 export type JobPhase =
