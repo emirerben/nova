@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.81.0] - 2026-06-06
+
+### Changed
+- **Landing page: 6 design fixes (header, marquee, outro, calendar, copy, video infra).** Cream `bg-[#fafaf8]` on the home header (black body was bleeding through the transparent `h-14` band). Marquee cards use `h-[240px]`/`md:flex-1` sizing — no vertical bleed and no horizontal scrollbar at any breakpoint including the `md` floor (768px). Blank text-only outro replaced with a full "04" process step: copy left, fanned 3-phone composition right (`lg+`), flat row below `lg`; step-03 gains a `border-b`. Calendar extends `CalCell` state to `"film" | "post"` — outlined lime film days, solid lime-600 post days, legend with `flex-wrap`, footer "3 film days → 11 posts". Copy: "learns about you" ×3; H2 gains a fourth beat ("then edits everything"). Video infra: `ShowcaseMarquee` client component (IntersectionObserver in-view autoplay, TemplateTile `play().catch()` pattern, gradient fallback); `GET /landing-clips` FastAPI route server-signs `landing/*` GCS keys on read (corrects the D2 hardcoded-public-URL plan, which was infeasible on this UBLA bucket); `page.tsx` resolves signed URLs at server-render time. Videos activate once clips are uploaded to `gs://$STORAGE_BUCKET/landing/` — see PR for the `gsutil cp` step.
+
 ## [0.4.80.0] - 2026-06-06
 
 ### Changed
