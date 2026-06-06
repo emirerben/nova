@@ -205,7 +205,7 @@ export default function PlanWizardPage() {
   if (loading || step === null) {
     return (
       <PlanShell>
-        <p className="py-24 text-center text-zinc-400">Loading…</p>
+        <p className="py-24 text-center text-[#71717a]">Loading…</p>
       </PlanShell>
     );
   }
@@ -220,7 +220,7 @@ export default function PlanWizardPage() {
       <Stepper current={step} reached={reached} onNavigate={setStep} />
 
       {error && (
-        <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
+        <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
           {error}
         </div>
       )}
@@ -291,11 +291,11 @@ function PersonaStepView({
   if (!persona) {
     return (
       <div className="animate-fade-up py-20 text-center">
-        <h1 className="mb-3 font-display text-3xl text-white">No persona yet</h1>
-        <p className="mb-8 text-zinc-400">Answer a few questions to get started.</p>
+        <h1 className="mb-3 font-display text-3xl text-[#0c0c0e]">No persona yet</h1>
+        <p className="mb-8 text-[#71717a]">Answer a few questions to get started.</p>
         <button
           onClick={onStartOver}
-          className="rounded-full bg-white px-6 py-3 font-medium text-black hover:bg-zinc-200"
+          className="inline-flex items-center justify-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
         >
           Start
         </button>
@@ -319,17 +319,17 @@ function PersonaStepView({
   if (persona.persona_status === "failed" && !persona.persona) {
     return (
       <div className="animate-fade-up py-16">
-        <h1 className="mb-3 font-display text-3xl text-white">
+        <h1 className="mb-3 font-display text-3xl text-[#0c0c0e]">
           Generation didn&apos;t finish
         </h1>
-        <p className="mb-2 text-zinc-400">
+        <p className="mb-2 text-[#71717a]">
           {persona.error_detail ?? "The persona generator hit an error."}
         </p>
-        <p className="mb-4 text-zinc-400">
+        <p className="mb-4 text-[#71717a]">
           Your answers are saved.{" "}
           <button
             onClick={onStartOver}
-            className="text-amber-300 underline transition-colors hover:text-amber-200"
+            className="text-lime-700 underline transition-colors hover:text-lime-600"
           >
             Edit your answers and try again
           </button>
@@ -386,13 +386,13 @@ function PlanStepView({
   if (plan === null || plan.plan_status === "failed") {
     return (
       <div className="animate-fade-up py-2">
-        <h1 className="mb-2 font-display text-3xl text-white">Plan your next 30 days</h1>
-        <p className="mb-6 text-zinc-400">
+        <h1 className="mb-2 font-display text-3xl text-[#0c0c0e]">Plan your next 30 days</h1>
+        <p className="mb-6 text-[#71717a]">
           Anything coming up we should lean into? Trips, launches, exams, events — optional,
           but it makes the plan feel like yours.
         </p>
         {plan?.plan_status === "failed" && (
-          <div className="mb-6 rounded border border-amber-700 bg-amber-950/40 px-4 py-3 text-amber-200">
+          <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
             Last generation didn&apos;t finish. Try again.
           </div>
         )}
@@ -403,20 +403,20 @@ function PlanStepView({
             onChange={(e) => setEvents(e.target.value)}
             rows={4}
             placeholder="e.g. moving apartments in week 2, gym comp at the end of the month"
-            className="w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
+            className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-4 py-3 text-[#0c0c0e] placeholder-zinc-400 transition-colors focus:border-lime-600/60 focus:outline-none"
           />
         </label>
         <div className="mt-4 flex items-center gap-4">
           <button
             onClick={() => onCreatePlan(events)}
             disabled={busy}
-            className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="inline-flex items-center justify-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:opacity-40"
           >
             {busy ? "Starting…" : "Generate my 30-day plan"}
           </button>
           <button
             onClick={onReviewPersona}
-            className="text-sm text-zinc-400 underline transition-colors hover:text-white"
+            className="text-sm text-[#71717a] underline underline-offset-4 transition-colors hover:text-[#0c0c0e]"
           >
             Review persona first
           </button>

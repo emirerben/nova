@@ -12,6 +12,7 @@ const STATUS_META: Record<PlanItemStatus, { glyph: string; label: string; cls: s
   generating: { glyph: "◐", label: "generating", cls: "border-amber-700 text-amber-300" },
   ready: { glyph: "●", label: "ready", cls: "border-emerald-700 text-emerald-300" },
   failed: { glyph: "✕", label: "failed", cls: "border-red-700 text-red-300" },
+  rerolling: { glyph: "↻", label: "rerolling", cls: "border-amber-700 text-amber-300" },
 };
 
 export function ItemStatusBadge({ status }: { status: PlanItemStatus }) {

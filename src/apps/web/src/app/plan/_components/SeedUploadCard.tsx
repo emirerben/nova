@@ -123,7 +123,7 @@ export default function SeedUploadCard({
     if (activationStartedAt) {
       return (
         <section
-          className="mb-8 rounded-xl border border-amber-700/50 bg-amber-950/20 p-5"
+          className="mb-8 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm"
           role="status"
           aria-live="polite"
         >
@@ -145,12 +145,12 @@ export default function SeedUploadCard({
     // Fallback: old API or no started_at yet
     return (
       <section
-        className="mb-8 rounded-xl border border-amber-700/50 bg-amber-950/20 p-5"
+        className="mb-8 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm"
         role="status"
         aria-live="polite"
       >
-        <h2 className="mb-1 font-display text-lg text-amber-200">Finding your best clip…</h2>
-        <p className="text-sm text-amber-200/70">
+        <h2 className="mb-1 font-display text-lg text-[#0c0c0e]">Finding your best clip…</h2>
+        <p className="text-sm text-[#71717a]">
           Matching your footage to the days it fits best and rendering a first video. This takes a
           couple of minutes — the matched day(s) below will start generating.
         </p>
@@ -160,9 +160,9 @@ export default function SeedUploadCard({
 
   if (done === "activated") {
     return (
-      <section className="mb-8 rounded-xl border border-emerald-800/50 bg-emerald-950/20 p-5">
-        <h2 className="mb-1 font-display text-lg text-emerald-200">Your first video is on the way</h2>
-        <p className="text-sm text-emerald-200/70">
+      <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-1 font-display text-lg text-[#0c0c0e]">Your first video is on the way</h2>
+        <p className="text-sm text-[#71717a]">
           We matched your clips to the best-fit day(s) below — open a generating card to watch it
           render. Upload more clips any time to activate other days.
         </p>
@@ -171,21 +171,21 @@ export default function SeedUploadCard({
   }
 
   return (
-    <section className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-      <h2 className="mb-1 font-display text-lg text-white">Skip the homework — start with footage you already have</h2>
-      <p className="mb-4 text-sm text-zinc-400">
+    <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+      <h2 className="mb-1 font-display text-lg text-[#0c0c0e]">Skip the homework — start with footage you already have</h2>
+      <p className="mb-4 text-sm text-[#71717a]">
         Upload a batch of recent clips and we&apos;ll find the day they fit best and render a first
         video for you — no need to film against the plan yet.
         {seededCount > 0 ? ` ${seededCount} clip${seededCount === 1 ? "" : "s"} ready.` : ""}
       </p>
       {done === "activated_empty" && (
-        <div className="mb-4 rounded border border-zinc-700 bg-zinc-800/60 px-4 py-3 text-sm text-zinc-300">
+        <div className="mb-4 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-sm text-[#3f3f46]">
           We couldn&apos;t confidently match those clips to a day — no problem. Pick a day below and
           film for it, or try a different batch.
         </div>
       )}
       {done === "failed" && (
-        <div className="mb-4 rounded border border-amber-700 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+        <div className="mb-4 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-sm text-[#3f3f46]">
           Something went wrong matching your clips. Try uploading again.
         </div>
       )}
@@ -197,19 +197,19 @@ export default function SeedUploadCard({
           multiple
           disabled={uploading}
           onChange={(e) => void handleFiles(e.target.files)}
-          className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
+          className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
         />
       </label>
-      {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
+      {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
       <button
         onClick={() => void handleActivate()}
         disabled={uploading || seededCount === 0}
-        className="mt-4 rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+        className="mt-4 inline-flex items-center justify-center rounded-full bg-[#0c0c0e] px-6 py-3 font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
       >
         Find my best clips
       </button>
       {seededCount === 0 && !uploading && (
-        <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>
+        <p className="mt-2 text-sm text-[#71717a]">Upload at least one clip first.</p>
       )}
     </section>
   );

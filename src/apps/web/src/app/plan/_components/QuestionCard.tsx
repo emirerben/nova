@@ -42,15 +42,15 @@ export default function QuestionCard({
 
   return (
     <div key={index} className="animate-fade-up py-4">
-      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-amber-300">
+      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-lime-700">
         Question {index + 1} of {total}
-        {optional && <span className="ml-2 text-zinc-500">· optional</span>}
+        {optional && <span className="ml-2 text-[#a1a1aa]">· optional</span>}
       </p>
-      <h1 id={promptId} className="font-display text-3xl leading-snug text-white">
+      <h1 id={promptId} className="font-display text-3xl leading-snug text-[#0c0c0e]">
         {prompt}
       </h1>
       {hint && (
-        <p id={hintId} className="mt-2 text-zinc-400">
+        <p id={hintId} className="mt-2 text-[#71717a]">
           {hint}
         </p>
       )}
@@ -68,18 +68,18 @@ export default function QuestionCard({
         rows={2}
         placeholder="Type your answer…"
         aria-labelledby={hintId ? `${promptId} ${hintId}` : promptId}
-        className="mt-6 w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-lg text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
+        className="mt-6 w-full resize-y rounded-lg border border-zinc-200 bg-white px-4 py-3 text-lg text-[#0c0c0e] placeholder-zinc-400 transition-colors focus:border-lime-600/60 focus:outline-none"
       />
 
       {examples.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
-          <span className="self-center text-xs text-zinc-500">e.g.</span>
+          <span className="self-center text-xs text-[#a1a1aa]">e.g.</span>
           {examples.map((c) => (
             <button
               key={c}
               type="button"
               onClick={() => onChipPick(c)}
-              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-800 bg-zinc-900/60 px-4 py-1 text-xs text-zinc-300 transition-colors hover:border-amber-400/50 hover:text-white"
+              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 bg-white px-4 py-1 text-xs text-[#3f3f46] transition-colors hover:border-lime-600/50 hover:text-[#0c0c0e]"
             >
               {c}
             </button>
@@ -92,7 +92,7 @@ export default function QuestionCard({
           type="button"
           onClick={onBack}
           disabled={index === 0 || submitting}
-          className="inline-flex min-h-[44px] items-center text-sm text-zinc-500 transition-colors hover:text-white disabled:invisible"
+          className="inline-flex min-h-[44px] items-center text-sm text-[#71717a] transition-colors hover:text-[#0c0c0e] disabled:invisible"
         >
           ← Back
         </button>
@@ -103,7 +103,7 @@ export default function QuestionCard({
               key={i}
               className={cn(
                 "h-1.5 w-1.5 rounded-full transition-colors",
-                i === index ? "bg-amber-400" : i < index ? "bg-zinc-500" : "bg-zinc-800",
+                i === index ? "bg-lime-600" : i < index ? "bg-zinc-400" : "bg-zinc-200",
               )}
             />
           ))}
@@ -113,7 +113,7 @@ export default function QuestionCard({
           type="button"
           onClick={onNext}
           disabled={submitting}
-          className="inline-flex min-h-[44px] items-center rounded-full bg-white px-5 py-2 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {submitting ? "Building…" : isLast ? submitLabel : optional && !value.trim() ? "Skip →" : "Next →"}
         </button>
