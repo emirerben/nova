@@ -13,6 +13,8 @@ interface EtaBarProps {
   elapsedMs: number;
   /** ETA string from etaLadder, or null when unavailable. */
   etaText: string | null;
+  /** "light" renders lime fill on zinc-200 track; "dark" (default) renders amber on zinc-800. */
+  tone?: "dark" | "light";
 }
 
 /**
@@ -22,11 +24,18 @@ interface EtaBarProps {
  * Accessibility: role="progressbar" with aria-valuenow, aria-valuemin, aria-valuemax.
  * aria-valuenow is derived from barPosition — the parent controls when to update it.
  */
-export function EtaBar({ barPosition, elapsedMs, etaText }: EtaBarProps) {
+export function EtaBar({ barPosition, elapsedMs, etaText, tone = "dark" }: EtaBarProps) {
   const pct = Math.round(barPosition * 100);
   const fillPct = `${(barPosition * 100).toFixed(2)}%`;
 
   const elapsedLabel = formatElapsedDisplay(elapsedMs);
+
+  const trackClass = tone === "light" ? "bg-zinc-200" : "bg-zinc-800";
+  const fillClass = tone === "light" ? "bg-lime-600" : "bg-amber-400";
+  const shimmerClass = tone === "light"
+    ? "from-transparent via-lime-300/60 to-transparent"
+    : "from-transparent via-amber-200/60 to-transparent";
+  const labelClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
 
   return (
     <div className="space-y-1.5">
@@ -37,11 +46,11 @@ export function EtaBar({ barPosition, elapsedMs, etaText }: EtaBarProps) {
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label="Render progress"
-        className="relative h-1 w-full overflow-hidden rounded-full bg-zinc-800"
+        className={`relative h-1 w-full overflow-hidden rounded-full ${trackClass}`}
       >
         {/* Filled portion */}
         <div
-          className="relative h-full rounded-full bg-amber-400 motion-safe:transition-[width] motion-safe:ease-linear"
+          className={`relative h-full rounded-full ${fillClass} motion-safe:transition-[width] motion-safe:ease-linear`}
           style={{
             width: fillPct,
             transitionDuration: `${BAR_TRANSITION_MS}ms`,
@@ -49,14 +58,14 @@ export function EtaBar({ barPosition, elapsedMs, etaText }: EtaBarProps) {
         >
           {/* Shimmer tip — sweeps right at the leading edge */}
           <div
-            className="absolute inset-y-0 right-0 w-16 bg-[length:200%_100%] bg-gradient-to-r from-transparent via-amber-200/60 to-transparent motion-safe:animate-shimmer"
+            className={`absolute inset-y-0 right-0 w-16 bg-[length:200%_100%] bg-gradient-to-r ${shimmerClass} motion-safe:animate-shimmer`}
             aria-hidden="true"
           />
         </div>
       </div>
 
       {/* Elapsed + ETA labels */}
-      <div className="flex items-center justify-between text-xs text-zinc-500">
+      <div className={`flex items-center justify-between text-xs ${labelClass}`}>
         <span>{elapsedLabel}</span>
         {etaText && <span>{etaText}</span>}
       </div>

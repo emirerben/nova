@@ -11,11 +11,11 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 | Surface | Canvas | Accent | Type | Mood |
 |---|---|---|---|---|
 | Landing (`/`) | cream `#fafaf8` | lime-700 family | Playfair Display headings | light editorial |
-| Plan (light product) (`/plan`, excl. `/plan/items/`) | cream `#fafaf8` / ink / lime | lime-700 | Playfair Display headings | light editorial |
-| Dark product (`/generative`, `/template-jobs`, `/library`, `/template/[id]`, `/plan/items/`) | `bg-black` | amber-400/300 | Playfair Display headings | dark theater |
+| Light product (`/plan`, `/plan/items/`, `/library`, `/generative`) | cream `#fafaf8` / ink / lime | lime-700 | Playfair Display headings | light editorial |
+| Dark render system (`/template/[id]`, `/template-jobs`) | `bg-black` | amber-400/300 | Playfair Display headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** Light editorial = landing + /plan flow. Dark theater = /library, /generative, /plan/items/[id], admin. Intentional, not drift.
+**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = template flow (`/template/*`, `/template-jobs/*`) + `/admin/*` only. ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for template flow + admin). Intentional, not drift.
 
 ---
 
@@ -41,15 +41,15 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
   **Single-primary-CTA rule on landing:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
-- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `plan/_components/ui/`.
+- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
 - **Editorial interview layout:** Playfair question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
 - **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
 
 ---
 
-## §3 Dark product system (render + /library + /generative + /plan/items/[id])
+## §3 Dark render system (template flow + admin)
 
-Token source: `src/apps/web/src/app/generative/`, `template-jobs/`, `library/`, `plan/items/` on origin/main.
+Token source: `src/apps/web/src/app/template/`, `template-jobs/` on origin/main. Admin is a separate variant (§4).
 
 - **Canvas:** `bg-black text-white`; `min-h-[calc(100vh-3.5rem)]` under the h-14 header.
 - **Zinc scale roles:**
@@ -142,6 +142,10 @@ Assignments: generative / plan-item / template = Theater; activation = Theater-i
 ### Surface ownership (D15)
 Theater components draw **no border, no background, no outer padding** — the host owns the surface. No card-in-card, ever.
 
+### Tone variant (D20)
+
+Theater components accept `tone?: "dark" | "light"` (default `"dark"`). Light surfaces (`/plan/items`, `/library`, `/generative`) pass `tone="light"` to `ProgressTheater`; the template render flow and admin pass nothing → default dark is preserved. `UploadBar` is dark-only (only consumers are template flow; a tone prop would be dead code). The D15 host-owns-surface rule is unchanged across both tones — the Theater never draws its own background regardless of tone.
+
 ### A11y contract (D17)
 - Status band: `role="status" aria-live="polite"`, each stage announced once.
 - Progress bar: `aria-valuenow` updates only on real backend events.
@@ -185,7 +189,7 @@ Celebrate then recede.
 
 ## §9 Anti-slop rules (Nova-specific)
 
-- **One accent per surface:** lime on landing, amber in product — never mixed, never a third.
+- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template/*`, `/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
 - No candy gradients, no rainbow palettes, no purple/violet defaults.
 - No 3-column icon-in-circle feature grids; no centered-everything; no decorative blobs/wavy dividers; no emoji as design elements.
 - **Serif display (Playfair) is the brand voice;** system-ui display type is the "gave up" signal.
@@ -208,9 +212,9 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | 4 | Landing raw-hex grays (= zinc-500/400) | `--ink*` CSS vars are the landing-identity tokens | Equivalence noted for greps |
 | 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
 | 6 | Eyebrow `letter-spacing` varies: `tracking-wide` (0.025em), 0.12, 0.14, 0.18, 0.22, 0.24em | `tracking-[0.18em]` landing section cards (dominant); `tracking-[0.24em]` hero eyebrow; `tracking-wide` product micro-labels (dominant in `/plan`) | Normalize opportunistically |
-| 7 | `/generative` submit CTA deviates from amber-CTA rule: `rounded bg-white text-black` | Amber `rounded-full bg-amber-400` is the canonical product CTA — generative file-upload flow uses white; ledgered as intentional upload-flow exception until revisited | Exception documented — do not copy the white CTA pattern outside upload flows |
+| 7 | `/generative` submit CTA deviates from amber-CTA rule: `rounded bg-white text-black` | Resolved v0.4.87.0 — `/generative` now uses `InkButton` (`bg-[#0c0c0e] text-white rounded-full`), same as all other light surfaces. Amber CTA exception closed. | DONE |
 | 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:bg-zinc-800 disabled:text-zinc-500` (`PlanCalendar`), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
-| 9 | Light editorial system covers landing + /plan flow. `/plan/items/[id]`, `/library`, `/generative` remain dark theater. | Intentional split — D21 follow-up. | film/post cell semantics: "post" = item status ready (awaiting publish); "film" = not yet made. Not a planner-emitted schedule field. |
+| 9 | Light editorial system covers landing + /plan flow. `/plan/items/[id]`, `/library`, `/generative` remain dark theater. | Resolved v0.4.87.0 — D20 + D21 landed. All user-facing surfaces are now light editorial. §1 standing rule updated. | DONE |
 | 10 | Workspace route layout | `/plan` = mode router (setup flow for new users; workspace for returning users); `/plan/setup` = canonical onboarding URL (redirects to `/plan`); `/plan/persona` = real persona read+edit page | PR3 ships the canonical routes and back-compat redirects. |
 
 ---

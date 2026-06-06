@@ -19,6 +19,8 @@ interface VariantRenderCardProps {
   isNewlyReady: boolean;
   /** Called when the user taps "Try again" on a failed variant. */
   onRetry?: () => void;
+  /** "light" renders on cream canvas; "dark" (default) renders dark theatre palette. */
+  tone?: "dark" | "light";
 }
 
 /**
@@ -28,11 +30,12 @@ interface VariantRenderCardProps {
  * - pending:   shimmer sweep, "Getting ready…"
  * - rendering: shimmer sweep + live elapsed clock from render_started_at
  * - ready:     9:16 video player + Download; arrive animation on isNewlyReady
- * - failed:    dashed zinc border, human error copy + "Try again"
+ * - failed:    dashed border, human error copy + "Try again"
  *
+ * D20: tone="light" swaps to cream-canvas palette.
  * No red (brand guideline). No raw error text shown.
  */
-export function VariantRenderCard({ variant, isNewlyReady, onRetry }: VariantRenderCardProps) {
+export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark" }: VariantRenderCardProps) {
   const { variant_id, render_status, render_started_at, output_url, error_class } = variant;
   const displayName = variantDisplayName(variant_id);
 
@@ -46,6 +49,8 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry }: VariantRen
     }
   }, [isNewlyReady]);
 
+  const labelClass = tone === "light" ? "text-[#3f3f46]" : "text-zinc-300";
+
   return (
     <div
       role="group"
@@ -53,7 +58,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry }: VariantRen
       className="flex flex-col gap-2"
     >
       {/* Variant label */}
-      <p className="text-sm font-medium text-zinc-300">{displayName}</p>
+      <p className={`text-sm font-medium ${labelClass}`}>{displayName}</p>
 
       {/* Card body */}
       {render_status === "ready" ? (
@@ -61,13 +66,14 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry }: VariantRen
           outputUrl={output_url ?? null}
           displayName={displayName}
           isNew={arrivedOnce}
+          tone={tone}
         />
       ) : render_status === "failed" ? (
-        <FailedCard errorClass={error_class ?? null} onRetry={onRetry} />
+        <FailedCard errorClass={error_class ?? null} onRetry={onRetry} tone={tone} />
       ) : render_status === "rendering" ? (
-        <RenderingCard startedAt={render_started_at ?? null} />
+        <RenderingCard startedAt={render_started_at ?? null} tone={tone} />
       ) : (
-        <PendingCard />
+        <PendingCard tone={tone} />
       )}
     </div>
   );
@@ -77,18 +83,20 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry }: VariantRen
 // Sub-cards
 // ---------------------------------------------------------------------------
 
-function PendingCard() {
+function PendingCard({ tone }: { tone: "dark" | "light" }) {
+  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
+  const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
   return (
-    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-zinc-900">
-      <ShimmerSweep />
+    <div className={`relative aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`}>
+      <ShimmerSweep tone={tone} />
       <div className="absolute inset-0 flex items-center justify-center">
-        <p className="text-sm text-zinc-500">Getting ready…</p>
+        <p className={`text-sm ${textClass}`}>Getting ready…</p>
       </div>
     </div>
   );
 }
 
-function RenderingCard({ startedAt }: { startedAt: string | null }) {
+function RenderingCard({ startedAt, tone }: { startedAt: string | null; tone: "dark" | "light" }) {
   const [elapsed, setElapsed] = useState(() => {
     if (!startedAt) return 0;
     return Date.now() - new Date(startedAt).getTime();
@@ -102,11 +110,13 @@ function RenderingCard({ startedAt }: { startedAt: string | null }) {
     return () => clearInterval(id);
   }, [startedAt]);
 
+  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
+  const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-400";
   return (
-    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-zinc-900">
-      <ShimmerSweep />
+    <div className={`relative aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`}>
+      <ShimmerSweep tone={tone} />
       <div className="absolute inset-0 flex items-center justify-center">
-        <p className="text-sm text-zinc-400">
+        <p className={`text-sm ${textClass}`}>
           Rendering · {formatElapsed(elapsed)}
         </p>
       </div>
@@ -118,18 +128,26 @@ function ReadyCard({
   outputUrl,
   displayName,
   isNew,
+  tone,
 }: {
   outputUrl: string | null;
   displayName: string;
   isNew: boolean;
+  tone: "dark" | "light";
 }) {
+  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
+  const ringClass = tone === "light" ? "ring-lime-600/60" : "ring-amber-400/60";
+  const emptyTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
+  const btnClass = tone === "light"
+    ? "border-zinc-200 text-[#3f3f46] hover:bg-zinc-100"
+    : "border-zinc-700 text-zinc-300 hover:bg-zinc-800";
   return (
     <div
       className={[
-        "aspect-[9/16] w-full overflow-hidden rounded-lg bg-zinc-900",
+        `aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`,
         "motion-safe:transition-[transform,box-shadow]",
         isNew
-          ? "motion-safe:animate-fade-up ring-2 ring-amber-400/60"
+          ? `motion-safe:animate-fade-up ring-2 ${ringClass}`
           : "",
       ]
         .filter(Boolean)
@@ -147,7 +165,7 @@ function ReadyCard({
           />
         </div>
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+        <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
           Video ready
         </div>
       )}
@@ -157,11 +175,11 @@ function ReadyCard({
           <a
             href={outputUrl}
             download
-            className="flex-1 rounded border border-zinc-700 py-1.5 text-center text-xs text-zinc-300 hover:bg-zinc-800"
+            className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
           >
             Download
           </a>
-          <ShareButton url={outputUrl} label={displayName} />
+          <ShareButton url={outputUrl} label={displayName} tone={tone} />
         </div>
       )}
     </div>
@@ -171,19 +189,28 @@ function ReadyCard({
 function FailedCard({
   errorClass,
   onRetry,
+  tone,
 }: {
   errorClass: string | null;
   onRetry?: () => void;
+  tone: "dark" | "light";
 }) {
   const copy = errorCopy(errorClass);
+  const cardClass = tone === "light"
+    ? "border-zinc-300 bg-zinc-50"
+    : "border-zinc-700 bg-zinc-900/40";
+  const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-400";
+  const btnClass = tone === "light"
+    ? "border-zinc-200 text-[#3f3f46] hover:bg-zinc-100"
+    : "border-zinc-600 text-zinc-300 hover:bg-zinc-800";
   return (
-    <div className="aspect-[9/16] w-full rounded-lg border border-dashed border-zinc-700 bg-zinc-900/40 p-4">
+    <div className={`aspect-[9/16] w-full rounded-lg border border-dashed p-4 ${cardClass}`}>
       <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-        <p className="text-sm text-zinc-400">Couldn&apos;t finish this one — {copy}</p>
+        <p className={`text-sm ${textClass}`}>Couldn&apos;t finish this one — {copy}</p>
         {onRetry && (
           <button
             onClick={onRetry}
-            className="rounded border border-zinc-600 px-3 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+            className={`rounded border px-3 py-1.5 text-xs ${btnClass}`}
           >
             Try again
           </button>
@@ -197,10 +224,13 @@ function FailedCard({
 // Shimmer utility
 // ---------------------------------------------------------------------------
 
-function ShimmerSweep() {
+function ShimmerSweep({ tone }: { tone: "dark" | "light" }) {
+  const gradClass = tone === "light"
+    ? "from-zinc-100 via-zinc-200 to-zinc-100"
+    : "from-zinc-900 via-zinc-800 to-zinc-900";
   return (
     <div
-      className="absolute inset-0 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900 motion-safe:animate-shimmer"
+      className={`absolute inset-0 bg-[length:200%_100%] bg-gradient-to-r ${gradClass} motion-safe:animate-shimmer`}
       aria-hidden="true"
     />
   );
@@ -210,8 +240,11 @@ function ShimmerSweep() {
 // Share button (Web Share API, gracefully degrades to copy)
 // ---------------------------------------------------------------------------
 
-function ShareButton({ url, label }: { url: string; label: string }) {
+function ShareButton({ url, label, tone }: { url: string; label: string; tone: "dark" | "light" }) {
   const [copied, setCopied] = useState(false);
+  const btnClass = tone === "light"
+    ? "border-zinc-200 text-[#3f3f46] hover:bg-zinc-100"
+    : "border-zinc-700 text-zinc-300 hover:bg-zinc-800";
 
   const handleShare = async () => {
     if (navigator.share) {
@@ -230,7 +263,7 @@ function ShareButton({ url, label }: { url: string; label: string }) {
   return (
     <button
       onClick={handleShare}
-      className="flex-1 rounded border border-zinc-700 py-1.5 text-center text-xs text-zinc-300 hover:bg-zinc-800"
+      className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
     >
       {copied ? "Copied!" : "Share"}
     </button>

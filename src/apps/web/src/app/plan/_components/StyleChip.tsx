@@ -44,8 +44,8 @@ export default function StyleChip({
       className={cn(
         "flex min-w-[7rem] max-w-[12rem] flex-col gap-1 rounded-lg border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40",
         selected
-          ? "border-amber-400 bg-zinc-900 ring-1 ring-amber-400"
-          : "border-zinc-700 hover:bg-zinc-900",
+          ? "border-lime-600 bg-white ring-1 ring-lime-600"
+          : "border-zinc-200 bg-white hover:border-zinc-400",
       )}
     >
       <span
@@ -54,7 +54,7 @@ export default function StyleChip({
       >
         {preview}
       </span>
-      <span className="truncate text-[11px] text-zinc-400">{styleSet.label}</span>
+      <span className="truncate text-[11px] text-[#71717a]">{styleSet.label}</span>
     </button>
   );
 }
