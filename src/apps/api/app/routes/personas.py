@@ -327,6 +327,9 @@ async def chat_start(
     for the first question. Suggestions + turn_label are stored in the turn
     dict so resume is free.
     """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents.interviewer_agent import (  # noqa: PLC0415
         ConversationTurn,
         InterviewerAgent,
@@ -344,9 +347,17 @@ async def chat_start(
             persona_status="chat_pending",
         )
         db.add(row)
-        await db.commit()
-        await db.refresh(row)
+        try:
+            await db.commit()
+            await db.refresh(row)
+        except IntegrityError:
+            # tiktok_scrape beat us to the INSERT — re-fetch the row it created.
+            await db.rollback()
+            row = (
+                await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+            ).scalar_one()
     else:
+        await db.refresh(existing)
         row = existing
 
     # If already past the chat stage, surface the status so the frontend can redirect
@@ -383,17 +394,19 @@ async def chat_start(
     agent_count = sum(1 for t in turns_raw if t.get("role") == "agent")
 
     result = await asyncio.to_thread(
-        InterviewerAgent().run,
+        InterviewerAgent(default_client()).run,
         InterviewerInput(turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count),
     )
 
     # Store Q + metadata so resume is free (no re-call on page refresh).
-    turns_raw.append({
-        "role": "agent",
-        "content": result.question,
-        "suggestions": result.suggestions,
-        "turn_label": result.turn_label,
-    })
+    turns_raw.append(
+        {
+            "role": "agent",
+            "content": result.question,
+            "suggestions": result.suggestions,
+            "turn_label": result.turn_label,
+        }
+    )
     q["interview_turns"] = turns_raw
     row.questionnaire = q
     await db.commit()
@@ -421,6 +434,7 @@ async def chat_turn(
     next Q. If the agent signals is_final (or the hard cap of 8 agent turns is
     reached), fires generate_persona.delay() and returns is_final=True.
     """
+    from app.agents._model_client import default_client  # noqa: PLC0415
     from app.agents.interviewer_agent import (  # noqa: PLC0415
         _HARD_CAP,
         ConversationTurn,
@@ -470,19 +484,21 @@ async def chat_turn(
     conv_turns = [ConversationTurn(role=t["role"], content=t["content"]) for t in turns_raw]
 
     result = await asyncio.to_thread(
-        InterviewerAgent().run,
+        InterviewerAgent(default_client()).run,
         InterviewerInput(turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count),
     )
 
     new_agent_count = agent_count + 1
     is_final = result.is_final or new_agent_count >= _HARD_CAP
 
-    turns_raw.append({
-        "role": "agent",
-        "content": result.question,
-        "suggestions": result.suggestions,
-        "turn_label": result.turn_label,
-    })
+    turns_raw.append(
+        {
+            "role": "agent",
+            "content": result.question,
+            "suggestions": result.suggestions,
+            "turn_label": result.turn_label,
+        }
+    )
     q["interview_turns"] = turns_raw
     row.questionnaire = q
 

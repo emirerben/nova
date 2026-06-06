@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { chatStart, chatTurn, NotAuthenticatedError } from "@/lib/plan-api";
 import type { TikTokProfile } from "@/lib/plan-api";
-import { chatStart, chatTurn } from "@/lib/plan-api";
 
 type Phase = "loading" | "chat" | "thinking" | "error";
 
@@ -45,7 +45,11 @@ export default function ChatInterview({ onComplete }: { onComplete: () => void }
         setTiktokContext(res.tiktok_context ?? null);
         setPhase("chat");
       })
-      .catch(() => {
+      .catch((err: unknown) => {
+        if (err instanceof NotAuthenticatedError) {
+          window.location.href = "/api/auth/signin?callbackUrl=/plan";
+          return;
+        }
         setError("Couldn't start the interview. Try refreshing.");
         setPhase("error");
       });
