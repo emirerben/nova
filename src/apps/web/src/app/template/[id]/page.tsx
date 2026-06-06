@@ -19,7 +19,9 @@ import {
   normaliseMimeType,
   prefetchClipAnalyze,
   uploadFileToGcs,
+  uploadFileToGcsWithProgress,
 } from "@/lib/api";
+import { UploadBar } from "@/components/progress";
 import { trackRecentJob } from "@/hooks/useArchitectureData";
 import {
   saveBatchToStorage,
@@ -289,6 +291,12 @@ export default function TemplateDetailPage() {
     setClips((prev) => prev.filter((c) => c.id !== id));
   }
 
+  function updateClipProgress(id: string, progress: number) {
+    setClips((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, progress } : c)),
+    );
+  }
+
   function inputsValid(reqInputs: RequiredInput[]): string | null {
     for (const r of reqInputs) {
       const v = (inputs[r.key] ?? "").trim();
@@ -350,7 +358,11 @@ export default function TemplateDetailPage() {
       await Promise.all(
         clips.map(async (clip, i) => {
           try {
-            await uploadFileToGcs(urls[i].upload_url, clip.file);
+            await uploadFileToGcsWithProgress(
+              urls[i].upload_url,
+              clip.file,
+              (frac) => updateClipProgress(clip.id, frac * 100),
+            );
             gcsPaths[i] = urls[i].gcs_path;
             setClips((prev) =>
               prev.map((c) => (c.id === clip.id ? { ...c, progress: 100 } : c)),
@@ -499,9 +511,9 @@ export default function TemplateDetailPage() {
     return (
       <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white px-4 py-12">
         <div className="max-w-xl mx-auto">
-          <div className="h-6 w-40 bg-zinc-900 rounded animate-pulse mb-6" />
-          <div className="h-8 w-72 bg-zinc-900 rounded animate-pulse mb-3" />
-          <div className="h-4 w-56 bg-zinc-900 rounded animate-pulse" />
+          <div className="h-6 w-40 bg-zinc-900 rounded motion-safe:animate-pulse mb-6" />
+          <div className="h-8 w-72 bg-zinc-900 rounded motion-safe:animate-pulse mb-3" />
+          <div className="h-4 w-56 bg-zinc-900 rounded motion-safe:animate-pulse" />
         </div>
       </main>
     );
@@ -660,7 +672,7 @@ export default function TemplateDetailPage() {
 
             {phase === "drive_importing" && driveImportStatus && (
               <div className="mt-4">
-                <div className="flex justify-between text-xs text-zinc-400 mb-1">
+                <div className="flex justify-between text-xs text-zinc-400 mb-1.5">
                   <span>
                     Importing from Google Drive ({driveImportStatus.completed}/{driveImportStatus.total})
                   </span>
@@ -670,23 +682,16 @@ export default function TemplateDetailPage() {
                     </span>
                   )}
                 </div>
-                <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-white transition-all duration-500"
-                    style={{
-                      width: `${
-                        driveImportStatus.total > 0
-                          ? (driveImportStatus.completed / driveImportStatus.total) * 100
-                          : 0
-                      }%`,
-                    }}
-                  />
-                </div>
+                <UploadBar
+                  progress={driveImportStatus.total > 0 ? driveImportStatus.completed / driveImportStatus.total : 0}
+                  label={`${driveImportStatus.completed} of ${driveImportStatus.total} imported`}
+                  ariaLabel="Drive import progress"
+                />
               </div>
             )}
 
             {phase === "drive_importing" && !driveImportStatus && (
-              <p className="mt-4 text-sm text-zinc-400 text-center animate-pulse">
+              <p className="mt-4 text-sm text-zinc-400 text-center motion-safe:animate-pulse">
                 {isRecovery ? "Resuming Drive import…" : "Starting Drive import…"}
               </p>
             )}
@@ -784,16 +789,11 @@ export default function TemplateDetailPage() {
 
             {phase === "uploading" && (
               <div className="mt-4">
-                <div className="flex justify-between text-xs text-zinc-400 mb-1">
-                  <span>Uploading clips…</span>
-                  <span>{totalProgress}%</span>
-                </div>
-                <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-white transition-all duration-300"
-                    style={{ width: `${totalProgress}%` }}
-                  />
-                </div>
+                <p className="text-xs text-zinc-400 mb-1.5">Uploading clips…</p>
+                <UploadBar
+                  progress={totalProgress / 100}
+                  label={`${totalProgress}%`}
+                />
               </div>
             )}
 

@@ -74,7 +74,7 @@ export default function QADashboardPage() {
                 Array.from({ length: 5 }).map((_, i) => (
                   <tr key={i} className="border-b border-zinc-900">
                     <td colSpan={5} className="py-3">
-                      <div className="h-4 bg-zinc-900 rounded animate-pulse w-full" />
+                      <div className="h-4 bg-zinc-900 rounded motion-safe:animate-pulse w-full" />
                     </td>
                   </tr>
                 ))

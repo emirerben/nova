@@ -87,7 +87,7 @@ export default function AdminDashboardPage() {
 
   if (loading) {
     return (
-      <div className="p-8 space-y-4 animate-pulse">
+      <div className="p-8 space-y-4 motion-safe:animate-pulse">
         <div className="h-6 w-40 bg-zinc-800 rounded" />
         <div className="grid grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (

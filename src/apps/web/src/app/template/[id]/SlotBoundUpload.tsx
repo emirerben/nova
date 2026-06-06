@@ -8,8 +8,10 @@ import {
   getBatchPresignedUrls,
   normaliseMimeType,
   uploadFileToGcs,
+  uploadFileToGcsWithProgress,
   uploadTemplatePhoto,
 } from "@/lib/api";
+import { UploadBar } from "@/components/progress";
 
 const VIDEO_MIME = ["video/mp4", "video/quicktime"];
 const PHOTO_MIME = [
@@ -61,6 +63,7 @@ type SlotState = {
   slot: SlotSummary;
   file: File | null;
   uploading: boolean;
+  uploadProgress: number; // 0-100
   error: string | null;
   gcsPath: string | null;
 };
@@ -77,7 +80,7 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
   const [slots, setSlots] = useState<SlotState[]>(
     () => [...template.slots]
       .sort((a, b) => a.position - b.position)
-      .map((s) => ({ slot: s, file: null, uploading: false, error: null, gcsPath: null }))
+      .map((s) => ({ slot: s, file: null, uploading: false, uploadProgress: 0, error: null, gcsPath: null }))
   );
   const [phase, setPhase] = useState<Phase>("ready");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -119,7 +122,7 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
 
   async function uploadOne(idx: number, current: SlotState): Promise<string> {
     if (!current.file) throw new Error("No file");
-    patchSlot(idx, { uploading: true, error: null });
+    patchSlot(idx, { uploading: true, uploadProgress: 0, error: null });
 
     try {
       if (current.slot.media_type === "photo") {
@@ -128,7 +131,7 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
           slotPosition: current.slot.position,
           file: current.file,
         });
-        patchSlot(idx, { uploading: false, gcsPath: gcs_path });
+        patchSlot(idx, { uploading: false, uploadProgress: 100, gcsPath: gcs_path });
         return gcs_path;
       }
 
@@ -139,8 +142,12 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
           file_size_bytes: current.file.size,
         },
       ]);
-      await uploadFileToGcs(urls[0].upload_url, current.file);
-      patchSlot(idx, { uploading: false, gcsPath: urls[0].gcs_path });
+      await uploadFileToGcsWithProgress(
+        urls[0].upload_url,
+        current.file,
+        (frac) => patchSlot(idx, { uploadProgress: frac * 100 }),
+      );
+      patchSlot(idx, { uploading: false, uploadProgress: 100, gcsPath: urls[0].gcs_path });
       return urls[0].gcs_path;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Upload failed";
@@ -231,7 +238,15 @@ export default function SlotBoundUpload({ template, inputs, onJobCreated }: Prop
               />
 
               {s.uploading && (
-                <p className="mt-2 text-xs text-blue-400">Uploading…</p>
+                <>
+                  <p className="mt-2 text-xs text-blue-400">Uploading…</p>
+                  <div className="mt-2">
+                    <UploadBar
+                      progress={s.uploadProgress / 100}
+                      ariaLabel={`Uploading ${s.file?.name ?? "file"}`}
+                    />
+                  </div>
+                </>
               )}
               {s.gcsPath && !s.uploading && (
                 <p className="mt-2 text-xs text-green-400">✓ Uploaded</p>
