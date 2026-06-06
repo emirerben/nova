@@ -102,6 +102,7 @@ def _persona_row(user_id: uuid.UUID, *, status: str) -> MagicMock:
     row.persona = {"summary": "you", "content_pillars": ["a"], "tone": "warm"}
     row.questionnaire = {"work": "barista"}
     row.error_detail = None
+    row.tiktok_profile = None
     return row
 
 
@@ -170,6 +171,7 @@ def _editable_row(user_id: uuid.UUID) -> MagicMock:
         "posting_cadence": "4/week",
     }
     row.error_detail = None
+    row.tiktok_profile = None
     return row
 
 
