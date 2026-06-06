@@ -11,6 +11,7 @@ PATCH /personas/{id}   — hand-edit persona fields. Also the escape hatch when
 from __future__ import annotations
 
 import asyncio
+import copy
 import uuid
 
 import structlog
@@ -371,7 +372,7 @@ async def chat_start(
             turn_label="",
         )
 
-    q = dict(row.questionnaire or {})
+    q = copy.deepcopy(row.questionnaire or {})
     turns_raw: list[dict] = q.get("interview_turns", [])
 
     # Resume: last turn is an unanswered agent question — return it without re-calling.
@@ -400,13 +401,16 @@ async def chat_start(
         ),
     )
 
+    # Compute turn_label server-side — LLM value is inconsistent (tildes drop, counter freezes).
+    computed_label = f"~{agent_count + 1} OF ~6"
+
     # Store Q + metadata so resume is free (no re-call on page refresh).
     turns_raw.append(
         {
             "role": "agent",
             "content": result.question,
             "suggestions": result.suggestions,
-            "turn_label": result.turn_label,
+            "turn_label": computed_label,
         }
     )
     q["interview_turns"] = turns_raw
@@ -418,7 +422,7 @@ async def chat_start(
         question=result.question,
         suggestions=result.suggestions,
         turn_number=agent_count + 1,
-        turn_label=result.turn_label or f"~{agent_count + 1} OF ~6",
+        turn_label=computed_label,
         tiktok_context=row.tiktok_profile,
         persona_status=row.persona_status,
     )
@@ -460,7 +464,7 @@ async def chat_turn(
             detail=f"Chat not active (status: {row.persona_status})",
         )
 
-    q = dict(row.questionnaire or {})
+    q = copy.deepcopy(row.questionnaire or {})
     turns_raw: list[dict] = q.get("interview_turns", [])
 
     # If the previous stored agent turn was already marked final, this answer
@@ -503,6 +507,9 @@ async def chat_turn(
     new_agent_count = agent_count + 1
     agent_is_final = result.is_final or new_agent_count >= _HARD_CAP
 
+    # Compute turn_label server-side — LLM value is inconsistent (tildes drop, counter freezes).
+    computed_label = f"~{new_agent_count} OF ~6"
+
     # Store the question; if agent flagged it as final, mark it so the NEXT
     # answer triggers generation (deferred — user must answer this Q first).
     turns_raw.append(
@@ -510,7 +517,7 @@ async def chat_turn(
             "role": "agent",
             "content": result.question,
             "suggestions": result.suggestions,
-            "turn_label": result.turn_label,
+            "turn_label": computed_label,
             "is_final": agent_is_final,
         }
     )
@@ -525,6 +532,6 @@ async def chat_turn(
         suggestions=result.suggestions,
         is_final=False,
         turn_number=new_agent_count,
-        turn_label=result.turn_label or f"~{new_agent_count} OF ~6",
+        turn_label=computed_label,
         persona_status="chat_pending",
     )
