@@ -383,7 +383,7 @@ async def chat_start(
             question=last_agent["content"],
             suggestions=last_agent.get("suggestions", []),
             turn_number=agent_count,
-            turn_label=last_agent.get("turn_label", f"~{agent_count} OF ~6"),
+            turn_label=last_agent.get("turn_label") or f"~{agent_count} OF ~6",
             tiktok_context=row.tiktok_profile,
             persona_status=row.persona_status,
         )
@@ -462,18 +462,26 @@ async def chat_turn(
 
     q = dict(row.questionnaire or {})
     turns_raw: list[dict] = q.get("interview_turns", [])
+
+    # If the previous stored agent turn was already marked final, this answer
+    # is the last one — generate without asking the agent again.
+    last_agent_was_final = (
+        bool(turns_raw)
+        and turns_raw[-1].get("role") == "agent"
+        and turns_raw[-1].get("is_final", False)
+    )
+
     turns_raw.append({"role": "user", "content": _sanitize_text(body.answer)})
     agent_count = sum(1 for t in turns_raw if t.get("role") == "agent")
 
-    # Hard cap — finalize without an extra agent call.
-    if agent_count >= _HARD_CAP:
+    from app.tasks.persona_build import generate_persona  # noqa: PLC0415
+
+    # Finalize: hard cap hit, or user just answered the stored final question.
+    if agent_count >= _HARD_CAP or last_agent_was_final:
         q["interview_turns"] = turns_raw
         row.questionnaire = q
         row.persona_status = "generating"
         await db.commit()
-
-        from app.tasks.persona_build import generate_persona  # noqa: PLC0415
-
         generate_persona.delay(str(row.id))
         return ChatTurnResponse(
             is_final=True,
@@ -493,36 +501,25 @@ async def chat_turn(
     )
 
     new_agent_count = agent_count + 1
-    is_final = result.is_final or new_agent_count >= _HARD_CAP
+    agent_is_final = result.is_final or new_agent_count >= _HARD_CAP
 
+    # Store the question; if agent flagged it as final, mark it so the NEXT
+    # answer triggers generation (deferred — user must answer this Q first).
     turns_raw.append(
         {
             "role": "agent",
             "content": result.question,
             "suggestions": result.suggestions,
             "turn_label": result.turn_label,
+            "is_final": agent_is_final,
         }
     )
     q["interview_turns"] = turns_raw
     row.questionnaire = q
-
-    if is_final:
-        row.persona_status = "generating"
-        await db.commit()
-
-        from app.tasks.persona_build import generate_persona  # noqa: PLC0415
-
-        generate_persona.delay(str(row.id))
-        return ChatTurnResponse(
-            question=result.question,
-            suggestions=result.suggestions,
-            is_final=True,
-            turn_number=new_agent_count,
-            turn_label=result.turn_label or f"~{new_agent_count} OF ~{_HARD_CAP}",
-            persona_status="generating",
-        )
-
     await db.commit()
+
+    # Always return is_final=False so the frontend shows the question and waits
+    # for the user's answer before transitioning to the generating state.
     return ChatTurnResponse(
         question=result.question,
         suggestions=result.suggestions,
