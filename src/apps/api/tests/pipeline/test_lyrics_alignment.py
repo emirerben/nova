@@ -364,6 +364,90 @@ def test_anchored_late_anchor_uses_matching_prefix_from_lookback_without_global_
     assert ok_line.start_s == 235.7
 
 
+def test_anchored_repeated_chorus_prefers_pre_anchor_prefix_over_late_decoy() -> None:
+    """Regression for lyrics-preview job f6637708.
+
+    The LRCLIB anchor for "But I love it..." landed ~2.1s after the actual
+    first "But I love it" phrase. The normal anchor window still contained a
+    later repeated "I love it" tail, so the old short lookback missed the real
+    prefix and aligned the caption to the decoy, making both chorus lines late.
+    """
+    anchors = [
+        SyncedLine(start_s=44.99, text="I can't feel my face when I'm with you"),
+        SyncedLine(start_s=49.94, text="But I love it, but I love it, oh"),
+        SyncedLine(start_s=53.06, text="I can't feel my face when I'm with you"),
+        SyncedLine(start_s=59.16, text="But I love it, but I love it, oh"),
+        SyncedLine(start_s=61.68, text="And I know she'll be the death of me"),
+    ]
+    whisper = [
+        _ww("I", 44.00, 44.62),
+        _ww("can", 44.62, 44.86),
+        _ww("feel", 44.86, 45.16),
+        _ww("my", 45.16, 45.40),
+        _ww("face", 45.40, 45.72),
+        _ww("when", 45.72, 45.98),
+        _ww("I'm", 45.98, 46.44),
+        _ww("with", 46.44, 46.54),
+        _ww("you", 46.54, 46.90),
+        _ww("But", 47.82, 48.44),
+        _ww("I", 48.44, 48.64),
+        _ww("love", 48.64, 48.94),
+        _ww("it", 48.94, 49.38),
+        _ww("why", 49.56, 50.70),
+        _ww("I", 50.70, 50.90),
+        _ww("love", 50.90, 51.24),
+        _ww("it", 51.24, 51.66),
+        _ww("I", 51.66, 52.60),
+        _ww("can", 52.60, 53.74),
+        _ww("feel", 53.74, 54.02),
+        _ww("my", 54.02, 54.26),
+        _ww("face", 54.26, 54.62),
+        _ww("when", 54.62, 54.86),
+        _ww("I'm", 54.86, 55.32),
+        _ww("with", 55.32, 55.42),
+        _ww("you", 55.42, 55.82),
+        _ww("But", 56.74, 57.36),
+        _ww("I", 57.36, 57.56),
+        _ww("love", 57.56, 57.98),
+        _ww("it", 57.98, 58.28),
+        _ww("why", 58.58, 59.58),
+        _ww("I", 59.58, 59.88),
+        _ww("love", 59.88, 60.14),
+        _ww("it", 60.14, 60.50),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=65.0)
+    but_lines = [line for line in result.lines if line.text == "But I love it, but I love it, oh"]
+
+    assert [line.start_s for line in but_lines] == [47.82, 56.74]
+    assert [w.start_s for w in but_lines[0].words[:4]] == [47.82, 48.44, 48.64, 48.94]
+    assert [w.start_s for w in but_lines[1].words[:4]] == [56.74, 57.36, 57.56, 57.98]
+
+
+def test_anchored_prefix_lookback_does_not_reuse_previous_line_words() -> None:
+    """The wider repeated-chorus lookback must not steal an already-rendered line."""
+    anchors = [
+        SyncedLine(start_s=10.0, text="But I love it, oh"),
+        SyncedLine(start_s=13.6, text="But I love it, oh"),
+        SyncedLine(start_s=16.0, text="Next line"),
+    ]
+    whisper = [
+        _ww("But", 10.7, 10.9),
+        _ww("I", 10.9, 11.0),
+        _ww("love", 11.0, 11.2),
+        _ww("it", 11.2, 11.4),
+        _ww("oh", 11.4, 11.7),
+        _ww("Next", 16.0, 16.2),
+        _ww("line", 16.2, 16.5),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=17.0)
+
+    but_lines = [line for line in result.lines if line.text == "But I love it, oh"]
+    assert [line.start_s for line in but_lines] == [10.7, 13.6]
+    assert [w.start_s for w in but_lines[1].words] == [13.6, 14.08, 14.56, 15.04, 15.52]
+
+
 def test_anchored_prefix_lookback_requires_strong_prefix(monkeypatch) -> None:
     """Do not pull a line earlier from a single common pre-anchor word."""
     from app.pipeline import lyrics_alignment

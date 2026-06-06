@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.database import get_db
 from app.main import app
+from app.services.lyrics_cache_refresh import current_lyrics_prompt_version
 
 ADMIN_TOKEN = "test-admin-token"
 
@@ -333,7 +334,13 @@ def test_post_lyrics_preview_rejects_empty_lines_array(client: TestClient) -> No
     burn a worker on a job that always failed with "no renderable lyric
     overlays". The route now rejects upfront with a useful message.
     """
-    track = _track(lyrics_cached={"source": "lrclib_synced+whisper", "lines": []})
+    track = _track(
+        lyrics_cached={
+            "prompt_version": current_lyrics_prompt_version(),
+            "source": "lrclib_synced+whisper",
+            "lines": [],
+        }
+    )
     override, _session = _override_db(track)
     app.dependency_overrides[get_db] = override
     try:
@@ -347,6 +354,47 @@ def test_post_lyrics_preview_rejects_empty_lines_array(client: TestClient) -> No
 
     assert resp.status_code == 422
     assert "no lyric lines" in resp.json()["detail"]
+
+
+def test_post_lyrics_preview_allows_stale_empty_renderable_cache_to_refresh(
+    client: TestClient,
+) -> None:
+    """A stale renderable-source cache may be empty only because the live
+    alignment/extraction logic changed. Queue the worker so render-time refresh
+    can replace it before burning the preview.
+    """
+
+    track = _track(
+        lyrics_cached={
+            "prompt_version": "old",
+            "source": "lrclib_synced+whisper",
+            "lines": [],
+        }
+    )
+    override, _session = _override_db(track)
+    new_job = MagicMock()
+    new_job.id = uuid4()
+    app.dependency_overrides[get_db] = override
+    try:
+        with (
+            patch("app.routes.admin_music.Job", return_value=new_job) as mock_job,
+            patch(
+                "app.services.job_dispatch.enqueue_orchestrator",
+                new_callable=AsyncMock,
+            ) as mock_enqueue,
+        ):
+            mock_enqueue.return_value = str(new_job.id)
+            resp = client.post(
+                f"/admin/music-tracks/{track.id}/lyrics-preview",
+                json={},
+                headers=_admin_headers(),
+            )
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+    assert resp.status_code == 202, resp.text
+    mock_job.assert_called_once()
+    mock_enqueue.assert_awaited_once()
 
 
 def test_post_lyrics_preview_accepts_legacy_genius_cache_with_lines(

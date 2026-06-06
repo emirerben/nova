@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.85.1] — 2026-06-06
+
+### Fixed
+- **Lyrics preview sync for job `f6637708-69f1-4a49-8a34-33aa66ec0576`.** Anchored LRCLIB alignment now uses a guarded 3s prefix lookback so repeated "But I love it..." chorus lines snap to the actually sung phrase instead of a late in-window decoy, while the lookback cannot reuse words already assigned to the previous lyric line.
+- **Initial clipped preview lyrics now render when vocals are already audible.** Lyrics-preview recipe finalization keeps boundary-clipped lead-in lines for preview windows, but only snaps karaoke timing to zero when the first surviving audible word is near the audio boundary. Late first words keep their real offset instead of showing early.
+- **Stale lyric caches refresh before preview render in production.** Admin preview submission now allows stale renderable-source caches through to the worker refresh path, while current empty caches and non-renderable `whisper_only` caches still fail upfront.
+- **Mid-quote lyric slices are cleaned conservatively.** The audible-word slicer removes a single orphan edge quote without stripping balanced quotes from valid lyric text.
+
 ## [0.4.85.0] — 2026-06-06
 
 ### Added

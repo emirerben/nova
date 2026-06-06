@@ -1953,10 +1953,36 @@ _FINALIZABLE_LYRIC_EFFECTS = frozenset({"lyric-line", "karaoke-line"})
 _EPS = 1e-6
 
 
+_INITIAL_PARTIAL_MAX_FIRST_WORD_GAP_S = 0.75
+
+
+def _first_audible_word_gap_s(
+    overlay: dict,
+    audio_mix_song_start_s: float,
+    audio_mix_song_end_s: float,
+) -> float:
+    words = list(overlay.get("original_words") or [])
+    if not words:
+        return 0.0
+    audible_starts: list[float] = []
+    for word in words:
+        if not _word_audible(word, audio_mix_song_start_s, audio_mix_song_end_s):
+            continue
+        try:
+            audible_starts.append(float(word.get("start_s_song", audio_mix_song_start_s)))
+        except (TypeError, ValueError):
+            continue
+    if not audible_starts:
+        return float("inf")
+    return max(0.0, min(audible_starts) - audio_mix_song_start_s)
+
+
 def _finalize_lyric_audible_window(
     overlays: list[dict],
     audio_mix_song_start_s: float,
     audio_mix_song_end_s: float,
+    *,
+    keep_initial_partial_lines: bool = False,
 ) -> list[dict]:
     """Audible-window-aware finalization for lyric overlays.
 
@@ -1976,6 +2002,11 @@ def _finalize_lyric_audible_window(
         (typically `best_start_s`).
       audio_mix_song_end_s: song-time end of the rendered audio mix
         (typically `best_start_s + total_audio_bearing_duration_s`).
+      keep_initial_partial_lines: when true, lyric overlays clipped by the
+        audio start boundary use the permissive boundary-partial floor. Lyrics
+        previews enable this so section-anchored windows do not look blank/late
+        while vocals are already audible; production render callers keep the
+        stricter interior rule by default.
 
     Returns:
       New list with the contract above. Original list is not mutated.
@@ -2002,6 +2033,7 @@ def _finalize_lyric_audible_window(
     # latest audible clipped_end wins (covers tracks where the rendered
     # window cuts well before any line tail).
     final_idxs: set[int] = set()
+    initial_idxs: set[int] = set()
     audible_clipped_ends: list[tuple[int, float]] = []
     for idx, ov in enumerate(overlays):
         if ov.get("effect") not in _FINALIZABLE_LYRIC_EFFECTS:
@@ -2022,6 +2054,17 @@ def _finalize_lyric_audible_window(
         if clipped_end <= clipped_start:
             # No audible overlap — cannot be final.
             continue
+        first_word_gap_s = _first_audible_word_gap_s(
+            ov,
+            audio_mix_song_start_s,
+            audio_mix_song_end_s,
+        )
+        if (
+            keep_initial_partial_lines
+            and clipped_start <= audio_mix_song_start_s + _EPS
+            and first_word_gap_s <= _INITIAL_PARTIAL_MAX_FIRST_WORD_GAP_S
+        ):
+            initial_idxs.add(idx)
         audible_clipped_ends.append((idx, clipped_end))
         if clipped_end >= audio_mix_song_end_s - _FINAL_LINE_TAIL_TOLERANCE_S:
             final_idxs.add(idx)
@@ -2039,6 +2082,7 @@ def _finalize_lyric_audible_window(
             out.append(ov)
             continue
         is_final = idx in final_idxs
+        is_initial = idx in initial_idxs
         if effect == "karaoke-line":
             finalized = _finalize_one_karaoke_line(
                 ov,
@@ -2046,6 +2090,7 @@ def _finalize_lyric_audible_window(
                 audio_mix_song_end_s=audio_mix_song_end_s,
                 audible_end_abs=audible_end_abs,
                 is_final=is_final,
+                is_initial=is_initial,
             )
         else:
             finalized = _finalize_one_lyric_line(
@@ -2054,6 +2099,7 @@ def _finalize_lyric_audible_window(
                 audio_mix_song_end_s=audio_mix_song_end_s,
                 audible_end_abs=audible_end_abs,
                 is_final=is_final,
+                is_initial=is_initial,
             )
         if finalized is not None:
             out.append(finalized)
@@ -2174,6 +2220,7 @@ def _finalize_one_lyric_line(
     audio_mix_song_end_s: float,
     audible_end_abs: float,
     is_final: bool,
+    is_initial: bool = False,
 ) -> dict | None:
     """Apply the decision procedure to one lyric-line overlay.
 
@@ -2338,8 +2385,11 @@ def _finalize_one_lyric_line(
         )
         return None
 
-    # Step 4 — Final-partial-line quality floor (basic only, more permissive).
-    if is_final:
+    # Step 4 — Boundary-partial-line quality floor (basic only, more permissive).
+    # A line clipped by the start of the rendered audio is just as user-visible
+    # as the final tail: dropping it leaves the preview blank while vocals are
+    # already audible, which reads as late lyrics.
+    if is_final or is_initial:
         single_started_word_ok = (
             surviving_word_count == 1
             and candidate_source == "single_started_word"
@@ -2349,7 +2399,11 @@ def _finalize_one_lyric_line(
             surviving_word_count < _BASIC_WORD_COUNT_FLOOR and not single_started_word_ok
         ):
             log.info(
-                "lyric_finalize_final_line_dropped_fragment_too_short",
+                (
+                    "lyric_finalize_final_line_dropped_fragment_too_short"
+                    if is_final
+                    else "lyric_finalize_initial_line_dropped_fragment_too_short"
+                ),
                 line_id=line_id,
                 audible_speech_s=round(audible_speech_s, 4),
                 surviving_word_count=surviving_word_count,
@@ -2359,7 +2413,11 @@ def _finalize_one_lyric_line(
             overlay,
             display_text=candidate_text,
             audible_end_abs=audible_end_abs,
-            log_event="lyric_finalize_final_line_kept_truncated",
+            log_event=(
+                "lyric_finalize_final_line_kept_truncated"
+                if is_final
+                else "lyric_finalize_initial_line_kept_truncated"
+            ),
             source=candidate_source,
             line_id=line_id,
         )
@@ -2401,6 +2459,7 @@ def _finalize_one_karaoke_line(
     audio_mix_song_end_s: float,
     audible_end_abs: float,
     is_final: bool,
+    is_initial: bool = False,
 ) -> dict | None:
     """Apply audible-window finalization to one karaoke-line overlay.
 
@@ -2490,6 +2549,11 @@ def _finalize_one_karaoke_line(
     audible_words = [
         w for w in original_words if _word_audible(w, audio_mix_song_start_s, audio_mix_song_end_s)
     ]
+    first_audible_word_gap_s = _first_audible_word_gap_s(
+        overlay,
+        audio_mix_song_start_s,
+        audio_mix_song_end_s,
+    )
     surviving_word_count = len(audible_words)
     original_word_count = len(original_words)
 
@@ -2540,7 +2604,7 @@ def _finalize_one_karaoke_line(
         )
         return None
 
-    if is_final:
+    if is_final or is_initial:
         single_started_word_ok = (
             surviving_word_count == 1
             and candidate_source == "single_started_word"
@@ -2550,7 +2614,11 @@ def _finalize_one_karaoke_line(
             surviving_word_count < _BASIC_WORD_COUNT_FLOOR and not single_started_word_ok
         ):
             log.info(
-                "karaoke_finalize_final_line_dropped_fragment_too_short",
+                (
+                    "karaoke_finalize_final_line_dropped_fragment_too_short"
+                    if is_final
+                    else "karaoke_finalize_initial_line_dropped_fragment_too_short"
+                ),
                 line_id=line_id,
                 audible_speech_s=round(audible_speech_s, 4),
                 surviving_word_count=surviving_word_count,
@@ -2562,8 +2630,15 @@ def _finalize_one_karaoke_line(
             display_text=candidate_text,
             audio_mix_song_start_s=audio_mix_song_start_s,
             audible_end_abs=audible_end_abs,
-            line_clipped_from_start=original_start_s_song < audio_mix_song_start_s,
-            log_event="karaoke_finalize_final_line_kept_truncated",
+            line_clipped_from_start=(
+                original_start_s_song < audio_mix_song_start_s
+                and first_audible_word_gap_s <= _INITIAL_PARTIAL_MAX_FIRST_WORD_GAP_S
+            ),
+            log_event=(
+                "karaoke_finalize_final_line_kept_truncated"
+                if is_final
+                else "karaoke_finalize_initial_line_kept_truncated"
+            ),
             source=candidate_source,
             line_id=line_id,
         )
@@ -2592,7 +2667,7 @@ def _finalize_one_karaoke_line(
         display_text=candidate_text,
         audio_mix_song_start_s=audio_mix_song_start_s,
         audible_end_abs=audible_end_abs,
-        line_clipped_from_start=original_start_s_song < audio_mix_song_start_s,
+        line_clipped_from_start=False,
         log_event="karaoke_finalize_interior_partial_kept_truncated",
         source=candidate_source,
         line_id=line_id,
@@ -2761,6 +2836,25 @@ def _tokenize_lyric_text(text: str) -> list[tuple[int, int, str]]:
     ]
 
 
+def _strip_unmatched_edge_quotes(text: str) -> str:
+    """Drop quote marks left orphaned by a mid-quote lyric slice."""
+    cleaned = text
+    quote_positions = [idx for idx, char in enumerate(cleaned) if char == '"']
+    if len(quote_positions) % 2 == 1:
+        if cleaned.startswith('"') and not cleaned.endswith('"'):
+            drop_idx = 0
+        elif cleaned.endswith('"') and not cleaned.startswith('"'):
+            drop_idx = len(cleaned) - 1
+        else:
+            drop_idx = min(quote_positions, key=lambda idx: min(idx, len(cleaned) - 1 - idx))
+        cleaned = cleaned[:drop_idx] + cleaned[drop_idx + 1 :]
+    if "“" in cleaned and "”" not in cleaned:
+        cleaned = cleaned.replace("“", "")
+    if "”" in cleaned and "“" not in cleaned:
+        cleaned = cleaned.replace("”", "")
+    return cleaned.strip()
+
+
 def _align_audible_words_to_original_text(
     *,
     original_text: str,
@@ -2860,8 +2954,8 @@ def _align_audible_words_to_original_text(
             match_end_idx=best_end,
         )
         if adjusted:
-            return adjusted
-    return original_text[first_start_char:last_end_char]
+            return _strip_unmatched_edge_quotes(adjusted)
+    return _strip_unmatched_edge_quotes(original_text[first_start_char:last_end_char])
 
 
 def _drop_dangling_parenthetical_prefix(

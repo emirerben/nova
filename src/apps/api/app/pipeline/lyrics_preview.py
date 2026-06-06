@@ -404,6 +404,7 @@ def build_lyrics_preview_recipe(track: Any, lyrics_config_effective: dict) -> di
             slot.get("text_overlays") or [],
             audio_mix_song_start_s=preview_start_s,
             audio_mix_song_end_s=preview_start_s + preview_duration_s,
+            keep_initial_partial_lines=True,
         )
     return recipe
 

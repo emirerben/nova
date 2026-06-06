@@ -289,10 +289,12 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
         # Previous: 2026-06-05.leading-prefix-mismatch: anchored windows
         # repair short leading Whisper prefixes when the canonical lyric line
         # omitted an audible opening word.
-        # Current: repair repeated-hook rows whose LRCLIB tail diverges from
-        # Whisper by preserving the canonical prefix and using the unused
-        # audio-backed tail.
-        prompt_version="2026-06-05.whisper-tail-repair",
+        # Previous: 2026-06-05.whisper-tail-repair: repair repeated-hook rows
+        # whose LRCLIB tail diverges from Whisper by preserving the canonical
+        # prefix and using the unused audio-backed tail.
+        # Current: expand anchored prefix lookback for repeated chorus lines
+        # whose first phrase starts more than 1.5s before a stale LRCLIB anchor.
+        prompt_version="2026-06-06.repeated-chorus-prefix-lookback",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.

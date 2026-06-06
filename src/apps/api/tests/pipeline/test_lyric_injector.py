@@ -2034,6 +2034,50 @@ def test_align_handles_repeated_words_picks_anchor_that_completes_match() -> Non
     assert out == "rain go away"
 
 
+def test_align_strips_unmatched_closing_quote_from_mid_quote_slice() -> None:
+    original = 'She told me, "You\'ll never be alone", oh, oh, woo'
+    words = [
+        {"text": "be", "start_s_song": 41.1, "end_s_song": 42.0},
+        {"text": "alone", "start_s_song": 42.0, "end_s_song": 43.08},
+        {"text": "oh", "start_s_song": 43.1, "end_s_song": 43.45},
+        {"text": "oh", "start_s_song": 43.47, "end_s_song": 43.82},
+        {"text": "woo", "start_s_song": 43.84, "end_s_song": 44.19},
+    ]
+
+    out = _align_audible_words_to_original_text(original_text=original, audible_words=words)
+
+    assert out == "be alone, oh, oh, woo"
+
+
+def test_align_strips_unmatched_curly_quote_from_mid_quote_slice() -> None:
+    original = "She told me, “You'll never be alone”, oh, oh, woo"
+    words = [
+        {"text": "be", "start_s_song": 41.1, "end_s_song": 42.0},
+        {"text": "alone", "start_s_song": 42.0, "end_s_song": 43.08},
+        {"text": "oh", "start_s_song": 43.1, "end_s_song": 43.45},
+        {"text": "oh", "start_s_song": 43.47, "end_s_song": 43.82},
+        {"text": "woo", "start_s_song": 43.84, "end_s_song": 44.19},
+    ]
+
+    out = _align_audible_words_to_original_text(original_text=original, audible_words=words)
+
+    assert out == "be alone, oh, oh, woo"
+
+
+def test_align_preserves_balanced_quotes_when_stripping_one_orphan_quote() -> None:
+    original = 'She said goodbye, "stay" alone", oh'
+    words = [
+        {"text": "goodbye", "start_s_song": 40.0, "end_s_song": 40.4},
+        {"text": "stay", "start_s_song": 40.5, "end_s_song": 40.9},
+        {"text": "alone", "start_s_song": 41.0, "end_s_song": 41.5},
+        {"text": "oh", "start_s_song": 41.6, "end_s_song": 42.0},
+    ]
+
+    out = _align_audible_words_to_original_text(original_text=original, audible_words=words)
+
+    assert out == 'goodbye, "stay" alone, oh'
+
+
 def test_align_returns_none_for_single_word() -> None:
     """Audible_words must have ≥2 entries for alignment to fire."""
     out = _align_audible_words_to_original_text(
@@ -2104,6 +2148,78 @@ def test_finalize_empty_words_outside_window_drops_line() -> None:
     )
     out = _finalize_lyric_audible_window([overlay], 128.0, 140.0)
     assert out == []
+
+
+def test_initial_partial_line_requires_first_word_near_audio_boundary() -> None:
+    overlay = _make_lyric_overlay(
+        text="one two late word",
+        start_s=0.0,
+        end_s=3.0,
+        line_id="line:late-initial",
+        original_text="one two late word",
+        original_start_s_song=120.0,
+        original_end_s_song=130.1,
+        original_words=[
+            {"text": "one", "start_s_song": 120.0, "end_s_song": 121.0},
+            {"text": "two", "start_s_song": 121.0, "end_s_song": 122.0},
+            {"text": "late", "start_s_song": 129.2, "end_s_song": 129.6},
+            {"text": "word", "start_s_song": 129.7, "end_s_song": 130.1},
+        ],
+    )
+
+    tail = _make_lyric_overlay(
+        text="real final line",
+        start_s=3.4,
+        end_s=4.0,
+        line_id="line:tail",
+        original_text="real final line",
+        original_start_s_song=131.0,
+        original_end_s_song=132.0,
+        original_words=[
+            {"text": "real", "start_s_song": 131.0, "end_s_song": 131.25},
+            {"text": "final", "start_s_song": 131.25, "end_s_song": 131.55},
+            {"text": "line", "start_s_song": 131.55, "end_s_song": 132.0},
+        ],
+    )
+
+    out = _finalize_lyric_audible_window(
+        [overlay, tail],
+        128.0,
+        132.0,
+        keep_initial_partial_lines=True,
+    )
+
+    assert [ov["lyric_line_id"] for ov in out] == ["line:tail"]
+
+
+def test_karaoke_interior_partial_keeps_late_first_word_timing() -> None:
+    overlay = _make_lyric_overlay(
+        text="early late word",
+        start_s=0.0,
+        end_s=4.0,
+        line_id="karaoke:late-first-word",
+        original_text="early late word",
+        original_start_s_song=127.0,
+        original_end_s_song=131.0,
+        original_words=[
+            {"text": "early", "start_s_song": 127.0, "end_s_song": 127.4},
+            {"text": "late", "start_s_song": 129.2, "end_s_song": 129.6},
+            {"text": "word", "start_s_song": 129.7, "end_s_song": 130.1},
+        ],
+        extras={"effect": "karaoke-line"},
+    )
+
+    out = _finalize_lyric_audible_window(
+        [overlay],
+        128.0,
+        132.0,
+        keep_initial_partial_lines=True,
+    )
+
+    assert len(out) == 1
+    assert out[0]["text"] == "late word"
+    assert out[0]["word_timings"][0]["text"] == "late"
+    assert out[0]["word_timings"][0]["start_s"] == pytest.approx(1.2)
 
 
 # ── Log-event assertion coverage (P1 from testing specialist) ────────────────
