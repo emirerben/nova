@@ -71,6 +71,7 @@ from app.services.audio_download import (
     is_supported_audio_url,
     probe_has_audio_stream,
 )
+from app.services.lyrics_cache_refresh import lyrics_cache_is_stale
 from app.services.lyrics_config_effective import (
     deep_merge_dict,
     effective_lyrics_config,
@@ -324,12 +325,6 @@ def _compute_generative_matchable(t: MusicTrack) -> bool:
 def _cached_lyrics_renderability_error(lyrics_cached: dict | None) -> str | None:
     if not lyrics_cached:
         return "Music track has no cached lyrics."
-    cached_lines = lyrics_cached.get("lines") if isinstance(lyrics_cached, dict) else None
-    if not cached_lines:
-        return (
-            "Music track has cached lyrics metadata but no lyric lines — "
-            "re-run extraction from the Config tab."
-        )
     cached_source = (lyrics_cached.get("source") or "") if isinstance(lyrics_cached, dict) else ""
     if cached_source not in RENDERABLE_CACHED_LYRICS_SOURCES:
         source_label = cached_source or "unknown"
@@ -337,6 +332,14 @@ def _cached_lyrics_renderability_error(lyrics_cached: dict | None) -> str | None
             "Music track cached lyrics are not renderable lyrics "
             f"(source: {source_label}). Paste an LRCLIB row ID or re-run "
             "lyric extraction before enabling lyrics or rendering a preview."
+        )
+    if lyrics_cache_is_stale(lyrics_cached):
+        return None
+    cached_lines = lyrics_cached.get("lines") if isinstance(lyrics_cached, dict) else None
+    if not cached_lines:
+        return (
+            "Music track has cached lyrics metadata but no lyric lines — "
+            "re-run extraction from the Config tab."
         )
     return None
 

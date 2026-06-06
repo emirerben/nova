@@ -111,12 +111,15 @@ _COLLAPSED_MIN_SLICE_S = 0.05
 
 # LRCLIB syncedLyrics anchors are usually good line starts, but a single late
 # anchor can exclude the real opening words before alignment ever sees them.
-# Allow a narrow pre-anchor lookback only when the canonical line prefix is
-# clearly present before the anchor.
-_ANCHOR_PREFIX_LOOKBACK_S = 1.5
+# Allow a short pre-anchor lookback only when the canonical line prefix is
+# clearly present before the anchor. Three seconds covers repeated-chorus
+# lines whose first phrase starts well before a stale anchor, while the
+# previous-anchor clamp below still prevents crossing lyric-line boundaries.
+_ANCHOR_PREFIX_LOOKBACK_S = 3.0
 _ANCHOR_PREFIX_LOOKBACK_MAX_WORDS = 5
 _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES = 3
 _ANCHOR_PREFIX_LOOKBACK_MIN_SHIFT_S = 0.2
+_ANCHOR_PREFIX_LOOKBACK_LINE_GAP_S = 1e-6
 
 # Exact-count windows are only a fast path when count AND content agree. If a
 # single LRCLIB token disagrees with Whisper inside an otherwise matching phrase,
@@ -1001,8 +1004,14 @@ def align_with_line_anchors(
         # for the bug class where a late anchor chopped off the line start.
         in_window_prefix_count, _, _ = _count_ordered_prefix_matches(expected, words_in_window)
         if in_window_prefix_count < _ANCHOR_PREFIX_LOOKBACK_MIN_MATCHES:
+            lookback_floor_s = anchor_lines[i - 1].start_s if i > 0 else 0.0
+            if aligned_lines:
+                lookback_floor_s = max(
+                    lookback_floor_s,
+                    aligned_lines[-1].end_s + _ANCHOR_PREFIX_LOOKBACK_LINE_GAP_S,
+                )
             lookback_start = max(
-                anchor_lines[i - 1].start_s if i > 0 else 0.0,
+                lookback_floor_s,
                 window_start - _ANCHOR_PREFIX_LOOKBACK_S,
             )
             lookback_words = [w for w in whisper_list if lookback_start <= w.start_s < window_start]

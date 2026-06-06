@@ -436,6 +436,75 @@ def test_preview_line_style_drops_text_whose_words_are_outside_audio_window() ->
     assert "It didn't matter what they wanted to see" in texts
 
 
+def test_preview_line_style_keeps_audible_initial_partial_line() -> None:
+    """Regression for lyrics-preview job f6637708.
+
+    The preview window started at song-time 41.7s because a previous lyric
+    line overlapped the selected section. The finalizer then treated that same
+    first line as an interior partial and dropped it, leaving the preview blank
+    until the next line at 44.99s. That made the lyrics look late even though
+    the audio already contained audible words from the clipped line.
+    """
+    track = _track(
+        duration_s=218.449,
+        track_config={"best_start_s": 41.7, "best_end_s": 61.0},
+        lyrics_cached={
+            "source": "lrclib_synced+whisper",
+            "lines": [
+                {
+                    "text": 'She told me, "You\'ll never be alone", oh, oh, woo',
+                    "start_s": 38.66,
+                    "end_s": 44.19,
+                    "words": [
+                        {"text": "She", "start_s": 38.66, "end_s": 39.2},
+                        {"text": "told", "start_s": 39.2, "end_s": 39.48},
+                        {"text": "me", "start_s": 39.48, "end_s": 39.8},
+                        {"text": "You'll", "start_s": 40.04, "end_s": 40.09},
+                        {"text": "never", "start_s": 40.06, "end_s": 41.1},
+                        {"text": "be", "start_s": 41.1, "end_s": 42.0},
+                        {"text": "alone", "start_s": 42.0, "end_s": 43.08},
+                        {"text": "oh", "start_s": 43.1, "end_s": 43.45},
+                        {"text": "oh", "start_s": 43.47, "end_s": 43.82},
+                        {"text": "woo", "start_s": 43.84, "end_s": 44.19},
+                    ],
+                },
+                {
+                    "text": "I can't feel my face when I'm with you",
+                    "start_s": 44.99,
+                    "end_s": 47.24,
+                    "words": [
+                        {"text": "I", "start_s": 44.99, "end_s": 45.22},
+                        {"text": "can't", "start_s": 44.99, "end_s": 45.22},
+                        {"text": "feel", "start_s": 45.24, "end_s": 45.32},
+                        {"text": "my", "start_s": 45.32, "end_s": 45.62},
+                        {"text": "face", "start_s": 45.62, "end_s": 45.86},
+                        {"text": "when", "start_s": 45.86, "end_s": 46.14},
+                        {"text": "I'm", "start_s": 46.14, "end_s": 46.52},
+                        {"text": "with", "start_s": 46.52, "end_s": 46.86},
+                        {"text": "you", "start_s": 46.86, "end_s": 47.24},
+                    ],
+                },
+            ],
+        },
+    )
+
+    recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "line"})
+    overlays = recipe["slots"][0]["text_overlays"]
+
+    assert overlays[0]["start_s"] == 0.0
+    assert (overlays[0].get("display_text") or overlays[0]["text"]) == "alone, oh, oh, woo"
+    assert overlays[1]["text"] == "I can't feel my face when I'm with you"
+    assert overlays[1]["start_s"] < 3.19
+
+    karaoke_recipe = build_lyrics_preview_recipe(track, {"enabled": True, "style": "karaoke"})
+    karaoke = karaoke_recipe["slots"][0]["text_overlays"]
+
+    assert karaoke[0]["start_s"] == 0.0
+    assert karaoke[0]["text"] == "alone, oh, oh, woo"
+    assert [w["text"] for w in karaoke[0]["word_timings"][:2]] == ["alone", "oh"]
+    assert karaoke[0]["word_timings"][0]["start_s"] == 0.0
+
+
 def test_preview_window_falls_back_when_section_has_no_lyrics() -> None:
     """Section contains no lyrics → falls back to first-vocal-of-song policy.
 
