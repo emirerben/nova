@@ -389,6 +389,109 @@ def test_anchored_prefix_lookback_requires_strong_prefix(monkeypatch) -> None:
     assert not rec.events_named("lyrics_alignment_anchor_prefix_lookback_applied")
 
 
+def test_anchored_low_confidence_line_uses_unused_whisper_tail() -> None:
+    """Regression for popup preview job 9cc0cb15.
+
+    LRCLIB had the repeated hook's prefix right but the tail wrong. Whisper
+    heard the sung tail inside the same line window; the renderer should not
+    keep interpolating LRCLIB's stale tail over the next lyric line.
+    """
+    anchors = [
+        SyncedLine(start_s=55.02, text="previous line"),
+        SyncedLine(start_s=57.75, text="Don't trust me, I might fall in"),
+        SyncedLine(start_s=61.39, text="I never think about you at all"),
+    ]
+    whisper = [
+        _ww("previous", 55.1, 55.4),
+        _ww("line", 55.4, 55.8),
+        _ww("Trust", 56.7, 58.0),
+        _ww("me", 58.0, 58.6),
+        _ww("I'm", 58.6, 59.16),
+        _ww("not", 59.16, 60.08),
+        _ww("falling", 60.08, 60.72),
+        _ww("I", 60.72, 61.64),
+        _ww("never", 61.64, 62.46),
+        _ww("think", 62.46, 62.84),
+        _ww("about", 62.84, 63.3),
+        _ww("you", 63.3, 63.66),
+        _ww("at", 63.66, 63.84),
+        _ww("all", 63.84, 64.62),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=65.0)
+
+    repaired = next(line for line in result.lines if line.start_s < 58.0 < line.end_s)
+    assert repaired.text == "Don't trust me I'm not falling"
+    assert [w.text for w in repaired.words] == [
+        "Don't",
+        "trust",
+        "me",
+        "I'm",
+        "not",
+        "falling",
+    ]
+    assert "might" not in {w.text for w in repaired.words}
+    assert repaired.end_s <= 60.72
+
+
+def test_anchored_low_confidence_tail_repair_requires_tail_near_next_anchor() -> None:
+    anchors = [
+        SyncedLine(start_s=10.0, text="alpha beta gamma delta epsilon zeta"),
+        SyncedLine(start_s=14.0, text="next line"),
+    ]
+    whisper = [
+        _ww("gamma", 10.2, 10.5),
+        _ww("other", 10.6, 10.9),
+        _ww("spoken", 10.9, 11.2),
+        _ww("tail", 11.2, 11.5),
+        _ww("words", 11.5, 11.8),
+        _ww("next", 14.1, 14.3),
+        _ww("line", 14.3, 14.6),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=15.0)
+
+    line = result.lines[0]
+    assert line.text == "alpha beta gamma delta epsilon zeta"
+    assert [word.text for word in line.words] == [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+    ]
+
+
+def test_anchored_low_confidence_tail_repair_requires_prefix_match() -> None:
+    anchors = [
+        SyncedLine(start_s=10.0, text="alpha beta gamma delta epsilon zeta"),
+        SyncedLine(start_s=14.0, text="next line"),
+    ]
+    whisper = [
+        _ww("delta", 10.2, 10.5),
+        _ww("other", 12.6, 12.9),
+        _ww("spoken", 12.9, 13.2),
+        _ww("tail", 13.2, 13.5),
+        _ww("words", 13.5, 13.8),
+        _ww("next", 14.1, 14.3),
+        _ww("line", 14.3, 14.6),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=15.0)
+
+    line = result.lines[0]
+    assert line.text == "alpha beta gamma delta epsilon zeta"
+    assert [word.text for word in line.words] == [
+        "alpha",
+        "beta",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+    ]
+
+
 def test_anchored_zero_whisper_words_in_window_interpolates_linearly() -> None:
     """A window with zero matching Whisper words (Whisper missed a quiet
     line, or there's instrumental in this section). Distribute canonical
