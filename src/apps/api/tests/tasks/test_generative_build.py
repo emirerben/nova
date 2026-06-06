@@ -997,6 +997,7 @@ def _patch_run_generative_job_success(monkeypatch):
 
 def _patch_run_generative_job_failure(monkeypatch, exc):
     """Patch _run_generative_job to raise exc."""
+
     def _raise(job_id):
         raise exc
 
