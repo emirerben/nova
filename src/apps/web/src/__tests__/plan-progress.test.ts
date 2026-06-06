@@ -1,4 +1,4 @@
-import { planProgress } from "@/app/plan/_components/PlanCalendar";
+import { planProgress } from "@/app/plan/_lib/plan-logic";
 import type { PlanItem, PlanItemStatus } from "@/lib/plan-api";
 
 function item(day: number, status: PlanItemStatus): PlanItem {
