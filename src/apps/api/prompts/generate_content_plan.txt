@@ -19,6 +19,7 @@ PERSONA
 $events
 EVENTS
 $preferences
+$tiktok_analysis
 For inspiration, here are content ideas that are working right now (mined from
 the market, ranked toward this creator's pillars). Adapt the ones that fit —
 fill the [brackets] with this creator's specifics. They are reference, NOT a

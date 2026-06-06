@@ -18,11 +18,25 @@ from app.agents._model_client import default_client
 from app.agents._runtime import RunContext
 from app.agents._schemas.persona import PERSONA_PROMPT_VERSION, PersonaQuestionnaire
 from app.agents.persona_generator import PersonaGeneratorAgent
+from app.config import settings
 from app.database import sync_session
 from app.models import Persona, User
 from app.worker import celery_app
 
 log = structlog.get_logger()
+
+
+def _analysis_summary(tiktok_profile: dict | None) -> str:
+    """Extract the pre-rendered TikTok analysis summary from the persona row JSONB.
+
+    Returns "" when the analysis hasn't landed yet (race) or the enrich failed —
+    the injector converts "" to an absent block, keeping the prompt byte-identical
+    to the no-TikTok baseline.
+    """
+    if not tiktok_profile:
+        return ""
+    analysis = tiktok_profile.get("analysis") or {}
+    return str(analysis.get("summary_for_prompts") or "")
 
 
 @celery_app.task(
@@ -54,6 +68,76 @@ def scrape_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa: 
         session.commit()
     log.info("scrape_tiktok_profile.done", persona_id=persona_id, handle=handle)
 
+    # Chain the enriched analysis (best-effort, background). The flat profile
+    # above is written before this fires so the interviewer can proceed immediately.
+    if settings.tiktok_deep_analysis_enabled:
+        analyze_tiktok_profile.delay(str(persona_id), handle)
+
+
+@celery_app.task(
+    name="app.tasks.persona_build.analyze_tiktok_profile",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=10,
+    soft_time_limit=210,
+    time_limit=240,
+)
+def analyze_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa: ANN001
+    """Enriched TikTok fetch + LLM distillation → persona.tiktok_profile['analysis'].
+
+    Best-effort: any failure (TikTok blocked, timeout, parse error, DB miss) is
+    logged and returns silently. The persona is NEVER marked failed by this task.
+    The 'analysis' sub-key is simply absent, and the three injection points
+    (persona/plan/hook prompts) fall back to byte-identical generation.
+
+    time_limit=240 << worker visibility_timeout (1900s) invariant holds.
+    """
+    from app.agents._schemas.tiktok_analysis import TikTokAnalyzerInput  # noqa: PLC0415
+    from app.agents.tiktok_analyzer import TikTokAnalyzerAgent  # noqa: PLC0415
+    from app.services.tiktok_profile import fetch_profile_enriched  # noqa: PLC0415
+
+    if not settings.tiktok_deep_analysis_enabled:
+        return
+
+    clean = handle  # already normalized by scrape_tiktok_profile
+    profile = fetch_profile_enriched(clean)
+    if profile is None:
+        log.info("analyze_tiktok_profile.no_data", persona_id=persona_id, handle=clean)
+        return
+
+    agent_input = TikTokAnalyzerInput(
+        handle=profile["handle"],
+        follower_count=profile.get("follower_count"),
+        median_views=profile.get("median_views"),
+        videos=[dict(v) for v in profile.get("videos", [])],
+    )
+
+    try:
+        agent = TikTokAnalyzerAgent(default_client())
+        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort: analysis failure never marks the persona failed.
+        log.warning(
+            "analyze_tiktok_profile.agent_failed", persona_id=persona_id, error=str(exc)[:300]
+        )
+        return
+
+    with sync_session() as session:
+        row = session.get(Persona, uuid.UUID(str(persona_id)))
+        if row is None:
+            return
+        # Read-merge-write: preserve the flat keys the interviewer reads.
+        blob = dict(row.tiktok_profile or {})
+        blob["analysis"] = output.analysis.model_dump()
+        row.tiktok_profile = blob
+        session.commit()
+    log.info(
+        "analyze_tiktok_profile.done",
+        persona_id=persona_id,
+        handle=clean,
+        has_summary=bool(output.analysis.summary_for_prompts),
+    )
+
 
 @celery_app.task(
     name="app.tasks.persona_build.generate_persona",
@@ -68,7 +152,13 @@ def generate_persona(self, persona_id: str) -> None:  # noqa: ANN001
         if persona_row is None:
             log.warning("persona_build.missing_row", persona_id=persona_id)
             return
-        questionnaire = PersonaQuestionnaire(**(persona_row.questionnaire or {}))
+        # Inject TikTok analysis at call time (not stored on questionnaire row).
+        # If the analysis task hasn't landed yet (race), this is "" and the prompt
+        # is byte-identical to the no-TikTok baseline — best-effort by design.
+        tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
+        questionnaire = PersonaQuestionnaire(**(persona_row.questionnaire or {})).model_copy(
+            update={"tiktok_analysis": tiktok_summary}
+        )
 
     try:
         agent = PersonaGeneratorAgent(default_client())
@@ -123,8 +213,9 @@ def retune_persona_from_feedback(self, persona_id: str) -> None:  # noqa: ANN001
             log.warning("persona_retune.missing_row", persona_id=persona_id)
             return
         summary = rollup_user_feedback(session, row.user_id)
+        tiktok_summary = _analysis_summary(row.tiktok_profile)
         questionnaire = PersonaQuestionnaire(**(row.questionnaire or {})).model_copy(
-            update={"preference_summary": summary}
+            update={"preference_summary": summary, "tiktok_analysis": tiktok_summary}
         )
 
     try:

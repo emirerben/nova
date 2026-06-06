@@ -1,0 +1,99 @@
+{
+  "agent": "nova.plan.tiktok_analyzer",
+  "prompt_version": "2026-06-06",
+  "input": {
+    "handle": "liftandlentils",
+    "follower_count": 12400,
+    "median_views": 8200,
+    "videos": [
+      {
+        "caption": "POV: you finally hit a PR after months of eating in a deficit #powerlifting #gymtok",
+        "hashtags": ["powerlifting", "gymtok"],
+        "view_count": 42000,
+        "like_count": 3100,
+        "comment_count": 280,
+        "repost_count": 410,
+        "engagement_rate": 0.08786,
+        "view_index": 5.12,
+        "duration": 18,
+        "upload_date": "20260520"
+      },
+      {
+        "caption": "high protein meals for broke college students — week 2 #mealprep #collegelife",
+        "hashtags": ["mealprep", "collegelife"],
+        "view_count": 31000,
+        "like_count": 2200,
+        "comment_count": 190,
+        "repost_count": 620,
+        "engagement_rate": 0.09710,
+        "view_index": 3.78,
+        "duration": 45,
+        "upload_date": "20260514"
+      },
+      {
+        "caption": "thrift haul for the gym girl who refuses to pay full price #thrifting #gymoutfit",
+        "hashtags": ["thrifting", "gymoutfit"],
+        "view_count": 18500,
+        "like_count": 1400,
+        "comment_count": 95,
+        "repost_count": 180,
+        "engagement_rate": 0.09054,
+        "view_index": 2.26,
+        "duration": 32,
+        "upload_date": "20260508"
+      },
+      {
+        "caption": "my week in food as a kinesiology major #kinesiology #studentlife",
+        "hashtags": ["kinesiology", "studentlife"],
+        "view_count": 7400,
+        "like_count": 580,
+        "comment_count": 42,
+        "repost_count": 60,
+        "engagement_rate": 0.09216,
+        "view_index": 0.90,
+        "duration": 28,
+        "upload_date": "20260501"
+      },
+      {
+        "caption": "pack your gym bag with me #gymbag #routine",
+        "hashtags": ["gymbag", "routine"],
+        "view_count": 6200,
+        "like_count": 400,
+        "comment_count": 28,
+        "repost_count": 35,
+        "engagement_rate": 0.07468,
+        "view_index": 0.76,
+        "duration": 22,
+        "upload_date": "20260424"
+      }
+    ]
+  },
+  "raw_text": "{\"analysis\": {\"voice_description\": \"Warm and relatable gym-adjacent student voice — shares genuine milestones and budget hacks without bro-culture posturing.\", \"hook_patterns_that_work\": [{\"pattern\": \"POV: milestone reveal (PR, breakthrough moment)\", \"evidence\": \"42k views, view_index 5.1x account median — top performer by far\"}, {\"pattern\": \"Save-worthy resource (weekly meals for broke students)\", \"evidence\": \"31k views, 620 reposts, view_index 3.8x — high repost:view ratio signals utility\"} ], \"winning_themes\": [{\"theme\": \"Powerlifting milestones and PRs\", \"view_index\": 5.12}, {\"theme\": \"Budget meal prep for college students\", \"view_index\": 3.78}, {\"theme\": \"Thrift gym outfits\", \"view_index\": 2.26}], \"posting_cadence\": \"Roughly 1-2 videos per week based on upload dates.\", \"audience_signal\": \"Engagement rates 8-10% across top posts — highly engaged, primarily saves and reposts over comments. Audience is budget-conscious gym beginners.\", \"summary_for_prompts\": \"Creator voice: warm, relatable, budget-aware powerlifter. Hooks that outperform (5x+ own median): POV milestone reveals (hitting a PR). Save-worthy resource hooks (3.8x): high-protein meals for broke students with high repost rate. Winning themes: powerlifting milestones, budget meal prep, thrift gym fashion. Audience: highly engaged (8-10% ER), saves-heavy — prefers utility. Cadence: 1-2 per week.\"}}",
+  "output": {
+    "analysis": {
+      "voice_description": "Warm and relatable gym-adjacent student voice — shares genuine milestones and budget hacks without bro-culture posturing.",
+      "hook_patterns_that_work": [
+        {
+          "pattern": "POV: milestone reveal (PR, breakthrough moment)",
+          "evidence": "42k views, view_index 5.1x account median — top performer by far"
+        },
+        {
+          "pattern": "Save-worthy resource (weekly meals for broke students)",
+          "evidence": "31k views, 620 reposts, view_index 3.8x — high repost:view ratio signals utility"
+        }
+      ],
+      "winning_themes": [
+        {"theme": "Powerlifting milestones and PRs", "view_index": 5.12},
+        {"theme": "Budget meal prep for college students", "view_index": 3.78},
+        {"theme": "Thrift gym outfits", "view_index": 2.26}
+      ],
+      "posting_cadence": "Roughly 1-2 videos per week based on upload dates.",
+      "audience_signal": "Engagement rates 8-10% across top posts — highly engaged, primarily saves and reposts over comments. Audience is budget-conscious gym beginners.",
+      "summary_for_prompts": "Creator voice: warm, relatable, budget-aware powerlifter. Hooks that outperform (5x+ own median): POV milestone reveals (hitting a PR). Save-worthy resource hooks (3.8x): high-protein meals for broke students with high repost rate. Winning themes: powerlifting milestones, budget meal prep, thrift gym fashion. Audience: highly engaged (8-10% ER), saves-heavy — prefers utility. Cadence: 1-2 per week."
+    }
+  },
+  "meta": {
+    "source": "synthetic_2026-06-06",
+    "case": "creator with 5 enriched videos; top 2 outperform median 5x and 3.8x; structural checks: summary ≤1200 chars, no @handles/URLs, hook/theme arrays within 6-item cap"
+  }
+}

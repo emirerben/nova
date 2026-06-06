@@ -1301,6 +1301,50 @@ def check_content_plan_generator(
     return failures
 
 
+def check_tiktok_analyzer(output: Any) -> list[str]:
+    """Structural floor for nova.plan.tiktok_analyzer.
+
+    The analyzer is best-effort — most fields are optional (empty account,
+    no high-performers, etc.). We only enforce hard invariants:
+    - summary_for_prompts must be ≤ _MAX_SUMMARY_CHARS
+    - hook_patterns list length must be ≤ 6
+    - winning_themes list length must be ≤ 6
+    - no @handles, #hashtags, or http URLs in summary_for_prompts (injection defence)
+    """
+    import re  # noqa: PLC0415
+
+    from app.agents._schemas.tiktok_analysis import _MAX_SUMMARY_CHARS  # noqa: PLC0415
+
+    failures: list[str] = []
+    analysis = output.analysis if hasattr(output, "analysis") else None
+    if analysis is None:
+        failures.append("missing analysis field")
+        return failures
+
+    summary = str(analysis.summary_for_prompts or "")
+    if len(summary) > _MAX_SUMMARY_CHARS:
+        failures.append(f"summary_for_prompts is {len(summary)} chars > {_MAX_SUMMARY_CHARS}")
+    # Hook/handle/URL injection guard (defense-in-depth post-sanitization).
+    if re.search(r"@\w+|#\w+|https?://", summary):
+        failures.append("summary_for_prompts contains @handle/#hashtag/URL — injection risk")
+
+    hooks = list(analysis.hook_patterns_that_work or [])
+    if len(hooks) > 6:
+        failures.append(f"hook_patterns_that_work has {len(hooks)} items (max 6)")
+    for h in hooks:
+        if not str(getattr(h, "pattern", "")).strip():
+            failures.append("hook_patterns_that_work contains empty pattern")
+
+    themes = list(analysis.winning_themes or [])
+    if len(themes) > 6:
+        failures.append(f"winning_themes has {len(themes)} items (max 6)")
+    for t in themes:
+        if not str(getattr(t, "theme", "")).strip():
+            failures.append("winning_themes contains empty theme")
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1341,4 +1385,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_persona_generator(output)
     if agent_name == "nova.plan.content_plan_generator":
         return check_content_plan_generator(output, input)
+    if agent_name == "nova.plan.tiktok_analyzer":
+        return check_tiktok_analyzer(output)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

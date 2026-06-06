@@ -33,6 +33,18 @@ from app.worker import celery_app
 log = structlog.get_logger()
 
 
+def _analysis_summary(tiktok_profile: dict | None) -> str:
+    """Extract the pre-rendered TikTok analysis summary from a persona's tiktok_profile JSONB.
+
+    Mirrors app.tasks.persona_build._analysis_summary — inlined to avoid a cross-task
+    import. Returns "" when the analysis hasn't landed yet (race) or the enrich failed.
+    """
+    if not tiktok_profile:
+        return ""
+    analysis = tiktok_profile.get("analysis") or {}
+    return str(analysis.get("summary_for_prompts") or "")
+
+
 @celery_app.task(
     name="app.tasks.content_plan_build.generate_content_plan",
     bind=True,
@@ -50,10 +62,12 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         if persona_row is None or not persona_row.persona:
             _fail(session, plan, "persona is not ready")
             return
+        tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
+            tiktok_analysis=tiktok_summary,
         )
 
     try:
@@ -189,11 +203,13 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         summary = rollup_user_feedback(session, plan.user_id)
         plan.preference_summary = summary or None
         session.commit()
+        tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             preference_summary=summary or "",
+            tiktok_analysis=tiktok_summary,
         )
 
     try:
@@ -298,6 +314,9 @@ def _dispatch_item_render(
             preference_summary=str(plan.preference_summary or ""),
             # The plan's declared edit shape → render archetype dispatch.
             edit_format=str(item.edit_format or "montage"),
+            # Deep TikTok analysis — the creator's proven style, threaded down to
+            # intro_writer so the hook voice matches what already works for them.
+            tiktok_summary=str(persona_data.get("_tiktok_summary", "") or ""),
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
@@ -320,10 +339,18 @@ def _dispatch_item_render(
 
 
 def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
-    """Best-effort persona dict for intro_writer threading. Empty if missing."""
+    """Best-effort persona dict for intro_writer threading. Empty if missing.
+
+    Includes `_tiktok_summary` (the pre-rendered TikTok analysis summary) as a
+    private key so _dispatch_item_render can thread it down to build_generative_job
+    without changing the public persona schema. The underscore prefix prevents
+    accidental use as an LLM field.
+    """
     persona_row = session.get(PersonaRow, plan.persona_id)
     if persona_row is not None and persona_row.persona:
-        return persona_row.persona
+        data = dict(persona_row.persona)
+        data["_tiktok_summary"] = _analysis_summary(persona_row.tiktok_profile)
+        return data
     return {}
 
 

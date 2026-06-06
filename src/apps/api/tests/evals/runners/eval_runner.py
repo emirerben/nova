@@ -256,6 +256,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.clip_plan_matcher import ClipPlanMatcherAgent
 
         return ClipPlanMatcherAgent
+    if agent_name == "nova.plan.tiktok_analyzer":
+        from app.agents.tiktok_analyzer import TikTokAnalyzerAgent
+
+        return TikTokAnalyzerAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

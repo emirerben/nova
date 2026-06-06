@@ -236,6 +236,14 @@ class Settings(BaseSettings):
     tiktok_client_secret: str = ""
     tiktok_redirect_uri: str = "http://localhost:8000/auth/tiktok/callback"
 
+    # Deep TikTok profile analysis (enriched fetch + LLM distillation).
+    # When true, scrape_tiktok_profile chains analyze_tiktok_profile after the
+    # flat fetch, enriching the persona/plan/hooks with the creator's own proven
+    # style. Set to false for a quick kill switch (no deploy needed):
+    #   fly secrets set TIKTOK_DEEP_ANALYSIS_ENABLED=false --app nova-video
+    #   + fly machine restart <id>
+    tiktok_deep_analysis_enabled: bool = True
+
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65
     engagement_weight: float = 0.35

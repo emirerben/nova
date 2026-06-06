@@ -72,6 +72,14 @@ class IntroWriterInput(BaseModel):
     # for plan jobs before any feedback. Steers the hook's voice/angle like the
     # persona context — footage still rules; re-sanitized in render_prompt.
     preference_summary: str = ""
+    # Deep TikTok analysis summary (analyze_tiktok_profile task). Pre-rendered
+    # summary_for_prompts — the creator's own proven hooks, voice, and winning themes.
+    # Empty for public jobs and for plan jobs where the analysis hasn't landed yet.
+    # Injected into _persona_context so it steers the hook voice without a separate
+    # prompt variable (keeps write_intro_text.txt unchanged). Re-sanitized in
+    # _persona_context as defense-in-depth (the summary was LLM-generated and will be
+    # used by yet another LLM — third layer).
+    tiktok_analysis: str = ""
 
 
 class IntroWriterOutput(BaseModel):
@@ -166,6 +174,10 @@ def _persona_context(input: IntroWriterInput) -> str:  # noqa: A002
     see _schemas/persona.py). Returns a sentinel when no persona is supplied
     (public generative jobs) so the prompt reads as footage-only and the model is
     NOT nudged toward an invented series.
+
+    tiktok_analysis is appended as a single-line digest ONLY when present — it
+    gives the hook writer a taste of what voice/patterns already perform for this
+    creator without a separate prompt variable (keeps write_intro_text.txt stable).
     """
     tone = _clean_persona_field(input.tone)
     theme = _clean_persona_field(input.theme)
@@ -173,7 +185,9 @@ def _persona_context(input: IntroWriterInput) -> str:  # noqa: A002
     pillars = [
         s for p in input.content_pillars[:_MAX_PILLARS_IN_PROMPT] if (s := _clean_persona_field(p))
     ]
-    if not (tone or theme or idea or pillars):
+    # Re-sanitize tiktok_analysis as defense-in-depth (LLM output entering an LLM prompt).
+    tiktok = _clean_persona_field(input.tiktok_analysis)
+    if not (tone or theme or idea or pillars or tiktok):
         return "(none — this is a one-off edit; write purely from the footage)"
     lines: list[str] = []
     if tone:
@@ -184,6 +198,9 @@ def _persona_context(input: IntroWriterInput) -> str:  # noqa: A002
         lines.append(f"- this video's theme: {theme}")
     if idea:
         lines.append(f"- this video's idea: {idea}")
+    if tiktok:
+        # Append a concise digest of what already performs well for this creator.
+        lines.append(f"- what works on this creator's TikTok: {tiktok}")
     return "\n".join(lines)
 
 
@@ -191,6 +208,9 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-06-06 — added tiktok_analysis injected into _persona_context as
+        #              "- what works on this creator's TikTok: …" so the hook voice
+        #              mirrors their proven style. Empty → byte-identical to baseline.
         # 2026-05-30.2 — added $preferences block (feedback-loop preference_summary)
         #              so future hooks lean toward what the creator liked.
         # 2026-05-30.1 — added $success_factors block (hook-relevant TikTok levers
@@ -199,7 +219,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-05-31",
+        prompt_version="2026-06-06",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
