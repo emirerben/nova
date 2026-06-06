@@ -103,7 +103,7 @@ function AuthControl({ isHome = false }: { isHome?: boolean }) {
   if (status === "loading") {
     return (
       <div
-        className={`h-8 w-8 animate-pulse rounded-full ${isHome ? "bg-zinc-200" : "bg-zinc-800"}`}
+        className={`h-8 w-8 motion-safe:animate-pulse rounded-full ${isHome ? "bg-zinc-200" : "bg-zinc-800"}`}
       />
     );
   }

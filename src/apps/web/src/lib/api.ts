@@ -35,6 +35,31 @@ export async function uploadFileToGcs(uploadUrl: string, file: File): Promise<vo
   if (!res.ok) throw new Error(`GCS upload failed: ${res.status}`);
 }
 
+/**
+ * Upload a file to GCS with real byte-level progress feedback.
+ * The signed URL is already content-type-bound, so the header must match exactly.
+ */
+export function uploadFileToGcsWithProgress(
+  uploadUrl: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl, true);
+    xhr.setRequestHeader("Content-Type", normaliseMimeType(file.type));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`GCS upload failed: ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error("GCS upload network error"));
+    xhr.send(file);
+  });
+}
+
 // ── Google Drive Import API ────────────────────────────────────────────────
 
 export interface DriveImportBatchResponse {

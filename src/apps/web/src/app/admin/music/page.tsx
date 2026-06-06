@@ -423,7 +423,7 @@ function ExtensionProgressBar({
             : done
             ? "bg-emerald-700 text-emerald-100"
             : active
-            ? "bg-amber-600 text-amber-50 animate-pulse"
+            ? "bg-amber-600 text-amber-50 motion-safe:animate-pulse"
             : "bg-zinc-700 text-zinc-400";
           return (
             <div key={stage} className="flex items-center gap-2">
