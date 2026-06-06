@@ -140,7 +140,7 @@ export default function ShowcaseMarquee({ clips }: Props) {
             ref={(el) => {
               cardRefs.current[i] = el;
             }}
-            className={`relative h-[240px] w-[135px] shrink-0 md:h-auto md:aspect-[3/4] md:w-auto md:flex-1 overflow-hidden rounded-[18px] border border-zinc-200 shadow-[0_4px_20px_rgba(0,0,0,0.08)] ${
+            className={`relative h-[240px] w-[135px] shrink-0 md:h-auto md:aspect-[2/3] md:w-auto md:flex-1 overflow-hidden rounded-[18px] border border-zinc-200 shadow-[0_4px_20px_rgba(0,0,0,0.08)] ${
               i % 2 === 0 ? "translate-y-3" : ""
             }`}
             style={{

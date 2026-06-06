@@ -483,28 +483,8 @@ export default async function HomePage() {
       </div>
 
       {/* ── FOOTER ── */}
-      <footer className="flex items-center justify-between border-t border-zinc-200 bg-white px-6 py-8 text-[13px] text-[#a1a1aa] md:px-12">
+      <footer className="border-t border-zinc-200 bg-white px-6 py-8 text-center text-[13px] text-[#a1a1aa] md:px-12">
         <span>© Nova</span>
-        <nav className="flex gap-6" aria-label="Footer navigation">
-          <Link
-            href="/templates"
-            className="transition-colors hover:text-[#0c0c0e]"
-          >
-            Templates
-          </Link>
-          <Link
-            href="/library"
-            className="transition-colors hover:text-[#0c0c0e]"
-          >
-            Library
-          </Link>
-          <Link
-            href="/api/auth/signin"
-            className="transition-colors hover:text-[#0c0c0e]"
-          >
-            Sign in
-          </Link>
-        </nav>
       </footer>
     </main>
   );
