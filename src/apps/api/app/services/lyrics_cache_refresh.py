@@ -34,6 +34,10 @@ class LyricsCacheRefreshError(RuntimeError):
     """Raised when a stale cache cannot be refreshed for a lyrics-enabled render."""
 
 
+class TransientLyricsCacheRefreshError(LyricsCacheRefreshError):
+    """Raised when an external lyrics provider failed during a stale-cache refresh."""
+
+
 def current_lyrics_prompt_version() -> str:
     return LyricsExtractionAgent.spec.prompt_version
 
@@ -109,6 +113,17 @@ def ensure_fresh_lyrics_cached_for_render(
         )
 
     if output.is_empty or output.source not in PUBLISHABLE_LYRICS_SOURCES:
+        if _non_publishable_due_to_lrclib_error(output):
+            log.warning(
+                "lyrics_cache_stale_refresh_transient_lrclib_error",
+                track_id=track_id,
+                reason=reason,
+                source=output.source,
+                lrclib_error=(output.lyrics_diagnostic or {}).get("lrclib_error"),
+            )
+            raise TransientLyricsCacheRefreshError(
+                "LRCLIB lookup failed while refreshing stale cached lyrics; retry the render"
+            )
         _persist_non_publishable_refresh(track_id=track_id, output=output)
         raise LyricsCacheRefreshError(
             "stale lyrics_cached refresh did not produce publishable LRCLIB lyrics"
@@ -142,6 +157,22 @@ def ensure_fresh_lyrics_cached_for_render(
         lines=len(output.lines),
     )
     return fresh
+
+
+def _non_publishable_due_to_lrclib_error(output: LyricsOutput) -> bool:
+    """Return true when a non-publishable output came from LRCLIB transport failure."""
+
+    diagnostic = output.lyrics_diagnostic
+    if not isinstance(diagnostic, dict):
+        return False
+    if not diagnostic.get("lrclib_error"):
+        return False
+
+    statuses = (
+        diagnostic.get("get_status"),
+        diagnostic.get("search_status"),
+    )
+    return any(isinstance(status, str) and "error" in status for status in statuses)
 
 
 def _persist_non_publishable_refresh(*, track_id: str, output: LyricsOutput) -> None:
