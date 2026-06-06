@@ -13,6 +13,11 @@ All notable changes to this project will be documented in this file.
 - **Content-plan activation baselines.** `phase_baselines.py` adds `CONTENT_PLAN_ACTIVATION_BASELINES_MS` (matching_clips=75s, picking_days=10s, starting_renders=35s) and `get_baselines("content_plan_activation")`.
 - **`getPlanItemJobStatus` API helper.** `lib/plan-api.ts` exports `getPlanItemJobStatus(jobId)` + `PlanItemJobStatus` type, plus `ACTIVATION_PHASE_ORDER/LABEL` vocab in `lib/job-phases.ts`.
 
+## [0.4.83.1] - 2026-06-06
+
+### Added
+- **DESIGN.md: Nova design system written to repo root.** Codifies landing cream/lime/Playfair, product dark-theater amber, admin plain-dark, loading-state system (D6 truth rules, D13 mood tiers, D14 motion constants, D15 surface ownership, D17–D20 a11y/copy/stall contracts), a11y & responsive baseline, anti-slop rules, and a 6-row known-deviations ledger with canonical picks. Every future design review calibrates against this document instead of re-grepping the codebase. `CLAUDE.md` references it under Key paths.
+
 ## [0.4.83.0] - 2026-06-06
 
 ### Added
