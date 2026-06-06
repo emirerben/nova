@@ -59,15 +59,10 @@ export default function ChatInterview({ onComplete }: { onComplete: () => void }
     if (phase === "chat") inputRef.current?.focus();
   }, [question, phase]);
 
-  function resetHeight() {
-    if (inputRef.current) inputRef.current.style.height = "auto";
-  }
-
   async function submit(text?: string) {
     const payload = (text ?? answer).trim();
     if (!payload || phase !== "chat" || !personaId) return;
     setAnswer("");
-    resetHeight();
     setPriorAnswer(payload);
     setPhase("thinking");
     setError(null);
@@ -119,8 +114,8 @@ export default function ChatInterview({ onComplete }: { onComplete: () => void }
   }
 
   return (
-    <div className="flex min-h-[60vh] flex-col">
-      {/* TikTok context chip — persists for the rest of the chat */}
+    <div className="py-2">
+      {/* TikTok context chip */}
       {tiktokContext && (
         <div
           className="mb-6 inline-flex items-center gap-2 self-start rounded-full bg-zinc-800 px-3 py-1.5"
@@ -146,102 +141,92 @@ export default function ChatInterview({ onComplete }: { onComplete: () => void }
         </div>
       )}
 
-      {/* Question area — grows to fill available space */}
-      <div className="flex-1">
-        {/* Eyebrow */}
-        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-amber-300">
-          {turnLabel || "Getting to know you"}
-        </p>
+      {/* Eyebrow */}
+      <p className="mb-3 text-xs font-medium uppercase tracking-wide text-amber-300">
+        {turnLabel || "Getting to know you"}
+      </p>
 
-        {/* The question: LEFT-ALIGNED, no card, no border, just text on black */}
-        <div role="status" aria-live="polite">
-          <h1 className="animate-fade-up font-display text-2xl leading-snug text-white sm:text-3xl">
-            {question}
-          </h1>
-        </div>
-
-        {/* Prior-answer pull-quote — ONE entry, amber left-border, never a thread */}
-        {priorAnswer && (
-          <blockquote className="mt-5 border-l-2 border-amber-400 pl-3">
-            <p className="line-clamp-3 text-sm text-zinc-400">{priorAnswer}</p>
-          </blockquote>
-        )}
-
-        {/* Suggestion chips — horizontal scroll on mobile, no wrapping */}
-        {suggestions.length > 0 && phase !== "thinking" && (
-          <div
-            className="mt-4 flex gap-2 overflow-x-auto pb-1"
-            style={{ WebkitOverflowScrolling: "touch" } as React.CSSProperties}
-          >
-            {suggestions.map((chip) => (
-              <button
-                key={chip}
-                type="button"
-                onClick={() => setAnswer(chip)}
-                className="min-h-[44px] flex-none whitespace-nowrap rounded-full border border-zinc-800 bg-zinc-900 px-4 py-2 text-xs text-amber-300 transition-colors hover:border-amber-400/50 hover:text-amber-200"
-              >
-                {chip}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Thinking dot — single amber ping, no full-screen spinner */}
-        {phase === "thinking" && (
-          <div
-            className="mt-5 flex items-center gap-2"
-            role="status"
-            aria-label="Nova is thinking"
-          >
-            <span className="h-1.5 w-1.5 animate-ping rounded-full bg-amber-400" />
-          </div>
-        )}
-
-        {/* Error state */}
-        {error && phase === "error" && (
-          <div className="mt-5 rounded-lg border border-amber-400/30 bg-zinc-900 px-4 py-3">
-            <p className="text-sm text-amber-300">{error}</p>
-            <button
-              type="button"
-              onClick={() => void retry()}
-              className="mt-2 text-xs text-zinc-400 underline hover:text-white"
-            >
-              Try again
-            </button>
-          </div>
-        )}
+      {/* Question — LEFT-ALIGNED, no card, no border */}
+      <div role="status" aria-live="polite">
+        <h1 className="animate-fade-up font-display text-2xl leading-snug text-white sm:text-3xl">
+          {question}
+        </h1>
       </div>
 
-      {/* Sticky input — iOS safe-area-aware, keyboard doesn't bury it */}
-      <div className="sticky bottom-0 z-10 bg-zinc-950 pb-[env(safe-area-inset-bottom)] pt-4">
-        <div className="flex items-end gap-3 rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3">
+      {/* Prior-answer pull-quote — ONE entry, amber left-border, never a thread */}
+      {priorAnswer && (
+        <blockquote className="mt-5 border-l-2 border-amber-400 pl-3">
+          <p className="line-clamp-3 text-sm text-zinc-400">{priorAnswer}</p>
+        </blockquote>
+      )}
+
+      {/* Suggestion chips — tap to auto-submit, wrap on desktop */}
+      {suggestions.length > 0 && phase !== "thinking" && (
+        <div className="mt-5 flex flex-wrap gap-2">
+          {suggestions.map((chip) => (
+            <button
+              key={chip}
+              type="button"
+              onClick={() => void submit(chip)}
+              className="min-h-[40px] rounded-full border border-zinc-600 bg-zinc-800 px-4 py-2 text-sm text-zinc-200 transition-colors hover:border-amber-400/60 hover:bg-zinc-700 hover:text-white"
+            >
+              {chip}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Thinking dot */}
+      {phase === "thinking" && (
+        <div
+          className="mt-5 flex items-center gap-2"
+          role="status"
+          aria-label="Nova is thinking"
+        >
+          <span className="h-1.5 w-1.5 animate-ping rounded-full bg-amber-400" />
+          <span className="text-sm text-zinc-500">Thinking…</span>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && phase === "error" && (
+        <div className="mt-5 rounded-lg border border-amber-400/30 bg-zinc-900 px-4 py-3">
+          <p className="text-sm text-amber-300">{error}</p>
+          <button
+            type="button"
+            onClick={() => void retry()}
+            className="mt-2 text-xs text-zinc-400 underline hover:text-white"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+
+      {/* Input — sits naturally below content, sticky on mobile when keyboard opens */}
+      <div className="sticky bottom-0 z-10 mt-8 bg-zinc-950 pb-[env(safe-area-inset-bottom)]">
+        <div className="flex items-center gap-3 rounded-2xl border border-zinc-700 bg-zinc-900 px-4 py-2">
           <textarea
             ref={inputRef}
             value={answer}
             rows={1}
             placeholder="Tell me…"
-            disabled={phase === "thinking" || phase === "loading"}
+            disabled={phase === "thinking"}
             aria-label="Your answer"
-            onChange={(e) => {
-              setAnswer(e.target.value);
-              // Auto-resize
-              e.target.style.height = "auto";
-              e.target.style.height = `${e.target.scrollHeight}px`;
-            }}
+            onChange={(e) => setAnswer(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void submit();
               }
             }}
-            className="max-h-[120px] flex-1 resize-none bg-transparent text-sm text-white placeholder-zinc-600 focus:outline-none disabled:opacity-50"
+            className="flex-1 resize-none bg-transparent text-sm text-white placeholder-zinc-600 focus:outline-none disabled:opacity-50 [field-sizing:content]"
           />
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={!answer.trim() || phase === "thinking" || phase === "loading"}
+            disabled={!answer.trim() || phase === "thinking"}
             aria-label="Send answer"
-            className="flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-full bg-amber-400 text-sm font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-500"
+            className="flex min-h-[44px] min-w-[44px] flex-shrink-0 items-center justify-center rounded-full bg-amber-400 text-sm font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:opacity-25"
           >
             →
           </button>
