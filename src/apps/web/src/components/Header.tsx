@@ -35,14 +35,10 @@ export default function Header() {
 
   return (
     <header
-      className={`sticky top-0 z-40 h-14 ${isHome ? "border-b border-zinc-200" : ""}`}
+      className={`z-40 h-14 ${isHome ? "" : "sticky top-0"}`}
       style={
         isHome
-          ? {
-              backgroundColor: "rgba(250, 250, 248, 0.92)",
-              backdropFilter: "blur(10px)",
-              WebkitBackdropFilter: "blur(10px)",
-            }
+          ? {}
           : {
               backgroundColor: `rgba(0, 0, 0, ${0.6 * progress})`,
               backdropFilter: `blur(${12 * progress}px)`,
@@ -59,16 +55,18 @@ export default function Header() {
           Nova
         </Link>
         <nav className="flex items-center gap-2 sm:gap-4">
-          <Link
-            href="/plan"
-            className={`text-sm transition-colors ${
-              isHome
-                ? `hover:text-[#0c0c0e] ${pathname.startsWith("/plan") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
-                : `hover:text-white ${pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"}`
-            }`}
-          >
-            Plan
-          </Link>
+          {authStatus === "authenticated" && (
+            <Link
+              href="/plan"
+              className={`text-sm transition-colors ${
+                isHome
+                  ? `hover:text-[#0c0c0e] ${pathname.startsWith("/plan") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
+                  : `hover:text-white ${pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"}`
+              }`}
+            >
+              Plan
+            </Link>
+          )}
           {authStatus === "authenticated" && (
             <Link
               href="/library"

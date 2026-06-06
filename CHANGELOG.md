@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.80.0] - 2026-06-06
+
+### Changed
+- **Landing page redesign: olive accent, combined process section, transparent header.** Replaced amber accent color with olive (`lime-*`) across the landing page. Header on `/` is now non-sticky and fully transparent — no background band floating over white sections. The "Plan" nav link is hidden for unauthenticated visitors (matches Library link behavior). The tilted desk-cards section and the 5-step narrative list are replaced by a single alternating-row process section (01 learn / 02 plan / 03 film) with explanatory prose alongside each card. The interview card uses an editorial serif layout (no chat bubbles) with realistic copy tied to one creator persona. The shot list card adds framing and duration per shot, matching the real `ShotSpec` shape. Marquee section fixes `overflow-x-auto` desktop scroll bug.
+
 ## [0.4.79.2] - 2026-06-05
 
 ### Fixed
