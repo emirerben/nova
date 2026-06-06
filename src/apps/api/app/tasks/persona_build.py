@@ -26,6 +26,36 @@ log = structlog.get_logger()
 
 
 @celery_app.task(
+    name="app.tasks.persona_build.scrape_tiktok_profile",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=5,
+    soft_time_limit=30,
+    time_limit=40,
+)
+def scrape_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa: ANN001
+    """Fetch public TikTok profile and store on the Persona row.
+
+    Best-effort: failure marks nothing in the DB — the NULL tiktok_profile
+    tells the frontend and chat agent to proceed as the no-TikTok path.
+    """
+    from app.services.tiktok_profile import fetch_profile  # noqa: PLC0415
+
+    profile = fetch_profile(handle)
+    if profile is None:
+        log.info("scrape_tiktok_profile.no_data", persona_id=persona_id, handle=handle)
+        return
+
+    with sync_session() as session:
+        row = session.get(Persona, uuid.UUID(str(persona_id)))
+        if row is None:
+            return
+        row.tiktok_profile = dict(profile)
+        session.commit()
+    log.info("scrape_tiktok_profile.done", persona_id=persona_id, handle=handle)
+
+
+@celery_app.task(
     name="app.tasks.persona_build.generate_persona",
     bind=True,
     max_retries=2,

@@ -13,8 +13,10 @@ import {
   type PersonaQuestionnaire,
   type PersonaResponse,
   retunePersonaFromFeedback,
+  tiktokScrape,
   updatePersona,
 } from "@/lib/plan-api";
+import ChatInterview from "./_components/ChatInterview";
 import GeneratingState from "./_components/GeneratingState";
 import OnboardingStep from "./_components/OnboardingStep";
 import PersonaEditor from "./_components/PersonaEditor";
@@ -23,6 +25,10 @@ import PlanShell from "./_components/PlanShell";
 import SeedUploadCard from "./_components/SeedUploadCard";
 import SignInPrompt from "./_components/SignInPrompt";
 import Stepper, { type WizardStep } from "./_components/Stepper";
+import TikTokPreScreen from "./_components/TikTokPreScreen";
+
+// Sub-steps within the "you" wizard step (not shown in the Stepper dots).
+type YouSubStep = "tiktok-pre-screen" | "chat" | "form";
 
 const POLL_MS = 2000;
 const ORDER: Record<WizardStep, number> = { you: 0, persona: 1, plan: 2 };
@@ -30,16 +36,24 @@ const ORDER: Record<WizardStep, number> = { you: 0, persona: 1, plan: 2 };
 /** Furthest step unlocked by the user's data. */
 function dataReached(p: PersonaResponse | null, pl: ContentPlan | null): WizardStep {
   if (pl) return "plan";
-  if (p) return "persona";
+  // chat_pending means the user is still in onboarding — they haven't reached Persona yet.
+  if (p && p.persona_status !== "chat_pending") return "persona";
   return "you";
 }
 
 /** Where a returning user should land based purely on their data. */
 function naturalStep(p: PersonaResponse | null, pl: ContentPlan | null): WizardStep {
   if (!p) return "you";
+  if (p.persona_status === "chat_pending") return "you";
   if (p.persona_status === "generating") return "persona";
   if (pl) return "plan";
   return "persona";
+}
+
+/** Sub-step within "you" derived from saved persona state (for resume). */
+function naturalSubStep(p: PersonaResponse | null): YouSubStep {
+  if (p?.persona_status === "chat_pending") return "chat";
+  return "tiktok-pre-screen";
 }
 
 export default function PlanWizardPage() {
@@ -51,6 +65,7 @@ export default function PlanWizardPage() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [step, setStep] = useState<WizardStep | null>(null);
+  const [subStep, setSubStep] = useState<YouSubStep>("tiktok-pre-screen");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -98,7 +113,9 @@ export default function PlanWizardPage() {
     const reached = dataReached(persona, plan);
     const urlStep = new URLSearchParams(window.location.search).get("step") as WizardStep | null;
     const valid = urlStep && urlStep in ORDER && ORDER[urlStep] <= ORDER[reached];
-    setStep(valid ? (urlStep as WizardStep) : naturalStep(persona, plan));
+    const ns = valid ? (urlStep as WizardStep) : naturalStep(persona, plan);
+    setStep(ns);
+    if (ns === "you") setSubStep(naturalSubStep(persona));
   }, [loading, step, needsAuth, persona, plan]);
 
   // Keep the URL in sync so refresh / share lands on the same step.
@@ -110,6 +127,29 @@ export default function PlanWizardPage() {
   }, [step]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
+
+  async function handleTikTokPreScreen(handle: string) {
+    if (handle) {
+      setBusy(true);
+      try {
+        const p = await tiktokScrape(handle);
+        setPersona(p);
+      } catch {
+        // Best-effort — scrape failure is non-blocking; proceed to chat regardless.
+      } finally {
+        setBusy(false);
+      }
+    }
+    setSubStep("chat");
+  }
+
+  function handleChatComplete() {
+    // ChatInterview fires generate_persona on the backend; navigate to the
+    // persona step and let the polling loop surface the result.
+    void load();
+    setStep("persona");
+  }
+
   async function handleOnboardingSubmit(answers: PersonaQuestionnaire) {
     setBusy(true);
     setError(null);
@@ -185,7 +225,15 @@ export default function PlanWizardPage() {
         </div>
       )}
 
-      {step === "you" && (
+      {step === "you" && subStep === "tiktok-pre-screen" && (
+        <TikTokPreScreen onContinue={handleTikTokPreScreen} submitting={busy} />
+      )}
+
+      {step === "you" && subStep === "chat" && (
+        <ChatInterview onComplete={handleChatComplete} />
+      )}
+
+      {step === "you" && subStep === "form" && (
         <OnboardingStep
           onSubmit={handleOnboardingSubmit}
           submitting={busy}
@@ -201,6 +249,10 @@ export default function PlanWizardPage() {
           onContinue={() => setStep("plan")}
           onStartOver={() => setStep("you")}
           onRetune={handleRetunePersona}
+          onUpdateAnswers={() => {
+            setSubStep("tiktok-pre-screen");
+            setStep("you");
+          }}
         />
       )}
 
@@ -226,6 +278,7 @@ function PersonaStepView({
   onContinue,
   onStartOver,
   onRetune,
+  onUpdateAnswers,
 }: {
   persona: PersonaResponse | null;
   busy: boolean;
@@ -233,6 +286,7 @@ function PersonaStepView({
   onContinue: () => void;
   onStartOver: () => void;
   onRetune: () => Promise<void>;
+  onUpdateAnswers: () => void;
 }) {
   if (!persona) {
     return (
@@ -250,10 +304,12 @@ function PersonaStepView({
   }
 
   if (persona.persona_status === "generating") {
+    const q = persona.questionnaire as unknown as Record<string, unknown> | null;
+    const fromChat = !!(q?.interview_turns);
     return (
       <GeneratingState
-        title="Crafting your persona…"
-        subtitle="Reading your answers for the voice and themes behind your videos. This usually takes 15-30 seconds."
+        title={fromChat ? "Reading everything you shared…" : "Crafting your persona…"}
+        subtitle="Turning your answers into a voice and themes for your videos. Usually 15-30 seconds."
         lines={4}
       />
     );
@@ -291,15 +347,19 @@ function PersonaStepView({
     );
   }
 
+  const personaData = persona.persona;
   return (
     <PersonaEditor
-      persona={persona.persona ?? blankPersona()}
+      persona={personaData ?? blankPersona()}
       status={persona.persona_status}
       onSave={onSave}
       onContinue={onContinue}
       continueLabel="Plan my 30 days →"
       continuing={busy}
       onRetuneFromFeedback={onRetune}
+      tiktokProfile={persona.tiktok_profile}
+      signatureQuote={personaData?.signature_quote}
+      onUpdateAnswers={onUpdateAnswers}
     />
   );
 }

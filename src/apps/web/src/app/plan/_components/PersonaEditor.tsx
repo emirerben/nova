@@ -2,7 +2,7 @@
 
 import { useId, useState } from "react";
 import { cn } from "@/lib/cn";
-import type { PersonaContent, PersonaStatus } from "@/lib/plan-api";
+import type { PersonaContent, PersonaStatus, TikTokProfile } from "@/lib/plan-api";
 
 const TEXT_FIELDS: { key: keyof PersonaContent; label: string }[] = [
   { key: "summary", label: "Summary" },
@@ -42,6 +42,9 @@ export default function PersonaEditor({
   continuing,
   startInEdit = false,
   onRetuneFromFeedback,
+  tiktokProfile,
+  signatureQuote,
+  onUpdateAnswers,
 }: {
   persona: PersonaContent;
   status: PersonaStatus;
@@ -54,6 +57,11 @@ export default function PersonaEditor({
   // Phase 2). Disabled when the persona is hand-edited — an explicit edit is
   // authoritative and never overwritten by inferred feedback ("their say" rule).
   onRetuneFromFeedback?: () => Promise<void>;
+  // Aha-moment reveal data (chat onboarding)
+  tiktokProfile?: TikTokProfile | null;
+  signatureQuote?: string;
+  // Navigates back to the TikTok pre-screen so returning users can restart the chat.
+  onUpdateAnswers?: () => void;
 }) {
   const [draft, setDraft] = useState<PersonaContent>(persona);
   const [lastSaved, setLastSaved] = useState<PersonaContent>(persona);
@@ -117,9 +125,17 @@ export default function PersonaEditor({
 
   return (
     <div className="animate-fade-up py-2">
+      {/* Aha-moment reveal — TikTok stat line OR verbatim creator quote */}
+      <AhaMoment tiktokProfile={tiktokProfile} signatureQuote={signatureQuote} />
+
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl text-white">Meet your persona</h1>
+          <h1
+            className="font-display text-3xl text-white animate-fade-up"
+            style={{ animationDelay: tiktokProfile ?? signatureQuote ? "100ms" : "0ms" }}
+          >
+            Meet your persona
+          </h1>
           <p className="mt-1 text-zinc-400">
             {editing
               ? "Edit anything that feels off — this guides every video we make for you."
@@ -193,9 +209,69 @@ export default function PersonaEditor({
             {retuning ? "Updating…" : "Update from feedback"}
           </button>
         )}
+
+        {onUpdateAnswers && !editing && (
+          <button
+            type="button"
+            onClick={onUpdateAnswers}
+            className="py-3 text-sm text-zinc-500 transition-colors hover:text-zinc-300"
+          >
+            Update my answers →
+          </button>
+        )}
       </div>
     </div>
   );
+}
+
+/**
+ * Aha-moment reveal shown once above the persona heading.
+ * TikTok path: stat line ("We analyzed N of your videos. @handle · N followers").
+ * Fallback path: verbatim creator quote ("You said: '…'").
+ * Nothing rendered when neither is available (legacy flat-questionnaire personas).
+ */
+function AhaMoment({
+  tiktokProfile,
+  signatureQuote,
+}: {
+  tiktokProfile?: TikTokProfile | null;
+  signatureQuote?: string;
+}) {
+  if (tiktokProfile) {
+    const { handle, follower_count, video_count } = tiktokProfile;
+    const followerStr =
+      follower_count != null
+        ? follower_count >= 1000
+          ? `${(follower_count / 1000).toFixed(1)}K followers`
+          : `${follower_count} followers`
+        : null;
+    return (
+      <div className="mb-8 animate-fade-up">
+        {video_count != null && (
+          <p className="text-sm font-medium uppercase tracking-wide text-amber-300">
+            We analyzed {video_count} of your videos.
+          </p>
+        )}
+        <p className="mt-0.5 text-xs text-zinc-400">
+          @{handle}
+          {followerStr && <> · {followerStr}</>}
+        </p>
+      </div>
+    );
+  }
+
+  if (signatureQuote?.trim()) {
+    return (
+      <div className="mb-8 animate-fade-up">
+        <p className="font-display text-xl italic leading-relaxed text-amber-300">
+          &ldquo;{signatureQuote}&rdquo;
+        </p>
+        <p className="mt-1.5 text-xs text-zinc-500">You said this</p>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 /** Editorial read view: summary leads, pillars/topics as chips, facts as labeled rows. */

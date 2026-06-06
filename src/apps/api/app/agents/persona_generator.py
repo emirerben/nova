@@ -30,6 +30,42 @@ from app.agents.music_matcher import _sanitize_text
 from app.agents.persona_examples import format_archetypes, format_success_factors
 from app.pipeline.prompt_loader import load_prompt
 
+_MAX_QUOTE_LEN = 500
+
+
+def _interview_block(q: PersonaQuestionnaire) -> str:
+    """Return the primary input block for the persona generator.
+
+    When interview_turns is present (new chat flow), render the full
+    conversation. Fall back to the flat questionnaire fields (legacy flow).
+    """
+    if q.interview_turns:
+        lines = [
+            "<<<INTERVIEW CONVERSATION (the creator's own words — primary source)",
+        ]
+        for turn in q.interview_turns:
+            label = "INTERVIEWER" if turn.role == "agent" else "CREATOR"
+            lines.append(f"{label}: {_sanitize_text(turn.content)}")
+        lines.append("INTERVIEW CONVERSATION")
+        # Include TikTok handle as supporting context if present
+        if q.tiktok_handle:
+            lines.append(f"\n(TikTok: @{_sanitize_text(q.tiktok_handle)})")
+        return "\n".join(lines)
+
+    # Legacy flat-questionnaire path
+    return (
+        "<<<QUESTIONNAIRE\n"
+        f"work: {_sanitize_text(q.work)}\n"
+        f"school: {_sanitize_text(q.school)}\n"
+        f"social life: {_sanitize_text(q.social)}\n"
+        f"location: {_sanitize_text(q.location)}\n"
+        f"hobbies: {_sanitize_text(q.hobbies)}\n"
+        f"travels: {_sanitize_text(q.travels)}\n"
+        f"passions: {_sanitize_text(q.passions)}\n"
+        f"tiktok handle (optional, do not fetch): {_sanitize_text(q.tiktok_handle)}\n"
+        "QUESTIONNAIRE"
+    )
+
 log = structlog.get_logger()
 
 
@@ -70,14 +106,8 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
     def render_prompt(self, input: PersonaQuestionnaire) -> str:  # noqa: A002
         return load_prompt(
             "generate_persona",
-            work=_sanitize_text(input.work),
-            school=_sanitize_text(input.school),
-            social=_sanitize_text(input.social),
-            location=_sanitize_text(input.location),
-            hobbies=_sanitize_text(input.hobbies),
-            travels=_sanitize_text(input.travels),
-            passions=_sanitize_text(input.passions),
-            tiktok_handle=_sanitize_text(input.tiktok_handle),
+            # Primary input block — interview turns (new) or flat fields (legacy)
+            interview_block=_interview_block(input),
             # Feedback-loop steer — the WHOLE block, or "" on first onboarding (keeps
             # the no-feedback prompt byte-identical to the baseline).
             preferences=_preferences_block(input.preference_summary),
@@ -122,6 +152,9 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             # User-facing "why this lane"; sanitized like the rest (it renders in
             # the dashboard and round-trips through persona edits).
             rationale=_sanitize_text(persona.rationale),
+            # Verbatim creator quote for the aha-moment reveal. Sanitized but
+            # quote length is capped to prevent bloated persona rows.
+            signature_quote=_sanitize_text(persona.signature_quote)[:_MAX_QUOTE_LEN],
         )
         if not cleaned.content_pillars:
             raise RefusalError("persona_generator: content_pillars empty after sanitize")
@@ -131,9 +164,10 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
         return (
             "\n\nIMPORTANT: Return ONLY the JSON object with keys summary, "
             "content_pillars, tone, audience, posting_cadence, posts_per_week, "
-            "sample_topics, rationale. "
+            "sample_topics, rationale, signature_quote. "
             "content_pillars MUST have 3-5 short items; sample_topics 5-8. "
             "posts_per_week MUST be an integer 1-7, consistent with posting_cadence. "
+            "signature_quote must be a verbatim creator quote or empty string. "
             "No markdown, no text outside the JSON."
         )
 
