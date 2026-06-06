@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type ContentPlan,
@@ -26,13 +27,36 @@ import SignInPrompt from "./_components/SignInPrompt";
 import TikTokPreScreen from "./_components/TikTokPreScreen";
 import { WorkspaceHome } from "./_components/workspace/WorkspaceHome";
 
-// Sub-steps within the "you" wizard step (not shown in the Stepper dots).
+// Sub-steps within the "you" wizard step.
 type YouSubStep = "tiktok-pre-screen" | "chat" | "form";
 
 const POLL_MS = 2000;
 
 export default function PlanPage() {
   const { status: authStatus } = useSession();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // callbackUrl audit (PR3): all existing callbackUrls point to "/" or "/plan" —
+  // both are correct. "/plan" is the mode router; "/plan?step=*" falls through
+  // the shim below. No callbackUrl changes needed.
+
+  // Legacy ?step= shim — redirect old deeplinks to their canonical routes.
+  const stepParam = searchParams.get("step");
+  useEffect(() => {
+    if (stepParam === "persona") {
+      router.replace("/plan/persona");
+      return;
+    }
+    if (stepParam === "you") {
+      router.replace("/plan/setup");
+      return;
+    }
+    if (stepParam === "plan") {
+      router.replace("/plan");
+      return;
+    }
+  }, [stepParam, router]);
 
   const [persona, setPersona] = useState<PersonaResponse | null>(null);
   const [plan, setPlan] = useState<ContentPlan | null>(null);
