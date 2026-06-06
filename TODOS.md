@@ -654,6 +654,12 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 ### Fix `test_active_font_renders_with_ass` smoke test on FFmpeg 8.1.1
 **Completed:** v0.4.75.3 (2026-06-04) — detected libass-capable ffmpeg-full via `_find_libass_ffmpeg()`; escaped paths with `escape_ffmpeg_filter_path()` matching `single_pass.py`. All 33 font parametrize cases pass.
 
+## Loading progress system — follow-ups (added 2026-06-06)
+
+- [ ] **Author DESIGN.md via /design-consultation** — codify the loading system's reusable rules (D6 truth rules, D13 mood tiers, D14 motion constants, D15 host-owns-surface) right after implementation while decisions are fresh.
+- [ ] **SSE for generative job status** — extend the template `/events` SSE pattern + `useJobStream` to generative so variant arrivals and the D12 climax land instantly instead of up to 2s late; sanity-check connection capacity on the 512MB API VM first.
+- [ ] **Baseline refresh from real phase data** — extend `scripts/aggregate_phase_timings.py` with a `phase_log` DB reader and refresh `app/services/phase_baselines.py` from prod percentiles once PR2's instrumentation has soaked (~1–2 weeks of generative jobs).
+
 ## Landing page design system
 
 ### Create DESIGN.md via /design-consultation

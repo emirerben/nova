@@ -35,6 +35,10 @@ export interface GenerativeVariant {
   // The archetype that actually rendered this variant (Lane D). null on montage
   // variants. Carried for verification + Lane E UI; current UI ignores it.
   resolved_archetype?: string | null;
+  // PR2 instrumentation fields — optional so older API builds degrade gracefully.
+  render_started_at?: string | null;
+  render_finished_at?: string | null;
+  error_class?: string | null;
 }
 
 export interface GenerativeStyleSet {
@@ -69,6 +73,12 @@ export interface GenerativeJobStatus {
   // Plan-declared edit format (montage default). Per-variant `resolved_archetype`
   // says what actually rendered. Optional — older API builds omit it.
   edit_format?: string | null;
+  // PR2 instrumentation fields — optional so older API builds degrade gracefully.
+  current_phase?: string | null;
+  phase_log?: Array<{ name: string; ts: string; elapsed_ms?: number }> | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  expected_phase_durations?: Record<string, number> | null;
 }
 
 /** Terminal statuses the poller should stop on. */
