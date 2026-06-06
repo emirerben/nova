@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   type ContentPlan,
   createContentPlan,
@@ -67,7 +67,6 @@ export default function PlanPage() {
   const [busy, setBusy] = useState(false);
 
   // Track when the plan flips from generating → ready in-session (for banner).
-  const prevPlanStatus = useRef<string | null>(null);
   const [planJustReady, setPlanJustReady] = useState(false);
 
   const load = useCallback(async () => {
@@ -81,7 +80,6 @@ export default function PlanPage() {
         if (prevStatus === "generating" && newStatus === "ready") {
           setPlanJustReady(true);
         }
-        prevPlanStatus.current = newStatus;
         return pl;
       });
       return { p, pl };
@@ -218,6 +216,7 @@ export default function PlanPage() {
         regenerating={mode === "workspace:regenerating"}
         onRefresh={load}
         onError={setError}
+        onBannerDismiss={() => setPlanJustReady(false)}
       />
     );
   }

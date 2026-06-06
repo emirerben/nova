@@ -18,6 +18,8 @@ interface WorkspaceHomeProps {
   regenerating: boolean;
   onRefresh: () => void;
   onError: (msg: string) => void;
+  /** Called after the ready banner auto-dismisses so the parent can reset the flag */
+  onBannerDismiss?: () => void;
 }
 
 export function WorkspaceHome({
@@ -27,6 +29,7 @@ export function WorkspaceHome({
   regenerating,
   onRefresh,
   onError,
+  onBannerDismiss,
 }: WorkspaceHomeProps) {
   const items = plan.items ?? [];
   const todayDay = calendarToday(plan.start_date, plan.horizon_days);
@@ -71,7 +74,11 @@ export function WorkspaceHome({
           {/* Right column */}
           <div className="flex flex-1 flex-col gap-6">
             {/* Plan-ready one-time banner */}
-            <PlanReadyBanner horizonDays={plan.horizon_days} show={planJustReady} />
+            <PlanReadyBanner
+              horizonDays={plan.horizon_days}
+              show={planJustReady}
+              onDismiss={onBannerDismiss}
+            />
 
             {/* Activation card — conditional */}
             {activating && (

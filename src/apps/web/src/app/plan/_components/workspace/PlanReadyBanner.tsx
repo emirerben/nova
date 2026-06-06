@@ -5,16 +5,21 @@ interface PlanReadyBannerProps {
   horizonDays: number;
   /** Fire only once per session (parent passes true when in-session flip detected) */
   show: boolean;
+  /** Called after the banner auto-dismisses so the parent can reset the flag */
+  onDismiss?: () => void;
 }
 
-export function PlanReadyBanner({ horizonDays, show }: PlanReadyBannerProps) {
+export function PlanReadyBanner({ horizonDays, show, onDismiss }: PlanReadyBannerProps) {
   const [visible, setVisible] = useState(show);
   useEffect(() => {
     if (!show) return;
     setVisible(true);
-    const t = setTimeout(() => setVisible(false), 4000);
+    const t = setTimeout(() => {
+      setVisible(false);
+      onDismiss?.();
+    }, 4000);
     return () => clearTimeout(t);
-  }, [show]);
+  }, [show, onDismiss]);
 
   if (!visible) return null;
   return (
