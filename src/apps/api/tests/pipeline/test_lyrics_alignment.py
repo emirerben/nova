@@ -424,6 +424,89 @@ def test_anchored_repeated_chorus_prefers_pre_anchor_prefix_over_late_decoy() ->
     assert [w.start_s for w in but_lines[1].words[:4]] == [56.74, 57.36, 57.56, 57.98]
 
 
+def test_anchored_repeated_chorus_lookback_wins_over_in_window_decoy_prefix() -> None:
+    """A later repeated prefix inside the anchor window must not block lookback.
+
+    The Can Feel My Face chorus has two "But I love it" phrases in one LRCLIB
+    line. When the stale LRCLIB anchor lands after the first phrase, Whisper
+    can still contain a strong prefix match for the second phrase inside the
+    normal anchor window. That decoy used to skip the pre-anchor lookback and
+    make the whole line render late in Pop-up and Karaoke previews.
+    """
+    anchors = [
+        SyncedLine(start_s=44.99, text="I can't feel my face when I'm with you"),
+        SyncedLine(start_s=49.94, text="But I love it, but I love it, oh"),
+        SyncedLine(start_s=53.06, text="I can't feel my face when I'm with you"),
+    ]
+    whisper = [
+        _ww("I", 44.00, 44.62),
+        _ww("can", 44.62, 44.86),
+        _ww("feel", 44.86, 45.16),
+        _ww("my", 45.16, 45.40),
+        _ww("face", 45.40, 45.72),
+        _ww("when", 45.72, 45.98),
+        _ww("I'm", 45.98, 46.44),
+        _ww("with", 46.44, 46.54),
+        _ww("you", 46.54, 46.90),
+        _ww("But", 47.82, 48.44),
+        _ww("I", 48.44, 48.64),
+        _ww("love", 48.64, 48.94),
+        _ww("it", 48.94, 49.38),
+        _ww("But", 50.02, 50.70),
+        _ww("I", 50.70, 50.90),
+        _ww("love", 50.90, 51.24),
+        _ww("it", 51.24, 51.66),
+        _ww("oh", 51.66, 52.60),
+        _ww("I", 52.60, 53.74),
+        _ww("can", 53.74, 54.02),
+    ]
+
+    result = align_with_line_anchors(anchors, whisper, track_end_s=55.0)
+    but_line = next(
+        line for line in result.lines if line.text == "But I love it, but I love it, oh"
+    )
+
+    assert but_line.start_s == 47.82
+    assert [w.start_s for w in but_line.words[:4]] == [47.82, 48.44, 48.64, 48.94]
+
+
+def test_rejected_prefix_lookback_does_not_mark_line_locally_adjusted(monkeypatch) -> None:
+    """A rejected lookback candidate must not exclude the line from global re-anchor."""
+    from app.pipeline import lyrics_alignment
+
+    captured: dict[str, list[bool]] = {}
+
+    def capture_reanchor(**kwargs):
+        captured["local_anchor_adjusted"] = list(kwargs["local_anchor_adjusted"])
+        return kwargs["aligned_lines"]
+
+    monkeypatch.setattr(lyrics_alignment, "_maybe_reanchor_to_lrc", capture_reanchor)
+
+    anchors = [
+        SyncedLine(start_s=10.0, text="Plain previous"),
+        SyncedLine(start_s=14.0, text="But I love it, oh"),
+        SyncedLine(start_s=18.0, text="Next line"),
+    ]
+    whisper = [
+        _ww("Plain", 10.10, 10.35),
+        _ww("previous", 10.35, 10.80),
+        _ww("But", 12.90, 13.10),
+        _ww("I", 13.10, 13.25),
+        _ww("love", 13.25, 13.55),
+        _ww("But", 14.10, 14.30),
+        _ww("I", 14.30, 14.45),
+        _ww("love", 14.45, 14.70),
+        _ww("it", 14.70, 14.95),
+        _ww("oh", 14.95, 15.30),
+        _ww("Next", 18.10, 18.35),
+        _ww("line", 18.35, 18.60),
+    ]
+
+    align_with_line_anchors(anchors, whisper, track_end_s=19.0)
+
+    assert captured["local_anchor_adjusted"] == [False, False, False]
+
+
 def test_anchored_prefix_lookback_does_not_reuse_previous_line_words() -> None:
     """The wider repeated-chorus lookback must not steal an already-rendered line."""
     anchors = [
