@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -38,6 +39,7 @@ from app.agents._schemas.edit_format import coerce_edit_format
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
+from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -119,8 +121,10 @@ def orchestrate_generative_job(self, job_id: str) -> None:
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
+        mark_started(job_id)
         try:
             _run_generative_job(job_id)
+            mark_finished(job_id)
         except OperationalError:
             raise  # transient DB → Celery autoretry
         except SoftTimeLimitExceeded:
@@ -129,6 +133,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             # freeze the row at status="processing" forever. Not in autoretry_for, so
             # this does not loop back into the same wall.
             log.warning("generative_job_timeout", job_id=job_id)
+            mark_failed_phase(job_id)
             _fail_job(
                 job_id,
                 "Processing timed out — your clips are heavy (likely 4K/HDR). "
@@ -137,6 +142,7 @@ def orchestrate_generative_job(self, job_id: str) -> None:
             )
         except Exception as exc:
             log.error("generative_job_failed", job_id=job_id, error=str(exc), exc_info=True)
+            mark_failed_phase(job_id)
             _fail_job(job_id, str(exc))
 
 
@@ -158,6 +164,9 @@ def _run_generative_job(job_id: str) -> None:
             failure_reason="skia_disabled",
         )
         return
+
+    # Phase: analyze_clips — covers download + probe + Gemini + clip_metadata.
+    record_phase(job_id, "queued", next_phase="analyze_clips")
 
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -283,6 +292,10 @@ def _run_generative_job(job_id: str) -> None:
             "assembly", "song_match_done", {"track_id": best_track.id if best_track else None}
         )
 
+        # Phase transition: clip analysis + song match are both complete.
+        record_phase(job_id, "analyze_clips", next_phase="match_song")
+        record_phase(job_id, "match_song", next_phase="render_variants")
+
         # [Phase 4/5] Resolve the archetype against the footage, then render its
         # variant set. Default-safe: montage (today's path) unless the plan declares
         # talking_head AND the flag is on AND a clip actually carries speech.
@@ -331,6 +344,16 @@ def _run_generative_job(job_id: str) -> None:
                     out.append({**reusable, "rank": rank})
                     continue
 
+                # Per-variant render_started_at timestamp (D6 tile clock).
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {
+                        "render_status": "rendering",
+                        "render_started_at": datetime.utcnow().isoformat() + "Z",
+                    },
+                )
+
                 variant_dir = os.path.join(tmpdir, f"variant_{rank}")
                 os.makedirs(variant_dir, exist_ok=True)
                 if spec.get("archetype") == "talking_head":
@@ -362,6 +385,11 @@ def _run_generative_job(job_id: str) -> None:
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                     )
+
+                # Per-variant render_finished_at on success (D6 tile clock).
+                if result.get("ok"):
+                    result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+
                 # Persist immediately so a deploy/OOM after this point can't lose it,
                 # and so the status endpoint reveals variants as they finish rather
                 # than all-at-once at _finalize_job.
@@ -369,11 +397,28 @@ def _run_generative_job(job_id: str) -> None:
                 out.append(result)
             return out
 
-        try:
-            results = _render_spec_set(
-                _specs_for_archetype(archetype, best_track, voiceover_gcs_path=voiceover_gcs_path),
-                spine_clip_id,
+        # Upfront pending-variant upsert: announce all variant IDs the moment the spec
+        # set is known — before any render starts. The frontend sees a stable N-tile grid
+        # from this point, never from a growing list that pops in mid-render (D7).
+        initial_specs = _specs_for_archetype(
+            archetype, best_track, voiceover_gcs_path=voiceover_gcs_path
+        )
+        for spec in initial_specs:
+            _upsert_variant_entry(
+                job_id,
+                {
+                    "variant_id": spec["variant_id"],
+                    "rank": initial_specs.index(spec) + 1,
+                    "text_mode": spec.get("text_mode", "agent_text"),
+                    "music_track_id": spec["track"].id if spec.get("track") else None,
+                    "track_title": spec["track"].title if spec.get("track") else None,
+                    "render_status": "pending",
+                    "ok": False,
+                },
             )
+
+        try:
+            results = _render_spec_set(initial_specs, spine_clip_id)
         except SpineExtractionError as exc:
             # Critical failure mode: a corrupt/unreadable spine clip degrades the whole
             # job to montage rather than hard-failing (best-effort invariant). Any
@@ -384,8 +429,25 @@ def _run_generative_job(job_id: str) -> None:
                 {"declared": edit_format, "reason": "spine_extraction_failed"},
             )
             log.warning("generative_talking_head_degrade_montage", job_id=job_id, error=str(exc))
-            results = _render_spec_set(_variant_specs(best_track), None)
+            # Re-upsert the montage fallback specs so the tile set stays consistent.
+            fallback_specs = _variant_specs(best_track)
+            for spec in fallback_specs:
+                _upsert_variant_entry(
+                    job_id,
+                    {
+                        "variant_id": spec["variant_id"],
+                        "rank": fallback_specs.index(spec) + 1,
+                        "text_mode": spec.get("text_mode", "agent_text"),
+                        "music_track_id": spec["track"].id if spec.get("track") else None,
+                        "track_title": spec["track"].title if spec.get("track") else None,
+                        "render_status": "pending",
+                        "ok": False,
+                    },
+                )
+            results = _render_spec_set(fallback_specs, None)
 
+    record_phase(job_id, "render_variants", next_phase="finalize")
+    record_phase(job_id, "finalize")
     _finalize_job(job_id, results)
 
 
@@ -658,7 +720,14 @@ def regenerate_generative_variant(
                 exc_info=True,
             )
             _update_variant_entry(
-                job_id, variant_id, {"render_status": "failed", "ok": False, "error": str(exc)}
+                job_id,
+                variant_id,
+                {
+                    "render_status": "failed",
+                    "ok": False,
+                    "error": str(exc),
+                    "error_class": _classify_error(exc),
+                },
             )
 
 
@@ -1227,6 +1296,27 @@ def _fit_section_to_footage(track_config: dict, available_footage_s: float) -> d
 # ── Variant render ──────────────────────────────────────────────────────────────
 
 
+def _classify_error(exc: BaseException) -> str:
+    """Map an exception to a machine-readable error_class for the frontend.
+
+    Keeps the raw `error` field (admin-only) separate from the public taxonomy.
+    The frontend maps these to user-facing copy; `unknown` gets the generic fallback.
+    """
+    from celery.exceptions import SoftTimeLimitExceeded  # noqa: PLC0415
+
+    if isinstance(exc, SoftTimeLimitExceeded):
+        return "timeout"
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    if "ffmpeg" in name or "encoder" in name or "ffmpeg" in msg or "codec" in msg:
+        return "encoder_error"
+    if "storage" in name or "gcs" in name or "upload" in name or "download" in name:
+        return "storage_error"
+    if "clip" in name and ("read" in name or "read" in msg):
+        return "clip_read_error"
+    return "unknown"
+
+
 def _render_generative_variant(
     *,
     job_id: str,
@@ -1447,7 +1537,13 @@ def _render_generative_variant(
             error=err,
             exc_info=True,
         )
-        return {**base, "ok": False, "render_status": "failed", "error": err}
+        return {
+            **base,
+            "ok": False,
+            "render_status": "failed",
+            "error": err,
+            "error_class": _classify_error(exc),
+        }
 
 
 def _render_talking_head_variant(
@@ -1568,7 +1664,13 @@ def _render_talking_head_variant(
             error=err,
             exc_info=True,
         )
-        return {**base, "ok": False, "render_status": "failed", "error": err}
+        return {
+            **base,
+            "ok": False,
+            "render_status": "failed",
+            "error": err,
+            "error_class": _classify_error(exc),
+        }
 
 
 def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
