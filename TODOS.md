@@ -654,9 +654,15 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 ### Fix `test_active_font_renders_with_ass` smoke test on FFmpeg 8.1.1
 **Completed:** v0.4.75.3 (2026-06-04) — detected libass-capable ffmpeg-full via `_find_libass_ffmpeg()`; escaped paths with `escape_ffmpeg_filter_path()` matching `single_pass.py`. All 33 font parametrize cases pass.
 
+## Loading progress system — follow-ups (added 2026-06-06)
+
+- [ ] **Author DESIGN.md via /design-consultation** — codify the loading system's reusable rules (D6 truth rules, D13 mood tiers, D14 motion constants, D15 host-owns-surface) right after implementation while decisions are fresh.
+- [ ] **SSE for generative job status** — extend the template `/events` SSE pattern + `useJobStream` to generative so variant arrivals and the D12 climax land instantly instead of up to 2s late; sanity-check connection capacity on the 512MB API VM first.
+- [ ] **Baseline refresh from real phase data** — extend `scripts/aggregate_phase_timings.py` with a `phase_log` DB reader and refresh `app/services/phase_baselines.py` from prod percentiles once PR2's instrumentation has soaked (~1–2 weeks of generative jobs).
+
 ## Landing page design system
 
-### ~~Create DESIGN.md via /design-consultation~~ — RESOLVED v0.4.82.2
+### ~~Create DESIGN.md via /design-consultation~~ — RESOLVED v0.4.83.1
 **What:** Codify the Nova landing/product design system — cream `#fafaf8` background, lime-600/lime-50/lime-200 accent, olive/ink `#0c0c0e` text, Playfair Display for editorial serifs (`font-display`), `rounded-2xl border border-zinc-200 shadow-sm` card tokens, anti-slop rules (no candy gradients, no rainbow palettes, editorial restraint). Run `/design-consultation` to produce `DESIGN.md` with the full token set, usage rules, and calibration examples.
 **Why:** Three consecutive design review sessions have reverse-engineered the same token set from `page.tsx` and memory entries. A DESIGN.md (or equivalent) means future `/plan-design-review` runs calibrate against a stated system, not guesswork.
 **How:** Invoke `/design-consultation` with the current landing + product pages as input. Persist the result as `DESIGN.md` (or `docs/DESIGN.md`) at the repo root. Reference from CLAUDE.md.

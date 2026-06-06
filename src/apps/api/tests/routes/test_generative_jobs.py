@@ -7,6 +7,8 @@ before any download.
 
 from __future__ import annotations
 
+from datetime import UTC
+
 import pytest
 from pydantic import ValidationError
 
@@ -337,3 +339,187 @@ def test_variants_for_response_signing_failure_falls_back(monkeypatch):
     # A signing failure must not 500 the poll — fall back to the stored URL.
     ready = next(v for v in out if v["variant_id"] == "song_lyrics")
     assert ready["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
+
+
+# ── Phase tracking fields (PR2) ─────────────────────────────────────────────────
+
+
+def _phase_job(current_phase="analyze_clips", phase_log=None, started_at=None):
+    """Build a minimal fake job with phase tracking fields set."""
+    import types
+    import uuid
+    from datetime import datetime
+
+    return types.SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing",
+        mode="generative",
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "pending",
+                    "ok": False,
+                }
+            ]
+        },
+        error_detail=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        all_candidates={"edit_format": "montage"},
+        current_phase=current_phase,
+        phase_log=phase_log or [{"name": "analyze_clips", "ts": "2026-06-06T10:00:00+00:00"}],
+        started_at=started_at or datetime.now(UTC),
+        finished_at=None,
+    )
+
+
+def test_status_includes_phase_fields(monkeypatch):
+    """Status response must include current_phase, phase_log, started_at,
+    and expected_phase_durations when a job has phase instrumentation."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: f"https://fresh/{path}")
+
+    job = _phase_job()
+    resp = gj.GenerativeJobStatusResponse(
+        job_id=str(job.id),
+        status=job.status,
+        variants=gj._variants_for_response(job),
+        error_detail=job.error_detail,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        edit_format=(job.all_candidates or {}).get("edit_format"),
+        current_phase=job.current_phase,
+        phase_log=list(job.phase_log or []),
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        expected_phase_durations={"analyze_clips": 45000, "match_song": 15000},
+    )
+    assert resp.current_phase == "analyze_clips"
+    assert isinstance(resp.phase_log, list)
+    assert len(resp.phase_log) == 1
+    assert resp.started_at is not None
+    assert resp.expected_phase_durations is not None
+    assert resp.expected_phase_durations["analyze_clips"] == 45000
+
+
+def test_status_phase_fields_null_for_uninstrumented_job(monkeypatch):
+    """A job without phase data must return nulls — no crash."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda path, ttl: f"https://fresh/{path}")
+
+    import types
+    import uuid
+    from datetime import datetime
+
+    bare_job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        status="processing",
+        mode="generative",
+        assembly_plan={"variants": []},
+        error_detail=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        all_candidates={},
+        current_phase=None,
+        phase_log=None,
+        started_at=None,
+        finished_at=None,
+    )
+    resp = gj.GenerativeJobStatusResponse(
+        job_id=str(bare_job.id),
+        status=bare_job.status,
+        variants=[],
+        error_detail=None,
+        created_at=bare_job.created_at,
+        updated_at=bare_job.updated_at,
+        current_phase=None,
+        phase_log=None,
+        started_at=None,
+        finished_at=None,
+        expected_phase_durations=None,
+    )
+    assert resp.current_phase is None
+    assert resp.phase_log is None
+    assert resp.started_at is None
+    assert resp.expected_phase_durations is None
+
+
+def test_variant_includes_error_class():
+    """A variant dict with error_class passes through _variants_for_response unchanged."""
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "failed",
+                    "ok": False,
+                    "error": "timed out",
+                    "error_class": "timeout",
+                }
+            ]
+        },
+    )
+    out = gj._variants_for_response(job)
+    assert out[0]["error_class"] == "timeout"
+
+
+def test_variant_error_class_fallback():
+    """A variant with raw `error` but no `error_class` key returns None for error_class
+    (the frontend uses generic copy for unknown error class)."""
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "render_status": "failed",
+                    "ok": False,
+                    "error": "some old error with no classification",
+                    # no error_class key
+                }
+            ]
+        },
+    )
+    out = gj._variants_for_response(job)
+    # No error_class key → .get returns None, which is the correct fallback signal.
+    assert out[0].get("error_class") is None
+
+
+# ── Phase baseline scaling ────────────────────────────────────────────────────────
+
+
+def test_phase_baselines_scale_render_variants():
+    """scale_render_variants adjusts the render_variants baseline by variant count."""
+    from app.services.phase_baselines import get_baselines, scale_render_variants
+
+    baselines = get_baselines("generative")
+    assert baselines is not None
+    # 3 pending → unscaled (3/3 = 1.0)
+    scaled_3 = scale_render_variants(baselines, 3)
+    assert scaled_3["render_variants"] == baselines["render_variants"]
+    # 1 pending → 1/3 of the base
+    scaled_1 = scale_render_variants(baselines, 1)
+    assert scaled_1["render_variants"] == baselines["render_variants"] // 3
+    # Other keys untouched
+    assert scaled_1["analyze_clips"] == baselines["analyze_clips"]
+
+
+def test_phase_baselines_unknown_pipeline_returns_none():
+    from app.services.phase_baselines import get_baselines
+
+    assert get_baselines("template") is None
+    assert get_baselines("music") is None

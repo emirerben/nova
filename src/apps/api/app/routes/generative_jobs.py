@@ -92,6 +92,37 @@ class GenerativeJobResponse(BaseModel):
     status: str
 
 
+class GenerativeVariant(BaseModel):
+    """Per-variant state as surfaced on the status response.
+
+    All fields are optional so the model is forward-compatible: older jobs (rendered
+    before PR2 instrumentation) may lack timestamps and error_class.
+    """
+
+    variant_id: str
+    render_status: str | None = None
+    ok: bool | None = None
+    output_url: str | None = None
+    video_path: str | None = None
+    music_track_id: str | None = None
+    track_title: str | None = None
+    text_mode: str | None = None
+    style_set_id: str | None = None
+    rank: int | None = None
+    intro_text_size_px: int | None = None
+    intro_size_source: str | None = None
+    resolved_archetype: str | None = None
+    mix: float | None = None
+    # Per-variant render timing (D6 tile clock — instrumented by PR2).
+    render_started_at: str | None = None
+    render_finished_at: str | None = None
+    # Machine-readable error class for the frontend copy taxonomy (PR2).
+    # The raw `error` field stays as-is (admin-only debug detail).
+    error_class: str | None = None
+
+    model_config = {"extra": "allow"}
+
+
 class GenerativeJobStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -103,6 +134,14 @@ class GenerativeJobStatusResponse(BaseModel):
     # (what actually rendered, after footage resolution + fallback) lives on each
     # variant dict. Carried for verification + Lane E UI; the current UI ignores it.
     edit_format: str | None = None
+    # Phase tracking (D2/D6 — instrumented by PR2).
+    # Null for content_plan jobs that don't have phase instrumentation yet;
+    # the frontend handles null gracefully.
+    current_phase: str | None = None
+    phase_log: list[dict] | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    expected_phase_durations: dict[str, int] | None = None
 
 
 class SwapSongRequest(BaseModel):
@@ -404,7 +443,19 @@ async def get_generative_job_status(
 
     Also serves content_plan jobs (the plan item page polls this for variants).
     """
+    from app.services.phase_baselines import get_baselines, scale_render_variants  # noqa: PLC0415
+
     job = await _load_generative_job(job_id, db, allowed_modes=_READABLE_MODES)
+
+    # Count pending/rendering variants for baseline scaling.
+    variants_list = (job.assembly_plan or {}).get("variants") or []
+    pending_count = sum(
+        1 for v in variants_list if v.get("render_status") in ("pending", "rendering")
+    )
+    baselines = get_baselines("generative")
+    if baselines and pending_count > 0:
+        baselines = scale_render_variants(baselines, pending_count)
+
     return GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -413,6 +464,11 @@ async def get_generative_job_status(
         created_at=job.created_at,
         updated_at=job.updated_at,
         edit_format=(job.all_candidates or {}).get("edit_format"),
+        current_phase=job.current_phase,
+        phase_log=list(job.phase_log or []) if job.phase_log is not None else None,
+        started_at=job.started_at,
+        finished_at=job.finished_at,
+        expected_phase_durations=baselines,
     )
 
 

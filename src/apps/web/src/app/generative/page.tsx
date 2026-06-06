@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   changeVariantStyle,
   createGenerativeJob,
@@ -14,33 +14,59 @@ import {
   uploadGenerativeClip,
   type GenerativeJobStatus,
   type GenerativeStyleSet,
+  type GenerativeVariant,
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { VariantCard } from "./VariantCard";
 import { VoiceRecorder } from "./VoiceRecorder";
+import {
+  GENERATIVE_PHASE_ORDER,
+  GENERATIVE_PHASE_LABEL,
+} from "@/lib/job-phases";
+import {
+  ProgressTheater,
+  PayoffField,
+  VariantRenderCard,
+} from "@/components/progress";
+import { formatElapsed } from "@/components/progress/logic";
+import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 
-const POLL_MS = 2000;
+// ===== Helpers =====
+
+function isTerminalStatus(data: GenerativeJobStatus): boolean {
+  return GENERATIVE_TERMINAL_STATUSES.includes(data.status);
+}
+
+function isSuccessStatus(status: string): boolean {
+  return status === "variants_ready" || status === "variants_ready_partial";
+}
+
+/**
+ * D12 receipt text: "Ready in m:ss"
+ * Falls back to created_at / updated_at when PR2 fields aren't present.
+ */
+function deriveReceiptText(status: GenerativeJobStatus): string {
+  const startRaw = status.started_at ?? status.created_at;
+  const endRaw = status.finished_at ?? status.updated_at;
+  if (!startRaw || !endRaw) return "Your edits are ready";
+  const elapsedMs = new Date(endRaw).getTime() - new Date(startRaw).getTime();
+  if (elapsedMs <= 0) return "Your edits are ready";
+  return `Ready in ${formatElapsed(elapsedMs)}`;
+}
+
+// ===== Page =====
 
 export default function GenerativePage() {
   const [uploads, setUploads] = useState<{ gcs_path: string; name: string }[]>([]);
   const [voiceoverPath, setVoiceoverPath] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [status, setStatus] = useState<GenerativeJobStatus | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
-  // True when the style-sets fetch failed. Without this, a transient API blip
-  // leaves styleSets=[] and the change-style picker (gated on length>0 in
-  // VariantCard) silently disappears — indistinguishable from "feature missing".
   const [styleSetsError, setStyleSetsError] = useState(false);
-  // Bumped after every poll (success OR failure) so the polling effect always
-  // re-arms — a transient fetch error must not silently kill polling.
-  const [tick, setTick] = useState(0);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Style sets for the style picker — retryable so a blip doesn't permanently
-  // hide the control.
+  // Style sets — retryable so a transient blip doesn't permanently hide the picker.
   const loadStyleSets = useCallback(() => {
     getGenerativeStyleSets()
       .then((s) => {
@@ -53,7 +79,7 @@ export default function GenerativePage() {
       });
   }, []);
 
-  // Song library for the swap picker + style sets for the style picker.
+  // Song library for the swap picker + style sets.
   useEffect(() => {
     getMusicTracks()
       .then((r) => setTracks(r.tracks))
@@ -61,58 +87,46 @@ export default function GenerativePage() {
     loadStyleSets();
   }, [loadStyleSets]);
 
-  const isTerminal = status != null && GENERATIVE_TERMINAL_STATUSES.includes(status.status);
+  // ===== Polling (replaces hand-rolled setTimeout loop) =====
+  //
+  // usePolledJobStatus handles:
+  //   - D8: visibilitychange → immediate refetch (built in)
+  //   - transient error resilience (keeps polling on fetch failure)
+  //   - terminal stop (stops polling when isTerminalAndDone returns true)
+  //
+  // We also poll while any variant is still rendering after a terminal status —
+  // swap/retext flips a variant back to "rendering" while the job status stays terminal.
 
-  // Poll job status until terminal. Swap/retext also re-arm the poll (they flip a
-  // variant back to "rendering" and the job status stays terminal, so we poll while
-  // any variant is still rendering too).
-  const anyRendering =
-    status?.variants?.some((v) => v.render_status === "rendering") ?? false;
+  const fetcher = useCallback(async () => {
+    if (!jobId) throw new Error("no jobId");
+    return getGenerativeJobStatus(jobId);
+  }, [jobId]);
 
-  useEffect(() => {
-    if (!jobId) return;
-    if (isTerminal && !anyRendering) return;
-    let cancelled = false;
-    pollRef.current = setTimeout(async () => {
-      try {
-        const s = await getGenerativeJobStatus(jobId);
-        if (!cancelled) setStatus(s);
-      } catch (e) {
-        // Re-arm on transient error (bump tick) instead of dying silently.
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "Failed to poll status");
-          setTick((x) => x + 1);
-        }
-      }
-    }, POLL_MS);
-    return () => {
-      cancelled = true;
-      if (pollRef.current) clearTimeout(pollRef.current);
-    };
-  }, [jobId, status, tick, isTerminal, anyRendering]);
+  const isTerminalAndDone = useCallback(
+    (data: GenerativeJobStatus) => {
+      const terminal = isTerminalStatus(data);
+      const anyRendering = data.variants?.some((v) => v.render_status === "rendering") ?? false;
+      return terminal && !anyRendering;
+    },
+    [],
+  );
 
-  // Optimistically flip a variant to "rendering" in local state so the poll arms
-  // immediately after swap/retext — the worker only sets the real "rendering" flag
-  // once it dequeues the task, which is after the POST returns and refresh() runs.
-  const markVariantRendering = useCallback((variantId: string) => {
-    setStatus((s) =>
-      s
-        ? {
-            ...s,
-            variants: s.variants.map((v) =>
-              v.variant_id === variantId
-                ? { ...v, render_status: "rendering" as const, ok: false, error: null }
-                : v,
-            ),
-          }
-        : s,
-    );
-  }, []);
+  const {
+    data: status,
+    error: pollError,
+    refetch,
+  } = usePolledJobStatus<GenerativeJobStatus>(
+    fetcher,
+    undefined, // use default POLL_INTERVAL_MS
+    isTerminalAndDone,
+  );
+
+  // ===== Upload / submit handlers =====
 
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
-    setError(null);
+    setSubmitError(null);
     try {
       const results = await Promise.all(
         Array.from(files).map(async (f) => {
@@ -122,29 +136,63 @@ export default function GenerativePage() {
       );
       setUploads((prev) => [...prev, ...results]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      setSubmitError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setUploading(false);
     }
   }, []);
 
   const handleGenerate = useCallback(async () => {
-    setError(null);
+    setSubmitError(null);
     try {
       const res = await createGenerativeJob(
         uploads.map((u) => u.gcs_path),
         voiceoverPath,
       );
       setJobId(res.job_id);
-      setStatus(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to start");
+      setSubmitError(e instanceof Error ? e.message : "Failed to start");
     }
   }, [uploads, voiceoverPath]);
 
-  const refresh = useCallback(async () => {
-    if (jobId) setStatus(await getGenerativeJobStatus(jobId));
-  }, [jobId]);
+  // ===== Variant mutation: trigger re-render after any mutation =====
+  const refresh = useCallback(() => {
+    refetch();
+  }, [refetch]);
+
+  // ===== D10 retry handler for failed variants =====
+  const handleRetry = useCallback(
+    async (variantId: string) => {
+      if (!jobId) return;
+      try {
+        // Use a no-op retext to re-queue the variant render.
+        // If a dedicated retry endpoint ships later, swap it in here.
+        await retextVariant(jobId, variantId, {});
+      } catch {
+        // Best-effort — the next poll cycle will reflect real state.
+      }
+      refetch();
+    },
+    [jobId, refetch],
+  );
+
+  // ===== Theater props derivation =====
+
+  const theaterIsTerminal = status != null && isTerminalAndDone(status);
+  const theaterIsSuccess = status != null && isSuccessStatus(status.status);
+  const receiptText = status ? deriveReceiptText(status) : "Your edits are ready";
+
+  // D9: before started_at lands, currentPhase defaults to "queued".
+  // Deploy-skew: if current_phase is null AND started_at is null → treat as queued.
+  // ProgressTheater handles null gracefully (ETA suppressed, no crash).
+  const currentPhase: string | null = (() => {
+    if (!status) return null;
+    if (status.current_phase) return status.current_phase;
+    if (!status.started_at) return "queued";
+    return null;
+  })();
+
+  // ===== Render =====
 
   return (
     <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white">
@@ -154,12 +202,21 @@ export default function GenerativePage() {
           Upload your clips. We pick a song, write the text, and give you a few versions to choose from.
         </p>
 
-        {error && (
+        {/* Submit-phase errors (upload / job creation) */}
+        {submitError && (
           <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
-            {error}
+            {submitError}
           </div>
         )}
 
+        {/* Transient poll errors — don't hide the theater, just surface a note */}
+        {pollError && status && (
+          <div className="mb-4 rounded border border-amber-700/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-200">
+            Trouble reaching the server — retrying…
+          </div>
+        )}
+
+        {/* ===== Upload form (shown when no job has been submitted yet) ===== */}
         {!jobId && (
           <section className="space-y-5">
             <div>
@@ -207,24 +264,12 @@ export default function GenerativePage() {
           </section>
         )}
 
+        {/* ===== Progress theater (shown immediately once job is submitted) ===== */}
         {jobId && (
           <section>
-            <StatusBanner status={status} />
-            {status?.status === "processing_failed" && (
-              <button
-                onClick={() => {
-                  setJobId(null);
-                  setStatus(null);
-                  setUploads([]);
-                  setError(null);
-                }}
-                className="mt-4 rounded border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
-              >
-                Start over
-              </button>
-            )}
+            {/* Style-sets blip warning */}
             {styleSetsError && styleSets.length === 0 && (
-              <div className="mt-4 flex items-center gap-3 rounded border border-amber-700/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-200">
+              <div className="mb-4 flex items-center gap-3 rounded border border-amber-700/60 bg-amber-950/40 px-4 py-2 text-sm text-amber-200">
                 <span>Couldn&apos;t load text styles — the style picker is hidden.</span>
                 <button
                   onClick={loadStyleSets}
@@ -234,64 +279,108 @@ export default function GenerativePage() {
                 </button>
               </div>
             )}
-            <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              {(status?.variants ?? []).map((v) => (
-                <VariantCard
-                  key={v.variant_id}
-                  variant={v}
-                  tracks={tracks}
-                  styleSets={styleSets}
-                  onSwap={async (trackId) => {
-                    markVariantRendering(v.variant_id);
-                    await swapVariantSong(jobId, v.variant_id, trackId);
-                    await refresh();
+
+            {/* Total failure — no variants produced */}
+            {status?.status === "processing_failed" && (
+              <div className="mb-6">
+                <p className="text-red-300 mb-4">
+                  {status.error_detail ?? "Something went wrong — we couldn't process your clips."}
+                </p>
+                <button
+                  onClick={() => {
+                    setJobId(null);
+                    setUploads([]);
+                    setSubmitError(null);
                   }}
-                  onRetext={async (text) => {
-                    markVariantRendering(v.variant_id);
-                    await retextVariant(jobId, v.variant_id, { text });
-                    await refresh();
-                  }}
-                  onRemoveText={async () => {
-                    markVariantRendering(v.variant_id);
-                    await retextVariant(jobId, v.variant_id, { remove: true });
-                    await refresh();
-                  }}
-                  onChangeStyle={async (styleSetId) => {
-                    markVariantRendering(v.variant_id);
-                    await changeVariantStyle(jobId, v.variant_id, styleSetId);
-                    await refresh();
-                  }}
-                  onResize={async (px) => {
-                    markVariantRendering(v.variant_id);
-                    await setVariantIntroSize(jobId, v.variant_id, px);
-                    await refresh();
-                  }}
-                  onSetMix={async (mix) => {
-                    markVariantRendering(v.variant_id);
-                    await setVariantMix(jobId, v.variant_id, mix);
-                    await refresh();
-                  }}
-                />
-              ))}
-            </div>
+                  className="rounded border border-zinc-700 px-4 py-2 text-sm text-zinc-300"
+                >
+                  Start over
+                </button>
+              </div>
+            )}
+
+            {/*
+             * D5 ProgressTheater.
+             *
+             * Visible from the moment jobId lands — no waiting for the first poll.
+             * Deploy-skew: null phase fields → shimmer + ETA suppressed, no crash.
+             * D9 queued state: currentPhase="queued" before started_at arrives.
+             * D12 receipt: collapses to "Ready in m:ss" after CELEBRATION_HOLD_MS.
+             */}
+            <ProgressTheater
+              phases={GENERATIVE_PHASE_ORDER}
+              phaseLabels={GENERATIVE_PHASE_LABEL}
+              currentPhase={currentPhase}
+              expectedPhaseMs={status?.expected_phase_durations ?? null}
+              phaseLog={status?.phase_log ?? null}
+              startedAt={status?.started_at ?? null}
+              jobCreatedAt={status?.created_at ?? new Date().toISOString()}
+              isTerminal={theaterIsTerminal}
+              isSuccess={theaterIsSuccess}
+              receiptText={receiptText}
+              variants={status?.variants ?? null}
+              size="full"
+            >
+              {/*
+               * D7 PayoffField — shimmer until variants array is populated.
+               * Slot count always from variants.length, never a hard-coded constant.
+               */}
+              <PayoffField
+                variants={status?.variants ?? null}
+                renderCard={(variant, isNewlyReady) => {
+                  // variant conforms to VariantLike; cast to the richer type for controls.
+                  const gv = variant as GenerativeVariant;
+
+                  return (
+                    <div key={gv.variant_id} className="flex flex-col gap-4">
+                      {/* D10: VariantRenderCard maps error_class → human copy */}
+                      <VariantRenderCard
+                        variant={gv}
+                        isNewlyReady={isNewlyReady}
+                        onRetry={() => void handleRetry(gv.variant_id)}
+                      />
+
+                      {/* Swap / retext / style / resize / mix controls —
+                          only visible once the variant is ready */}
+                      {gv.render_status === "ready" && (
+                        <VariantCard
+                          variant={gv}
+                          tracks={tracks}
+                          styleSets={styleSets}
+                          onSwap={async (trackId) => {
+                            await swapVariantSong(jobId, gv.variant_id, trackId);
+                            refresh();
+                          }}
+                          onRetext={async (text) => {
+                            await retextVariant(jobId, gv.variant_id, { text });
+                            refresh();
+                          }}
+                          onRemoveText={async () => {
+                            await retextVariant(jobId, gv.variant_id, { remove: true });
+                            refresh();
+                          }}
+                          onChangeStyle={async (styleSetId) => {
+                            await changeVariantStyle(jobId, gv.variant_id, styleSetId);
+                            refresh();
+                          }}
+                          onResize={async (px) => {
+                            await setVariantIntroSize(jobId, gv.variant_id, px);
+                            refresh();
+                          }}
+                          onSetMix={async (mix) => {
+                            await setVariantMix(jobId, gv.variant_id, mix);
+                            refresh();
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                }}
+              />
+            </ProgressTheater>
           </section>
         )}
       </div>
     </main>
   );
-}
-
-function StatusBanner({ status }: { status: GenerativeJobStatus | null }) {
-  const s = status?.status ?? "queued";
-  const label: Record<string, string> = {
-    queued: "Queued…",
-    processing: "Analyzing your clips…",
-    matching: "Matching a song…",
-    rendering: "Rendering your edits…",
-    variants_ready: "Your edits are ready — pick one.",
-    variants_ready_partial: "Some edits are ready (others failed).",
-    variants_failed: "We couldn't render any edits.",
-    processing_failed: status?.error_detail ?? "Something went wrong.",
-  };
-  return <p className="text-zinc-300">{label[s] ?? s}</p>;
 }
