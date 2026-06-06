@@ -656,9 +656,16 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 
 ## Landing page design system
 
-### Create DESIGN.md via /design-consultation
+### ~~Create DESIGN.md via /design-consultation~~ — RESOLVED v0.4.82.2
 **What:** Codify the Nova landing/product design system — cream `#fafaf8` background, lime-600/lime-50/lime-200 accent, olive/ink `#0c0c0e` text, Playfair Display for editorial serifs (`font-display`), `rounded-2xl border border-zinc-200 shadow-sm` card tokens, anti-slop rules (no candy gradients, no rainbow palettes, editorial restraint). Run `/design-consultation` to produce `DESIGN.md` with the full token set, usage rules, and calibration examples.
 **Why:** Three consecutive design review sessions have reverse-engineered the same token set from `page.tsx` and memory entries. A DESIGN.md (or equivalent) means future `/plan-design-review` runs calibrate against a stated system, not guesswork.
 **How:** Invoke `/design-consultation` with the current landing + product pages as input. Persist the result as `DESIGN.md` (or `docs/DESIGN.md`) at the repo root. Reference from CLAUDE.md.
 **Effort:** XS (CC: ~15min)
+**Priority:** P3
+
+### Normalize DESIGN.md ledger drifts #2/#5/#6
+**What:** Three low-effort cleanup items from the known-deviations ledger in `DESIGN.md §10`: (1) stray product radius values (`rounded`, lone `rounded-2xl`) → `rounded-lg` surfaces / `rounded-full` buttons; (2) remove dead Montserrat 800 `@import` from `globals.css` (dead font download on every page view); (3) collapse 6 eyebrow `letter-spacing` values to 2 canonicals (`tracking-[0.24em]` landing, `tracking-[0.14em]` product micro-labels). Source: `DESIGN.md §10`.
+**Why:** Montserrat alone is a free perf win; radius and tracking drift silently copy into new components until the ledger is cleared.
+**How:** Grep-and-replace opportunistically during nearby UI work; no isolated PR needed. Pick one drift at a time.
+**Effort:** S (CC: ~10min per drift)
 **Priority:** P3

@@ -46,6 +46,7 @@ Rules:
 - DB: PostgreSQL (job metadata, user state)
 
 ## Key paths
+- `DESIGN.md` — design-system source of truth (tokens, loading rules, anti-slop, a11y); design reviews calibrate against it.
 - `src/apps/web/` — Next.js frontend (upload UI, progress tracker, result viewer)
 - `src/apps/web/src/app/admin/templates/[id]/components/` — visual overlay editor (OverlayPreview, OverlayTimeline, PropertyPanel, overlay-constants.ts)
 - `src/apps/web/src/app/music/` — music gallery page

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.82.2] - 2026-06-06
+
+### Added
+- **DESIGN.md: Nova design system written to repo root.** Codifies landing cream/lime/Playfair, product dark-theater amber, admin plain-dark, loading-state system (D6 truth rules, D13 mood tiers, D14 motion constants, D15 surface ownership, D17–D20 a11y/copy/stall contracts), a11y & responsive baseline, anti-slop rules, and a 6-row known-deviations ledger with canonical picks. Every future design review calibrates against this document instead of re-grepping the codebase. `CLAUDE.md` references it under Key paths.
+
 ## [0.4.82.0] - 2026-06-06
 
 ### Changed
