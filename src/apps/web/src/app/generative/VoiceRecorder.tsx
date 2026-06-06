@@ -287,7 +287,7 @@ export function VoiceRecorder({
             <span className="inline-flex items-center gap-2 text-sm text-zinc-300">
               <span
                 aria-hidden
-                className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500"
+                className="h-2.5 w-2.5 motion-safe:animate-pulse rounded-full bg-red-500"
               />
               Recording
             </span>

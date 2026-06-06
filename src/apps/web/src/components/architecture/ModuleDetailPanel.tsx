@@ -39,7 +39,7 @@ function CommitsSection({ modulePath }: { modulePath: string | null }) {
     return (
       <div className="space-y-2">
         {[1, 2, 3].map((i) => (
-          <div key={i} className="h-4 bg-gray-800 rounded animate-pulse" />
+          <div key={i} className="h-4 bg-gray-800 rounded motion-safe:animate-pulse" />
         ))}
       </div>
     );
@@ -82,7 +82,7 @@ function IssuesSection({ label }: { label: string | null }) {
     return (
       <div className="space-y-2">
         {[1, 2].map((i) => (
-          <div key={i} className="h-4 bg-gray-800 rounded animate-pulse" />
+          <div key={i} className="h-4 bg-gray-800 rounded motion-safe:animate-pulse" />
         ))}
       </div>
     );

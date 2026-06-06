@@ -9,6 +9,7 @@ export { EtaBar } from "./EtaBar";
 export { VariantRenderCard } from "./VariantRenderCard";
 export type { VariantRenderCardVariant } from "./VariantRenderCard";
 export { PayoffField } from "./PayoffField";
+export { UploadBar } from "./UploadBar";
 
 // Constants
 export {

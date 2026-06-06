@@ -14,6 +14,18 @@ All notable changes to this project will be documented in this file.
 - Theater `isTerminal=false` by design — the top-level router swaps to `ResultView` on `template_ready` before the theater sees terminal; no D12 celebration animation plays.
 - `template-job-phases.ts` untouched — regression invariant holds.
 
+## [0.4.85.0] — 2026-06-06
+
+### Added
+- **Real byte-progress upload bars.** Template clip uploads now use XHR `upload.onprogress` (via new `uploadFileToGcsWithProgress` in `lib/api.ts`) so `totalProgress` reflects real bytes transferred rather than binary 0/100 per file. `SlotBoundUpload` gains a per-slot `UploadBar` while uploading.
+- **`UploadBar` component** (`components/progress/UploadBar.tsx`). Amber-on-zinc-800 determinate bar with shimmer tip — same visual language as `EtaBar` but for measured byte/count progress. No fake ETA (D6). Exported from the progress barrel.
+- Upload bars (template clip bar + Drive-import bar + slot bars) restyled to `UploadBar` visuals.
+- **Motion-safe sweep.** 16 bare `animate-pulse/shimmer/ping` usages across 10 files (TemplateGridSkeleton, admin pages, VoiceRecorder, Header, architecture components) prefixed with `motion-safe:` for reduced-motion compliance (D17). `globals.css` previously only neutralized `.animate-fade-up`.
+
+### Tests
+- `PhaseChipRow` D16 mobile-chip behavior verified by new `phase-chip-row.test.tsx`.
+- `UploadBar` aria attributes, label, and clamping verified by new `upload-bar.test.tsx`.
+
 ## [0.4.84.0] — 2026-06-06
 
 ### Added

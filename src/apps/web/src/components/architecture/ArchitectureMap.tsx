@@ -325,7 +325,7 @@ export function ArchitectureMap() {
       {/* Footer legend */}
       <div className="h-8 flex items-center px-4 bg-gray-900 border-t border-gray-800 shrink-0 gap-4">
         <span className="flex items-center gap-1.5 text-[10px] text-gray-500">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="w-2 h-2 rounded-full bg-emerald-400 motion-safe:animate-pulse" />
           active
         </span>
         <span className="flex items-center gap-1.5 text-[10px] text-gray-500">

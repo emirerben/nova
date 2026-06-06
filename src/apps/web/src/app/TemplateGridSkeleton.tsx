@@ -6,10 +6,10 @@ export default function TemplateGridSkeleton() {
           key={i}
           className="rounded-xl border border-zinc-900 overflow-hidden"
         >
-          <div className="aspect-[9/16] bg-zinc-900 animate-pulse" />
+          <div className="aspect-[9/16] bg-zinc-900 motion-safe:animate-pulse" />
           <div className="p-4 space-y-2">
-            <div className="h-4 bg-zinc-900 rounded animate-pulse w-2/3" />
-            <div className="h-3 bg-zinc-900 rounded animate-pulse w-1/2" />
+            <div className="h-4 bg-zinc-900 rounded motion-safe:animate-pulse w-2/3" />
+            <div className="h-3 bg-zinc-900 rounded motion-safe:animate-pulse w-1/2" />
           </div>
         </div>
       ))}

@@ -1256,7 +1256,7 @@ function PhaseLogPanel({
         {showLive && (
           <li className="flex justify-between text-amber-300">
             <span>
-              <span className="inline-block w-2 h-2 mr-2 bg-amber-400 rounded-full animate-pulse" />
+              <span className="inline-block w-2 h-2 mr-2 bg-amber-400 rounded-full motion-safe:animate-pulse" />
               {humanisePhase(currentPhase ?? null)}
             </span>
             <span className="text-zinc-500">running…</span>
@@ -2013,7 +2013,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function PageSkeleton() {
   return (
-    <div className="p-8 space-y-4 animate-pulse">
+    <div className="p-8 space-y-4 motion-safe:animate-pulse">
       <div className="h-6 w-48 bg-zinc-800 rounded" />
       <div className="h-4 w-32 bg-zinc-800 rounded" />
       <div className="h-10 w-full bg-zinc-800 rounded mt-6" />
