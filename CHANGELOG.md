@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.80.0] - 2026-06-06
+## [0.4.81.0] - 2026-06-06
 
 ### Added
 - **AI chat onboarding replaces the 8-question fixed form.** Users are now interviewed by an adaptive AI that asks 4–7 focused questions (hard cap 8) before generating the persona. The interviewer adapts to each answer and signals completion with "One last thing —" on the final question.
@@ -17,7 +17,15 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - Persona generating shimmer copy updated: "Reading everything you shared…" replaces "Crafting your persona…" when the persona was generated from a chat interview.
 - `PersonaStatus` type now includes `"chat_pending"` for users in the middle of onboarding chat.
+## [0.4.80.0] - 2026-06-06
 
+### Changed
+- **Landing page redesign: olive accent, combined process section, transparent header.** Replaced amber accent color with olive (`lime-*`) across the landing page. Header on `/` is now non-sticky and fully transparent — no background band floating over white sections. The "Plan" nav link is hidden for unauthenticated visitors (matches Library link behavior). The tilted desk-cards section and the 5-step narrative list are replaced by a single alternating-row process section (01 learn / 02 plan / 03 film) with explanatory prose alongside each card. The interview card uses an editorial serif layout (no chat bubbles) with realistic copy tied to one creator persona. The shot list card adds framing and duration per shot, matching the real `ShotSpec` shape. Marquee section fixes `overflow-x-auto` desktop scroll bug.
+
+## [0.4.79.2] - 2026-06-05
+
+### Fixed
+- **Pop-up lyric previews now recover missing repeated-hook tails from audio-backed Whisper timings.** When a synced LRCLIB row matches only a low-confidence prefix and its canonical tail diverges from the recording, lyrics alignment preserves the trusted prefix and replaces the bad tail with unused Whisper words from the same line window. The lyric extractor prompt version was bumped so stale cached rows refresh before production renders reuse old timing blobs. Regression coverage locks the production preview job `9cc0cb15-9cc0-4302-9ef6-661ce63e2a3d` and negative guardrails for loose mid-window speech.
 ## [0.4.79.1] - 2026-06-05
 
 ### Fixed

@@ -121,3 +121,39 @@ def test_repeated_popup_chorus_repairs_bad_source_fragments() -> None:
     assert [line.text for line in result.lines] == ["Body moving heart is open"] * 4
     assert [line.start_s for line in result.lines] == [0.0, 3.85, 8.1, 11.45]
     assert [line.words[0].text for line in result.lines] == ["Body"] * 4
+
+
+def test_low_confidence_repeated_hook_tail_uses_whisper_tail() -> None:
+    """Eval guard for repeated hooks whose canonical tail is stale."""
+    result = align_with_line_anchors(
+        [
+            SyncedLine(start_s=10.0, text="previous line"),
+            SyncedLine(start_s=12.0, text="one two gamma stale stale"),
+            SyncedLine(start_s=15.5, text="next line"),
+        ],
+        [
+            WhisperWord(text="previous", start_s=10.05, end_s=10.3),
+            WhisperWord(text="line", start_s=10.3, end_s=10.65),
+            WhisperWord(text="gamma", start_s=12.2, end_s=12.5),
+            WhisperWord(text="delta", start_s=12.6, end_s=13.0),
+            WhisperWord(text="epsilon", start_s=13.0, end_s=13.6),
+            WhisperWord(text="zeta", start_s=13.6, end_s=14.7),
+            WhisperWord(text="next", start_s=15.6, end_s=15.9),
+            WhisperWord(text="line", start_s=15.9, end_s=16.2),
+        ],
+        track_end_s=17.0,
+    )
+
+    repaired = next(line for line in result.lines if line.text.startswith("one two gamma"))
+
+    assert repaired.text == "one two gamma delta epsilon zeta"
+    assert [word.text for word in repaired.words] == [
+        "one",
+        "two",
+        "gamma",
+        "delta",
+        "epsilon",
+        "zeta",
+    ]
+    assert "stale" not in {word.text for word in repaired.words}
+    assert repaired.end_s <= 14.7

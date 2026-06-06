@@ -4,9 +4,13 @@ import Header from "@/components/Header";
 import Providers from "./providers";
 
 export const metadata: Metadata = {
-  title: "Nova — Turn raw footage into viral clips",
+  title: "Nova — Your AI content agent",
   description:
-    "Pick a template. Upload your clips. Get a video ready to post.",
+    "An AI agent that plans your 30-day content calendar, tells you what to film, and edits every video. You just press record.",
+  openGraph: {
+    title: "Nova — Your AI content agent",
+    description: "An AI agent for your content career.",
+  },
 };
 
 export default function RootLayout({

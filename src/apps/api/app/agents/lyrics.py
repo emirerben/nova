@@ -280,15 +280,19 @@ class LyricsExtractionAgent(Agent[LyricsInput, LyricsOutput]):
         # Previous: 2026-06-05.collapsed-word-runs: repair dense Whisper
         # word-timing clusters that exact-count alignment would otherwise
         # cache as one 50ms karaoke flash.
-        # Previous: 2026-06-05.anchor-prefix-lookback: repair isolated late LRC
-        # anchors by admitting a strong matching line prefix from the pre-anchor
-        # lookback window.
+        # Previous: 2026-06-05.anchor-prefix-lookback: repair isolated late
+        # LRC anchors by admitting a strong matching line prefix from the
+        # pre-anchor lookback window.
         # Previous: 2026-06-05.exact-count-mismatch: exact-count anchored
         # windows verify pairwise word agreement and repair isolated canonical
         # mismatches from Whisper.
-        # Current: anchored windows repair short leading Whisper prefixes when
-        # the canonical lyric line omitted an audible opening word.
-        prompt_version="2026-06-05.leading-prefix-mismatch",
+        # Previous: 2026-06-05.leading-prefix-mismatch: anchored windows
+        # repair short leading Whisper prefixes when the canonical lyric line
+        # omitted an audible opening word.
+        # Current: repair repeated-hook rows whose LRCLIB tail diverges from
+        # Whisper by preserving the canonical prefix and using the unused
+        # audio-backed tail.
+        prompt_version="2026-06-05.whisper-tail-repair",
         model="rule_based",
         # LRCLIB + Whisper each have their own retry/timeout policy. The
         # agent runtime's retry loop doesn't apply to rule_based agents.

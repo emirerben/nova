@@ -31,50 +31,62 @@ export default function Header() {
 
   if (isAdmin) return null;
 
+  const isHome = pathname === "/";
+
   return (
     <header
-      className="sticky top-0 z-40 h-14"
-      style={{
-        backgroundColor: `rgba(0, 0, 0, ${0.6 * progress})`,
-        backdropFilter: `blur(${12 * progress}px)`,
-        WebkitBackdropFilter: `blur(${12 * progress}px)`,
-      }}
+      className={`z-40 h-14 ${isHome ? "" : "sticky top-0"}`}
+      style={
+        isHome
+          ? {}
+          : {
+              backgroundColor: `rgba(0, 0, 0, ${0.6 * progress})`,
+              backdropFilter: `blur(${12 * progress}px)`,
+              WebkitBackdropFilter: `blur(${12 * progress}px)`,
+            }
+      }
     >
       <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
         <Link
           href="/"
           aria-label="Nova — home"
-          className="font-semibold tracking-tight text-white"
+          className={`font-semibold tracking-tight ${isHome ? "text-[#0c0c0e]" : "text-white"}`}
         >
           Nova
         </Link>
         <nav className="flex items-center gap-2 sm:gap-4">
-          <Link
-            href="/plan"
-            className={`text-sm transition-colors hover:text-white ${
-              pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"
-            }`}
-          >
-            Plan
-          </Link>
+          {authStatus === "authenticated" && (
+            <Link
+              href="/plan"
+              className={`text-sm transition-colors ${
+                isHome
+                  ? `hover:text-[#0c0c0e] ${pathname.startsWith("/plan") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
+                  : `hover:text-white ${pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"}`
+              }`}
+            >
+              Plan
+            </Link>
+          )}
           {authStatus === "authenticated" && (
             <Link
               href="/library"
-              className={`text-sm transition-colors hover:text-white ${
-                pathname.startsWith("/library") ? "text-white" : "text-zinc-400"
+              className={`text-sm transition-colors ${
+                isHome
+                  ? `hover:text-[#0c0c0e] ${pathname.startsWith("/library") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
+                  : `hover:text-white ${pathname.startsWith("/library") ? "text-white" : "text-zinc-400"}`
               }`}
             >
               Library
             </Link>
           )}
-          <AuthControl />
+          <AuthControl isHome={isHome} />
         </nav>
       </div>
     </header>
   );
 }
 
-function AuthControl() {
+function AuthControl({ isHome = false }: { isHome?: boolean }) {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -89,7 +101,11 @@ function AuthControl() {
   }, []);
 
   if (status === "loading") {
-    return <div className="h-8 w-8 animate-pulse rounded-full bg-zinc-800" />;
+    return (
+      <div
+        className={`h-8 w-8 animate-pulse rounded-full ${isHome ? "bg-zinc-200" : "bg-zinc-800"}`}
+      />
+    );
   }
 
   if (!session?.user) {
@@ -104,7 +120,11 @@ function AuthControl() {
           );
         }}
         disabled={signingIn}
-        className="rounded-full border border-zinc-700 px-4 py-1.5 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+        className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+          isHome
+            ? "border-zinc-300 text-[#0c0c0e] hover:border-zinc-500"
+            : "border-zinc-700 text-zinc-200 hover:border-zinc-400 hover:text-white"
+        }`}
       >
         {signingIn ? "Signing in…" : "Sign in"}
       </button>

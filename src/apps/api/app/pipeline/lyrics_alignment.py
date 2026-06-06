@@ -131,6 +131,17 @@ _EXACT_COUNT_REPAIR_MAX_MISMATCHES = 1
 _LEADING_WHISPER_PREFIX_MAX_WORDS = 2
 _LEADING_WHISPER_PREFIX_MAX_GAP_S = 0.75
 
+# If a synced LRCLIB line only matches a prefix and Whisper has a substantial
+# unused tail in the same line window, the canonical row is probably wrong for
+# this recording/repeat. Preserve the trusted canonical prefix, then let the
+# audio-backed Whisper tail win.
+_LOW_CONFIDENCE_WHISPER_TAIL_MAX_MATCH_RATIO = 0.50
+_LOW_CONFIDENCE_WHISPER_TAIL_MAX_PREFIX_MISSES = 2
+_LOW_CONFIDENCE_WHISPER_TAIL_MIN_PREFIX_SIMILARITY = 0.95
+_LOW_CONFIDENCE_WHISPER_TAIL_MIN_UNUSED_WORDS = 2
+_LOW_CONFIDENCE_WHISPER_TAIL_MAX_END_GAP_S = 1.25
+_LOW_CONFIDENCE_WHISPER_TAIL_MAX_SIMILARITY = 0.80
+
 
 @dataclass(frozen=True, slots=True)
 class _PrefixLookbackMatch:
@@ -1633,17 +1644,30 @@ def _align_within_window(
     # Strategy 2 — fuzzy align within the window using the existing matcher.
     if whisper_words_in_window:
         slots: list[tuple[str, float | None, float | None]] = []
+        matched_indices: list[int | None] = []
         cursor = 0
         matched_count = 0
         for canonical_word in expected_words:
             match_idx = _find_match(canonical_word, whisper_words_in_window, cursor)
             if match_idx is None:
                 slots.append((canonical_word, None, None))
+                matched_indices.append(None)
             else:
                 ww = whisper_words_in_window[match_idx]
                 slots.append((canonical_word, ww.start_s, ww.end_s))
+                matched_indices.append(match_idx)
                 matched_count += 1
                 cursor = match_idx + 1
+        repaired = _maybe_repair_low_confidence_whisper_tail(
+            anchor_text,
+            slots,
+            matched_indices,
+            whisper_words_in_window,
+            window_end,
+            matched_count,
+        )
+        if repaired is not None:
+            return repaired
         # Pass the anchored window's upper bound so the trailing-unmatched
         # guardrail in `_build_line` can spread (not collapse) tokens up to
         # `window_end - _NEXT_LINE_SAFETY_S`.
@@ -1677,3 +1701,98 @@ def _align_within_window(
         ),
         0,
     )
+
+
+def _maybe_repair_low_confidence_whisper_tail(
+    anchor_text: str,
+    slots: list[tuple[str, float | None, float | None]],
+    matched_indices: list[int | None],
+    whisper_words_in_window: list[WhisperWord],
+    window_end: float,
+    matched_count: int,
+) -> tuple[AlignedLine, int] | None:
+    """Replace a bad canonical tail with unused Whisper words.
+
+    This targets repeated-hook rows where LRCLIB's synced text diverges from
+    the actual recording: the line prefix matches, then canonical tail words
+    fail while Whisper has a coherent unused phrase in the same window.
+    """
+    expected_count = len(slots)
+    if expected_count < 4 or matched_count <= 0:
+        return None
+    if matched_count / expected_count > _LOW_CONFIDENCE_WHISPER_TAIL_MAX_MATCH_RATIO:
+        return None
+
+    first_matched_slot_idx = next(
+        (idx for idx, match_idx in enumerate(matched_indices) if match_idx is not None),
+        None,
+    )
+    if first_matched_slot_idx is None:
+        return None
+    if first_matched_slot_idx > _LOW_CONFIDENCE_WHISPER_TAIL_MAX_PREFIX_MISSES:
+        return None
+    first_matched_whisper_idx = matched_indices[first_matched_slot_idx]
+    if first_matched_whisper_idx is None:
+        return None
+    first_matched_word = slots[first_matched_slot_idx][0]
+    first_matched_whisper_word = whisper_words_in_window[first_matched_whisper_idx].text
+    if (
+        _similarity(_normalize(first_matched_word), _normalize(first_matched_whisper_word))
+        < _LOW_CONFIDENCE_WHISPER_TAIL_MIN_PREFIX_SIMILARITY
+    ):
+        return None
+
+    later_matched = [
+        idx
+        for idx in matched_indices[first_matched_slot_idx + 1 :]
+        if idx is not None and idx > first_matched_whisper_idx
+    ]
+    tail_stop_idx = min(later_matched) if later_matched else len(whisper_words_in_window)
+    matched_set = {idx for idx in matched_indices if idx is not None}
+    whisper_tail = [
+        word
+        for idx, word in enumerate(whisper_words_in_window)
+        if first_matched_whisper_idx < idx < tail_stop_idx and idx not in matched_set
+    ]
+    if len(whisper_tail) < _LOW_CONFIDENCE_WHISPER_TAIL_MIN_UNUSED_WORDS:
+        return None
+    if window_end - whisper_tail[-1].end_s > _LOW_CONFIDENCE_WHISPER_TAIL_MAX_END_GAP_S:
+        return None
+
+    canonical_tail = [word for word, _, _ in slots[first_matched_slot_idx + 1 :]]
+    if _word_sequence_similarity(canonical_tail, [word.text for word in whisper_tail]) >= (
+        _LOW_CONFIDENCE_WHISPER_TAIL_MAX_SIMILARITY
+    ):
+        return None
+
+    hybrid_slots = [
+        *slots[: first_matched_slot_idx + 1],
+        *((word.text, word.start_s, word.end_s) for word in whisper_tail),
+    ]
+    hybrid_text = " ".join(word for word, _, _ in hybrid_slots)
+    line = _build_line(hybrid_text, hybrid_slots, tail_end_cap_s=window_end)
+    if line is None:
+        return None
+
+    log.warning(
+        "lyrics_alignment_low_confidence_whisper_tail_repaired",
+        original_line=anchor_text.strip()[:80],
+        repaired_line=hybrid_text[:80],
+        matched_count=matched_count,
+        expected_count=expected_count,
+        whisper_tail=[word.text for word in whisper_tail],
+    )
+    hybrid_matched_count = sum(
+        1 for _, start_s, end_s in hybrid_slots if start_s is not None and end_s is not None
+    )
+    return line, hybrid_matched_count
+
+
+def _word_sequence_similarity(left: list[str], right: list[str]) -> float:
+    left_norm = " ".join(_normalize(word) for word in left if _normalize(word))
+    right_norm = " ".join(_normalize(word) for word in right if _normalize(word))
+    if not left_norm and not right_norm:
+        return 1.0
+    if not left_norm or not right_norm:
+        return 0.0
+    return SequenceMatcher(None, left_norm, right_norm).ratio()
