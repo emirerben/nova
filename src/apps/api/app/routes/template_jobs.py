@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import CurrentUserOrSynthetic
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
+from app.services.phase_baselines import get_baselines
 from app.services.template_validation import (
     get_template_or_404,
     require_ready,
@@ -165,6 +166,9 @@ class TemplateJobStatusResponse(BaseModel):
     finished_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Advisory per-phase duration baselines in ms for the ETA ladder (D18).
+    # Seeded from prod timings; null on deploy-skew (older API build).
+    expected_phase_durations: dict[str, int] | None = None
 
 
 class TemplateJobListItem(BaseModel):
@@ -253,9 +257,7 @@ async def list_template_jobs(
     offset: int = Query(default=0, ge=0),
 ) -> TemplateJobListResponse:
     """List template jobs ordered by created_at DESC. Scoped to the current user."""
-    base_query = (
-        select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
-    )
+    base_query = select(Job).where(Job.user_id == current_user.id).where(Job.job_type == "template")
 
     # Count total
     count_result = await db.execute(select(func.count()).select_from(base_query.subquery()))
@@ -524,6 +526,7 @@ async def get_template_job_status(
         finished_at=job.finished_at,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        expected_phase_durations=get_baselines("template"),
     )
 
 

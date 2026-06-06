@@ -23,6 +23,19 @@ CONTENT_PLAN_ACTIVATION_BASELINES_MS: dict[str, int] = {
     "starting_renders": 35_000,
 }
 
+TEMPLATE_PHASE_BASELINES_MS: dict[str, int] = {
+    # Hand-seeded from prod phase_log history (advisory, ±30% variance absorbed by D18 ladder)
+    "download_clips": 8_000,
+    "analyze_clips": 25_000,
+    "match_clips": 12_000,
+    "assemble": 20_000,
+    "mix_audio": 6_000,
+    "generate_copy": 10_000,
+    "upload": 8_000,
+    "finalize": 3_000,
+    # Note: "queued" excluded — ETA suppressed while queued (D9)
+}
+
 
 def get_baselines(pipeline: str = "generative") -> dict[str, int] | None:
     """Return baseline map for the given pipeline, or None if unknown."""
@@ -30,6 +43,8 @@ def get_baselines(pipeline: str = "generative") -> dict[str, int] | None:
         return dict(GENERATIVE_PHASE_BASELINES_MS)
     if pipeline == "content_plan_activation":
         return dict(CONTENT_PLAN_ACTIVATION_BASELINES_MS)
+    elif pipeline == "template":
+        return dict(TEMPLATE_PHASE_BASELINES_MS)
     return None
 
 

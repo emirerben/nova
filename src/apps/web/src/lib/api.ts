@@ -175,6 +175,8 @@ export interface TemplateJobStatusResponse {
   finished_at?: string | null;
   created_at: string;
   updated_at: string;
+  // Advisory per-phase duration baselines in ms for the ETA ladder (D18).
+  expected_phase_durations?: Record<string, number> | null;
 }
 
 /** Structured error detail returned by the upload-time pre-flight when one

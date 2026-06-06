@@ -13,6 +13,8 @@ interface PayoffFieldProps {
   variants: VariantLike[] | null | undefined;
   /** Render function for each variant tile — consumer controls the card style. */
   renderCard: (variant: VariantLike, isNewlyReady: boolean) => ReactNode;
+  /** Custom empty-state copy. Defaults to "Your edits will appear here". */
+  emptyText?: string;
 }
 
 /**
@@ -23,7 +25,7 @@ interface PayoffFieldProps {
  * - Slot count always from variants.length — never a constant.
  * - isNewlyReady flag passed to renderCard for arrive animation on newly-ready tiles.
  */
-export function PayoffField({ variants, renderCard }: PayoffFieldProps) {
+export function PayoffField({ variants, renderCard, emptyText }: PayoffFieldProps) {
   const hasVariants = variants != null && variants.length > 0;
   const [wasEmpty, setWasEmpty] = useState(!hasVariants);
   const [opacity, setOpacity] = useState(hasVariants ? 1 : 0);
@@ -81,7 +83,7 @@ export function PayoffField({ variants, renderCard }: PayoffFieldProps) {
               />
             ))}
           </div>
-          <p className="text-sm text-zinc-600">Your edits will appear here</p>
+          <p className="text-sm text-zinc-600">{emptyText ?? "Your edits will appear here"}</p>
         </div>
       </div>
     );

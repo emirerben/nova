@@ -521,5 +521,7 @@ def test_phase_baselines_scale_render_variants():
 def test_phase_baselines_unknown_pipeline_returns_none():
     from app.services.phase_baselines import get_baselines
 
-    assert get_baselines("template") is None
+    # "template" now has baselines (PR6) — only truly unknown pipelines return None.
+    assert get_baselines("template") is not None
     assert get_baselines("music") is None
+    assert get_baselines("nonexistent") is None

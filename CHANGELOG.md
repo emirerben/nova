@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.86.0] — 2026-06-06
+
+### Added
+- **Template-screen migration onto ProgressTheater** (`template-jobs/[id]/page.tsx`). The old `ProgressScreen` (spinner + index-derived `phaseProgress` bar + `PhaseChips` flex-wrap + `ElapsedTimer`) is replaced by the shared `ProgressTheater` with template phases. `useJobStream` (SSE + polling fallback) is fully preserved — it feeds the theater's props unchanged. `ResultView`, `ErrorScreen`, `RerollButton`, `TimelinePlayer`, `SideBySideComparison`, `CopyCard` are unchanged.
+- **Template phase baselines** (`phase_baselines.py`). Hand-seeded 8-phase map for the template pipeline (~92s total). Served on `GET /template-jobs/{id}/status` as `expected_phase_durations`.
+- **`PayoffField.emptyText` prop** — optional override for the empty-state copy (default "Your edits will appear here"). The template screen passes "Your video will appear here".
+
+### Notes
+- **D21 soak gate:** This PR is opened but not merged until the generative theater has soaked in prod for a few days. The template screen is the only currently-good loading surface; regression risk lands on proven shared components.
+- Theater `isTerminal=false` by design — the top-level router swaps to `ResultView` on `template_ready` before the theater sees terminal; no D12 celebration animation plays.
+- `template-job-phases.ts` untouched — regression invariant holds.
+
 ## [0.4.84.0] — 2026-06-06
 
 ### Added
