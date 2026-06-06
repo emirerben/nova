@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import {
   type ContentPlan,
   createContentPlan,
@@ -33,6 +33,14 @@ type YouSubStep = "tiktok-pre-screen" | "chat" | "form";
 const POLL_MS = 2000;
 
 export default function PlanPage() {
+  return (
+    <Suspense>
+      <PlanPageInner />
+    </Suspense>
+  );
+}
+
+function PlanPageInner() {
   const { status: authStatus } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
