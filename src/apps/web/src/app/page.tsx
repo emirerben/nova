@@ -143,10 +143,6 @@ export default async function HomePage() {
           >
             Build my plan
           </Link>
-          <span className="mt-3 block text-[12.5px] text-[#71717a]">
-            Eight questions about you. Three minutes. A month of content,
-            scripted.
-          </span>
         </section>
       </FadeInOnScroll>
 
@@ -333,10 +329,10 @@ export default async function HomePage() {
           </div>
         </FadeInOnScroll>
 
-        {/* Step 4 — outro */}
+        {/* Step 4 — phone fan left, text right on desktop (mirrors 02) */}
         <FadeInOnScroll>
-          <div className="flex flex-col gap-10 pt-16 md:flex-row md:items-center md:gap-16">
-            {/* Left: step copy */}
+          <div className="flex flex-col gap-10 pt-16 md:flex-row-reverse md:items-center md:gap-16">
+            {/* Right on desktop: step copy */}
             <div className="md:flex-1">
               <span className="font-display text-[44px] italic text-zinc-200">
                 04
@@ -352,7 +348,7 @@ export default async function HomePage() {
               </p>
             </div>
 
-            {/* Right: fanned phone mockups — lg+ only; flat row below lg */}
+            {/* Left on desktop: fanned phone mockups — lg+ only; flat row below lg */}
             <div className="md:flex-1">
               {/* Desktop fan (lg+) */}
               <div className="hidden lg:block">
@@ -487,28 +483,8 @@ export default async function HomePage() {
       </div>
 
       {/* ── FOOTER ── */}
-      <footer className="flex items-center justify-between border-t border-zinc-200 bg-white px-6 py-8 text-[13px] text-[#a1a1aa] md:px-12">
+      <footer className="border-t border-zinc-200 bg-white px-6 py-8 text-center text-[13px] text-[#a1a1aa] md:px-12">
         <span>© Nova</span>
-        <nav className="flex gap-6" aria-label="Footer navigation">
-          <Link
-            href="/templates"
-            className="transition-colors hover:text-[#0c0c0e]"
-          >
-            Templates
-          </Link>
-          <Link
-            href="/library"
-            className="transition-colors hover:text-[#0c0c0e]"
-          >
-            Library
-          </Link>
-          <Link
-            href="/api/auth/signin"
-            className="transition-colors hover:text-[#0c0c0e]"
-          >
-            Sign in
-          </Link>
-        </nav>
       </footer>
     </main>
   );
