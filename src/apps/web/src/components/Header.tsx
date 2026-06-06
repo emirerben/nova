@@ -35,7 +35,7 @@ export default function Header() {
 
   return (
     <header
-      className={`z-40 h-14 ${isHome ? "" : "sticky top-0"}`}
+      className={`z-40 h-14 ${isHome ? "bg-[#fafaf8]" : "sticky top-0"}`}
       style={
         isHome
           ? {}
