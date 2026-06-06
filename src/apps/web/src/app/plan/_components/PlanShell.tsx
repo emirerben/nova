@@ -27,7 +27,7 @@ export default function PlanShell({
 }) {
   const widthClass = WIDTHS[size ?? (wide ? "wide" : "default")];
   return (
-    <main className="min-h-[calc(100vh-3.5rem)] bg-[#fafaf8] text-[#0c0c0e]">
+    <main className="min-h-[calc(100vh-3.5rem)] bg-black text-white">
       <div className={cn("mx-auto px-4", widthClass, className)}>{children}</div>
     </main>
   );
