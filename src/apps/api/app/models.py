@@ -552,6 +552,7 @@ class Persona(Base):
     tiktok_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # generating | ready | failed | edited
     persona_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
+    generation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
@@ -599,6 +600,9 @@ class ContentPlan(Base):
     # NULL until the user leaves feedback + regenerates; the generator treats NULL
     # as "(none)".
     preference_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    generation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    activation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    activation_phase: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

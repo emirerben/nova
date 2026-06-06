@@ -9,9 +9,12 @@ import {
   requestSeedUploadUrls,
   uploadToGcs,
 } from "@/lib/plan-api";
+import { ProgressTheater } from "@/components/progress";
+import { ACTIVATION_PHASE_ORDER, ACTIVATION_PHASE_LABEL } from "@/lib/job-phases";
 
 const POLL_MS = 2000;
 const ACCEPT = "video/mp4,video/quicktime";
+const ACTIVATION_BASELINES_MS = { matching_clips: 75_000, picking_days: 10_000, starting_renders: 35_000 };
 
 /**
  * Activation seed (T8): after the plan is ready, the user drops in one batch of
@@ -41,6 +44,8 @@ export default function SeedUploadCard({
       ? plan.activation_status
       : null,
   );
+  const [activationPhase, setActivationPhase] = useState<string | null>(null);
+  const [activationStartedAt, setActivationStartedAt] = useState<string | null>(null);
   const onRefreshRef = useRef(onRefresh);
   onRefreshRef.current = onRefresh;
 
@@ -50,6 +55,8 @@ export default function SeedUploadCard({
     const id = setInterval(async () => {
       try {
         const st = await getActivation(plan.id);
+        setActivationPhase(st.activation_phase ?? null);
+        setActivationStartedAt(st.activation_started_at ?? null);
         if (st.activation_status !== "activating") {
           setActivating(false);
           if (
@@ -111,6 +118,31 @@ export default function SeedUploadCard({
   }, [plan.id, onError]);
 
   if (activating) {
+    // Gate: only show the theater when the new backend fields are present
+    // (deploy-skew: old API doesn't send activation_started_at yet)
+    if (activationStartedAt) {
+      return (
+        <section
+          className="mb-8 rounded-xl border border-amber-700/50 bg-amber-950/20 p-5"
+          role="status"
+          aria-live="polite"
+        >
+          <ProgressTheater
+            size="inline"
+            phases={ACTIVATION_PHASE_ORDER as unknown as string[]}
+            phaseLabels={ACTIVATION_PHASE_LABEL}
+            currentPhase={activationPhase ?? "matching_clips"}
+            startedAt={activationStartedAt}
+            jobCreatedAt={activationStartedAt}
+            expectedPhaseMs={ACTIVATION_BASELINES_MS}
+            phaseLog={null}
+            isTerminal={false}
+            isSuccess={false}
+          />
+        </section>
+      );
+    }
+    // Fallback: old API or no started_at yet
     return (
       <section
         className="mb-8 rounded-xl border border-amber-700/50 bg-amber-950/20 p-5"

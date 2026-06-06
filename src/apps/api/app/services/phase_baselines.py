@@ -17,11 +17,19 @@ GENERATIVE_PHASE_BASELINES_MS: dict[str, int] = {
     "finalize": 10_000,
 }
 
+CONTENT_PLAN_ACTIVATION_BASELINES_MS: dict[str, int] = {
+    "matching_clips": 75_000,
+    "picking_days": 10_000,
+    "starting_renders": 35_000,
+}
+
 
 def get_baselines(pipeline: str = "generative") -> dict[str, int] | None:
     """Return baseline map for the given pipeline, or None if unknown."""
     if pipeline == "generative":
         return dict(GENERATIVE_PHASE_BASELINES_MS)
+    if pipeline == "content_plan_activation":
+        return dict(CONTENT_PLAN_ACTIVATION_BASELINES_MS)
     return None
 
 

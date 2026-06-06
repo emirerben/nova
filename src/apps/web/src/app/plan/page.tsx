@@ -311,6 +311,7 @@ function PersonaStepView({
         title={fromChat ? "Reading everything you shared…" : "Crafting your persona…"}
         subtitle="Turning your answers into a voice and themes for your videos. Usually 15-30 seconds."
         lines={4}
+        startedAt={persona.generation_started_at ?? null}
       />
     );
   }
@@ -430,6 +431,7 @@ function PlanStepView({
         title="Building your 30-day plan…"
         subtitle="Scripting a month of video ideas around your persona. This usually takes up to a minute."
         lines={6}
+        startedAt={plan.generation_started_at ?? null}
       />
     );
   }

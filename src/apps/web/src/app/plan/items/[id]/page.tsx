@@ -2,15 +2,16 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   attachClips,
   changePlanItemStyle,
   generatePlanItem,
   getPlanItem,
-  getPlanItemVariants,
+  getPlanItemJobStatus,
   NotAuthenticatedError,
   type PlanItem,
+  type PlanItemJobStatus,
   type PlanItemVariant,
   requestUploadUrls,
   retextPlanItem,
@@ -23,23 +24,30 @@ import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
 import { stripRationalePrefix } from "@/lib/plan-text";
+import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
+import { ProgressTheater } from "@/components/progress";
+import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import PlanShell from "../../_components/PlanShell";
 import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 
-const POLL_MS = 2500;
-// Generative renders three variants; show that many tiles while waiting so the
-// grid doesn't reflow as each one lands.
-const EXPECTED_VARIANTS = 3;
+function deriveReceiptText(job: PlanItemJobStatus): string {
+  if (job.started_at && job.finished_at) {
+    const ms = new Date(job.finished_at).getTime() - new Date(job.started_at).getTime();
+    const secs = Math.floor(ms / 1000);
+    const mins = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `Ready in ${mins}:${String(s).padStart(2, "0")}`;
+  }
+  return "Your edits are ready";
+}
 
 export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
   const itemId = params.id;
 
-  const [item, setItem] = useState<PlanItem | null>(null);
-  const [variants, setVariants] = useState<PlanItemVariant[]>([]);
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,12 +61,11 @@ export default function PlanItemPage() {
   // Which variant the hero shows + the editor edits. Kept valid by an effect
   // below: defaults to the first ready variant, never points at a gone id.
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
-  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // variant_id → the output_url at the moment the user submitted an edit. While a
   // variant is in here we keep polling and keep showing its spinner — we can't
   // rely on catching the worker's transient "rendering" flag (the throttled
   // plan-jobs queue may flip it between polls), so we wait for the URL to change.
-  const pendingEdits = useRef<Map<string, string | null>>(new Map());
+  const pendingEdits = useRef<Map<string, { priorOutputUrl: string | null }>>(new Map());
 
   useEffect(() => {
     getMusicTracks()
@@ -69,80 +76,66 @@ export default function PlanItemPage() {
       .catch(() => setStyleSets([]));
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const it = await getPlanItem(itemId);
-      setItem(it);
-      // Hydrate variants whenever a render job exists — NOT only on "ready" — so
-      // each variant tile fills in (or fails) on its own as the render lands.
-      let vs: PlanItemVariant[] = [];
-      if (it.current_job_id) {
-        try {
-          vs = await getPlanItemVariants(it.current_job_id);
-          // Retire a pending edit once its render visibly lands (URL changed) or
-          // fails; until then keep the variant displayed as "rendering".
-          const pending = pendingEdits.current;
-          if (pending.size > 0) {
-            for (const sv of vs) {
-              if (!pending.has(sv.variant_id)) continue;
-              const prevUrl = pending.get(sv.variant_id) ?? null;
-              const landed = !!sv.output_url && sv.output_url !== prevUrl;
-              if (landed || sv.render_status === "failed") pending.delete(sv.variant_id);
-            }
-            vs = vs.map((sv) =>
-              pending.has(sv.variant_id) ? { ...sv, render_status: "rendering" } : sv,
-            );
-          }
-          setVariants(vs);
-        } catch {
-          // best-effort; the item status itself is the source of truth
-        }
-      }
-      return { item: it, variants: vs };
-    } catch (err) {
-      if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-      else setError(err instanceof Error ? err.message : "Failed to load item");
-      return null;
-    } finally {
-      setLoading(false);
-    }
+  // Composite fetcher: item + job status in one shot.
+  const fetcher = useCallback(async () => {
+    const it = await getPlanItem(itemId);
+    const jobSt = it.current_job_id
+      ? await getPlanItemJobStatus(it.current_job_id)
+      : null;
+    return { item: it, job: jobSt };
   }, [itemId]);
 
-  // A render is in flight while the item is generating, OR a job exists that
-  // hasn't reached a terminal status, OR any single variant is re-rendering (a
-  // swap/retext/restyle flips one variant back to "rendering" while the item
-  // stays "ready").
-  const inFlight = (it: PlanItem, vs: PlanItemVariant[]): boolean =>
-    it.status === "generating" ||
-    (!!it.current_job_id && it.status !== "ready" && it.status !== "failed") ||
-    pendingEdits.current.size > 0 ||
-    vs.some((v) => v.render_status === "rendering");
+  const isTerminalFn = useCallback(
+    ({ item, job }: { item: PlanItem; job: PlanItemJobStatus | null }) => {
+      const anyRendering =
+        job?.variants?.some((v) => v.render_status === "rendering") ?? false;
+      const pending = pendingEdits.current;
+      return (
+        !anyRendering &&
+        pending.size === 0 &&
+        item.status !== "generating" &&
+        !(item.current_job_id && item.status !== "ready" && item.status !== "failed")
+      );
+    },
+    [],
+  );
 
-  // Arm a single recursive poll loop (deduped via pollRef) that runs until
-  // nothing is in flight. Shared by mount, generate, and the edit actions.
-  const armPoll = useCallback(() => {
-    if (pollRef.current) clearTimeout(pollRef.current);
-    pollRef.current = setTimeout(async function tick() {
-      const res = await refresh();
-      if (!res) return;
-      if (inFlight(res.item, res.variants)) {
-        pollRef.current = setTimeout(tick, POLL_MS);
-      }
-    }, POLL_MS);
-  }, [refresh]);
+  const {
+    data,
+    error: pollError,
+    refetch,
+  } = usePolledJobStatus(fetcher, undefined, isTerminalFn);
 
+  // Set loading false once first data arrives (or error).
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const res = await refresh();
-      if (cancelled || !res) return;
-      if (inFlight(res.item, res.variants)) armPoll();
-    })();
-    return () => {
-      cancelled = true;
-      if (pollRef.current) clearTimeout(pollRef.current);
-    };
-  }, [refresh, armPoll]);
+    if (data !== null || pollError !== null) setLoading(false);
+  }, [data, pollError]);
+
+  // Handle auth errors from the poll.
+  useEffect(() => {
+    if (pollError instanceof NotAuthenticatedError) setNeedsAuth(true);
+    else if (pollError) setError(pollError.message);
+  }, [pollError]);
+
+  const item = data?.item ?? null;
+
+  // pendingEdits overlay: remove when output_url changes (not when render_status changes).
+  const variants = useMemo(
+    () => {
+      const rawVariants = data?.job?.variants ?? [];
+      return rawVariants.map((v) => {
+        const pending = pendingEdits.current.get(v.variant_id);
+        if (!pending) return v;
+        // Still pending if the output_url hasn't changed.
+        if (v.output_url !== pending.priorOutputUrl) {
+          pendingEdits.current.delete(v.variant_id);
+          return v;
+        }
+        return { ...v, render_status: "rendering" as const };
+      });
+    },
+    [data],
+  );
 
   // Keep a valid focused variant as renders land: default to the first variant
   // with a playable output (else the first one), and reset if the focused id
@@ -159,29 +152,29 @@ export default function PlanItemPage() {
   }, [variants, focusedVariantId]);
 
   // Optimistically flip a variant to "rendering" so the card shows a spinner and
-  // the poll arms immediately — the worker only sets the real flag once it
+  // the poll fires immediately — the worker only sets the real flag once it
   // dequeues the task, after the POST returns.
-  const markVariantRendering = useCallback((variantId: string) => {
-    setVariants((vs) =>
-      vs.map((v) => (v.variant_id === variantId ? { ...v, render_status: "rendering" } : v)),
-    );
-  }, []);
+  const markVariantRendering = useCallback(
+    (variantId: string, priorOutputUrl: string | null) => {
+      pendingEdits.current.set(variantId, { priorOutputUrl });
+      refetch();
+    },
+    [refetch],
+  );
 
   const runEdit = useCallback(
     async (variantId: string, prevUrl: string | null, action: () => Promise<unknown>) => {
-      markVariantRendering(variantId);
       setError(null);
       try {
         await action();
         // Track until the re-rendered URL lands (see pendingEdits) and keep polling.
-        pendingEdits.current.set(variantId, prevUrl);
-        armPoll();
+        markVariantRendering(variantId, prevUrl);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to update variant");
-        await refresh(); // clear the optimistic spinner if the request was rejected
+        refetch(); // clear the optimistic spinner if the request was rejected
       }
     },
-    [armPoll, markVariantRendering, refresh],
+    [markVariantRendering, refetch],
   );
 
   async function handleFiles(files: FileList | null) {
@@ -200,8 +193,8 @@ export default function PlanItemPage() {
       );
       await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, list[i])));
       const existing = item?.clip_gcs_paths ?? [];
-      const updated = await attachClips(itemId, [...existing, ...urls.map((u) => u.gcs_path)]);
-      setItem(updated);
+      await attachClips(itemId, [...existing, ...urls.map((u) => u.gcs_path)]);
+      refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
@@ -214,8 +207,7 @@ export default function PlanItemPage() {
     setError(null);
     try {
       await generatePlanItem(itemId);
-      await refresh();
-      armPoll();
+      refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start generation");
     } finally {
@@ -246,7 +238,7 @@ export default function PlanItemPage() {
   if (item === null) {
     return (
       <PlanShell>
-        <div className="animate-fade-up py-24 text-center">
+        <div className="motion-safe:animate-fade-up py-24 text-center">
           <p className="mb-6 text-zinc-400">We couldn&apos;t find that idea.</p>
           <Link
             href="/plan"
@@ -261,20 +253,24 @@ export default function PlanItemPage() {
 
   const clipCount = item.clip_gcs_paths.length;
   const isGenerating = item.status === "generating";
-  const readyCount = variants.filter((v) => v.output_url).length;
-  const showResults = isGenerating || variants.length > 0;
-  // Pad with skeletons while generating so the grid shows the shape of what's coming.
-  const tileCount = isGenerating ? Math.max(EXPECTED_VARIANTS, variants.length) : variants.length;
   const focused = variants.find((v) => v.variant_id === focusedVariantId) ?? null;
   // The focused variant is editable once it has rendered (or failed) at least once.
   const focusedEditable =
     focused && (!!focused.output_url || focused.render_status === "failed");
+  const showResults = isGenerating || variants.length > 0;
+
+  // Theater props
+  const currentPhase =
+    data?.job?.current_phase ??
+    (!data?.job?.started_at ? "queued" : null);
+  const theaterIsTerminal = !!(item && isTerminalFn({ item, job: data?.job ?? null }));
+  const theaterIsSuccess = item?.status === "ready";
 
   return (
     <PlanShell size="results">
       {/* @font-face for the style-preview chips — fonts lazy-load only when used. */}
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
-      <div className="animate-fade-up py-12">
+      <div className="motion-safe:animate-fade-up py-12">
         {/* ── Editorial header + controls (narrow, readable column) ── */}
         <div className="max-w-2xl">
           <Link
@@ -357,30 +353,27 @@ export default function PlanItemPage() {
             <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>
           )}
 
-          {/* Ready-state moment: a render landed — mark the payoff, don't bury it. */}
-          {item.status === "ready" && readyCount > 0 && (
-            <div
-              className="mb-2 mt-8 flex items-center gap-2 rounded-lg border border-emerald-800/60 bg-emerald-950/20 px-4 py-3"
-              role="status"
-            >
-              <span aria-hidden="true" className="text-lg">
-                🎉
-              </span>
-              <p className="text-sm text-emerald-200">
-                {readyCount === 1
-                  ? "Your video is ready — play it below."
-                  : `${readyCount} videos are ready — play them below.`}
-              </p>
+          {/* ProgressTheater: replaces old StatusLine + "(N of M ready)" text block */}
+          {data?.job && (
+            <div className="mt-8">
+              <ProgressTheater
+                phases={GENERATIVE_PHASE_ORDER}
+                phaseLabels={GENERATIVE_PHASE_LABEL}
+                currentPhase={currentPhase}
+                expectedPhaseMs={data.job.expected_phase_durations ?? null}
+                phaseLog={data.job.phase_log ?? null}
+                startedAt={data.job.started_at ?? null}
+                jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
+                isTerminal={theaterIsTerminal}
+                isSuccess={theaterIsSuccess}
+                receiptText={deriveReceiptText(data.job)}
+                variants={variants}
+                size="full"
+              >
+                {null}
+              </ProgressTheater>
             </div>
           )}
-          <p className={`text-sm text-zinc-400 ${item.status === "ready" ? "" : "mt-8"}`} aria-live="polite">
-            <StatusLine status={item.status} />
-            {isGenerating && variants.length > 0 && (
-              <span className="ml-1 text-zinc-500">
-                ({readyCount} of {tileCount} ready)
-              </span>
-            )}
-          </p>
           {isGenerating && (
             <p className="mt-1 text-xs text-zinc-500">
               Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
@@ -518,7 +511,7 @@ function Hero({
 
 function SkeletonTile() {
   return (
-    <div className="aspect-[9/16] w-full animate-shimmer rounded-xl border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
+    <div className="aspect-[9/16] w-full motion-safe:animate-shimmer rounded-xl border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
   );
 }
 
@@ -529,15 +522,4 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
-}
-
-function StatusLine({ status }: { status: string }) {
-  const copy: Record<string, string> = {
-    idea: "Not started — upload clips and generate.",
-    awaiting_clips: "Waiting on your clips.",
-    generating: "Rendering your variants…",
-    ready: "Done — your videos are below.",
-    failed: "Generation failed. Try generating again.",
-  };
-  return <>{copy[status] ?? status}</>;
 }

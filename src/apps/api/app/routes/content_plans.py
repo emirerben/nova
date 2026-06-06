@@ -11,6 +11,7 @@ GET  /content-plans   — the user's latest plan with its items. Each item's liv
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -58,6 +59,7 @@ class ContentPlanResponse(BaseModel):
     # full seed path list is intentionally not on the wire (count is enough for UI).
     activation_status: str = "none"
     seed_clip_count: int = 0
+    generation_started_at: datetime | None = None
 
 
 def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
@@ -69,6 +71,7 @@ def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
         items=[plan_item_response(it) for it in plan.items],
         activation_status=plan.activation_status,
         seed_clip_count=len(plan.seed_clip_paths or []),
+        generation_started_at=plan.generation_started_at,
     )
 
 
@@ -94,6 +97,7 @@ async def create_plan(
         events={"text": body.events} if body.events else None,
         plan_status="generating",
         horizon_days=horizon,
+        generation_started_at=datetime.now(UTC),
     )
     db.add(plan)
     await db.commit()
@@ -152,6 +156,7 @@ async def regenerate_plan(
             detail="A plan generation is already in progress",
         )
     plan.plan_status = "generating"
+    plan.generation_started_at = datetime.now(UTC)
     await db.commit()
 
     from app.tasks.content_plan_build import regenerate_content_plan  # noqa: PLC0415
@@ -322,6 +327,9 @@ class ActivationStatusResponse(BaseModel):
     seed_clip_count: int
     generating_item_ids: list[str]
     ready_item_ids: list[str]
+    activation_phase: str | None = None
+    activation_started_at: datetime | None = None
+    expected_phase_durations: dict[str, int] | None = None
 
 
 @router.get("/{plan_id}/activation", response_model=ActivationStatusResponse)
@@ -331,6 +339,8 @@ async def get_activation(
     db: AsyncSession = Depends(get_db),
 ) -> ActivationStatusResponse:
     """Poll target for the activation seed. Item lists are DERIVED from Job.status."""
+    from app.services.phase_baselines import get_baselines  # noqa: PLC0415
+
     plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
     generating: list[str] = []
     ready: list[str] = []
@@ -345,4 +355,7 @@ async def get_activation(
         seed_clip_count=len(plan.seed_clip_paths or []),
         generating_item_ids=generating,
         ready_item_ids=ready,
+        activation_phase=plan.activation_phase,
+        activation_started_at=plan.activation_started_at,
+        expected_phase_durations=get_baselines("content_plan_activation"),
     )

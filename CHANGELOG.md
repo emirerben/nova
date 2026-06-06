@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.84.0] — 2026-06-06
+
+### Added
+- **Plan-item page ProgressTheater.** `plan/items/[id]/page.tsx` now uses `usePolledJobStatus` with a composite fetcher (item + job status in one shot) and renders a full `ProgressTheater` band above the filmstrip. Kills `EXPECTED_VARIANTS = 3` — tile count comes from `job.variants.length`. The `pendingEdits` overlay (remove when `output_url` changes, not when `render_status` changes) is preserved through a `useMemo` pass over `data.job.variants`. Deploy-skew: null phase fields render gracefully with no numeric ETA.
+- **Activation inline theater.** `SeedUploadCard.tsx` polls `activation_phase` and `activation_started_at` from the activation endpoint and renders a compact `ProgressTheater size="inline"` during the matching phase (deploy-skew fallback: old API without these fields still shows the static amber card).
+- **GeneratingState elapsed clock.** `GeneratingState.tsx` accepts `startedAt?: string | null` and shows a live elapsed clock (formatted as `m:ss`) when provided. All `animate-*` classes prefixed with `motion-safe:` for reduced-motion compliance. `plan/page.tsx` passes `generation_started_at` from both persona and plan responses.
+- **Migration 0049** — adds `generation_started_at` to `personas`, and `generation_started_at` + `activation_started_at` + `activation_phase` to `content_plans`.
+- **Backend phase stamping.** `routes/personas.py` and `routes/content_plans.py` stamp `generation_started_at = now()` when flipping status to `"generating"`. `activate_content_plan` stamps `activation_phase` through `matching_clips → picking_days → starting_renders` and sets `activation_started_at` at the activating transition. `ActivationStatusResponse` exposes all three new fields plus `expected_phase_durations` from `phase_baselines`.
+- **Content-plan activation baselines.** `phase_baselines.py` adds `CONTENT_PLAN_ACTIVATION_BASELINES_MS` (matching_clips=75s, picking_days=10s, starting_renders=35s) and `get_baselines("content_plan_activation")`.
+- **`getPlanItemJobStatus` API helper.** `lib/plan-api.ts` exports `getPlanItemJobStatus(jobId)` + `PlanItemJobStatus` type, plus `ACTIVATION_PHASE_ORDER/LABEL` vocab in `lib/job-phases.ts`.
+
 ## [0.4.83.0] - 2026-06-06
 
 ### Added
