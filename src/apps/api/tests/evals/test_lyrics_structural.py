@@ -84,6 +84,61 @@ def test_late_lrclib_anchor_prefix_repair_keeps_following_anchor_local() -> None
     assert following.start_s == 235.7
 
 
+def test_repeated_chorus_prefix_lookback_beats_late_decoy() -> None:
+    """Eval guard for lyrics-preview job f6637708's repeated chorus lag."""
+    result = align_with_line_anchors(
+        [
+            SyncedLine(start_s=44.99, text="I can't feel my face when I'm with you"),
+            SyncedLine(start_s=49.94, text="But I love it, but I love it, oh"),
+            SyncedLine(start_s=53.06, text="I can't feel my face when I'm with you"),
+            SyncedLine(start_s=59.16, text="But I love it, but I love it, oh"),
+        ],
+        [
+            WhisperWord(text="I", start_s=44.00, end_s=44.62),
+            WhisperWord(text="can", start_s=44.62, end_s=44.86),
+            WhisperWord(text="feel", start_s=44.86, end_s=45.16),
+            WhisperWord(text="my", start_s=45.16, end_s=45.40),
+            WhisperWord(text="face", start_s=45.40, end_s=45.72),
+            WhisperWord(text="when", start_s=45.72, end_s=45.98),
+            WhisperWord(text="I'm", start_s=45.98, end_s=46.44),
+            WhisperWord(text="with", start_s=46.44, end_s=46.54),
+            WhisperWord(text="you", start_s=46.54, end_s=46.90),
+            WhisperWord(text="But", start_s=47.82, end_s=48.44),
+            WhisperWord(text="I", start_s=48.44, end_s=48.64),
+            WhisperWord(text="love", start_s=48.64, end_s=48.94),
+            WhisperWord(text="it", start_s=48.94, end_s=49.38),
+            WhisperWord(text="why", start_s=49.56, end_s=50.70),
+            WhisperWord(text="I", start_s=50.70, end_s=50.90),
+            WhisperWord(text="love", start_s=50.90, end_s=51.24),
+            WhisperWord(text="it", start_s=51.24, end_s=51.66),
+            WhisperWord(text="I", start_s=51.66, end_s=52.60),
+            WhisperWord(text="can", start_s=52.60, end_s=53.74),
+            WhisperWord(text="feel", start_s=53.74, end_s=54.02),
+            WhisperWord(text="my", start_s=54.02, end_s=54.26),
+            WhisperWord(text="face", start_s=54.26, end_s=54.62),
+            WhisperWord(text="when", start_s=54.62, end_s=54.86),
+            WhisperWord(text="I'm", start_s=54.86, end_s=55.32),
+            WhisperWord(text="with", start_s=55.32, end_s=55.42),
+            WhisperWord(text="you", start_s=55.42, end_s=55.82),
+            WhisperWord(text="But", start_s=56.74, end_s=57.36),
+            WhisperWord(text="I", start_s=57.36, end_s=57.56),
+            WhisperWord(text="love", start_s=57.56, end_s=57.98),
+            WhisperWord(text="it", start_s=57.98, end_s=58.28),
+            WhisperWord(text="why", start_s=58.58, end_s=59.58),
+            WhisperWord(text="I", start_s=59.58, end_s=59.88),
+            WhisperWord(text="love", start_s=59.88, end_s=60.14),
+            WhisperWord(text="it", start_s=60.14, end_s=60.50),
+        ],
+        track_end_s=61.0,
+    )
+
+    but_lines = [line for line in result.lines if line.text == "But I love it, but I love it, oh"]
+
+    assert [line.start_s for line in but_lines] == [47.82, 56.74]
+    assert [word.start_s for word in but_lines[0].words[:4]] == [47.82, 48.44, 48.64, 48.94]
+    assert [word.start_s for word in but_lines[1].words[:4]] == [56.74, 57.36, 57.56, 57.98]
+
+
 def test_repeated_popup_chorus_repairs_bad_source_fragments() -> None:
     """Eval guard for lyrics-preview job 8c5793b6's repeated chorus cache."""
     result = align_with_line_anchors(
