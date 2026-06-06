@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.86.0] — 2026-06-06
+
+### Added
+- **Light-editorial Workspace Home for `/plan`.** Returning users land directly on a persistent workspace instead of the onboarding wizard. Two-column layout (left rail: Today card, Momentum card, Persona card; right column: reveal banner, week strip, 30-day calendar grid, SteerInput). Full editorial light system (cream `#fafaf8`, Playfair, ink, lime) — consistent with the landing page.
+- **Mode router (`resolvePlanMode`).** Pure function in `plan/_lib/route.ts` replaces the old step/subStep state machine. Drives 10 modes: setup states (prescreen, chat, persona-generating, persona-failed, plan-intro, plan-generating, plan-failed) + workspace states (workspace, workspace:regenerating, workspace:refresh-failed). Items-present always stays in the workspace — regenerate/failure never bounces to setup.
+- **Selective shimmer during regenerate (D13).** Protected cells (`user_edited || current_job_id`) stay solid while only replaceable cells shimmer. "Your work is safe" rendered visually, zero extra copy.
+- **`POST /plan-items/{id}/reroll` + `reroll_plan_item` Celery task.** Single-item idea swap on the Today card. Guards 409 for rendered/rendering items. Reuses existing dedup + `choose_replacements(1, …)` machinery. Failure is best-effort — old idea survives.
+- **`start_date` activation.** Both generate and regenerate ready-flips now write `start_date = date.today()` when the field is null (idempotent guard; regenerate preserves original anchor). Exposed in `ContentPlanResponse` with a legacy fallback. Powers real weekday labels and the behind-state line.
+- **New light primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` (plan-flow only).
+- **`GeneratingStateLight`** with optional `accentQuote` prop — shows persona `signature_quote` during first plan generation (D14 peak-anticipation beat).
+- **`/plan/setup` and `/plan/persona`** as real canonical routes. `?step=` shim handles old deep-links. `/plan/onboarding` redirects to `/plan/setup`.
+- **Lime-700 contrast rule (D16).** Small lime text and text-bearing lime fills use `lime-700` (4.79:1 on cream, AA-passing). Landing page eyebrow and 10px labels updated too.
+- **Mobile week strip scroll-snap (D17).** Seven text-bearing cards scroll horizontally on `< lg` with `snap-x snap-mandatory`; today auto-centered via `scrollIntoView` on mount.
+- **End-of-plan CTA (D18).** When all items are ready, the Today card expands an inline events textarea → `POST /content-plans` (new plan, not regenerate which no-ops on a fully-made plan).
+- **Header light on all `/plan*` surfaces** (except `/plan/items/[id]`); lime-600 avatar initial-fallback.
+
+### Changed
+- `/plan/page.tsx` rewritten as the mode router (Stepper removed). Load/poll/auth machinery unchanged.
+- `planNudge` / `planProgress` moved from `PlanCalendar.tsx` → `plan/_lib/plan-logic.ts`.
+- `PlanCalendar.tsx` retired; replaced by `MonthCalendarGrid`.
+- DESIGN.md §1 updated: `/plan` flow is the fourth surface (light editorial, not dark product). §2 retitled with primitives reference + D16 lime rule + chat-interview invariants.
+
+### Fixed
+- Montserrat loaded scoped to `/admin` only (Google Fonts link in admin layout); removed from `globals.css` which is now Playfair-only.
+- `PlanReadyBanner` re-show on back-nav fixed via `onDismiss` callback resetting `planJustReady`.
+
 ## [0.4.85.2] — 2026-06-06
 
 ### Fixed

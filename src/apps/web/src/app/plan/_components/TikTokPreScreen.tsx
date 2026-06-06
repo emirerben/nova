@@ -29,14 +29,14 @@ export default function TikTokPreScreen({
 
   return (
     <div className="animate-fade-up py-4">
-      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-amber-300">
+      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-lime-700">
         Getting to know you
       </p>
-      <h1 className="font-display text-3xl leading-snug text-white">
+      <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
         Are you a TikTok creator?
       </h1>
-      <p className="mt-2 text-zinc-400">
-        Drop your handle and we&apos;ll skip straight to the interesting questions.
+      <p className="mt-2 text-[#71717a]">
+        Drop your handle and we&apos;ll skip to the interesting questions.
       </p>
 
       <div className="mt-6">
@@ -54,7 +54,7 @@ export default function TikTokPreScreen({
           aria-label="Your TikTok handle"
           autoComplete="off"
           spellCheck={false}
-          className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-4 py-3 text-lg text-white placeholder-zinc-600 transition-colors focus:border-amber-400/60 focus:outline-none"
+          className="w-full rounded-lg border border-zinc-200 bg-white px-4 py-3 text-lg text-[#0c0c0e] placeholder-zinc-400 transition-colors focus:border-lime-600/60 focus:outline-none"
         />
       </div>
 
@@ -63,7 +63,7 @@ export default function TikTokPreScreen({
           type="button"
           onClick={submit}
           disabled={submitting || !handle.trim()}
-          className="inline-flex min-h-[44px] items-center rounded-full bg-white px-5 py-2 text-sm font-medium text-black transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+          className="inline-flex min-h-[44px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {submitting ? "Looking up…" : "Continue →"}
         </button>
@@ -72,7 +72,7 @@ export default function TikTokPreScreen({
           type="button"
           onClick={() => onContinue("")}
           disabled={submitting}
-          className="py-3 text-sm text-zinc-500 transition-colors hover:text-zinc-300 disabled:opacity-50"
+          className="px-4 py-2 text-sm text-[#71717a] transition-colors hover:underline underline-offset-4 disabled:opacity-50"
         >
           Skip →
         </button>

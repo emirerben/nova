@@ -371,3 +371,37 @@ async def set_item_intro_size(
         "plan_item_set_intro_size", item_id=item_id, variant_id=variant_id, px=req.text_size_px
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+# ── Reroll (swap idea for a single un-started item) ────────────────────────────
+
+
+@router.post("/{item_id}/reroll", response_model=PlanItemResponse)
+async def reroll_plan_item_route(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Re-generate the idea for a single plan item.
+
+    Only allowed when the item is an un-started idea (item_status == "idea"
+    and no current_job_id) — re-rolling a rendered/rendering item would
+    orphan work in progress.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+
+    if item.item_status != "idea" or item.current_job_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Can only reroll an un-started idea (item_status='idea', no current_job_id)",
+        )
+
+    item.item_status = "rerolling"
+    await db.commit()
+
+    from app.tasks.content_plan_build import reroll_plan_item  # noqa: PLC0415
+
+    reroll_plan_item.delay(str(item.id))
+
+    log.info("plan_item_reroll.dispatched", item_id=item_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))

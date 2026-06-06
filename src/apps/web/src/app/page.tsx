@@ -124,7 +124,7 @@ export default async function HomePage() {
       {/* ── HERO ── */}
       <FadeInOnScroll>
         <section className="mx-auto max-w-[900px] px-6 pb-0 pt-24 text-center">
-          <p className="mb-5 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-600">
+          <p className="mb-5 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700">
             Your AI influencer agent
           </p>
           <h1 className="font-display mb-5 text-[clamp(36px,6vw,64px)] font-medium leading-[1.08]">
@@ -270,7 +270,7 @@ export default async function HomePage() {
                   ))}
                 </div>
                 <div className="flex justify-between text-[10px] text-[#a1a1aa]">
-                  <span className="text-lime-600">3 film days → 11 posts</span>
+                  <span className="text-lime-700">3 film days → 11 posts</span>
                   <span>each post is its own video</span>
                 </div>
               </div>
@@ -314,7 +314,7 @@ export default async function HomePage() {
                           {how}
                         </span>
                       </span>
-                      <span className="shrink-0 text-[10px] text-lime-600">
+                      <span className="shrink-0 text-[10px] text-lime-700">
                         {dur}
                       </span>
                     </div>
@@ -322,7 +322,7 @@ export default async function HomePage() {
                 </div>
                 <p className="mt-3 text-[10px] text-[#a1a1aa]">
                   Est. filming time:{" "}
-                  <span className="text-lime-600">~8 min</span>
+                  <span className="text-lime-700">~8 min</span>
                 </p>
               </div>
             </div>

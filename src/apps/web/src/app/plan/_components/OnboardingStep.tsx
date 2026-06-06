@@ -171,7 +171,7 @@ export default function OnboardingStep({
 
   return (
     <div className="py-2">
-      <p className="mb-8 text-center text-zinc-400">
+      <p className="mb-8 text-center text-[#71717a]">
         A few quick answers become an editable creator persona — the voice and themes
         behind your videos.
       </p>

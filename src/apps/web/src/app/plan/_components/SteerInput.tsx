@@ -33,8 +33,8 @@ export default function SteerInput({ contentPlanId }: { contentPlanId: string })
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
-      <p className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Steer</p>
+    <div className="rounded-xl border border-zinc-200 bg-white p-4">
+      <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">Steer</p>
       <label className="mt-2 block">
         <span className="sr-only">Tell the AI what&apos;s working and what to change</span>
         <textarea
@@ -45,7 +45,7 @@ export default function SteerInput({ contentPlanId }: { contentPlanId: string })
           }}
           rows={2}
           placeholder="Tell the AI what's working — more travel, less talking-head, punchier hooks…"
-          className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+          className="w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46] placeholder:text-zinc-400 focus:border-lime-600/60 focus:outline-none"
         />
       </label>
       <div className="mt-2 flex items-center gap-3">
@@ -53,16 +53,16 @@ export default function SteerInput({ contentPlanId }: { contentPlanId: string })
           type="button"
           onClick={() => void submit()}
           disabled={busy || !note.trim()}
-          className="min-h-11 rounded-full border border-zinc-700 px-4 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:opacity-50"
+          className="min-h-11 rounded-full bg-[#0c0c0e] px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-80 disabled:opacity-40"
         >
           {busy ? "Saving…" : "Save for next time"}
         </button>
         {saved && (
-          <span className="text-xs text-amber-300" aria-live="polite">
+          <span className="text-xs text-lime-700" aria-live="polite">
             Got it — I&apos;ll use this when you regenerate.
           </span>
         )}
-        {error && <span className="text-xs text-red-400">{error}</span>}
+        {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
     </div>
   );

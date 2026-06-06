@@ -9,7 +9,7 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        // Playfair Display + Montserrat are loaded via the Google Fonts @import
+        // Playfair Display is loaded via the Google Fonts @import
         // in globals.css. `font-display` is the editorial serif used for plan
         // headings + key prompts.
         display: ['"Playfair Display"', "Georgia", "serif"],

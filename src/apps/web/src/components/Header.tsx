@@ -31,13 +31,13 @@ export default function Header() {
 
   if (isAdmin) return null;
 
-  const isHome = pathname === "/";
+  const isLight = pathname === "/" || (pathname.startsWith("/plan") && !pathname.startsWith("/plan/items/"));
 
   return (
     <header
-      className={`z-40 h-14 ${isHome ? "bg-[#fafaf8]" : "sticky top-0"}`}
+      className={`z-40 h-14 ${isLight ? "bg-[#fafaf8] border-b border-zinc-200/70" : "sticky top-0"}`}
       style={
-        isHome
+        isLight
           ? {}
           : {
               backgroundColor: `rgba(0, 0, 0, ${0.6 * progress})`,
@@ -50,7 +50,7 @@ export default function Header() {
         <Link
           href="/"
           aria-label="Nova — home"
-          className={`font-semibold tracking-tight ${isHome ? "text-[#0c0c0e]" : "text-white"}`}
+          className={`font-semibold tracking-tight ${isLight ? "text-[#0c0c0e]" : "text-white"}`}
         >
           Nova
         </Link>
@@ -59,7 +59,7 @@ export default function Header() {
             <Link
               href="/plan"
               className={`text-sm transition-colors ${
-                isHome
+                isLight
                   ? `hover:text-[#0c0c0e] ${pathname.startsWith("/plan") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
                   : `hover:text-white ${pathname.startsWith("/plan") ? "text-white" : "text-zinc-400"}`
               }`}
@@ -71,7 +71,7 @@ export default function Header() {
             <Link
               href="/library"
               className={`text-sm transition-colors ${
-                isHome
+                isLight
                   ? `hover:text-[#0c0c0e] ${pathname.startsWith("/library") ? "text-[#0c0c0e]" : "text-[#71717a]"}`
                   : `hover:text-white ${pathname.startsWith("/library") ? "text-white" : "text-zinc-400"}`
               }`}
@@ -79,14 +79,14 @@ export default function Header() {
               Library
             </Link>
           )}
-          <AuthControl isHome={isHome} />
+          <AuthControl isLight={isLight} />
         </nav>
       </div>
     </header>
   );
 }
 
-function AuthControl({ isHome = false }: { isHome?: boolean }) {
+function AuthControl({ isLight = false }: { isLight?: boolean }) {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -103,7 +103,7 @@ function AuthControl({ isHome = false }: { isHome?: boolean }) {
   if (status === "loading") {
     return (
       <div
-        className={`h-8 w-8 motion-safe:animate-pulse rounded-full ${isHome ? "bg-zinc-200" : "bg-zinc-800"}`}
+        className={`h-8 w-8 motion-safe:animate-pulse rounded-full ${isLight ? "bg-zinc-200" : "bg-zinc-800"}`}
       />
     );
   }
@@ -121,7 +121,7 @@ function AuthControl({ isHome = false }: { isHome?: boolean }) {
         }}
         disabled={signingIn}
         className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-          isHome
+          isLight
             ? "border-zinc-300 text-[#0c0c0e] hover:border-zinc-500"
             : "border-zinc-700 text-zinc-200 hover:border-zinc-400 hover:text-white"
         }`}
@@ -140,7 +140,7 @@ function AuthControl({ isHome = false }: { isHome?: boolean }) {
       <button
         onClick={() => setOpen((v) => !v)}
         aria-label="Account menu"
-        className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-zinc-700 bg-zinc-800 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400"
+        className={`flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border text-sm font-medium transition-colors ${isLight ? "border-zinc-300 bg-lime-600 text-white hover:border-zinc-400" : "border-zinc-700 bg-zinc-800 text-zinc-200 hover:border-zinc-400"}`}
       >
         {image ? (
           // eslint-disable-next-line @next/next/no-img-element

@@ -1,5 +1,31 @@
 # Nova — Deferred Work
 
+## Light editorial system — follow-up work
+
+### Light ProgressTheater port (D20)
+**What:** Port the 6-component Theater family (`ProgressTheater`, `StepRow`, `ProgressTimeline`, `PlaybackSection`, `ProgressShimmer`, `TheaterShell`) to the light editorial system so the render-watching payoff beat is no longer the only dark flash remaining in the plan-flow journey after the workspace redesign ships.
+**Why:** The plan-flow is fully light after the workspace PR series. `/plan/items/[id]` stays dark for now — but the ProgressTheater is the last high-friction dark seam. Users go: light workspace → tap a cell → full dark Theater → back to light. Closing this with a light Theater variant is the natural next step.
+**How:** Add a `variant="light"` prop to `TheaterShell` + `ProgressShimmer` (cream canvas, ink text, lime accents in place of zinc/amber); keep the dark defaults so `/library` + `/generative` are unaffected. Reuse `LightCard`/`Eyebrow`/`InkButton` primitives from PR1.
+**Depends on:** PR1 light primitives merged + baked in production.
+**Effort:** M (human: ~1d / CC: ~45min)
+**Priority:** P2
+
+### Light unification of remaining dark surfaces (D21)
+**What:** `/plan/items/[id]`, `/library`, `/generative` converge on the light editorial system (D1's second half). Final DESIGN.md §1/§3 rewrite. Includes the D20 Theater port as a sub-item.
+**Why:** D1 (full light unification decision, 2026-06-06) called for the entire user-facing product to converge on the landing editorial system. The workspace PR series (PR0–PR3) covers `/plan`; this item closes the loop on the remaining dark surfaces.
+**How:** Reuse PR1 primitives (`LightCard`, `Eyebrow`, `InkButton`, `LightShell`); port item-page Theater (D20 sub-item); light-theme `/library` + `/generative` index pages; final DESIGN.md §1 standing-rule + §3 retitle to match the completed unification.
+**Depends on:** PR0–PR3 merged + primitives in production a few weeks (validate with real usage data first).
+**Effort:** L (human: ~3d / CC: ~2h)
+**Priority:** P2
+
+### "I filmed it" loop-closing + filming-guide peek on the Today card (D22)
+**What:** Close the daily loop in the workspace without navigating to the item page. When the user taps "See how to film it" and films, they should be able to mark the day filmed and see the filming guide inline on the Today card.
+**Why:** Today the workspace → item page round-trip breaks flow. The Today card is the daily anchor; the filming guide peek and a "I filmed it" action belong right there. Currently the backend has no item-level "filmed" state (only clip-upload presence is a proxy).
+**How:** Product decision first: define what "filmed" means (clip-upload detection vs explicit toggle vs new `item_status` value `filmed`). Then: expand TodayCard to show the first 2-3 shots from `filming_guide` + an ink "I filmed it" button. Needs item-page design input.
+**Depends on:** PR2 workspace shipped; validate with workspace→item bounce rate data.
+**Effort:** M (human: ~1d / CC: ~30min)
+**Priority:** P3
+
 ## Filming guide (v1 shipped in v0.4.79.0)
 
 ### Expose edit_format in PlanItemResponse + item detail UI pill

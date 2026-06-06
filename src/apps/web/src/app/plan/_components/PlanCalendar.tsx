@@ -159,15 +159,15 @@ export default function PlanCalendar({
   if (plan.items.length === 0) {
     return (
       <div className="animate-fade-up py-2">
-        <h1 className="mb-1 font-display text-3xl text-white">Your 30-day plan</h1>
-        <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-8 text-center">
-          <p className="text-zinc-300">Your plan came back empty.</p>
-          <p className="mt-2 text-sm text-zinc-500">
+        <h1 className="mb-1 font-display text-3xl text-[#0c0c0e]">Your 30-day plan</h1>
+        <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
+          <p className="text-[#3f3f46]">Your plan came back empty.</p>
+          <p className="mt-2 text-sm text-[#71717a]">
             That&apos;s unusual — regenerating from your persona usually fixes it.
           </p>
           <button
             onClick={onRefresh}
-            className="mt-6 inline-flex min-h-[44px] items-center rounded-full border border-zinc-700 px-5 py-3 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+            className="mt-6 inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e]"
           >
             Reload plan
           </button>
@@ -178,21 +178,21 @@ export default function PlanCalendar({
 
   return (
     <div className="animate-fade-up py-2">
-      <h1 className="mb-1 font-display text-3xl text-white">Your 30-day plan</h1>
-      <p className="mb-6 text-zinc-400">
+      <h1 className="mb-1 font-display text-3xl text-[#0c0c0e]">Your 30-day plan</h1>
+      <p className="mb-6 text-[#71717a]">
         Edit any idea. Week 1 is your activation week — film those first.
       </p>
 
       {/* Momentum header: how many videos are made of the whole plan. */}
       <div className="mb-4">
         <div className="mb-2 flex items-center justify-between text-sm">
-          <span className="text-zinc-300">
+          <span className="text-[#3f3f46]">
             {made} of {total} video{total === 1 ? "" : "s"} made
           </span>
-          <span className="text-zinc-500">{pct}%</span>
+          <span className="text-[#71717a]">{pct}%</span>
         </div>
         <div
-          className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800"
+          className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200"
           role="progressbar"
           aria-valuenow={made}
           aria-valuemin={0}
@@ -200,7 +200,7 @@ export default function PlanCalendar({
           aria-label={`${made} of ${total} videos made`}
         >
           <div
-            className="h-full rounded-full bg-amber-400 transition-all"
+            className="h-full rounded-full bg-lime-600 transition-all"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -208,11 +208,11 @@ export default function PlanCalendar({
 
       {/* Next-action nudge: the one thing worth doing next (also the resume beat). */}
       {nudge && (
-        <p className="mb-8 text-sm text-amber-300" aria-live="polite">
+        <p className="mb-8 text-sm text-lime-700" aria-live="polite">
           {nudge.itemId ? (
             <Link
               href={`/plan/items/${nudge.itemId}`}
-              className="underline-offset-2 transition-colors hover:text-amber-200 hover:underline"
+              className="underline-offset-2 transition-colors hover:text-lime-600 hover:underline"
             >
               {nudge.text}
             </Link>
@@ -231,13 +231,13 @@ export default function PlanCalendar({
             type="button"
             onClick={handleRegenerate}
             disabled={regenerating || plan.plan_status === "generating"}
-            className="min-h-11 rounded-full border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:opacity-50"
+            className="min-h-11 rounded-full border border-zinc-200 px-4 py-2 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-50"
           >
             {regenerating || plan.plan_status === "generating"
               ? "Regenerating…"
               : "Regenerate plan with my feedback"}
           </button>
-          <span className="text-xs text-zinc-600">
+          <span className="text-xs text-[#a1a1aa]">
             Keeps the days you&apos;ve edited or already started.
           </span>
         </div>
@@ -253,7 +253,7 @@ export default function PlanCalendar({
                 type="button"
                 onClick={() => toggleWeek(week)}
                 aria-expanded={isOpen}
-                className="flex min-w-0 items-center gap-2 text-sm font-semibold uppercase tracking-wide text-zinc-400 transition-colors hover:text-white"
+                className="flex min-w-0 items-center gap-2 text-sm font-semibold uppercase tracking-wide text-[#71717a] transition-colors hover:text-[#0c0c0e]"
               >
                 <span
                   aria-hidden="true"
@@ -262,8 +262,8 @@ export default function PlanCalendar({
                   ›
                 </span>
                 <span>Week {week}</span>
-                {week === 1 && <span className="text-amber-400">· activation</span>}
-                <span className="truncate font-normal normal-case text-zinc-600">
+                {week === 1 && <span className="text-lime-700">· activation</span>}
+                <span className="truncate font-normal normal-case text-[#a1a1aa]">
                   · {items.length} idea{items.length === 1 ? "" : "s"}
                   {ready > 0 ? ` · ${ready} ready` : ""}
                 </span>
@@ -277,14 +277,14 @@ export default function PlanCalendar({
                       ? "Upload clips to a week-1 idea first"
                       : `Render ${week1WithClips} idea(s) with clips`
                   }
-                  className="shrink-0 rounded-full bg-amber-400 px-4 py-1.5 text-xs font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                  className="shrink-0 rounded-full bg-[#0c0c0e] px-4 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {batching ? "Starting…" : "Generate week 1"}
                 </button>
               )}
             </div>
             {week === 1 && batchNote && (
-              <p className="mb-3 text-xs text-amber-300">{batchNote}</p>
+              <p className="mb-3 text-xs text-lime-700">{batchNote}</p>
             )}
             {isOpen && (
               <div className="space-y-3">

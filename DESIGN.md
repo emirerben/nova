@@ -10,25 +10,27 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 
 | Surface | Canvas | Accent | Type | Mood |
 |---|---|---|---|---|
-| Landing (`/`) | cream `#fafaf8` | lime-600 family | Playfair Display headings | light editorial |
-| Product (`/plan`, `/generative`, `/template-jobs`, `/library`, `/template/[id]`) | `bg-black` | amber-400/300 | Playfair Display headings | dark theater |
+| Landing (`/`) | cream `#fafaf8` | lime-700 family | Playfair Display headings | light editorial |
+| Plan (light product) (`/plan`, excl. `/plan/items/`) | cream `#fafaf8` / ink / lime | lime-700 | Playfair Display headings | light editorial |
+| Dark product (`/generative`, `/template-jobs`, `/library`, `/template/[id]`, `/plan/items/`) | `bg-black` | amber-400/300 | Playfair Display headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** dark product UI and light marketing page **deliberately coexist** — do not "unify" them.
+**Standing rule:** Light editorial = landing + /plan flow. Dark theater = /library, /generative, /plan/items/[id], admin. Intentional, not drift.
 
 ---
 
-## §2 Landing system (light editorial)
+## §2 Light editorial system (landing + /plan flow)
 
 Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 
 - **Canvas:** `bg-[#fafaf8]` (`--cream`); alt section surface `bg-white` with `border-y border-zinc-200`.
 - **Ink scale:** `#0c0c0e` primary (`--ink`), `#3f3f46` secondary, `#71717a` muted, `#a1a1aa` faint.
-- **Lime accent roles:**
-  - `text-lime-600` — eyebrows, emphasis, durations
+- **Lime accent roles (D16 contrast rule):**
+  - `text-lime-700` — eyebrows, small text labels, emphasis under ~18px
+  - `text-lime-600` — large display ems (h1/h2/h3 level), non-text fills, bars, dots
   - `bg-lime-600 text-white` — solid cells
   - `border-lime-200 bg-lime-50 text-lime-800` — pills / soft cells
-  - `border-lime-500` — answer left-border
+  - `border-lime-600` — answer left-border (plan ChatInterview pull-quote)
   - `outline-lime-500` — selection
 - **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#fafaf8]`.
 - **Media / phone tiles:** `rounded-[18px]` (marquee) / `rounded-[14px]` desktop, `rounded-[10px]` mobile; heavier shadow `shadow-[0_12px_30px_rgba(0,0,0,0.18)]`.
@@ -36,15 +38,18 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
   - Hero h1: `font-display text-[clamp(36px,6vw,64px)] font-medium leading-[1.08]`
   - h2: `font-display` 36px; h3: 28px; step numerals: 44px italic `text-zinc-200`
   - Eyebrows: `text-[11px] font-semibold uppercase tracking-[0.18em]` (dominant, 5× in section cards); hero eyebrow uses `tracking-[0.24em]` — see §10 ledger
-- **CTA:** single ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
-  **Single-primary-CTA rule:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
+- **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
+  **Single-primary-CTA rule on landing:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
+- **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `plan/_components/ui/`.
+- **Editorial interview layout:** Playfair question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
+- **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
 
 ---
 
-## §3 Product system (dark theater)
+## §3 Dark product system (render + /library + /generative + /plan/items/[id])
 
-Token source: `src/apps/web/src/app/plan/`, `generative/`, `template-jobs/` on origin/main.
+Token source: `src/apps/web/src/app/generative/`, `template-jobs/`, `library/`, `plan/items/` on origin/main.
 
 - **Canvas:** `bg-black text-white`; `min-h-[calc(100vh-3.5rem)]` under the h-14 header.
 - **Zinc scale roles:**
@@ -66,7 +71,7 @@ Token source: `src/apps/web/src/app/plan/`, `generative/`, `template-jobs/` on o
   - Body: default sans; secondary: `text-sm text-zinc-400`
 - **Radius roles:** `rounded-full` = buttons/pills; `rounded-lg` = inputs/surfaces.
 - **Header:** product routes get sticky scroll-fade header (`rgba(0,0,0,0.6·progress)` + blur); `/` gets static cream header; `/admin` hides Header entirely.
-- **Chat / interview surfaces:** editorial interview, not chat app — left-aligned Playfair questions, one prior-answer pull-quote with amber left-border, NO message bubbles, NO bot avatar.
+- **Chat / interview surfaces:** editorial interview, not chat app — left-aligned Playfair questions, one prior-answer pull-quote (amber left-border on dark surfaces; lime left-border on light surfaces), NO message bubbles, NO bot avatar.
 
 ---
 
@@ -201,10 +206,12 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | 2 | Product radius stragglers: bare `rounded`, lone `rounded-2xl` | `rounded-full` buttons/pills; `rounded-lg` surfaces | Normalize opportunistically |
 | 3 | `--amber: #d97706` CSS var ≠ shipped amber-400 `#fbbf24` | Tailwind `amber-400` / `amber-300` | CSS var is stale; do not reference it |
 | 4 | Landing raw-hex grays (= zinc-500/400) | `--ink*` CSS vars are the landing-identity tokens | Equivalence noted for greps |
-| 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Remove on next `globals.css` touch | Dead font download on every page view |
+| 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
 | 6 | Eyebrow `letter-spacing` varies: `tracking-wide` (0.025em), 0.12, 0.14, 0.18, 0.22, 0.24em | `tracking-[0.18em]` landing section cards (dominant); `tracking-[0.24em]` hero eyebrow; `tracking-wide` product micro-labels (dominant in `/plan`) | Normalize opportunistically |
 | 7 | `/generative` submit CTA deviates from amber-CTA rule: `rounded bg-white text-black` | Amber `rounded-full bg-amber-400` is the canonical product CTA — generative file-upload flow uses white; ledgered as intentional upload-flow exception until revisited | Exception documented — do not copy the white CTA pattern outside upload flows |
 | 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:bg-zinc-800 disabled:text-zinc-500` (`PlanCalendar`), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
+| 9 | Light editorial system covers landing + /plan flow. `/plan/items/[id]`, `/library`, `/generative` remain dark theater. | Intentional split — D21 follow-up. | film/post cell semantics: "post" = item status ready (awaiting publish); "film" = not yet made. Not a planner-emitted schedule field. |
+| 10 | Workspace route layout | `/plan` = mode router (setup flow for new users; workspace for returning users); `/plan/setup` = canonical onboarding URL (redirects to `/plan`); `/plan/persona` = real persona read+edit page | PR3 ships the canonical routes and back-compat redirects. |
 
 ---
 

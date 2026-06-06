@@ -72,6 +72,13 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="min-h-screen bg-black text-white flex flex-col">
       {/* eslint-disable-next-line react/no-danger -- static font-face CSS for admin */}
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
+      {/* Montserrat is used by the overlay editor (overlay-constants.ts: sans preset).
+          Load from Google Fonts here so it resolves in the canvas FontFace registry. */}
+      {/* eslint-disable-next-line @next/next/no-page-custom-font */}
+      <link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&display=swap"
+      />
       <AdminNav onLogout={() => { clearAdminToken(); setAuthed(false); }} />
       {children}
     </div>

@@ -1,4 +1,4 @@
-import { planNudge } from "@/app/plan/_components/PlanCalendar";
+import { planNudge } from "@/app/plan/_lib/plan-logic";
 import type { PlanItem, PlanItemStatus } from "@/lib/plan-api";
 
 function item(
