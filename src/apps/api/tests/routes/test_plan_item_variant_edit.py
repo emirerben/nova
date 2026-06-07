@@ -62,6 +62,7 @@ def _owned_item(user_id: uuid.UUID, *, job=None):
     item.current_job_id = job.id if job else None
     item.item_status = "idea"
     item.user_edited = False
+    item.conformance = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
