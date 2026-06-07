@@ -125,7 +125,7 @@ export function StyleCard({ style, status, styleSetPreview, fontPreview }: Style
         href="/plan/style"
         className="mt-4 inline-block text-[11px] text-[#a1a1aa] hover:text-[#3f3f46] transition-colors"
       >
-        Tweak your style →
+        Edit →
       </Link>
     </LightCard>
   );
