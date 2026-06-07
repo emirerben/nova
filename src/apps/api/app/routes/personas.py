@@ -844,7 +844,11 @@ class StyleAgentTurnResponse(BaseModel):
 
 
 def _style_snapshot(row: PersonaRow) -> dict | None:
-    """Compact snapshot of the user's current style for the agent greeting."""
+    """Full snapshot of the user's current style for the agent.
+
+    Exposes all 10 knobs + top-level fields so the agent can answer
+    read-back queries ("what is it set to right now?") accurately.
+    """
     if not row.style:
         return None
     raw = dict(row.style)
@@ -852,11 +856,10 @@ def _style_snapshot(row: PersonaRow) -> dict | None:
         "style_set_id": raw.get("style_set_id"),
         "instruction_level": raw.get("instruction_level"),
         "footage_type_bias": raw.get("footage_type_bias", []),
-        "top_knobs": {
-            k: v
-            for k, v in (raw.get("knobs") or {}).items()
-            if v is not None and k in ("font_family", "text_size_px", "text_anchor")
-        },
+        "preferred_edit_format_mix": raw.get("preferred_edit_format_mix", {}),
+        "status": raw.get("status"),
+        # All 10 parity-safe knobs (only non-None values).
+        "knobs": {k: v for k, v in (raw.get("knobs") or {}).items() if v is not None},
     }
 
 
@@ -990,6 +993,8 @@ async def style_agent_turn(
     await db.commit()
 
     applied = False
+    # May be updated inside the style_edit branch to append honest clamp notes.
+    final_reply = intent_result.reply
 
     # Route to the correct write path based on intent.
     if intent_result.needs_clarification or intent_result.intent == "clarify":
@@ -998,25 +1003,31 @@ async def style_agent_turn(
 
     elif intent_result.intent in ("style_edit", "scope_reduction"):
         # Build a StyleEdit from the agent fields — only parity-safe knobs allowed.
+        # IMPORTANT: build StyleKnobsEdit from the CLAMPED output of StyleKnobs, never
+        # from raw_knobs directly. StyleKnobs._clamp_px silently clamps text_size_px to
+        # [40, 80]; StyleKnobsEdit has ge=40 which raises on raw sub-floor values. Using
+        # clamped values keeps the two validators in sync and prevents a 500.
         fields = intent_result.fields or {}
 
-        # Parity guard: validate knobs through StyleKnobs extra="forbid" before any write.
         raw_knobs = fields.get("knobs") or {}
+        knobs_edit = None
+        _clamp_notes: list[str] = []
+
         if raw_knobs:
             from pydantic import ValidationError  # noqa: PLC0415
 
             from app.agents._schemas.user_style import StyleKnobs  # noqa: PLC0415
 
             try:
-                StyleKnobs.model_validate(raw_knobs)
+                validated_knobs = StyleKnobs.model_validate(raw_knobs)
             except ValidationError as exc:
+                # extra="forbid" caught a key that is not in the 10 parity-safe knobs.
                 log.warning(
                     "style_agent_turn.forbidden_knob",
                     knobs=raw_knobs,
                     error=str(exc),
                     user_id=str(user.id),
                 )
-                # Forbidden key → no write, ask for clarification.
                 _knob_reply = (
                     "I can only adjust font, size, position, color, or stroke settings. "
                     "Could you be more specific about what to change?"
@@ -1029,9 +1040,45 @@ async def style_agent_turn(
                     persona_status=row.persona_status,
                 )
 
-        knobs_edit = None
-        if raw_knobs:
-            knobs_edit = StyleKnobsEdit(**{k: v for k, v in raw_knobs.items() if v is not None})
+            # Build from the clamped dict — StyleKnobsEdit never raises on these values.
+            clamped = validated_knobs.model_dump(exclude_none=True)
+
+            # Detect text_size_px clamping so the reply is honest about what was stored.
+            raw_px = raw_knobs.get("text_size_px")
+            clamped_px = clamped.get("text_size_px")
+            if raw_px is not None and clamped_px is not None:
+                try:
+                    if int(raw_px) != int(clamped_px):
+                        _clamp_notes.append(
+                            f"(Smallest text size is 40px — I've set it to {clamped_px}.)"
+                        )
+                except (TypeError, ValueError):
+                    pass
+
+            if clamped:
+                knobs_edit = StyleKnobsEdit(**clamped)
+
+        # Materiality check: skip the write if there is nothing concrete to persist.
+        # A free_text-only style_edit has no structured knob/field; calling _apply_style_edit
+        # would stamp status="edited" without changing any setting (false "Done").
+        is_material = bool(
+            (knobs_edit is not None)
+            or fields.get("style_set_id")
+            or fields.get("footage_type_bias")
+            or fields.get("preferred_edit_format_mix")
+            or fields.get("instruction_level")
+        )
+        if not is_material:
+            return StyleAgentTurnResponse(
+                reply=(
+                    "To apply a change, try being specific — for example: "
+                    '"make text 44px", "move text to bottom", or "use a serif font".'
+                ),
+                suggestions=["Make text 44px", "Move text to bottom", "Change my font"],
+                applied=False,
+                intent=intent_result.intent,
+                persona_status=row.persona_status,
+            )
 
         style_edit = StyleEdit(
             style_set_id=fields.get("style_set_id"),
@@ -1044,6 +1091,9 @@ async def style_agent_turn(
         try:
             await _apply_style_edit(row, style_edit, db)
             applied = True
+            # Append honest clamp note when text_size_px was adjusted.
+            if _clamp_notes:
+                final_reply = intent_result.reply + " " + " ".join(_clamp_notes)
             # Update the last agent turn to reflect the write.
             q2 = copy.deepcopy(row.questionnaire or {})
             turns2 = q2.get("style_agent_turns", [])
@@ -1064,10 +1114,10 @@ async def style_agent_turn(
             retune_persona_from_feedback.delay(str(row.id))
             applied = True  # task is queued, not applied synchronously
 
-    # intent == "unknown" → no write, use reply from agent.
+    # intent == "describe" | "unknown" → no write, use reply from agent.
 
     return StyleAgentTurnResponse(
-        reply=intent_result.reply,
+        reply=final_reply,
         suggestions=intent_result.suggestions,
         applied=applied,
         intent=intent_result.intent,
