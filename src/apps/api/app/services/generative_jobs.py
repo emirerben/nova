@@ -36,6 +36,54 @@ _MAX_PREFERENCE_SUMMARY_CHARS = 1000
 # existed can't bloat all_candidates / the intro_writer prompt.
 _MAX_TIKTOK_SUMMARY_CHARS = 1200
 
+# Filming-guide caps — mirror the schema-side constants so the storage layer
+# independently enforces them without importing the schema.
+_MAX_FILMING_GUIDE_SHOTS = 4
+_MAX_FILMING_GUIDE_FIELD_CHARS = 300
+_MAX_FILMING_GUIDE_DURATION_S = 60
+_MIN_FILMING_GUIDE_DURATION_S = 1
+
+
+def _build_filming_guide_context(filming_guide: list[dict] | None) -> list[dict]:
+    """Sanitize + cap the filming_guide from a plan item for stashing on all_candidates.
+
+    Returns an empty list when filming_guide is absent/empty/entirely malformed —
+    callers then omit the key entirely (byte-identical to pre-B2 shape, same
+    discipline as _build_user_style_context returning None).
+
+    Per-shot guards:
+    - Non-dict entries dropped.
+    - Non-str ``what`` (null, nested object) → skip the shot.
+    - Empty or whitespace-only ``what`` after strip → skip.
+    - ``what`` / ``how`` string-capped and stripped.
+    - Non-str ``how`` (null) → treated as "".
+    - ``duration_s`` coerced to int, clamped [1, 60]; on type/value error → 3.
+    - Total capped at _MAX_FILMING_GUIDE_SHOTS.
+    """
+    if not filming_guide:
+        return []
+    sanitized: list[dict] = []
+    for entry in filming_guide:
+        if not isinstance(entry, dict):
+            continue
+        what_raw = entry.get("what", "")
+        if not isinstance(what_raw, str):
+            continue
+        what = what_raw.strip()[:_MAX_FILMING_GUIDE_FIELD_CHARS]
+        if not what:
+            continue
+        how_raw = entry.get("how", "")
+        how = how_raw.strip()[:_MAX_FILMING_GUIDE_FIELD_CHARS] if isinstance(how_raw, str) else ""
+        try:
+            dur = int(float(entry.get("duration_s", 3)))
+        except (TypeError, ValueError, OverflowError):
+            dur = 3
+        dur = max(_MIN_FILMING_GUIDE_DURATION_S, min(_MAX_FILMING_GUIDE_DURATION_S, dur))
+        sanitized.append({"what": what, "how": how, "duration_s": dur})
+        if len(sanitized) >= _MAX_FILMING_GUIDE_SHOTS:
+            break
+    return sanitized
+
 
 def _build_persona_context(
     *,
@@ -113,6 +161,7 @@ def build_generative_job(
     voiceover_gcs_path: str | None = None,
     tiktok_summary: str = "",
     user_style: dict | None = None,
+    filming_guide: list[dict] | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -163,6 +212,13 @@ def build_generative_job(
         style_ctx = _build_user_style_context(user_style)
         if style_ctx is not None:
             all_candidates["user_style"] = style_ctx
+    # Filming guide (Creator Agent M3 / B2). Plain plan data — NOT gated on
+    # USER_STYLE_ENABLED. Omit the key entirely when absent/empty so public
+    # and non-plan jobs keep byte-identical all_candidates shape (same discipline
+    # as persona_ctx / user_style above).
+    guide_ctx = _build_filming_guide_context(filming_guide)
+    if guide_ctx:
+        all_candidates["filming_guide"] = guide_ctx
     return Job(
         user_id=user_id,
         job_type="generative",

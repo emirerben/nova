@@ -231,7 +231,7 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-05.1: per-item filming_guide (2–4 shots keyed to edit_format).
     # 2026-06-06: added $tiktok_analysis block (deep TikTok profile analysis).
     assert content_ideas_version() == "2026-05-31"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-06"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-07"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -240,11 +240,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # The success-factor bank is part of THREE prompts (persona, content plan,
     # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-06-06.1
     # (deep TikTok analysis), content plan to 2026-06-06 (TikTok analysis), and
-    # intro_writer to 2026-06-06 (tiktok_analysis in _persona_context).
+    # intro_writer to 2026-06-07 (filming_guide context block — M3).
     assert success_factors_version() == "2026-05-30"
     assert PERSONA_PROMPT_VERSION == "2026-06-06.1"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-06"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-06"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-07"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -255,9 +255,9 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # `library_version()` (and re-trip this guard), and a consuming-agent prompt
     # change must bump that agent's prompt_version. Bump 2026-05-31: added 2 new
     # overlay examples (destination-qualifier-popin-01, city-morning-sensory-fadein-01).
-    # IntroTextWriterAgent bumped to 2026-06-06 for tiktok_analysis injection.
+    # IntroTextWriterAgent bumped to 2026-06-07 for filming_guide block (M3).
     assert library_version() == "2026-05-31"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-06"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-05-31"
 
 

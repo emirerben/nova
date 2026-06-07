@@ -62,7 +62,7 @@ aspirational-guru, never a LinkedIn lecture. If a persona pillar is abstract
 (e.g. "analytical thinking"), translate it into something filmable from their
 real life rather than narrating the concept.
 
-$variety_constraint
+$instruction_level$edit_format_mix$variety_constraint
 Build a $horizon_days-day content plan with about $target_item_count items total — roughly $posts_per_week posts per week. Return ONLY a JSON object:
 
 {
