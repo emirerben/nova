@@ -218,18 +218,19 @@ async def reset_persona(
     )
     # 2. Delete user-scoped feedback (ondelete=CASCADE is from users, not here).
     await db.execute(delete(VideoFeedback).where(VideoFeedback.user_id == user.id))
-    # 3. Delete the persona — cascades content_plans → plan_items.
-    persona = (
-        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
-    ).scalar_one_or_none()
-    if persona is not None:
-        await db.delete(persona)
+    # 3. Delete the persona via raw SQL — NOT db.delete(row). Using the ORM
+    #    db.delete() triggers SQLAlchemy's cascade handling which tries to SET
+    #    persona_id=NULL on content_plans before the row is deleted, violating
+    #    the NOT NULL constraint. A raw DELETE lets Postgres's ondelete=CASCADE
+    #    handle child rows directly at the DB level.
+    result = await db.execute(delete(PersonaRow).where(PersonaRow.user_id == user.id))
+    had_persona = result.rowcount > 0
     # 4. Reset onboarding so the frontend routes back to setup:prescreen.
     db_user = await db.get(User, user.id)
     if db_user is not None:
         db_user.onboarding_status = "pending"
     await db.commit()
-    log.info("reset_persona", user_id=str(user.id), had_persona=persona is not None)
+    log.info("reset_persona", user_id=str(user.id), had_persona=had_persona)
     return ResetResponse(reset=True)
 
 

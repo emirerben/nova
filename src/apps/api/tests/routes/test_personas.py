@@ -230,22 +230,27 @@ def test_reset_requires_auth(client: TestClient) -> None:
 def test_reset_happy_path(client: TestClient) -> None:
     """Happy path: 200 {reset: true}.
 
-    Verify the operation ORDER — jobs UPDATE must run BEFORE the persona SELECT
-    to avoid the no-ondelete FK violation on plan_items.id (models.py:383).
-    The mock-DB cannot exercise the real cascade; ordering + status are the guards.
+    All three deletes go through db.execute (raw SQL), not db.delete — using the
+    ORM db.delete(persona) triggers SQLAlchemy's cascade which tries to SET
+    persona_id=NULL on content_plans (NOT NULL constraint violation). Raw DELETE
+    lets Postgres's ondelete=CASCADE handle child rows at the DB level.
+
+    Execute order: (1) UPDATE jobs, (2) DELETE feedback, (3) DELETE persona.
     """
     user = _fake_user()
-    persona_row = _persona_row(user.id, status="ready")
     db_user = MagicMock()
     db_user.onboarding_status = "complete"
 
+    delete_result = MagicMock()
+    delete_result.rowcount = 1  # persona existed
+
     db = AsyncMock()
     db.commit = AsyncMock()
-    # execute side_effects: (1) UPDATE jobs, (2) DELETE feedback, (3) SELECT persona
+    # execute side_effects: (1) UPDATE jobs, (2) DELETE feedback, (3) DELETE persona
     execute_results = [
-        MagicMock(),  # UPDATE result
-        MagicMock(),  # DELETE result
-        MagicMock(scalar_one_or_none=MagicMock(return_value=persona_row)),
+        MagicMock(),  # UPDATE jobs result
+        MagicMock(),  # DELETE feedback result
+        delete_result,  # DELETE persona result (rowcount=1)
     ]
     db.execute = AsyncMock(side_effect=execute_results)
     db.delete = AsyncMock()
@@ -258,13 +263,10 @@ def test_reset_happy_path(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"reset": True}
-    # Three execute calls: jobs UPDATE, feedback DELETE, persona SELECT — in that order.
+    # Three execute calls: jobs UPDATE, feedback DELETE, persona DELETE — raw SQL.
     assert db.execute.call_count == 3
-    # The first execute targets jobs (the FK fix); inspect the compiled statement string.
-    first_stmt = str(db.execute.call_args_list[0].args[0])
-    assert "jobs" in first_stmt.lower()
-    # Persona was deleted (triggers cascade into content_plans → plan_items).
-    db.delete.assert_awaited_once_with(persona_row)
+    # ORM db.delete must NOT be called (causes the NOT NULL cascade bug).
+    db.delete.assert_not_awaited()
     # Onboarding status reset.
     assert db_user.onboarding_status == "pending"
     # Single commit.
@@ -274,19 +276,22 @@ def test_reset_happy_path(client: TestClient) -> None:
 def test_reset_no_persona_is_idempotent_200(client: TestClient) -> None:
     """No-persona case returns 200 — idempotent; 'start over with nothing' is valid.
 
-    Jobs UPDATE + feedback DELETE + onboarding reset still happen even without a
-    persona (keeps the function idempotent for repeated calls).
+    The DELETE personas WHERE user_id=:uid simply deletes 0 rows (rowcount=0).
+    Jobs UPDATE + feedback DELETE + onboarding reset still all happen.
     """
     user = _fake_user()
     db_user = MagicMock()
     db_user.onboarding_status = "pending"
 
+    no_persona_result = MagicMock()
+    no_persona_result.rowcount = 0
+
     db = AsyncMock()
     db.commit = AsyncMock()
     execute_results = [
-        MagicMock(),  # UPDATE result
-        MagicMock(),  # DELETE result
-        MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # no persona
+        MagicMock(),  # UPDATE jobs result
+        MagicMock(),  # DELETE feedback result
+        no_persona_result,  # DELETE persona (0 rows — nothing existed)
     ]
     db.execute = AsyncMock(side_effect=execute_results)
     db.delete = AsyncMock()
@@ -299,10 +304,8 @@ def test_reset_no_persona_is_idempotent_200(client: TestClient) -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"reset": True}
-    # persona delete must NOT be called — nothing to cascade.
-    db.delete.assert_not_awaited()
-    # But jobs UPDATE + feedback DELETE + onboarding reset + commit still happen.
     assert db.execute.call_count == 3
+    db.delete.assert_not_awaited()
     assert db_user.onboarding_status == "pending"
     db.commit.assert_awaited_once()
 
@@ -315,14 +318,16 @@ def test_reset_nulls_job_fk_before_persona_delete(client: TestClient) -> None:
     no ondelete on Job.content_plan_item_id).
     """
     user = _fake_user()
-    persona_row = _persona_row(user.id, status="ready")
+
+    delete_result = MagicMock()
+    delete_result.rowcount = 1
 
     db = AsyncMock()
     db.commit = AsyncMock()
     execute_results = [
-        MagicMock(),
-        MagicMock(),
-        MagicMock(scalar_one_or_none=MagicMock(return_value=persona_row)),
+        MagicMock(),  # UPDATE jobs
+        MagicMock(),  # DELETE feedback
+        delete_result,  # DELETE persona
     ]
     db.execute = AsyncMock(side_effect=execute_results)
     db.delete = AsyncMock()
