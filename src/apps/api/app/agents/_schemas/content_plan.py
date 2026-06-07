@@ -51,7 +51,7 @@ from app.agents._schemas.persona import Persona
 # 2026-06-07 — Creator Agent M3: added $instruction_level and $edit_format_mix
 #              placeholders (gated on user_style_enabled; empty string when style
 #              absent → byte-identical to pre-M3 baseline).
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-07"
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-07.1"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

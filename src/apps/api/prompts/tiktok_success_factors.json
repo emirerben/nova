@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-30",
+  "version": "2026-06-07",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -91,6 +91,33 @@
       "provenance": "corpus",
       "evidence": "In our fetched solo-travel set a single plain, relatable one-liner clip was a >100x-median outlier — rare, but it shows the upside of a universally felt line (treat as upside, not a guarantee)",
       "source": "tiktok market research 2026-05 (solo-travel account)"
+    },
+    {
+      "id": "implied-question-hook-corpus-05",
+      "factor": "Let your video be the answer to a question the viewer is already asking — caption it as the conclusion, not the premise",
+      "why": "An implied question creates curiosity before a single frame plays; the video becomes the resolution of something the viewer already cares about, driving replays and comments",
+      "applies_to": ["hook"],
+      "provenance": "corpus",
+      "evidence": "In our fetched solo-adventure set, a clip captioned as 'my simplest answer' (the video IS the response to an unasked existential question) indexed ~120x the account median — treat as upside, not a baseline",
+      "source": "tiktok market research 2026-06 (solo-travel account)"
+    },
+    {
+      "id": "humor-extreme-adventure-corpus-06",
+      "factor": "Pair an extreme or high-stakes adventure moment with a single self-deprecating line — the gap between the epic setting and the honest human reaction is the hook",
+      "why": "Self-deprecating humor on otherwise intimidating content lowers the barrier for non-adventurers to engage; they share it because it's how they'd feel, not because they'd do it",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched outdoor-adventure set, a raw water-rafting clip with a single humorous caption indexed ~124x the account median at 8.7% engagement",
+      "source": "tiktok market research 2026-06 (solo-travel account)"
+    },
+    {
+      "id": "serial-brand-chapters-corpus-07",
+      "factor": "Break the brand-build journey into named standalone chapters — each video is one decision or milestone, satisfying alone but rewarding for followers of the whole arc",
+      "why": "Serial narrative creates returning viewers without requiring them to have seen previous episodes; each chapter also functions as an entry point for new followers",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched founder set, five consecutive brand-chapter videos (naming, packaging, launch prep, launch day, live post) all indexed 2–5x the account median — consistent outperformance across the full arc, not just the reveal",
+      "source": "tiktok market research 2026-06 (founder account)"
     }
   ]
 }
