@@ -427,3 +427,35 @@ def test_agent_turn_forbidden_knob_no_write(client: TestClient) -> None:
     body = resp.json()
     # "effect" is not parity-safe → StyleKnobs extra="forbid" rejects it → no write
     assert body["applied"] is False
+
+
+# ── GET /personas/style — lazy-trigger ───────────────────────────────────────
+
+
+def test_get_style_no_style_returns_deriving(client: TestClient) -> None:
+    """When persona exists but style is NULL, GET /personas/style returns
+    status='deriving' (not 'absent') so the StyleCard shows the loading skeleton
+    rather than the set-up CTA."""
+    user = _fake_user()
+    row = _persona_row(user.id, style=None)
+    db = _async_db(scalar_result=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    # The route lazily imports + calls derive_user_style.delay inside try/except,
+    # so we patch the whole module import to return a no-op task.
+    fake_task = MagicMock()
+    fake_task.delay = MagicMock()
+    fake_style_build = MagicMock()
+    fake_style_build.derive_user_style = fake_task
+
+    with (
+        patch("app.config.settings", _settings()),
+        patch.dict("sys.modules", {"app.tasks.style_build": fake_style_build}),
+    ):
+        resp = client.get("/personas/style")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "deriving"
+    assert body["style"] is None

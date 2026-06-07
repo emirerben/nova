@@ -357,7 +357,17 @@ async def get_style(
         return StyleResponse(style=None, status="absent")
     raw = dict(row.style) if row.style else None
     if raw is None:
-        return StyleResponse(style=None, status="absent")
+        # Persona exists but no style — write "deriving" first (prevents re-queue
+        # on concurrent requests), then kick off derivation in the background.
+        row.style = {"status": "deriving"}
+        await db.commit()
+        try:
+            from app.tasks.style_build import derive_user_style  # noqa: PLC0415
+
+            derive_user_style.delay(str(row.id))
+        except Exception:  # noqa: BLE001
+            pass
+        return StyleResponse(style=None, status="deriving")
     pinned_set_id = raw.get("style_set_id")
     pinned_font = (raw.get("knobs") or {}).get("font_family")
     return StyleResponse(
