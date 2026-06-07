@@ -65,7 +65,7 @@ export default function PlanVariantEditor({
     <div className="space-y-6">
       {/* ── Caption ─────────────────────────────────────────────── */}
       <section>
-        <h3 className="mb-2 text-sm font-semibold text-zinc-200">Caption</h3>
+        <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Caption</h3>
         {editing ? (
           <form
             className="flex flex-col gap-2"
@@ -82,20 +82,20 @@ export default function PlanVariantEditor({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="New intro text…"
-              className="rounded border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:border-amber-400 focus:outline-none"
+              className="rounded border border-zinc-200 bg-white px-3 py-2 text-sm text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-600 focus:outline-none"
             />
             <div className="flex gap-2">
               <button
                 type="submit"
                 disabled={rendering || !draft.trim()}
-                className="rounded-full bg-amber-400 px-4 py-2 text-sm font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                className="rounded-full bg-[#0c0c0e] px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Save
               </button>
               <button
                 type="button"
                 onClick={() => setEditing(false)}
-                className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800"
+                className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
               >
                 Cancel
               </button>
@@ -110,7 +110,7 @@ export default function PlanVariantEditor({
                 setDraft("");
                 setEditing(true);
               }}
-              className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Edit text
             </button>
@@ -118,7 +118,7 @@ export default function PlanVariantEditor({
               type="button"
               disabled={rendering}
               onClick={() => run(onRemoveText)}
-              className="rounded-full border border-zinc-700 px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               Remove text
             </button>
@@ -129,9 +129,9 @@ export default function PlanVariantEditor({
       {/* ── Text size ───────────────────────────────────────────── */}
       {onResize && curPx != null && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-zinc-200">Text size</h3>
+          <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Text size</h3>
           <div className="flex items-center gap-3">
-            <div className="flex items-center overflow-hidden rounded-full border border-zinc-700">
+            <div className="flex items-center overflow-hidden rounded-full border border-zinc-200">
               <button
                 type="button"
                 disabled={rendering || curPx <= INTRO_SIZE_MIN}
@@ -139,11 +139,11 @@ export default function PlanVariantEditor({
                   run(() => onResize(Math.max(INTRO_SIZE_MIN, curPx - INTRO_SIZE_STEP)))
                 }
                 aria-label="Smaller intro text"
-                className="px-4 py-2 text-sm text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 A&minus;
               </button>
-              <span className="border-x border-zinc-700 px-3 py-2 text-sm tabular-nums text-zinc-400">
+              <span className="border-x border-zinc-200 px-3 py-2 text-sm tabular-nums text-[#71717a]">
                 {variant.intro_size_source === "user" ? `${curPx}` : `${curPx} · auto`}
               </span>
               <button
@@ -153,12 +153,12 @@ export default function PlanVariantEditor({
                   run(() => onResize(Math.min(INTRO_SIZE_MAX, curPx + INTRO_SIZE_STEP)))
                 }
                 aria-label="Bigger intro text"
-                className="px-4 py-2 text-base text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                className="px-4 py-2 text-base text-[#3f3f46] transition-colors hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 A+
               </button>
             </div>
-            <span className="text-xs text-zinc-500">
+            <span className="text-xs text-[#a1a1aa]">
               {variant.intro_size_source === "user"
                 ? "your size"
                 : "auto-sized to the footage"}
@@ -170,7 +170,7 @@ export default function PlanVariantEditor({
       {/* ── Text style ──────────────────────────────────────────── */}
       {styleSets.length > 0 && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-zinc-200">Style</h3>
+          <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Style</h3>
           <div role="radiogroup" aria-label="Text style" className="flex flex-wrap gap-2">
             {styleSets.map((s) => (
               <StyleChip
@@ -190,7 +190,7 @@ export default function PlanVariantEditor({
       {/* ── Song ────────────────────────────────────────────────── */}
       {canSwap && (
         <section>
-          <h3 className="mb-2 text-sm font-semibold text-zinc-200">Song</h3>
+          <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Song</h3>
           <SongPicker
             tracks={tracks}
             currentTrackId={variant.music_track_id ?? null}

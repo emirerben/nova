@@ -22,6 +22,8 @@ export const TEXT_MODE_LABEL: Record<string, string> = {
  * remove text, swap song, change style). Shared by the public generative page and
  * the admin generative detail page — both drive the same public endpoints, so the
  * card stays presentation-only and takes the actions as callbacks.
+ *
+ * D20: tone="light" renders on cream canvas. Admin omits tone → default dark.
  */
 export function VariantCard({
   variant,
@@ -33,6 +35,7 @@ export function VariantCard({
   onChangeStyle,
   onResize,
   onSetMix,
+  tone = "dark",
 }: {
   variant: GenerativeVariant;
   tracks: MusicTrackSummary[];
@@ -43,19 +46,16 @@ export function VariantCard({
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize?: (textSizePx: number) => Promise<void>;
   onSetMix?: (mix: number) => Promise<void>;
+  tone?: "dark" | "light";
 }) {
   const [busy, setBusy] = useState(false);
   const rendering = variant.render_status === "rendering" || busy;
   const failed = variant.render_status === "failed";
 
-  // Voice/footage mix for voiceover variants. The slider updates local state
-  // immediately (responsive) but only fires the re-render after a debounce so a
-  // drag doesn't enqueue a render per step. `music_track_id` decides whether the
-  // "Footage" side of the mix is the original audio or the matched music bed.
+  // Voice/footage mix for voiceover variants.
   const isVoiceover = variant.variant_id.startsWith("voiceover");
   const [mix, setMix] = useState<number>(variant.mix ?? 1);
   const mixTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Re-sync local mix when the server reports a new value (e.g. after a render).
   useEffect(() => {
     setMix(variant.mix ?? 1);
   }, [variant.mix]);
@@ -65,9 +65,6 @@ export function VariantCard({
     };
   }, []);
   const bedLabel = variant.music_track_id !== null ? "Music" : "Footage";
-  // The ±size nudge applies only to the AI-intro text variants, and only once a
-  // size exists to nudge from (set on first render). curPx is the current pinned
-  // or agent-decided size; null hides the control.
   const curPx =
     variant.text_mode === "agent_text" ? variant.intro_text_size_px : null;
 
@@ -80,28 +77,62 @@ export function VariantCard({
     }
   };
 
+  // Palette
+  const cardClass = tone === "light"
+    ? "rounded-lg border border-zinc-200 bg-white p-3"
+    : "rounded-lg border border-zinc-800 bg-zinc-950 p-3";
+  const badgeClass = tone === "light"
+    ? "rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#3f3f46]"
+    : "rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300";
+  const videoWellClass = tone === "light"
+    ? "aspect-[9/16] w-full overflow-hidden rounded bg-zinc-100"
+    : "aspect-[9/16] w-full overflow-hidden rounded bg-black";
+  const renderingTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
+  const failedTextClass = tone === "light" ? "text-red-600" : "text-red-300";
+  const emptyTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-600";
+  const btnClass = tone === "light"
+    ? "rounded border border-zinc-200 px-2 py-1 text-xs text-[#3f3f46] disabled:opacity-40"
+    : "rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40";
+  const sizeControlClass = tone === "light"
+    ? "flex items-center overflow-hidden rounded border border-zinc-200"
+    : "flex items-center overflow-hidden rounded border border-zinc-700";
+  const sizeBtnClass = tone === "light"
+    ? "px-2.5 py-1 text-xs text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40"
+    : "px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40";
+  const sizeDivClass = tone === "light"
+    ? "select-none border-x border-zinc-200 px-2 py-1 text-xs tabular-nums text-[#71717a]"
+    : "select-none border-x border-zinc-700 px-2 py-1 text-xs tabular-nums text-zinc-500";
+  const selectClass = tone === "light"
+    ? "rounded border border-zinc-200 bg-white px-2 py-1 text-xs text-[#3f3f46] disabled:opacity-40"
+    : "rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40";
+  const mixLabelClass = tone === "light"
+    ? "mb-1 flex items-center justify-between text-xs text-[#71717a]"
+    : "mb-1 flex items-center justify-between text-xs text-zinc-400";
+  const mixPctClass = tone === "light" ? "tabular-nums text-[#71717a]" : "tabular-nums text-zinc-500";
+  const sliderAccent = tone === "light" ? "accent-lime-600" : "accent-white";
+
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+    <div className={cardClass}>
       <div className="mb-2 flex items-center justify-between">
-        <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+        <span className={badgeClass}>
           {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
           {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
         </span>
       </div>
 
-      <div className="aspect-[9/16] w-full overflow-hidden rounded bg-black">
+      <div className={videoWellClass}>
         {rendering ? (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+          <div className={`flex h-full items-center justify-center text-sm ${renderingTextClass}`}>
             Rendering…
           </div>
         ) : failed ? (
-          <div className="flex h-full items-center justify-center px-3 text-center text-sm text-red-300">
+          <div className={`flex h-full items-center justify-center px-3 text-center text-sm ${failedTextClass}`}>
             {variant.error ?? "Render failed"}
           </div>
         ) : variant.output_url ? (
           <video src={variant.output_url} controls className="h-full w-full object-contain" />
         ) : (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-600">
+          <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
             No preview
           </div>
         )}
@@ -113,7 +144,7 @@ export function VariantCard({
             onClick={() =>
               downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
             }
-            className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+            className={btnClass}
           >
             Download
           </button>
@@ -124,29 +155,26 @@ export function VariantCard({
             const next = prompt("New intro text:");
             if (next && next.trim()) run(() => onRetext(next.trim()));
           }}
-          className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+          className={btnClass}
         >
           Edit text
         </button>
         <button
           disabled={rendering}
           onClick={() => run(onRemoveText)}
-          className="rounded border border-zinc-700 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+          className={btnClass}
         >
           Remove text
         </button>
-        {/* ±size nudge — re-renders the AI intro at a bigger/smaller font. Hidden
-            on lyrics / no-text variants (no resizable overlay) and until a size
-            exists to nudge from. Clamped both client- and server-side. */}
         {onResize && curPx != null && (
-          <div className="flex items-center overflow-hidden rounded border border-zinc-700">
+          <div className={sizeControlClass}>
             <button
               disabled={rendering || curPx <= INTRO_SIZE_MIN}
               onClick={() =>
                 run(() => onResize(Math.max(INTRO_SIZE_MIN, curPx - INTRO_SIZE_STEP)))
               }
               aria-label="Smaller intro text"
-              className="px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+              className={sizeBtnClass}
             >
               A−
             </button>
@@ -156,7 +184,7 @@ export function VariantCard({
                   ? `Your size · ${curPx}px`
                   : `Auto-sized · ${curPx}px`
               }
-              className="select-none border-x border-zinc-700 px-2 py-1 text-xs tabular-nums text-zinc-500"
+              className={sizeDivClass}
             >
               {variant.intro_size_source === "user" ? `${curPx}` : `${curPx} auto`}
             </span>
@@ -166,14 +194,12 @@ export function VariantCard({
                 run(() => onResize(Math.min(INTRO_SIZE_MAX, curPx + INTRO_SIZE_STEP)))
               }
               aria-label="Bigger intro text"
-              className="px-2.5 py-1 text-xs text-zinc-300 hover:bg-zinc-800 disabled:opacity-40"
+              className={sizeBtnClass}
             >
               A+
             </button>
           </div>
         )}
-        {/* Change text style — applies to ALL variants (the set governs the AI
-            intro on text variants and the lyric typography on the lyrics variant). */}
         {styleSets.length > 0 && (
           <select
             disabled={rendering}
@@ -183,7 +209,7 @@ export function VariantCard({
                 run(() => onChangeStyle(e.target.value));
               }
             }}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+            className={selectClass}
           >
             <option value="" disabled>
               Style…
@@ -202,7 +228,7 @@ export function VariantCard({
             onChange={(e) => {
               if (e.target.value) run(() => onSwap(e.target.value));
             }}
-            className="rounded border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-zinc-300 disabled:opacity-40"
+            className={selectClass}
           >
             <option value="">Swap song…</option>
             {tracks.map((t) => (
@@ -214,13 +240,11 @@ export function VariantCard({
         )}
       </div>
 
-      {/* Voice / bed mix — voiceover variants only. Debounced re-render; disabled
-          while the variant is rendering, mirroring the other controls. */}
       {isVoiceover && onSetMix && (
         <div className="mt-3">
-          <div className="mb-1 flex items-center justify-between text-xs text-zinc-400">
+          <div className={mixLabelClass}>
             <label htmlFor={`mix-${variant.variant_id}`}>Voice / {bedLabel}</label>
-            <span className="tabular-nums text-zinc-500">{Math.round(mix * 100)}% voice</span>
+            <span className={mixPctClass}>{Math.round(mix * 100)}% voice</span>
           </div>
           <input
             id={`mix-${variant.variant_id}`}
@@ -239,7 +263,7 @@ export function VariantCard({
                 run(() => onSetMix(next));
               }, 600);
             }}
-            className="w-full accent-white disabled:opacity-40"
+            className={`w-full ${sliderAccent} disabled:opacity-40`}
           />
         </div>
       )}

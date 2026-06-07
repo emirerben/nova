@@ -11,9 +11,6 @@ function fmtTime(secs: number): string {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
-// MediaRecorder is unavailable in some browsers (older Safari, locked-down WebViews).
-// We resolve this once on mount (client-only) so the record UI is hidden but the
-// file-upload fallback always stays usable.
 function mediaRecorderSupported(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -25,9 +22,7 @@ function mediaRecorderSupported(): boolean {
 
 /**
  * Add a voiceover to a generative edit: record in-browser (mic + live waveform)
- * OR upload an audio file. On a finished take or chosen file we upload it and
- * call `onVoiceover(gcsPath)`; removing the take calls `onVoiceover(null)`.
- * Presentation + upload only — the page owns the resulting gcs_path.
+ * OR upload an audio file. Rendered on the light editorial system.
  */
 export function VoiceRecorder({
   onVoiceover,
@@ -74,13 +69,11 @@ export function VoiceRecorder({
     analyserRef.current = null;
   }, []);
 
-  // Clean up everything on unmount, and revoke the object URL.
   useEffect(() => {
     return () => {
       stopTracksAndAudio();
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
-    // audioUrl intentionally captured at unmount via closure refresh below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stopTracksAndAudio]);
 
@@ -99,10 +92,10 @@ export function VoiceRecorder({
       const w = canvas.width;
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#09090b"; // zinc-950
+      ctx.fillStyle = "#f4f4f5"; // zinc-100 — light canvas
       ctx.fillRect(0, 0, w, h);
       ctx.lineWidth = 2;
-      ctx.strokeStyle = "#a1a1aa"; // zinc-400
+      ctx.strokeStyle = "#52525b"; // zinc-600
       ctx.beginPath();
       const slice = w / bufferLength;
       let x = 0;
@@ -144,7 +137,6 @@ export function VoiceRecorder({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
 
-      // Live waveform via AnalyserNode.
       const AudioCtor =
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext })
@@ -183,7 +175,6 @@ export function VoiceRecorder({
       setPhase("recording");
       drawWaveform();
     } catch (e) {
-      // Permission denied / no device: keep the file-upload path usable.
       stopTracksAndAudio();
       setMicBlocked(true);
       setPhase("idle");
@@ -238,19 +229,18 @@ export function VoiceRecorder({
 
   return (
     <div className="space-y-3">
-      {/* Screen-reader-friendly live region for recording/upload state. */}
       <p aria-live="polite" className="sr-only">
         {liveStatus}
       </p>
 
       {micBlocked && (
-        <div className="rounded border border-amber-700/60 bg-amber-950/40 px-3 py-2 text-sm text-amber-200">
+        <div className="rounded border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
           Mic blocked. Upload an audio file instead, or enable mic in your browser
           settings.
         </div>
       )}
       {error && (
-        <div className="rounded border border-red-700 bg-red-950/50 px-3 py-2 text-sm text-red-200">
+        <div className="rounded border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-red-600">
           {error}
         </div>
       )}
@@ -263,13 +253,13 @@ export function VoiceRecorder({
               onClick={startRecording}
               aria-label="Record voiceover"
               aria-pressed={false}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
+              className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
             >
               <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-red-500" />
               Record
             </button>
           )}
-          <label className="inline-flex min-h-[44px] cursor-pointer items-center rounded border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800">
+          <label className="inline-flex min-h-[44px] cursor-pointer items-center rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400">
             Upload audio
             <input
               type="file"
@@ -284,30 +274,30 @@ export function VoiceRecorder({
       {phase === "recording" && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <span className="inline-flex items-center gap-2 text-sm text-zinc-300">
+            <span className="inline-flex items-center gap-2 text-sm text-[#3f3f46]">
               <span
                 aria-hidden
                 className="h-2.5 w-2.5 motion-safe:animate-pulse rounded-full bg-red-500"
               />
               Recording
             </span>
-            <span className="text-sm tabular-nums text-zinc-400">{fmtTime(elapsed)}</span>
+            <span className="text-sm tabular-nums text-[#71717a]">{fmtTime(elapsed)}</span>
           </div>
           <canvas
             ref={canvasRef}
             aria-hidden
             width={640}
             height={64}
-            className="h-16 w-full rounded border border-zinc-800 bg-zinc-950"
+            className="h-16 w-full rounded border border-zinc-200 bg-zinc-100"
           />
           <button
             type="button"
             onClick={stopRecording}
             aria-label="Stop recording"
             aria-pressed
-            className="inline-flex min-h-[44px] items-center gap-2 rounded border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
+            className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
           >
-            <span aria-hidden className="h-2.5 w-2.5 rounded-sm bg-zinc-200" />
+            <span aria-hidden className="h-2.5 w-2.5 rounded-sm bg-[#3f3f46]" />
             Stop
           </button>
         </div>
@@ -321,15 +311,15 @@ export function VoiceRecorder({
             </audio>
           )}
           <div className="flex flex-wrap items-center gap-3">
-            {uploading && <span className="text-sm text-zinc-500">Uploading…</span>}
+            {uploading && <span className="text-sm text-[#71717a]">Uploading…</span>}
             {!uploading && uploadedName && (
-              <span className="text-sm text-zinc-400">{uploadedName}</span>
+              <span className="text-sm text-[#71717a]">{uploadedName}</span>
             )}
             <button
               type="button"
               onClick={reset}
               aria-label="Remove voiceover"
-              className="inline-flex min-h-[44px] items-center rounded border border-zinc-700 bg-zinc-900 px-4 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
+              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
             >
               {recordSupported ? "Retake / remove" : "Remove"}
             </button>

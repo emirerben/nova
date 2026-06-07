@@ -59,6 +59,11 @@ interface ProgressTheaterProps {
    * Only rendered in 'full' mode.
    */
   children?: ReactNode;
+  /**
+   * D20 tone: "light" renders on cream canvas; "dark" (default) renders the dark
+   * theatre palette. Forwarded to PhaseChipRow, StatusHeadline, EtaBar.
+   */
+  tone?: "dark" | "light";
 }
 
 /**
@@ -87,6 +92,7 @@ export function ProgressTheater({
   onRetry: _onRetry,
   size = "full",
   children,
+  tone = "dark",
 }: ProgressTheaterProps) {
   // Elapsed since job start.
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -186,7 +192,7 @@ export function ProgressTheater({
       style={{ transitionDuration: `${BAND_COLLAPSE_MS}ms` }}
     >
       {showReceipt ? (
-        <p className="flex items-center gap-2 text-sm font-medium text-amber-300">
+        <p className={`flex items-center gap-2 text-sm font-medium ${tone === "light" ? "text-lime-700" : "text-amber-300"}`}>
           <span aria-hidden="true">✓</span>
           {receiptText}
         </p>
@@ -196,23 +202,27 @@ export function ProgressTheater({
             phases={phases}
             phaseLabels={phaseLabels}
             currentPhase={currentPhase}
+            tone={tone}
           />
-          <StatusHeadline text={headlineText} />
+          <StatusHeadline text={headlineText} tone={tone} />
           {detail && (
-            <p className="text-xs text-zinc-500">{detail}</p>
+            <p className={`text-xs ${tone === "light" ? "text-[#71717a]" : "text-zinc-500"}`}>{detail}</p>
           )}
           {!isTerminal && (
             <EtaBar
               barPosition={barPosition}
               elapsedMs={elapsedMs}
               etaText={etaText}
+              tone={tone}
             />
           )}
           {!isTerminal && (
             <p
               className={[
                 "text-xs",
-                tier >= 2 ? "text-amber-400" : "text-zinc-600",
+                tier >= 2
+                  ? (tone === "light" ? "text-lime-700" : "text-amber-400")
+                  : (tone === "light" ? "text-[#a1a1aa]" : "text-zinc-600"),
               ].join(" ")}
             >
               {leaveNote}
