@@ -76,6 +76,26 @@ def _build_persona_context(
     return ctx
 
 
+def _build_user_style_context(style: dict | None) -> dict | None:
+    """Validate + normalize the raw style JSONB blob for stashing on all_candidates.
+
+    Returns None when the style is absent, empty, or invalid — callers that
+    receive None omit the `user_style` key entirely, preserving byte-identical
+    all_candidates shape vs pre-M1 (the byte-identity invariant).
+    """
+    if not style:
+        return None
+    try:
+        from app.agents._schemas.user_style import coerce_user_style  # noqa: PLC0415
+
+        parsed = coerce_user_style(style)
+        if parsed is None:
+            return None
+        return parsed.model_dump()
+    except Exception:  # noqa: BLE001 — defensive; bad blob → None → baseline
+        return None
+
+
 def build_generative_job(
     *,
     user_id: uuid.UUID,
@@ -92,6 +112,7 @@ def build_generative_job(
     edit_format: str = DEFAULT_EDIT_FORMAT,
     voiceover_gcs_path: str | None = None,
     tiktok_summary: str = "",
+    user_style: dict | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -133,6 +154,15 @@ def build_generative_job(
     )
     if persona_ctx is not None:
         all_candidates["persona"] = persona_ctx
+    # Per-user style (Creator Agent M1). Omit the key entirely when absent or
+    # disabled so public/legacy jobs keep their exact pre-style all_candidates shape
+    # (byte-identity invariant — guards the render path's no-style baseline).
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if _settings.user_style_enabled:
+        style_ctx = _build_user_style_context(user_style)
+        if style_ctx is not None:
+            all_candidates["user_style"] = style_ctx
     return Job(
         user_id=user_id,
         job_type="generative",

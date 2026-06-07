@@ -191,6 +191,9 @@ def _run_generative_job(job_id: str) -> None:
         # Persona/series context for persona-coherent hooks (content-plan jobs
         # only — public generative jobs omit the key). Forwarded to intro_writer.
         persona: dict = all_candidates.get("persona") or {}
+        # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
+        # all render branches fall through to today's byte-identical behavior.
+        user_style: dict = all_candidates.get("user_style") or {}
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
@@ -258,7 +261,31 @@ def _run_generative_job(job_id: str) -> None:
             text, form = _run_text_agents(
                 clip_metas, hero, job_id=job_id, language=language, persona=persona
             )
-            style = _select_generative_style_set(clip_metas, text, job_id=job_id)
+            # Creator Agent M1: if the user has a pinned style_set_id, bypass the
+            # per-render AgenticStyleSelectorAgent and use it directly. This ensures
+            # a consistent visual identity across all of a creator's edits. When
+            # absent/disabled, the selector runs as before (byte-identical baseline).
+            pinned_set_id = str(user_style.get("style_set_id") or "").strip()
+            if pinned_set_id and pinned_set_id != "default":
+                from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
+
+                if pinned_set_id in style_set_ids(applies_to="generative"):
+                    log.info(
+                        "generative_style_set.user_pinned",
+                        job_id=job_id,
+                        style_set_id=pinned_set_id,
+                    )
+                    style = pinned_set_id
+                else:
+                    # Pinned set no longer in catalog (drift) → fall back to selector.
+                    log.info(
+                        "generative_style_set.pinned_not_in_catalog",
+                        job_id=job_id,
+                        pinned=pinned_set_id,
+                    )
+                    style = _select_generative_style_set(clip_metas, text, job_id=job_id)
+            else:
+                style = _select_generative_style_set(clip_metas, text, job_id=job_id)
             return text, form, style
 
         # NOT a `with` block: ThreadPoolExecutor.__exit__ calls shutdown(wait=True),
@@ -291,6 +318,20 @@ def _run_generative_job(job_id: str) -> None:
         record_pipeline_event(
             "assembly", "song_match_done", {"track_id": best_track.id if best_track else None}
         )
+
+        # Compute per-user knob overrides once (cheap, CPU-only) for use across all
+        # variants. Empty dict when no style is present → no overrides → baseline.
+        user_style_knobs: dict = {}
+        if user_style:
+            try:
+                from app.agents._schemas.user_style import (  # noqa: PLC0415
+                    coerce_user_style,
+                    user_style_knobs_dict,
+                )
+
+                user_style_knobs = user_style_knobs_dict(coerce_user_style(user_style))
+            except Exception:  # noqa: BLE001 — defensive; bad blob → no overrides
+                pass
 
         # Phase transition: clip analysis + song match are both complete.
         record_phase(job_id, "analyze_clips", next_phase="match_song")
@@ -369,6 +410,7 @@ def _run_generative_job(job_id: str) -> None:
                         agent_form=agent_form,
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
+                        user_style_knobs=user_style_knobs,
                     )
                 else:
                     result = _render_generative_variant(
@@ -384,6 +426,7 @@ def _run_generative_job(job_id: str) -> None:
                         agent_form=agent_form,
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
+                        user_style_knobs=user_style_knobs,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -772,6 +815,10 @@ def _run_regenerate_variant(
         existing_mix = existing.get("mix")
         existing_size_source = existing.get("intro_size_source")
         existing_size_px = existing.get("intro_text_size_px")
+        # User-style knobs persisted on the variant entry (Creator Agent M1). Reading
+        # from the variant (not the persona row) so re-renders are hermetic — the
+        # persona style could have changed between first-render and re-render.
+        existing_user_style_knobs: dict | None = existing.get("user_style_knobs") or None
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -782,10 +829,12 @@ def _run_regenerate_variant(
     resolved_style_set_id = style_set_id or existing_style_set_id or "default"
 
     # Intro-size precedence on a re-render:
-    #   explicit resize request  → new user pin
-    #   prior pin was the user's → preserve it (swap-song/retext must not recompute
-    #                              over a size the user set by hand)
-    #   otherwise                → None → recompute from the hero clip's composition
+    #   explicit resize request       → new user pin
+    #   prior pin was the user's      → preserve it (swap-song/retext must not recompute
+    #                                  over a size the user set by hand)
+    #   prior source was "user_style" → re-apply via user_style_knobs (M1; the knobs
+    #                                  path handles this; don't double-pin in override)
+    #   otherwise                     → None → recompute from the hero clip's composition
     if size_override_px is not None:
         resolved_size_override_px = int(size_override_px)
     elif existing_size_source == "user" and existing_size_px is not None:
@@ -890,6 +939,7 @@ def _run_regenerate_variant(
             variant_dir=variant_dir,
             style_set_id=resolved_style_set_id,
             intro_size_override_px=resolved_size_override_px,
+            user_style_knobs=existing_user_style_knobs,
         )
 
     _update_variant_entry(job_id, variant_id, result)
@@ -1336,6 +1386,7 @@ def _render_generative_variant(
     variant_dir: str,
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
+    user_style_knobs: dict | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -1343,6 +1394,11 @@ def _render_generative_variant(
     nudge). When None the size is computed from the hero clip's composition; when
     set it wins and the variant records `intro_size_source="user"` so later
     re-renders (swap-song/retext/restyle) preserve it instead of recomputing.
+
+    `user_style_knobs` are per-user parity-safe overrides (Creator Agent M1):
+    font, position, colors, etc. They win over the curated set's values inside
+    `_resolve_intro_overlay_params`. Persisted on the variant entry so re-renders
+    (swap-song/retext/restyle) re-apply them without re-reading the persona row.
     """
     from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
     from app.pipeline.music_recipe import generate_music_recipe  # noqa: PLC0415
@@ -1380,9 +1436,13 @@ def _render_generative_variant(
         "style_set_id": style_set_id,
         # Agent-decided (or user-pinned) intro size. None for non-text variants.
         "intro_text_size_px": None,
-        "intro_size_source": None,  # "computed" | "user" | None
+        "intro_size_source": None,  # "computed" | "user" | "user_style" | None
         # Voice-prominence slider for voiceover variants; None otherwise.
         "mix": mix if voiceover_gcs_path else None,
+        # Per-user parity-safe knob overrides (Creator Agent M1). Persisted so
+        # re-renders (swap-song/retext/restyle) re-apply them without re-reading
+        # the persona row. None/empty = no overrides = baseline.
+        "user_style_knobs": user_style_knobs or None,
     }
     try:
         beats: list[float] = []
@@ -1444,6 +1504,7 @@ def _render_generative_variant(
                 hero_safe_zone=hero_safe_zone,
                 hero_density=hero_density,
                 size_override_px=intro_size_override_px,
+                user_style_knobs=user_style_knobs,
             )
             base["intro_text_size_px"] = intro_px
             base["intro_size_source"] = intro_source
@@ -1564,6 +1625,7 @@ def _render_talking_head_variant(
     variant_dir: str,
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
+    user_style_knobs: dict | None = None,
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -1596,6 +1658,9 @@ def _render_talking_head_variant(
         "intro_text_size_px": None,
         "intro_size_source": None,
         "resolved_archetype": "talking_head",
+        # Per-user parity-safe knob overrides (Creator Agent M1). Persisted for
+        # re-renders (same as _render_generative_variant).
+        "user_style_knobs": user_style_knobs or None,
     }
 
     try:
@@ -1630,6 +1695,7 @@ def _render_talking_head_variant(
                 hero_safe_zone=hero_safe_zone,
                 hero_density=hero_density,
                 size_override_px=intro_size_override_px,
+                user_style_knobs=user_style_knobs,
             )
             # No song → no beats; the intro reveals on an even split. Slot-0-relative
             # timestamps (from 0) are already absolute on the composite, which is what
@@ -1775,15 +1841,17 @@ def _inject_agent_intro(
     hero_safe_zone: dict | None = None,
     hero_density: float = 5.0,
     size_override_px: int | None = None,
+    user_style_knobs: dict | None = None,
 ) -> tuple[dict, int | None, str | None]:
     """Inject the hero intro and return (recipe, intro_text_size_px, size_source).
 
     Size precedence (the user's "no default size" rule — never a constant):
       1. `size_override_px` — the public ±nudge → source "user" (preserved on
          later re-renders so swap-song/retext don't recompute over a manual pin).
-      2. curated style-set `text_size_px` — source "computed" (set-driven; safe to
+      2. user_style_knobs `text_size_px` — source "user_style" (per-user pin).
+      3. curated style-set `text_size_px` — source "computed" (set-driven; safe to
          re-resolve from the set on re-render).
-      3. `compute_overlay_size(...)` from the hero clip's safe-zone + density —
+      4. `compute_overlay_size(...)` from the hero clip's safe-zone + density —
          source "computed".
     """
     from app.pipeline.generative_overlays import (  # noqa: PLC0415
@@ -1805,6 +1873,7 @@ def _inject_agent_intro(
         hero_safe_zone=hero_safe_zone,
         hero_density=hero_density,
         size_override_px=size_override_px,
+        user_style_knobs=user_style_knobs,
     )
     recipe_dict = inject_persistent_intro(
         recipe_dict,
@@ -1824,6 +1893,7 @@ def _resolve_intro_overlay_params(
     hero_safe_zone: dict | None = None,
     hero_density: float = 5.0,
     size_override_px: int | None = None,
+    user_style_knobs: dict | None = None,
 ) -> tuple[dict, int | None, str | None]:
     """Resolve the hero-intro look + size into kwargs for the overlay builders.
 
@@ -1839,8 +1909,12 @@ def _resolve_intro_overlay_params(
     Size precedence (the user's "no default size" rule — never a constant):
       1. `size_override_px` — the public ±nudge → source "user" (preserved on later
          re-renders so swap-song/retext don't recompute over a manual pin).
-      2. curated style-set `text_size_px` — source "computed" (set-driven).
-      3. `compute_overlay_size(...)` from the hero clip's safe-zone + density.
+      2. `user_style_knobs["text_size_px"]` — per-user style pin → source "user_style".
+      3. curated style-set `text_size_px` — source "computed" (set-driven).
+      4. `compute_overlay_size(...)` from the hero clip's safe-zone + density.
+
+    Knob precedence (most-specific wins):
+      user_style_knobs > curated-set value > agent advisory > hardcoded default.
     """
     # Curated style set owns the intro look (font, size, color, effect, position).
     # The agent_form fields drop to ADVISORY: `resolve_overlay_style` lets the set
@@ -1859,10 +1933,19 @@ def _resolve_intro_overlay_params(
         }
         style = resolve_overlay_style(style_set_id, "intro", advisory=advisory)
 
-    font_family = style.get("font_family")
+    # User-style knobs win over curated-set values (Creator Agent M1).
+    # None when USER_STYLE_ENABLED=false or user has no derived style → baseline.
+    knobs: dict = user_style_knobs or {}
+
+    # Font: user-style knob > set > None (renderer picks a fallback)
+    font_family = knobs.get("font_family") or style.get("font_family")
+
     set_px = style.get("text_size_px")
+    user_style_px = knobs.get("text_size_px") if knobs else None
     if size_override_px is not None:
         intro_px, intro_source = int(size_override_px), "user"
+    elif user_style_px is not None:
+        intro_px, intro_source = int(user_style_px), "user_style"
     elif set_px is not None:
         intro_px, intro_source = int(set_px), "computed"
     else:
@@ -1878,18 +1961,47 @@ def _resolve_intro_overlay_params(
 
     params = {
         "text": agent_text.text,
+        # effect: NOT in StyleKnobs (parity unconfirmed — #296); set/agent-advisory only
         "effect": style.get("effect") or agent_form.get("effect", "karaoke-line"),
-        "position": style.get("position") or agent_form.get("position", "center"),
-        "text_color": style.get("text_color") or agent_form.get("text_color", "#FFFFFF"),
-        "highlight_color": style.get("highlight_color")
-        or agent_form.get("highlight_color", "#FFD24A"),
-        "text_anchor": style.get("text_anchor") or agent_form.get("text_anchor", "center"),
+        # knobs win over set, set wins over agent advisory, agent advisory wins over default
+        "position": (
+            knobs.get("position") or style.get("position") or agent_form.get("position", "center")
+        ),
+        "text_color": (
+            knobs.get("text_color")
+            or style.get("text_color")
+            or agent_form.get("text_color", "#FFFFFF")
+        ),
+        "highlight_color": (
+            knobs.get("highlight_color")
+            or style.get("highlight_color")
+            or agent_form.get("highlight_color", "#FFD24A")
+        ),
+        "text_anchor": (
+            knobs.get("text_anchor")
+            or style.get("text_anchor")
+            or agent_form.get("text_anchor", "center")
+        ),
         "highlight_word": getattr(agent_text, "highlight_word", None),
         "font_family": font_family,
-        "stroke_width": style.get("stroke_width"),
-        "text_size_px": intro_px,  # computed/user/set px — no hardcoded jumbo default
-        "position_x_frac": style.get("position_x_frac"),
-        "position_y_frac": style.get("position_y_frac"),
+        # stroke_width: None-safe — knob wins when set (0 is a valid value)
+        "stroke_width": (
+            knobs["stroke_width"]
+            if knobs.get("stroke_width") is not None
+            else style.get("stroke_width")
+        ),
+        "text_size_px": intro_px,  # computed/user/user_style/set px — no hardcoded jumbo default
+        # position_x_frac / position_y_frac: None-safe
+        "position_x_frac": (
+            knobs["position_x_frac"]
+            if knobs.get("position_x_frac") is not None
+            else style.get("position_x_frac")
+        ),
+        "position_y_frac": (
+            knobs["position_y_frac"]
+            if knobs.get("position_y_frac") is not None
+            else style.get("position_y_frac")
+        ),
     }
     return params, intro_px, intro_source
 

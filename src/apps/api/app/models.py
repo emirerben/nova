@@ -550,6 +550,11 @@ class Persona(Base):
     # {handle, follower_count, video_count, top_captions[], top_hashtags[], analyzed_at}
     # NULL when user skipped the TikTok step or scrape failed.
     tiktok_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Per-user derived text style (Creator Agent M1). Pins a curated style_set_id
+    # + parity-safe knob overrides applied to every generative render. NULL = no
+    # style derived yet → byte-identical render behavior. status="edited" means the
+    # user hand-edited; derivation never auto-overwrites it without explicit /rederive.
+    style: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # generating | ready | failed | edited
     persona_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
     generation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)

@@ -275,6 +275,219 @@ async def retune_persona_from_feedback(
     return PersonaResponse.of(row)
 
 
+# ── Style routes (Creator Agent M1) ──────────────────────────────────────────
+
+
+class StyleKnobsEdit(BaseModel):
+    """Partial knob edit — any subset of StyleKnobs fields. Validated at write time."""
+
+    font_family: str | None = None
+    text_size_px: int | None = Field(default=None, ge=40, le=80)
+    position: str | None = None
+    position_x_frac: float | None = Field(default=None, ge=0.0, le=1.0)
+    position_y_frac: float | None = Field(default=None, ge=0.0, le=1.0)
+    text_anchor: str | None = None
+    text_color: str | None = None
+    highlight_color: str | None = None
+    stroke_width: int | None = None
+    cycle_fonts: bool | None = None
+
+
+class StyleEdit(BaseModel):
+    """PATCH /personas/style — any subset of UserStyle top-level fields."""
+
+    style_set_id: str | None = None
+    knobs: StyleKnobsEdit | None = None
+    footage_type_bias: list[str] | None = None
+    preferred_edit_format_mix: dict | None = None
+    instruction_level: str | None = None  # full | light | none
+
+
+class StyleResponse(BaseModel):
+    """GET /personas/style response — wraps the stored UserStyle dict."""
+
+    style: dict | None
+    status: str  # deriving | ready | edited | failed | absent
+    style_set_preview: dict | None = None  # label, tags, preview_url from catalog
+    font_preview: dict | None = None  # css_family, display_name for the UI typeface
+
+
+def _style_set_preview(style_set_id: str | None) -> dict | None:
+    """Return the style-set preview dict (font, colors, effect) for the UI picker."""
+    if not style_set_id:
+        return None
+    try:
+        from app.pipeline.style_sets import style_set_preview  # noqa: PLC0415
+
+        return {"id": style_set_id, **style_set_preview(style_set_id)}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _font_preview(font_family: str | None) -> dict | None:
+    """Return display metadata for the pinned font (css_family for the UI)."""
+    if not font_family:
+        return None
+    try:
+        from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+        entry = _FONT_REGISTRY.get(font_family) or {}
+        return {
+            "font_family": font_family,
+            "display_name": entry.get("display_name") or font_family,
+            "css_family": entry.get("css_family") or font_family,
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+@router.get("/style", response_model=StyleResponse)
+async def get_style(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StyleResponse:
+    """Return the current user's derived style (or absent when not yet derived)."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.user_style_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_not_enabled")
+    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        return StyleResponse(style=None, status="absent")
+    raw = dict(row.style) if row.style else None
+    if raw is None:
+        return StyleResponse(style=None, status="absent")
+    pinned_set_id = raw.get("style_set_id")
+    pinned_font = (raw.get("knobs") or {}).get("font_family")
+    return StyleResponse(
+        style=raw,
+        status=raw.get("status", "ready"),
+        style_set_preview=_style_set_preview(pinned_set_id),
+        font_preview=_font_preview(pinned_font),
+    )
+
+
+@router.patch("/style", response_model=StyleResponse)
+async def patch_style(
+    edit: StyleEdit,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StyleResponse:
+    """Partial-edit the user's style. Sets status='edited' — derivation will not auto-overwrite."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.user_style_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_not_enabled")
+
+    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="persona_not_found")
+
+    # Read-merge-write: merge the edit into the existing blob (or start fresh).
+    raw: dict = dict(row.style) if row.style else {}
+
+    # Validate style_set_id against catalog when provided.
+    if edit.style_set_id is not None:
+        try:
+            from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
+
+            known = style_set_ids()
+            if edit.style_set_id not in known:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown style_set_id: {edit.style_set_id}",
+                )
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001
+            pass  # catalog unavailable → accept; fail-open on preview
+        raw["style_set_id"] = edit.style_set_id
+
+    # Validate + merge knobs (only provided fields overwrite).
+    if edit.knobs is not None:
+        knobs = dict(raw.get("knobs") or {})
+        knob_data = edit.knobs.model_dump(exclude_none=True)
+        # Validate font_family against registry if provided.
+        if "font_family" in knob_data:
+            try:
+                from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+                if knob_data["font_family"] not in _FONT_REGISTRY:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Unknown font_family: {knob_data['font_family']}",
+                    )
+            except HTTPException:
+                raise
+            except Exception:  # noqa: BLE001
+                pass  # registry unavailable → accept; fail-open
+        knobs.update(knob_data)
+        raw["knobs"] = knobs
+
+    if edit.footage_type_bias is not None:
+        raw["footage_type_bias"] = edit.footage_type_bias
+    if edit.preferred_edit_format_mix is not None:
+        raw["preferred_edit_format_mix"] = edit.preferred_edit_format_mix
+    if edit.instruction_level is not None:
+        allowed = {"full", "light", "none"}
+        if edit.instruction_level not in allowed:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"instruction_level must be one of {sorted(allowed)}",
+            )
+        raw["instruction_level"] = edit.instruction_level
+
+    # Mark as edited — derivation guards will not auto-overwrite.
+    raw["status"] = "edited"
+    row.style = raw
+    await db.commit()
+    await db.refresh(row)
+    pinned_set_id = raw.get("style_set_id")
+    pinned_font = (raw.get("knobs") or {}).get("font_family")
+    return StyleResponse(
+        style=dict(row.style),
+        status="edited",
+        style_set_preview=_style_set_preview(pinned_set_id),
+        font_preview=_font_preview(pinned_font),
+    )
+
+
+@router.post("/style/rederive", status_code=status.HTTP_202_ACCEPTED)
+async def rederive_style(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Re-derive the style from the current persona (overwrites even an edited style)."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.user_style_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_not_enabled")
+
+    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="persona_not_found")
+    if row.persona_status not in ("ready", "edited"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="persona_not_ready",
+        )
+
+    # Mark as deriving so the UI can poll status.
+    raw: dict = dict(row.style) if row.style else {}
+    raw["status"] = "deriving"
+    row.style = raw
+    await db.commit()
+
+    from app.tasks.style_build import derive_user_style  # noqa: PLC0415
+
+    # force=True bypasses the "edited" guard in the task.
+    derive_user_style.delay(str(row.id), force=True)
+    return {"queued": True, "persona_id": str(row.id)}
+
+
 # ── Chat interview routes ─────────────────────────────────────────────────────
 
 

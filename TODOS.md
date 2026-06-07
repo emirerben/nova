@@ -1,5 +1,28 @@
 # Nova — Deferred Work
 
+## Creator Agent — follow-up work (M1 shipped dark in v0.4.90.0)
+
+### Enable USER_STYLE_ENABLED + live-eval validation (pre-flip gate)
+**What:** Before setting `USER_STYLE_ENABLED=true` on Fly, run `NOVA_EVAL_MODE=live pytest tests/evals/test_style_derivation_evals.py --eval-mode=live` to capture golden fixtures and validate agent output quality. Check rubric dimensions: persona_alignment ≥ 3.5, parity_safety (no effect in knobs), calibration, instruction_level_correctness.
+**Effort:** XS (CC: ~10 min)
+
+### Frontend StyleCard (M1 UI, after kill switch flip)
+**What:** `StyleCard.tsx` in `WorkspaceHome.tsx` near `PersonaCard`. Shows font preview (css_family), set picker (StyleChip grid), position/size/color controls, footage-bias chips, status badge (polls while deriving), Re-derive button. Light editorial design system.
+**Why:** Backend ships dark; UI follows once kill switch is on and agent quality is validated.
+**Effort:** M (CC: ~45 min)
+
+### M2 — Conversational agent
+**What:** Chat endpoint where user says "change my main font to something bolder" → `PATCH /personas/style` → status="edited". Or "I don't want to film running" → `PATCH /personas/{id}` → retune. Or "no instructions" → style.instruction_level="none". See `docs/pipelines/creator-agent.md` for full intent taxonomy.
+**Effort:** L (human: ~2d / CC: ~2h)
+
+### M3 — Style-driven plan + filming guide in render
+**What:** Planner reads `style.instruction_level` + `preferred_edit_format_mix`; `filming_guide` threaded into `build_generative_job` → `all_candidates["filming_guide"]` → `intro_writer`; `footage_type_bias` biases `_select_archetype`.
+**Effort:** L
+
+### M4 — Per-item single-video upload + conformance agent
+**What:** UI uploads one video per plan item; `ConformanceFeedbackAgent` compares footage against `filming_guide` (clip_metadata signals) → "this looks like X instead of Y; engagement risk Z".
+**Effort:** XL
+
 ## Light editorial system — follow-up work
 
 ### "I filmed it" loop-closing + filming-guide peek on the Today card (D22)

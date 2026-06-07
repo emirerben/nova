@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.90.0] — 2026-06-07
+
+### Added
+- **Creator Agent M1: User Style entity (dark behind `USER_STYLE_ENABLED=false`).** A new per-user persistent `style` JSONB column on `personas` (migration 0050) stores a `UserStyle`: a pinned style-set id, parity-safe knob overrides (font, size, position, color, stroke), footage type bias, preferred edit format mix, and instruction level (full/light/none). Ships dark; enabling requires `fly secrets set USER_STYLE_ENABLED=true` after live-eval validation.
+- **`nova.plan.style_derivation` agent.** Gemini Flash agent that reads the creator's persona + TikTok analysis summary and picks a style-set from the generative catalog, optionally setting parity-safe knob overrides. Output validated through `StyleKnobs(extra="forbid")` — unknown/unsafe keys (including `effect`) are silently dropped. Chained from `generate_persona` and `retune_persona_from_feedback` on success.
+- **Render wiring.** `build_generative_job(user_style=...)` injects `all_candidates["user_style"]` (key omitted when disabled/None → byte-identical baseline). `_resolve_intro_overlay_params` (the single source of truth for intro styling) applies knobs with explicit precedence: `size_override_px` (user) > `user_style_knobs.text_size_px` (user_style) > curated-set px > `compute_overlay_size` (computed). Font, color, position, stroke follow the same knob > set > advisory > default chain. Knobs stored on the variant entry dict for hermetic re-renders.
+- **Style API routes.** `GET /personas/style` (style + preview projection), `PATCH /personas/style` (partial edit, 422 on unknown set/font, sets `status="edited"`), `POST /personas/style/rederive` (force=True overwrite; the only path that overwrites a hand-edited style).
+- **Frontend typed client** (`src/apps/web/src/lib/plan-api.ts`): `UserStyle`, `StyleKnobs`, `StyleSetPreview`, `FontPreview`, `StyleResponse`, `StyleEdit` interfaces + `getStyle/patchStyle/rederiveStyle` functions.
+- **Architecture roadmap** (`docs/pipelines/creator-agent.md`): M1–M6 milestones, propagation model, invariants, key files.
+- **Guards/tests.** `TestStyleKnobaParitySafety` (field subset guard, effect exclusion, extra-key raises), `TestByteIdentityContract` (no `user_style` key when disabled/null), `TestDeriveUserStyleEditedGuard` (user's say wins, force bypass), `TestResolveIntroOverlayParamsKnobPrecedence` (11 knob precedence tests), `StyleDerivationAgent.parse()` (36 coercion tests, bad JSON → SchemaError), eval harness + rubric.
+
+### Changed
+- **Knob precedence in `_resolve_intro_overlay_params`:** user-style knobs now slot between the per-variant override and the curated-set value, with stroke_width/position_x_frac/position_y_frac using `is not None` checks (so `0` and `0.0` are valid knob values).
+
 ## [0.4.89.0] — 2026-06-07
 
 ### Added

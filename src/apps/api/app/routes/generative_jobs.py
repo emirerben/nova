@@ -388,7 +388,25 @@ async def create_generative_job(
     # content-plan per-item task. Prefixes were already validated by the request
     # schema; build_generative_job re-validates (cheap defense-in-depth).
     from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+    from app.models import Persona as PersonaRow  # noqa: PLC0415
     from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
+
+    # Load the user's style for the render path (Creator Agent M1).
+    # Best-effort: a missing persona row → no style → baseline behavior.
+    user_style_raw: dict | None = None
+    from app.auth import SYNTHETIC_USER_ID  # noqa: PLC0415
+
+    if settings.user_style_enabled and current_user.id != SYNTHETIC_USER_ID:
+        try:
+            result_p = await db.execute(
+                select(PersonaRow).where(PersonaRow.user_id == current_user.id)
+            )
+            persona_row = result_p.scalar_one_or_none()
+            if persona_row is not None and persona_row.style:
+                user_style_raw = dict(persona_row.style)
+        except Exception:  # noqa: BLE001
+            pass  # non-fatal — proceed without style
 
     job = build_generative_job(
         user_id=current_user.id,
@@ -397,6 +415,7 @@ async def create_generative_job(
         selected_platforms=req.selected_platforms,
         edit_format=req.edit_format or DEFAULT_EDIT_FORMAT,
         voiceover_gcs_path=req.voiceover_gcs_path,
+        user_style=user_style_raw,
     )
     db.add(job)
     await db.commit()
