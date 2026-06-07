@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-26",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -14,7 +14,11 @@
     },
     "hero_transcript": "this is just a regular tuesday for me now",
     "tone": "calm",
-    "form": {"effect": "static", "size_class": "xlarge", "position": "center"},
+    "form": {
+      "effect": "static",
+      "size_class": "xlarge",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "lifestyle-freedom-static-01",
@@ -36,6 +40,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "freedom/slow-living footage → original minimalist juxtaposition hook grounded in THIS clip (the 'regular tuesday' beach-office), in the reference voice (cf. @vvvayda 'this and no job'); NOT a copy of the exemplar"
+    "case": "freedom/slow-living footage \u2192 original minimalist juxtaposition hook grounded in THIS clip (the 'regular tuesday' beach-office), in the reference voice (cf. @vvvayda 'this and no job'); NOT a copy of the exemplar"
   }
 }

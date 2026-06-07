@@ -1,20 +1,24 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-28",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_tr_003",
       "media_type": "video",
       "duration_s": 4.0,
-      "subject": "el yapımı kek tabağa diziliyor, üstüne çikolata akıtılıyor",
+      "subject": "el yap\u0131m\u0131 kek taba\u011fa diziliyor, \u00fcst\u00fcne \u00e7ikolata ak\u0131t\u0131l\u0131yor",
       "hook_text": "",
       "hook_score": 7.0,
       "energy": 5.5,
-      "description": "yakın plan, mutfak tezgahı, çikolata sosu yavaşça akıyor, akşam aydınlatması"
+      "description": "yak\u0131n plan, mutfak tezgah\u0131, \u00e7ikolata sosu yava\u015f\u00e7a ak\u0131yor, ak\u015fam ayd\u0131nlatmas\u0131"
     },
-    "hero_transcript": "bunu evde 10 dakikada yapıyorum",
+    "hero_transcript": "bunu evde 10 dakikada yap\u0131yorum",
     "tone": "punchy",
-    "form": {"effect": "static", "size_class": "jumbo", "position": "center"},
+    "form": {
+      "effect": "static",
+      "size_class": "jumbo",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "lifestyle-freedom-static-01",
@@ -30,14 +34,14 @@
     ],
     "language": "tr"
   },
-  "raw_text": "{\"text\": \"bunu yapmadan ölme\", \"highlight_word\": \"ölme\"}",
+  "raw_text": "{\"text\": \"bunu yapmadan \u00f6lme\", \"highlight_word\": \"\u00f6lme\"}",
   "output": {
-    "text": "bunu yapmadan ölme",
-    "highlight_word": "ölme"
+    "text": "bunu yapmadan \u00f6lme",
+    "highlight_word": "\u00f6lme"
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "TR food/reveal → punchy imperative in lowercase sen-form (ölme = informal 'don't die'). Three-word punch matches the static form; energy enough to hold the swipe.",
+    "case": "TR food/reveal \u2192 punchy imperative in lowercase sen-form (\u00f6lme = informal 'don't die'). Three-word punch matches the static form; energy enough to hold the swipe.",
     "language": "tr"
   }
 }

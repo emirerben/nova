@@ -63,11 +63,25 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             _fail(session, plan, "persona is not ready")
             return
         tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        user_style = dict(persona_row.style) if persona_row.style else None
+        instruction_level = "full"
+        preferred_edit_format_mix: dict[str, float] = {}
+        if _settings.user_style_enabled and user_style:
+            instruction_level = str(user_style.get("instruction_level", "full") or "full")
+            raw_mix = user_style.get("preferred_edit_format_mix") or {}
+            if isinstance(raw_mix, dict):
+                preferred_edit_format_mix = {
+                    str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
+                }
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             tiktok_analysis=tiktok_summary,
+            instruction_level=instruction_level,  # type: ignore[arg-type]
+            preferred_edit_format_mix=preferred_edit_format_mix,
         )
 
     try:
@@ -204,12 +218,26 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         plan.preference_summary = summary or None
         session.commit()
         tiktok_summary = _analysis_summary(persona_row.tiktok_profile)
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        user_style = dict(persona_row.style) if persona_row.style else None
+        instruction_level = "full"
+        preferred_edit_format_mix: dict[str, float] = {}
+        if _settings.user_style_enabled and user_style:
+            instruction_level = str(user_style.get("instruction_level", "full") or "full")
+            raw_mix = user_style.get("preferred_edit_format_mix") or {}
+            if isinstance(raw_mix, dict):
+                preferred_edit_format_mix = {
+                    str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
+                }
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             preference_summary=summary or "",
             tiktok_analysis=tiktok_summary,
+            instruction_level=instruction_level,  # type: ignore[arg-type]
+            preferred_edit_format_mix=preferred_edit_format_mix,
         )
 
     try:
@@ -320,6 +348,9 @@ def _dispatch_item_render(
             # Per-user persistent style (Creator Agent M1). Private key from
             # _load_persona_data — not part of the public persona schema.
             user_style=persona_data.get("_user_style"),
+            # Filming guide (Creator Agent M3 / B2). Plain plan data, threaded down
+            # to intro_writer so the hook voice reflects the intended shots.
+            filming_guide=list(item.filming_guide or []),
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))

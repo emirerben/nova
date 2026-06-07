@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-30",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -14,10 +14,18 @@
     },
     "hero_transcript": "alarm went off at 4:45, nobody's even awake yet, let's just get the first set in",
     "tone": "high-energy, no-excuses gym motivation; talks like a tough-love trainer friend",
-    "content_pillars": ["morning workout routines", "discipline over motivation", "home gym setups"],
+    "content_pillars": [
+      "morning workout routines",
+      "discipline over motivation",
+      "home gym setups"
+    ],
     "theme": "first 5am workout of the 30-day challenge",
     "idea": "film the dark early-morning start and the very first set",
-    "form": {"effect": "karaoke-line", "size_class": "jumbo", "position": "center"},
+    "form": {
+      "effect": "karaoke-line",
+      "size_class": "jumbo",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "pov-surprise-karaoke-01",
@@ -39,6 +47,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "persona-threaded — fitness creator (discipline/morning-routine pillars), 5am-challenge theme. Hook coheres with the no-excuses tone + first-workout theme AND stays grounded in THIS clip (dark gym, nobody awake, the first set); invents nothing."
+    "case": "persona-threaded \u2014 fitness creator (discipline/morning-routine pillars), 5am-challenge theme. Hook coheres with the no-excuses tone + first-workout theme AND stays grounded in THIS clip (dark gym, nobody awake, the first set); invents nothing."
   }
 }

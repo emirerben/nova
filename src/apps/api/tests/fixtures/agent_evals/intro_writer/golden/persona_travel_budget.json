@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-30",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -14,10 +14,18 @@
     },
     "hero_transcript": "okay this hostel was thirty euros a night and look at this view",
     "tone": "warm, practical, slightly conspiratorial budget-travel friend",
-    "content_pillars": ["budget travel hacks", "solo female travel", "hidden city spots"],
+    "content_pillars": [
+      "budget travel hacks",
+      "solo female travel",
+      "hidden city spots"
+    ],
     "theme": "the cheap hostel with a rooftop nobody posts about",
     "idea": "reveal the rooftop view at sunset and the nightly price",
-    "form": {"effect": "static", "size_class": "xlarge", "position": "center"},
+    "form": {
+      "effect": "static",
+      "size_class": "xlarge",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "lifestyle-freedom-static-01",
@@ -39,6 +47,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "persona-threaded — budget-travel creator (budget-hacks/hidden-spots pillars), cheap-rooftop theme. Hook leans the budget pillar (the €30 price from the transcript) against the rooftop view in THIS clip; specific and grounded, not generic travel filler."
+    "case": "persona-threaded \u2014 budget-travel creator (budget-hacks/hidden-spots pillars), cheap-rooftop theme. Hook leans the budget pillar (the \u20ac30 price from the transcript) against the rooftop view in THIS clip; specific and grounded, not generic travel filler."
   }
 }
