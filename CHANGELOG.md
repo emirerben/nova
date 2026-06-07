@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.91.1] — 2026-06-07
+
+### Added
+- **Creator Agent M2/M3/M4 workflow (`creator-agent-m234-build`).** New orchestrating workflow script at `.claude/workflows/creator-agent-m234-build.js` that builds the StyleCard (deferred M1 UI), M3 style-driven plan + filming guide in render, M2 conversational agent (editorial-interview frontend + `StyleIntentAgent`), and M4 single-video upload + `ConformanceFeedbackAgent` across four parallel worktree-isolated lanes. Each lane opens its own PR against main; merge order A→B→C→D.
+
 ## [0.4.90.0] — 2026-06-07
 
 ### Added
