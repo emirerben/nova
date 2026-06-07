@@ -818,7 +818,10 @@ def _resolve_regen_text(
 
     # Fall through: run intro_writer (first render or legacy variant without persisted text).
     agent_text, agent_form = run_text_agents_fn()
-    return agent_text, agent_form, "agent_text"
+    # Preserve existing_text_mode when the LLM returns None (e.g. text-removed variant
+    # that somehow reaches here); avoids corrupting text_mode from "none" to "agent_text".
+    mode = "agent_text" if agent_text is not None else (existing_text_mode or "none")
+    return agent_text, agent_form, mode
 
 
 def _is_fast_reburn_eligible(
@@ -936,7 +939,7 @@ def _reburn_text_on_base(
             shutil.copy2(local_base, final_path)
 
         # Upload final to same variant key
-        variant_gcs_key = existing.get("video_path", "").lstrip("/")
+        variant_gcs_key = (existing.get("video_path") or "").lstrip("/")
         output_url = upload_public_read(final_path, variant_gcs_key)
 
         return {
@@ -949,6 +952,8 @@ def _reburn_text_on_base(
             "style_set_id": resolved_style_set_id,
             "text_mode": text_mode,
             "render_status": "ready",
+            "ok": True,
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
             "video_path": variant_gcs_key,
             "output_url": output_url,
             # base_video_path unchanged (still valid for next edit)
@@ -2411,6 +2416,11 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_text_size_px": r.get("intro_text_size_px"),
                     "intro_size_source": r.get("intro_size_source"),
                     "resolved_archetype": r.get("resolved_archetype"),
+                    # fast-reburn fields — MUST survive finalization or the cached
+                    # base is permanently unreachable after the first completed render
+                    "intro_text": r.get("intro_text"),
+                    "intro_highlight_word": r.get("intro_highlight_word"),
+                    "base_video_path": r.get("base_video_path"),
                 }
                 for r in results
             ],
