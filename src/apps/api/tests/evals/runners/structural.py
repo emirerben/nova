@@ -1301,6 +1301,45 @@ def check_content_plan_generator(
     return failures
 
 
+def check_style_derivation(output: Any) -> list[str]:
+    """Structural floor for nova.plan.style_derivation.
+
+    parse() coerces invalid set IDs, fonts, and knobs. This layer asserts the
+    invariants that coercion can't catch:
+
+      - style_set_id is non-empty (coercion always produces "default" or a
+        valid catalog id — an empty string means something deeply wrong).
+      - instruction_level is one of the three valid literals (coercion enforces
+        this at parse() time; the structural check is a canary for regressions).
+      - status is "ready" (derivation always sets "ready"; any other value
+        means the task wrote a partial result).
+      - rationale is non-empty — the agent was asked to explain its pick; a
+        blank rationale signals the model dropped the field entirely.
+    """
+    failures: list[str] = []
+    style = output.style if hasattr(output, "style") else None
+    if style is None:
+        failures.append("output.style is None")
+        return failures
+
+    if not (style.style_set_id or "").strip():
+        failures.append("style_set_id is empty after coercion (expected 'default' as fallback)")
+
+    if style.instruction_level not in ("full", "light", "none"):
+        failures.append(
+            f"instruction_level={style.instruction_level!r} not in "
+            "('full', 'light', 'none') — parse() should have coerced"
+        )
+
+    if style.status != "ready":
+        failures.append(f"status={style.status!r} — derive path must always produce status='ready'")
+
+    if not (style.rationale or "").strip():
+        failures.append("rationale is empty (agent failed to explain its style pick)")
+
+    return failures
+
+
 def check_tiktok_analyzer(output: Any) -> list[str]:
     """Structural floor for nova.plan.tiktok_analyzer.
 
@@ -1387,4 +1426,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_content_plan_generator(output, input)
     if agent_name == "nova.plan.tiktok_analyzer":
         return check_tiktok_analyzer(output)
+    if agent_name == "nova.plan.style_derivation":
+        return check_style_derivation(output)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

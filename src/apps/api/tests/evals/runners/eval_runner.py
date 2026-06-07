@@ -260,6 +260,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.tiktok_analyzer import TikTokAnalyzerAgent
 
         return TikTokAnalyzerAgent
+    if agent_name == "nova.plan.style_derivation":
+        from app.agents.style_derivation import StyleDerivationAgent
+
+        return StyleDerivationAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 
