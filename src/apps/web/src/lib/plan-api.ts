@@ -143,6 +143,11 @@ export function createPersona(
   });
 }
 
+/** Soft-reset onboarding: deletes persona/plan/feedback, keeps rendered videos. */
+export function resetPersona(): Promise<{ reset: boolean }> {
+  return request<{ reset: boolean }>("/personas/reset", { method: "POST" });
+}
+
 /** Fetch the current user's persona, or null if they haven't started onboarding. */
 export async function getPersona(): Promise<PersonaResponse | null> {
   try {

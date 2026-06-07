@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 
+import { resetPersona } from "@/lib/plan-api";
+
 export default function Header() {
   const pathname = usePathname() ?? "";
   const isAdmin = pathname.startsWith("/admin");
@@ -96,6 +98,9 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
   const { data: session, status } = useSession();
   const [open, setOpen] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -172,6 +177,55 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
           >
             My videos
           </Link>
+          {!confirming ? (
+            <button
+              onClick={() => {
+                setResetError(null);
+                setConfirming(true);
+              }}
+              className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
+            >
+              Start over
+            </button>
+          ) : (
+            <div className="px-3 py-2">
+              <p className={`mb-1.5 text-xs ${isLight ? "text-[#71717a]" : "text-zinc-400"}`}>
+                Deletes your plan &amp; persona — keeps your videos.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={async () => {
+                    setResetting(true);
+                    setResetError(null);
+                    try {
+                      await resetPersona();
+                      window.location.assign("/plan");
+                    } catch (err) {
+                      setResetError(err instanceof Error ? err.message : "Reset failed");
+                      setResetting(false);
+                    }
+                  }}
+                  disabled={resetting}
+                  className="rounded px-2 py-1 text-xs font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {resetting ? "Resetting…" : "Yes, start over"}
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirming(false);
+                    setResetError(null);
+                  }}
+                  disabled={resetting}
+                  className={`rounded px-2 py-1 text-xs font-medium disabled:opacity-60 ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-300 hover:bg-zinc-800"}`}
+                >
+                  Cancel
+                </button>
+              </div>
+              {resetError && (
+                <p className="mt-1 text-xs text-red-500">{resetError}</p>
+              )}
+            </div>
+          )}
           <button
             onClick={() => signOut({ callbackUrl: "/" })}
             className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
