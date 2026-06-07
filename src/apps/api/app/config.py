@@ -1,6 +1,6 @@
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -210,6 +210,13 @@ class Settings(BaseSettings):
     # can only improve overflowing text. Flip to False to disable the guarantee
     # (e.g. to isolate a layout regression) without redeploying.
     style_constraints_enabled: bool = True
+
+    GENERATIVE_FAST_REBURN_ENABLED: bool = Field(
+        default=True,
+        description="Enable fast reburn path for generative variant edits (font/text/size). "
+        "Set to false to fall back to full re-render on every edit (slower but safe). "
+        "Layer-1 text persistence stays active regardless.",
+    )
 
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily

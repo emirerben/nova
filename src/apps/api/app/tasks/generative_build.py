@@ -774,6 +774,187 @@ def regenerate_generative_variant(
             )
 
 
+def _resolve_regen_text(
+    override_text: str | None,
+    remove_text: bool,
+    existing_text_mode: str | None,
+    persisted_text: str | None,
+    persisted_highlight: str | None,
+    *,
+    run_text_agents_fn,  # callable: () -> (agent_text, agent_form)
+) -> tuple:
+    """Return (agent_text, agent_form, text_mode) without running the LLM when possible.
+
+    Priority:
+    1. remove_text → text_mode="none", no overlay.
+    2. override_text → sanitised SimpleNamespace, mode unchanged.
+    3. persisted intro_text present + mode agent_text → reuse (no LLM).
+    4. else → run intro_writer (first render or legacy variant).
+    """
+    import types as _types  # noqa: PLC0415
+
+    if remove_text:
+        return None, None, "none"
+
+    if override_text:
+        # Reuse existing sanitise chain (same as _run_regenerate_variant original path).
+        # Strip ASS tags / control chars / URLs / handles and clamp length.
+        from app.agents.intro_writer import _clamp, _strip_unsafe_tokens  # noqa: PLC0415
+        from app.agents.text_alignment import _sanitize_aligned_line  # noqa: PLC0415
+
+        cleaned = _clamp(_strip_unsafe_tokens(_sanitize_aligned_line(override_text)))
+        if cleaned:
+            agent_text = _types.SimpleNamespace(text=cleaned, highlight_word=None)
+            agent_form = {"effect": "karaoke-line"}
+            return agent_text, agent_form, existing_text_mode or "agent_text"
+        # Nothing renderable after sanitization → no overlay (footage only).
+        return None, None, existing_text_mode or "agent_text"
+
+    if persisted_text and existing_text_mode == "agent_text":
+        # Reuse persisted text — NO LLM call.
+        agent_text = _types.SimpleNamespace(text=persisted_text, highlight_word=persisted_highlight)
+        agent_form = {"effect": "karaoke-line"}
+        return agent_text, agent_form, "agent_text"
+
+    # Fall through: run intro_writer (first render or legacy variant without persisted text).
+    agent_text, agent_form = run_text_agents_fn()
+    return agent_text, agent_form, "agent_text"
+
+
+def _is_fast_reburn_eligible(
+    existing: dict,
+    new_track_id: str | None,
+    mix_override,
+    settings,
+) -> bool:
+    """True iff this edit can use the cached-base fast-reburn path."""
+    if not getattr(settings, "GENERATIVE_FAST_REBURN_ENABLED", True):
+        return False
+    if new_track_id is not None or mix_override is not None:
+        return False  # audio changes → must full re-render
+    if not existing.get("base_video_path"):
+        return False  # no cached base (legacy or lyrics variant)
+    text_mode = existing.get("text_mode")
+    if text_mode not in ("agent_text", "none"):
+        return False  # lyrics variants: full path in v1
+    return True
+
+
+def _reburn_text_on_base(
+    *,
+    job_id: str,
+    variant_id: str,
+    existing: dict,
+    agent_text,
+    agent_form: dict | None,
+    text_mode: str,
+    resolved_style_set_id: str | None,
+    size_override_px: int | None,
+    settings,
+) -> dict:
+    """Fast reburn: download base → rebuild overlay → burn → upload.
+
+    Returns a partial variant patch dict (same keys as _update_variant_entry expects).
+    Raises on unrecoverable failure (base download error handled by caller via fallback).
+    """
+    import shutil  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+
+    base_gcs_path = existing["base_video_path"]
+
+    with tempfile.TemporaryDirectory(prefix="nova_reburn_") as tmpdir:
+        local_base = os.path.join(tmpdir, "base.mp4")
+
+        # Download the cached base
+        download_to_file(base_gcs_path, local_base)
+
+        # Resolve size (pixel-stability rule)
+        existing_size_px = existing.get("intro_text_size_px")
+        existing_size_source = existing.get("intro_size_source", "computed")
+        if size_override_px is not None:
+            final_size_px = size_override_px
+            final_size_source = "user"
+        elif existing_size_source == "user" and existing_size_px:
+            final_size_px = existing_size_px
+            final_size_source = "user"
+        else:
+            # computed_fallback_px: if set has no px, fall back to persisted px
+            # instead of hero-less recompute.
+            final_size_px = existing_size_px  # may be None; resolver handles it
+            final_size_source = "computed"
+
+        # Probe base duration for reveal window
+        try:
+            base_dur = float(probe_video(local_base).duration_s)
+        except Exception:  # noqa: BLE001
+            base_dur = MAX_INTRO_S
+        reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
+
+        final_path = os.path.join(tmpdir, "final.mp4")
+        intro_px = existing_size_px
+        intro_source = existing_size_source
+
+        if agent_text is not None and text_mode == "agent_text":
+            # Always pass final_size_px as size_override_px so we never try to
+            # recompute via compute_overlay_size (which needs hero-clip metadata
+            # we don't have on the fast-reburn path). The "user" vs "computed"
+            # distinction is preserved via final_size_source returned below.
+            params, intro_px, intro_source = _resolve_intro_overlay_params(
+                agent_text,
+                agent_form or {"effect": "karaoke-line"},
+                resolved_style_set_id,
+                size_override_px=final_size_px,
+            )
+            # Preserve the original source label — size_override_px always wins
+            # inside the resolver, which would label it "user"; restore the real
+            # source so pixel-stability logic downstream remains correct.
+            intro_source = final_size_source
+            overlays = build_persistent_intro_overlays(
+                reveal_window_s=reveal_window_s,
+                beats=[],  # even-split reveal; talking-head precedent
+                **params,
+            )
+            burn_text_overlays_skia(local_base, overlays, final_path, tmpdir)
+
+            # Detect silent copy-through (burn failed with non-empty overlays)
+            if (
+                overlays
+                and os.path.exists(final_path)
+                and os.path.getsize(final_path) == os.path.getsize(local_base)
+            ):
+                raise RuntimeError(
+                    f"burn_text_overlays_skia copy-through detected on {base_gcs_path}; "
+                    "marking reburn as failed"
+                )
+        else:
+            # remove_text or none mode
+            shutil.copy2(local_base, final_path)
+
+        # Upload final to same variant key
+        variant_gcs_key = existing.get("video_path", "").lstrip("/")
+        output_url = upload_public_read(final_path, variant_gcs_key)
+
+        return {
+            "intro_text": agent_text.text if agent_text else None,
+            "intro_highlight_word": (
+                getattr(agent_text, "highlight_word", None) if agent_text else None
+            ),
+            "intro_text_size_px": intro_px if agent_text else existing_size_px,
+            "intro_size_source": intro_source if agent_text else existing_size_source,
+            "style_set_id": resolved_style_set_id,
+            "text_mode": text_mode,
+            "render_status": "ready",
+            "video_path": variant_gcs_key,
+            "output_url": output_url,
+            # base_video_path unchanged (still valid for next edit)
+        }
+
+
 def _run_regenerate_variant(
     job_id: str,
     variant_id: str,
@@ -784,8 +965,6 @@ def _run_regenerate_variant(
     size_override_px: int | None = None,
     mix_override: float | None = None,
 ) -> None:
-    import types  # noqa: PLC0415
-
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
@@ -819,6 +998,10 @@ def _run_regenerate_variant(
         # from the variant (not the persona row) so re-renders are hermetic — the
         # persona style could have changed between first-render and re-render.
         existing_user_style_knobs: dict | None = existing.get("user_style_knobs") or None
+        # Persisted intro text — used by _resolve_regen_text to skip re-running
+        # intro_writer on font/size/style edits where the user's text hasn't changed.
+        persisted_text: str | None = existing.get("intro_text") or None
+        persisted_highlight: str | None = existing.get("intro_highlight_word") or None
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -850,6 +1033,62 @@ def _run_regenerate_variant(
         job_id, variant_id, {"render_status": "rendering", "ok": False, "error": None}
     )
 
+    # ── Fast-reburn path ──────────────────────────────────────────────────────
+    # When the edit is a pure text/style/size change (no audio change, base cached),
+    # skip the full clip ingest + re-assemble. Download the base → reburn text → done.
+    if _is_fast_reburn_eligible(existing, new_track_id, mix_override, settings):
+        # Resolve text WITHOUT ingest (no LLM needed: persisted text or override).
+        # The run_text_agents_fn is never called on the fast path because eligibility
+        # already guarantees base_video_path is set, which only happens after a
+        # successful full render that persists intro_text.
+        fast_agent_text, fast_agent_form, fast_text_mode = _resolve_regen_text(
+            override_text=override_text,
+            remove_text=remove_text,
+            existing_text_mode=existing_text_mode,
+            persisted_text=persisted_text,
+            persisted_highlight=persisted_highlight,
+            run_text_agents_fn=lambda: (None, None),  # unreachable: persisted text exists
+        )
+        _used_fast_path = False
+        try:
+            result = _reburn_text_on_base(
+                job_id=job_id,
+                variant_id=variant_id,
+                existing=existing,
+                agent_text=fast_agent_text,
+                agent_form=fast_agent_form,
+                text_mode=fast_text_mode,
+                resolved_style_set_id=resolved_style_set_id,
+                size_override_px=resolved_size_override_px,
+                settings=settings,
+            )
+            _used_fast_path = True
+        except Exception as _fast_exc:  # noqa: BLE001
+            # If the base blob is gone (GCS lifecycle, deleted base, etc.), fall
+            # through to the full re-render path rather than surfacing an error.
+            # Detect by checking for Google/GCS NotFound or generic download signals.
+            _exc_type = type(_fast_exc).__name__
+            _is_missing = (
+                "NotFound" in _exc_type
+                or "not found" in str(_fast_exc).lower()
+                or "does not exist" in str(_fast_exc).lower()
+                or "no such object" in str(_fast_exc).lower()
+            )
+            if _is_missing:
+                log.warning(
+                    "generative_fast_reburn_base_missing",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(_fast_exc),
+                )
+                # Fall through to full path below.
+            else:
+                raise
+        if _used_fast_path:
+            _update_variant_entry(job_id, variant_id, result)
+            return
+    # ── /Fast-reburn path ─────────────────────────────────────────────────────
+
     # Resolve the track for the new spec.
     track: MusicTrack | None = None
     track_id = new_track_id or existing_track_id
@@ -858,36 +1097,6 @@ def _run_regenerate_variant(
             track = db.get(MusicTrack, track_id)
         if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
             raise ValueError(f"Track {track_id} is not available for re-render")
-
-    # Resolve text mode + text.
-    if remove_text:
-        text_mode = "none"
-    elif override_text:
-        text_mode = "agent_text"
-    else:
-        text_mode = existing_text_mode
-
-    spec: dict[str, Any] = {
-        "variant_id": variant_id,
-        "rank": rank,
-        "text_mode": text_mode,
-        "track": track,
-    }
-    # Voiceover variant re-render (e.g. the mix slider): re-attach the voice bed and
-    # the resolved mix. Precedence: explicit slider value → the variant's persisted
-    # mix → the per-variant default. The track (voiceover_music's bed) is already
-    # resolved above via existing_track_id.
-    if voiceover_gcs_path and variant_id in ("voiceover_only", "voiceover_music"):
-        if mix_override is not None:
-            resolved_mix = max(0.0, min(1.0, float(mix_override)))
-        elif existing_mix is not None:
-            resolved_mix = max(0.0, min(1.0, float(existing_mix)))
-        elif variant_id == "voiceover_music":
-            resolved_mix = _VOICEOVER_MUSIC_DEFAULT_MIX
-        else:
-            resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
-        spec["voiceover_gcs_path"] = voiceover_gcs_path
-        spec["mix"] = resolved_mix
 
     with tempfile.TemporaryDirectory(prefix="nova_generative_re_") as tmpdir:
         # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
@@ -898,30 +1107,45 @@ def _run_regenerate_variant(
         # the render). Follow-up once the feature is real-render-verified.
         ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
         available_footage_s = _available_footage_s(ingest["probe_map"])
-        agent_text: Any = None
-        agent_form: dict = {}
-        if text_mode == "agent_text":
-            if override_text:
-                # User-supplied text bypasses intro_writer's LLM, so it must go through
-                # the SAME output sanitizers the agent path applies (the Skia renderer
-                # does NOT sanitize — it draws overlay["text"] verbatim). Strip ASS
-                # tags / control chars / URLs / handles and clamp length.
-                from app.agents.intro_writer import _clamp, _strip_unsafe_tokens  # noqa: PLC0415
-                from app.agents.text_alignment import _sanitize_aligned_line  # noqa: PLC0415
 
-                cleaned = _clamp(_strip_unsafe_tokens(_sanitize_aligned_line(override_text)))
-                if cleaned:
-                    agent_text = types.SimpleNamespace(text=cleaned, highlight_word=None)
-                    agent_form = {"effect": "karaoke-line"}
-                # else: nothing renderable after sanitization → no overlay (footage only).
+        # Resolve text mode + agent_text in one step.  _resolve_regen_text re-uses
+        # persisted intro_text when the user is only changing font/size/style — no LLM.
+        agent_text, agent_form, text_mode = _resolve_regen_text(
+            override_text=override_text,
+            remove_text=remove_text,
+            existing_text_mode=existing_text_mode,
+            persisted_text=persisted_text,
+            persisted_highlight=persisted_highlight,
+            run_text_agents_fn=lambda: _run_text_agents(
+                ingest["clip_metas"],
+                ingest["hero"],
+                job_id=job_id,
+                language=language,
+                persona=persona,
+            ),
+        )
+
+        spec: dict[str, Any] = {
+            "variant_id": variant_id,
+            "rank": rank,
+            "text_mode": text_mode,
+            "track": track,
+        }
+        # Voiceover variant re-render (e.g. the mix slider): re-attach the voice bed and
+        # the resolved mix. Precedence: explicit slider value → the variant's persisted
+        # mix → the per-variant default. The track (voiceover_music's bed) is already
+        # resolved above via existing_track_id.
+        if voiceover_gcs_path and variant_id in ("voiceover_only", "voiceover_music"):
+            if mix_override is not None:
+                resolved_mix = max(0.0, min(1.0, float(mix_override)))
+            elif existing_mix is not None:
+                resolved_mix = max(0.0, min(1.0, float(existing_mix)))
+            elif variant_id == "voiceover_music":
+                resolved_mix = _VOICEOVER_MUSIC_DEFAULT_MIX
             else:
-                agent_text, agent_form = _run_text_agents(
-                    ingest["clip_metas"],
-                    ingest["hero"],
-                    job_id=job_id,
-                    language=language,
-                    persona=persona,
-                )
+                resolved_mix = _VOICEOVER_ONLY_DEFAULT_MIX
+            spec["voiceover_gcs_path"] = voiceover_gcs_path
+            spec["mix"] = resolved_mix
 
         variant_dir = os.path.join(tmpdir, f"variant_{rank}")
         os.makedirs(variant_dir, exist_ok=True)
@@ -1437,12 +1661,18 @@ def _render_generative_variant(
         # Agent-decided (or user-pinned) intro size. None for non-text variants.
         "intro_text_size_px": None,
         "intro_size_source": None,  # "computed" | "user" | "user_style" | None
+        # Persisted intro text so re-renders can reuse it without re-running intro_writer.
+        "intro_text": None,
+        "intro_highlight_word": None,
         # Voice-prominence slider for voiceover variants; None otherwise.
         "mix": mix if voiceover_gcs_path else None,
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted so
         # re-renders (swap-song/retext/restyle) re-apply them without re-reading
         # the persona row. None/empty = no overrides = baseline.
         "user_style_knobs": user_style_knobs or None,
+        # Cached text-free, audio-mixed base for fast-reburn on style/font/size edits.
+        # None for lyrics variants (full path in v1) and voiceover variants.
+        "base_video_path": None,
     }
     try:
         beats: list[float] = []
@@ -1491,23 +1721,38 @@ def _render_generative_variant(
 
         # Text injection per mode. The chosen style set styles BOTH the lyric
         # overlays (lyrics variant) and the AI hero-intro (text variants).
+        # For agent_text variants we do NOT inject into the recipe here —
+        # instead we assemble text-free, cache the base, then burn text in a
+        # separate step so fast-reburn can skip re-assembly on future edits.
         if text_mode == "lyrics" and track is not None:
             recipe_dict = _inject_lyrics(recipe_dict, track, style_set_id=style_set_id)
-        elif text_mode == "agent_text" and agent_text is not None:
+
+        # Resolve agent_text overlay params early (before assembly) so we have
+        # intro_px / intro_source for base dict even if the burn fails below.
+        _agent_text_overlays = None  # built after audio mix, if needed
+        _agent_text_intro_px = None
+        _agent_text_intro_source = None
+        if text_mode == "agent_text" and agent_text is not None:
             hero_safe_zone, hero_density = _hero_composition(clip_metas)
-            recipe_dict, intro_px, intro_source = _inject_agent_intro(
-                recipe_dict,
-                agent_text,
-                agent_form,
-                beats,
-                style_set_id=style_set_id,
-                hero_safe_zone=hero_safe_zone,
-                hero_density=hero_density,
-                size_override_px=intro_size_override_px,
-                user_style_knobs=user_style_knobs,
+            _at_params, _agent_text_intro_px, _agent_text_intro_source = (
+                _resolve_intro_overlay_params(
+                    agent_text,
+                    agent_form,
+                    style_set_id,
+                    hero_safe_zone=hero_safe_zone,
+                    hero_density=hero_density,
+                    size_override_px=intro_size_override_px,
+                    user_style_knobs=user_style_knobs,
+                )
             )
-            base["intro_text_size_px"] = intro_px
-            base["intro_size_source"] = intro_source
+            base["intro_text_size_px"] = _agent_text_intro_px
+            base["intro_size_source"] = _agent_text_intro_source
+            # Persist the intro text so re-renders (font/size/style edits) can reuse
+            # it without re-running intro_writer.
+            base["intro_text"] = agent_text.text if agent_text is not None else None
+            base["intro_highlight_word"] = (
+                getattr(agent_text, "highlight_word", None) if agent_text is not None else None
+            )
 
         recipe = build_recipe(recipe_dict)
         try:
@@ -1537,6 +1782,9 @@ def _render_generative_variant(
             allow_slowdown_fill=False,
         )
 
+        # audio_mixed_path: the assembled+audio-mixed video before text burn.
+        # For agent_text variants this becomes the cached base.
+        audio_mixed_path = os.path.join(variant_dir, "audio_mixed.mp4")
         final_path = os.path.join(variant_dir, "final.mp4")
         if voiceover_gcs_path:
             # Voiceover variants: the user's voice is the bed. voiceover_only ducks the
@@ -1546,7 +1794,7 @@ def _render_generative_variant(
             _mix_user_voiceover(
                 assembled_path,
                 voiceover_local,
-                final_path,
+                audio_mixed_path,
                 variant_dir,
                 mix=mix,
                 target_duration_s=voiceover_target_s,
@@ -1571,14 +1819,54 @@ def _render_generative_variant(
             _mix_template_audio(
                 assembled_path,
                 track.audio_gcs_path,
-                final_path,
+                audio_mixed_path,
                 variant_dir,
                 audio_start_offset_s=float(cfg.get("best_start_s", 0.0)),
             )
         else:
             # Original-audio variant: KEEP the clips' source audio — skip the mix.
             # `_assemble_clips` already muxed source audio into assembled.mp4.
-            final_path = assembled_path
+            audio_mixed_path = assembled_path
+
+        if not os.path.exists(audio_mixed_path) or os.path.getsize(audio_mixed_path) == 0:
+            raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
+
+        # For agent_text variants: upload the text-free base for fast-reburn, then
+        # burn text on top to produce the final output. For all other modes the
+        # audio-mixed video IS the final (no separate burn step).
+        if text_mode == "agent_text" and agent_text is not None:
+            from app.pipeline.generative_overlays import (  # noqa: PLC0415
+                build_persistent_intro_overlays,
+            )
+            from app.pipeline.probe import probe_video  # noqa: PLC0415
+            from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+
+            # Upload the text-free base first.
+            base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
+            base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
+            base["base_video_path"] = base_gcs
+            log.info(
+                "generative_base_uploaded",
+                job_id=job_id,
+                variant_id=variant_id,
+                base_gcs=base_gcs,
+            )
+
+            # Burn the agent intro overlay on top of the base.
+            try:
+                base_dur = float(probe_video(audio_mixed_path).duration_s)
+            except Exception:  # noqa: BLE001
+                base_dur = MAX_INTRO_S
+            reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
+            overlays = build_persistent_intro_overlays(
+                reveal_window_s=reveal_window_s,
+                beats=beats,
+                **_at_params,
+            )
+            burn_text_overlays_skia(audio_mixed_path, overlays, final_path, variant_dir)
+        else:
+            # lyrics / none / voiceover: no text burn; base caching not supported in v1.
+            final_path = audio_mixed_path
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty output")
@@ -1657,10 +1945,16 @@ def _render_talking_head_variant(
         "style_set_id": style_set_id,
         "intro_text_size_px": None,
         "intro_size_source": None,
+        # Persisted intro text so re-renders can reuse it without re-running intro_writer.
+        "intro_text": None,
+        "intro_highlight_word": None,
         "resolved_archetype": "talking_head",
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted for
         # re-renders (same as _render_generative_variant).
         "user_style_knobs": user_style_knobs or None,
+        # No text-free base cached for talking_head in v1 (the assembler's spine
+        # extraction is the expensive step, not text burn; fast-reburn not yet applied).
+        "base_video_path": None,
     }
 
     try:
@@ -1709,6 +2003,12 @@ def _render_talking_head_variant(
                 final_path = burned
                 base["intro_text_size_px"] = intro_px
                 base["intro_size_source"] = intro_source
+            # Persist intro text regardless of whether overlays were non-empty —
+            # the text itself is what re-renders need to reuse.
+            base["intro_text"] = agent_text.text if agent_text is not None else None
+            base["intro_highlight_word"] = (
+                getattr(agent_text, "highlight_word", None) if agent_text is not None else None
+            )
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty output")

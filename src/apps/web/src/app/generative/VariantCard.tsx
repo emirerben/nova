@@ -152,7 +152,7 @@ export function VariantCard({
         <button
           disabled={rendering}
           onClick={() => {
-            const next = prompt("New intro text:");
+            const next = prompt("New intro text:", variant.intro_text ?? "");
             if (next && next.trim()) run(() => onRetext(next.trim()));
           }}
           className={btnClass}
