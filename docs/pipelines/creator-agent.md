@@ -105,7 +105,7 @@ changed between the first render and the swap-song/retext.
 
 ## Milestones
 
-### M1 — User Style entity (this PR, dark behind `USER_STYLE_ENABLED=false`)
+### M1 — User Style entity ✓ SHIPPED dark (`USER_STYLE_ENABLED=false`)
 
 **What's shipped:**
 - `personas.style` JSONB column (migration 0050)
@@ -115,38 +115,35 @@ changed between the first render and the swap-song/retext.
 - Render wiring: `build_generative_job(user_style=...)` → `all_candidates["user_style"]`; `_resolve_intro_overlay_params(user_style_knobs=...)` applies knobs with correct precedence
 - API: `GET /personas/style`, `PATCH /personas/style` (→ status="edited"), `POST /personas/style/rederive`
 - Kill switch: `USER_STYLE_ENABLED=false` (default)
+- **M1-FE:** `StyleCard` in workspace left rail (5 render states); links to `/plan/style`
 
-**Not yet wired:**
-- Frontend StyleCard (M1 backend ships first; UI ships once kill switch is flipped)
-- Planner does not yet consume `instruction_level` or `footage_type_bias` (M3)
+### M2 — Conversational agent ✓ SHIPPED dark (`STYLE_AGENT_ENABLED=false`)
 
-### M2 — Conversational agent
+`StyleIntentAgent` (`nova.plan.style_intent`) parses free-text style utterances into 5
+typed intents. Editorial-interview frontend at `/plan/style` (`StyleAgentInterview`
+component — no chat bubbles, clean Q&A flow). API routes:
+- `POST /personas/agent/start` — personalized greeting + opening chips
+- `POST /personas/agent/turn` — stateless single-shot intent dispatch (both return 404 when flag off)
 
-A chat endpoint where the user says "change my main font to something bolder" or "I
-don't want to film running anymore". The agent parses the intent → dispatches to
-existing re-tune tasks or PATCH routes → the user sees the impact on next render.
+Remaining open items (post-flag-flip):
+- Scope reduction intent (stop filming X) → `PATCH /content_plans/{id}` category edit (new)
 
-Key interactions:
-- Font/color/style change → `PATCH /personas/style` (→ status="edited")
-- Persona preference → `PATCH /personas/{id}` → `retune_persona_from_feedback`
-- "No instructions" → style.instruction_level="none" → planner consumes in M3
-- Scope reduction (stop filming X) → `PATCH /content_plans/{id}` category edit (new)
+### M3 — Style-driven plan + filming guide in render ✓ SHIPPED dark (reads `USER_STYLE_ENABLED`)
 
-### M3 — Style-driven plan + filming guide in render
+- Planner reads `style.instruction_level` + `preferred_edit_format_mix` → plan items get
+  per-day `filming_guide` (2–4 shot keys keyed to `edit_format`) injected as context for
+  `intro_writer`'s hook; `CONTENT_PLAN_PROMPT_VERSION` → `2026-06-07`
+- `_resolve_archetype`: soft `footage_type_bias` tiebreaker biases toward user's declared
+  footage preference (transparent when bias absent — byte-identical baseline)
 
-- Planner reads `style.instruction_level` + `preferred_edit_format_mix` to determine
-  video category weights and instruction verbosity
-- `filming_guide` (already in `plan_items`) threaded into `build_generative_job` →
-  `all_candidates["filming_guide"]` → `intro_writer` uses it as context for the hook
-- Persona-driven archetype dispatch: `footage_type_bias` biases `_select_archetype`
-  toward the user's preferred footage style
+### M4 — Per-item conformance feedback ✓ SHIPPED dark (`CONFORMANCE_FEEDBACK_ENABLED=false`)
 
-### M4 — Per-item single-video upload + conformance agent
-
-- UI change: upload one video per instructed plan item (vs. current bulk upload)
-- Conformance agent: compare uploaded footage against the item's `filming_guide`
-  (clip_metadata signals) → emit "this looks like X instead of Y; engagement risk Z"
-- Reuse `clip_metadata` + `clip_plan_matcher` signals; new `ConformanceFeedbackAgent`
+- Migration 0051: nullable `conformance` JSONB on `plan_items`
+- `ConformanceFeedbackAgent` (`nova.plan.conformance_feedback`) — Gemini Flash, best-effort,
+  fire-and-forget after `attach_clips` commit (max_retries=0, soft_time_limit=120s)
+- Verdict panel on plan-item page (lime/amber/red); never blocks Generate
+- Instructed items (instruction_level ≠ "none") get single-file replace UI
+- Kill switch: `CONFORMANCE_FEEDBACK_ENABLED=false` (default)
 
 ### M5 — Freeform / off-plan uploads
 
