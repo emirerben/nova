@@ -1,0 +1,27 @@
+{
+  "agent": "nova.plan.style_intent",
+  "prompt_version": "2026-06-07",
+  "input": {
+    "utterance": "make my font bigger",
+    "prior_turns": [],
+    "current_style_snapshot": {
+      "style_set_id": "travel_editorial",
+      "instruction_level": "full",
+      "footage_type_bias": [],
+      "top_knobs": {"font_family": "Playfair Display", "text_size_px": 52}
+    }
+  },
+  "raw_text": "{\"intent\": \"style_edit\", \"fields\": {\"knobs\": {\"text_size_px\": 64}}, \"confidence\": 0.95, \"reply\": \"Done — your text size is now larger. Your next render will use this.\", \"suggestions\": [\"Make it even bigger\", \"Change my font\", \"Move text to center\", \"Adjust text color\"], \"needs_clarification\": false}",
+  "output": {
+    "intent": "style_edit",
+    "fields": {"knobs": {"text_size_px": 64}},
+    "confidence": 0.95,
+    "reply": "Done — your text size is now larger. Your next render will use this.",
+    "suggestions": ["Make it even bigger", "Change my font", "Move text to center", "Adjust text color"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Clear style_edit intent — 'make my font bigger' unambiguously maps to text_size_px knob. No clarification needed, high confidence."
+  }
+}

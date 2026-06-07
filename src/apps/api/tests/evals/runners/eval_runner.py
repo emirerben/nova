@@ -264,6 +264,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.style_derivation import StyleDerivationAgent
 
         return StyleDerivationAgent
+    if agent_name == "nova.plan.style_intent":
+        from app.agents.style_intent import StyleIntentAgent
+
+        return StyleIntentAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

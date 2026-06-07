@@ -368,24 +368,14 @@ async def get_style(
     )
 
 
-@router.patch("/style", response_model=StyleResponse)
-async def patch_style(
-    edit: StyleEdit,
-    user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> StyleResponse:
-    """Partial-edit the user's style. Sets status='edited' — derivation will not auto-overwrite."""
-    from app.config import settings  # noqa: PLC0415
+async def _apply_style_edit(row: PersonaRow, edit: StyleEdit, db: AsyncSession) -> dict:
+    """Read-merge-write the style edit onto the persona row and commit.
 
-    if not settings.user_style_enabled:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_not_enabled")
-
-    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
-    row = result.scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="persona_not_found")
-
-    # Read-merge-write: merge the edit into the existing blob (or start fresh).
+    Shared by PATCH /personas/style and POST /personas/agent/turn so the two
+    write paths can never drift. Returns the final merged style dict.
+    Raises HTTPException on validation errors (unknown set_id / font_family /
+    instruction_level).
+    """
     raw: dict = dict(row.style) if row.style else {}
 
     # Validate style_set_id against catalog when provided.
@@ -444,10 +434,31 @@ async def patch_style(
     row.style = raw
     await db.commit()
     await db.refresh(row)
-    pinned_set_id = raw.get("style_set_id")
-    pinned_font = (raw.get("knobs") or {}).get("font_family")
+    return dict(row.style)
+
+
+@router.patch("/style", response_model=StyleResponse)
+async def patch_style(
+    edit: StyleEdit,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StyleResponse:
+    """Partial-edit the user's style. Sets status='edited' — derivation will not auto-overwrite."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.user_style_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_not_enabled")
+
+    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="persona_not_found")
+
+    merged = await _apply_style_edit(row, edit, db)
+    pinned_set_id = merged.get("style_set_id")
+    pinned_font = (merged.get("knobs") or {}).get("font_family")
     return StyleResponse(
-        style=dict(row.style),
+        style=merged,
         status="edited",
         style_set_preview=_style_set_preview(pinned_set_id),
         font_preview=_font_preview(pinned_font),
@@ -754,4 +765,252 @@ async def chat_turn(
         turn_number=new_agent_count,
         turn_label=computed_label,
         persona_status="chat_pending",
+    )
+
+
+# ── Style Agent routes (Creator Agent M2) ──────────────────────────────────────
+
+
+class StyleAgentTurnBody(BaseModel):
+    answer: str
+    prior_turns: list[dict] = Field(default_factory=list)
+
+
+class StyleAgentTurnResponse(BaseModel):
+    reply: str
+    suggestions: list[str] = Field(default_factory=list)
+    applied: bool
+    intent: str
+    persona_status: str
+
+
+def _style_snapshot(row: PersonaRow) -> dict | None:
+    """Compact snapshot of the user's current style for the agent greeting."""
+    if not row.style:
+        return None
+    raw = dict(row.style)
+    return {
+        "style_set_id": raw.get("style_set_id"),
+        "instruction_level": raw.get("instruction_level"),
+        "footage_type_bias": raw.get("footage_type_bias", []),
+        "top_knobs": {
+            k: v
+            for k, v in (raw.get("knobs") or {}).items()
+            if v is not None and k in ("font_family", "text_size_px", "text_anchor")
+        },
+    }
+
+
+@router.post("/agent/start", response_model=StyleAgentTurnResponse)
+async def style_agent_start(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StyleAgentTurnResponse:
+    """Return a personalised greeting + opening suggestion chips for the style agent.
+
+    Gated behind `settings.style_agent_enabled` (404 when off).
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.style_agent_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_agent_not_enabled")
+
+    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="persona_not_found")
+
+    snapshot = _style_snapshot(row)
+    if snapshot and snapshot.get("style_set_id"):
+        greeting = (
+            f'Your style is set to "{snapshot["style_set_id"]}". '
+            "Tell me what you'd like to change — your font, text size, filming focus, "
+            "or how much detail you want in your content plans."
+        )
+    else:
+        greeting = (
+            "Tell me how you'd like your videos to look and feel. "
+            'You can say things like "make my font bigger", "I mostly film outdoors", '
+            'or "keep my plans minimal".'
+        )
+
+    return StyleAgentTurnResponse(
+        reply=greeting,
+        suggestions=[
+            "Make my font bigger",
+            "I mostly film outdoors",
+            "Keep my plans minimal",
+            "Change my text style",
+        ],
+        applied=False,
+        intent="greeting",
+        persona_status=row.persona_status,
+    )
+
+
+@router.post("/agent/turn", response_model=StyleAgentTurnResponse)
+async def style_agent_turn(
+    body: StyleAgentTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StyleAgentTurnResponse:
+    """Process one style-agent conversational turn.
+
+    Parses the user utterance into a typed intent, routes to the correct write path,
+    and returns a reply + suggestion chips.
+    Gated behind `settings.style_agent_enabled` (404 when off).
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.style_agent_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="style_agent_not_enabled")
+
+    result = await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    row = result.scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="persona_not_found")
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.style_intent import StyleIntentAgent, StyleIntentInput  # noqa: PLC0415
+
+    snapshot = _style_snapshot(row)
+    agent_input = StyleIntentInput(
+        utterance=body.answer,
+        prior_turns=body.prior_turns,
+        current_style_snapshot=snapshot,
+    )
+
+    try:
+        intent_result = await asyncio.to_thread(
+            StyleIntentAgent(default_client()).run,
+            agent_input,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("style_agent_turn.agent_failed", error=str(exc), user_id=str(user.id))
+        # Store the failed turn for diagnostics, then surface a friendly fallback.
+        q = copy.deepcopy(row.questionnaire or {})
+        turns: list[dict] = q.get("style_agent_turns", [])
+        turns.append({"role": "user", "content": body.answer, "error": str(exc)})
+        q["style_agent_turns"] = turns
+        row.questionnaire = q
+        await db.commit()
+        _fallback_reply = (
+            "I had trouble understanding that. Try rephrasing — "
+            'for example, "make my font bigger" or "I film mostly outdoors".'
+        )
+        return StyleAgentTurnResponse(
+            reply=_fallback_reply,
+            suggestions=["Make my font bigger", "I mostly film outdoors", "Keep plans minimal"],
+            applied=False,
+            intent="unknown",
+            persona_status=row.persona_status,
+        )
+
+    # Store the turn in questionnaire["style_agent_turns"] (disjoint from interview_turns).
+    q = copy.deepcopy(row.questionnaire or {})
+    turns = q.get("style_agent_turns", [])
+    turns.append(
+        {
+            "role": "user",
+            "content": body.answer,
+            "intent": intent_result.intent,
+            "confidence": intent_result.confidence,
+        }
+    )
+    turns.append(
+        {
+            "role": "agent",
+            "content": intent_result.reply,
+            "intent": intent_result.intent,
+            "applied": False,  # updated below if write succeeds
+        }
+    )
+    q["style_agent_turns"] = turns
+    row.questionnaire = q
+    # Persist the turn log before attempting writes so we never lose it.
+    await db.commit()
+
+    applied = False
+
+    # Route to the correct write path based on intent.
+    if intent_result.needs_clarification or intent_result.intent == "clarify":
+        # No write — return clarifying question.
+        pass
+
+    elif intent_result.intent in ("style_edit", "scope_reduction"):
+        # Build a StyleEdit from the agent fields — only parity-safe knobs allowed.
+        fields = intent_result.fields or {}
+
+        # Parity guard: validate knobs through StyleKnobs extra="forbid" before any write.
+        raw_knobs = fields.get("knobs") or {}
+        if raw_knobs:
+            from pydantic import ValidationError  # noqa: PLC0415
+
+            from app.agents._schemas.user_style import StyleKnobs  # noqa: PLC0415
+
+            try:
+                StyleKnobs.model_validate(raw_knobs)
+            except ValidationError as exc:
+                log.warning(
+                    "style_agent_turn.forbidden_knob",
+                    knobs=raw_knobs,
+                    error=str(exc),
+                    user_id=str(user.id),
+                )
+                # Forbidden key → no write, ask for clarification.
+                _knob_reply = (
+                    "I can only adjust font, size, position, color, or stroke settings. "
+                    "Could you be more specific about what to change?"
+                )
+                return StyleAgentTurnResponse(
+                    reply=_knob_reply,
+                    suggestions=["Change my font", "Make text bigger", "Move text to center"],
+                    applied=False,
+                    intent=intent_result.intent,
+                    persona_status=row.persona_status,
+                )
+
+        knobs_edit = None
+        if raw_knobs:
+            knobs_edit = StyleKnobsEdit(**{k: v for k, v in raw_knobs.items() if v is not None})
+
+        style_edit = StyleEdit(
+            style_set_id=fields.get("style_set_id"),
+            knobs=knobs_edit,
+            footage_type_bias=fields.get("footage_type_bias"),
+            preferred_edit_format_mix=fields.get("preferred_edit_format_mix"),
+            instruction_level=fields.get("instruction_level"),
+        )
+
+        try:
+            await _apply_style_edit(row, style_edit, db)
+            applied = True
+            # Update the last agent turn to reflect the write.
+            q2 = copy.deepcopy(row.questionnaire or {})
+            turns2 = q2.get("style_agent_turns", [])
+            if turns2:
+                turns2[-1]["applied"] = True
+            q2["style_agent_turns"] = turns2
+            row.questionnaire = q2
+            await db.commit()
+        except HTTPException:
+            # Validation error from _apply_style_edit (unknown set/font) — bubble reply.
+            pass
+
+    elif intent_result.intent == "persona_preference":
+        # Soft preference → retune the persona (which will re-derive the style).
+        if row.persona_status in ("ready", "edited"):
+            from app.tasks.persona_build import retune_persona_from_feedback  # noqa: PLC0415
+
+            retune_persona_from_feedback.delay(str(row.id))
+            applied = True  # task is queued, not applied synchronously
+
+    # intent == "unknown" → no write, use reply from agent.
+
+    return StyleAgentTurnResponse(
+        reply=intent_result.reply,
+        suggestions=intent_result.suggestions,
+        applied=applied,
+        intent=intent_result.intent,
+        persona_status=row.persona_status,
     )

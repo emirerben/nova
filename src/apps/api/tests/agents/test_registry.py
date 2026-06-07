@@ -36,6 +36,8 @@ _EXPECTED = {
     "nova.plan.clip_plan_matcher",
     # Creator Agent M1 — style derivation
     "nova.plan.style_derivation",
+    # Creator Agent M2 — style intent (interview agent)
+    "nova.plan.style_intent",
 }
 
 
