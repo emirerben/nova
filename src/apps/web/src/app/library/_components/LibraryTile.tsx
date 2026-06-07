@@ -7,9 +7,7 @@ import { downloadVideo } from "@/lib/download-video";
 import FeedbackButtons from "./FeedbackButtons";
 
 /**
- * One 9:16 video in the library. Three visual states mirror the design spec:
- * ready (playable video + Add-to-plan), generating (shimmer placeholder),
- * failed (muted error). The content is the visual — no decorative chrome.
+ * One 9:16 video in the library. Light editorial canvas (D20/D21).
  */
 export default function LibraryTile({
   job,
@@ -21,10 +19,9 @@ export default function LibraryTile({
   onPinned: (planItemId: string) => void;
 }) {
   return (
-    <div className="animate-fade-up">
-      <div className="relative aspect-[9/16] overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+    <div className="motion-safe:animate-fade-up">
+      <div className="relative aspect-[9/16] overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
         {job.status === "ready" && job.output_url ? (
-          // The mp4's first frame acts as the poster; metadata-only until played.
           <video
             src={job.output_url}
             controls
@@ -35,12 +32,12 @@ export default function LibraryTile({
           />
         ) : job.status === "failed" ? (
           <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <span className="text-sm text-zinc-300">This render didn&apos;t finish</span>
-            <span className="text-xs text-zinc-500">{job.raw_status.replace(/_/g, " ")}</span>
+            <span className="text-sm text-[#3f3f46]">This render didn&apos;t finish</span>
+            <span className="text-xs text-[#a1a1aa]">{job.raw_status.replace(/_/g, " ")}</span>
           </div>
         ) : (
-          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(110deg,#18181b,45%,#27272a,55%,#18181b)] bg-[length:200%_100%] motion-safe:animate-shimmer">
-            <span className="text-sm text-zinc-400">Rendering…</span>
+          <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer">
+            <span className="text-sm text-[#71717a]">Rendering…</span>
           </div>
         )}
       </div>
@@ -48,7 +45,7 @@ export default function LibraryTile({
       {job.status === "ready" && (
         <div className="mt-2">
           {job.content_plan_item_id ? (
-            <span className="inline-flex items-center text-xs font-medium uppercase tracking-wide text-amber-300">
+            <span className="inline-flex items-center text-xs font-medium uppercase tracking-wide text-lime-700">
               In your plan
             </span>
           ) : (
@@ -58,7 +55,7 @@ export default function LibraryTile({
             <button
               type="button"
               onClick={() => downloadVideo(job.output_url!, `nova-${job.id.slice(0, 8)}.mp4`)}
-              className="mt-2 min-h-11 rounded-full border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+              className="mt-2 min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400"
             >
               Download
             </button>
@@ -85,7 +82,7 @@ function AddToPlan({
 
   if (!plan || plan.items.length === 0) {
     return (
-      <a href="/plan" className="text-xs text-zinc-500 underline-offset-2 hover:underline">
+      <a href="/plan" className="text-xs text-[#71717a] underline-offset-2 hover:underline">
         Create a plan to pin this →
       </a>
     );
@@ -112,7 +109,7 @@ function AddToPlan({
         onClick={() => setOpen((v) => !v)}
         disabled={busy}
         aria-expanded={open}
-        className="min-h-11 rounded-full border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white disabled:opacity-60"
+        className="min-h-11 rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:opacity-60"
       >
         {busy ? "Adding…" : "Add to plan"}
       </button>
@@ -125,7 +122,7 @@ function AddToPlan({
               const v = e.target.value;
               if (v) void pin(Number(v));
             }}
-            className="min-h-11 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-2 text-sm text-zinc-200"
+            className="min-h-11 w-full rounded-lg border border-zinc-200 bg-white px-2 text-sm text-[#3f3f46]"
           >
             <option value="" disabled>
               Pick a day…
@@ -138,7 +135,7 @@ function AddToPlan({
           </select>
         </label>
       )}
-      {error && <p className="mt-1 text-xs text-red-400">{error}</p>}
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
     </div>
   );
 }

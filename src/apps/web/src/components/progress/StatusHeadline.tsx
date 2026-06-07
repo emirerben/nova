@@ -5,6 +5,8 @@ import { HEADLINE_CROSSFADE_MS, HEADLINE_MIN_DWELL_MS } from "./constants";
 
 interface StatusHeadlineProps {
   text: string;
+  /** "light" renders ink text on cream; "dark" (default) renders white. */
+  tone?: "dark" | "light";
 }
 
 /**
@@ -16,7 +18,8 @@ interface StatusHeadlineProps {
  * - Reduced motion: instant swap (no crossfade).
  * - role="status" aria-live="polite" — each new text announced once to screen readers.
  */
-export function StatusHeadline({ text }: StatusHeadlineProps) {
+export function StatusHeadline({ text, tone = "dark" }: StatusHeadlineProps) {
+  const textClass = tone === "light" ? "text-[#0c0c0e]" : "text-white";
   const [displayed, setDisplayed] = useState(text);
   const [incoming, setIncoming] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "fading-out" | "fading-in">("idle");
@@ -94,7 +97,7 @@ export function StatusHeadline({ text }: StatusHeadlineProps) {
     <div role="status" aria-live="polite" className="relative min-h-[2em] overflow-hidden">
       {/* Displayed (current) headline */}
       <h2
-        className="font-display text-xl text-white transition-opacity"
+        className={`font-display text-xl ${textClass} transition-opacity`}
         style={{
           transitionDuration: crossfadeDuration,
           opacity: phase === "fading-out" ? 0 : 1,
@@ -106,7 +109,7 @@ export function StatusHeadline({ text }: StatusHeadlineProps) {
       {/* Incoming headline (fades in while current fades out) */}
       {incoming && (
         <h2
-          className="font-display absolute inset-0 text-xl text-white transition-opacity"
+          className={`font-display absolute inset-0 text-xl ${textClass} transition-opacity`}
           style={{
             transitionDuration: crossfadeDuration,
             opacity: phase === "fading-out" ? 1 : 0,

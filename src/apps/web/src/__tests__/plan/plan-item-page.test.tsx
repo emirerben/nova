@@ -76,9 +76,9 @@ jest.mock("@/lib/font-faces", () => ({ FONT_FACES: "" }));
 jest.mock("@/lib/download-video", () => ({ downloadVideo: jest.fn() }));
 jest.mock("@/lib/plan-text", () => ({ stripRationalePrefix: (s: string) => s }));
 
-jest.mock("@/app/plan/_components/PlanShell", () => ({
-  __esModule: true,
-  default: ({ children }: { children: React.ReactNode }) => <div data-testid="plan-shell">{children}</div>,
+// PlanShell was deleted in v0.4.87.0 — item page now uses LightShell.
+jest.mock("@/components/ui/LightShell", () => ({
+  LightShell: ({ children }: { children: React.ReactNode }) => <div data-testid="light-shell">{children}</div>,
 }));
 jest.mock("@/app/plan/_components/PlanFilmstrip", () => ({
   __esModule: true,
@@ -180,8 +180,8 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
     });
 
     // ProgressTheater should be present (it renders the status band).
-    // The theater renders with generative phases — no crash, plan-shell present.
-    expect(screen.getByTestId("plan-shell")).toBeInTheDocument();
+    // The theater renders with generative phases — no crash, light-shell present.
+    expect(screen.getByTestId("light-shell")).toBeInTheDocument();
   });
 });
 
@@ -247,7 +247,7 @@ describe("PlanItemPage — deploy-skew (no phase fields)", () => {
     expect(screen.queryByText(/min left/i)).toBeNull();
     expect(screen.queryByText(/less than a minute/i)).toBeNull();
     // Page is present.
-    expect(screen.getByTestId("plan-shell")).toBeInTheDocument();
+    expect(screen.getByTestId("light-shell")).toBeInTheDocument();
   });
 });
 

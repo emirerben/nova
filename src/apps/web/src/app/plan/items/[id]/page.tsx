@@ -27,7 +27,8 @@ import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { ProgressTheater } from "@/components/progress";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
-import PlanShell from "../../_components/PlanShell";
+import { LightShell } from "@/components/ui/LightShell";
+import { InkButton } from "@/components/ui/InkButton";
 import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
@@ -53,18 +54,9 @@ export default function PlanItemPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
-  // Song gallery + curated style sets for the per-variant edit controls. Both are
-  // public GET endpoints (same as the generative page), so fetch them directly —
-  // not through the authenticated /api/plan proxy.
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
-  // Which variant the hero shows + the editor edits. Kept valid by an effect
-  // below: defaults to the first ready variant, never points at a gone id.
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
-  // variant_id → the output_url at the moment the user submitted an edit. While a
-  // variant is in here we keep polling and keep showing its spinner — we can't
-  // rely on catching the worker's transient "rendering" flag (the throttled
-  // plan-jobs queue may flip it between polls), so we wait for the URL to change.
   const pendingEdits = useRef<Map<string, { priorOutputUrl: string | null }>>(new Map());
 
   useEffect(() => {
@@ -76,7 +68,6 @@ export default function PlanItemPage() {
       .catch(() => setStyleSets([]));
   }, []);
 
-  // Composite fetcher: item + job status in one shot.
   const fetcher = useCallback(async () => {
     const it = await getPlanItem(itemId);
     const jobSt = it.current_job_id
@@ -106,12 +97,10 @@ export default function PlanItemPage() {
     refetch,
   } = usePolledJobStatus(fetcher, undefined, isTerminalFn);
 
-  // Set loading false once first data arrives (or error).
   useEffect(() => {
     if (data !== null || pollError !== null) setLoading(false);
   }, [data, pollError]);
 
-  // Handle auth errors from the poll.
   useEffect(() => {
     if (pollError instanceof NotAuthenticatedError) setNeedsAuth(true);
     else if (pollError) setError(pollError.message);
@@ -119,14 +108,12 @@ export default function PlanItemPage() {
 
   const item = data?.item ?? null;
 
-  // pendingEdits overlay: remove when output_url changes (not when render_status changes).
   const variants = useMemo(
     () => {
       const rawVariants = data?.job?.variants ?? [];
       return rawVariants.map((v) => {
         const pending = pendingEdits.current.get(v.variant_id);
         if (!pending) return v;
-        // Still pending if the output_url hasn't changed.
         if (v.output_url !== pending.priorOutputUrl) {
           pendingEdits.current.delete(v.variant_id);
           return v;
@@ -137,9 +124,6 @@ export default function PlanItemPage() {
     [data],
   );
 
-  // Keep a valid focused variant as renders land: default to the first variant
-  // with a playable output (else the first one), and reset if the focused id
-  // disappears (e.g. a fresh generate replaces the variant set).
   useEffect(() => {
     if (variants.length === 0) {
       if (focusedVariantId !== null) setFocusedVariantId(null);
@@ -151,9 +135,6 @@ export default function PlanItemPage() {
     }
   }, [variants, focusedVariantId]);
 
-  // Optimistically flip a variant to "rendering" so the card shows a spinner and
-  // the poll fires immediately — the worker only sets the real flag once it
-  // dequeues the task, after the POST returns.
   const markVariantRendering = useCallback(
     (variantId: string, priorOutputUrl: string | null) => {
       pendingEdits.current.set(variantId, { priorOutputUrl });
@@ -167,11 +148,10 @@ export default function PlanItemPage() {
       setError(null);
       try {
         await action();
-        // Track until the re-rendered URL lands (see pendingEdits) and keep polling.
         markVariantRendering(variantId, prevUrl);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to update variant");
-        refetch(); // clear the optimistic spinner if the request was rejected
+        refetch();
       }
     },
     [markVariantRendering, refetch],
@@ -217,49 +197,44 @@ export default function PlanItemPage() {
 
   if (needsAuth) {
     return (
-      <PlanShell>
+      <LightShell size="narrow">
         <SignInPrompt
           callbackUrl={`/plan/items/${itemId}`}
           title="Sign in to continue"
           subtitle="We use your Google account to save your clips and renders."
         />
-      </PlanShell>
+      </LightShell>
     );
   }
 
   if (loading) {
     return (
-      <PlanShell>
-        <p className="py-24 text-center text-zinc-400">Loading…</p>
-      </PlanShell>
+      <LightShell size="narrow">
+        <p className="py-24 text-center text-[#71717a]">Loading…</p>
+      </LightShell>
     );
   }
 
   if (item === null) {
     return (
-      <PlanShell>
+      <LightShell size="narrow">
         <div className="motion-safe:animate-fade-up py-24 text-center">
-          <p className="mb-6 text-zinc-400">We couldn&apos;t find that idea.</p>
-          <Link
-            href="/plan"
-            className="inline-block rounded-full bg-white px-6 py-3 text-sm font-medium text-black transition-colors hover:bg-zinc-200"
-          >
-            Back to your plan
+          <p className="mb-6 text-[#71717a]">We couldn&apos;t find that idea.</p>
+          <Link href="/plan">
+            <InkButton>Back to your plan</InkButton>
           </Link>
         </div>
-      </PlanShell>
+      </LightShell>
     );
   }
 
   const clipCount = item.clip_gcs_paths.length;
   const isGenerating = item.status === "generating";
   const focused = variants.find((v) => v.variant_id === focusedVariantId) ?? null;
-  // The focused variant is editable once it has rendered (or failed) at least once.
   const focusedEditable =
     focused && (!!focused.output_url || focused.render_status === "failed");
   const showResults = isGenerating || variants.length > 0;
 
-  // Theater props
   const currentPhase =
     data?.job?.current_phase ??
     (!data?.job?.started_at ? "queued" : null);
@@ -267,44 +242,44 @@ export default function PlanItemPage() {
   const theaterIsSuccess = item?.status === "ready";
 
   return (
-    <PlanShell size="results">
-      {/* @font-face for the style-preview chips — fonts lazy-load only when used. */}
+    <LightShell size="wide">
+      {/* @font-face for style-preview chips */}
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
-      <div className="motion-safe:animate-fade-up py-12">
-        {/* ── Editorial header + controls (narrow, readable column) ── */}
+      <div className="motion-safe:animate-fade-up">
+        {/* ── Editorial header + controls ── */}
         <div className="max-w-2xl">
           <Link
             href="/plan"
-            className="text-sm text-zinc-500 underline transition-colors hover:text-white"
+            className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
           >
             ← back to plan
           </Link>
           <div className="mb-1 mt-4 flex items-center gap-3">
-            <span className="rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
               Day {item.day_index}
             </span>
           </div>
-          <h1 className="font-display text-3xl text-white">{item.theme}</h1>
-          <p className="mb-2 mt-2 text-zinc-300">{item.idea}</p>
+          <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
+          <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>
           {item.rationale && (
-            <div className="mb-4 mt-3 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
-              <p className="mb-1 text-xs font-medium text-amber-300/80">Why this works</p>
-              <p className="text-sm text-zinc-300">{stripRationalePrefix(item.rationale)}</p>
+            <div className="mb-4 mt-3 rounded-lg border border-zinc-200 bg-white p-4">
+              <p className="mb-1 text-xs font-medium text-lime-700">Why this works</p>
+              <p className="text-sm text-[#3f3f46]">{stripRationalePrefix(item.rationale)}</p>
             </div>
           )}
           {item.filming_guide && item.filming_guide.length > 0 ? (
-            <div className="mb-8 mt-1 rounded-lg border border-zinc-800 bg-zinc-950/40 p-4">
-              <p className="mb-2 text-xs font-medium text-amber-300/80">🎬 How to film this</p>
+            <div className="mb-8 mt-1 rounded-lg border border-zinc-200 bg-white p-4">
+              <p className="mb-2 text-xs font-medium text-lime-700">🎬 How to film this</p>
               <ol className="space-y-2">
                 {item.filming_guide.map((shot, i) => (
                   <li key={i} className="flex items-start gap-2 text-sm">
-                    <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-xs text-zinc-400">
+                    <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-[#71717a]">
                       {shot.duration_s}s
                     </span>
                     <span>
-                      <span className="text-zinc-300">{shot.what}</span>
+                      <span className="text-[#3f3f46]">{shot.what}</span>
                       {shot.how ? (
-                        <span className="text-zinc-500"> — {shot.how}</span>
+                        <span className="text-[#71717a]"> — {shot.how}</span>
                       ) : null}
                     </span>
                   </li>
@@ -312,19 +287,19 @@ export default function PlanItemPage() {
               </ol>
             </div>
           ) : item.filming_suggestion ? (
-            <p className="mb-8 text-sm text-zinc-500">🎬 {item.filming_suggestion}</p>
+            <p className="mb-8 text-sm text-[#71717a]">🎬 {item.filming_suggestion}</p>
           ) : null}
 
           {error && (
-            <div className="mb-6 rounded border border-red-700 bg-red-950/50 px-4 py-3 text-red-200">
+            <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
               {error}
             </div>
           )}
 
           {/* Upload */}
-          <section className="mb-8 rounded-xl border border-zinc-800 bg-zinc-900/60 p-5">
-            <h2 className="mb-2 text-sm font-semibold text-zinc-300">Themed clips</h2>
-            <p className="mb-4 text-sm text-zinc-500">
+          <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
+            <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
+            <p className="mb-4 text-sm text-[#71717a]">
               Upload footage for this idea. {clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}
             </p>
             <label className="block">
@@ -335,25 +310,24 @@ export default function PlanItemPage() {
                 multiple
                 disabled={uploading}
                 onChange={(e) => handleFiles(e.target.files)}
-                className="block w-full text-sm text-zinc-400 file:mr-3 file:rounded-full file:border-0 file:bg-white file:px-4 file:py-2 file:text-sm file:font-medium file:text-black hover:file:bg-zinc-200"
+                className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
               />
             </label>
-            {uploading && <p className="mt-3 text-sm text-amber-300">Uploading…</p>}
+            {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
           </section>
 
           {/* Generate */}
-          <button
+          <InkButton
             onClick={handleGenerate}
             disabled={generating || clipCount === 0 || isGenerating}
-            className="rounded-full bg-amber-400 px-6 py-3 font-medium text-black transition-colors hover:bg-amber-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           >
             {isGenerating ? "Generating…" : generating ? "Starting…" : "Generate videos"}
-          </button>
+          </InkButton>
           {clipCount === 0 && (
-            <p className="mt-2 text-sm text-zinc-500">Upload at least one clip first.</p>
+            <p className="mt-2 text-sm text-[#a1a1aa]">Upload at least one clip first.</p>
           )}
 
-          {/* ProgressTheater: replaces old StatusLine + "(N of M ready)" text block */}
+          {/* ProgressTheater — light tone */}
           {data?.job && (
             <div className="mt-8">
               <ProgressTheater
@@ -369,24 +343,25 @@ export default function PlanItemPage() {
                 receiptText={deriveReceiptText(data.job)}
                 variants={variants}
                 size="full"
+                tone="light"
               >
                 {null}
               </ProgressTheater>
             </div>
           )}
           {isGenerating && (
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-[#a1a1aa]">
               Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
             </p>
           )}
           {item.status === "failed" && variants.length === 0 && (
-            <p className="mt-2 text-sm text-zinc-500">
+            <p className="mt-2 text-sm text-[#71717a]">
               Generation failed before any variant rendered. Try generating again.
             </p>
           )}
         </div>
 
-        {/* ── Results: focused player + filmstrip + editor (full width) ── */}
+        {/* ── Results: focused player + filmstrip + editor ── */}
         {showResults && (
           <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
             {/* Hero */}
@@ -401,7 +376,7 @@ export default function PlanItemPage() {
                       `nova-${slugify(item.theme) || itemId.slice(0, 8)}.mp4`,
                     )
                   }
-                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-700 px-5 py-2 text-sm text-zinc-200 transition-colors hover:border-zinc-400 hover:text-white"
+                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-200 px-5 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400"
                 >
                   Download
                 </button>
@@ -449,16 +424,14 @@ export default function PlanItemPage() {
                 />
               ) : (
                 isGenerating && (
-                  <p className="text-sm text-zinc-500">
+                  <p className="text-sm text-[#71717a]">
                     Edit controls unlock as soon as a variant finishes rendering.
                   </p>
                 )
               )}
-              {/* Per-video feedback (feedback loop, Phase 2): keyed to the item's
-                  Job so a reaction here lands in the same store as the library. */}
               {item.current_job_id && !isGenerating && (
-                <div className="border-t border-zinc-800 pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                <div className="border-t border-zinc-200 pt-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
                     How&apos;s this one?
                   </p>
                   <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
@@ -468,12 +441,11 @@ export default function PlanItemPage() {
           </div>
         )}
       </div>
-    </PlanShell>
+    </LightShell>
   );
 }
 
-/** Large hero player for the focused variant. Keeps the previous video visible
- *  with an overlay while a re-render is in flight (never blanks the payoff). */
+/** Large hero player for the focused variant. */
 function Hero({
   variant,
   generating,
@@ -485,21 +457,21 @@ function Hero({
   const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
   return (
-    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-800 bg-black">
+    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
       {variant.output_url ? (
         <video src={variant.output_url} controls className="h-full w-full object-contain" />
       ) : failed ? (
-        <div className="flex h-full items-center justify-center px-4 text-center text-sm text-red-300">
+        <div className="flex h-full items-center justify-center px-4 text-center text-sm text-red-600">
           This variant failed — try editing again.
         </div>
       ) : (
-        <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+        <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
           {generating ? "Rendering…" : "No preview yet"}
         </div>
       )}
       {rendering && variant.output_url && (
         <div
-          className="absolute inset-0 flex items-center justify-center bg-black/55 text-sm text-amber-300"
+          className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-lime-700"
           role="status"
         >
           Rendering new version…
@@ -511,11 +483,10 @@ function Hero({
 
 function SkeletonTile() {
   return (
-    <div className="aspect-[9/16] w-full motion-safe:animate-shimmer rounded-xl border border-zinc-800 bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900" />
+    <div className="aspect-[9/16] w-full motion-safe:animate-shimmer rounded-xl border border-zinc-200 bg-[length:200%_100%] bg-gradient-to-r from-zinc-100 via-zinc-200 to-zinc-100" />
   );
 }
 
-/** Lowercase, hyphenated, ASCII-safe slug for download filenames. */
 function slugify(s: string): string {
   return s
     .toLowerCase()

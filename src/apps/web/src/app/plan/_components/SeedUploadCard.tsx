@@ -129,6 +129,7 @@ export default function SeedUploadCard({
         >
           <ProgressTheater
             size="inline"
+            tone="light"
             phases={ACTIVATION_PHASE_ORDER as unknown as string[]}
             phaseLabels={ACTIVATION_PHASE_LABEL}
             currentPhase={activationPhase ?? "matching_clips"}

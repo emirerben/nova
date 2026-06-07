@@ -13,6 +13,8 @@ interface PayoffFieldProps {
   variants: VariantLike[] | null | undefined;
   /** Render function for each variant tile — consumer controls the card style. */
   renderCard: (variant: VariantLike, isNewlyReady: boolean) => ReactNode;
+  /** "light" renders on cream canvas; "dark" (default) renders dark theatre palette. */
+  tone?: "dark" | "light";
 }
 
 /**
@@ -23,7 +25,7 @@ interface PayoffFieldProps {
  * - Slot count always from variants.length — never a constant.
  * - isNewlyReady flag passed to renderCard for arrive animation on newly-ready tiles.
  */
-export function PayoffField({ variants, renderCard }: PayoffFieldProps) {
+export function PayoffField({ variants, renderCard, tone = "dark" }: PayoffFieldProps) {
   const hasVariants = variants != null && variants.length > 0;
   const [wasEmpty, setWasEmpty] = useState(!hasVariants);
   const [opacity, setOpacity] = useState(hasVariants ? 1 : 0);
@@ -68,20 +70,25 @@ export function PayoffField({ variants, renderCard }: PayoffFieldProps) {
   }, [hasVariants, wasEmpty]);
 
   if (!hasVariants) {
+    const borderClass = tone === "light" ? "border-zinc-300" : "border-zinc-800";
+    const skelClass = tone === "light"
+      ? "from-zinc-100 via-zinc-200 to-zinc-100"
+      : "from-zinc-900 via-zinc-800 to-zinc-900";
+    const emptyTextClass = tone === "light" ? "text-[#a1a1aa]" : "text-zinc-600";
     return (
-      <div className="flex w-full items-center justify-center rounded-xl border border-dashed border-zinc-800 px-6 py-16">
+      <div className={`flex w-full items-center justify-center rounded-xl border border-dashed ${borderClass} px-6 py-16`}>
         <div className="flex flex-col items-center gap-4">
           {/* Shimmer skeleton lines */}
           <div className="space-y-2 w-48">
             {[100, 80, 60].map((w, i) => (
               <div
                 key={i}
-                className="h-3 rounded bg-[length:200%_100%] bg-gradient-to-r from-zinc-900 via-zinc-800 to-zinc-900 motion-safe:animate-shimmer"
+                className={`h-3 rounded bg-[length:200%_100%] bg-gradient-to-r ${skelClass} motion-safe:animate-shimmer`}
                 style={{ width: `${w}%` }}
               />
             ))}
           </div>
-          <p className="text-sm text-zinc-600">Your edits will appear here</p>
+          <p className={`text-sm ${emptyTextClass}`}>Your edits will appear here</p>
         </div>
       </div>
     );

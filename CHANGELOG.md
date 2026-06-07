@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.89.0] — 2026-06-07
+
+### Added
+- **Light unification (D20 + D21).** The entire user-facing product is now light editorial. `/plan/items/[id]`, `/library`, and `/generative` have been converted from the dark theater system to the cream/ink/lime palette.
+- **ProgressTheater family tone-aware (D20).** All six Theater components (`ProgressTheater`, `PhaseChipRow`, `StatusHeadline`, `EtaBar`, `VariantRenderCard`, `PayoffField`) accept `tone?: "dark" | "light"` (default `"dark"`). Template flow, admin, and held PR #466 are untouched.
+- **`VariantCard` tone prop.** Shared between `/generative` (light) and `/admin/generative/[id]` (dark); admin omits the prop → stays dark automatically.
+- **Light-primitive relocation.** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` moved to canonical `src/apps/web/src/components/ui/`; `plan/_components/ui/` stubs re-export for backward compat.
+- **New tests:** `__tests__/progress/tone.test.tsx` (tone contract + dark-default regression pins), `__tests__/components/header.test.tsx` (isLight predicate for all light surfaces).
+
+### Changed
+- **`/generative/page.tsx`** — `LightShell wide`, lime `Eyebrow`, `InkButton` Generate CTA (closes §10 row 7 exception), quiet-light error banners, `tone="light"` on Theater family.
+- **`/library/page.tsx` + `LibraryTile.tsx` + `FeedbackButtons.tsx`** — full light editorial conversion.
+- **`/plan/items/[id]/page.tsx`** — `LightShell` wide, all dark literals converted, `tone="light"` on Theater.
+- **`PlanFilmstrip`, `PlanVariantEditor`, `StyleChip`, `SongPicker`** — lime ring/selection accents, light input surfaces, ink Save CTAs.
+- **`VoiceRecorder.tsx`** — light canvas, ink/zinc UI chrome.
+- **`Header.tsx`** — `isLight` extended to `/library` and `/generative`; AuthControl dropdown now light-conditional.
+- **`SeedUploadCard.tsx`** — `tone="light"` forwarded to inline ProgressTheater (fixes dark-on-white seam on /plan).
+- **DESIGN.md** — §1 standing rule updated to full unification; §3 retitled to "Dark render system (template flow + admin)"; §7 tone variant paragraph added; §9 accent rule updated; §10 rows 7 + 9 closed DONE.
+- **TODOS.md** — D20 + D21 blocks removed (shipped); D22 remains.
+
+### Removed
+- **`PlanShell.tsx`** — dead component (sole consumer was item page, now uses `LightShell`).
+- **`GeneratingState.tsx`** + its test — dead component (no live consumer after D20).
+
+### Notes
+- PR #466 (Theater template-flow migration) stays open/held — known one-line PayoffField conflict on `emptyText` prop (introduced by D20); #466 needs a rebase for VERSION anyway.
+- `UploadBar` is intentionally dark-only (only consumers are template flow; tone prop would be dead code).
+
 ## [0.4.88.0] — 2026-06-06
 
 ### Fixed
@@ -10,7 +38,7 @@ All notable changes to this project will be documented in this file.
 ## [0.4.87.0] — 2026-06-06
 
 ### Fixed
-- **Repeated chorus lyric previews now sync to the first sung phrase.** Pop-up and Karaoke previews no longer wait for the later in-window "But I love it" repeat when the actual line starts before a stale LRCLIB anchor.
+- **Repeated chorus lyric previews now sync to the first sung phrase.** Pop-up and Karaoke previews no longer wait for the later in-window "But I keep it" repeat when the actual line starts before a stale LRCLIB anchor.
 - **Lyrics caches refresh for the repeated-chorus fix.** The lyrics extraction prompt version now includes the boundary-sync decoy-prefix repair so existing cached alignments get regenerated on the next preview or render.
 - **Global lyric re-anchoring stays eligible when lookback is rejected.** A pre-anchor candidate is only marked as a local timing repair after it actually moves the line window, preserving whole-track drift detection for stronger in-window matches.
 

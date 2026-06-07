@@ -54,20 +54,20 @@ export default function PlanFilmstrip({
             onClick={() => onFocus(v.variant_id)}
             onKeyDown={(e) => onKeyDown(e, i)}
             className={cn(
-              "relative aspect-[9/16] w-16 shrink-0 overflow-hidden rounded-md border bg-black transition-colors",
-              selected ? "border-amber-400 ring-1 ring-amber-400" : "border-zinc-700 hover:border-zinc-500",
+              "relative aspect-[9/16] w-16 shrink-0 overflow-hidden rounded-md border bg-zinc-100 transition-colors",
+              selected ? "border-lime-600 ring-1 ring-lime-600" : "border-zinc-200 hover:border-zinc-400",
             )}
           >
             {v.output_url ? (
               <video src={v.output_url} muted preload="metadata" className="h-full w-full object-cover" />
             ) : (
-              <div className="h-full w-full bg-zinc-900" />
+              <div className="h-full w-full bg-zinc-200" />
             )}
-            <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[9px] text-zinc-200">
+            <span className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 py-0.5 text-[9px] text-white">
               {label}
             </span>
             {rendering && (
-              <span className="absolute inset-0 flex items-center justify-center bg-black/50 text-[10px] text-amber-300">
+              <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
                 …
               </span>
             )}

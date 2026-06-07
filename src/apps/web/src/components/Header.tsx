@@ -31,7 +31,13 @@ export default function Header() {
 
   if (isAdmin) return null;
 
-  const isLight = pathname === "/" || (pathname.startsWith("/plan") && !pathname.startsWith("/plan/items/"));
+  // Light surfaces: landing + all plan pages (incl. /plan/items) + library + generative.
+  // Dark: template render flow (/template, /template-jobs) and /admin (early-return above).
+  const isLight =
+    pathname === "/" ||
+    pathname.startsWith("/plan") ||
+    pathname.startsWith("/library") ||
+    pathname.startsWith("/generative");
 
   return (
     <header
@@ -150,25 +156,25 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
         )}
       </button>
       {open && (
-        <div className="absolute right-0 mt-2 w-44 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 py-1 shadow-xl">
-          <p className="truncate px-3 py-2 text-xs text-zinc-500">{name}</p>
+        <div className={`absolute right-0 mt-2 w-44 overflow-hidden rounded-lg border py-1 shadow-xl ${isLight ? "border-zinc-200 bg-white" : "border-zinc-800 bg-zinc-950"}`}>
+          <p className={`truncate px-3 py-2 text-xs ${isLight ? "text-[#a1a1aa]" : "text-zinc-500"}`}>{name}</p>
           <Link
             href="/plan"
             onClick={() => setOpen(false)}
-            className="block px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
           >
             My plan
           </Link>
           <Link
             href="/library"
             onClick={() => setOpen(false)}
-            className="block px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-900"
+            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
           >
             My videos
           </Link>
           <button
             onClick={() => signOut({ callbackUrl: "/" })}
-            className="block w-full px-3 py-2 text-left text-sm text-zinc-400 hover:bg-zinc-900 hover:text-white"
+            className={`block w-full px-3 py-2 text-left text-sm ${isLight ? "text-[#71717a] hover:bg-[#fafaf8] hover:text-[#0c0c0e]" : "text-zinc-400 hover:bg-zinc-900 hover:text-white"}`}
           >
             Sign out
           </button>
