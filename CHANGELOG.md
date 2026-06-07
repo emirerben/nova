@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.93.0] — 2026-06-08
+
+### Added
+- **Shot-slot uploader: per-shot upload wells linked to the filming guide.** For instructed plan items (`instruction_level ≠ "none"`), the "Themed clips" section is replaced by an integrated "HOW TO FILM THIS" film card. Each shot in the filming guide is a named upload slot with a full state machine (`idle → uploading → committing → filled | error`) so the creator can see exactly which shots are filmed and which are missing. An extra-footage strip below the slots accepts any additional b-roll.
+- **Stable `shot_id` on every filmed shot.** All three `filming_guide` persist sites (`generate`, `regenerate`, `reroll` in `content_plan_build.py`) now stamp each shot dict with a server-assigned `shot_id: uuid4().hex` at write time. IDs are attached at persist time, not by the LLM, so they survive prompt changes.
+- **`clip_assignments` JSONB on `plan_items` (migration 0052).** New nullable JSONB column (`[{"gcs_path": str, "shot_id": str | null}]`) persists the shot↔clip mapping. `null` `shot_id` = extra-footage pool. Migration backfills `shot_id` into existing `filming_guide` entries (skips malformed rows). `clip_gcs_paths` (flat pool) stays the render contract — zero render-path changes.
+- **`app/services/plan_clips.py`: single-writer `set_item_clips`.** All writes to `clip_gcs_paths`/`clip_assignments` route through one helper that derives ordered pools (shot-slots first, pool after) and enforces the ≤20 cap and dupe checks. The helper does NO prefix validation so the seed write at `content_plan_build.py:~550` is safe.
+- **Attach route hardening (D16).** `AttachClipsBody` gains optional `assignments: list[ClipAssignment]`. The attach route validates: correct `users/{user_id}/plan/{item_id}/` prefix per path (existing), unknown `shot_id`, duplicate `shot_id`, duplicate `gcs_path`, count > 20 (four new 422 guards). On every attach: `item.conformance = None` before re-dispatching analysis so the verdict panel never shows stale data (D7).
+- **Read-time reconciliation (D15).** `plan_item_response` demotes any assignment whose `shot_id` is no longer present in the current guide to pool (`shot_id: null`) — a dangling pointer never ghost-renders. `PlanItemResponse` now includes `clip_assignments`.
+- **Reroll demote.** The reroll persist path calls `set_item_clips` to move shot-assigned clips into the pool before stamping fresh `shot_id`s on the new guide.
+- **Conformance clip selection.** `analyze_item_conformance` picks the first shot-assigned clip (by guide order) rather than `clips[0]` (arbitrary order).
+- **`ShotSlotUploader` React component** (`src/apps/web/src/app/plan/items/[id]/components/ShotSlotUploader.tsx`). Per-slot state machine keyed by `shot_id`: idle (dashed drop target, label softens after first fill), uploading (XHR progress bar + Cancel), committing ("Saving…"), filled (lime ✓ chip + filename + duration + Replace), error (zinc chip + Retry, phase-aware: upload-phase retry re-uploads; attach-phase retry re-attaches without re-uploading). Attach commits are serialized via a queue. Duration is probed client-side via a detached `<video>` element at file-select time. Pool slots accept multiple extra-footage clips with ✕ remove. `onBusyChange` feeds the Generate gating guard.
+- **Generate gating (D6).** Generate is disabled while any upload or attach commit is in flight; helper text swaps to "Finishing upload… ({n} clip uploading)".
+- **Page hierarchy (D5).** Film card hoisted above "Why this works" for instructed items. Uninstructed items keep the existing pool-style "Themed clips" section unchanged.
+- **`plan-api.ts` additions.** `uploadToGcsWithProgress(url, file, onProgress, signal)` (XHR-based, supports abort); `attachClips(itemId, assignments)` sends full `{clip_gcs_paths, assignments}` map; `ClipAssignment` + `FilmingShot.shot_id` types; `clip_assignments` field on `PlanItem`.
+
+### Changed
+- M4's single-file replace UI (`isInstructed` branch in `page.tsx`) is removed; `ShotSlotUploader` handles both the guide display and upload for instructed items.
+- `filming_guide` entries in `PlanItemResponse` now include `shot_id` (null for legacy rows without a stamped id).
+
 ## [0.4.92.0] — 2026-06-07
 
 ### Added
