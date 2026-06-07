@@ -16,7 +16,7 @@ export function StyleCard({ style, status, styleSetPreview, fontPreview }: Style
       <LightCard className="px-6 py-5">
         <Eyebrow tone="muted">Your style</Eyebrow>
         <p className="mt-3 text-[13px] text-[#a1a1aa]">
-          Tell us your style — we'll apply it to every edit.
+          Tell us your style — we&apos;ll apply it to every edit.
         </p>
         <Link
           href="/plan/style"
