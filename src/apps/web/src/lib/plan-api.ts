@@ -543,3 +543,36 @@ export function rederiveStyle(): Promise<{ queued: boolean; persona_id: string }
     method: "POST",
   });
 }
+
+// ── Style Agent conversational interface (Creator Agent M2) ──────────────────
+// Append-only — do not edit any existing code above this section.
+
+export interface StyleAgentTurnResponse {
+  reply: string;
+  suggestions: string[];
+  applied: boolean;
+  intent: string;
+  persona_status: string;
+}
+
+/**
+ * POST /personas/agent/start — returns a personalised greeting + opening suggestion chips.
+ * Returns 404 when STYLE_AGENT_ENABLED=false (the page hides the entry when absent).
+ */
+export function styleAgentStart(): Promise<StyleAgentTurnResponse> {
+  return request<StyleAgentTurnResponse>("/personas/agent/start", { method: "POST" });
+}
+
+/**
+ * POST /personas/agent/turn — submit a style utterance; returns reply + applied flag.
+ * priorTurns is the full conversation history so far (stateless single-shot agent).
+ */
+export function styleAgentTurn(
+  answer: string,
+  priorTurns?: unknown[],
+): Promise<StyleAgentTurnResponse> {
+  return request<StyleAgentTurnResponse>("/personas/agent/turn", {
+    method: "POST",
+    body: JSON.stringify({ answer, prior_turns: priorTurns ?? [] }),
+  });
+}

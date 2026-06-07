@@ -262,6 +262,13 @@ class Settings(BaseSettings):
     # "user_style" key → renders are byte-identical to pre-M1 output.
     user_style_enabled: bool = False
 
+    # Conversational style agent (Creator Agent M2). When True, the
+    # POST /personas/agent/start and POST /personas/agent/turn routes are live.
+    # Ships OFF — enable after live-eval validation of StyleIntentAgent quality:
+    #   fly secrets set STYLE_AGENT_ENABLED=true --app nova-video + restart workers.
+    # When False: both agent routes return 404 — byte-identical to pre-M2 behavior.
+    style_agent_enabled: bool = False
+
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65
     engagement_weight: float = 0.35
