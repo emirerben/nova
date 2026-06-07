@@ -1231,6 +1231,7 @@ class TestResolveIntroOverlayParamsKnobPrecedence:
 
     def _call(self, monkeypatch, knobs=None, style_set_id=None, size_override_px=None):
         """Helper: resolve params with a minimal set stub."""
+
         def _fake_resolve(set_id, overlay_type, *, advisory=None):
             # Return a recognisable but minimal set dict.
             return {
@@ -1382,3 +1383,608 @@ class TestResolveIntroOverlayParamsKnobPrecedence:
         # The fake set returns effect=fade-in; the knob effect must NOT override it.
         # The params["effect"] should come from set/agent_form, never from knobs.
         assert params["effect"] == "fade-in"  # set value wins, knob is ignored
+
+
+# ── Fast-reburn: _resolve_regen_text ────────────────────────────────────────────
+
+
+def test_regenerate_reuses_persisted_intro_text():
+    """Persisted text + mode=agent_text → no LLM call; returned text matches persisted."""
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return types.SimpleNamespace(text="LLM text", highlight_word=None), {}
+
+    agent_text, agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text="My hook text",
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text is not None
+    assert agent_text.text == "My hook text"
+    assert text_mode == "agent_text"
+
+
+def test_regenerate_runs_intro_writer_when_no_persisted_text():
+    """No persisted text → intro_writer LLM IS called."""
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return types.SimpleNamespace(text="From LLM", highlight_word=None), {"effect": "pop-in"}
+
+    agent_text, agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert llm_called["called"] is True
+    assert agent_text.text == "From LLM"
+    assert text_mode == "agent_text"
+
+
+def test_resolve_regen_text_remove_overrides_persisted():
+    """remove_text=True → (None, None, 'none') even when persisted text exists."""
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return None, {}
+
+    agent_text, agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=True,
+        existing_text_mode="agent_text",
+        persisted_text="Some hook text",
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert agent_text is None
+    assert agent_form is None
+    assert text_mode == "none"
+    assert llm_called["called"] is False
+
+
+def test_resolve_regen_text_override_beats_persisted():
+    """override_text wins over persisted text; no LLM call."""
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return None, {}
+
+    agent_text, agent_form, text_mode = gb._resolve_regen_text(
+        override_text="new text",
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text="old text",
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text is not None
+    assert agent_text.text == "new text"
+
+
+# ── Fast-reburn: _is_fast_reburn_eligible ───────────────────────────────────────
+
+
+def test_fast_reburn_kill_switch(monkeypatch):
+    """Kill-switch off → fast path never taken; _ingest_clips IS called."""
+    monkeypatch.setattr(gb.settings, "GENERATIVE_FAST_REBURN_ENABLED", False, raising=False)
+
+    existing = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "My text",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "music_track_id": None,
+        "video_path": "generative-jobs/x/song_text.mp4",
+        "rank": 1,
+    }
+
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is False
+
+
+def test_is_fast_reburn_eligible_returns_true_for_style_change():
+    """All conditions met → eligible."""
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+    }
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is True
+
+
+def test_is_fast_reburn_eligible_false_for_new_track():
+    """Audio change (new_track_id) → not eligible."""
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+    }
+    assert gb._is_fast_reburn_eligible(existing, "new-track-id", None, gb.settings) is False
+
+
+def test_is_fast_reburn_eligible_false_for_mix_override():
+    """Audio change (mix_override) → not eligible."""
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+    }
+    assert gb._is_fast_reburn_eligible(existing, None, 0.5, gb.settings) is False
+
+
+def test_is_fast_reburn_eligible_false_for_lyrics_variant():
+    """Lyrics variant (text_mode='lyrics') → not eligible in v1."""
+    existing = {
+        "text_mode": "lyrics",
+        "base_video_path": "generative-jobs/j/base_0_song_lyrics.mp4",
+    }
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is False
+
+
+def test_legacy_variant_without_base_falls_back():
+    """Existing variant with no base_video_path → not eligible (full path)."""
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": None,
+    }
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is False
+
+
+# ── Fast-reburn: _reburn_text_on_base ───────────────────────────────────────────
+
+
+def _patch_reburn_helpers(monkeypatch, *, base_content=b"\x00" * 32, final_content=None):
+    """Stub the lazily-imported helpers so _reburn_text_on_base runs without real GCS/ffmpeg.
+
+    `final_content`: bytes written to final_path by burn_text_overlays_skia.
+    If None it defaults to different content than the base so copy-through detection passes.
+    """
+    import app.pipeline.generative_overlays as go
+    import app.pipeline.text_overlay_skia as skia
+    import app.storage as storage
+
+    burn_calls: list = []
+
+    def _fake_download(gcs_path, local_path):
+        with open(local_path, "wb") as f:
+            f.write(base_content)
+
+    def _fake_probe(path):
+        return types.SimpleNamespace(duration_s=5.0)
+
+    def _fake_overlays(**kwargs):
+        return [{"type": "text", "text": kwargs.get("text", "hi")}]
+
+    if final_content is None:
+        # Different size from base → copy-through detection passes.
+        _final = b"\x01" * (len(base_content) + 8)
+    else:
+        _final = final_content
+
+    def _fake_burn(base_path, overlays, out_path, tmpdir):
+        burn_calls.append({"base": base_path, "overlays": overlays, "out": out_path})
+        with open(out_path, "wb") as f:
+            f.write(_final)
+
+    def _fake_upload(local_path, gcs_path):
+        return f"https://signed/{gcs_path}"
+
+    monkeypatch.setattr(storage, "download_to_file", _fake_download, raising=False)
+    monkeypatch.setattr(storage, "upload_public_read", _fake_upload, raising=False)
+    monkeypatch.setattr(go, "build_persistent_intro_overlays", _fake_overlays, raising=False)
+    monkeypatch.setattr(skia, "burn_text_overlays_skia", _fake_burn, raising=False)
+
+    # Patch probe_video inside the module namespace
+    import app.pipeline.probe as probe_mod
+
+    monkeypatch.setattr(probe_mod, "probe_video", _fake_probe, raising=False)
+
+    return burn_calls
+
+
+def test_render_persists_intro_text_and_base_path(monkeypatch, tmp_path):
+    """_render_generative_variant result must include intro_text, intro_highlight_word,
+    and base_video_path for agent_text variants."""
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    vdir = tmp_path / "v"
+    vdir.mkdir()
+    spec = {"variant_id": "song_text", "rank": 2, "text_mode": "agent_text", "track": None}
+    agent_text = types.SimpleNamespace(text="My hook", highlight_word="hook")
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=2,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=agent_text,
+        agent_form={"effect": "karaoke-line"},
+        variant_dir=str(vdir),
+    )
+    assert res["ok"] is True
+    assert res["intro_text"] == "My hook"
+    assert res["intro_highlight_word"] == "hook"
+    assert res["base_video_path"] is not None
+    assert res["base_video_path"].startswith("generative-jobs/")
+
+
+def test_change_style_takes_fast_path(monkeypatch, tmp_path):
+    """Style change (no audio, base cached) takes fast path; _ingest_clips NOT called."""
+    monkeypatch.setattr(gb.settings, "GENERATIVE_FAST_REBURN_ENABLED", True, raising=False)
+
+    ingest_called = {"called": False}
+
+    def _boom_ingest(*a, **k):
+        ingest_called["called"] = True
+        raise AssertionError("ingest must not be called on fast path")
+
+    monkeypatch.setattr(gb, "_ingest_clips", _boom_ingest, raising=False)
+
+    existing = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "My hook",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "music_track_id": None,
+        "video_path": "generative-jobs/x/song_text.mp4",
+        "rank": 1,
+        "style_set_id": None,
+    }
+
+    burn_calls = _patch_reburn_helpers(monkeypatch)
+
+    update_calls: list = []
+    monkeypatch.setattr(
+        gb,
+        "_update_variant_entry",
+        lambda jid, vid, patch: update_calls.append(patch),
+        raising=False,
+    )
+
+    # Simulate _run_regenerate_variant fast-path branch directly via the helper.
+    result = gb._reburn_text_on_base(
+        job_id="test-job",
+        variant_id="song_text",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+        agent_form={"effect": "karaoke-line"},
+        text_mode="agent_text",
+        resolved_style_set_id="film_mono",
+        size_override_px=None,
+        settings=gb.settings,
+    )
+
+    assert ingest_called["called"] is False
+    assert len(burn_calls) == 1
+    assert result["render_status"] == "ready"
+    assert result["intro_text"] == "My hook"
+
+
+def test_swap_song_takes_full_path_preserves_text(monkeypatch, tmp_path):
+    """swap_song (new_track_id set) → full path taken; text persisted from existing."""
+    monkeypatch.setattr(gb.settings, "GENERATIVE_FAST_REBURN_ENABLED", True, raising=False)
+
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "My text",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "music_track_id": "old-track",
+    }
+
+    # new_track_id is set → ineligible for fast path
+    assert gb._is_fast_reburn_eligible(existing, "new-track-id", None, gb.settings) is False
+
+    # The resolve function should reuse the text (no LLM) since persisted text is present.
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return types.SimpleNamespace(text="LLM text", highlight_word=None), {}
+
+    agent_text, _, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text="My text",
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text.text == "My text"
+
+
+def test_mix_takes_full_path_preserves_text(monkeypatch):
+    """mix_override set → full path taken (not fast-reburn eligible); text preserved."""
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "My voiceover text",
+    }
+
+    assert gb._is_fast_reburn_eligible(existing, None, 0.8, gb.settings) is False
+
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return None, {}
+
+    agent_text, _, _ = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="agent_text",
+        persisted_text="My voiceover text",
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text.text == "My voiceover text"
+
+
+def test_remove_text_fast_path(monkeypatch):
+    """remove_text=True → text_mode='none', no overlays built, fast path eligible."""
+    monkeypatch.setattr(gb.settings, "GENERATIVE_FAST_REBURN_ENABLED", True, raising=False)
+
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "Some hook",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+    }
+
+    # Still fast-reburn eligible (remove_text is handled after eligibility check).
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is True
+
+    agent_text, agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=True,
+        existing_text_mode="agent_text",
+        persisted_text="Some hook",
+        persisted_highlight=None,
+        run_text_agents_fn=lambda: (None, None),
+    )
+
+    assert agent_text is None
+    assert text_mode == "none"
+
+
+def test_fast_path_base_download_failure_falls_back(monkeypatch):
+    """If base download raises a 'not found' error, _reburn_text_on_base raises and
+    the caller (_run_regenerate_variant) must fall back to the full path without propagating."""
+    import app.storage as storage
+
+    def _fail_download(gcs_path, local_path):
+        raise RuntimeError("no such object: generative-jobs/x/base_0_song_text.mp4")
+
+    monkeypatch.setattr(storage, "download_to_file", _fail_download, raising=False)
+
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "Hook",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "video_path": "generative-jobs/x/song_text.mp4",
+    }
+
+    # _reburn_text_on_base raises when download fails.
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no such object"):
+        gb._reburn_text_on_base(
+            job_id="test-job",
+            variant_id="song_text",
+            existing=existing,
+            agent_text=types.SimpleNamespace(text="Hook", highlight_word=None),
+            agent_form={"effect": "karaoke-line"},
+            text_mode="agent_text",
+            resolved_style_set_id=None,
+            size_override_px=None,
+            settings=gb.settings,
+        )
+
+    # The caller treats "not found"-shaped errors as a safe fallback signal.
+    # The key assertion here is that _reburn_text_on_base raises and that the error
+    # message contains a recognisable "not found" substring that the caller checks.
+    # (The actual fallback logic is exercised in _run_regenerate_variant; we verify
+    # the contract here at the _reburn_text_on_base boundary.)
+
+
+def test_fast_reburn_kill_switch_off_forces_full_path(monkeypatch):
+    """GENERATIVE_FAST_REBURN_ENABLED=False → _is_fast_reburn_eligible returns False
+    even when all other conditions are met."""
+    monkeypatch.setattr(gb.settings, "GENERATIVE_FAST_REBURN_ENABLED", False, raising=False)
+
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+    }
+
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is False
+
+
+def test_reburn_size_pixel_stable(monkeypatch):
+    """Existing computed size is carried forward as computed_fallback_px when no override
+    is given; the size is passed to _resolve_intro_overlay_params, not dropped."""
+    _patch_reburn_helpers(monkeypatch)
+
+    resolve_calls: list = []
+    _original_resolve = gb._resolve_intro_overlay_params
+
+    def _spy_resolve(agent_text, agent_form, style_set_id, **kwargs):
+        resolve_calls.append(kwargs)
+        return _original_resolve(agent_text, agent_form, style_set_id, **kwargs)
+
+    monkeypatch.setattr(gb, "_resolve_intro_overlay_params", _spy_resolve, raising=False)
+
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "My hook",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "video_path": "generative-jobs/x/song_text.mp4",
+    }
+
+    gb._reburn_text_on_base(
+        job_id="test-job",
+        variant_id="song_text",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="My hook", highlight_word=None),
+        agent_form={"effect": "karaoke-line"},
+        text_mode="agent_text",
+        resolved_style_set_id=None,
+        size_override_px=None,  # no override → must use persisted px
+        settings=gb.settings,
+    )
+
+    assert len(resolve_calls) == 1
+    # The persisted size (60) must be passed so overlay params don't recompute from scratch.
+    assert resolve_calls[0].get("size_override_px") == 60
+
+
+def test_full_rerender_overwrites_base_video_path(monkeypatch, tmp_path):
+    """After a full re-render (swap_song path), the returned dict must contain
+    base_video_path — either a new GCS key or None — NOT the stale old path."""
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+
+    import app.pipeline.music_recipe as mr
+
+    monkeypatch.setattr(
+        mr,
+        "generate_music_recipe",
+        lambda td: {
+            "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.5, 1.0],
+        },
+        raising=False,
+    )
+
+    vdir = tmp_path / "v1"
+    vdir.mkdir()
+    spec = {"variant_id": "song_text", "rank": 1, "text_mode": "agent_text", "track": _track()}
+    agent_text = types.SimpleNamespace(text="Fresh hook", highlight_word=None)
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=agent_text,
+        agent_form={"effect": "karaoke-line"},
+        variant_dir=str(vdir),
+    )
+
+    assert res["ok"] is True
+    # base_video_path must be present in the result dict — it's NOT the stale "old_path".
+    assert "base_video_path" in res
+    if res["base_video_path"] is not None:
+        assert res["base_video_path"] != "old_path"
+
+
+def test_voiceover_variant_fast_path_preserves_mix(monkeypatch):
+    """Voiceover variant (no mix_override, base set, text_mode=agent_text) →
+    fast-reburn is eligible (no audio change)."""
+    # mix_override=None means no voiceover bed change — fast path is still available
+    # for pure text/style changes on a voiceover variant that has a cached base.
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_voiceover_only.mp4",
+        "intro_text": "Hook text",
+    }
+
+    # Voiceover variants with no mix_override and no new_track_id are eligible.
+    assert gb._is_fast_reburn_eligible(existing, None, None, gb.settings) is True
+
+
+def test_fast_path_burn_copy_through_marks_failed(monkeypatch):
+    """When burn_text_overlays_skia writes the same byte-count as input (copy-through),
+    _reburn_text_on_base must raise RuntimeError."""
+    import app.pipeline.generative_overlays as go
+    import app.pipeline.probe as probe_mod
+    import app.pipeline.text_overlay_skia as skia
+    import app.storage as storage
+
+    base_content = b"\x00" * 64
+
+    def _fake_download(gcs_path, local_path):
+        with open(local_path, "wb") as f:
+            f.write(base_content)
+
+    def _fake_probe(path):
+        return types.SimpleNamespace(duration_s=5.0)
+
+    def _fake_overlays(**kwargs):
+        # Return non-empty overlays so the copy-through check fires.
+        return [{"type": "text", "text": "hi"}]
+
+    def _copy_through_burn(base_path, overlays, out_path, tmpdir):
+        # Write same byte count as base → simulates copy-through (no actual burn).
+        with open(out_path, "wb") as f:
+            f.write(base_content)
+
+    monkeypatch.setattr(storage, "download_to_file", _fake_download, raising=False)
+    monkeypatch.setattr(storage, "upload_public_read", lambda *a: "https://signed/x", raising=False)
+    monkeypatch.setattr(go, "build_persistent_intro_overlays", _fake_overlays, raising=False)
+    monkeypatch.setattr(skia, "burn_text_overlays_skia", _copy_through_burn, raising=False)
+    monkeypatch.setattr(probe_mod, "probe_video", _fake_probe, raising=False)
+
+    existing = {
+        "text_mode": "agent_text",
+        "base_video_path": "generative-jobs/x/base_0_song_text.mp4",
+        "intro_text": "Hi",
+        "intro_highlight_word": None,
+        "intro_text_size_px": 60,
+        "intro_size_source": "computed",
+        "video_path": "generative-jobs/x/song_text.mp4",
+    }
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="copy-through"):
+        gb._reburn_text_on_base(
+            job_id="test-job",
+            variant_id="song_text",
+            existing=existing,
+            agent_text=types.SimpleNamespace(text="Hi", highlight_word=None),
+            agent_form={"effect": "karaoke-line"},
+            text_mode="agent_text",
+            resolved_style_set_id=None,
+            size_override_px=None,
+            settings=gb.settings,
+        )

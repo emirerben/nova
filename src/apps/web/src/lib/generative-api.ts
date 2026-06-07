@@ -29,6 +29,8 @@ export interface GenerativeVariant {
   // Agent-decided (or user-pinned) intro size. null for non-text variants.
   intro_text_size_px: number | null;
   intro_size_source: "computed" | "user" | null;
+  intro_text?: string | null;
+  intro_highlight_word?: string | null;
   // Voice/bed mix for voiceover variants (0..1; 1.0 = voice only / bed ducked,
   // 0.0 = bed full). null on non-voiceover variants.
   mix?: number | null;

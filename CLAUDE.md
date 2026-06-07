@@ -155,6 +155,8 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - NO reference template and NO pre-selected song: the user uploads clips; `orchestrate_generative_job` analyzes them, auto-matches a track, writes its own intro overlay, and renders THREE variants: `song_lyrics`, `song_text`, `original_text`.
 - **Best-effort by design:** if no labeled track matches, song variants are skipped and `original_text` still renders — a generative job never hard-fails on an empty library.
 - Per-variant state is authoritative in `Job.assembly_plan["variants"]` (the task owns it) — no new DB column. Jobs are plain `Job` rows with `mode == "generative"`.
+- **Intro-text persistence:** rendered intro text + highlight word are stored on `variants[i]["intro_text"]` / `["intro_highlight_word"]`. On re-render without override, persisted text is reused (no LLM). intro_writer only runs on first render or legacy variants.
+- **Fast reburn base:** for `agent_text` montage variants, the audio-mixed text-free base is stored at `variants[i]["base_video_path"]` (GCS key). Font/text/size edits download the base and reburn only the overlay (seconds). Kill switch: `GENERATIVE_FAST_REBURN_ENABLED=false` + worker restart.
 - See `docs/pipelines/generative.md` for how the music engine is reused and per-variant mechanics.
 
 ## Template pipeline
