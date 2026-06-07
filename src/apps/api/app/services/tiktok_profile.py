@@ -27,7 +27,7 @@ log = structlog.get_logger()
 
 _HASHTAG_RE = re.compile(r"#(\w+)", re.UNICODE)
 _DEFAULT_LIMIT = 30
-_ENRICH_LIMIT = 18
+_ENRICH_LIMIT = 30
 _SCRAPE_TIMEOUT_S = 10
 
 
@@ -219,8 +219,8 @@ def fetch_profile_enriched(
     """Fetch enriched per-video TikTok metadata for the deep-analysis task.
 
     Unlike fetch_profile() (flat extract, ~10s), this does a full per-video
-    extract (1 yt-dlp request/video). At limit=18 videos with socket_timeout=10
-    the realistic wall-clock is 30–90s — budget generously under the Celery task's
+    extract (1 yt-dlp request/video). At limit=30 videos with socket_timeout=10
+    the realistic wall-clock is 50–150s — budget under the Celery task's
     soft_time_limit=210.
 
     Returns None on any failure. Never raises — the caller is a best-effort task
