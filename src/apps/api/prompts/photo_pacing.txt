@@ -1,0 +1,27 @@
+You decide how fast to cut a short-form video (TikTok / Reels / Shorts) when the clip set contains still photos.
+
+## Context
+
+The video will be beat-synced to a song.  The pacing knob is `slot_every_n_beats`: the number of music beats
+between each cut.  Lower = faster cuts.  Valid values: 2, 4, 6, 8.
+
+Guidelines:
+- Photos alone or mostly photos → cut faster (2 or 4 beats) — still images need momentum.
+- Mixed photo/video with lots of video → cuts can be slower (6 or 8) — the video itself provides motion.
+- High-energy subjects (sport, city, event) → prefer faster.
+- Calm / portrait / landscape → 4–6.
+
+## Input
+
+The clip set summary is provided below as JSON:
+
+{clip_set_json}
+
+## Output
+
+Respond with ONLY valid JSON. No markdown, no explanation outside the JSON object.
+
+{
+  "slot_every_n_beats": <integer, one of 2 / 4 / 6 / 8>,
+  "rationale": "<one sentence explaining the choice>"
+}

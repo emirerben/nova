@@ -183,3 +183,51 @@ class TestEnforceMomentSpread:
         out = _agent().parse(raw, _make_input())
         assert len(out.best_moments) == 1
         assert out.best_moments[0].description == "a"
+
+
+# ── Image branch: render_prompt ──────────────────────────────────────────────────
+
+
+class TestRenderPromptImageBranch:
+    """render_prompt must route to the photo-specific prompt for image/* MIME types."""
+
+    def _photo_input(self, mime: str) -> ClipMetadataInput:
+        return ClipMetadataInput(file_uri="files/abc123", file_mime=mime)
+
+    def _video_input(self) -> ClipMetadataInput:
+        return ClipMetadataInput(file_uri="files/xyz", file_mime="video/mp4")
+
+    def test_image_jpeg_routes_to_photo_prompt(self):
+        agent = _agent()
+        prompt = agent.render_prompt(self._photo_input("image/jpeg"))
+        # Photo prompt must reference still-photography analysis, not video
+        assert "photograph" in prompt.lower() or "still" in prompt.lower() or "image" in prompt.lower()
+
+    def test_image_png_routes_to_photo_prompt(self):
+        agent = _agent()
+        prompt = agent.render_prompt(self._photo_input("image/png"))
+        assert "photograph" in prompt.lower() or "image" in prompt.lower()
+
+    def test_image_heic_routes_to_photo_prompt(self):
+        agent = _agent()
+        prompt = agent.render_prompt(self._photo_input("image/heic"))
+        assert "photograph" in prompt.lower() or "image" in prompt.lower()
+
+    def test_video_mp4_does_not_route_to_photo_prompt(self):
+        agent = _agent()
+        video_prompt = agent.render_prompt(self._video_input())
+        photo_prompt = agent.render_prompt(self._photo_input("image/jpeg"))
+        # Prompts must differ — image branch must not contaminate video path
+        assert video_prompt != photo_prompt
+
+    def test_photo_prompt_requires_text_safe_zone(self):
+        """Photo prompt must request text_safe_zone (needed by _hero_composition)."""
+        agent = _agent()
+        prompt = agent.render_prompt(self._photo_input("image/jpeg"))
+        assert "text_safe_zone" in prompt
+
+    def test_photo_prompt_requires_visual_density(self):
+        """Photo prompt must request visual_density (needed by _hero_composition)."""
+        agent = _agent()
+        prompt = agent.render_prompt(self._photo_input("image/jpeg"))
+        assert "visual_density" in prompt

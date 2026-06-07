@@ -285,7 +285,9 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # engine), layered on the composition fields above. New fields default +
         # coerce, so a hook_score regression here is attributable; D4 eval gate
         # compares hook_score against the prior baseline before merge.
-        prompt_version="2026-05-31.1",
+        # 2026-06-07   — image branch: still photograph analysis path in render_prompt,
+        # requesting text_safe_zone + visual_density so intro_sizing doesn't degrade.
+        prompt_version="2026-06-07",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -336,6 +338,16 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
     # ── Prompt ────────────────────────────────────────────────────
 
     def render_prompt(self, input: ClipMetadataInput) -> str:  # noqa: A002
+        # ── Image (still photograph) path ─────────────────────────
+        # When the file is a still image, bypass the video prompt and use
+        # a photo-specific instruction set.  We still request all composition
+        # fields (text_safe_zone + visual_density) so _hero_composition in
+        # generative_build.py can size the intro overlay correctly — omitting
+        # them would silently degrade every photos-only job to the full-width
+        # fallback intro.
+        if input.file_mime.startswith("image/"):
+            return load_prompt("analyze_clip_photo")
+
         if input.segment is not None:
             segment_instruction = (
                 f"Analyze the video segment from {input.segment.start_s:.1f}s "

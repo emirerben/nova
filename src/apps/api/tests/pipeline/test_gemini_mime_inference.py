@@ -61,3 +61,58 @@ def test_wav_does_not_return_x_wav() -> None:
 
 def test_flac_does_not_return_x_flac() -> None:
     assert _infer_mime_type("a.flac") == "audio/flac"
+
+
+# ── Image extension coverage (added for photo-support) ───────────────────────────
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        ("photo.jpg", "image/jpeg"),
+        ("photo.jpeg", "image/jpeg"),
+        ("screenshot.png", "image/png"),
+        ("animated.webp", "image/webp"),
+        ("iphone.heic", "image/heic"),
+        ("iphone.heif", "image/heif"),
+        # Upper-case (case-folded in _infer_mime_type)
+        ("PHOTO.JPG", "image/jpeg"),
+        ("SHOT.HEIC", "image/heic"),
+    ],
+)
+def test_infer_mime_type_images(path: str, expected: str) -> None:
+    """Image extensions must return the correct IANA image/* type, not 'video/mp4'."""
+    result = _infer_mime_type(path)
+    assert result == expected, f"Expected {expected!r} for {path!r}, got {result!r}"
+    assert result.startswith("image/"), "Image files must not fall through to video/mp4"
+
+
+def test_clip_meta_is_image_defaults_false() -> None:
+    """ClipMeta.is_image must default to False so video-only paths are unaffected."""
+    from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+    meta = ClipMeta(
+        clip_id="clip_0",
+        hook_score=7.0,
+        hook_text="",
+        detected_subject="",
+        transcript="",
+        best_moments=[],
+    )
+    assert meta.is_image is False  # must not default to True
+
+
+def test_clip_meta_is_image_set_true() -> None:
+    """is_image=True can be set without triggering a Pydantic parse() trap (plain dataclass)."""
+    from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+    meta = ClipMeta(
+        clip_id="clip_1",
+        hook_score=5.0,
+        hook_text="",
+        detected_subject="",
+        transcript="",
+        best_moments=[],
+        is_image=True,
+    )
+    assert meta.is_image is True

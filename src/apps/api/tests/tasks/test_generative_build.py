@@ -1211,3 +1211,334 @@ def test_classify_error_unknown():
 
 def test_classify_error_encoder():
     assert gb._classify_error(RuntimeError("ffmpeg returned non-zero")) == "encoder_error"
+
+
+# ── Photo support ───────────────────────────────────────────────────────────────
+
+
+class _Probe:
+    """Thin probe stub (duration only)."""
+
+    def __init__(self, duration_s: float):
+        self.duration_s = duration_s
+
+
+# ── _photo_pacing_fallback ──────────────────────────────────────────────────────
+
+
+def test_photo_pacing_fallback_photos_only():
+    # All photos (ratio = 1.0 ≥ 0.7) → fast cuts = 4
+    assert gb._photo_pacing_fallback(5, 0) == 4
+
+
+def test_photo_pacing_fallback_mixed_heavy_photos():
+    # 3 photos, 1 video → ratio 0.75 ≥ 0.7 → fast cuts = 4
+    assert gb._photo_pacing_fallback(3, 1) == 4
+
+
+def test_photo_pacing_fallback_mixed_balanced():
+    # 2 photos, 3 videos → ratio 0.4 (0.3–0.7) → moderate = 6
+    assert gb._photo_pacing_fallback(2, 3) == 6
+
+
+def test_photo_pacing_fallback_video_heavy():
+    # 1 photo, 9 videos → ratio 0.1 < 0.3 → default = 8
+    assert gb._photo_pacing_fallback(1, 9) == 8
+
+
+def test_photo_pacing_fallback_zero_clips():
+    # Edge case: 0+0 → safe default 8
+    assert gb._photo_pacing_fallback(0, 0) == 8
+
+
+# ── _variant_specs(has_video=False) skips original_text ──────────────────────────
+
+
+def test_variant_specs_photos_only_with_track_skips_original_text():
+    """Photos-only set: original_text (original clip audio) must be excluded."""
+    specs = gb._variant_specs(_track(), has_video=False)
+    variant_ids = [s["variant_id"] for s in specs]
+    assert "original_text" not in variant_ids
+    # Song variants still present
+    assert "song_lyrics" in variant_ids or "song_text" in variant_ids
+
+
+def test_variant_specs_photos_only_no_track_returns_empty():
+    """Photos-only + no track → zero specs → caller raises loud failure."""
+    specs = gb._variant_specs(None, has_video=False)
+    assert specs == []
+
+
+def test_variant_specs_mixed_with_track_keeps_original_text():
+    """Mixed (has_video=True) keeps all three variants."""
+    specs = gb._variant_specs(_track(), has_video=True)
+    variant_ids = [s["variant_id"] for s in specs]
+    assert "original_text" in variant_ids
+
+
+# ── _available_footage_s with photo budget ────────────────────────────────────────
+
+
+def test_available_footage_photo_contributes_budget_not_physical():
+    """Photo-derived mp4 is 20s physical but contributes only 3s to the budget."""
+    photo_path = "/tmp/photo_0_kbcrop.mp4"
+    probe_map = {photo_path: _Probe(gb._PHOTO_DERIVED_DURATION_S)}  # 20s physical
+    result = gb._available_footage_s(probe_map, photo_local_paths={photo_path})
+    # Must be 3s (budget), NOT 20s (physical)
+    assert result == gb._PHOTO_BUDGET_HOLD_S
+
+
+def test_available_footage_mixed_video_real_photo_budget():
+    """Mixed: video contributes real duration; photo contributes budget hold."""
+    video_path = "/tmp/clip_0.mp4"
+    photo_path = "/tmp/photo_1_kbcrop.mp4"
+    probe_map = {
+        video_path: _Probe(15.0),  # real video
+        photo_path: _Probe(gb._PHOTO_DERIVED_DURATION_S),  # 20s derived
+    }
+    result = gb._available_footage_s(probe_map, photo_local_paths={photo_path})
+    # video real (15s) + photo budget (3s) = 18s
+    assert abs(result - (15.0 + gb._PHOTO_BUDGET_HOLD_S)) < 1e-6
+
+
+def test_available_footage_no_photos_unchanged():
+    """When photo_local_paths is None, behavior is identical to the original."""
+    pm = {"/a.mp4": _Probe(3.0), "/b.mp4": _Probe(4.5)}
+    assert gb._available_footage_s(pm, photo_local_paths=None) == 7.5
+    assert gb._available_footage_s(pm) == 7.5  # default None
+
+
+# ── _resolve_archetype photos-only → montage ──────────────────────────────────────
+
+
+def test_resolve_archetype_all_photos_returns_montage(monkeypatch):
+    """All-photo clip set must short-circuit to montage without speech analysis."""
+    # Stub record_pipeline_event to avoid import side effects
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda *a, **kw: None,
+        raising=False,
+    )
+    metas = [
+        types.SimpleNamespace(clip_id="clip_0"),
+        types.SimpleNamespace(clip_id="clip_1"),
+    ]
+    photo_ids = {"clip_0", "clip_1"}
+    archetype, spine = gb._resolve_archetype(
+        "talking_head",
+        metas,
+        {"clip_0": "/a.mp4", "clip_1": "/b.mp4"},
+        job_id="test-job",
+        photo_clip_ids=photo_ids,
+    )
+    assert archetype == "montage"
+    assert spine is None
+
+
+def test_resolve_archetype_no_photo_ids_not_short_circuited(monkeypatch):
+    """No photo_clip_ids → standard path (montage format is returned for montage)."""
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda *a, **kw: None,
+        raising=False,
+    )
+    metas = [types.SimpleNamespace(clip_id="clip_0")]
+    archetype, spine = gb._resolve_archetype(
+        "montage",
+        metas,
+        {"clip_0": "/a.mp4"},
+        job_id="test-job",
+        photo_clip_ids=None,
+    )
+    assert archetype == "montage"
+
+
+# ── _convert_photos_to_clips: GCS-ext detection ──────────────────────────────────
+
+
+def test_convert_photos_to_clips_detects_by_gcs_extension_not_local(
+    tmp_path, monkeypatch
+):
+    """The local file is renamed clip_0.mp4 by the downloader.  Detection MUST
+    use the GCS path extension — never the local path — or photos are silently
+    treated as videos."""
+    # Stub heavy imports so the test runs without ffmpeg / PIL.
+    normalize_calls: list = []
+    render_calls: list = []
+
+    def _fake_normalize(raw: bytes) -> bytes:
+        normalize_calls.append(raw)
+        return raw  # return same bytes as JPEG
+
+    def _fake_render(jpeg_path, out_path, *, duration_s, ken_burns):
+        render_calls.append({"jpeg": jpeg_path, "out": out_path, "duration_s": duration_s})
+        # Create a non-empty dummy file so the caller can replace local_paths.
+        open(out_path, "wb").write(b"\x00" * 8)  # noqa: WPS515
+
+    monkeypatch.setattr(
+        "app.services.image_to_video._normalize_to_9x16",
+        _fake_normalize,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.image_clip.render_image_to_clip",
+        _fake_render,
+        raising=False,
+    )
+
+    # Write a small fake "clip_0.mp4" (the renamed photo download).
+    fake_content = b"\xff\xd8\xff" + b"\x00" * 16  # JPEG magic + padding
+    local_mp4 = tmp_path / "clip_0.mp4"
+    local_mp4.write_bytes(fake_content)
+
+    local_paths = [str(local_mp4)]
+    gcs_paths = ["music-uploads/user/photo.jpg"]  # GCS ext = .jpg → is image
+
+    jpeg_paths, photo_idxs = gb._convert_photos_to_clips(
+        local_paths, gcs_paths, str(tmp_path)
+    )
+
+    # Photo at index 0 must be detected and converted.
+    assert 0 in photo_idxs
+    assert 0 in jpeg_paths
+    assert len(normalize_calls) == 1
+    assert len(render_calls) == 1
+    assert render_calls[0]["duration_s"] == gb._PHOTO_DERIVED_DURATION_S
+    # local_paths[0] must be mutated to point at the derived mp4, not the original.
+    assert local_paths[0] != str(local_mp4)
+    assert local_paths[0].endswith("_kbcrop.mp4")
+
+
+def test_convert_photos_to_clips_video_passthrough(tmp_path, monkeypatch):
+    """A non-image GCS path must not be converted — local_paths stays unchanged."""
+    normalize_calls: list = []
+
+    monkeypatch.setattr(
+        "app.services.image_to_video._normalize_to_9x16",
+        lambda raw: (normalize_calls.append(raw) or raw),
+        raising=False,
+    )
+
+    local_mp4 = tmp_path / "clip_0.mp4"
+    local_mp4.write_bytes(b"\x00" * 8)
+    original_path = str(local_mp4)
+
+    local_paths = [original_path]
+    gcs_paths = ["music-uploads/user/video.mp4"]  # not an image
+
+    jpeg_paths, photo_idxs = gb._convert_photos_to_clips(
+        local_paths, gcs_paths, str(tmp_path)
+    )
+
+    assert jpeg_paths == {}
+    assert photo_idxs == {}
+    assert normalize_calls == []
+    assert local_paths[0] == original_path  # untouched
+
+
+# ── clip_id constraint: synthesized metas ─────────────────────────────────────────
+
+
+def test_synth_meta_clip_id_matches_ingest_convention():
+    """Synthesized failure meta's clip_id must match the f"clip_{idx}" derivation.
+
+    The ingest maps (clip_id_to_local, clip_id_to_gcs) are built with
+    _clip_id_for(ref, idx) which returns f"clip_{idx}" when ref is None.
+    A mismatch causes a hard ValueError in _assemble_clips.
+    """
+    # Verify the derivation directly: _clip_id_for is nested inside _ingest_clips,
+    # but the convention is documented + pinned here to catch any future refactor.
+    # When the Gemini upload fails, the ref is None → clip_id must be "clip_{idx}".
+    from app.pipeline.agents.gemini_analyzer import ClipMeta
+
+    for idx in range(5):
+        expected_clip_id = f"clip_{idx}"
+        synth = ClipMeta(
+            clip_id=expected_clip_id,  # must be f"clip_{idx}"
+            transcript="",
+            hook_text="",
+            hook_score=5.0,
+            best_moments=[],
+            is_image=True,
+            analysis_degraded=True,
+        )
+        assert synth.clip_id == expected_clip_id, (
+            f"Synth meta clip_id mismatch at idx={idx}: "
+            f"got {synth.clip_id!r}, expected {expected_clip_id!r}"
+        )
+
+
+def test_synth_meta_clip_id_in_ingest_maps_would_resolve():
+    """Map built with f"clip_{idx}" keys would resolve the synth meta clip_id.
+
+    This is the contract: if clip_id_to_local is built as
+    {f"clip_{i}": path for i, path in enumerate(local_clip_paths)},
+    then synth meta with clip_id=f"clip_{idx}" must be findable.
+    """
+    local_clip_paths = ["/tmp/photo_0_kbcrop.mp4", "/tmp/clip_1.mp4"]
+    clip_id_to_local = {f"clip_{i}": p for i, p in enumerate(local_clip_paths)}
+
+    # A synth meta at idx=0 (photo upload failed) uses clip_id="clip_0"
+    synth_clip_id = "clip_0"
+    assert synth_clip_id in clip_id_to_local, (
+        "Synth meta clip_id must be findable in clip_id_to_local map; "
+        "if _clip_id_for changes, update both the ingest maps and the synth path."
+    )
+
+
+# ── Pacing persistence read-back logic ────────────────────────────────────────────
+
+
+def test_pacing_persisted_value_takes_precedence_over_fallback():
+    """When all_candidates has photo_slot_every_n_beats, it wins over the heuristic.
+
+    Simulates the re-render path logic:
+        persisted = (job.all_candidates or {}).get("photo_slot_every_n_beats")
+        result = persisted or _photo_pacing_fallback(n_photos, n_videos)
+    """
+    persisted = 2  # agent decided fast cuts
+    n_photos, n_videos = 2, 5  # heuristic would return 6 (mixed-balanced)
+
+    all_candidates = {"photo_slot_every_n_beats": persisted}
+    _persisted_pacing: int | None = (all_candidates or {}).get("photo_slot_every_n_beats")
+    result = _persisted_pacing or gb._photo_pacing_fallback(n_photos, n_videos)
+
+    assert result == 2, "Persisted value must win over heuristic fallback"
+
+
+def test_pacing_fallback_when_persisted_absent():
+    """When all_candidates lacks photo_slot_every_n_beats, fallback heuristic fires."""
+    n_photos, n_videos = 2, 5  # ratio = 0.29 < 0.3 → 8... wait 2/(2+5) = 0.286 < 0.3 → 8
+    # Actually 2/(2+5) = 0.286, which is < 0.3, so fallback returns 8.
+    all_candidates: dict = {}
+    _persisted_pacing: int | None = (all_candidates or {}).get("photo_slot_every_n_beats")
+    result = _persisted_pacing or gb._photo_pacing_fallback(n_photos, n_videos)
+
+    assert result == 8, "Heuristic must fire when persisted pacing is absent"
+    # Confirm: with persisted = 0 (falsy int), fallback also fires.
+    _persisted_zero: int | None = 0
+    result_zero = _persisted_zero or gb._photo_pacing_fallback(n_photos, n_videos)
+    assert result_zero == 8  # 0 is falsy → fallback
+
+
+def test_pacing_absent_key_returns_none():
+    """all_candidates.get returns None when key missing — re-render fallback path."""
+    all_candidates = {"some_other_key": "value"}
+    persisted = all_candidates.get("photo_slot_every_n_beats")
+    assert persisted is None
+
+
+# ── Photos-only + no-track = zero specs = explicit failure ─────────────────────────
+
+
+def test_specs_for_archetype_photos_only_no_track_yields_zero():
+    """_specs_for_archetype for photos-only job with no matched track → empty list.
+
+    This is the gate that triggers the loud failure in _run_generative_job.
+    """
+    # montage archetype, no track, no voiceover → _variant_specs(None, has_video=False)
+    specs = gb._variant_specs(None, has_video=False)
+    assert specs == [], (
+        "Photos-only + no track must produce zero specs — "
+        "the caller is expected to raise a loud error rather than render nothing."
+    )

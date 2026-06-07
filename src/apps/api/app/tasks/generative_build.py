@@ -39,6 +39,7 @@ from app.agents._schemas.edit_format import coerce_edit_format
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
+from app.pipeline.agents.gemini_analyzer import ClipMeta
 from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
 
@@ -77,6 +78,25 @@ _VOICEOVER_MAX_DURATION_S = 60.0
 # freeze on heavy 4K/HDR uploads (prod job d30c61fe): 7 clips × 4-8min each blew
 # past the task soft_time_limit before any variant rendered.
 _PRETONEMAP_MAX_WORKERS = 2
+
+# ── Photo support constants ───────────────────────────────────────────────────
+#
+# Photos need two separate durations:
+#
+# 1. Physical derived-mp4 duration (_PHOTO_DERIVED_DURATION_S = 20s).
+#    The Ken Burns zoompan clip is 20s long so that even the heaviest reuse case
+#    (large window / few clips) fits within the derived mp4.  Worst-case cumulative
+#    per-photo usage ≈ window/n_clips + slot_dur — a mixed set with two 30s videos
+#    inflates the window to ~66s giving ~16.5s+slot per photo, which exceeds 12s.
+#    20s covers realistic windows; the `_plan_slots` shrink branch remains the
+#    graceful backstop for edge cases.
+#
+# 2. Nominal footage contribution (_PHOTO_BUDGET_HOLD_S = 3s).
+#    `_available_footage_s` must not count the full 20s derived duration or a
+#    12-photo set claims 240s of song window.  3s is a realistic "hold" for one
+#    photo in a fast cut; the pacing agent adjusts cuts-per-photo separately.
+_PHOTO_DERIVED_DURATION_S = 20.0
+_PHOTO_BUDGET_HOLD_S = 3.0
 
 # Terminal statuses a redelivered task (Celery acks_late) must NOT re-run. A job
 # killed mid-render is left at "rendering" (not terminal) so the resume path can
@@ -218,14 +238,28 @@ def _run_generative_job(job_id: str) -> None:
         clip_id_to_local = ingest["clip_id_to_local"]
         probe_map = ingest["probe_map"]
         hero = ingest["hero"]
+        photo_clip_ids: set[str] = ingest.get("photo_clip_ids", set())
+        has_video: bool = ingest.get("has_video", True)
+        n_photos: int = ingest.get("n_photos", 0)
+        n_videos: int = ingest.get("n_videos", len(clip_metas))
+
+        # Compute photo local paths for the footage-budget override.
+        photo_local_paths = {
+            clip_id_to_local[cid] for cid in photo_clip_ids if cid in clip_id_to_local
+        }
         # The edit can never be longer than the footage the user actually uploaded.
-        # This hard ceiling flows into every variant: it shrinks the song's
-        # best-section window (music variants) and sizes the no-music arrangement.
-        available_footage_s = _available_footage_s(probe_map)
+        # Photos contribute _PHOTO_BUDGET_HOLD_S (3s), not their physical 20s derived
+        # mp4, so a 12-photo set doesn't claim 240s of song window.
+        available_footage_s = _available_footage_s(probe_map, photo_local_paths)
         record_pipeline_event(
             "assembly",
             "clip_metadata_done",
-            {"clips": len(clip_metas), "available_footage_s": round(available_footage_s, 3)},
+            {
+                "clips": len(clip_metas),
+                "available_footage_s": round(available_footage_s, 3),
+                "n_photos": n_photos,
+                "n_videos": n_videos,
+            },
         )
 
         # The pre-render phase has three independent workstreams that used to run
@@ -261,6 +295,51 @@ def _run_generative_job(job_id: str) -> None:
             style = _select_generative_style_set(clip_metas, text, job_id=job_id)
             return text, form, style
 
+        def _run_photo_pacing() -> int | None:
+            """Run the photo_pacing agent; return slot_every_n_beats or None on failure."""
+            if n_photos == 0:
+                return None  # no photos — no override needed
+            try:
+                from app.agents._model_client import default_client  # noqa: PLC0415
+                from app.agents._runtime import RunContext  # noqa: PLC0415
+                from app.agents.photo_pacing import (  # noqa: PLC0415
+                    PhotoPacingAgent,
+                    PhotoPacingInput,
+                )
+
+                video_durations = []
+                for m in clip_metas:
+                    if not getattr(m, "is_image", False):
+                        local = clip_id_to_local.get(m.clip_id, "")
+                        probe = probe_map.get(local)
+                        dur = float(getattr(probe, "duration_s", 0.0) or 0.0)
+                        video_durations.append(dur)
+                clip_energies = []
+                for m in clip_metas:
+                    moments = getattr(m, "best_moments", None) or []
+                    first = moments[0] if moments else None
+                    clip_energies.append(float(getattr(first, "energy", 5.0) or 5.0))
+                subjects = [
+                    str(getattr(m, "detected_subject", "") or "")[:80]
+                    for m in clip_metas
+                    if getattr(m, "detected_subject", "")
+                ][:5]
+                ctx = RunContext(job_id=job_id)
+                result = PhotoPacingAgent(default_client()).run(
+                    PhotoPacingInput(
+                        n_photos=n_photos,
+                        n_videos=n_videos,
+                        video_durations_s=video_durations,
+                        clip_energies=clip_energies,
+                        subjects=subjects,
+                    ),
+                    ctx=ctx,
+                )
+                return result.slot_every_n_beats
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                log.warning("photo_pacing_agent_failed", job_id=job_id, error=str(exc)[:200])
+                return None
+
         # NOT a `with` block: ThreadPoolExecutor.__exit__ calls shutdown(wait=True),
         # which would BLOCK on the in-flight tonemap thread if the soft time limit
         # fires mid-join — so SoftTimeLimitExceeded can't reach the orchestrator's
@@ -269,21 +348,51 @@ def _run_generative_job(job_id: str) -> None:
         # cancel_futures=True) so the exception propagates immediately. Python can't
         # kill a running ffmpeg thread, but each tonemap holds its own 600s timeout
         # and the failing task's worker is recycled, so the orphan is bounded.
-        pool = ThreadPoolExecutor(max_workers=3)
+        #
+        # 4th future: photo_pacing agent (zero serial latency — runs alongside the
+        # existing tonemap/text/match streams).  Short-circuits to None when no photos.
+        pool = ThreadPoolExecutor(max_workers=4)
         try:
             fut_tonemap = pool.submit(
                 _pretonemap_hdr_clips, clip_id_to_local, probe_map, tmpdir, job_id=job_id
             )
             fut_text = pool.submit(_text_then_style)
             fut_match = pool.submit(_match_best_track, clip_metas, job_id=job_id)
+            fut_pacing = pool.submit(_run_photo_pacing)
             n_tonemapped = fut_tonemap.result()
             agent_text, agent_form, style_set_id = fut_text.result()
             best_track = fut_match.result()
+            pacing_agent_result: int | None = fut_pacing.result()
         except BaseException:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
         else:
             pool.shutdown(wait=True)
+
+        # Resolve final slot_every_n_beats: agent → fallback heuristic.
+        if n_photos > 0:
+            if pacing_agent_result is not None:
+                photo_slot_every_n_beats: int | None = pacing_agent_result
+                pacing_source = "agent"
+            else:
+                photo_slot_every_n_beats = _photo_pacing_fallback(n_photos, n_videos)
+                pacing_source = "fallback"
+            record_pipeline_event(
+                "assembly",
+                "photo_pacing_decided",
+                {"slot_every_n_beats": photo_slot_every_n_beats, "source": pacing_source},
+            )
+            # Persist in all_candidates so re-renders (swap-song/retext) use the same
+            # pacing without re-running the agent.
+            with _sync_session() as db:
+                job_row = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                if job_row is not None:
+                    cands = dict(job_row.all_candidates or {})
+                    cands["photo_slot_every_n_beats"] = photo_slot_every_n_beats
+                    job_row.all_candidates = cands
+                    db.commit()
+        else:
+            photo_slot_every_n_beats = None
 
         record_pipeline_event("reframe", "hdr_pretonemap_done", {"clips_converted": n_tonemapped})
         record_pipeline_event("overlay", "agent_text_done", {"has_text": bool(agent_text)})
@@ -307,6 +416,7 @@ def _run_generative_job(job_id: str) -> None:
             clip_id_to_local,
             job_id=job_id,
             voiceover_gcs_path=voiceover_gcs_path,
+            photo_clip_ids=photo_clip_ids,
         )
         _set_status(job_id, "rendering")
 
@@ -384,6 +494,7 @@ def _run_generative_job(job_id: str) -> None:
                         agent_form=agent_form,
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
+                        slot_every_n_beats=photo_slot_every_n_beats,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -401,14 +512,27 @@ def _run_generative_job(job_id: str) -> None:
         # set is known — before any render starts. The frontend sees a stable N-tile grid
         # from this point, never from a growing list that pops in mid-render (D7).
         initial_specs = _specs_for_archetype(
-            archetype, best_track, voiceover_gcs_path=voiceover_gcs_path
+            archetype, best_track, voiceover_gcs_path=voiceover_gcs_path, has_video=has_video
         )
-        for spec in initial_specs:
+        # Photos-only with no matched track → zero variants → hard fail with a clear message.
+        # (A video-only job always has original_text; a mixed job always has a song fallback or
+        # original_text. Only photos-only + empty library reaches here with 0 specs.)
+        if not initial_specs:
+            from app.services.pipeline_trace import record_pipeline_event as _rpe  # noqa: PLC0415
+
+            _rpe("assembly", "photos_only_no_track", {"n_photos": n_photos})
+            raise ValueError(
+                "No matched song for a photos-only job. "
+                "Please add more music tracks to the library or upload "
+                "a video clip with your photos."
+            )
+
+        for rank_0, spec in enumerate(initial_specs):
             _upsert_variant_entry(
                 job_id,
                 {
                     "variant_id": spec["variant_id"],
-                    "rank": initial_specs.index(spec) + 1,
+                    "rank": rank_0 + 1,
                     "text_mode": spec.get("text_mode", "agent_text"),
                     "music_track_id": spec["track"].id if spec.get("track") else None,
                     "track_title": spec["track"].title if spec.get("track") else None,
@@ -430,7 +554,7 @@ def _run_generative_job(job_id: str) -> None:
             )
             log.warning("generative_talking_head_degrade_montage", job_id=job_id, error=str(exc))
             # Re-upsert the montage fallback specs so the tile set stays consistent.
-            fallback_specs = _variant_specs(best_track)
+            fallback_specs = _variant_specs(best_track, has_video=has_video)
             for spec in fallback_specs:
                 _upsert_variant_entry(
                     job_id,
@@ -451,18 +575,146 @@ def _run_generative_job(job_id: str) -> None:
     _finalize_job(job_id, results)
 
 
+# ── Photo helpers (ingest seam) ───────────────────────────────────────────────
+
+
+def _convert_photos_to_clips(
+    local_paths: list[str],
+    gcs_paths: list[str],
+    tmpdir: str,
+) -> tuple[dict[int, str], dict[int, str]]:
+    """Convert still-image downloads to Ken Burns mp4s in place.
+
+    Downloads are renamed ``clip_{i}.mp4`` by `_download_clips_parallel`, so we
+    detect photos by the **GCS path** extension, never the local path.
+
+    For each photo index:
+    - Read raw bytes from the local (renamed) file.
+    - PIL-decode with EXIF rotation + HEIC support via ``_normalize_to_9x16``
+      (from app.services.image_to_video) → JPEG bytes.
+    - Write JPEG to a temp file kept as the Gemini-upload source (original pixel
+      data, not the derived mp4 — cheaper and semantically richer).
+    - Render 20s Ken Burns mp4 via ``render_image_to_clip``.
+    - Replace ``local_paths[i]`` in-place with the derived mp4 path.
+
+    Ken Burns: rate-based endpoint so each slot slice has visible motion even
+    from a short section of the 20s clip — ``zoom_to = min(1.0 + 0.015 × 20, 1.30)``
+    ≈ 1.30 (30% zoom), ~1.5%/s, capped to bound late-clip crop.
+
+    Conversions are parallelized (same bounded thread pool as pre-tonemap) since
+    each zoompan encode at 4× prescale takes 2–5s; serial would regress latency.
+
+    Returns:
+        photo_jpeg_paths  — {idx: path_to_jpeg} for Gemini upload
+        photo_idxs        — {idx: "photo"} sentinel; used by callers to skip
+                            Whisper and mark ClipMeta.is_image
+    """
+    import concurrent.futures  # noqa: PLC0415
+
+    from app.pipeline.image_clip import (  # noqa: PLC0415
+        KenBurns,
+        is_image_file,
+        render_image_to_clip,
+    )
+    from app.services.image_to_video import _normalize_to_9x16  # noqa: PLC0415
+
+    _PHOTO_ZOOM_TO = min(1.0 + 0.015 * _PHOTO_DERIVED_DURATION_S, 1.30)
+    _PHOTO_KEN_BURNS = KenBurns(zoom_from=1.0, zoom_to=_PHOTO_ZOOM_TO)
+
+    photo_jpeg_paths: dict[int, str] = {}
+    photo_idxs: dict[int, str] = {}
+
+    # Collect photo indices before any mutation.
+    photo_indices = [i for i, gcs in enumerate(gcs_paths) if is_image_file(gcs)]
+    if not photo_indices:
+        return {}, {}
+
+    def _convert_one(idx: int) -> tuple[int, str, str] | None:
+        """Returns (idx, jpeg_path, derived_mp4_path) or None on error."""
+        gcs_path = gcs_paths[idx]
+        local_path = local_paths[idx]  # renamed clip_{i}.mp4 by downloader
+        try:
+            with open(local_path, "rb") as fh:
+                raw = fh.read()
+            jpeg_bytes = _normalize_to_9x16(raw)
+
+            jpeg_path = os.path.join(tmpdir, f"photo_{idx}_orig.jpg")
+            with open(jpeg_path, "wb") as f:
+                f.write(jpeg_bytes)
+
+            derived_path = os.path.join(tmpdir, f"photo_{idx}_kbcrop.mp4")
+            render_image_to_clip(
+                jpeg_path,
+                derived_path,
+                duration_s=_PHOTO_DERIVED_DURATION_S,
+                ken_burns=_PHOTO_KEN_BURNS,
+            )
+            return idx, jpeg_path, derived_path
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "photo_convert_failed",
+                idx=idx,
+                gcs_path=gcs_path,
+                error=str(exc)[:300],
+            )
+            return None
+
+    max_workers = min(len(photo_indices), _PRETONEMAP_MAX_WORKERS)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_convert_one, idx) for idx in photo_indices]
+        for fut in concurrent.futures.as_completed(futures):
+            result = fut.result()
+            if result is None:
+                continue
+            idx, jpeg_path, derived_path = result
+            # Replace the renamed mp4 placeholder with the Ken Burns-derived clip.
+            local_paths[idx] = derived_path
+            photo_jpeg_paths[idx] = jpeg_path
+            photo_idxs[idx] = "photo"
+            log.info("photo_converted", idx=idx, derived=os.path.basename(derived_path))
+
+    return photo_jpeg_paths, photo_idxs
+
+
+def _photo_pacing_fallback(n_photos: int, n_videos: int) -> int:
+    """Deterministic fallback pacing: photo-ratio → slot_every_n_beats in {2,4,6,8}.
+
+    Triggered when the photo_pacing agent fails/times out, or when called on
+    initial setup before the agent result is known.  Re-renders read back the
+    persisted value so this only fires on a missing key.
+    """
+    if n_photos + n_videos == 0:
+        return 8  # no-op; only photos-only job with 0 photos (shouldn't happen)
+    ratio = n_photos / (n_photos + n_videos)
+    if ratio >= 0.7:
+        return 4  # photo-heavy → fast cuts
+    if ratio >= 0.3:
+        return 6  # mixed → moderate cuts
+    return 8  # video-heavy → default
+
+
 # ── Ingest (shared by the full job + the single-variant re-render) ──────────────
 
 
 def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dict[str, Any]:
-    """Download → probe → Gemini upload → clip_metadata. Reuses the proven helpers.
+    """Download → photo-convert → probe → Gemini upload → clip_metadata.
 
-    Returns clip_metas, clip_id↔gcs/local maps, the probe map, and the hero clip.
+    Photos are identified by GCS-path extension (not local path — downloads are
+    renamed to ``clip_{i}.mp4``).  For each photo:
+      - The derived 20s Ken Burns mp4 replaces the local path for probing/reframe.
+      - The original PIL-decoded JPEG is uploaded to Gemini with image/jpeg MIME
+        (cheaper + semantically better than analyzing the derived mp4).
+      - The Whisper fallback is skipped — the derived mp4 is silent.
+      - ``ClipMeta.is_image`` is set True on every photo meta.
+
+    Returns clip_metas, clip_id↔gcs/local maps, probe map, hero clip,
+    photo_clip_ids (set[str]), and has_video (bool).
     Raises if more than half the clips fail metadata extraction.
     """
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         _analyze_clips_parallel,
         _download_clips_parallel,
+        _fallback_moments,
         _probe_clips,
         _upload_clips_parallel,
     )
@@ -473,28 +725,120 @@ def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dic
     def _clip_id_for(ref: object | None, idx: int) -> str:
         return ref.name if ref is not None else f"clip_{idx}"
 
+    # ── Step 1: download (renames all to clip_{i}.mp4) ───────────────────────
     local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
-    probe_map = _probe_clips(local_clip_paths)
-    file_refs = _upload_clips_parallel(local_clip_paths)
-    clip_metas, failed_count = _analyze_clips_parallel(
-        file_refs, local_clip_paths, probe_map, job_id=job_id
+
+    # ── Step 2: photo conversion (in-place local_clip_paths mutation) ────────
+    # local_clip_paths is mutated so _probe_clips sees the derived 20s mp4.
+    photo_jpeg_paths, photo_idxs = _convert_photos_to_clips(
+        local_clip_paths, clip_paths_gcs, tmpdir
     )
+    n_photos = len(photo_idxs)
+    n_videos = len(local_clip_paths) - n_photos
+
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    record_pipeline_event("assembly", "photo_ingest", {"n_photos": n_photos, "n_videos": n_videos})
+
+    # ── Step 3: probe (sees 20s derived mp4s for photos) ─────────────────────
+    probe_map = _probe_clips(local_clip_paths)
+
+    # ── Step 4: Gemini upload ─────────────────────────────────────────────────
+    # Photos upload the original JPEG (image MIME), not the derived mp4.
+    # Build a parallel-upload list where photo indices use the JPEG source.
+    upload_paths: list[str] = []
+    for idx, lp in enumerate(local_clip_paths):
+        upload_paths.append(photo_jpeg_paths.get(idx, lp))
+
+    file_refs = _upload_clips_parallel(upload_paths)
+
+    # ── Step 5: clip_metadata analysis ───────────────────────────────────────
+    # Photo clips whose Gemini upload failed get a synthesized ClipMeta (skip
+    # Whisper — the derived mp4 is silent). We do this by pre-populating a
+    # failure-meta dict and removing failed photo indices from the analyze list.
+    # We pass the FULL file_refs list so _analyze_clips_parallel sees Nones for
+    # failed uploads, BUT we need to intercept the Whisper path for photos.
+    # Strategy: replace None refs for failed-photo indices with a sentinel so
+    # _analyze_clips_parallel skips them; then synthesize the meta ourselves.
+    #
+    # Simpler: run _analyze_clips_parallel as usual.  Its Whisper fallback on a
+    # silent derived mp4 just transcribes silence → empty transcript.  That is
+    # actually fine (no worse than analysis_degraded=True).  But we must:
+    # a) prevent those failed-photo analyses from counting toward the >50% abort.
+    # b) set is_image=True on all photo metas.
+    #
+    # Approach: collect synthetic metas for photos that failed Gemini upload
+    # (ref is None), remove them from the parallel-analyze input, then merge.
+    photo_synth_metas: dict[int, Any] = {}
+    analyze_file_refs: list = []
+    analyze_local_paths: list[str] = []
+
+    for idx, (ref, lp) in enumerate(zip(file_refs, local_clip_paths)):
+        if ref is None and idx in photo_idxs:
+            # Gemini upload failed for a photo — synthesize a degraded meta.
+            # clip_id MUST use the same _clip_id_for derivation the maps use.
+            synth_meta = ClipMeta(
+                clip_id=_clip_id_for(None, idx),  # = f"clip_{idx}"
+                transcript="",
+                hook_text="",
+                hook_score=5.0,
+                best_moments=_fallback_moments(_PHOTO_DERIVED_DURATION_S),
+                analysis_degraded=True,
+                clip_path=lp,
+                is_image=True,
+            )
+            photo_synth_metas[idx] = synth_meta
+        else:
+            analyze_file_refs.append(ref)
+            analyze_local_paths.append(lp)
+
+    analyzed_metas, failed_count = _analyze_clips_parallel(
+        analyze_file_refs, analyze_local_paths, probe_map, job_id=job_id
+    )
+
+    # Build clip_id maps (same source of truth for all callers).
+    clip_id_to_gcs: dict[str, str] = {}
+    clip_id_to_local: dict[str, str] = {}
+    for i, (ref, gcs, lp) in enumerate(zip(file_refs, clip_paths_gcs, local_clip_paths)):
+        cid = _clip_id_for(ref, i)
+        clip_id_to_gcs[cid] = gcs
+        clip_id_to_local[cid] = lp
+
+    # Build photo_clip_ids set (clip_id for every photo index, succeeded or synth).
+    photo_clip_ids: set[str] = set()
+    for idx in photo_idxs:
+        cid = _clip_id_for(file_refs[idx], idx)
+        photo_clip_ids.add(cid)
+
+    # Tag is_image on all photo metas from the analyze step.
+    for meta in analyzed_metas:
+        cid = str(getattr(meta, "clip_id", ""))
+        if cid in photo_clip_ids:
+            meta.is_image = True
+
+    # Combine: analyzed + synthetic photo metas.
+    clip_metas: list = list(analyzed_metas) + list(photo_synth_metas.values())
+
+    # Total includes analyzed failures + synthetic photos (already handled).
     total = len(clip_metas) + failed_count
     if total == 0 or failed_count > total * 0.5:
         raise ValueError(
             f"{failed_count}/{total} clips failed clip_metadata — aborting generative job"
         )
+
+    hero = max(clip_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0))
+    has_video = n_videos > 0
+
     return {
         "clip_metas": clip_metas,
         "probe_map": probe_map,
-        "clip_id_to_gcs": {
-            _clip_id_for(ref, i): gcs for i, (ref, gcs) in enumerate(zip(file_refs, clip_paths_gcs))
-        },
-        "clip_id_to_local": {
-            _clip_id_for(ref, i): path
-            for i, (ref, path) in enumerate(zip(file_refs, local_clip_paths))
-        },
-        "hero": max(clip_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0)),
+        "clip_id_to_gcs": clip_id_to_gcs,
+        "clip_id_to_local": clip_id_to_local,
+        "photo_clip_ids": photo_clip_ids,
+        "has_video": has_video,
+        "n_photos": n_photos,
+        "n_videos": n_videos,
+        "hero": hero,
     }
 
 
@@ -756,6 +1100,10 @@ def _run_regenerate_variant(
         # Re-renders inherit the persona context too (content-plan jobs only), so a
         # retext/swap_song hook stays persona-coherent. Same Job-row source of truth.
         persona: dict = (job.all_candidates or {}).get("persona") or {}
+        # Photo pacing: read back the persisted decision from the original render so
+        # swap-song/retext re-renders cut at the same speed.  Falls back to the
+        # heuristic if absent (pre-photo-support jobs / first renders before persist).
+        _persisted_pacing: int | None = (job.all_candidates or {}).get("photo_slot_every_n_beats")
         # Voiceover jobs re-render the same voice bed; the mix slider is the only knob
         # that changes here. Both come from the Job row (single source of truth).
         voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
@@ -848,7 +1196,21 @@ def _run_regenerate_variant(
         # and skip re-analysis here (only re-download + re-probe are truly needed for
         # the render). Follow-up once the feature is real-render-verified.
         ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
-        available_footage_s = _available_footage_s(ingest["probe_map"])
+        _re_photo_local_paths = {
+            ingest["clip_id_to_local"][cid]
+            for cid in ingest.get("photo_clip_ids", set())
+            if cid in ingest["clip_id_to_local"]
+        }
+        available_footage_s = _available_footage_s(ingest["probe_map"], _re_photo_local_paths)
+        # Resolve photo pacing for re-render: persisted → fallback heuristic.
+        _re_n_photos: int = ingest.get("n_photos", 0)
+        _re_n_videos: int = ingest.get("n_videos", len(ingest["clip_metas"]))
+        if _re_n_photos > 0:
+            re_slot_every_n_beats: int | None = _persisted_pacing or _photo_pacing_fallback(
+                _re_n_photos, _re_n_videos
+            )
+        else:
+            re_slot_every_n_beats = None
         agent_text: Any = None
         agent_form: dict = {}
         if text_mode == "agent_text":
@@ -890,6 +1252,7 @@ def _run_regenerate_variant(
             variant_dir=variant_dir,
             style_set_id=resolved_style_set_id,
             intro_size_override_px=resolved_size_override_px,
+            slot_every_n_beats=re_slot_every_n_beats,
         )
 
     _update_variant_entry(job_id, variant_id, result)
@@ -957,17 +1320,32 @@ def _update_variant_entry(job_id: str, variant_id: str, patch: dict[str, Any]) -
 # ── Variant spec ──────────────────────────────────────────────────────────────
 
 
-def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
-    """The variants to render. Song variants only when a track matched; the lyrics
-    variant only when that track actually has cached lyrics (otherwise it would render
-    identically to song_text with no lyrics — a wasted render + a confusing "Lyrics"
-    card). Always emit the original-audio variant."""
+def _variant_specs(
+    best_track: MusicTrack | None,
+    *,
+    has_video: bool = True,
+) -> list[dict[str, Any]]:
+    """The variants to render.
+
+    Song variants only when a track matched; the lyrics variant only when that track
+    actually has cached lyrics (otherwise it would render identically to song_text with
+    no lyrics — a wasted render + a confusing "Lyrics" card).
+
+    `original_text` (variant 3 — clips' original audio) is only emitted when
+    `has_video=True`.  Photos-only sets have no original audio worth preserving
+    (every photo derives a silent mp4); the variant would render identically to
+    `song_text` without a song or produce silence without interest.  Mixed jobs
+    (has_video=True) keep it — the video clips carry real audio.
+
+    Photos-only + no matched track → zero variants → loud failure (see caller).
+    """
     specs: list[dict[str, Any]] = []
     if best_track is not None:
         if best_track.lyrics_cached:
             specs.append({"variant_id": "song_lyrics", "text_mode": "lyrics", "track": best_track})
         specs.append({"variant_id": "song_text", "text_mode": "agent_text", "track": best_track})
-    specs.append({"variant_id": "original_text", "text_mode": "agent_text", "track": None})
+    if has_video:
+        specs.append({"variant_id": "original_text", "text_mode": "agent_text", "track": None})
     return specs
 
 
@@ -981,6 +1359,7 @@ def _resolve_archetype(
     *,
     job_id: str,
     voiceover_gcs_path: str | None = None,
+    photo_clip_ids: set[str] | None = None,
 ) -> tuple[str, str | None]:
     """Resolve the plan-declared edit_format against the footage → (archetype, spine).
 
@@ -1006,6 +1385,12 @@ def _resolve_archetype(
         )
         return "montage", None
 
+    _photo_ids = photo_clip_ids or set()
+
+    # All-photos short-circuit: no speech possible in a still-only set.
+    if _photo_ids and all(str(getattr(m, "clip_id", "")) in _photo_ids for m in clip_metas):
+        return "montage", None
+
     # A user-supplied voiceover wins over any footage-derived archetype: the voice is
     # the spine. Resolved BEFORE the speech-coverage logic because it's driven by an
     # uploaded asset, not by what the footage happens to contain.
@@ -1022,13 +1407,16 @@ def _resolve_archetype(
     if not settings.edit_format_talking_head_enabled:
         return _fallback("flag_disabled")
 
-    # Pick the highest-speech clip; reject the format if none carries real speech.
+    # Pick the highest-speech clip among VIDEO clips only — photo-derived mp4s are
+    # silent and would always score 0, polluting the best_cov selection.
     from app.services.clip_speech import speech_coverage  # noqa: PLC0415
 
     best_id: str | None = None
     best_cov = -1.0
     for m in clip_metas:
         cid = str(getattr(m, "clip_id", "") or "")
+        if cid in _photo_ids:
+            continue  # derived mp4 is silent; skip
         path = clip_id_to_local.get(cid)
         if not path:
             continue
@@ -1069,6 +1457,7 @@ def _specs_for_archetype(
     best_track: MusicTrack | None,
     *,
     voiceover_gcs_path: str | None = None,
+    has_video: bool = True,
 ) -> list[dict[str, Any]]:
     """The variant set to render for a resolved archetype (single source of truth).
 
@@ -1113,7 +1502,7 @@ def _specs_for_archetype(
                 "archetype": "talking_head",
             }
         ]
-    return _variant_specs(best_track)
+    return _variant_specs(best_track, has_video=has_video)
 
 
 # ── Agents (best-effort) ────────────────────────────────────────────────────────
@@ -1257,21 +1646,34 @@ def _match_best_track(clip_metas: list, *, job_id: str) -> MusicTrack | None:
 # ── Footage-derived sizing ───────────────────────────────────────────────────────
 
 
-def _available_footage_s(probe_map: dict) -> float:
+def _available_footage_s(
+    probe_map: dict,
+    photo_local_paths: set[str] | None = None,
+) -> float:
     """Total seconds of uploaded footage — the hard ceiling on every variant.
 
-    Summed across all probed clips. The output edit is sized against this so it
-    can never run longer than the content the user actually uploaded (a clip used
-    in more than one slot can't manufacture extra runtime — `allow_slowdown_fill=
-    False` forbids stretching, and the matcher prefers spreading clips across
-    slots). A probe failure contributes 0 for that clip rather than a fabricated
-    fallback, keeping the ceiling conservative.
+    Summed across all probed clips. Photos contribute `_PHOTO_BUDGET_HOLD_S` (3s)
+    rather than their physical 20s derived duration — otherwise 12 photos claim
+    240s of song window, inflating the best-section window far beyond what the user
+    uploaded.  The physical 20s still exists for slot-fill purposes; this is purely
+    the footage budget fed to `_fit_section_to_footage`.
+
+    `photo_local_paths` is the set of local paths that are photo-derived mp4s
+    (the values of `clip_id_to_local` for photo clip_ids).  Pass None (default)
+    to preserve the original video-only behavior for non-generative callers.
+
+    A probe failure contributes 0 for that clip rather than a fabricated fallback,
+    keeping the ceiling conservative.
     """
+    photo_paths = photo_local_paths or set()
     total = 0.0
-    for probe in probe_map.values():
-        dur = float(getattr(probe, "duration_s", 0.0) or 0.0)
-        if dur > 0:
-            total += dur
+    for path, probe in probe_map.items():
+        if path in photo_paths:
+            total += _PHOTO_BUDGET_HOLD_S
+        else:
+            dur = float(getattr(probe, "duration_s", 0.0) or 0.0)
+            if dur > 0:
+                total += dur
     return round(total, 3)
 
 
@@ -1336,6 +1738,7 @@ def _render_generative_variant(
     variant_dir: str,
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
+    slot_every_n_beats: int | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -1416,6 +1819,12 @@ def _render_generative_variant(
             track_config = _fit_section_to_footage(
                 track_config_with_rank_one(track), available_footage_s
             )
+            # Photo pacing override: inject the agent/fallback slot_every_n_beats into
+            # track_config so generate_music_recipe cuts faster for photo-heavy uploads.
+            # Only applied when photos are present (slot_every_n_beats is not None).
+            if slot_every_n_beats is not None:
+                track_config = dict(track_config)
+                track_config["slot_every_n_beats"] = slot_every_n_beats
             track_data = {
                 "beat_timestamps_s": track.beat_timestamps_s or [],
                 "track_config": track_config,

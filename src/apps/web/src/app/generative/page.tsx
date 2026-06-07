@@ -235,7 +235,8 @@ export default function GenerativePage() {
 
           <p className="text-xs text-[#a1a1aa]">
             Length is set automatically from your clips and the matched song —
-            the edit is never longer than the footage you upload.
+            the edit is never longer than the footage you upload. Photos and
+            videos work together in the same edit.
           </p>
 
           <InkButton

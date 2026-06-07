@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.91.0] — 2026-06-07
+
+### Added
+- **Photo support in generative edits.** Users can now upload still images (JPEG, PNG, WebP, HEIC/HEIF) alongside videos — or upload photos only — and the generative pipeline handles them natively.
+  - **Auto-detect, no new UI:** photos and videos flow through the existing generative upload (`accept="video/*,image/*"` was already set). Extension detected from the GCS path (local downloads are renamed to `clip_N.mp4`).
+  - **Ken Burns conversion at ingest:** each photo becomes a 20s mp4 with a rate-based zoom (1.5%/s, capped at 1.30×) via `render_image_to_clip`. EXIF rotation and HEIC support via PIL `_normalize_to_9x16`.
+  - **Photo-specific Gemini analysis:** original JPEG (not the derived mp4) is uploaded with `image/jpeg` MIME to the Gemini File API. A new `analyze_clip_photo` prompt requests `text_safe_zone` and `visual_density` (required by `_hero_composition` for intro sizing) plus a single `best_moments` entry spanning the 3s hold window.
+  - **Agent-decided pacing:** new `nova.video.photo_pacing` agent (Gemini Flash, 256-token thinking budget) picks `slot_every_n_beats ∈ {2,4,6,8}` based on clip composition. Runs as a 4th concurrent future (zero serial latency). Deterministic fallback: photo ratio ≥0.7 → 4; 0.3–0.7 → 6; <0.3 → 8. Decision persisted to `Job.all_candidates["photo_slot_every_n_beats"]` and read back on re-renders (swap-song/retext).
+  - **Footage budgeting:** photos contribute 3s nominal (not 20s physical) to `_available_footage_s` so the song window doesn't inflate beyond what the user actually uploaded.
+  - **Variant gating:** `original_text` variant (preserves original clip audio) is skipped for photos-only jobs — silent photos have no original audio worth preserving. Mixed jobs (any video present) keep all three variants.
+  - **Loud failure on zero-variant cases:** photos-only + no matched track raises an explicit job error instead of silently rendering nothing.
+  - **Music matcher photo-awareness:** `ClipMeta.is_image` flag (plain dataclass default, no Pydantic parse-threading trap) propagates to the matcher summary via the existing `getattr(meta, "is_image", False)` defensive read.
+- **31 new tests** covering GCS-ext detection, footage budgeting, pacing fallback, `_variant_specs(has_video=False)`, archetype routing for all-photo sets, clip_id constraint for synthesized failure metas, pacing persistence read-back, `_infer_mime_type` image extensions, `ClipMeta.is_image` default, and `render_prompt` image branch.
+- **Frontend copy update:** upload hint on `/generative` now mentions that photos and videos work together in the same edit.
+
+### Changed
+- `_infer_mime_type` in `gemini_analyzer.py` extended with image extension mappings (`.jpg/.jpeg/png/webp/heic/heif`).
+- `_render_generative_variant` accepts optional `slot_every_n_beats` kwarg; both call sites (main render + `_run_regenerate_variant`) thread it through.
+- `_run_generative_job` concurrent block bumped to `max_workers=4` (was 3) to accommodate the new pacing agent future.
+
 ## [0.4.89.0] — 2026-06-07
 
 ### Added

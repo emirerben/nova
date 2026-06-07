@@ -55,6 +55,10 @@ class ClipMeta:
     # Composition signal for agent-decided overlay sizing (overlay_sizing.py).
     text_safe_zone: dict | None = None  # {"x","y","w","h"} normalized to the 9:16 frame
     visual_density: float = 5.0  # 0 (empty) .. 10 (cluttered)
+    # True when this meta represents a still image (photo) rather than a video clip.
+    # Plain dataclass default — no Pydantic parse() threading trap (that's ClipMetadataOutput).
+    # Downstream: matcher summary reads via getattr(meta, "is_image", False) already.
+    is_image: bool = False
 
 
 @dataclass
@@ -182,6 +186,7 @@ def _infer_mime_type(path: str) -> str:
     # table tight: anything not listed falls through to mimetypes +
     # video/mp4 default.
     explicit = {
+        # Audio formats
         ".m4a": "audio/mp4",
         ".mp4a": "audio/mp4",
         ".aac": "audio/aac",
@@ -190,17 +195,27 @@ def _infer_mime_type(path: str) -> str:
         ".ogg": "audio/ogg",
         ".flac": "audio/flac",
         ".opus": "audio/opus",
+        # Video formats
         ".mp4": "video/mp4",
         ".mov": "video/quicktime",
         ".webm": "video/webm",
+        # Image formats — used when uploading originals to Gemini for photo analysis
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".heic": "image/heic",
+        ".heif": "image/heif",
     }
     if ext in explicit:
         return explicit[ext]
     guess, _ = mimetypes.guess_type(path)
-    # Only trust the stdlib guess if it's an audio/* or video/* type —
+    # Only trust the stdlib guess if it's an audio/*, video/*, or image/* type —
     # stdlib has surprising answers for some extensions (e.g. ".xyz"
     # maps to "chemical/x-xyz" on macOS).
-    if guess and (guess.startswith("audio/") or guess.startswith("video/")):
+    if guess and (
+        guess.startswith("audio/") or guess.startswith("video/") or guess.startswith("image/")
+    ):
         return guess
     return "video/mp4"
 
