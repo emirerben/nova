@@ -74,6 +74,12 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.plan.clip_plan_matcher", "app.agents.clip_plan_matcher", "ClipPlanMatcherAgent"),
     # Creator Agent M1: derive per-user style from persona + TikTok analysis.
     ("nova.plan.style_derivation", "app.agents.style_derivation", "StyleDerivationAgent"),
+    # Creator Agent M4: conformance verdict at clip-attach time (best-effort, display-only).
+    (
+        "nova.plan.conformance_feedback",
+        "app.agents.conformance_feedback",
+        "ConformanceFeedbackAgent",
+    ),
 )
 
 

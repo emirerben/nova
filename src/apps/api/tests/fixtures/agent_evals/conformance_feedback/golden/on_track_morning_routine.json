@@ -1,0 +1,34 @@
+{
+  "agent": "nova.plan.conformance_feedback",
+  "prompt_version": "2026-06-07",
+  "input": {
+    "filming_guide": [
+      {"what": "Close-up of hands making coffee", "how": "handheld, overhead", "duration_s": 5},
+      {"what": "Creator at desk reviewing notes", "how": "eye level, natural light", "duration_s": 8},
+      {"what": "Walking outside in the morning light", "how": "self-shot, wide", "duration_s": 7}
+    ],
+    "clip_digest": {
+      "detected_subject": "person making coffee in a kitchen",
+      "content_type": "broll",
+      "audio_type": "ambient",
+      "hook_text": "Morning ritual that changed everything",
+      "transcript": "The first thing I do every morning is make a proper coffee...",
+      "visual_density": 3.5,
+      "composition_note": "well-lit kitchen, overhead angle visible"
+    },
+    "theme": "Morning Routine",
+    "idea": "Show your real morning routine that sets you up for a productive day"
+  },
+  "raw_text": "{\"verdict\": \"on_track\", \"confidence\": 0.85, \"summary\": \"Clip matches the coffee shot brief; kitchen broll aligns with the morning routine theme\", \"mismatches\": [], \"suggestions\": []}",
+  "output": {
+    "verdict": "on_track",
+    "confidence": 0.85,
+    "summary": "Clip matches the coffee shot brief; kitchen broll aligns with the morning routine theme",
+    "mismatches": [],
+    "suggestions": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Creator uploaded a coffee close-up matching shot 1 of the morning routine guide — expected on_track verdict."
+  }
+}

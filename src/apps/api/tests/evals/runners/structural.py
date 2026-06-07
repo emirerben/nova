@@ -1340,6 +1340,47 @@ def check_style_derivation(output: Any) -> list[str]:
     return failures
 
 
+def check_conformance_feedback(output: Any) -> list[str]:
+    """Structural floor for nova.plan.conformance_feedback.
+
+    parse() coerces verdict to a valid set and clamps confidence to [0.0, 1.0].
+    This layer asserts the invariants that coercion enforces:
+
+      - verdict is one of the three valid literals.
+      - confidence is in [0.0, 1.0].
+      - summary is non-empty (the agent must explain the verdict).
+      - mismatches list has at most 3 items.
+      - suggestions list has at most 3 items.
+    """
+    failures: list[str] = []
+
+    _VALID_VERDICTS = {"on_track", "minor_drift", "off_brief"}
+    verdict = getattr(output, "verdict", None)
+    if verdict not in _VALID_VERDICTS:
+        failures.append(
+            f"verdict={verdict!r} not in {_VALID_VERDICTS} — "
+            "parse() should have coerced to 'off_brief'"
+        )
+
+    confidence = getattr(output, "confidence", None)
+    if confidence is None or not (0.0 <= confidence <= 1.0):
+        failures.append(f"confidence={confidence!r} must be a float in [0.0, 1.0]")
+
+    summary = getattr(output, "summary", None)
+    if not (summary or "").strip():
+        failures.append("summary is empty — agent must explain the verdict")
+
+    mismatches = list(getattr(output, "mismatches", None) or [])
+    if len(mismatches) > 3:
+        failures.append(f"mismatches has {len(mismatches)} items (max 3)")
+
+    suggestions = list(getattr(output, "suggestions", None) or [])
+    if len(suggestions) > 3:
+        failures.append(f"suggestions has {len(suggestions)} items (max 3)")
+
+    return failures
+
+
 def check_tiktok_analyzer(output: Any) -> list[str]:
     """Structural floor for nova.plan.tiktok_analyzer.
 
@@ -1428,4 +1469,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_tiktok_analyzer(output)
     if agent_name == "nova.plan.style_derivation":
         return check_style_derivation(output)
+    if agent_name == "nova.plan.conformance_feedback":
+        return check_conformance_feedback(output)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

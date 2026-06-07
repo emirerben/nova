@@ -115,6 +115,8 @@ function makeItem(overrides = {}) {
     status: "idea",
     current_job_id: null,
     user_edited: false,
+    instruction_level: "full" as const,
+    conformance: null,
     ...overrides,
   };
 }
@@ -273,5 +275,117 @@ describe("PlanItemPage — pendingEdits overlay", () => {
 
     // The filmstrip is present and no crash.
     expect(screen.getByTestId("plan-filmstrip")).toBeInTheDocument();
+  });
+});
+
+// ── M4: conformance verdict panel ──────────────────────────────────────────────
+
+describe("PlanItemPage — M4 conformance verdict panel", () => {
+  it("test_conformance_on_track_panel_rendered: lime verdict badge visible", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+      filming_guide: [{ what: "creator to camera", how: "eye level", duration_s: 8 }],
+      conformance: {
+        verdict: "on_track" as const,
+        confidence: 0.9,
+        summary: "Clip matches the brief well",
+        mismatches: [],
+        suggestions: [],
+      },
+    });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
+    expect(screen.getByText(/on track/i)).toBeInTheDocument();
+    expect(screen.getByText(/Clip matches the brief well/)).toBeInTheDocument();
+  });
+
+  it("test_conformance_off_brief_panel_rendered: red verdict badge visible", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+      filming_guide: [{ what: "overhead cooking shot", how: "tripod top-down", duration_s: 10 }],
+      conformance: {
+        verdict: "off_brief" as const,
+        confidence: 0.85,
+        summary: "Wrong subject — guitar instead of cooking",
+        mismatches: ["Expected kitchen footage, got guitar"],
+        suggestions: ["Reshoot with overhead angle above the cutting board"],
+      },
+    });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
+    expect(screen.getByText(/off brief/i)).toBeInTheDocument();
+    expect(screen.getByText(/Wrong subject/)).toBeInTheDocument();
+    expect(screen.getByText(/Expected kitchen footage/)).toBeInTheDocument();
+    expect(screen.getByText(/Reshoot with overhead/)).toBeInTheDocument();
+  });
+
+  it("test_conformance_absent_no_panel: panel not rendered when conformance is null", async () => {
+    const item = makeItem({
+      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+      conformance: null,
+    });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByTestId("conformance-verdict-panel")).toBeNull();
+  });
+
+  it("test_generate_button_not_blocked_by_conformance: Generate button enabled with clips regardless of verdict", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+      filming_guide: [{ what: "creator at desk", how: "eye level", duration_s: 5 }],
+      conformance: {
+        verdict: "off_brief" as const,
+        confidence: 0.95,
+        summary: "Wrong subject",
+        mismatches: ["Wrong subject"],
+        suggestions: ["Reshoot"],
+      },
+    });
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // Generate button should be enabled — off_brief verdict never blocks it.
+    const generateBtn = screen.getByRole("button", { name: /generate videos/i });
+    expect(generateBtn).not.toBeDisabled();
   });
 });

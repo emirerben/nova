@@ -262,6 +262,13 @@ class Settings(BaseSettings):
     # "user_style" key → renders are byte-identical to pre-M1 output.
     user_style_enabled: bool = False
 
+    # Creator Agent M4: ConformanceFeedbackAgent at clip-attach time (best-effort).
+    # Ships OFF — fires async after attach_clips, never blocks the 200 response.
+    # Enable after live-eval validation of the conformance_feedback agent:
+    #   fly secrets set CONFORMANCE_FEEDBACK_ENABLED=true --app nova-video + restart workers.
+    # When False: analyze_item_conformance task is a no-op; item.conformance stays NULL.
+    conformance_feedback_enabled: bool = False
+
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65
     engagement_weight: float = 0.35

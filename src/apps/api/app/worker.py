@@ -25,6 +25,7 @@ celery_app = Celery(
         "app.tasks.grade_final_video",
         "app.tasks.send_daily_digest",
         "app.tasks.maintenance",
+        "app.tasks.conformance_build",
     ],
 )
 
