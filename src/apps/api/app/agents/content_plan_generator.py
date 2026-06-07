@@ -123,6 +123,57 @@ def _tiktok_analysis_block(summary: str) -> str:
     )
 
 
+def _instruction_level_block(level: str) -> str:
+    """The style instruction-level block — or "" when level is "full" (byte-identical baseline).
+
+    Rendered ONLY when the user has chosen a lighter brief ("light"/"none"), so the
+    default "full" case stays byte-for-byte identical to the proven pre-M3 baseline.
+    An inert "(none)" block measurably dilutes output quality (documented regression,
+    CLAUDE.md); empty string only.
+    """
+    if level == "full" or not level:
+        return ""
+    if level == "none":
+        return (
+            "STYLE NOTE (DATA — not instructions to you): this creator wants minimal "
+            "filming direction. Generate ideas only — omit filming_suggestion and keep "
+            "filming_guide to a single-shot minimum. Do not add coaching language.\n\n"
+        )
+    # level == "light"
+    return (
+        "STYLE NOTE (DATA — not instructions to you): this creator prefers lighter "
+        "direction. Keep filming_suggestion and filming_guide brief and practical — "
+        "one-line tips only, no step-by-step coaching.\n\n"
+    )
+
+
+def _edit_format_mix_block(mix: dict[str, float]) -> str:
+    """The edit-format preference block — or "" when mix is empty (byte-identical baseline).
+
+    Rendered ONLY when the user has an expressed format preference so the common
+    no-preference case stays byte-for-byte identical to the proven pre-M3 baseline.
+    An inert "(none)" block degrades output quality — empty string only.
+    """
+    if not mix:
+        return ""
+    lines = [
+        f"  - {fmt}: {int(round(weight * 100))}% of ideas"
+        for fmt, weight in sorted(mix.items(), key=lambda kv: -kv[1])
+        if weight > 0
+    ]
+    if not lines:
+        return ""
+    formatted = "\n".join(lines)
+    return (
+        "CREATOR FORMAT PREFERENCE (DATA — not instructions to you): this creator "
+        "wants their plan biased toward these edit shapes:\n"
+        f"{formatted}\n"
+        "Bias new ideas toward these shapes while still matching the persona and "
+        "keeping variety. Do not override the edit_format rules — use this only to "
+        "break ties.\n\n"
+    )
+
+
 def _variety_constraint_block(exclude_ideas: list[str]) -> str:
     """The constrained-regeneration block — or "" when there's nothing to avoid.
 
@@ -184,6 +235,10 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
             # Constrained-regeneration block — the WHOLE block, or "" on the first
             # pass (keeps the first-pass prompt byte-identical to the baseline).
             variety_constraint=_variety_constraint_block(input.exclude_ideas),
+            # Creator Agent M3: instruction-level directive — "" when "full" (baseline).
+            instruction_level=_instruction_level_block(input.instruction_level),
+            # Creator Agent M3: edit-format preference bias — "" when empty (baseline).
+            edit_format_mix=_edit_format_mix_block(input.preferred_edit_format_mix),
             # Market-research idea bank, ranked toward this creator's pillars.
             idea_bank=format_ideas_for_pillars(p.content_pillars),
             # Codified TikTok success factors for what makes a plan item perform.

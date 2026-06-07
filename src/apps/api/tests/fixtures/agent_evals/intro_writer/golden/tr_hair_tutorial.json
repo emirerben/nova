@@ -1,20 +1,24 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-28",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_tr_001",
       "media_type": "video",
       "duration_s": 5.5,
-      "subject": "uzun saçlı kadın aynanın karşısında balayage sonrası saçını tarıyor",
+      "subject": "uzun sa\u00e7l\u0131 kad\u0131n aynan\u0131n kar\u015f\u0131s\u0131nda balayage sonras\u0131 sa\u00e7\u0131n\u0131 tar\u0131yor",
       "hook_text": "",
       "hook_score": 7.5,
       "energy": 4.0,
-      "description": "yumuşak doğal ışık, banyo aynası önünde, hem yeni renk hem de sağlıklı saç ortaya çıkıyor"
+      "description": "yumu\u015fak do\u011fal \u0131\u015f\u0131k, banyo aynas\u0131 \u00f6n\u00fcnde, hem yeni renk hem de sa\u011fl\u0131kl\u0131 sa\u00e7 ortaya \u00e7\u0131k\u0131yor"
     },
-    "hero_transcript": "balayage sonrası saçımı tarıyorum bakın nasıl olmuş",
+    "hero_transcript": "balayage sonras\u0131 sa\u00e7\u0131m\u0131 tar\u0131yorum bak\u0131n nas\u0131l olmu\u015f",
     "tone": "warm",
-    "form": {"effect": "static", "size_class": "jumbo", "position": "center"},
+    "form": {
+      "effect": "static",
+      "size_class": "jumbo",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "lifestyle-freedom-static-01",
@@ -30,14 +34,14 @@
     ],
     "language": "tr"
   },
-  "raw_text": "{\"text\": \"bu saçla iş bambaşka\", \"highlight_word\": \"bambaşka\"}",
+  "raw_text": "{\"text\": \"bu sa\u00e7la i\u015f bamba\u015fka\", \"highlight_word\": \"bamba\u015fka\"}",
   "output": {
-    "text": "bu saçla iş bambaşka",
-    "highlight_word": "bambaşka"
+    "text": "bu sa\u00e7la i\u015f bamba\u015fka",
+    "highlight_word": "bamba\u015fka"
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "TR hair tutorial → casual creator voice in Turkish, lowercase, sen-form, diacritics preserved (ş ğ). Reference Nermin Özdemir's hair-tutorial caption voice. Form effect is static (TR-bias hint: agglutinative phrases overflow karaoke-line).",
+    "case": "TR hair tutorial \u2192 casual creator voice in Turkish, lowercase, sen-form, diacritics preserved (\u015f \u011f). Reference Nermin \u00d6zdemir's hair-tutorial caption voice. Form effect is static (TR-bias hint: agglutinative phrases overflow karaoke-line).",
     "language": "tr"
   }
 }

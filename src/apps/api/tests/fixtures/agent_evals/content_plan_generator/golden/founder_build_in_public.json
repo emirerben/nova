@@ -1,9 +1,9 @@
 {
   "agent": "nova.plan.content_plan_generator",
-  "prompt_version": "2026-05-31",
+  "prompt_version": "2026-06-07",
   "input": {
     "persona": {
-      "summary": "You are a solo-ish founder building a video app in public, letting people watch the messy middle of shipping while you keep one foot in real life — football with friends, your coding cafe, your city.",
+      "summary": "You are a solo-ish founder building a video app in public, letting people watch the messy middle of shipping while you keep one foot in real life \u2014 football with friends, your coding cafe, your city.",
       "content_pillars": [
         "building the app in public",
         "founder day-in-the-life",
@@ -25,25 +25,97 @@
     "events": "Champions League final this week; shipping a big feature the same week",
     "horizon_days": 30
   },
-  "raw_text": "{\"items\": [{\"day_index\": 1, \"theme\": \"matchday rituals with friends\", \"idea\": \"Setting up for the Champions League final: the snacks on the table, pulling on the jersey, the group chat already going off. End on the kickoff whistle.\", \"filming_suggestion\": \"Handheld, warm indoor light. Quick cuts of each prep moment, hold the last shot on the TV as the match starts.\", \"rationale\": \"Why this works: the 'getting ready with the crew' build-up is a relatable felt-moment opener that hooks anyone who loves the game in the first 2 seconds.\"}, {\"day_index\": 2, \"theme\": \"building the app in public\", \"idea\": \"The one feature we shipped this week, demoed in 20 seconds on my actual screen — before vs after.\", \"filming_suggestion\": \"Screen recording with a tight talking-head corner. Show the broken/old way first, then the new flow.\", \"rationale\": \"Why this works: a concrete before/after demo is save-worthy for other builders and the contrast earns the first 2 seconds.\"}, {\"day_index\": 3, \"theme\": \"founder day-in-the-life\", \"idea\": \"A real day building solo, the unglamorous version: laptop in bed, third coffee, one tiny win at 11pm.\", \"filming_suggestion\": \"POV handheld clips through the day, timestamps on screen. Keep it honest, not aspirational.\", \"rationale\": \"Why this works: the honest, unpolished day-in-the-life is a relatable counter to glossy founder content, which keeps builders watching.\"}, {\"day_index\": 4, \"theme\": \"matchday rituals with friends\", \"idea\": \"Watching the final with friends — film the room the second the goal goes in. Everyone jumping, no script.\", \"filming_suggestion\": \"Prop the phone facing the couch before kickoff so you catch the real reaction, not a re-enactment.\", \"rationale\": \"Why this works: an unscripted group reaction is the kind of genuine felt-moment that gets shared because it can't be faked.\"}, {\"day_index\": 5, \"theme\": \"favorite spots around the city\", \"idea\": \"The cafe I code from every morning, and why I always take the corner seat by the window.\", \"filming_suggestion\": \"Establishing shot of the cafe, close-ups of the coffee and your laptop, golden morning light.\", \"rationale\": \"Why this works: an insider 'my spot' reveal is save-worthy for locals and gives the build a real-world place people remember.\"}, {\"day_index\": 6, \"theme\": \"building the app in public\", \"idea\": \"What the app actually does, shown by editing one real clip start to finish in under 30 seconds.\", \"filming_suggestion\": \"Screen capture of the full flow, sped up slightly, with the final result held at the end.\", \"rationale\": \"Why this works: showing the product do its job beats describing it — a clear value payoff that earns saves and shares.\"}, {\"day_index\": 7, \"theme\": \"founder day-in-the-life\", \"idea\": \"Reading the very first user feedback after launch out loud — the good one and the brutal one — real reaction.\", \"filming_suggestion\": \"Talking head, soft window light, phone in hand. Don't edit out the wince.\", \"rationale\": \"Why this works: a raw, vulnerable reaction is a strong felt-moment opener that makes early supporters feel part of the story.\"}, {\"day_index\": 8, \"theme\": \"favorite spots around the city\", \"idea\": \"The walk I take when I'm stuck on a bug — the route, the bridge, the light, the moment it clicks.\", \"filming_suggestion\": \"B-roll of the walk, quiet trending sound, minimal text. Let the scenery breathe.\", \"rationale\": \"Why this works: a calm, atmospheric mood clip is rewatchable and gives the hustle content a human, scroll-stopping breather.\"}, {\"day_index\": 9, \"theme\": \"matchday rituals with friends\", \"idea\": \"Building the perfect matchday spread: what's actually on the table when we watch a game.\", \"filming_suggestion\": \"Overhead food b-roll, quick cuts on the beat, on-screen labels for each thing.\", \"rationale\": \"Why this works: a relatable 'what we eat' setup is high-save content for anyone planning their own watch party.\"}, {\"day_index\": 10, \"theme\": \"building the app in public\", \"idea\": \"Day in the life of squashing one annoying bug — the messy middle, not the highlight reel.\", \"filming_suggestion\": \"Mix screen recording with desk shots and a frustrated-then-relieved face. Timestamp the hours it took.\", \"rationale\": \"Why this works: the honest 'messy middle' is exactly what other builders save, because nobody else shows the unglamorous part.\"}, {\"day_index\": 11, \"theme\": \"founder day-in-the-life\", \"idea\": \"The gym break that keeps me sane between work blocks — quick, no fitness-guru energy.\", \"filming_suggestion\": \"POV from the gym, a couple of candid sets, back to the laptop after. Keep it short.\", \"rationale\": \"Why this works: showing the real rhythm of a builder's day is relatable and breaks up the screen-heavy content.\"}, {\"day_index\": 12, \"theme\": \"favorite spots around the city\", \"idea\": \"The late-night dumpling spot I always end up at after shipping something big.\", \"filming_suggestion\": \"Handheld, low light for the late-night feel, steamy close-up of the food as the hook.\", \"rationale\": \"Why this works: a specific insider food spot tied to a real ritual is save-worthy and gives the launch story a satisfying payoff.\"}]}",
+  "raw_text": "{\"items\": [{\"day_index\": 1, \"theme\": \"matchday rituals with friends\", \"idea\": \"Setting up for the Champions League final: the snacks on the table, pulling on the jersey, the group chat already going off. End on the kickoff whistle.\", \"filming_suggestion\": \"Handheld, warm indoor light. Quick cuts of each prep moment, hold the last shot on the TV as the match starts.\", \"rationale\": \"Why this works: the 'getting ready with the crew' build-up is a relatable felt-moment opener that hooks anyone who loves the game in the first 2 seconds.\"}, {\"day_index\": 2, \"theme\": \"building the app in public\", \"idea\": \"The one feature we shipped this week, demoed in 20 seconds on my actual screen \u2014 before vs after.\", \"filming_suggestion\": \"Screen recording with a tight talking-head corner. Show the broken/old way first, then the new flow.\", \"rationale\": \"Why this works: a concrete before/after demo is save-worthy for other builders and the contrast earns the first 2 seconds.\"}, {\"day_index\": 3, \"theme\": \"founder day-in-the-life\", \"idea\": \"A real day building solo, the unglamorous version: laptop in bed, third coffee, one tiny win at 11pm.\", \"filming_suggestion\": \"POV handheld clips through the day, timestamps on screen. Keep it honest, not aspirational.\", \"rationale\": \"Why this works: the honest, unpolished day-in-the-life is a relatable counter to glossy founder content, which keeps builders watching.\"}, {\"day_index\": 4, \"theme\": \"matchday rituals with friends\", \"idea\": \"Watching the final with friends \u2014 film the room the second the goal goes in. Everyone jumping, no script.\", \"filming_suggestion\": \"Prop the phone facing the couch before kickoff so you catch the real reaction, not a re-enactment.\", \"rationale\": \"Why this works: an unscripted group reaction is the kind of genuine felt-moment that gets shared because it can't be faked.\"}, {\"day_index\": 5, \"theme\": \"favorite spots around the city\", \"idea\": \"The cafe I code from every morning, and why I always take the corner seat by the window.\", \"filming_suggestion\": \"Establishing shot of the cafe, close-ups of the coffee and your laptop, golden morning light.\", \"rationale\": \"Why this works: an insider 'my spot' reveal is save-worthy for locals and gives the build a real-world place people remember.\"}, {\"day_index\": 6, \"theme\": \"building the app in public\", \"idea\": \"What the app actually does, shown by editing one real clip start to finish in under 30 seconds.\", \"filming_suggestion\": \"Screen capture of the full flow, sped up slightly, with the final result held at the end.\", \"rationale\": \"Why this works: showing the product do its job beats describing it \u2014 a clear value payoff that earns saves and shares.\"}, {\"day_index\": 7, \"theme\": \"founder day-in-the-life\", \"idea\": \"Reading the very first user feedback after launch out loud \u2014 the good one and the brutal one \u2014 real reaction.\", \"filming_suggestion\": \"Talking head, soft window light, phone in hand. Don't edit out the wince.\", \"rationale\": \"Why this works: a raw, vulnerable reaction is a strong felt-moment opener that makes early supporters feel part of the story.\"}, {\"day_index\": 8, \"theme\": \"favorite spots around the city\", \"idea\": \"The walk I take when I'm stuck on a bug \u2014 the route, the bridge, the light, the moment it clicks.\", \"filming_suggestion\": \"B-roll of the walk, quiet trending sound, minimal text. Let the scenery breathe.\", \"rationale\": \"Why this works: a calm, atmospheric mood clip is rewatchable and gives the hustle content a human, scroll-stopping breather.\"}, {\"day_index\": 9, \"theme\": \"matchday rituals with friends\", \"idea\": \"Building the perfect matchday spread: what's actually on the table when we watch a game.\", \"filming_suggestion\": \"Overhead food b-roll, quick cuts on the beat, on-screen labels for each thing.\", \"rationale\": \"Why this works: a relatable 'what we eat' setup is high-save content for anyone planning their own watch party.\"}, {\"day_index\": 10, \"theme\": \"building the app in public\", \"idea\": \"Day in the life of squashing one annoying bug \u2014 the messy middle, not the highlight reel.\", \"filming_suggestion\": \"Mix screen recording with desk shots and a frustrated-then-relieved face. Timestamp the hours it took.\", \"rationale\": \"Why this works: the honest 'messy middle' is exactly what other builders save, because nobody else shows the unglamorous part.\"}, {\"day_index\": 11, \"theme\": \"founder day-in-the-life\", \"idea\": \"The gym break that keeps me sane between work blocks \u2014 quick, no fitness-guru energy.\", \"filming_suggestion\": \"POV from the gym, a couple of candid sets, back to the laptop after. Keep it short.\", \"rationale\": \"Why this works: showing the real rhythm of a builder's day is relatable and breaks up the screen-heavy content.\"}, {\"day_index\": 12, \"theme\": \"favorite spots around the city\", \"idea\": \"The late-night dumpling spot I always end up at after shipping something big.\", \"filming_suggestion\": \"Handheld, low light for the late-night feel, steamy close-up of the food as the hook.\", \"rationale\": \"Why this works: a specific insider food spot tied to a real ritual is save-worthy and gives the launch story a satisfying payoff.\"}]}",
   "output": {
     "items": [
-      {"day_index": 1, "theme": "matchday rituals with friends", "idea": "Setting up for the Champions League final: the snacks on the table, pulling on the jersey, the group chat already going off. End on the kickoff whistle.", "filming_suggestion": "Handheld, warm indoor light. Quick cuts of each prep moment, hold the last shot on the TV as the match starts.", "rationale": "Why this works: the 'getting ready with the crew' build-up is a relatable felt-moment opener that hooks anyone who loves the game in the first 2 seconds."},
-      {"day_index": 2, "theme": "building the app in public", "idea": "The one feature we shipped this week, demoed in 20 seconds on my actual screen — before vs after.", "filming_suggestion": "Screen recording with a tight talking-head corner. Show the broken/old way first, then the new flow.", "rationale": "Why this works: a concrete before/after demo is save-worthy for other builders and the contrast earns the first 2 seconds."},
-      {"day_index": 3, "theme": "founder day-in-the-life", "idea": "A real day building solo, the unglamorous version: laptop in bed, third coffee, one tiny win at 11pm.", "filming_suggestion": "POV handheld clips through the day, timestamps on screen. Keep it honest, not aspirational.", "rationale": "Why this works: the honest, unpolished day-in-the-life is a relatable counter to glossy founder content, which keeps builders watching."},
-      {"day_index": 4, "theme": "matchday rituals with friends", "idea": "Watching the final with friends — film the room the second the goal goes in. Everyone jumping, no script.", "filming_suggestion": "Prop the phone facing the couch before kickoff so you catch the real reaction, not a re-enactment.", "rationale": "Why this works: an unscripted group reaction is the kind of genuine felt-moment that gets shared because it can't be faked."},
-      {"day_index": 5, "theme": "favorite spots around the city", "idea": "The cafe I code from every morning, and why I always take the corner seat by the window.", "filming_suggestion": "Establishing shot of the cafe, close-ups of the coffee and your laptop, golden morning light.", "rationale": "Why this works: an insider 'my spot' reveal is save-worthy for locals and gives the build a real-world place people remember."},
-      {"day_index": 6, "theme": "building the app in public", "idea": "What the app actually does, shown by editing one real clip start to finish in under 30 seconds.", "filming_suggestion": "Screen capture of the full flow, sped up slightly, with the final result held at the end.", "rationale": "Why this works: showing the product do its job beats describing it — a clear value payoff that earns saves and shares."},
-      {"day_index": 7, "theme": "founder day-in-the-life", "idea": "Reading the very first user feedback after launch out loud — the good one and the brutal one — real reaction.", "filming_suggestion": "Talking head, soft window light, phone in hand. Don't edit out the wince.", "rationale": "Why this works: a raw, vulnerable reaction is a strong felt-moment opener that makes early supporters feel part of the story."},
-      {"day_index": 8, "theme": "favorite spots around the city", "idea": "The walk I take when I'm stuck on a bug — the route, the bridge, the light, the moment it clicks.", "filming_suggestion": "B-roll of the walk, quiet trending sound, minimal text. Let the scenery breathe.", "rationale": "Why this works: a calm, atmospheric mood clip is rewatchable and gives the hustle content a human, scroll-stopping breather."},
-      {"day_index": 9, "theme": "matchday rituals with friends", "idea": "Building the perfect matchday spread: what's actually on the table when we watch a game.", "filming_suggestion": "Overhead food b-roll, quick cuts on the beat, on-screen labels for each thing.", "rationale": "Why this works: a relatable 'what we eat' setup is high-save content for anyone planning their own watch party."},
-      {"day_index": 10, "theme": "building the app in public", "idea": "Day in the life of squashing one annoying bug — the messy middle, not the highlight reel.", "filming_suggestion": "Mix screen recording with desk shots and a frustrated-then-relieved face. Timestamp the hours it took.", "rationale": "Why this works: the honest 'messy middle' is exactly what other builders save, because nobody else shows the unglamorous part."},
-      {"day_index": 11, "theme": "founder day-in-the-life", "idea": "The gym break that keeps me sane between work blocks — quick, no fitness-guru energy.", "filming_suggestion": "POV from the gym, a couple of candid sets, back to the laptop after. Keep it short.", "rationale": "Why this works: showing the real rhythm of a builder's day is relatable and breaks up the screen-heavy content."},
-      {"day_index": 12, "theme": "favorite spots around the city", "idea": "The late-night dumpling spot I always end up at after shipping something big.", "filming_suggestion": "Handheld, low light for the late-night feel, steamy close-up of the food as the hook.", "rationale": "Why this works: a specific insider food spot tied to a real ritual is save-worthy and gives the launch story a satisfying payoff."}
+      {
+        "day_index": 1,
+        "theme": "matchday rituals with friends",
+        "idea": "Setting up for the Champions League final: the snacks on the table, pulling on the jersey, the group chat already going off. End on the kickoff whistle.",
+        "filming_suggestion": "Handheld, warm indoor light. Quick cuts of each prep moment, hold the last shot on the TV as the match starts.",
+        "rationale": "Why this works: the 'getting ready with the crew' build-up is a relatable felt-moment opener that hooks anyone who loves the game in the first 2 seconds."
+      },
+      {
+        "day_index": 2,
+        "theme": "building the app in public",
+        "idea": "The one feature we shipped this week, demoed in 20 seconds on my actual screen \u2014 before vs after.",
+        "filming_suggestion": "Screen recording with a tight talking-head corner. Show the broken/old way first, then the new flow.",
+        "rationale": "Why this works: a concrete before/after demo is save-worthy for other builders and the contrast earns the first 2 seconds."
+      },
+      {
+        "day_index": 3,
+        "theme": "founder day-in-the-life",
+        "idea": "A real day building solo, the unglamorous version: laptop in bed, third coffee, one tiny win at 11pm.",
+        "filming_suggestion": "POV handheld clips through the day, timestamps on screen. Keep it honest, not aspirational.",
+        "rationale": "Why this works: the honest, unpolished day-in-the-life is a relatable counter to glossy founder content, which keeps builders watching."
+      },
+      {
+        "day_index": 4,
+        "theme": "matchday rituals with friends",
+        "idea": "Watching the final with friends \u2014 film the room the second the goal goes in. Everyone jumping, no script.",
+        "filming_suggestion": "Prop the phone facing the couch before kickoff so you catch the real reaction, not a re-enactment.",
+        "rationale": "Why this works: an unscripted group reaction is the kind of genuine felt-moment that gets shared because it can't be faked."
+      },
+      {
+        "day_index": 5,
+        "theme": "favorite spots around the city",
+        "idea": "The cafe I code from every morning, and why I always take the corner seat by the window.",
+        "filming_suggestion": "Establishing shot of the cafe, close-ups of the coffee and your laptop, golden morning light.",
+        "rationale": "Why this works: an insider 'my spot' reveal is save-worthy for locals and gives the build a real-world place people remember."
+      },
+      {
+        "day_index": 6,
+        "theme": "building the app in public",
+        "idea": "What the app actually does, shown by editing one real clip start to finish in under 30 seconds.",
+        "filming_suggestion": "Screen capture of the full flow, sped up slightly, with the final result held at the end.",
+        "rationale": "Why this works: showing the product do its job beats describing it \u2014 a clear value payoff that earns saves and shares."
+      },
+      {
+        "day_index": 7,
+        "theme": "founder day-in-the-life",
+        "idea": "Reading the very first user feedback after launch out loud \u2014 the good one and the brutal one \u2014 real reaction.",
+        "filming_suggestion": "Talking head, soft window light, phone in hand. Don't edit out the wince.",
+        "rationale": "Why this works: a raw, vulnerable reaction is a strong felt-moment opener that makes early supporters feel part of the story."
+      },
+      {
+        "day_index": 8,
+        "theme": "favorite spots around the city",
+        "idea": "The walk I take when I'm stuck on a bug \u2014 the route, the bridge, the light, the moment it clicks.",
+        "filming_suggestion": "B-roll of the walk, quiet trending sound, minimal text. Let the scenery breathe.",
+        "rationale": "Why this works: a calm, atmospheric mood clip is rewatchable and gives the hustle content a human, scroll-stopping breather."
+      },
+      {
+        "day_index": 9,
+        "theme": "matchday rituals with friends",
+        "idea": "Building the perfect matchday spread: what's actually on the table when we watch a game.",
+        "filming_suggestion": "Overhead food b-roll, quick cuts on the beat, on-screen labels for each thing.",
+        "rationale": "Why this works: a relatable 'what we eat' setup is high-save content for anyone planning their own watch party."
+      },
+      {
+        "day_index": 10,
+        "theme": "building the app in public",
+        "idea": "Day in the life of squashing one annoying bug \u2014 the messy middle, not the highlight reel.",
+        "filming_suggestion": "Mix screen recording with desk shots and a frustrated-then-relieved face. Timestamp the hours it took.",
+        "rationale": "Why this works: the honest 'messy middle' is exactly what other builders save, because nobody else shows the unglamorous part."
+      },
+      {
+        "day_index": 11,
+        "theme": "founder day-in-the-life",
+        "idea": "The gym break that keeps me sane between work blocks \u2014 quick, no fitness-guru energy.",
+        "filming_suggestion": "POV from the gym, a couple of candid sets, back to the laptop after. Keep it short.",
+        "rationale": "Why this works: showing the real rhythm of a builder's day is relatable and breaks up the screen-heavy content."
+      },
+      {
+        "day_index": 12,
+        "theme": "favorite spots around the city",
+        "idea": "The late-night dumpling spot I always end up at after shipping something big.",
+        "filming_suggestion": "Handheld, low light for the late-night feel, steamy close-up of the food as the hook.",
+        "rationale": "Why this works: a specific insider food spot tied to a real ritual is save-worthy and gives the launch story a satisfying payoff."
+      }
     ]
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "anti-cringe regression: founder + football-fan persona with a Champions League event — the exact profile that produced 'what the final taught me about strategic risk assessment in business'. Golden shows the event filmed as a real matchday moment (prep, watch party, food), never a forced business lesson; pillars rotate, activation week front-loaded, rationales name real levers."
+    "case": "anti-cringe regression: founder + football-fan persona with a Champions League event \u2014 the exact profile that produced 'what the final taught me about strategic risk assessment in business'. Golden shows the event filmed as a real matchday moment (prep, watch party, food), never a forced business lesson; pillars rotate, activation week front-loaded, rationales name real levers."
   }
 }

@@ -1,9 +1,11 @@
 "use client";
-import type { ContentPlan, PersonaResponse } from "@/lib/plan-api";
+import type { ContentPlan, PersonaResponse, StyleResponse } from "@/lib/plan-api";
+import { FONT_FACES } from "@/lib/font-faces";
 import { calendarToday, behindBy } from "@/app/plan/_lib/plan-schedule";
 import { TodayCard } from "./TodayCard";
 import { MomentumCard } from "./MomentumCard";
 import { PersonaCard } from "./PersonaCard";
+import { StyleCard } from "./StyleCard";
 import { ThisWeekStrip } from "./ThisWeekStrip";
 import { MonthCalendarGrid } from "./MonthCalendarGrid";
 import { PlanReadyBanner } from "./PlanReadyBanner";
@@ -20,6 +22,8 @@ interface WorkspaceHomeProps {
   onError: (msg: string) => void;
   /** Called after the ready banner auto-dismisses so the parent can reset the flag */
   onBannerDismiss?: () => void;
+  /** Creator Agent M1: user style — absent when USER_STYLE_ENABLED=false */
+  styleResponse?: StyleResponse | null;
 }
 
 export function WorkspaceHome({
@@ -30,6 +34,7 @@ export function WorkspaceHome({
   onRefresh,
   onError,
   onBannerDismiss,
+  styleResponse,
 }: WorkspaceHomeProps) {
   const items = plan.items ?? [];
   const todayDay = calendarToday(plan.start_date, plan.horizon_days);
@@ -53,6 +58,10 @@ export function WorkspaceHome({
 
   return (
     <div className="min-h-screen bg-[#fafaf8]">
+      {/* Inject @font-face declarations once so StyleCard (and any other font-previewing
+          component in this subtree) can render fonts in their REAL typeface. The item page
+          already does this; WorkspaceHome is a separate subtree so we inject it here too. */}
+      <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
       <div className="mx-auto max-w-[1180px] px-6 pb-24 pt-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
           {/* Left rail */}
@@ -69,6 +78,15 @@ export function WorkspaceHome({
             />
             <MomentumCard plan={plan} />
             <PersonaCard persona={persona} />
+            {/* Creator Agent M1: StyleCard — absent when USER_STYLE_ENABLED=false */}
+            {styleResponse && (
+              <StyleCard
+                style={styleResponse.style}
+                status={styleResponse.status}
+                styleSetPreview={styleResponse.style_set_preview}
+                fontPreview={styleResponse.font_preview}
+              />
+            )}
           </div>
 
           {/* Right column */}

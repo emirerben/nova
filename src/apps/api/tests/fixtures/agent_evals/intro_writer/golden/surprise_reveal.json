@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-26",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -14,7 +14,11 @@
     },
     "hero_transcript": "okay so I just got this in the mail and I have no idea what it is, let me open it... wait, what?",
     "tone": "punchy",
-    "form": {"effect": "karaoke-line", "size_class": "jumbo", "position": "center"},
+    "form": {
+      "effect": "karaoke-line",
+      "size_class": "jumbo",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "pov-surprise-karaoke-01",
@@ -47,6 +51,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "surprise reveal → original hook grounded in THIS clip (a mailed package), not a copy of the exemplar; lowercase in-voice, highlight_word is a real token"
+    "case": "surprise reveal \u2192 original hook grounded in THIS clip (a mailed package), not a copy of the exemplar; lowercase in-voice, highlight_word is a real token"
   }
 }

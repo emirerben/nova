@@ -202,6 +202,10 @@ def _run_generative_job(job_id: str) -> None:
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
         voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
+        # Filming guide (Creator Agent M3 / B2). Shot-list context forwarded to
+        # intro_writer for hook voice. Absent on public/legacy jobs → empty list →
+        # byte-identical to pre-M3 behavior.
+        filming_guide_candidates: list[dict] = list(all_candidates.get("filming_guide") or [])
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -259,7 +263,12 @@ def _run_generative_job(job_id: str) -> None:
 
         def _text_then_style():
             text, form = _run_text_agents(
-                clip_metas, hero, job_id=job_id, language=language, persona=persona
+                clip_metas,
+                hero,
+                job_id=job_id,
+                language=language,
+                persona=persona,
+                filming_guide=filming_guide_candidates,
             )
             # Creator Agent M1: if the user has a pinned style_set_id, bypass the
             # per-render AgenticStyleSelectorAgent and use it directly. This ensures
@@ -342,12 +351,19 @@ def _run_generative_job(job_id: str) -> None:
         # talking_head AND the flag is on AND a clip actually carries speech.
         from app.pipeline.talking_head_assembler import SpineExtractionError  # noqa: PLC0415
 
+        # B3: extract footage_type_bias from user_style as a soft tiebreaker.
+        # When user_style is absent or empty (public/legacy jobs) → empty list →
+        # byte-identical to pre-B3 behavior.
+        _footage_type_bias: list[str] = list(
+            (user_style.get("footage_type_bias") or []) if user_style else []
+        )
         archetype, spine_clip_id = _resolve_archetype(
             edit_format,
             clip_metas,
             clip_id_to_local,
             job_id=job_id,
             voiceover_gcs_path=voiceover_gcs_path,
+            footage_type_bias=_footage_type_bias,
         )
         _set_status(job_id, "rendering")
 
@@ -983,6 +999,11 @@ def _run_regenerate_variant(
         # Re-renders inherit the persona context too (content-plan jobs only), so a
         # retext/swap_song hook stays persona-coherent. Same Job-row source of truth.
         persona: dict = (job.all_candidates or {}).get("persona") or {}
+        # Re-renders inherit the filming guide too (Creator Agent M3 / B2), so a
+        # retext/swap_song hook still reflects the intended shots.
+        filming_guide_regen: list[dict] = list(
+            (job.all_candidates or {}).get("filming_guide") or []
+        )
         # Voiceover jobs re-render the same voice bed; the mix slider is the only knob
         # that changes here. Both come from the Job row (single source of truth).
         voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
@@ -1127,6 +1148,7 @@ def _run_regenerate_variant(
                 job_id=job_id,
                 language=language,
                 persona=persona,
+                filming_guide=filming_guide_regen,
             ),
         )
 
@@ -1260,6 +1282,7 @@ def _resolve_archetype(
     *,
     job_id: str,
     voiceover_gcs_path: str | None = None,
+    footage_type_bias: list[str] | None = None,
 ) -> tuple[str, str | None]:
     """Resolve the plan-declared edit_format against the footage → (archetype, spine).
 
@@ -1270,9 +1293,19 @@ def _resolve_archetype(
     fed straight to `assemble_talking_head`, whose override path then only re-scores
     that one clip.
 
+    `footage_type_bias` (Creator Agent M3 / B3): the user's declared preference for
+    footage type (from UserStyle.footage_type_bias). Used as a SOFT TIE-BREAKER only —
+    it NEVER overrides the voiceover fast path, the speech-coverage gate, or the
+    edit_format_talking_head_enabled kill switch. When the declared edit_format is
+    "montage" AND the bias contains "talking_head" AND the flag is on AND a clip carries
+    sufficient speech, the archetype is promoted to talking_head. When bias is absent or
+    empty, behavior is byte-identical to pre-B3. Any failure in the bias path falls back
+    silently to montage (best-effort).
+
     Reasons for montage fallback: `archetype_not_implemented` (day_vlog/single_hero —
     no assembler yet), `flag_disabled` (kill switch off), `no_speech` (no clip clears
-    `_MIN_SPINE_COVERAGE`).
+    `_MIN_SPINE_COVERAGE`), `archetype_bias_no_speech` (bias suggested talking_head but
+    no speech found).
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -1288,13 +1321,93 @@ def _resolve_archetype(
     # A user-supplied voiceover wins over any footage-derived archetype: the voice is
     # the spine. Resolved BEFORE the speech-coverage logic because it's driven by an
     # uploaded asset, not by what the footage happens to contain.
+    # MUST NOT be overridden by footage_type_bias (bias is a soft signal only).
     if voiceover_gcs_path:
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "voiceover"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="voiceover")
         return "voiceover", None
 
     if edit_format == "montage":
+        # B3 soft bias: when the user's style says "talking_head", attempt the
+        # talking_head path only when the flag is on AND speech actually exists.
+        # Hard signals already handled above (voiceover) or below (explicit format).
+        # This is a tie-breaker only — it NEVER runs if the flag is off.
+        bias = list(footage_type_bias or [])
+        if bias:
+            record_pipeline_event(
+                "assembly",
+                "archetype_bias",
+                {
+                    "edit_format": edit_format,
+                    "footage_type_bias": bias,
+                    "bias_active": True,
+                },
+            )
+        if bias and "talking_head" in bias and settings.edit_format_talking_head_enabled:
+            # Attempt the bias: check speech coverage.
+            try:
+                from app.services.clip_speech import speech_coverage  # noqa: PLC0415
+
+                best_id_bias: str | None = None
+                best_cov_bias = -1.0
+                for m in clip_metas:
+                    cid = str(getattr(m, "clip_id", "") or "")
+                    path = clip_id_to_local.get(cid)
+                    if not path:
+                        continue
+                    try:
+                        cov = float(speech_coverage(path))
+                    except Exception:  # noqa: BLE001
+                        cov = 0.0
+                    if cov > best_cov_bias:
+                        best_cov_bias, best_id_bias = cov, cid
+
+                if best_id_bias is not None and best_cov_bias >= _MIN_SPINE_COVERAGE:
+                    record_pipeline_event(
+                        "assembly",
+                        "archetype_selected",
+                        {
+                            "archetype": "talking_head",
+                            "via": "footage_type_bias",
+                            "spine_clip_id": best_id_bias,
+                            "speech_coverage": round(best_cov_bias, 3),
+                        },
+                    )
+                    log.info(
+                        "generative_archetype_selected",
+                        job_id=job_id,
+                        archetype="talking_head",
+                        via="footage_type_bias",
+                        spine_clip_id=best_id_bias,
+                        speech_coverage=round(best_cov_bias, 3),
+                    )
+                    return "talking_head", best_id_bias
+                else:
+                    # Bias suggested talking_head but no speech — fall through to montage.
+                    record_pipeline_event(
+                        "assembly",
+                        "archetype_fallback",
+                        {
+                            "declared": edit_format,
+                            "reason": "archetype_bias_no_speech",
+                            "bias": bias,
+                        },
+                    )
+                    log.info(
+                        "generative_archetype_fallback",
+                        job_id=job_id,
+                        declared=edit_format,
+                        reason="archetype_bias_no_speech",
+                        bias=bias,
+                    )
+            except Exception as exc:  # noqa: BLE001 — bias is best-effort; never fail the job
+                log.warning(
+                    "generative_archetype_bias_failed",
+                    job_id=job_id,
+                    error=str(exc),
+                )
         return "montage", None
+
     if edit_format != "talking_head":
         # day_vlog / single_hero declared but no assembler exists yet.
         return _fallback("archetype_not_implemented")
@@ -1399,7 +1512,13 @@ def _specs_for_archetype(
 
 
 def _run_text_agents(
-    clip_metas: list, hero, *, job_id: str, language: str = "en", persona: dict | None = None
+    clip_metas: list,
+    hero,
+    *,
+    job_id: str,
+    language: str = "en",
+    persona: dict | None = None,
+    filming_guide: list[dict] | None = None,
 ) -> tuple[Any, dict]:
     """Run overlay_format_matcher → intro_writer. Returns (IntroWriterOutput|None, form dict).
 
@@ -1413,10 +1532,16 @@ def _run_text_agents(
     day's theme; empty/absent for public generative jobs → footage-only voice
     (identical to pre-persona behavior). intro_writer re-sanitizes every field.
 
+    `filming_guide` is the optional per-item shot list from the content plan (Creator
+    Agent M3 / B2). When present, it provides the hook writer with DATA context about
+    the intended shots so the hook can reflect the shooting intent. Empty for public
+    jobs → byte-identical to pre-M3 behavior.
+
     Best-effort: any failure yields (None, {}) so the text variants render footage
     without an intro rather than failing the job.
     """
     persona = persona or {}
+    filming_guide = filming_guide or []
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RunContext  # noqa: PLC0415
@@ -1456,6 +1581,9 @@ def _run_text_agents(
                 # voice. Empty for public jobs and when analysis hasn't landed yet
                 # → prompt byte-identical to baseline (_persona_context handles this).
                 tiktok_analysis=str(persona.get("tiktok_summary", "") or ""),
+                # Filming guide (Creator Agent M3 / B2). Shot-list context for the
+                # hook writer — DATA only, never a command. Empty → byte-identical.
+                filming_guide=filming_guide,
                 form=form.model_dump(),
                 exemplars=exemplars,
                 language=language,

@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-26",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -14,7 +14,11 @@
     },
     "hero_transcript": "i can't believe i'm actually here right now",
     "tone": "aspirational",
-    "form": {"effect": "fade-in", "size_class": "large", "position": "center"},
+    "form": {
+      "effect": "fade-in",
+      "size_class": "large",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "travel-aspirational-fadein-02",
@@ -36,6 +40,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "scenic solo-travel arrival → original, lowercase, second-person aspirational hook grounded in THIS clip (a hiked-in valley view), in the reference voice (cf. @shootyourtrip 'imagine traveling solo in berlin and ending up here'); NOT a copy of the exemplar"
+    "case": "scenic solo-travel arrival \u2192 original, lowercase, second-person aspirational hook grounded in THIS clip (a hiked-in valley view), in the reference voice (cf. @shootyourtrip 'imagine traveling solo in berlin and ending up here'); NOT a copy of the exemplar"
   }
 }
