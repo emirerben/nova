@@ -18,8 +18,10 @@ export const metadata = {
 
 export default function StylePage() {
   return (
-    <main className="mx-auto max-w-xl px-4 py-12">
-      <StyleAgentInterview />
+    <main className="min-h-screen bg-[#fafaf8] px-4 py-12">
+      <div className="mx-auto max-w-xl">
+        <StyleAgentInterview />
+      </div>
     </main>
   );
 }

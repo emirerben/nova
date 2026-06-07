@@ -44,19 +44,19 @@ function makeStyleResponse(overrides: {
 }
 
 describe("StyleCard", () => {
-  it("test_absent_renders_nothing: status absent → renders nothing", () => {
-    const { container } = render(
-      <StyleCard status="absent" style={null} />
+  it("test_absent_renders_setup_cta: status absent → shows set-up-your-style invite", () => {
+    render(<StyleCard status="absent" style={null} />);
+    expect(screen.getByText(/set up your style/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /set up your style/i })).toHaveAttribute(
+      "href",
+      "/plan/style",
     );
-    expect(container.firstChild).toBeNull();
   });
 
-  it("test_absent_from_404_renders_nothing: page passes status absent (from getStyle 404) → renders nothing", () => {
+  it("test_absent_from_404_renders_setup_cta: page passes status absent (from getStyle 404) → shows invite", () => {
     const props = makeStyleResponse({ status: "absent", style: null });
-    const { container } = render(
-      <StyleCard status={props.status} style={props.style} />
-    );
-    expect(container.firstChild).toBeNull();
+    render(<StyleCard status={props.status} style={props.style} />);
+    expect(screen.getByText(/set up your style/i)).toBeInTheDocument();
   });
 
   it("test_deriving_shows_learning_text: status deriving → shows learning copy", () => {
