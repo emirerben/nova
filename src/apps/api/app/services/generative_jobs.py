@@ -31,6 +31,11 @@ _MAX_PERSONA_FIELD_CHARS = 400
 # stale/oversized value can't bloat all_candidates / the intro_writer prompt.
 _MAX_PREFERENCE_SUMMARY_CHARS = 1000
 
+# Storage-side cap on the TikTok analysis summary. Mirrors the agent-side
+# _MAX_SUMMARY_CHARS (1200); re-capped here so a stale row from before the cap
+# existed can't bloat all_candidates / the intro_writer prompt.
+_MAX_TIKTOK_SUMMARY_CHARS = 1200
+
 
 def _build_persona_context(
     *,
@@ -39,6 +44,7 @@ def _build_persona_context(
     theme: str,
     idea: str,
     preference_summary: str = "",
+    tiktok_summary: str = "",
 ) -> dict | None:
     """Assemble the persona/series context stashed on the job for intro_writer.
 
@@ -50,18 +56,24 @@ def _build_persona_context(
     theme = (theme or "").strip()[:_MAX_PERSONA_FIELD_CHARS]
     idea = (idea or "").strip()[:_MAX_PERSONA_FIELD_CHARS]
     prefs = (preference_summary or "").strip()[:_MAX_PREFERENCE_SUMMARY_CHARS]
+    tiktok = (tiktok_summary or "").strip()[:_MAX_TIKTOK_SUMMARY_CHARS]
     clean_pillars = [
         str(p).strip()[:_MAX_PERSONA_FIELD_CHARS] for p in (pillars or []) if str(p).strip()
     ][:_MAX_PERSONA_PILLARS]
-    if not (tone or clean_pillars or theme or idea or prefs):
+    if not (tone or clean_pillars or theme or idea or prefs or tiktok):
         return None
-    return {
+    ctx: dict = {
         "tone": tone,
         "content_pillars": clean_pillars,
         "theme": theme,
         "idea": idea,
         "preference_summary": prefs,
     }
+    # Only stash tiktok_summary when non-empty so public jobs that never provide
+    # it keep an identical all_candidates shape — guards the byte-identity invariant.
+    if tiktok:
+        ctx["tiktok_summary"] = tiktok
+    return ctx
 
 
 def build_generative_job(
@@ -79,6 +91,7 @@ def build_generative_job(
     preference_summary: str = "",
     edit_format: str = DEFAULT_EDIT_FORMAT,
     voiceover_gcs_path: str | None = None,
+    tiktok_summary: str = "",
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -116,6 +129,7 @@ def build_generative_job(
         theme=item_theme,
         idea=item_idea,
         preference_summary=preference_summary,
+        tiktok_summary=tiktok_summary,
     )
     if persona_ctx is not None:
         all_candidates["persona"] = persona_ctx

@@ -16,6 +16,10 @@ from pydantic import BaseModel, Field
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-06-06.1 — added $tiktok_analysis block (deep TikTok profile analysis from
+#                analyze_tiktok_profile task — creator's own proven hooks/themes/voice).
+#                Injected call-time only; not stored on the questionnaire row. Absent
+#                when the analysis hasn't landed → prompt byte-identical to baseline.
 # 2026-06-06 — interview_turns replaces flat fields as primary input; added
 #              signature_quote output field for the aha-moment reveal.
 # 2026-06-05 — added posts_per_week (int 1-7) so the plan agent can emit the right
@@ -28,7 +32,7 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-06-06"
+PERSONA_PROMPT_VERSION = "2026-06-06.1"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -60,6 +64,12 @@ class PersonaQuestionnaire(BaseModel):
     # the regenerated lane toward what they reacted well to. NOT stored on the
     # questionnaire row — injected at call time by retune_persona_from_feedback.
     preference_summary: str = ""
+    # Deep TikTok analysis summary (analyze_tiktok_profile task). Pre-rendered
+    # summary_for_prompts from TikTokAnalysis — the creator's own proven hooks,
+    # voice, and winning themes. NOT stored on the questionnaire row — injected at
+    # call time by generate_persona and retune_persona_from_feedback. Empty when
+    # the analysis hasn't landed yet (race) → prompt byte-identical to baseline.
+    tiktok_analysis: str = ""
 
 
 class Persona(BaseModel):

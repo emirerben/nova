@@ -1173,6 +1173,10 @@ def _run_text_agents(
                 theme=str(persona.get("theme", "") or ""),
                 idea=str(persona.get("idea", "") or ""),
                 preference_summary=str(persona.get("preference_summary", "") or ""),
+                # Deep TikTok analysis — the creator's proven style informs the hook
+                # voice. Empty for public jobs and when analysis hasn't landed yet
+                # → prompt byte-identical to baseline (_persona_context handles this).
+                tiktok_analysis=str(persona.get("tiktok_summary", "") or ""),
                 form=form.model_dump(),
                 exemplars=exemplars,
                 language=language,

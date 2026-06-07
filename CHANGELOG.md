@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [0.4.89.0] — 2026-06-07
 
 ### Added
+- **Deep TikTok profile analysis (`nova.plan.tiktok_analyzer`).** When a user adds their TikTok handle at onboarding, a new `analyze_tiktok_profile` Celery task enriches the flat scrape with per-video views, likes, comments, engagement_rate, and view_index (vs the account's own median), then runs a Gemini Flash agent to distill them into structured insights: creator voice, hook patterns that outperform (5x+ own median), winning themes, posting cadence, and audience signal.
+- **Injection into all three generation prompts (persona, content plan, hook writer).** The agent's `summary_for_prompts` (≤1200 chars, plain text, no handles/URLs) is injected at call time into `generate_persona.txt`, `generate_content_plan.txt`, and the `_persona_context()` function of `intro_writer.py`. Conditional injection: `""` when absent → prompts byte-identical to the no-TikTok baseline (no eval-degrading inert blocks).
+- **Best-effort design.** Any failure (TikTok blocked, timeout, parse error) is logged silently. The persona is never marked failed. The kill switch `TIKTOK_DEEP_ANALYSIS_ENABLED=false` (env var) stops analysis without a deploy.
+- **`fetch_profile_enriched`** in `tiktok_profile.py` — new enriched fetch (30 videos, per-video extract) alongside the existing flat `fetch_profile` (pre-screen UX stays ≤10s).
+- **Defense-in-depth sanitization.** Untrusted captions are stripped with `_sanitize_text` before reaching the analyzer prompt; all output fields are re-sanitized with `_sanitize_output` (control chars + URL/handle stripping) before threaded into three downstream agents.
 - **Light unification (D20 + D21).** The entire user-facing product is now light editorial. `/plan/items/[id]`, `/library`, and `/generative` have been converted from the dark theater system to the cream/ink/lime palette.
 - **ProgressTheater family tone-aware (D20).** All six Theater components (`ProgressTheater`, `PhaseChipRow`, `StatusHeadline`, `EtaBar`, `VariantRenderCard`, `PayoffField`) accept `tone?: "dark" | "light"` (default `"dark"`). Template flow, admin, and held PR #466 are untouched.
 - **`VariantCard` tone prop.** Shared between `/generative` (light) and `/admin/generative/[id]` (dark); admin omits the prop → stays dark automatically.

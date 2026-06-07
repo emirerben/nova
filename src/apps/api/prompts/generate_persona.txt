@@ -19,6 +19,7 @@ wording.
 $archetypes
 STYLE_REFERENCES
 $preferences
+$tiktok_analysis
 What actually makes short-form content perform (use these to land this person in
 a focused lane and a realistic cadence — [observed] = seen in our own
 market-research data, [TikTok docs] = TikTok's published creator guidance):

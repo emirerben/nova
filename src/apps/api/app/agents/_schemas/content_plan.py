@@ -43,7 +43,10 @@ from app.agents._schemas.persona import Persona
 #                keyed to edit_format so montage/day_vlog/talking_head/single_hero each
 #                get the right shot shape. Stored on PlanItem as JSONB; rendered on the
 #                item detail page. filming_suggestion stays (feeds clip_plan_matcher).
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-05.1"
+# 2026-06-06 — added $tiktok_analysis block (deep TikTok profile analysis from
+#              analyze_tiktok_profile task — creator's own proven ideas/hooks/voice).
+#              Absent when analysis hasn't landed → prompt byte-identical to baseline.
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-06"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -81,6 +84,10 @@ class ContentPlanInput(BaseModel):
     # "generate ideas DISTINCT from these" block so the second pass refills the
     # near-duplicate day slots with genuinely new ideas. Empty on the first pass.
     exclude_ideas: list[str] = Field(default_factory=list)
+    # Deep TikTok analysis summary (analyze_tiktok_profile task). Pre-rendered
+    # summary_for_prompts — the creator's own proven content ideas, hooks, and voice.
+    # NOT stored on ContentPlan; injected at call time. Empty → byte-identical to baseline.
+    tiktok_analysis: str = ""
 
 
 class PlanItemSpec(BaseModel):
