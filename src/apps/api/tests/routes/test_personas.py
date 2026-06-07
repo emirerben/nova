@@ -215,3 +215,133 @@ def test_patch_persona_rejects_zero_posts_per_week(client: TestClient) -> None:
 
     resp = client.patch(f"/personas/{row.id}", json={"posts_per_week": 0})
     assert resp.status_code == 422
+
+
+# ── POST /personas/reset ─────────────────────────────────────────────────────
+
+
+def test_reset_requires_auth(client: TestClient) -> None:
+    """No auth → 401; route is behind CurrentUser (strict)."""
+    app.dependency_overrides[get_db] = lambda: _async_db()
+    resp = client.post("/personas/reset")
+    assert resp.status_code == 401
+
+
+def test_reset_happy_path(client: TestClient) -> None:
+    """Happy path: 200 {reset: true}.
+
+    All three deletes go through db.execute (raw SQL), not db.delete — using the
+    ORM db.delete(persona) triggers SQLAlchemy's cascade which tries to SET
+    persona_id=NULL on content_plans (NOT NULL constraint violation). Raw DELETE
+    lets Postgres's ondelete=CASCADE handle child rows at the DB level.
+
+    Execute order: (1) UPDATE jobs, (2) DELETE feedback, (3) DELETE persona.
+    """
+    user = _fake_user()
+    db_user = MagicMock()
+    db_user.onboarding_status = "complete"
+
+    delete_result = MagicMock()
+    delete_result.rowcount = 1  # persona existed
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    # execute side_effects: (1) UPDATE jobs, (2) DELETE feedback, (3) DELETE persona
+    execute_results = [
+        MagicMock(),  # UPDATE jobs result
+        MagicMock(),  # DELETE feedback result
+        delete_result,  # DELETE persona result (rowcount=1)
+    ]
+    db.execute = AsyncMock(side_effect=execute_results)
+    db.delete = AsyncMock()
+    db.get = AsyncMock(return_value=db_user)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post("/personas/reset")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"reset": True}
+    # Three execute calls: jobs UPDATE, feedback DELETE, persona DELETE — raw SQL.
+    assert db.execute.call_count == 3
+    # ORM db.delete must NOT be called (causes the NOT NULL cascade bug).
+    db.delete.assert_not_awaited()
+    # Onboarding status reset.
+    assert db_user.onboarding_status == "pending"
+    # Single commit.
+    db.commit.assert_awaited_once()
+
+
+def test_reset_no_persona_is_idempotent_200(client: TestClient) -> None:
+    """No-persona case returns 200 — idempotent; 'start over with nothing' is valid.
+
+    The DELETE personas WHERE user_id=:uid simply deletes 0 rows (rowcount=0).
+    Jobs UPDATE + feedback DELETE + onboarding reset still all happen.
+    """
+    user = _fake_user()
+    db_user = MagicMock()
+    db_user.onboarding_status = "pending"
+
+    no_persona_result = MagicMock()
+    no_persona_result.rowcount = 0
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    execute_results = [
+        MagicMock(),  # UPDATE jobs result
+        MagicMock(),  # DELETE feedback result
+        no_persona_result,  # DELETE persona (0 rows — nothing existed)
+    ]
+    db.execute = AsyncMock(side_effect=execute_results)
+    db.delete = AsyncMock()
+    db.get = AsyncMock(return_value=db_user)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post("/personas/reset")
+
+    assert resp.status_code == 200
+    assert resp.json() == {"reset": True}
+    assert db.execute.call_count == 3
+    db.delete.assert_not_awaited()
+    assert db_user.onboarding_status == "pending"
+    db.commit.assert_awaited_once()
+
+
+def test_reset_nulls_job_fk_before_persona_delete(client: TestClient) -> None:
+    """The FK fix: the first execute must target 'jobs' with content_plan_item_id.
+
+    If a future refactor reorders the operations, this test fails loudly — which
+    prevents the Postgres NO ACTION violation on plan_items.id (models.py:383,
+    no ondelete on Job.content_plan_item_id).
+    """
+    user = _fake_user()
+
+    delete_result = MagicMock()
+    delete_result.rowcount = 1
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    execute_results = [
+        MagicMock(),  # UPDATE jobs
+        MagicMock(),  # DELETE feedback
+        delete_result,  # DELETE persona
+    ]
+    db.execute = AsyncMock(side_effect=execute_results)
+    db.delete = AsyncMock()
+    db.get = AsyncMock(return_value=_fake_user())
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    client.post("/personas/reset")
+
+    # First call must be the jobs UPDATE (the FK-nulling step).
+    first_stmt = str(db.execute.call_args_list[0].args[0])
+    assert "jobs" in first_stmt.lower(), (
+        "First execute must target 'jobs' to NULL content_plan_item_id "
+        "before plan_items are cascade-deleted (models.py:383 no-ondelete FK)"
+    )
+    assert "content_plan_item_id" in first_stmt.lower()

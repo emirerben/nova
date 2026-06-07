@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.music_matcher import _sanitize_text
@@ -183,6 +183,55 @@ async def get_persona(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No persona yet")
     return PersonaResponse.of(row)
+
+
+class ResetResponse(BaseModel):
+    reset: bool
+
+
+@router.post("/reset", response_model=ResetResponse)
+async def reset_persona(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ResetResponse:
+    """Soft-reset the user's onboarding profile so they can redo it from scratch.
+
+    Deletes the persona row (cascades content_plans → plan_items + all chat/style
+    state stored on the persona JSONB), explicitly deletes video_feedback, and
+    resets onboarding_status back to 'pending'. Rendered videos (jobs) are KEPT.
+
+    FK hazard: Job.content_plan_item_id → plan_items.id has no ondelete. We NULL
+    those refs first (models.py:383) so the plan_items cascade doesn't raise a
+    Postgres FK violation. Celery tasks (generate_persona, derive_user_style, etc.)
+    all no-op on a missing persona row — no recreate path. Idempotent: returns 200
+    even when the user has no persona yet.
+    """
+    from app.models import Job, VideoFeedback  # noqa: PLC0415
+
+    # 1. Sever job → plan_item back-refs BEFORE plan_items are cascade-deleted.
+    #    Without this, the persona delete cascades into plan_items while jobs still
+    #    hold a no-ondelete FK → Postgres NO ACTION violation.
+    await db.execute(
+        update(Job)
+        .where(Job.user_id == user.id, Job.content_plan_item_id.is_not(None))
+        .values(content_plan_item_id=None)
+    )
+    # 2. Delete user-scoped feedback (ondelete=CASCADE is from users, not here).
+    await db.execute(delete(VideoFeedback).where(VideoFeedback.user_id == user.id))
+    # 3. Delete the persona via raw SQL — NOT db.delete(row). Using the ORM
+    #    db.delete() triggers SQLAlchemy's cascade handling which tries to SET
+    #    persona_id=NULL on content_plans before the row is deleted, violating
+    #    the NOT NULL constraint. A raw DELETE lets Postgres's ondelete=CASCADE
+    #    handle child rows directly at the DB level.
+    result = await db.execute(delete(PersonaRow).where(PersonaRow.user_id == user.id))
+    had_persona = result.rowcount > 0
+    # 4. Reset onboarding so the frontend routes back to setup:prescreen.
+    db_user = await db.get(User, user.id)
+    if db_user is not None:
+        db_user.onboarding_status = "pending"
+    await db.commit()
+    log.info("reset_persona", user_id=str(user.id), had_persona=had_persona)
+    return ResetResponse(reset=True)
 
 
 @router.patch("/{persona_id}", response_model=PersonaResponse)
