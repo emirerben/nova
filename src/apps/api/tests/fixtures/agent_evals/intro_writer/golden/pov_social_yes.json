@@ -1,6 +1,6 @@
 {
   "agent": "nova.compose.intro_writer",
-  "prompt_version": "2026-05-26",
+  "prompt_version": "2026-06-07",
   "input": {
     "hero_clip": {
       "clip_id": "clip_001",
@@ -14,7 +14,11 @@
     },
     "hero_transcript": "come on let's just go, are you in? yes? let's do it",
     "tone": "warm",
-    "form": {"effect": "karaoke-line", "size_class": "jumbo", "position": "center"},
+    "form": {
+      "effect": "karaoke-line",
+      "size_class": "jumbo",
+      "position": "center"
+    },
     "exemplars": [
       {
         "id": "pov-social-karaoke-01",
@@ -36,6 +40,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "social POV footage → original 'POV:' second-person hook grounded in THIS clip (strangers becoming friends), in the reference voice (cf. @smeggs_ 'POV: you found people who say yes'); NOT a copy of the exemplar"
+    "case": "social POV footage \u2192 original 'POV:' second-person hook grounded in THIS clip (strangers becoming friends), in the reference voice (cf. @smeggs_ 'POV: you found people who say yes'); NOT a copy of the exemplar"
   }
 }

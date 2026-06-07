@@ -1,0 +1,27 @@
+{
+  "agent": "nova.plan.style_intent",
+  "prompt_version": "2026-06-07",
+  "input": {
+    "utterance": "change my style",
+    "prior_turns": [],
+    "current_style_snapshot": {
+      "style_set_id": "default",
+      "instruction_level": "full",
+      "footage_type_bias": [],
+      "top_knobs": {}
+    }
+  },
+  "raw_text": "{\"intent\": \"clarify\", \"fields\": {}, \"confidence\": 0.45, \"reply\": \"What would you like to change? For example: font, text size, text color, or your overall style set.\", \"suggestions\": [\"Change my font\", \"Make text bigger\", \"Different style set\", \"Adjust text color\"], \"needs_clarification\": true}",
+  "output": {
+    "intent": "clarify",
+    "fields": {},
+    "confidence": 0.45,
+    "reply": "What would you like to change? For example: font, text size, text color, or your overall style set.",
+    "suggestions": ["Change my font", "Make text bigger", "Different style set", "Adjust text color"],
+    "needs_clarification": true
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Ambiguous utterance — 'change my style' could mean font, color, style set, or content. Low confidence forces clarify intent and needs_clarification=true."
+  }
+}

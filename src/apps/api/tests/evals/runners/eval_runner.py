@@ -264,6 +264,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.style_derivation import StyleDerivationAgent
 
         return StyleDerivationAgent
+    if agent_name == "nova.plan.style_intent":
+        from app.agents.style_intent import StyleIntentAgent
+
+        return StyleIntentAgent
     if agent_name == "nova.plan.conformance_feedback":
         from app.agents.conformance_feedback import ConformanceFeedbackAgent
 

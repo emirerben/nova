@@ -7,6 +7,8 @@ is a list of per-day PlanItemSpec the user can edit before generating videos.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, EditFormat, coerce_edit_format
@@ -46,7 +48,10 @@ from app.agents._schemas.persona import Persona
 # 2026-06-06 — added $tiktok_analysis block (deep TikTok profile analysis from
 #              analyze_tiktok_profile task — creator's own proven ideas/hooks/voice).
 #              Absent when analysis hasn't landed → prompt byte-identical to baseline.
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-06"
+# 2026-06-07 — Creator Agent M3: added $instruction_level and $edit_format_mix
+#              placeholders (gated on user_style_enabled; empty string when style
+#              absent → byte-identical to pre-M3 baseline).
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-07"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -88,6 +93,14 @@ class ContentPlanInput(BaseModel):
     # summary_for_prompts — the creator's own proven content ideas, hooks, and voice.
     # NOT stored on ContentPlan; injected at call time. Empty → byte-identical to baseline.
     tiktok_analysis: str = ""
+    # Creator Agent M3: instruction verbosity for this user's plan items.
+    # "full" (default) → byte-identical to pre-M3 baseline; "light"/"none" inject a
+    # directive block. Gated on settings.user_style_enabled; defaults to "full" when
+    # the flag is off or the style row is absent.
+    instruction_level: Literal["full", "light", "none"] = "full"
+    # Creator Agent M3: the user's declared edit-format preference weights (e.g.
+    # {"montage": 0.6, "talking_head": 0.4}). Empty → byte-identical to baseline.
+    preferred_edit_format_mix: dict[str, float] = Field(default_factory=dict)
 
 
 class PlanItemSpec(BaseModel):

@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.content_plan_generator",
-  "prompt_version": "2026-05-30.1",
+  "prompt_version": "2026-06-07",
   "input": {
     "persona": {
       "summary": "You are Milan's trusted local friend, sharing your city's hidden gems and best-kept secrets. Blending your passion for discovering unique spots, thrifting, and slow-morning aesthetics, you offer an authentic, curated guide to experiencing Milan.",

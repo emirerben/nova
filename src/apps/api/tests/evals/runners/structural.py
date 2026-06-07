@@ -1425,6 +1425,70 @@ def check_tiktok_analyzer(output: Any) -> list[str]:
     return failures
 
 
+def check_style_intent(output: Any) -> list[str]:
+    """Structural floor for nova.plan.style_intent (Creator Agent M2).
+
+    Hard invariants:
+    - intent must be one of the 5 valid literal values
+    - confidence must be in [0.0, 1.0]
+    - reply must be non-empty (agent must always produce a user-visible reply)
+    - suggestions must be a list (may be empty; max 5)
+    - fields.knobs (if present) must contain ONLY the 10 parity-safe key names
+    - needs_clarification must be a bool
+    """
+    _PARITY_SAFE_KNOBS = frozenset(
+        {
+            "font_family",
+            "text_size_px",
+            "position",
+            "position_x_frac",
+            "position_y_frac",
+            "text_anchor",
+            "text_color",
+            "highlight_color",
+            "stroke_width",
+            "cycle_fonts",
+        }
+    )
+    _VALID_INTENTS = {"style_edit", "persona_preference", "scope_reduction", "clarify", "unknown"}
+
+    failures: list[str] = []
+
+    intent = getattr(output, "intent", None)
+    if intent not in _VALID_INTENTS:
+        failures.append(f"intent={intent!r} not in {sorted(_VALID_INTENTS)}")
+
+    confidence = getattr(output, "confidence", None)
+    if confidence is None or not isinstance(confidence, float) or not (0.0 <= confidence <= 1.0):
+        failures.append(f"confidence={confidence!r} must be float in [0.0, 1.0]")
+
+    reply = getattr(output, "reply", None)
+    if not reply or not str(reply).strip():
+        failures.append("reply is empty — agent must produce a user-visible reply")
+
+    suggestions = getattr(output, "suggestions", None)
+    if not isinstance(suggestions, list):
+        failures.append(f"suggestions must be a list, got {type(suggestions)!r}")
+    elif len(suggestions) > 5:
+        failures.append(f"suggestions has {len(suggestions)} items (max 5)")
+
+    fields = getattr(output, "fields", {}) or {}
+    knobs = fields.get("knobs") if isinstance(fields, dict) else None
+    if isinstance(knobs, dict) and knobs:
+        bad_keys = set(knobs.keys()) - _PARITY_SAFE_KNOBS
+        if bad_keys:
+            failures.append(
+                f"fields.knobs contains non-parity-safe keys: {sorted(bad_keys)} — "
+                f"only {sorted(_PARITY_SAFE_KNOBS)} are allowed"
+            )
+
+    needs_clarification = getattr(output, "needs_clarification", None)
+    if not isinstance(needs_clarification, bool):
+        failures.append(f"needs_clarification must be bool, got {type(needs_clarification)!r}")
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1469,6 +1533,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_tiktok_analyzer(output)
     if agent_name == "nova.plan.style_derivation":
         return check_style_derivation(output)
+    if agent_name == "nova.plan.style_intent":
+        return check_style_intent(output)
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

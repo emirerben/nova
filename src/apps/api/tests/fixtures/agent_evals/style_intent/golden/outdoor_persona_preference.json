@@ -1,0 +1,27 @@
+{
+  "agent": "nova.plan.style_intent",
+  "prompt_version": "2026-06-07",
+  "input": {
+    "utterance": "I want to focus more on outdoor content and hiking adventures",
+    "prior_turns": [],
+    "current_style_snapshot": {
+      "style_set_id": "lifestyle_clean",
+      "instruction_level": "full",
+      "footage_type_bias": [],
+      "top_knobs": {}
+    }
+  },
+  "raw_text": "{\"intent\": \"persona_preference\", \"fields\": {\"free_text\": \"Focus on outdoor content and hiking adventures\"}, \"confidence\": 0.88, \"reply\": \"Got it — I'll shift your content focus toward outdoor and hiking adventures. Your next plan will reflect this.\", \"suggestions\": [\"More travel content\", \"Reduce gym footage\", \"Add cooking content\", \"Change my style\"], \"needs_clarification\": false}",
+  "output": {
+    "intent": "persona_preference",
+    "fields": {"free_text": "Focus on outdoor content and hiking adventures"},
+    "confidence": 0.88,
+    "reply": "Got it — I'll shift your content focus toward outdoor and hiking adventures. Your next plan will reflect this.",
+    "suggestions": ["More travel content", "Reduce gym footage", "Add cooking content", "Change my style"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "persona_preference — content strategy request (topic focus), not a visual style change. Should NOT map to style_edit or scope_reduction."
+  }
+}
