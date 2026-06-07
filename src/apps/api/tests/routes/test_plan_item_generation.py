@@ -51,6 +51,8 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.current_job = None
     item.item_status = "idea"
     item.user_edited = False
+    # M4: explicit None so plan_item_response does not mistake MagicMock for a dict.
+    item.conformance = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -59,12 +61,29 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
 def _db_for(item, plan) -> AsyncMock:
     """DB mock matching _load_owned_item: the item is loaded via
     execute().scalar_one_or_none() (eager-loads current_job), the plan
-    ownership check via get()."""
+    ownership check via get().
+
+    M4: also handles _get_instruction_level's Persona get() call —
+    returns a mock persona with style=None so instruction_level defaults to 'full'.
+    """
     db = _async_db()
     result = MagicMock()
     result.scalar_one_or_none = MagicMock(return_value=item)
     db.execute = AsyncMock(return_value=result)
-    db.get = AsyncMock(return_value=plan)
+
+    persona_mock = MagicMock()
+    persona_mock.style = None  # → instruction_level defaults to "full"
+
+    # get() is called with different classes: ContentPlan (returns plan),
+    # Persona (returns persona_mock). Use side_effect to differentiate.
+    from app.models import Persona as PersonaRow  # noqa: PLC0415
+
+    async def _get_side_effect(cls, pk):
+        if cls is PersonaRow:
+            return persona_mock
+        return plan
+
+    db.get = AsyncMock(side_effect=_get_side_effect)
     return db
 
 
@@ -147,6 +166,65 @@ def test_get_plan_item_returns_filming_guide(client: TestClient) -> None:
     ]
 
 
+# ── M4: attach_clips fire-and-forget + instruction_level ─────────────────────
+
+
+def test_attach_clips_returns_200_immediately(client: TestClient) -> None:
+    """POST /plan-items/{id}/clips returns 200 without blocking on conformance analysis.
+
+    The conformance task is fire-and-forget: analyze_item_conformance.delay()
+    is called but the response must not wait for it to complete.
+    """
+    user = _user()
+    item, plan = _owned_item(
+        user.id,
+        clips=[],
+        filming_guide=[{"what": "creator at desk", "how": "eye level", "duration_s": 5}],
+    )
+    db = _db_for(item, plan)
+    clip_path = f"users/{user.id}/plan/{item.id}/clip.mp4"
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.conformance_build.analyze_item_conformance") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/clips",
+            json={"clip_gcs_paths": [clip_path]},
+        )
+
+    assert resp.status_code == 200
+    # Delay was called once with the item id (fire-and-forget).
+    mock_task.delay.assert_called_once_with(str(item.id))
+
+
+def test_get_plan_item_returns_instruction_level(client: TestClient) -> None:
+    """GET /plan-items/{id} includes instruction_level (default 'full' when style absent)."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.get(f"/plan-items/{item.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["instruction_level"] == "full"
+
+
+def test_get_plan_item_returns_conformance_null_when_absent(client: TestClient) -> None:
+    """GET /plan-items/{id} returns conformance=null when no verdict has run yet."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.conformance = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.get(f"/plan-items/{item.id}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["conformance"] is None
+
+
 def test_get_plan_item_filming_guide_empty_for_legacy_items(client: TestClient) -> None:
     """Legacy items (filming_guide=[]) return filming_guide:[] in the response."""
     user = _user()
@@ -181,6 +259,7 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     item.current_job = None
     item.item_status = "idea"
     item.user_edited = False
+    item.conformance = None  # M4: must be None/dict, not a MagicMock attribute
 
     resp = plan_item_response(item)
     # non-dict skipped; 2 dicts kept with defaults

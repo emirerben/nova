@@ -10,6 +10,7 @@ import {
   getPlanItem,
   getPlanItemJobStatus,
   NotAuthenticatedError,
+  type ConformanceVerdict,
   type PlanItem,
   type PlanItemJobStatus,
   type PlanItemVariant,
@@ -58,6 +59,9 @@ export default function PlanItemPage() {
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
   const pendingEdits = useRef<Map<string, { priorOutputUrl: string | null }>>(new Map());
+  // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
+  // so the verdict panel appears shortly after the async agent finishes (~6s window).
+  const conformancePolls = useRef(0);
 
   useEffect(() => {
     getMusicTracks()
@@ -81,12 +85,23 @@ export default function PlanItemPage() {
       const anyRendering =
         job?.variants?.some((v) => v.render_status === "rendering") ?? false;
       const pending = pendingEdits.current;
-      return (
+      const baseTerminal =
         !anyRendering &&
         pending.size === 0 &&
         item.status !== "generating" &&
-        !(item.current_job_id && item.status !== "ready" && item.status !== "failed")
-      );
+        !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
+
+      // Keep polling for up to 3 extra cycles when the item has clips but no
+      // conformance verdict yet (the async task may still be running).
+      const hasClips = (item.clip_gcs_paths?.length ?? 0) > 0;
+      const hasFilmingGuide = (item.filming_guide?.length ?? 0) > 0;
+      const awaitingConformance =
+        hasClips && hasFilmingGuide && !item.conformance && conformancePolls.current < 3;
+      if (awaitingConformance) {
+        conformancePolls.current += 1;
+        return false;
+      }
+      return baseTerminal;
     },
     [],
   );
@@ -157,12 +172,20 @@ export default function PlanItemPage() {
     [markVariantRendering, refetch],
   );
 
+  // M4: single-file replace for instructed items (filming_guide present + level != "none").
+  // Bulk append is preserved for uninstructed items.
+  const isInstructed =
+    (item?.filming_guide?.length ?? 0) > 0 && item?.instruction_level !== "none";
+
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     setUploading(true);
     setError(null);
+    // Reset conformance poll counter so we poll for the new verdict after attach.
+    conformancePolls.current = 0;
     try {
-      const list = Array.from(files);
+      // Instructed items: take only the first file (single-video replace mode).
+      const list = isInstructed ? [Array.from(files)[0]] : Array.from(files);
       const urls = await requestUploadUrls(
         itemId,
         list.map((f) => ({
@@ -172,8 +195,13 @@ export default function PlanItemPage() {
         })),
       );
       await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, list[i])));
-      const existing = item?.clip_gcs_paths ?? [];
-      await attachClips(itemId, [...existing, ...urls.map((u) => u.gcs_path)]);
+      const newPaths = urls.map((u) => u.gcs_path);
+      // Instructed: replace (the backend already stores whatever paths we send).
+      // Uninstructed: append to existing paths.
+      const pathsToAttach = isInstructed
+        ? newPaths
+        : [...(item?.clip_gcs_paths ?? []), ...newPaths];
+      await attachClips(itemId, pathsToAttach);
       refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -300,14 +328,16 @@ export default function PlanItemPage() {
           <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
             <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
             <p className="mb-4 text-sm text-[#71717a]">
-              Upload footage for this idea. {clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}
+              {isInstructed
+                ? "Upload the clip for this shot list. It will replace the current clip."
+                : `Upload footage for this idea. ${clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}`}
             </p>
             <label className="block">
               <span className="sr-only">Upload video clips for this idea</span>
               <input
                 type="file"
                 accept="video/mp4,video/quicktime"
-                multiple
+                {...(!isInstructed ? { multiple: true } : {})}
                 disabled={uploading}
                 onChange={(e) => handleFiles(e.target.files)}
                 className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
@@ -315,6 +345,11 @@ export default function PlanItemPage() {
             </label>
             {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
           </section>
+
+          {/* Conformance verdict panel — display-only, never blocks Generate */}
+          {item.conformance && (
+            <ConformanceVerdictPanel conformance={item.conformance} />
+          )}
 
           {/* Generate */}
           <InkButton
@@ -493,4 +528,64 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
+}
+
+// ── Conformance verdict panel ──────────────────────────────────────────────────
+// Display-only: shows the ConformanceFeedbackAgent's verdict after clip attach.
+// Never disables or blocks the Generate button — purely informational.
+
+const VERDICT_STYLE: Record<
+  "on_track" | "minor_drift" | "off_brief",
+  { border: string; badge: string; label: string }
+> = {
+  on_track: {
+    border: "border-lime-200",
+    badge: "bg-lime-100 text-lime-800",
+    label: "On track",
+  },
+  minor_drift: {
+    border: "border-amber-200",
+    badge: "bg-amber-100 text-amber-800",
+    label: "Minor drift",
+  },
+  off_brief: {
+    border: "border-red-200",
+    badge: "bg-red-50 text-red-700",
+    label: "Off brief",
+  },
+};
+
+function ConformanceVerdictPanel({ conformance }: { conformance: ConformanceVerdict }) {
+  const style = VERDICT_STYLE[conformance.verdict] ?? VERDICT_STYLE.off_brief;
+  return (
+    <div
+      className={`mb-6 rounded-lg border ${style.border} bg-white p-4`}
+      data-testid="conformance-verdict-panel"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <span className={`rounded px-2 py-0.5 text-xs font-semibold ${style.badge}`}>
+          {style.label}
+        </span>
+        <p className="text-sm text-[#3f3f46]">{conformance.summary}</p>
+      </div>
+      {conformance.mismatches && conformance.mismatches.length > 0 && (
+        <ul className="mb-2 space-y-0.5">
+          {conformance.mismatches.map((m, i) => (
+            <li key={i} className="text-xs text-[#71717a]">
+              &bull; {m}
+            </li>
+          ))}
+        </ul>
+      )}
+      {conformance.suggestions && conformance.suggestions.length > 0 && (
+        <ul className="space-y-0.5">
+          {conformance.suggestions.map((s, i) => (
+            <li key={i} className="text-xs text-lime-700">
+              &rarr; {s}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }

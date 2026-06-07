@@ -38,6 +38,8 @@ _EXPECTED = {
     "nova.plan.style_derivation",
     # Creator Agent M2 — style intent (interview agent)
     "nova.plan.style_intent",
+    # Creator Agent M4 — conformance feedback
+    "nova.plan.conformance_feedback",
 }
 
 

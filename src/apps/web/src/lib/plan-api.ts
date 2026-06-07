@@ -544,6 +544,27 @@ export function rederiveStyle(): Promise<{ queued: boolean; persona_id: string }
   });
 }
 
+// ── Creator Agent M4: conformance verdict at clip-attach time ─────────────────
+// Best-effort, display-only. Never blocks the Generate button.
+// Arrives async after attach — poll item until conformance is non-null or timeout.
+
+/** ConformanceFeedbackAgent verdict, stored on plan_items.conformance (nullable). */
+export interface ConformanceVerdict {
+  verdict: "on_track" | "minor_drift" | "off_brief";
+  confidence: number;
+  summary: string;
+  mismatches: string[];
+  suggestions: string[];
+}
+
+// M4 fields appended to PlanItem via interface declaration merging (append-only rule).
+// instruction_level: "full"|"light"|"none" — drives single-file vs bulk upload split.
+// conformance: present after ConformanceFeedbackAgent runs (async, best-effort).
+export interface PlanItem {
+  instruction_level?: "full" | "light" | "none";
+  conformance?: ConformanceVerdict | null;
+}
+
 // ── Style Agent conversational interface (Creator Agent M2) ──────────────────
 // Append-only — do not edit any existing code above this section.
 

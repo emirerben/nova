@@ -652,6 +652,10 @@ class PlanItem(Base):
     # Stored as raw JSONB (no separate table) and returned read-only by the API.
     # Legacy rows receive [] via server_default; no backfill needed.
     filming_guide: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # ConformanceFeedbackAgent result at clip-attach time (best-effort, display-only).
+    # {verdict, confidence, summary, mismatches[], suggestions[]}. NULL until
+    # CONFORMANCE_FEEDBACK_ENABLED=True and the agent runs; never blocks Generate.
+    conformance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # idea | awaiting_clips ONLY. Render state is derived from current_job.status.
     item_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="idea")
     # Forward link to the job currently rendering this item (the circular pair's

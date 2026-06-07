@@ -24,7 +24,7 @@ from app import storage
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import ContentPlan, Job, PlanItem
+from app.models import ContentPlan, Job, Persona, PlanItem
 from app.routes.generative_jobs import (
     ChangeStyleRequest,
     RetextRequest,
@@ -97,9 +97,22 @@ class PlanItemResponse(BaseModel):
     status: str
     current_job_id: str | None
     user_edited: bool
+    # Creator Agent M4: instruction level from the owning user's style entity.
+    # Drives the instructed/uninstructed upload split on the item page:
+    #   "full" or "light" → single-file replace mode when filming_guide is present
+    #   "none" → keep existing bulk-append behaviour unchanged
+    # Default "full": applies to items whose plan predates M1 or when style is absent.
+    instruction_level: str = "full"
+    # ConformanceFeedbackAgent verdict (best-effort, display-only). NULL until the
+    # agent runs (flag on + clip attached). Never blocks Generate.
+    conformance: dict | None = None
 
 
-def plan_item_response(item: PlanItem) -> PlanItemResponse:
+def plan_item_response(
+    item: PlanItem,
+    *,
+    instruction_level: str = "full",
+) -> PlanItemResponse:
     # Tolerate missing keys in individual JSONB shots — each shot is constructed
     # via .get() so a hand-corrupted row or a migration-era partial row never raises.
     shots = [
@@ -123,7 +136,29 @@ def plan_item_response(item: PlanItem) -> PlanItemResponse:
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         user_edited=item.user_edited,
+        instruction_level=instruction_level,
+        conformance=item.conformance,
     )
+
+
+async def _get_instruction_level(item: PlanItem, db: AsyncSession) -> str:
+    """Read instruction_level from the owning user's personas.style JSONB.
+
+    Null-safe chain: item → ContentPlan → Persona → style → instruction_level.
+    Any missing link → default "full".
+    """
+    try:
+        plan = await db.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            return "full"
+        persona = await db.get(Persona, plan.persona_id)
+        if persona is None:
+            return "full"
+        style = persona.style or {}
+        level = str(style.get("instruction_level", "full") or "full")
+        return level if level in ("full", "light", "none") else "full"
+    except Exception:  # noqa: BLE001
+        return "full"
 
 
 @router.get("/{item_id}", response_model=PlanItemResponse)
@@ -133,7 +168,8 @@ async def get_plan_item(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     item = await _load_owned_item(item_id, user.id, db)
-    return plan_item_response(item)
+    instruction_level = await _get_instruction_level(item, db)
+    return plan_item_response(item, instruction_level=instruction_level)
 
 
 class PlanItemEdit(BaseModel):
@@ -162,7 +198,9 @@ async def edit_plan_item(
         item.user_edited = True
     await db.commit()
     # Reload with current_job eager-loaded (commit expired it) before serializing.
-    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
 # ── Themed uploads + per-item generation ──────────────────────────────────────
@@ -267,8 +305,14 @@ async def attach_clips(
             )
     item.clip_gcs_paths = list(body.clip_gcs_paths)
     await db.commit()
+    # Fire-and-forget conformance analysis (best-effort, never blocks this response).
+    from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
+
+    analyze_item_conformance.delay(str(item.id))
     # Reload with current_job eager-loaded (commit expired it) before serializing.
-    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
 @router.post("/{item_id}/generate", response_model=PlanItemResponse)
@@ -289,7 +333,9 @@ async def generate_item(
     generate_plan_item_videos.delay(str(item.id))
     # current_job_id is set by the task, not synchronously here; reload with the
     # relationship eager-loaded so serialization never lazy-loads on the session.
-    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
 # ── Per-variant editing (swap song / edit text / change style) ────────────────
