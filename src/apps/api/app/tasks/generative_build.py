@@ -1333,15 +1333,16 @@ def _resolve_archetype(
         # Hard signals already handled above (voiceover) or below (explicit format).
         # This is a tie-breaker only — it NEVER runs if the flag is off.
         bias = list(footage_type_bias or [])
-        record_pipeline_event(
-            "assembly",
-            "archetype_bias",
-            {
-                "edit_format": edit_format,
-                "footage_type_bias": bias,
-                "bias_active": bool(bias),
-            },
-        )
+        if bias:
+            record_pipeline_event(
+                "assembly",
+                "archetype_bias",
+                {
+                    "edit_format": edit_format,
+                    "footage_type_bias": bias,
+                    "bias_active": True,
+                },
+            )
         if bias and "talking_head" in bias and settings.edit_format_talking_head_enabled:
             # Attempt the bias: check speech coverage.
             try:
