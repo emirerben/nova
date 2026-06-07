@@ -96,8 +96,23 @@ def _run(plan_item_id: str) -> None:
             log.debug("conformance_build.no_clips", plan_item_id=plan_item_id)
             return
 
-        # We analyze ONLY the first (most recent, replace-mode) clip.
-        clip_gcs_path = clip_paths[0]
+        # Pick the first shot-assigned clip (by guide order) when available (T5/D15).
+        # Fallback to clips[0] for legacy/uninstructed items with no assignments.
+        # "By guide order" = first shot_id in filming_guide that has a matching assignment.
+        assignments = item.clip_assignments or []
+        assigned_by_shot: dict[str, str] = {
+            a["shot_id"]: a["gcs_path"]
+            for a in assignments
+            if isinstance(a, dict) and a.get("shot_id") and a.get("gcs_path")
+        }
+        clip_gcs_path: str | None = None
+        for shot in filming_guide:
+            sid = shot.get("shot_id") if isinstance(shot, dict) else None
+            if sid and sid in assigned_by_shot:
+                clip_gcs_path = assigned_by_shot[sid]
+                break
+        if clip_gcs_path is None:
+            clip_gcs_path = clip_paths[0]
         theme = str(item.theme or "")
         idea = str(item.idea or "")
 
