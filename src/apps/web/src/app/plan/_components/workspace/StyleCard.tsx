@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LightCard } from "@/components/ui/LightCard";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import type { UserStyle, StyleResponse, StyleSetPreview, FontPreview } from "@/lib/plan-api";
@@ -119,6 +120,13 @@ export function StyleCard({ style, status, styleSetPreview, fontPreview }: Style
           ))}
         </div>
       )}
+
+      <Link
+        href="/plan/style"
+        className="mt-4 inline-block text-[11px] text-[#a1a1aa] hover:text-[#3f3f46] transition-colors"
+      >
+        Tweak your style →
+      </Link>
     </LightCard>
   );
 }
