@@ -244,6 +244,17 @@ class Settings(BaseSettings):
     #   + fly machine restart <id>
     tiktok_deep_analysis_enabled: bool = True
 
+    # Per-user style entity (Creator Agent M1). When True, a UserStyle is derived
+    # from the persona after generation and applied to every generative render:
+    # style-set pin bypasses the per-render AgenticStyleSelectorAgent; knob overrides
+    # win over the curated set's values inside _resolve_intro_overlay_params.
+    # Ships OFF (False) so zero renders are affected on deploy; enable after live-eval
+    # validation of the style_derivation agent:
+    #   fly secrets set USER_STYLE_ENABLED=true --app nova-video + restart workers.
+    # When False OR when personas.style is NULL: all_candidates carries no
+    # "user_style" key → renders are byte-identical to pre-M1 output.
+    user_style_enabled: bool = False
+
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65
     engagement_weight: float = 0.35

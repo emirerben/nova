@@ -461,3 +461,85 @@ export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobSt
   const res = await request<PlanItemJobStatus>(`/generative-jobs/${jobId}/status`);
   return res;
 }
+
+// ── Creator Agent M1: Per-user style ─────────────────────────────────────────
+// Gated behind USER_STYLE_ENABLED on the backend (returns 404 when disabled).
+// Frontend: render StyleCard only when the style API returns non-404.
+
+export interface StyleKnobs {
+  font_family?: string | null;
+  text_size_px?: number | null;
+  position?: string | null;
+  position_x_frac?: number | null;
+  position_y_frac?: number | null;
+  text_anchor?: string | null;
+  text_color?: string | null;
+  highlight_color?: string | null;
+  stroke_width?: number | null;
+  cycle_fonts?: boolean | null;
+}
+
+export interface UserStyle {
+  style_set_id?: string;
+  knobs?: StyleKnobs;
+  footage_type_bias?: string[];
+  preferred_edit_format_mix?: Record<string, number>;
+  instruction_level?: "full" | "light" | "none";
+  status?: "deriving" | "ready" | "edited" | "failed";
+  derived_from?: Record<string, unknown>;
+  style_version?: string;
+  rationale?: string;
+}
+
+export interface StyleSetPreview {
+  id?: string;
+  font_family?: string | null;
+  css_family?: string | null;
+  font_file?: string | null;
+  font_weight?: string | null;
+  text_color?: string | null;
+  highlight_color?: string | null;
+  effect?: string | null;
+}
+
+export interface FontPreview {
+  font_family: string;
+  display_name: string;
+  css_family: string;
+}
+
+export interface StyleResponse {
+  style: UserStyle | null;
+  status: "deriving" | "ready" | "edited" | "failed" | "absent";
+  style_set_preview?: StyleSetPreview | null;
+  font_preview?: FontPreview | null;
+}
+
+export interface StyleEdit {
+  style_set_id?: string;
+  knobs?: Partial<StyleKnobs>;
+  footage_type_bias?: string[];
+  preferred_edit_format_mix?: Record<string, number>;
+  instruction_level?: "full" | "light" | "none";
+}
+
+/** GET /personas/style — returns 404 when USER_STYLE_ENABLED=false. */
+export function getStyle(): Promise<StyleResponse> {
+  return request<StyleResponse>("/personas/style");
+}
+
+/** PATCH /personas/style — partial edit; sets status="edited". */
+export function patchStyle(edit: StyleEdit): Promise<StyleResponse> {
+  return request<StyleResponse>("/personas/style", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(edit),
+  });
+}
+
+/** POST /personas/style/rederive — re-derives from current persona (overwrites even edited). */
+export function rederiveStyle(): Promise<{ queued: boolean; persona_id: string }> {
+  return request<{ queued: boolean; persona_id: string }>("/personas/style/rederive", {
+    method: "POST",
+  });
+}

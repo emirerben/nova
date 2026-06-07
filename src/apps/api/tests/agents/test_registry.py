@@ -34,6 +34,8 @@ _EXPECTED = {
     "nova.plan.persona_generator",
     "nova.plan.content_plan_generator",
     "nova.plan.clip_plan_matcher",
+    # Creator Agent M1 — style derivation
+    "nova.plan.style_derivation",
 }
 
 

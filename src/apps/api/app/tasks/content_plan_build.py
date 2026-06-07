@@ -317,6 +317,9 @@ def _dispatch_item_render(
             # Deep TikTok analysis — the creator's proven style, threaded down to
             # intro_writer so the hook voice matches what already works for them.
             tiktok_summary=str(persona_data.get("_tiktok_summary", "") or ""),
+            # Per-user persistent style (Creator Agent M1). Private key from
+            # _load_persona_data — not part of the public persona schema.
+            user_style=persona_data.get("_user_style"),
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
@@ -350,6 +353,10 @@ def _load_persona_data(session, plan: ContentPlan) -> dict:  # noqa: ANN001
     if persona_row is not None and persona_row.persona:
         data = dict(persona_row.persona)
         data["_tiktok_summary"] = _analysis_summary(persona_row.tiktok_profile)
+        # Thread the per-user style (Creator Agent M1) under a private key so
+        # _dispatch_item_render can pass it to build_generative_job without
+        # polluting the public persona schema fields.
+        data["_user_style"] = dict(persona_row.style) if persona_row.style else None
         return data
     return {}
 

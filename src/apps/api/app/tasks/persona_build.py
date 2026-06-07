@@ -188,6 +188,12 @@ def generate_persona(self, persona_id: str) -> None:  # noqa: ANN001
             user.onboarding_status = "persona_ready"
         session.commit()
     log.info("persona_build.ready", persona_id=persona_id)
+    # Chain style derivation best-effort (Creator Agent M1). Fires only when
+    # USER_STYLE_ENABLED is True; task guards against re-deriving edited styles.
+    if settings.user_style_enabled:
+        from app.tasks.style_build import derive_user_style  # noqa: PLC0415
+
+        derive_user_style.delay(str(persona_id))
 
 
 @celery_app.task(
@@ -241,3 +247,9 @@ def retune_persona_from_feedback(self, persona_id: str) -> None:  # noqa: ANN001
         row.prompt_version = PERSONA_PROMPT_VERSION
         session.commit()
     log.info("persona_retune.ready", persona_id=persona_id, has_summary=bool(summary))
+    # Re-derive style when persona updates (M1 propagation). The task's edited
+    # guard protects user overrides — only re-derives non-edited styles.
+    if settings.user_style_enabled:
+        from app.tasks.style_build import derive_user_style  # noqa: PLC0415
+
+        derive_user_style.delay(str(persona_id))

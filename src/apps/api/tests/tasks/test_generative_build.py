@@ -1211,3 +1211,174 @@ def test_classify_error_unknown():
 
 def test_classify_error_encoder():
     assert gb._classify_error(RuntimeError("ffmpeg returned non-zero")) == "encoder_error"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_intro_overlay_params — Creator Agent M1 knob precedence
+# ---------------------------------------------------------------------------
+
+
+def _agent_text(text: str = "Hello world", highlight_word: str | None = None):
+    return types.SimpleNamespace(text=text, highlight_word=highlight_word)
+
+
+class TestResolveIntroOverlayParamsKnobPrecedence:
+    """Covers the user-style knob precedence chain added in Creator Agent M1.
+
+    No DB, no GPU — pure Python unit tests.  The only import that could fail is
+    resolve_overlay_style (style_sets module) which is guarded by monkeypatching.
+    """
+
+    def _call(self, monkeypatch, knobs=None, style_set_id=None, size_override_px=None):
+        """Helper: resolve params with a minimal set stub."""
+        def _fake_resolve(set_id, overlay_type, *, advisory=None):
+            # Return a recognisable but minimal set dict.
+            return {
+                "font_family": "Bodoni Moda",
+                "text_size_px": 52,
+                "effect": "fade-in",
+                "position": "top",
+                "text_color": "#EEEEEE",
+                "highlight_color": "#FF0000",
+                "text_anchor": "right",
+                "stroke_width": 2,
+            }
+
+        # resolve_overlay_style is lazily imported inside the function (PLC0415),
+        # so patch it at the source module, not on generative_build.
+        monkeypatch.setattr(
+            "app.pipeline.style_sets.resolve_overlay_style",
+            _fake_resolve,
+            raising=True,
+        )
+
+        return gb._resolve_intro_overlay_params(
+            _agent_text(),
+            {},
+            style_set_id,
+            user_style_knobs=knobs,
+            size_override_px=size_override_px,
+        )
+
+    def test_size_override_wins_over_user_style_knob(self, monkeypatch):
+        """per-variant size_override_px (source='user') > user-style text_size_px."""
+        params, px, source = self._call(
+            monkeypatch,
+            knobs={"text_size_px": 70},
+            style_set_id=None,
+            size_override_px=140,
+        )
+        assert px == 140
+        assert source == "user"
+        assert params["text_size_px"] == 140
+
+    def test_user_style_px_wins_over_set_px(self, monkeypatch):
+        """user_style_knobs.text_size_px (source='user_style') > curated set px."""
+        params, px, source = self._call(
+            monkeypatch,
+            knobs={"text_size_px": 65},
+            style_set_id="any_set",
+        )
+        # The fake set returns text_size_px=52; user-style 65 must win.
+        assert px == 65
+        assert source == "user_style"
+
+    def test_set_px_wins_when_no_user_style_knob(self, monkeypatch):
+        """curated set px (source='computed') wins when no user_style knob."""
+        params, px, source = self._call(
+            monkeypatch,
+            knobs=None,
+            style_set_id="any_set",
+        )
+        # Fake set returns 52.
+        assert px == 52
+        assert source == "computed"
+
+    def test_user_style_font_wins_over_set_font(self, monkeypatch):
+        """user_style_knobs.font_family wins over the curated set's font."""
+        params, px, source = self._call(
+            monkeypatch,
+            knobs={"font_family": "Playfair Display"},
+            style_set_id="any_set",
+        )
+        assert params["font_family"] == "Playfair Display"
+
+    def test_set_font_used_when_no_user_style_font(self, monkeypatch):
+        """Curated set's font_family is used when user-style knob is absent."""
+        params, px, source = self._call(
+            monkeypatch,
+            knobs=None,
+            style_set_id="any_set",
+        )
+        assert params["font_family"] == "Bodoni Moda"
+
+    def test_stroke_width_zero_is_honored(self, monkeypatch):
+        """stroke_width=0 (valid falsy value) is passed through — not dropped."""
+        params, _px, _src = self._call(
+            monkeypatch,
+            knobs={"stroke_width": 0},
+            style_set_id="any_set",
+        )
+        assert params["stroke_width"] == 0
+
+    def test_stroke_width_none_knob_falls_back_to_set(self, monkeypatch):
+        """No stroke_width knob → curated set value is used."""
+        params, _px, _src = self._call(
+            monkeypatch,
+            knobs=None,
+            style_set_id="any_set",
+        )
+        assert params["stroke_width"] == 2  # from fake set
+
+    def test_position_x_frac_zero_is_honored(self, monkeypatch):
+        """position_x_frac=0.0 is a valid value and must NOT be dropped."""
+        params, _px, _src = self._call(
+            monkeypatch,
+            knobs={"position_x_frac": 0.0},
+            style_set_id=None,
+        )
+        assert params["position_x_frac"] == 0.0
+
+    def test_user_style_position_wins_over_set_position(self, monkeypatch):
+        """user_style_knobs.position wins over curated-set position."""
+        params, _px, _src = self._call(
+            monkeypatch,
+            knobs={"position": "bottom"},
+            style_set_id="any_set",
+        )
+        assert params["position"] == "bottom"
+
+    def test_no_knobs_no_set_size_is_computed(self, monkeypatch):
+        """When there's no knob, no set, and no override, size is computed (source='computed')."""
+        # No style_set_id → no curated set → compute_overlay_size is called.
+        # We stub compute_overlay_size to avoid Skia/PIL imports.
+        monkeypatch.setattr(
+            "app.pipeline.overlay_sizing.compute_overlay_size",
+            lambda text, **kw: 58,
+            raising=True,
+        )
+        params, px, source = gb._resolve_intro_overlay_params(
+            _agent_text(),
+            {},
+            None,
+            user_style_knobs=None,
+            size_override_px=None,
+        )
+        assert source == "computed"
+        assert px == 58
+
+    def test_effect_not_in_style_knobs_path(self, monkeypatch):
+        """effect must NOT be settable via user_style_knobs (parity-unsafe #296).
+
+        The effect in the output params comes from the set or agent_form only.
+        """
+        # Pass an effect in knobs dict (bypassing StyleKnobs validation so we
+        # test the resolver itself, not the schema guard).
+        params, _px, _src = self._call(
+            monkeypatch,
+            knobs={"effect": "glow"},  # should be ignored
+            style_set_id="any_set",
+        )
+        # The fake set returns effect=fade-in; the knob effect must NOT override it.
+        # The params["effect"] should come from set/agent_form, never from knobs.
+        assert params["effect"] == "fade-in"  # set value wins, knob is ignored
