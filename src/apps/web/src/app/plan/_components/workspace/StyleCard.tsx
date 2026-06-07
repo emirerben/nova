@@ -11,7 +11,22 @@ interface StyleCardProps {
 }
 
 export function StyleCard({ style, status, styleSetPreview, fontPreview }: StyleCardProps) {
-  if (status === "absent") return null;
+  if (status === "absent") {
+    return (
+      <LightCard className="px-6 py-5">
+        <Eyebrow tone="muted">Your style</Eyebrow>
+        <p className="mt-3 text-[13px] text-[#a1a1aa]">
+          Tell us your style — we'll apply it to every edit.
+        </p>
+        <Link
+          href="/plan/style"
+          className="mt-4 inline-block text-[11px] text-[#3f3f46] underline underline-offset-2 hover:text-[#0c0c0e] transition-colors"
+        >
+          Set up your style →
+        </Link>
+      </LightCard>
+    );
+  }
 
   if (status === "deriving") {
     return (
