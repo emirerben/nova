@@ -161,8 +161,9 @@ def test_get_plan_item_returns_filming_guide(client: TestClient) -> None:
     resp = client.get(f"/plan-items/{item.id}")
     assert resp.status_code == 200
     body = resp.json()
+    # filming_guide now includes shot_id (null for pre-0052 rows without a stamped id).
     assert body["filming_guide"] == [
-        {"what": "creator to camera", "how": "eye level", "duration_s": 8}
+        {"shot_id": None, "what": "creator to camera", "how": "eye level", "duration_s": 8}
     ]
 
 

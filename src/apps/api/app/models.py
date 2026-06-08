@@ -652,6 +652,11 @@ class PlanItem(Base):
     # Stored as raw JSONB (no separate table) and returned read-only by the API.
     # Legacy rows receive [] via server_default; no backfill needed.
     filming_guide: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    # Per-shot clip assignments: [{"gcs_path": str, "shot_id": str | null}].
+    # shot_id=null means extra-footage pool; shot_id=str links to a filming_guide entry.
+    # clip_gcs_paths is ALWAYS derived from this list (shots-first, pool after) via
+    # set_item_clips in app/services/plan_clips.py — the single writer.
+    clip_assignments: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # ConformanceFeedbackAgent result at clip-attach time (best-effort, display-only).
     # {verdict, confidence, summary, mismatches[], suggestions[]}. NULL until
     # CONFORMANCE_FEEDBACK_ENABLED=True and the agent runs; never blocks Generate.

@@ -708,3 +708,21 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **How:** Grep-and-replace opportunistically during nearby UI work; no isolated PR needed. Pick one drift at a time.
 **Effort:** S (CC: ~10min per drift)
 **Priority:** P3
+
+## Shot-slot uploader — follow-ups (added 2026-06-08, v0.4.93.0)
+
+### Signed-GET clip thumbnails + persisted duration (TODO-1 / D18)
+**What:** Authenticated `GET /plan-items/{id}/clip-thumbnail?gcs_path=…` returning a short-TTL signed URL (or a server-extracted poster frame), so the filled-on-reload state can show a real thumbnail and persisted duration instead of the chip-led row.
+**Why:** D9 ships chip-led reload (no image well) because clip GCS paths are private and the local object URL/duration are gone after reload. A signed-GET endpoint closes that gap and makes reload visually identical to fresh-upload.
+**How:** New authed `GET /plan-items/{id}/clip-thumbnail?gcs_path=…` in `routes/plan_items.py` using `storage.py` signed-URL helper. Persist duration server-side (probe at attach or extract on demand). Reuse `users/{user_id}/plan/{item_id}/` prefix for path validation. Frontend: ShotSlotUploader post-reload state renders thumbnail + duration from API response.
+**Effort:** S (human: ~half day / CC: ~30min)
+**Priority:** P3
+**Depends on:** `clip_assignments` (shipped v0.4.93.0). See plan file `we-recently-changed-the-lively-hollerith.md` TODO-1.
+
+### Per-shot conformance verdicts (TODO-2 / D19)
+**What:** Extend `ConformanceFeedbackAgent` to judge EACH shot-assigned clip against its own shot brief (`what`/`how`), surfacing a per-slot conformance chip rather than one aggregate verdict.
+**Why:** This plan ships conformance as a single aggregate verdict from the first shot-assigned clip. With stable `shot_id` + `clip_assignments` now available, per-shot verdicts become possible and give the user actionable, slot-level feedback.
+**How:** Pass shot-keyed clip list to `ConformanceFeedbackAgent`. Extend `conformance` JSONB schema to `{per_shot: [{shot_id, verdict, summary}], aggregate: ...}`. Add per-slot conformance chips to `ShotSlotUploader`. Feature flag: `conformance_feedback_enabled` already defaults `False` (dark in prod) — safe to extend behind the same flag.
+**Effort:** L (human: ~2 days / CC: ~1h)
+**Priority:** P3
+**Depends on:** `shot_id` + `clip_assignments` (shipped v0.4.93.0). See plan file `we-recently-changed-the-lively-hollerith.md` TODO-2.
