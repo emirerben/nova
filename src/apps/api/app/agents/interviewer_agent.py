@@ -12,6 +12,9 @@ Design:
   "One last thing — " (checked by the route).
 - TikTok-aware: when tiktok_profile is present, the agent skips questions
   that the profile already answers and goes deeper on gaps.
+
+Changelog:
+  2026-06-08 — Turn 3 audience question rewritten to remove 'secretly filming for' framing.
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-06-06.1"
+INTERVIEWER_PROMPT_VERSION = "2026-06-08"
 _HARD_CAP = 8
 
 

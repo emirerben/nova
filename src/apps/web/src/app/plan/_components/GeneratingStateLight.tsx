@@ -5,15 +5,12 @@ import { formatElapsed } from "@/components/progress/logic";
 interface GeneratingStateLightProps {
   /** "Building your {n} days" eyebrow line — pass the horizon number */
   horizonDays?: number;
-  /** If provided, shows the persona's signature quote in italic Playfair below the eyebrow */
-  accentQuote?: string | null;
   /** Label prefix override (default: "Building your {n} days") */
   label?: string;
 }
 
 export function GeneratingStateLight({
   horizonDays,
-  accentQuote,
   label,
 }: GeneratingStateLightProps) {
   const [elapsed, setElapsed] = useState(0);
@@ -40,13 +37,6 @@ export function GeneratingStateLight({
       <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700">
         {eyebrow}
       </p>
-
-      {/* Persona quote — the peak-anticipation beat */}
-      {accentQuote && (
-        <blockquote className="max-w-[420px] font-display text-[22px] italic leading-snug text-[#3f3f46]">
-          &ldquo;{accentQuote}&rdquo;
-        </blockquote>
-      )}
 
       {/* Shimmer placeholder */}
       <div className="mt-4 w-full max-w-[320px] space-y-3">

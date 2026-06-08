@@ -303,7 +303,7 @@ export default function PlanItemPage() {
             <>
               {/* Uninstructed: legacy pool upload section (unchanged) */}
               {item.filming_suggestion ? (
-                <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
+                <p className="mb-4 text-sm text-[#71717a]">📋 {item.filming_suggestion}</p>
               ) : null}
               {error && (
                 <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">

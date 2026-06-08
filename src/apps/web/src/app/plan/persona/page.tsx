@@ -49,7 +49,6 @@ export default function PersonaPage() {
         onContinue={() => router.push("/plan")}
         continueLabel="Back to plan →"
         tiktokProfile={persona.tiktok_profile}
-        signatureQuote={persona.persona.signature_quote}
       />
     </LightShell>
   );

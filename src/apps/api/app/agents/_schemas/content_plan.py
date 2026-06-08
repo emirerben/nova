@@ -51,7 +51,9 @@ from app.agents._schemas.persona import Persona
 # 2026-06-07 — Creator Agent M3: added $instruction_level and $edit_format_mix
 #              placeholders (gated on user_style_enabled; empty string when style
 #              absent → byte-identical to pre-M3 baseline).
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-07"
+# 2026-06-08 — retrospective-footage rule: past-event ideas emit empty filming_guide
+#              + footage-selection filming_suggestion instead of a shot list.
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-08"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

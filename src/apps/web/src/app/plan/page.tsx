@@ -300,7 +300,6 @@ function PlanPageInner() {
       {mode === "setup:plan-generating" && (
         <GeneratingStateLight
           horizonDays={plan?.horizon_days}
-          accentQuote={persona?.persona?.signature_quote}
           label={`Building your ${plan?.horizon_days ?? 30} days`}
         />
       )}
@@ -418,7 +417,6 @@ function PersonaReadyView({
       continuing={busy}
       onRetuneFromFeedback={onRetune}
       tiktokProfile={persona.tiktok_profile}
-      signatureQuote={personaData.signature_quote}
       onUpdateAnswers={onUpdateAnswers}
     />
   );

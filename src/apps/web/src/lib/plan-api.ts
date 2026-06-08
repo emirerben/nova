@@ -559,6 +559,8 @@ export interface UserStyle {
 
 export interface StyleSetPreview {
   id?: string;
+  label?: string | null;
+  tags?: string[] | null;
   font_family?: string | null;
   css_family?: string | null;
   font_file?: string | null;

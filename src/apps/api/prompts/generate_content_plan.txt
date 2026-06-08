@@ -110,4 +110,5 @@ Rules:
     - talking_head: 1–2 shots — the to-camera take is always first; add B-roll only if it clearly helps
     - single_hero: 1–2 shots of the hero subject from the best angle
   filming_guide must agree with filming_suggestion (the one-liner summary). Same real-life moment, same place.
+  - Retrospective footage: if the idea is built around a specific past event the creator has almost certainly already filmed (a completed trip, a one-time past event), set filming_guide to [] (empty array) — there is nothing left to shoot. Write filming_suggestion as footage-selection guidance instead (e.g. "Pick your 3 strongest clips from the trip — prioritise wide establishing shots and one close-up reaction"). Do NOT emit a shot list for past footage.
 - Output valid JSON and nothing else. No markdown.
