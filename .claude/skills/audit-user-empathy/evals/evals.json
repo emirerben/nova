@@ -1,0 +1,69 @@
+{
+  "skill_name": "audit-user-empathy",
+  "evals": [
+    {
+      "id": "trigger-onboarding-audit",
+      "name": "Triggers on onboarding question complaints",
+      "prompt": "I tested our onboarding and a user said 'I have no idea who my audience is, why is the app asking me this?' Can you audit the questions we're asking?",
+      "expected_output": "Should trigger audit-user-empathy skill and produce a report grading the interview questions",
+      "assertions": [
+        "Runs simulate_conversations.py or extract_surfaces.py (or both)",
+        "Runs grade_surfaces.py to produce graded.json and report.md",
+        "Report contains all four required sections: Summary, Failure modes, Root cause, Proposed edits",
+        "Report identifies assumes_targeting_knowledge or a closely related flag",
+        "Does not edit any prompt file (prompts/interviewer.txt, prompts/style_intent.txt)",
+        "Does not open a PR"
+      ]
+    },
+    {
+      "id": "trigger-user-burden-check",
+      "name": "Triggers on 'are we asking things users shouldn't have to know'",
+      "prompt": "Are we asking users things they shouldn't have to know? Like audience targeting or content strategy?",
+      "expected_output": "Should trigger audit-user-empathy skill and run at minimum the static catalog (Mode A)",
+      "assertions": [
+        "Runs at least extract_surfaces.py and grade_surfaces.py",
+        "Report flags at least one question as assumes_targeting_knowledge or assumes_marketer_knowledge",
+        "Does not edit any prompt file",
+        "Does not open a PR"
+      ]
+    },
+    {
+      "id": "trigger-interview-audit",
+      "name": "Triggers on 'audit the interview questions'",
+      "prompt": "Audit the interview questions our AI asks during onboarding.",
+      "expected_output": "Should trigger audit-user-empathy skill and cover InterviewerAgent surfaces",
+      "assertions": [
+        "Runs the skill (not just answers from memory)",
+        "Report covers interviewer.txt surfaces specifically",
+        "Report has a Failure modes section",
+        "Does not edit prompts/interviewer.txt"
+      ]
+    },
+    {
+      "id": "no-auto-edit",
+      "name": "Never auto-edits a prompt file",
+      "prompt": "Test our onboarding questions and fix any problems you find.",
+      "expected_output": "Should produce a report and propose edits but NOT apply them",
+      "assertions": [
+        "Produces report.md with proposed edits",
+        "Does NOT modify src/apps/api/prompts/interviewer.txt",
+        "Does NOT modify src/apps/api/prompts/style_intent.txt",
+        "Does NOT create a git commit",
+        "Does NOT open a PR",
+        "Ends with a clear statement that edits are proposed, not applied"
+      ]
+    },
+    {
+      "id": "proactive-trigger-style-agent",
+      "name": "Triggers proactively when style_intent prompt is on the table",
+      "prompt": "I'm thinking about changing the style_intent prompt to ask users what font they prefer. Does this seem like a good idea?",
+      "expected_output": "Should proactively trigger audit-user-empathy to check if the proposed change would burden users",
+      "assertions": [
+        "Recognises the style_intent prompt as in scope",
+        "Evaluates the proposed change against the empathy rubric (either by grading or reasoning from rubric)",
+        "Considers whether asking about font preference burdens the user or is natural",
+        "Does not edit any file"
+      ]
+    }
+  ]
+}
