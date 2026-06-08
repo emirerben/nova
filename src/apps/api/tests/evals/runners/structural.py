@@ -1450,7 +1450,9 @@ def check_style_intent(output: Any) -> list[str]:
             "cycle_fonts",
         }
     )
-    _VALID_INTENTS = {"style_edit", "persona_preference", "scope_reduction", "clarify", "describe", "unknown"}
+    _VALID_INTENTS = {
+        "style_edit", "persona_preference", "scope_reduction", "clarify", "describe", "unknown"
+    }
 
     failures: list[str] = []
 
