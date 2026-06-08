@@ -34,6 +34,38 @@ interface OverlayPreviewProps {
   previewSubject: string;
 }
 
+/**
+ * Convert a `text_gradient` overlay field to CSS properties for browser
+ * preview.  The CSS `background-clip: text` technique paints the gradient
+ * through the glyph shapes, matching the renderer's "ice cover" visual.
+ * Returns `{}` when no gradient is set so solid `color` is used as-is.
+ */
+function gradientTextStyle(
+  overlay: RecipeTextOverlay
+): React.CSSProperties {
+  const g = overlay.text_gradient;
+  if (!g || !g.colors || g.colors.length < 2) return {};
+
+  const angleDeg = g.angle_deg ?? 90;
+  const stops = g.colors
+    .map((c, i) => {
+      const pct =
+        g.stops && g.stops[i] != null
+          ? `${Math.round(g.stops[i] * 100)}%`
+          : "";
+      return `${c}${pct ? " " + pct : ""}`;
+    })
+    .join(", ");
+
+  return {
+    backgroundImage: `linear-gradient(${angleDeg}deg, ${stops})`,
+    WebkitBackgroundClip: "text",
+    backgroundClip: "text",
+    color: "transparent",
+    WebkitTextFillColor: "transparent",
+  };
+}
+
 export function OverlayPreview({
   slot,
   slotIndex,
@@ -289,6 +321,7 @@ export function OverlayPreview({
                   textShadow: "0 2px 4px rgba(0,0,0,0.6)",
                   caretColor: "white",
                   width: "90%",
+                  ...gradientTextStyle(overlay),
                 }}
               />
             ) : overlay.spans && overlay.spans.length > 0 ? (
@@ -335,6 +368,7 @@ export function OverlayPreview({
                   color: overlay.text_color || "#FFFFFF",
                   textShadow: "0 2px 4px rgba(0,0,0,0.6)",
                   visibility: hideDomText ? "hidden" : "visible",
+                  ...gradientTextStyle(overlay),
                 }}
               >
                 {displayText}

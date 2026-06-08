@@ -93,6 +93,11 @@ export interface RecipeTextOverlay {
   font_cycle_accel_at_s: number | null;
   spans?: TextSpan[];     // When set, overrides flat text for rendering
   outline_px?: number | null;  // When set, draws black outline of N pixels around text for legibility
+  /** Gradient text fill. When set, glyphs are painted with a smooth multi-color
+   *  gradient instead of the solid `text_color`. Shape: { colors: string[];
+   *  angle_deg?: number; stops?: number[] }. Both Skia and Pillow renderers
+   *  honor this field. Null/absent → solid fill (backward compatible). */
+  text_gradient?: { colors: string[]; angle_deg?: number; stops?: number[] } | null;
   // Subject substitution opt-in. The renderer slices the user's `inputs.location`
   // value into this overlay's text: "first_half"/"second_half" split at midpoint (ceil),
   // "full" replaces entirely. Casing matches sample_text. Currently invisible in the

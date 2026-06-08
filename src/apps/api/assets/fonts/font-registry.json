@@ -344,6 +344,66 @@
       "category": "sans",
       "css_family": "'Unbounded', sans-serif",
       "vibe": "viral_headlines"
+    },
+    "Great Vibes": {
+      "file": "GreatVibes-Regular.ttf",
+      "ass_name": "Great Vibes",
+      "weight": 400,
+      "category": "script",
+      "css_family": "'Great Vibes', cursive",
+      "cycle_role": "settle",
+      "vibe": "script",
+      "_substitutes": "Big Curls (Dafont, personal use only — OFL replacement)"
+    },
+    "Satisfy": {
+      "file": "Satisfy-Regular.ttf",
+      "ass_name": "Satisfy",
+      "weight": 400,
+      "category": "script",
+      "css_family": "'Satisfy', cursive",
+      "cycle_role": "settle",
+      "vibe": "script",
+      "_substitutes": "Swirls and Curls (Dafont, personal use only — Apache 2.0 replacement)"
+    },
+    "Patrick Hand": {
+      "file": "PatrickHand-Regular.ttf",
+      "ass_name": "Patrick Hand",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Patrick Hand', cursive",
+      "cycle_role": "settle",
+      "vibe": "handwritten",
+      "_substitutes": "Rascal (Dafont, personal use only — OFL replacement)"
+    },
+    "EB Garamond": {
+      "file": "EBGaramond-VF.ttf",
+      "ass_name": "EB Garamond",
+      "weight": 700,
+      "category": "serif",
+      "css_family": "'EB Garamond', serif",
+      "cycle_role": "settle",
+      "vibe": "editorial",
+      "_substitutes": "Apple Garamond (Apple-proprietary — OFL replacement)"
+    },
+    "Outfit": {
+      "file": "Outfit-VF.ttf",
+      "ass_name": "Outfit",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Outfit', sans-serif",
+      "cycle_role": "contrast",
+      "vibe": "viral_headlines",
+      "_substitutes": "ZT Bros Oskon 90s (paid Zetafonts — OFL replacement)"
+    },
+    "Plus Jakarta Sans": {
+      "file": "PlusJakartaSans-VF.ttf",
+      "ass_name": "Plus Jakarta Sans",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Plus Jakarta Sans', sans-serif",
+      "cycle_role": "contrast",
+      "vibe": "viral_headlines",
+      "_substitutes": "Alter Haas Grotesk (Dafont, personal use only — OFL replacement)"
     }
   },
   "style_defaults": {

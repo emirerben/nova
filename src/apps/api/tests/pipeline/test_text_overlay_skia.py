@@ -139,6 +139,10 @@ _TR_UNSAFE_FONTS: set[str] = {
     # the form matcher's TR hint biases toward simpler effects which sharply
     # narrows this exposure.
     "PermanentMarker-Regular.ttf",
+    # Satisfy added in v0.4.94.0 — script font lacks Turkish diacritics (İ ı Ş ş Ğ ğ).
+    # Great Vibes and Patrick Hand DO cover the TR diacritic set and are NOT listed here.
+    # Same TODO(tr-cycle-filter) applies.
+    "Satisfy-Regular.ttf",
 }
 
 
@@ -1201,6 +1205,133 @@ def test_both_renderers_honor_text_anchor(renderer):
         f"edge by only {right_delta}px (line {line_w}px wide, expected ~-half). "
         f"This is the #296 class — a field honored by one renderer, dropped by the other."
     )
+
+
+# ── Renderer parity: text_gradient honored by both Skia and Pillow ───────────
+# Lock the CLAUDE.md renderer-parity invariant for the new `text_gradient`
+# field.  When a gradient is set (red→blue, top→bottom), the top of the text
+# block should have substantially more RED than BLUE, and the bottom
+# substantially more BLUE than RED.  A renderer that ignores text_gradient
+# falls back to solid white fill — then both halves are nearly white
+# (R ≈ B ≈ 255) and the directional assertion fails, exposing the regression.
+#
+# Two-line text is intentional: it forces a taller block, making the gradient
+# sweep more visible and making top/bottom sampling more reliable.
+
+
+@pytest.mark.parametrize("renderer", ["skia", "pillow"])
+def test_both_renderers_honor_text_gradient(renderer):
+    """Both renderers must paint glyph fills with the requested gradient.
+
+    The parity contract (CLAUDE.md "renderer-parity invariant", #296 class):
+    every field carried in the burn dict MUST be honored by BOTH the Pillow
+    and Skia renderers.  `text_gradient` was introduced in PR #487 together
+    with renderer support on both sides; this test is the sentinel.
+    """
+    import numpy as np
+
+    overlay = {
+        "text": "NOVA\nGRADIENT",
+        "effect": "none",
+        "text_size_px": 72,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",  # solid fallback (should NOT appear when gradient is set)
+        "start_s": 0.0,
+        "end_s": 2.0,
+        # Red at LEFT → blue at RIGHT, left-to-right (angle 0°).
+        # We use a HORIZONTAL gradient rather than vertical (90°) because the
+        # two renderers produce different line structures from "NOVA\nGRADIENT":
+        # Skia respects the explicit '\n' and renders 2 lines, while Pillow's
+        # word-wrap joins them into 1 line "NOVA GRADIENT". A horizontal
+        # (left→right) gradient is direction-invariant w.r.t. line count — the
+        # left glyph columns are always red, the right always blue, regardless
+        # of how many lines are rendered.
+        "text_gradient": {
+            "colors": ["#FF0000", "#0000FF"],
+            "angle_deg": 0,
+        },
+    }
+
+    bbox_fn = _frame_bbox if renderer == "skia" else _pillow_bbox
+    bbox, _width = bbox_fn(overlay)
+    assert bbox is not None, f"{renderer}: gradient overlay produced no visible pixels"
+
+    # Re-render to get the full image (bbox_fn discards it)
+    if renderer == "skia":
+        img = _skia_rgba_image(overlay)
+    else:
+        img = _pillow_rgba_image(overlay)
+
+    arr = np.array(img)  # (H, W, 4) uint8 RGBA
+
+    # Restrict to glyph bbox so we don't sample transparent padding.
+    x0, y0, x1, y1 = bbox[0], bbox[1], bbox[2], bbox[3]
+    block_w = x1 - x0
+
+    # Sample inner horizontal bands (12.5%–37.5% and 62.5%–87.5% of bbox
+    # width). Inner bands avoid anti-aliased / shadow edges that have low alpha,
+    # and the [10%, 35%] / [65%, 90%] ranges sit well inside the red / blue
+    # halves of the left→right gradient for any plausible text width.
+    left_band = arr[y0:y1, x0 + block_w // 8 : x0 + 3 * block_w // 8]
+    right_band = arr[y0:y1, x0 + 5 * block_w // 8 : x0 + 7 * block_w // 8]
+
+    # Keep only opaque-ish pixels (alpha > 128) so we measure glyph fill only.
+    left_opaque = left_band[left_band[..., 3] > 128]
+    right_opaque = right_band[right_band[..., 3] > 128]
+
+    assert len(left_opaque) > 50, f"{renderer}: left band has too few opaque pixels"
+    assert len(right_opaque) > 50, f"{renderer}: right band has too few opaque pixels"
+
+    left_r = float(left_opaque[:, 0].mean())
+    left_b = float(left_opaque[:, 2].mean())
+    right_r = float(right_opaque[:, 0].mean())
+    right_b = float(right_opaque[:, 2].mean())
+
+    assert left_r > left_b + 30, (
+        f"{renderer}: left of gradient should be red (R={left_r:.0f} B={left_b:.0f}). "
+        "If the renderer ignores text_gradient the fill is solid white and R≈B."
+    )
+    assert right_b > right_r + 30, (
+        f"{renderer}: right of gradient should be blue (R={right_r:.0f} B={right_b:.0f}). "
+        "If the renderer ignores text_gradient the fill is solid white and R≈B."
+    )
+
+
+def _skia_rgba_image(overlay: dict) -> Image.Image:
+    """Render overlay at t=0.5s via the Skia path and return the RGBA PIL image.
+
+    Must use readPixels(kRGBA_8888, kUnpremul) rather than tobytes() — the
+    surface is N32Premul whose byte layout is BGRA on little-endian hosts, so
+    tobytes() + frombytes("RGBA") silently swaps R and B channels.
+    """
+    import skia as _skia
+
+    from app.pipeline.text_overlay_skia import _draw_frame
+
+    skia_img = _draw_frame(overlay, 0.5, 2.0)
+    info = _skia.ImageInfo.Make(
+        skia_img.width(),
+        skia_img.height(),
+        _skia.ColorType.kRGBA_8888_ColorType,
+        _skia.AlphaType.kUnpremul_AlphaType,
+    )
+    row_bytes = skia_img.width() * 4
+    buf = bytearray(row_bytes * skia_img.height())
+    skia_img.readPixels(info, buf, row_bytes, 0, 0)
+    return Image.frombytes("RGBA", (skia_img.width(), skia_img.height()), bytes(buf))
+
+
+def _pillow_rgba_image(overlay: dict) -> Image.Image:
+    """Render overlay at t=2.0s via the Pillow path and return the RGBA PIL image."""
+    import tempfile as _tf
+
+    from app.pipeline.text_overlay import render_overlays_at_time
+
+    with _tf.TemporaryDirectory(prefix="pillow_grad_") as d:
+        out = os.path.join(d, "p.png")
+        render_overlays_at_time([overlay], 2.0, 1.0, out)
+        return Image.open(out).convert("RGBA").copy()
 
 
 # ── Renderer parity: display_text honored by both Skia and Pillow ────────────

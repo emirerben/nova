@@ -72,11 +72,17 @@ class TestFontRegistryFile:
             )
 
     def test_expected_font_count(self):
-        """Registry has 33 active + 9 soft-deprecated fonts."""
+        """Registry has 39 active + 8 soft-deprecated fonts.
+
+        Note: Outfit was previously deprecated (PR pre-gradient); PR #487 activated
+        it as the OFL substitute for ZT Bros Oskon 90s, so the deprecated count is
+        now 8 (not 9). Active count grew by 6 (Great Vibes, Satisfy, Patrick Hand,
+        EB Garamond, Outfit, Plus Jakarta Sans).
+        """
         fonts = _FONT_REGISTRY.get("fonts", {})
-        assert len(fonts) == 42
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 9
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 33
+        assert len(fonts) == 47
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 8
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 39
 
     def test_expected_styles(self):
         """All 5 font styles should have defaults."""

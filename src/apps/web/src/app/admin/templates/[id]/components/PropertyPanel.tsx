@@ -467,6 +467,92 @@ function OverlayListItem({
           value={overlay.text_color}
           onChange={(v) => set("text_color", v)}
         />
+        {/* Gradient text fill — writes text_gradient onto the overlay.
+            Solid fill remains when all gradient colors are cleared. */}
+        <div className="col-span-4">
+          <p className="text-xs text-zinc-400 mb-1 font-medium">
+            Gradient Fill
+            <span className="text-zinc-600 font-normal ml-1">
+              (overrides Text Color when set)
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-2 items-center">
+            {(overlay.text_gradient?.colors ?? []).map((c, ci) => (
+              <div key={ci} className="flex items-center gap-1">
+                <input
+                  type="color"
+                  value={c}
+                  title={`Stop ${ci + 1}`}
+                  className="w-7 h-7 rounded cursor-pointer border border-zinc-600"
+                  onChange={(e) => {
+                    const newColors = [...(overlay.text_gradient?.colors ?? [])];
+                    newColors[ci] = e.target.value;
+                    set("text_gradient", { ...overlay.text_gradient, colors: newColors });
+                  }}
+                />
+                <button
+                  className="text-zinc-500 hover:text-red-400 text-xs"
+                  title="Remove stop"
+                  onClick={() => {
+                    const newColors = (overlay.text_gradient?.colors ?? []).filter(
+                      (_, i) => i !== ci
+                    );
+                    if (newColors.length < 2) {
+                      set("text_gradient", null);
+                    } else {
+                      set("text_gradient", { ...overlay.text_gradient, colors: newColors });
+                    }
+                  }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            <button
+              className="text-xs px-2 py-1 rounded bg-zinc-700 hover:bg-zinc-600 text-zinc-200"
+              onClick={() => {
+                const existing = overlay.text_gradient?.colors ?? [];
+                const newColors = existing.length === 0
+                  ? ["#B06EFF", "#4ADEDE"]
+                  : [...existing, "#FFFFFF"];
+                set("text_gradient", {
+                  colors: newColors,
+                  angle_deg: overlay.text_gradient?.angle_deg ?? 90,
+                });
+              }}
+            >
+              + Add stop
+            </button>
+            {overlay.text_gradient && (
+              <>
+                <div className="flex items-center gap-1 ml-auto">
+                  <span className="text-xs text-zinc-400">Angle</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={360}
+                    step={15}
+                    value={overlay.text_gradient.angle_deg ?? 90}
+                    className="w-14 px-1 py-0.5 text-xs rounded bg-zinc-800 border border-zinc-600 text-zinc-200"
+                    onChange={(e) =>
+                      set("text_gradient", {
+                        ...overlay.text_gradient,
+                        angle_deg: Number(e.target.value),
+                      })
+                    }
+                  />
+                  <span className="text-xs text-zinc-400">°</span>
+                </div>
+                <button
+                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-red-900 text-zinc-400 hover:text-red-300"
+                  onClick={() => set("text_gradient", null)}
+                >
+                  Clear gradient
+                </button>
+              </>
+            )}
+          </div>
+        </div>
         <div>
           <TextInput
             label="Text"

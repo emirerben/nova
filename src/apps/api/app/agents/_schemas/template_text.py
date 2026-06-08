@@ -124,6 +124,12 @@ class TemplateTextOverlay(BaseModel):
     # statically. Without it, every cumulative stage would re-pop the whole
     # line. Ignored when effect != "pop-in". None preserves historical behavior.
     pop_animated_suffix: str | None = Field(default=None)
+    # Optional gradient text fill.  When present the renderers paint the glyph
+    # fill with a smooth multi-colour gradient instead of the solid
+    # `font_color_hex`.  The agent is never required to emit this — it is
+    # populated by style-set resolution at render time.  Defined here so the
+    # schema round-trip keeps the field when an overlay already carries it.
+    text_gradient: dict | None = Field(default=None)
 
     @field_validator("text_anchor")
     @classmethod

@@ -64,6 +64,7 @@ from app.pipeline.text_overlay import (
     _emoji_png_path,
     _finite_float,
     _hex_to_rgba,
+    _parse_gradient_spec,
     _validate_overlay,
 )
 from app.pipeline.text_wrap import balanced_word_wrap_indices
@@ -263,6 +264,50 @@ def _skia_color_from_rgba(rgba: tuple[int, int, int, int]) -> int:
 def _skia_color_from_hex(hex_color: str, alpha: int = 255) -> int:
     r, g, b, _ = _hex_to_rgba(hex_color)
     return skia.ColorSetARGB(alpha, r, g, b)
+
+
+def _skia_gradient_shader(
+    spec: dict,
+    block_x: float,
+    block_top: float,
+    block_w: float,
+    block_h: float,
+    alpha: float,
+) -> skia.Shader | None:
+    """Build a Skia linear gradient shader from a normalised gradient spec.
+
+    The shader spans the block bounding box along ``spec["angle_deg"]``, so the
+    full colour range is visible across the text regardless of canvas position.
+    Returns ``None`` when the spec is invalid so callers fall back to solid fill.
+    """
+    import math  # noqa: PLC0415 — avoid circular at module level
+
+    parsed = _parse_gradient_spec(spec)
+    if parsed is None:
+        return None
+
+    alpha_int = int(255 * alpha)
+    color_ints = [skia.ColorSetARGB(alpha_int, r, g, b) for r, g, b, _ in parsed["colors"]]
+    stops = [float(s) for s in parsed["stops"]]
+
+    angle_rad = math.radians(parsed["angle_deg"] % 360)
+    cos_a = math.cos(angle_rad)
+    sin_a = math.sin(angle_rad)
+
+    cx = block_x + block_w / 2
+    cy = block_top + block_h / 2
+    # Half-span: project the block rectangle's extent onto the gradient axis so
+    # stop 0 maps to one edge and stop 1 to the opposite edge.
+    half = (abs(block_w * cos_a) + abs(block_h * sin_a)) / 2
+
+    p0 = skia.Point(cx - cos_a * half, cy - sin_a * half)
+    p1 = skia.Point(cx + cos_a * half, cy + sin_a * half)
+
+    return skia.GradientShader.MakeLinear(
+        [p0, p1],
+        color_ints,
+        stops,
+    )
 
 
 # -- Layout helpers -----------------------------------------------------------
@@ -546,6 +591,21 @@ def _draw_centered_text(
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
     shadow_alpha = int(160 * alpha)
 
+    # Build gradient shader when text_gradient is set and no explicit
+    # color_override (karaoke highlight keeps solid colour).
+    gradient_shader: Any = None
+    if overlay.get("text_gradient") and color_override is None:
+        block_w = max(block["widths"]) if block["widths"] else float(CANVAS_W)
+        block_x = _anchored_left_x(anchor, cx, block_w)
+        gradient_shader = _skia_gradient_shader(
+            overlay["text_gradient"],
+            block_x,
+            block_top,
+            block_w,
+            float(block["block_h"]),
+            alpha,
+        )
+
     canvas.save()
     # Center transform on anchor for scale + translate
     canvas.translate(cx, cy + y_translate)
@@ -571,6 +631,7 @@ def _draw_centered_text(
             fill_color,
             stroke_px,
             shadow_alpha,
+            shader=gradient_shader,
         )
 
     # Emoji compositing onto the canvas at the resolved combined-block x
@@ -594,8 +655,16 @@ def _draw_line_with_layers(
     fill_color: int,
     stroke_px: int,
     shadow_alpha: int,
+    *,
+    shader: Any = None,
 ) -> None:
-    """Shadow → stroke → fill, in that order, matching Pillow's compositing."""
+    """Shadow → stroke → fill, in that order, matching Pillow's compositing.
+
+    When ``shader`` is provided (a ``skia.Shader`` from
+    ``_skia_gradient_shader``), the fill paint uses it instead of the solid
+    ``fill_color``.  Shadow and stroke remain solid black so the gradient
+    glyphs keep depth and legibility.
+    """
     # Shadow: soft black blur, offset 6px down (Pillow uses y+6, alpha 160).
     if shadow_alpha > 0:
         shadow_paint = skia.Paint(
@@ -616,8 +685,10 @@ def _draw_line_with_layers(
         )
         canvas.drawString(line, x, baseline_y, font, stroke_paint)
 
-    # Fill
+    # Fill: solid colour OR gradient shader
     fill_paint = skia.Paint(AntiAlias=True, Color=fill_color)
+    if shader is not None:
+        fill_paint.setShader(shader)
     canvas.drawString(line, x, baseline_y, font, fill_paint)
 
 

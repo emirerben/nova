@@ -1,177 +1,1531 @@
 {
-  "version": "style-sets-2026-06-04",
+  "version": "style-sets-2026-06-08-gradient",
   "_doc": "Curated text style sets. Each set defines per-ROLE styling that fully owns the look of an overlay (the LLM/recipe supplies only text + timing + role). Every `font_family` MUST be a key in assets/fonts/font-registry.json; every `effect` must be in VALID_EFFECTS (app/agents/_schemas/template_text.py) plus the renderer-level karaoke-line/lyric-line; every `position` must be a key in _POSITION_Y (app/pipeline/text_overlay.py). Fields left null fall through to the LLM/legacy advisory value, then the renderer default. Design direction: editorial fonts (serif + one mono; no cheap geometric sans), restrained sizes (text_size_px ~38-88, consistent scale across agentic sets), thin strokes (rely on the renderer's gaussian shadow). See app/pipeline/style_sets.py. Editing this file changes STYLE_SETS_VERSION which is folded into the Layer-2 cache key.",
   "sets": [
     {
       "id": "default",
       "label": "Default / Editorial",
-      "tags": ["fallback", "editorial", "neutral"],
-      "applies_to": ["agentic", "music", "generative"],
+      "tags": [
+        "fallback",
+        "editorial",
+        "neutral"
+      ],
+      "applies_to": [
+        "agentic",
+        "music",
+        "generative"
+      ],
       "lyric_style": "line",
       "roles": {
-        "hook": {"font_family": "Playfair Display", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "label": {"font_family": "Playfair Display Regular", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center-label", "text_anchor": "center", "stroke_width": 0},
-        "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
-        "reaction": {"font_family": "Playfair Display", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "body": {"font_family": "Playfair Display Regular", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "lyric_line": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}},
-        "lyric_karaoke": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "highlight_color": "#F4D03F", "effect": "karaoke-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.3, "post_dwell_s": 0.4}},
-        "lyric_word_pop": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"word_reveal_min_gap_s": 0.3}},
-        "intro": {"font_family": "Playfair Display", "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0}
+        "hook": {
+          "font_family": "Playfair Display",
+          "text_size_px": 88,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Playfair Display",
+          "text_size_px": 72,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Playfair Display",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        },
+        "lyric_karaoke": {
+          "font_family": "Playfair Display",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "highlight_color": "#F4D03F",
+          "effect": "karaoke-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "timing": {
+            "pre_roll_s": 0.3,
+            "post_dwell_s": 0.4
+          }
+        },
+        "lyric_word_pop": {
+          "font_family": "Playfair Display",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "timing": {
+            "word_reveal_min_gap_s": 0.3
+          }
+        },
+        "intro": {
+          "font_family": "Playfair Display",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        }
       }
     },
     {
       "id": "lyric_karaoke_bold",
-      "label": "Karaoke — Editorial Sweep",
-      "tags": ["music", "lyrics", "energetic", "pop", "hip-hop"],
-      "applies_to": ["music"],
+      "label": "Karaoke \u2014 Editorial Sweep",
+      "tags": [
+        "music",
+        "lyrics",
+        "energetic",
+        "pop",
+        "hip-hop"
+      ],
+      "applies_to": [
+        "music"
+      ],
       "roles": {
-        "lyric_karaoke": {"font_family": "Fraunces", "text_size_px": 64, "text_color": "#FFFFFF", "highlight_color": "#F4D03F", "effect": "karaoke-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.3, "post_dwell_s": 0.4}}
+        "lyric_karaoke": {
+          "font_family": "Fraunces",
+          "text_size_px": 64,
+          "text_color": "#FFFFFF",
+          "highlight_color": "#F4D03F",
+          "effect": "karaoke-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "timing": {
+            "pre_roll_s": 0.3,
+            "post_dwell_s": 0.4
+          }
+        }
       }
     },
     {
       "id": "lyric_line_calm",
-      "label": "Lyric Lines — Calm Serif",
-      "tags": ["music", "lyrics", "calm", "acoustic", "ballad", "editorial"],
-      "applies_to": ["music"],
+      "label": "Lyric Lines \u2014 Calm Serif",
+      "tags": [
+        "music",
+        "lyrics",
+        "calm",
+        "acoustic",
+        "ballad",
+        "editorial"
+      ],
+      "applies_to": [
+        "music"
+      ],
       "roles": {
-        "lyric_line": {"font_family": "Playfair Display", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "center-below", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.2, "next_line_gap_s": 0.25, "fade_in_ms": 300, "fade_out_ms": 350}}
+        "lyric_line": {
+          "font_family": "Playfair Display",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "center-below",
+          "text_anchor": "center",
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.2,
+            "next_line_gap_s": 0.25,
+            "fade_in_ms": 300,
+            "fade_out_ms": 350
+          }
+        }
       }
     },
     {
       "id": "lyric_word_pop_punchy",
-      "label": "Per-Word Pop — High Contrast",
-      "tags": ["music", "lyrics", "punchy", "rap", "trap", "high-contrast"],
-      "applies_to": ["music"],
+      "label": "Per-Word Pop \u2014 High Contrast",
+      "tags": [
+        "music",
+        "lyrics",
+        "punchy",
+        "rap",
+        "trap",
+        "high-contrast"
+      ],
+      "applies_to": [
+        "music"
+      ],
       "roles": {
-        "lyric_karaoke": {"font_family": "Bodoni Moda", "text_size_px": 64, "text_color": "#FFFFFF", "highlight_color": "#FFFF00", "effect": "karaoke-line", "position": "bottom", "text_anchor": "center", "position_x_frac": 0.5, "stroke_width": 2},
-        "lyric_word_pop": {"font_family": "Bodoni Moda", "text_size_px": 64, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 2, "timing": {"word_reveal_min_gap_s": 0.3}}
+        "lyric_karaoke": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 64,
+          "text_color": "#FFFFFF",
+          "highlight_color": "#FFFF00",
+          "effect": "karaoke-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "position_x_frac": 0.5,
+          "stroke_width": 2
+        },
+        "lyric_word_pop": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 64,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 2,
+          "timing": {
+            "word_reveal_min_gap_s": 0.3
+          }
+        }
       }
     },
     {
       "id": "travel_editorial",
-      "label": "Travel — Editorial Serif",
-      "tags": ["agentic", "generative", "travel", "editorial", "vlog", "cinematic"],
-      "applies_to": ["agentic", "generative"],
+      "label": "Travel \u2014 Editorial Serif",
+      "tags": [
+        "agentic",
+        "generative",
+        "travel",
+        "editorial",
+        "vlog",
+        "cinematic"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Playfair Display", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "label": {"font_family": "Bodoni Moda", "text_size_px": 58, "text_color": "#F4D03F", "effect": "fade-in", "position": "center-label", "text_anchor": "center", "stroke_width": 0},
-        "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
-        "reaction": {"font_family": "Playfair Display", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "body": {"font_family": "Playfair Display Regular", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Playfair Display", "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "lyric_line": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Playfair Display",
+          "text_size_px": 88,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 58,
+          "text_color": "#F4D03F",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Playfair Display",
+          "text_size_px": 72,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Playfair Display",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Playfair Display",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
       }
     },
     {
       "id": "lifestyle_clean",
-      "label": "Lifestyle — Minimal Serif",
-      "tags": ["agentic", "generative", "lifestyle", "clean", "minimal", "modern"],
-      "applies_to": ["agentic", "generative"],
+      "label": "Lifestyle \u2014 Minimal Serif",
+      "tags": [
+        "agentic",
+        "generative",
+        "lifestyle",
+        "clean",
+        "minimal",
+        "modern"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Playfair Display Regular", "text_size_px": 88, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "label": {"font_family": "Playfair Display Regular", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center-label", "text_anchor": "center", "stroke_width": 0},
-        "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
-        "reaction": {"font_family": "Playfair Display Regular", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "body": {"font_family": "Playfair Display Regular", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Playfair Display Regular", "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "lyric_line": {"font_family": "Playfair Display Regular", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "center-below", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.2, "next_line_gap_s": 0.25, "fade_in_ms": 300, "fade_out_ms": 350}}
+        "hook": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 88,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 72,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Playfair Display Regular",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "center-below",
+          "text_anchor": "center",
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.2,
+            "next_line_gap_s": 0.25,
+            "fade_in_ms": 300,
+            "fade_out_ms": 350
+          }
+        }
       }
     },
     {
       "id": "word_reveal",
       "label": "Kinetic Word Reveal",
-      "_doc": "Captures the look of agentic template 89cde014 'not just luck 2' — a left-anchored, pop-in statement that reveals word-by-word and grows rightward/downward. The cumulative per-word staging itself is produced by the pipeline (Layer-2 / per-word injector); this set carries the visual signature (left anchor, pop-in, Playfair serif, white) so it's selectable for kinetic/story templates.",
-      "tags": ["agentic", "generative", "kinetic", "statement", "story", "bold"],
-      "applies_to": ["agentic", "generative"],
+      "_doc": "Captures the look of agentic template 89cde014 'not just luck 2' \u2014 a left-anchored, pop-in statement that reveals word-by-word and grows rightward/downward. The cumulative per-word staging itself is produced by the pipeline (Layer-2 / per-word injector); this set carries the visual signature (left anchor, pop-in, Playfair serif, white) so it's selectable for kinetic/story templates.",
+      "tags": [
+        "agentic",
+        "generative",
+        "kinetic",
+        "statement",
+        "story",
+        "bold"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Playfair Display", "text_size_px": 82, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "reaction": {"font_family": "Playfair Display", "text_size_px": 76, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "body": {"font_family": "Playfair Display", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "label": {"font_family": "Bodoni Moda", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "cta": {"font_family": "Playfair Display Regular", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "intro": {"font_family": "Playfair Display", "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "lyric_line": {"font_family": "Playfair Display", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Playfair Display",
+          "text_size_px": 82,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Playfair Display",
+          "text_size_px": 76,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Playfair Display",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center-label",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Playfair Display Regular",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Playfair Display",
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Playfair Display",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
       }
     },
     {
       "id": "high_fashion",
-      "label": "High Fashion — Bodoni",
+      "label": "High Fashion \u2014 Bodoni",
       "_doc": "Magazine/luxury look: Bodoni Moda's dramatic thick/thin contrast, white headline + gold label. Suits short, capitalized statements.",
-      "tags": ["agentic", "generative", "fashion", "luxury", "editorial", "magazine"],
-      "applies_to": ["agentic", "generative"],
+      "tags": [
+        "agentic",
+        "generative",
+        "fashion",
+        "luxury",
+        "editorial",
+        "magazine"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Bodoni Moda", "text_size_px": 80, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "label": {"font_family": "Bodoni Moda", "text_size_px": 56, "text_color": "#F4D03F", "effect": "fade-in", "position": "center-label", "text_anchor": "center", "stroke_width": 0},
-        "cta": {"font_family": "Bodoni Moda", "text_size_px": 42, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
-        "reaction": {"font_family": "Bodoni Moda", "text_size_px": 68, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "body": {"font_family": "Bodoni Moda", "text_size_px": 46, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Bodoni Moda", "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "lyric_line": {"font_family": "Bodoni Moda", "text_size_px": 58, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 80,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 56,
+          "text_color": "#F4D03F",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 42,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 68,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 46,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Bodoni Moda",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Bodoni Moda",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
       }
     },
     {
       "id": "bold_statement",
-      "label": "Bold Statement — Fraunces",
+      "label": "Bold Statement \u2014 Fraunces",
       "_doc": "Punchy editorial: Fraunces' heavy characterful serif with a pop-in entrance for emphasis.",
-      "tags": ["agentic", "generative", "bold", "punchy", "statement", "editorial"],
-      "applies_to": ["agentic", "generative"],
+      "tags": [
+        "agentic",
+        "generative",
+        "bold",
+        "punchy",
+        "statement",
+        "editorial"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Fraunces", "text_size_px": 84, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "label": {"font_family": "Fraunces", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center-label", "text_anchor": "center", "stroke_width": 0},
-        "cta": {"font_family": "Fraunces", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "pop-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
-        "reaction": {"font_family": "Fraunces", "text_size_px": 72, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "body": {"font_family": "Fraunces", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Fraunces", "text_color": "#FFFFFF", "effect": "pop-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "lyric_line": {"font_family": "Fraunces", "text_size_px": 60, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 2, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Fraunces",
+          "text_size_px": 84,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Fraunces",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Fraunces",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Fraunces",
+          "text_size_px": 72,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Fraunces",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Fraunces",
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Fraunces",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
       }
     },
     {
       "id": "film_mono",
-      "label": "Film / Indie — Mono",
+      "label": "Film / Indie \u2014 Mono",
       "_doc": "Documentary/indie-film feel: Space Mono monospace, smaller (mono reads wide), white, fade-in. Reads like film credits / a-roll captions.",
-      "tags": ["agentic", "generative", "film", "indie", "documentary", "minimal"],
-      "applies_to": ["agentic", "generative"],
+      "tags": [
+        "agentic",
+        "generative",
+        "film",
+        "indie",
+        "documentary",
+        "minimal"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "label": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center-label", "text_anchor": "center", "stroke_width": 0},
-        "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "fade-in", "position": "bottom", "text_anchor": "center", "stroke_width": 0},
-        "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "body": {"font_family": "Space Mono", "text_size_px": 38, "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "intro": {"font_family": "Space Mono", "text_color": "#FFFFFF", "effect": "fade-in", "position": "center", "text_anchor": "center", "stroke_width": 0},
-        "lyric_line": {"font_family": "Space Mono", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "center", "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Space Mono",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Space Mono",
+          "text_size_px": 40,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Space Mono",
+          "text_size_px": 36,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Space Mono",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Space Mono",
+          "text_size_px": 38,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Space Mono",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Space Mono",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
       }
     },
     {
       "id": "typewriter",
-      "label": "Typewriter — Letter by Letter",
+      "label": "Typewriter \u2014 Letter by Letter",
       "_doc": "Classic mechanical typewriter: Space Mono, char-by-char reveal (effect=typewriter, ~12 chars/s), left-anchored so it types rightward from a fixed margin.",
-      "tags": ["agentic", "generative", "typewriter", "retro", "mechanical", "kinetic"],
-      "applies_to": ["agentic", "generative"],
+      "tags": [
+        "agentic",
+        "generative",
+        "typewriter",
+        "retro",
+        "mechanical",
+        "kinetic"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Space Mono", "text_size_px": 56, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "label": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "typewriter", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "body": {"font_family": "Space Mono", "text_size_px": 38, "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "intro": {"font_family": "Space Mono", "text_color": "#FFFFFF", "effect": "typewriter", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "lyric_line": {"font_family": "Space Mono", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Space Mono",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "typewriter",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Space Mono",
+          "text_size_px": 40,
+          "text_color": "#FFFFFF",
+          "effect": "typewriter",
+          "position": "center-label",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Space Mono",
+          "text_size_px": 36,
+          "text_color": "#FFFFFF",
+          "effect": "typewriter",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Space Mono",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "typewriter",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Space Mono",
+          "text_size_px": 38,
+          "text_color": "#FFFFFF",
+          "effect": "typewriter",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Space Mono",
+          "text_color": "#FFFFFF",
+          "effect": "typewriter",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Space Mono",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
       }
     },
     {
       "id": "ai_answer",
-      "label": "AI Answer — Streaming",
+      "label": "AI Answer \u2014 Streaming",
       "_doc": "How an AI returns an answer: Space Mono, word-by-word stream-in with a blinking cursor (effect=stream-in, ~6 words/s), left-anchored so the answer grows rightward like a chat response.",
-      "tags": ["agentic", "generative", "ai", "streaming", "terminal", "tech"],
-      "applies_to": ["agentic", "generative"],
+      "tags": [
+        "agentic",
+        "generative",
+        "ai",
+        "streaming",
+        "terminal",
+        "tech"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
       "roles": {
-        "hook": {"font_family": "Space Mono", "text_size_px": 54, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "label": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center-label", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "cta": {"font_family": "Space Mono", "text_size_px": 36, "text_color": "#FFFFFF", "effect": "stream-in", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "reaction": {"font_family": "Space Mono", "text_size_px": 48, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "body": {"font_family": "Space Mono", "text_size_px": 40, "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "intro": {"font_family": "Space Mono", "text_color": "#FFFFFF", "effect": "stream-in", "position": "center", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0},
-        "lyric_line": {"font_family": "Space Mono", "text_size_px": 44, "text_color": "#FFFFFF", "effect": "lyric-line", "position": "bottom", "text_anchor": "left", "position_x_frac": 0.06, "stroke_width": 0, "timing": {"pre_roll_s": 0.4, "post_dwell_s": 1.0, "fade_in_ms": 200, "fade_out_ms": 250}}
+        "hook": {
+          "font_family": "Space Mono",
+          "text_size_px": 54,
+          "text_color": "#FFFFFF",
+          "effect": "stream-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "label": {
+          "font_family": "Space Mono",
+          "text_size_px": 40,
+          "text_color": "#FFFFFF",
+          "effect": "stream-in",
+          "position": "center-label",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "cta": {
+          "font_family": "Space Mono",
+          "text_size_px": 36,
+          "text_color": "#FFFFFF",
+          "effect": "stream-in",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "reaction": {
+          "font_family": "Space Mono",
+          "text_size_px": 48,
+          "text_color": "#FFFFFF",
+          "effect": "stream-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "body": {
+          "font_family": "Space Mono",
+          "text_size_px": 40,
+          "text_color": "#FFFFFF",
+          "effect": "stream-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "intro": {
+          "font_family": "Space Mono",
+          "text_color": "#FFFFFF",
+          "effect": "stream-in",
+          "position": "center",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0
+        },
+        "lyric_line": {
+          "font_family": "Space Mono",
+          "text_size_px": 44,
+          "text_color": "#FFFFFF",
+          "effect": "lyric-line",
+          "position": "bottom",
+          "text_anchor": "left",
+          "position_x_frac": 0.06,
+          "stroke_width": 0,
+          "timing": {
+            "pre_roll_s": 0.4,
+            "post_dwell_s": 1.0,
+            "fade_in_ms": 200,
+            "fade_out_ms": 250
+          }
+        }
+      }
+    },
+    {
+      "id": "iridescent",
+      "label": "Iridescent \u2014 Holographic Serif",
+      "_doc": "Elegant holographic gradient text: Cormorant Garamond at generous size with a purple\u2192cyan\u2192magenta sweep at 45\u00b0. Looks like light refracting through ice. Editorial and aspirational.",
+      "tags": [
+        "gradient",
+        "holographic",
+        "editorial",
+        "luxury",
+        "stylish"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
+      "roles": {
+        "hook": {
+          "font_family": "Cormorant Garamond",
+          "text_size_px": 88,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#B06EFF",
+              "#4ADEDE",
+              "#FF6EC4"
+            ],
+            "angle_deg": 45
+          }
+        },
+        "label": {
+          "font_family": "Cormorant Garamond",
+          "text_size_px": 62,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#B06EFF",
+              "#4ADEDE",
+              "#FF6EC4"
+            ],
+            "angle_deg": 45
+          }
+        },
+        "reaction": {
+          "font_family": "Cormorant Garamond",
+          "text_size_px": 76,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#B06EFF",
+              "#4ADEDE",
+              "#FF6EC4"
+            ],
+            "angle_deg": 45
+          }
+        },
+        "cta": {
+          "font_family": "Cormorant Garamond",
+          "text_size_px": 52,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#B06EFF",
+              "#4ADEDE",
+              "#FF6EC4"
+            ],
+            "angle_deg": 45
+          }
+        },
+        "body": {
+          "font_family": "Cormorant Garamond",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#B06EFF",
+              "#4ADEDE",
+              "#FF6EC4"
+            ],
+            "angle_deg": 45
+          }
+        },
+        "intro": {
+          "font_family": "Cormorant Garamond",
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#B06EFF",
+              "#4ADEDE",
+              "#FF6EC4"
+            ],
+            "angle_deg": 45
+          }
+        }
+      }
+    },
+    {
+      "id": "sunset_gradient",
+      "label": "Sunset \u2014 Coral to Gold",
+      "_doc": "Warm golden-hour gradient text: Fraunces (editorial serif) with a coral\u2192amber\u2192gold diagonal sweep. Evokes sun flare on warm skin \u2014 lifestyle, travel, food.",
+      "tags": [
+        "gradient",
+        "warm",
+        "sunset",
+        "lifestyle",
+        "editorial"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
+      "roles": {
+        "hook": {
+          "font_family": "Fraunces",
+          "text_size_px": 84,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 4,
+          "text_gradient": {
+            "colors": [
+              "#FF6B6B",
+              "#FFA94D",
+              "#FFE66D"
+            ],
+            "angle_deg": 135
+          }
+        },
+        "label": {
+          "font_family": "Fraunces",
+          "text_size_px": 60,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#FF6B6B",
+              "#FFA94D",
+              "#FFE66D"
+            ],
+            "angle_deg": 135
+          }
+        },
+        "reaction": {
+          "font_family": "Fraunces",
+          "text_size_px": 72,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 4,
+          "text_gradient": {
+            "colors": [
+              "#FF6B6B",
+              "#FFA94D",
+              "#FFE66D"
+            ],
+            "angle_deg": 135
+          }
+        },
+        "cta": {
+          "font_family": "Fraunces",
+          "text_size_px": 50,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#FF6B6B",
+              "#FFA94D",
+              "#FFE66D"
+            ],
+            "angle_deg": 135
+          }
+        },
+        "body": {
+          "font_family": "Fraunces",
+          "text_size_px": 54,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#FF6B6B",
+              "#FFA94D",
+              "#FFE66D"
+            ],
+            "angle_deg": 135
+          }
+        },
+        "intro": {
+          "font_family": "Fraunces",
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 4,
+          "text_gradient": {
+            "colors": [
+              "#FF6B6B",
+              "#FFA94D",
+              "#FFE66D"
+            ],
+            "angle_deg": 135
+          }
+        }
+      }
+    },
+    {
+      "id": "ocean_drift",
+      "label": "Ocean Drift \u2014 Teal to Indigo",
+      "_doc": "Cool deep-water gradient: Gloock (editorial serif) with a teal\u2192cobalt\u2192indigo sweep at 90\u00b0. Calm, deep, mysterious \u2014 wellness, mindfulness, nature.",
+      "tags": [
+        "gradient",
+        "cool",
+        "ocean",
+        "calm",
+        "editorial"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
+      "roles": {
+        "hook": {
+          "font_family": "Gloock",
+          "text_size_px": 80,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#4ADEDE",
+              "#1A6BFF",
+              "#7873F5"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "label": {
+          "font_family": "Gloock",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#4ADEDE",
+              "#1A6BFF",
+              "#7873F5"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "reaction": {
+          "font_family": "Gloock",
+          "text_size_px": 70,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#4ADEDE",
+              "#1A6BFF",
+              "#7873F5"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "cta": {
+          "font_family": "Gloock",
+          "text_size_px": 50,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#4ADEDE",
+              "#1A6BFF",
+              "#7873F5"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "body": {
+          "font_family": "Gloock",
+          "text_size_px": 52,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#4ADEDE",
+              "#1A6BFF",
+              "#7873F5"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "intro": {
+          "font_family": "Gloock",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#4ADEDE",
+              "#1A6BFF",
+              "#7873F5"
+            ],
+            "angle_deg": 90
+          }
+        }
+      }
+    },
+    {
+      "id": "candy_pop",
+      "label": "Candy Pop \u2014 Pink to Orange",
+      "_doc": "Playful high-energy gradient: Bricolage Grotesque (bold condensed sans) with a hot-pink\u2192yellow-orange sweep at 90\u00b0. Gen-Z energy \u2014 fashion, food, lifestyle.",
+      "tags": [
+        "gradient",
+        "playful",
+        "bold",
+        "pink",
+        "energetic"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
+      "roles": {
+        "hook": {
+          "font_family": "Bricolage Grotesque",
+          "text_size_px": 78,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 5,
+          "text_gradient": {
+            "colors": [
+              "#FF6EC4",
+              "#FF9A3C",
+              "#FFE347"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "label": {
+          "font_family": "Bricolage Grotesque",
+          "text_size_px": 56,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 4,
+          "text_gradient": {
+            "colors": [
+              "#FF6EC4",
+              "#FF9A3C",
+              "#FFE347"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "reaction": {
+          "font_family": "Bricolage Grotesque",
+          "text_size_px": 68,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 5,
+          "text_gradient": {
+            "colors": [
+              "#FF6EC4",
+              "#FF9A3C",
+              "#FFE347"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "cta": {
+          "font_family": "Bricolage Grotesque",
+          "text_size_px": 50,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 4,
+          "text_gradient": {
+            "colors": [
+              "#FF6EC4",
+              "#FF9A3C",
+              "#FFE347"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "body": {
+          "font_family": "Bricolage Grotesque",
+          "text_size_px": 54,
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 4,
+          "text_gradient": {
+            "colors": [
+              "#FF6EC4",
+              "#FF9A3C",
+              "#FFE347"
+            ],
+            "angle_deg": 90
+          }
+        },
+        "intro": {
+          "font_family": "Bricolage Grotesque",
+          "text_color": "#FFFFFF",
+          "effect": "pop-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 5,
+          "text_gradient": {
+            "colors": [
+              "#FF6EC4",
+              "#FF9A3C",
+              "#FFE347"
+            ],
+            "angle_deg": 90
+          }
+        }
+      }
+    },
+    {
+      "id": "aurora",
+      "label": "Aurora \u2014 Northern Lights",
+      "_doc": "Ethereal aurora gradient: Syne (editorial geometric sans) with a neon-green\u2192cyan\u2192violet sweep at 120\u00b0. Tech, creative, futuristic \u2014 fitness, science, innovation.",
+      "tags": [
+        "gradient",
+        "neon",
+        "aurora",
+        "futuristic",
+        "editorial"
+      ],
+      "applies_to": [
+        "agentic",
+        "generative"
+      ],
+      "roles": {
+        "hook": {
+          "font_family": "Syne",
+          "text_size_px": 82,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#00F5A0",
+              "#00D9F5",
+              "#7873F5"
+            ],
+            "angle_deg": 120
+          }
+        },
+        "label": {
+          "font_family": "Syne",
+          "text_size_px": 58,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center-label",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#00F5A0",
+              "#00D9F5",
+              "#7873F5"
+            ],
+            "angle_deg": 120
+          }
+        },
+        "reaction": {
+          "font_family": "Syne",
+          "text_size_px": 70,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#00F5A0",
+              "#00D9F5",
+              "#7873F5"
+            ],
+            "angle_deg": 120
+          }
+        },
+        "cta": {
+          "font_family": "Syne",
+          "text_size_px": 50,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "bottom",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#00F5A0",
+              "#00D9F5",
+              "#7873F5"
+            ],
+            "angle_deg": 120
+          }
+        },
+        "body": {
+          "font_family": "Syne",
+          "text_size_px": 54,
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 2,
+          "text_gradient": {
+            "colors": [
+              "#00F5A0",
+              "#00D9F5",
+              "#7873F5"
+            ],
+            "angle_deg": 120
+          }
+        },
+        "intro": {
+          "font_family": "Syne",
+          "text_color": "#FFFFFF",
+          "effect": "fade-in",
+          "position": "center",
+          "text_anchor": "center",
+          "stroke_width": 3,
+          "text_gradient": {
+            "colors": [
+              "#00F5A0",
+              "#00D9F5",
+              "#7873F5"
+            ],
+            "angle_deg": 120
+          }
+        }
       }
     }
   ]

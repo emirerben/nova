@@ -190,7 +190,12 @@ def test_orchestrator_skips_overlays_without_bbox(monkeypatch, tmp_path) -> None
 
 def test_orchestrator_writes_alternatives_and_default(monkeypatch) -> None:
     """A single overlay with a valid bbox produces font_alternatives on the
-    overlay and aggregates to font_default on the recipe."""
+    overlay and aggregates to font_default on the recipe.
+
+    Space Mono is used as the top-similarity match because it is deprecated —
+    the test verifies deprecated fonts are filtered from alternatives and do not
+    become the font_default. (Outfit was used here before PR #487 activated it.)
+    """
     recipe = _StubRecipe(
         slots=[
             {
@@ -213,7 +218,7 @@ def test_orchestrator_writes_alternatives_and_default(monkeypatch) -> None:
     )
     matcher = _StubMatcher(
         [
-            FontMatch("Outfit", 0.91),
+            FontMatch("Space Mono", 0.91),  # deprecated — must be filtered out
             FontMatch("DM Sans", 0.84),
             FontMatch("Montserrat", 0.78),
         ]
@@ -254,11 +259,14 @@ def test_identify_fonts_never_returns_deprecated_in_alternatives(monkeypatch) ->
             }
         ]
     )
+    # Space Mono and Inter Regular are deprecated; DM Sans and Montserrat are active.
+    # Expected: both deprecated entries filtered out of alternatives + font_default.
+    # (Outfit was used here before PR #487 activated it.)
     matcher = _StubMatcher(
         [
-            FontMatch("Outfit", 0.99),
+            FontMatch("Space Mono", 0.99),  # deprecated
             FontMatch("DM Sans", 0.9),
-            FontMatch("Inter Regular", 0.88),
+            FontMatch("Inter Regular", 0.88),  # deprecated
             FontMatch("Montserrat", 0.8),
         ]
     )
@@ -476,7 +484,8 @@ def test_cosine_rank_returns_sorted_descending() -> None:
 
 
 def test_cosine_rank_skips_deprecated_fonts() -> None:
-    families = np.array(["Outfit", "DM Sans", "Inter Regular", "Montserrat"], dtype=object)
+    # Space Mono replaces Outfit here (Outfit was activated in PR #487).
+    families = np.array(["Space Mono", "DM Sans", "Inter Regular", "Montserrat"], dtype=object)
     embeddings = np.array(
         [
             [1.0, 0.0],
@@ -520,12 +529,16 @@ def test_cosine_rank_is_deterministic() -> None:
 
 
 def test_deprecated_font_still_resolves_at_render() -> None:
+    # Outfit was deprecated (Outfit-Bold.ttf) before PR #487; it is now active
+    # (Outfit-VF.ttf, the variable-font OFL substitute for ZT Bros Oskon 90s).
+    # The test verifies that existing recipe overlays that carry font_family="Outfit"
+    # still resolve to a valid font file after the activation.
     from app.pipeline.text_overlay import _registry_font_path
 
     path = _registry_font_path("Outfit")
 
     assert path is not None
-    assert path.endswith("Outfit-Bold.ttf")
+    assert path.endswith("Outfit-VF.ttf")
 
 
 def test_existing_recipe_with_deprecated_font_family_renders(tmp_path) -> None:
