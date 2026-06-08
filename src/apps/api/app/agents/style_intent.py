@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-STYLE_INTENT_PROMPT_VERSION = "2026-06-07"
+STYLE_INTENT_PROMPT_VERSION = "2026-06-07-v2"
 
 # The exactly 10 parity-safe knob keys (must match StyleKnobs in _schemas/user_style.py)
 _PARITY_SAFE_KNOBS: frozenset[str] = frozenset(
@@ -63,12 +63,15 @@ class StyleIntentInput(BaseModel):
 class StyleIntentOutput(BaseModel):
     """Parsed intent from a single user utterance about their style."""
 
-    intent: Literal["style_edit", "persona_preference", "scope_reduction", "clarify", "unknown"]
+    intent: Literal[
+        "style_edit", "persona_preference", "scope_reduction", "clarify", "describe", "unknown"
+    ]
     # Intent-specific fields — varies by intent:
     #   style_edit: style_set_id?, knobs?, instruction_level?, footage_type_bias?,
     #               preferred_edit_format_mix?
     #   persona_preference: free_text?
     #   scope_reduction: footage_type_bias? (encoded as bias away from X)
+    #   describe: (empty — reply is generated from the snapshot)
     #   clarify/unknown: (empty or minimal)
     fields: dict = Field(default_factory=dict)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
@@ -105,7 +108,7 @@ def _format_style_snapshot(snapshot: dict | None) -> str:
     bias = snapshot.get("footage_type_bias") or []
     if bias:
         parts.append(f"footage_bias: {', '.join(bias)}")
-    knobs = snapshot.get("top_knobs") or {}
+    knobs = snapshot.get("knobs") or {}
     if knobs:
         knob_str = ", ".join(f"{k}={v}" for k, v in knobs.items())
         parts.append(f"knobs: {knob_str}")
@@ -162,6 +165,7 @@ class StyleIntentAgent(Agent[StyleIntentInput, StyleIntentOutput]):
             "persona_preference",
             "scope_reduction",
             "clarify",
+            "describe",
             "unknown",
         }
         if intent not in valid_intents:
@@ -248,9 +252,10 @@ class StyleIntentAgent(Agent[StyleIntentInput, StyleIntentOutput]):
             raise RefusalError(f"style_intent: output validation — {exc}") from exc
 
     def schema_clarification(self) -> str:
+        intents = "style_edit|persona_preference|scope_reduction|clarify|describe|unknown"
         return (
             "\n\nIMPORTANT: return ONLY valid JSON with keys: "
-            "intent (one of style_edit|persona_preference|scope_reduction|clarify|unknown), "
+            f"intent (one of {intents}), "
             "fields (object, intent-specific), "
             "confidence (float 0-1), "
             "reply (string — confirmation or clarifying question), "

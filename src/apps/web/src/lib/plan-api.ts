@@ -195,9 +195,17 @@ export type PlanItemStatus =
 
 /** One concrete shot in a filming guide. */
 export interface FilmingShot {
+  /** Stable server-assigned uuid; null for pre-0052 rows (backfilled by migration). */
+  shot_id: string | null;
   what: string;
   how: string;
   duration_s: number;
+}
+
+/** One clip assignment — shot_id=null means extra-footage pool. */
+export interface ClipAssignment {
+  gcs_path: string;
+  shot_id: string | null;
 }
 
 export interface PlanItem {
@@ -213,6 +221,8 @@ export interface PlanItem {
   // this field shipped; the UI falls back to filming_suggestion in that case.
   filming_guide: FilmingShot[];
   clip_gcs_paths: string[];
+  /** Per-shot clip assignments (since migration 0052). Empty for new items. */
+  clip_assignments?: ClipAssignment[];
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
@@ -313,10 +323,61 @@ export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> 
   if (!res.ok) throw new Error(`Upload failed (${res.status})`);
 }
 
-export function attachClips(itemId: string, clipGcsPaths: string[]): Promise<PlanItem> {
+/**
+ * PUT a file to GCS with progress reporting and abort support (XHR-based).
+ *
+ * onProgress is called with a value 0–1 as bytes are sent.
+ * Pass an AbortSignal to cancel mid-upload (slot returns to idle; the orphaned
+ * GCS object is cleaned up by the 24h lifecycle rule).
+ */
+export function uploadToGcsWithProgress(
+  uploadUrl: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new Error(`Upload failed (${xhr.status})`));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Upload network error")));
+    xhr.addEventListener("abort", () => reject(new DOMException("Upload cancelled", "AbortError")));
+
+    if (signal) {
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+
+    xhr.open("PUT", uploadUrl);
+    xhr.setRequestHeader("Content-Type", file.type);
+    xhr.send(file);
+  });
+}
+
+/**
+ * Tell the API which clips are now attached to this item.
+ *
+ * When assignments are provided (shot-slot uploader), the backend validates
+ * shot_ids and derives clip_gcs_paths via set_item_clips.
+ * When assignments are omitted (legacy/uninstructed), the API treats all clips
+ * as pool (unchanged behavior).
+ */
+export function attachClips(
+  itemId: string,
+  clipGcsPaths: string[],
+  assignments?: ClipAssignment[],
+): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/clips`, {
     method: "POST",
-    body: JSON.stringify({ clip_gcs_paths: clipGcsPaths }),
+    body: JSON.stringify({
+      clip_gcs_paths: clipGcsPaths,
+      ...(assignments !== undefined ? { assignments } : {}),
+    }),
   });
 }
 
@@ -498,6 +559,8 @@ export interface UserStyle {
 
 export interface StyleSetPreview {
   id?: string;
+  label?: string | null;
+  tags?: string[] | null;
   font_family?: string | null;
   css_family?: string | null;
   font_file?: string | null;

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  attachClips,
   changePlanItemStyle,
   generatePlanItem,
   getPlanItem,
@@ -20,6 +19,7 @@ import {
   swapPlanItemSong,
   uploadToGcs,
 } from "@/lib/plan-api";
+import ShotSlotUploader from "./components/ShotSlotUploader";
 import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
@@ -55,6 +55,8 @@ export default function PlanItemPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  // uploaderBusy: true while ShotSlotUploader has any upload/commit in flight (D6).
+  const [uploaderBusy, setUploaderBusy] = useState(false);
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
@@ -172,20 +174,19 @@ export default function PlanItemPage() {
     [markVariantRendering, refetch],
   );
 
-  // M4: single-file replace for instructed items (filming_guide present + level != "none").
-  // Bulk append is preserved for uninstructed items.
+  // Instructed items: filming_guide present + instruction_level != "none".
+  // These use ShotSlotUploader. Uninstructed items keep the legacy pool upload.
   const isInstructed =
     (item?.filming_guide?.length ?? 0) > 0 && item?.instruction_level !== "none";
 
+  // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
+    if (!files || files.length === 0 || isInstructed) return;
     setUploading(true);
     setError(null);
-    // Reset conformance poll counter so we poll for the new verdict after attach.
     conformancePolls.current = 0;
     try {
-      // Instructed items: take only the first file (single-video replace mode).
-      const list = isInstructed ? [Array.from(files)[0]] : Array.from(files);
+      const list = Array.from(files);
       const urls = await requestUploadUrls(
         itemId,
         list.map((f) => ({
@@ -196,12 +197,9 @@ export default function PlanItemPage() {
       );
       await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, list[i])));
       const newPaths = urls.map((u) => u.gcs_path);
-      // Instructed: replace (the backend already stores whatever paths we send).
-      // Uninstructed: append to existing paths.
-      const pathsToAttach = isInstructed
-        ? newPaths
-        : [...(item?.clip_gcs_paths ?? []), ...newPaths];
-      await attachClips(itemId, pathsToAttach);
+      const pathsToAttach = [...(item?.clip_gcs_paths ?? []), ...newPaths];
+      const { attachClips: attach } = await import("@/lib/plan-api");
+      await attach(itemId, pathsToAttach);
       refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
@@ -288,78 +286,86 @@ export default function PlanItemPage() {
             </span>
           </div>
           <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
-          <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>
-          {item.rationale && (
-            <div className="mb-4 mt-3 rounded-lg border border-zinc-200 bg-white p-4">
-              <p className="mb-1 text-xs font-medium text-lime-700">Why this works</p>
-              <p className="text-sm text-[#3f3f46]">{stripRationalePrefix(item.rationale)}</p>
-            </div>
-          )}
-          {item.filming_guide && item.filming_guide.length > 0 ? (
-            <div className="mb-8 mt-1 rounded-lg border border-zinc-200 bg-white p-4">
-              <p className="mb-2 text-xs font-medium text-lime-700">🎬 How to film this</p>
-              <ol className="space-y-2">
-                {item.filming_guide.map((shot, i) => (
-                  <li key={i} className="flex items-start gap-2 text-sm">
-                    <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-[#71717a]">
-                      {shot.duration_s}s
-                    </span>
-                    <span>
-                      <span className="text-[#3f3f46]">{shot.what}</span>
-                      {shot.how ? (
-                        <span className="text-[#71717a]"> — {shot.how}</span>
-                      ) : null}
-                    </span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          ) : item.filming_suggestion ? (
-            <p className="mb-8 text-sm text-[#71717a]">🎬 {item.filming_suggestion}</p>
-          ) : null}
+          <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
 
-          {error && (
-            <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
-              {error}
-            </div>
+          {/* ── FILM CARD (D5: primary action, above "Why this works") ── */}
+          {isInstructed ? (
+            <ShotSlotUploader
+              item={item}
+              onAttached={(updated) => {
+                conformancePolls.current = 0;
+                // Merge updated item into polling data without waiting for a refetch.
+                refetch();
+              }}
+              onBusyChange={setUploaderBusy}
+            />
+          ) : (
+            <>
+              {/* Uninstructed: legacy pool upload section (unchanged) */}
+              {item.filming_suggestion ? (
+                <p className="mb-4 text-sm text-[#71717a]">📋 {item.filming_suggestion}</p>
+              ) : null}
+              {error && (
+                <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+                  {error}
+                </div>
+              )}
+              <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
+                <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
+                <p className="mb-4 text-sm text-[#71717a]">
+                  {`Upload footage for this idea. ${clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}`}
+                </p>
+                <label className="block">
+                  <span className="sr-only">Upload video clips for this idea</span>
+                  <input
+                    type="file"
+                    accept="video/mp4,video/quicktime"
+                    multiple
+                    disabled={uploading}
+                    onChange={(e) => handleFiles(e.target.files)}
+                    className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+                  />
+                </label>
+                {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
+              </section>
+            </>
           )}
 
-          {/* Upload */}
-          <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
-            <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
-            <p className="mb-4 text-sm text-[#71717a]">
+          {/* Generate button (D6: also disabled while ShotSlotUploader has in-flight uploads) */}
+          <InkButton
+            onClick={handleGenerate}
+            disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
+          >
+            {isGenerating
+              ? "Generating…"
+              : generating
+                ? "Starting…"
+                : uploaderBusy
+                  ? `Finishing upload…`
+                  : "Generate videos"}
+          </InkButton>
+          {clipCount === 0 && !uploaderBusy && (
+            <p className="mt-2 text-sm text-[#a1a1aa]">
               {isInstructed
-                ? "Upload the clip for this shot list. It will replace the current clip."
-                : `Upload footage for this idea. ${clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}`}
+                ? "You can generate with any shots filled — more footage means better edits."
+                : "Upload at least one clip first."}
             </p>
-            <label className="block">
-              <span className="sr-only">Upload video clips for this idea</span>
-              <input
-                type="file"
-                accept="video/mp4,video/quicktime"
-                {...(!isInstructed ? { multiple: true } : {})}
-                disabled={uploading}
-                onChange={(e) => handleFiles(e.target.files)}
-                className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
-              />
-            </label>
-            {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
-          </section>
+          )}
+          {uploaderBusy && (
+            <p className="mt-2 text-sm text-[#a1a1aa]">Finishing upload…</p>
+          )}
 
           {/* Conformance verdict panel — display-only, never blocks Generate */}
           {item.conformance && (
             <ConformanceVerdictPanel conformance={item.conformance} />
           )}
 
-          {/* Generate */}
-          <InkButton
-            onClick={handleGenerate}
-            disabled={generating || clipCount === 0 || isGenerating}
-          >
-            {isGenerating ? "Generating…" : generating ? "Starting…" : "Generate videos"}
-          </InkButton>
-          {clipCount === 0 && (
-            <p className="mt-2 text-sm text-[#a1a1aa]">Upload at least one clip first.</p>
+          {/* "Why this works" — D5: moved below the film card + Generate */}
+          {item.rationale && (
+            <div className="mb-4 mt-6 rounded-lg border border-zinc-200 bg-white p-4">
+              <p className="mb-1 text-xs font-medium text-lime-700">Why this works</p>
+              <p className="text-sm text-[#3f3f46]">{stripRationalePrefix(item.rationale)}</p>
+            </div>
           )}
 
           {/* ProgressTheater — light tone */}

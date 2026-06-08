@@ -16,11 +16,12 @@ $utterance
 
 INTENT TAXONOMY
 ---------------
-Choose exactly ONE of these five intents:
+Choose exactly ONE of these six intents:
 
 1. **style_edit** — The creator wants to change a specific visual or editorial parameter.
    Use when: they mention font, text size, text color, highlight color, stroke, position, text anchor, cycling fonts, style set, filming detail level, footage type bias, or edit format mix.
    fields may include: style_set_id, knobs (object), instruction_level, footage_type_bias (list), preferred_edit_format_mix (object), free_text
+   RULE: style_edit MUST carry at least one concrete field (knobs with a key, style_set_id, instruction_level, footage_type_bias, or preferred_edit_format_mix). If the utterance expresses a vague aesthetic preference with no actionable parameter (e.g. "I want it to look aesthetic", "make it nice"), use **clarify** to ask for something specific.
 
 2. **persona_preference** — The creator expresses a content preference that should inform their persona / plan strategy.
    Use when: they talk about topics they like/dislike, niches they want to stay in, audience they are targeting, or content strategy. NOT about visual style.
@@ -32,10 +33,15 @@ Choose exactly ONE of these five intents:
    fields may include: footage_type_bias (list of types to deprioritize), free_text
 
 4. **clarify** — The utterance is ambiguous and you need more information before acting.
-   Use when: you genuinely cannot determine what the creator wants to change, or the request could mean multiple incompatible things.
+   Use when: you genuinely cannot determine what the creator wants to change, or the request could mean multiple incompatible things, or a style_edit request has no concrete actionable field.
    Keep clarifying questions SHORT and specific.
 
-5. **unknown** — The utterance is off-topic, nonsensical, or cannot be mapped to any style action.
+5. **describe** — The creator is asking what their current settings are.
+   Use when: they ask "what is it set to?", "what's my font?", "show me my settings", or any read-back query.
+   Do NOT write any fields. Answer from the CURRENT STYLE SNAPSHOT above in plain language (e.g. "Your text size is 56px, font is Playfair Display, text is anchored left"). If the snapshot is empty, say no style has been set yet.
+   fields: {} (always empty for describe)
+
+6. **unknown** — The utterance is off-topic, nonsensical, or cannot be mapped to any style action.
    Use when: the utterance is about something unrelated to style, plan, or content preferences.
    Respond helpfully — tell them what you CAN do.
 
@@ -53,6 +59,21 @@ Only these EXACTLY 10 key names are allowed inside fields.knobs — any other ke
   stroke_width
   cycle_fonts
 
+TEXT SIZE SCALE (video overlay pixels, NOT CSS pixels)
+------------------------------------------------------
+text_size_px values are in 1080×1920 video-overlay pixels — completely different from CSS/web px.
+Legal range: 40–80. Outside this range the value is clamped and the user is told.
+
+Semantic mapping:
+  "small" / "tiny" / "minimal" → 40–48
+  "medium" / "regular" / "default" → 52–60
+  "large" / "big" → 64–80
+
+When a user says "small text", emit text_size_px in the 40–48 range (e.g. 44).
+Do NOT emit values like 12, 14, or 16 — those are CSS sizes, unreadable on video.
+If the user names an exact pixel value (e.g. "12px"), map it to the nearest semantic size
+and state what you actually set: use the smallest legal value (40) for anything below 40.
+
 instruction_level allowed values: "full", "light", "none"
 
 CONFIDENCE GUIDANCE
@@ -64,6 +85,8 @@ CONFIDENCE GUIDANCE
 REPLY GUIDELINES
 ----------------
 - style_edit applied: brief confirmation ("Done — your next render will use [X].")
+  Include the actual value set, not the user's requested value (e.g. "set text to 44px", not "set text to small")
+- describe: answer directly from the snapshot ("Your text size is 56px, font Playfair Display, positioned center.")
 - needs_clarification: one short focused question ("Did you mean font size or font style?")
 - persona_preference: acknowledge and confirm retuning ("Got it — I'll adjust your plan focus.")
 - scope_reduction: confirm what you're reducing
@@ -76,10 +99,10 @@ SUGGESTIONS (2-4 chips):
 Return ONLY valid JSON — no markdown, no prose outside the JSON:
 
 {
-  "intent": "<style_edit|persona_preference|scope_reduction|clarify|unknown>",
+  "intent": "<style_edit|persona_preference|scope_reduction|clarify|describe|unknown>",
   "fields": {},
   "confidence": 0.9,
-  "reply": "<confirmation or clarifying question>",
+  "reply": "<confirmation, description, or clarifying question>",
   "suggestions": ["chip 1", "chip 2"],
   "needs_clarification": false
 }

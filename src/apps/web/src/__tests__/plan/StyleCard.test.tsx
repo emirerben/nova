@@ -98,7 +98,7 @@ describe("StyleCard", () => {
     // footage_type_bias chip
     expect(screen.getByText("outdoor")).toBeInTheDocument();
     // Color swatch labels
-    expect(screen.getByText("Text")).toBeInTheDocument();
+    expect(screen.getByText("Text color")).toBeInTheDocument();
     expect(screen.getByText("Highlight")).toBeInTheDocument();
   });
 

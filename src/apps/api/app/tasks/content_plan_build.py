@@ -114,7 +114,11 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     filming_suggestion=spec.filming_suggestion or None,
                     rationale=spec.rationale or None,
                     edit_format=spec.edit_format,
-                    filming_guide=[s.model_dump() for s in spec.filming_guide],
+                    # Stamp stable shot_id at persist time (D15) so assignments can
+                    # survive rerolls without dangling positional pointers.
+                    filming_guide=[
+                        {**s.model_dump(), "shot_id": uuid.uuid4().hex} for s in spec.filming_guide
+                    ],
                     item_status="idea",
                 )
             )
@@ -277,7 +281,10 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     filming_suggestion=spec.filming_suggestion or None,
                     rationale=spec.rationale or None,
                     edit_format=spec.edit_format,
-                    filming_guide=[s.model_dump() for s in spec.filming_guide],
+                    # Stamp stable shot_id at persist time (D15).
+                    filming_guide=[
+                        {**s.model_dump(), "shot_id": uuid.uuid4().hex} for s in spec.filming_guide
+                    ],
                     item_status="idea",
                 )
             )
@@ -547,7 +554,10 @@ def activate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             # plan, and build_generative_job only requires the `users/` allowlist —
             # so no GCS copy is needed. Do NOT "fix" this by adding a per-item
             # prefix check: it would break activation.
-            item.clip_gcs_paths = list(paths)
+            # Route through set_item_clips (D16 single-writer contract).
+            from app.services.plan_clips import ClipAssignment, set_item_clips  # noqa: PLC0415
+
+            set_item_clips(item, [ClipAssignment(gcs_path=p, shot_id=None) for p in paths])
             session.flush()
             if _dispatch_item_render(session, item, plan, persona_data) is not None:
                 dispatched += 1
@@ -649,10 +659,28 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
         item.idea = fresh.idea
         item.filming_suggestion = fresh.filming_suggestion or None
         item.rationale = fresh.rationale or None
-        item.filming_guide = [s.model_dump() for s in (fresh.filming_guide or [])]
+        # Stamp fresh shot_ids (D15) — old ids are gone, old assignments dangle.
+        item.filming_guide = [
+            {**s.model_dump(), "shot_id": uuid.uuid4().hex} for s in (fresh.filming_guide or [])
+        ]
         item.edit_format = fresh.edit_format or "montage"
         item.item_status = "idea"
         item.user_edited = False
+
+        # Reroll demote (D15): move all shot-assigned clips to the pool so they
+        # remain visible as extra footage rather than dangling against the new guide.
+        # The read-time reconciliation in plan_item_response is a safety net; this
+        # explicit demote makes the intent clear in the write path.
+        from app.services.plan_clips import ClipAssignment, set_item_clips  # noqa: PLC0415
+
+        existing_assignments = item.clip_assignments or []
+        demoted = [
+            ClipAssignment(gcs_path=a["gcs_path"], shot_id=None)
+            for a in existing_assignments
+            if isinstance(a, dict) and a.get("gcs_path")
+        ]
+        set_item_clips(item, demoted)
+
         session.commit()
 
     log.info(

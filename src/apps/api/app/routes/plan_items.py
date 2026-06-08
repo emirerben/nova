@@ -77,9 +77,17 @@ class FilmingShotResponse(BaseModel):
     with missing keys never 500s the read path.
     """
 
+    shot_id: str | None = None  # stable server-assigned uuid; null for legacy pre-0052 rows
     what: str = ""
     how: str = ""
     duration_s: int = 1  # matches MIN_SHOT_DURATION_S; 0 would render as confusing "0s" badge
+
+
+class ClipAssignmentResponse(BaseModel):
+    """One clip assignment in the response (mirrors the DB JSONB shape)."""
+
+    gcs_path: str
+    shot_id: str | None = None  # null = extra-footage pool
 
 
 class PlanItemResponse(BaseModel):
@@ -94,6 +102,9 @@ class PlanItemResponse(BaseModel):
     # whose plans predate this field (frontend falls back to filming_suggestion).
     filming_guide: list[FilmingShotResponse]
     clip_gcs_paths: list[str]
+    # Per-shot clip assignments. Shape: [{gcs_path, shot_id}]; shot_id=null = pool.
+    # Populated since migration 0052; empty list for items with no clips yet.
+    clip_assignments: list[ClipAssignmentResponse] = []
     status: str
     current_job_id: str | None
     user_edited: bool
@@ -117,6 +128,7 @@ def plan_item_response(
     # via .get() so a hand-corrupted row or a migration-era partial row never raises.
     shots = [
         FilmingShotResponse(
+            shot_id=s.get("shot_id"),  # None for pre-0052 rows (backfilled by migration)
             what=s.get("what", ""),
             how=s.get("how", ""),
             duration_s=s.get("duration_s", 1),  # 1 = MIN_SHOT_DURATION_S; 0 renders as "0s" badge
@@ -124,6 +136,22 @@ def plan_item_response(
         for s in (item.filming_guide or [])
         if isinstance(s, dict)
     ]
+
+    # Read-time reconciliation (D15): any assignment whose shot_id is no longer
+    # present in the current filming_guide is presented as pool (shot_id=null).
+    # This handles the case where the guide was rerolled after clips were attached;
+    # the assignment becomes visible extra footage rather than a ghost.
+    live_shot_ids = {s.shot_id for s in shots if s.shot_id is not None}
+    raw_assignments = item.clip_assignments or []
+    reconciled_assignments = [
+        ClipAssignmentResponse(
+            gcs_path=a.get("gcs_path", ""),
+            shot_id=a.get("shot_id") if a.get("shot_id") in live_shot_ids else None,
+        )
+        for a in raw_assignments
+        if isinstance(a, dict) and a.get("gcs_path")
+    ]
+
     return PlanItemResponse(
         id=str(item.id),
         day_index=item.day_index,
@@ -133,6 +161,7 @@ def plan_item_response(
         rationale=item.rationale,
         filming_guide=shots,
         clip_gcs_paths=list(item.clip_gcs_paths or []),
+        clip_assignments=reconciled_assignments,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
         user_edited=item.user_edited,
@@ -282,8 +311,18 @@ async def create_upload_urls(
     return UploadUrlsResponse(urls=urls)
 
 
+class ClipAssignmentBody(BaseModel):
+    """One clip assignment sent from the frontend."""
+
+    gcs_path: str
+    shot_id: str | None = None  # null = extra-footage pool
+
+
 class AttachClipsBody(BaseModel):
     clip_gcs_paths: list[str]
+    # Optional per-shot assignments (shot-slot uploader). When absent the whole
+    # batch is treated as pool (legacy / uninstructed callers are unaffected).
+    assignments: list[ClipAssignmentBody] | None = None
 
 
 @router.post("/{item_id}/clips", response_model=PlanItemResponse)
@@ -293,17 +332,72 @@ async def attach_clips(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """Record uploaded clip paths on the item (validated to the users/ prefix)."""
+    """Record uploaded clip paths on the item (validated to the users/ prefix).
+
+    Assignment semantics (shot-slot uploader, D16):
+      - body.assignments present → validate shot_ids + derive clip_gcs_paths via set_item_clips
+      - body.assignments absent  → treat body.clip_gcs_paths as pool (legacy callers)
+
+    D7: nulls item.conformance before dispatching re-analysis so the panel can
+    never describe replaced footage. If re-analysis fails, the panel is absent,
+    not stale.
+    """
+    from app.services.plan_clips import (  # noqa: PLC0415
+        ClipAssignment,
+        ClipAssignmentError,
+        set_item_clips,
+    )
+
     item = await _load_owned_item(item_id, user.id, db)
-    expected = f"users/{user.id}/plan/{item.id}/"
-    for p in body.clip_gcs_paths:
-        if not p.startswith(expected):
-            # Reject any path that isn't this user's own plan-item prefix.
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Clip path outside this plan item's upload prefix",
-            )
-    item.clip_gcs_paths = list(body.clip_gcs_paths)
+    expected_prefix = f"users/{user.id}/plan/{item.id}/"
+
+    if body.assignments is not None:
+        # Shot-slot uploader path: validate prefix, then validate shot_ids.
+        for a in body.assignments:
+            if not a.gcs_path.startswith(expected_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Clip path outside this plan item's upload prefix",
+                )
+
+        # Build set of live shot_ids from the item's filming_guide.
+        live_shot_ids: set[str] = {
+            s["shot_id"]
+            for s in (item.filming_guide or [])
+            if isinstance(s, dict) and s.get("shot_id")
+        }
+
+        for a in body.assignments:
+            if a.shot_id is not None and a.shot_id not in live_shot_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown shot_id: {a.shot_id}",
+                )
+
+        assignments = [
+            ClipAssignment(gcs_path=a.gcs_path, shot_id=a.shot_id) for a in body.assignments
+        ]
+    else:
+        # Legacy / uninstructed path: all clips go to pool.
+        for p in body.clip_gcs_paths:
+            if not p.startswith(expected_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Clip path outside this plan item's upload prefix",
+                )
+        assignments = [ClipAssignment(gcs_path=p, shot_id=None) for p in body.clip_gcs_paths]
+
+    try:
+        set_item_clips(item, assignments)
+    except ClipAssignmentError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    # D7: null conformance so the panel can never describe replaced footage.
+    item.conformance = None
+
     await db.commit()
     # Fire-and-forget conformance analysis (best-effort, never blocks this response).
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415

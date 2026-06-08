@@ -312,10 +312,13 @@ def style_set_preview(set_id: str) -> dict:
     the renderer burn dict, which keeps the #296 parity invariant intact. Walks
     the role-fallback chain via `_role_block`; always returns a dict.
     """
-    block = _role_block(get_style_set(set_id), _PREVIEW_ROLE) or {}
+    catalog = get_style_set(set_id)
+    block = _role_block(catalog, _PREVIEW_ROLE) or {}
     family = block.get("font_family")
     reg = _FONT_REGISTRY.get("fonts", {}).get(family or "", {})
     return {
+        "label": catalog.get("label"),
+        "tags": catalog.get("tags"),
         "font_family": family,
         "css_family": reg.get("css_family"),
         "font_file": reg.get("file"),

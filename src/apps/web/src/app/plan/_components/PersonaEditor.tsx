@@ -43,7 +43,6 @@ export default function PersonaEditor({
   startInEdit = false,
   onRetuneFromFeedback,
   tiktokProfile,
-  signatureQuote,
   onUpdateAnswers,
 }: {
   persona: PersonaContent;
@@ -59,7 +58,6 @@ export default function PersonaEditor({
   onRetuneFromFeedback?: () => Promise<void>;
   // Aha-moment reveal data (chat onboarding)
   tiktokProfile?: TikTokProfile | null;
-  signatureQuote?: string;
   // Navigates back to the TikTok pre-screen so returning users can restart the chat.
   onUpdateAnswers?: () => void;
 }) {
@@ -125,14 +123,14 @@ export default function PersonaEditor({
 
   return (
     <div className="animate-fade-up py-2">
-      {/* Aha-moment reveal — TikTok stat line OR verbatim creator quote */}
-      <AhaMoment tiktokProfile={tiktokProfile} signatureQuote={signatureQuote} />
+      {/* Aha-moment reveal — TikTok stat line */}
+      <AhaMoment tiktokProfile={tiktokProfile} />
 
       <div className="mb-8 flex items-start justify-between gap-4">
         <div>
           <h1
             className="font-display text-3xl text-[#0c0c0e] animate-fade-up"
-            style={{ animationDelay: tiktokProfile ?? signatureQuote ? "100ms" : "0ms" }}
+            style={{ animationDelay: tiktokProfile ? "100ms" : "0ms" }}
           >
             Meet your persona
           </h1>
@@ -227,15 +225,12 @@ export default function PersonaEditor({
 /**
  * Aha-moment reveal shown once above the persona heading.
  * TikTok path: stat line ("We analyzed N of your videos. @handle · N followers").
- * Fallback path: verbatim creator quote ("You said: '…'").
- * Nothing rendered when neither is available (legacy flat-questionnaire personas).
+ * Nothing rendered when not available (legacy flat-questionnaire personas).
  */
 function AhaMoment({
   tiktokProfile,
-  signatureQuote,
 }: {
   tiktokProfile?: TikTokProfile | null;
-  signatureQuote?: string;
 }) {
   if (tiktokProfile) {
     const { handle, follower_count, video_count } = tiktokProfile;
@@ -256,17 +251,6 @@ function AhaMoment({
           @{handle}
           {followerStr && <> · {followerStr}</>}
         </p>
-      </div>
-    );
-  }
-
-  if (signatureQuote?.trim()) {
-    return (
-      <div className="mb-8 animate-fade-up">
-        <p className="font-display text-xl italic leading-relaxed text-lime-700">
-          &ldquo;{signatureQuote}&rdquo;
-        </p>
-        <p className="mt-1.5 text-xs text-[#71717a]">You said this</p>
       </div>
     );
   }

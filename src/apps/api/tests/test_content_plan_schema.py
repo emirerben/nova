@@ -40,6 +40,7 @@ _EXPECTED_CHAIN = {
     "0049": "0048",
     "0050": "0049",
     "0051": "0050",
+    "0052": "0051",
 }
 
 
@@ -51,7 +52,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0051"], f"expected a single head 0051, got {heads}"
+    assert heads == ["0052"], f"expected a single head 0052, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -101,6 +102,7 @@ def test_new_tables_registered() -> None:
         "theme",
         "idea",
         "clip_gcs_paths",
+        "clip_assignments",
         "item_status",
         "current_job_id",
         "edit_format",

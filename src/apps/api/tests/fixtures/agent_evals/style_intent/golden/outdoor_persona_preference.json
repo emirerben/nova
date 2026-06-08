@@ -1,6 +1,6 @@
 {
   "agent": "nova.plan.style_intent",
-  "prompt_version": "2026-06-07",
+  "prompt_version": "2026-06-07-v2",
   "input": {
     "utterance": "I want to focus more on outdoor content and hiking adventures",
     "prior_turns": [],

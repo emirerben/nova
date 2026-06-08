@@ -234,8 +234,9 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-06: added $tiktok_analysis block (deep TikTok profile analysis).
     # 2026-06-07: weekly research refresh — added 4 new ideas (adventure-humor,
     #             implied-question, serial-brand-chapter, art-cultural-moment).
+    # 2026-06-08: retrospective-footage rule (past-event ideas).
     assert content_ideas_version() == "2026-06-07"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-07.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -245,9 +246,10 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # intro). Bump 2026-06-07: weekly research refresh — added 3 corpus factors
     # (implied-question-hook vi=120x, humor-extreme-adventure vi=124x,
     # serial-brand-chapters consistent vi=2-5x across 5 founder chapter videos).
+    # Content plan subsequently bumped to 2026-06-08 (retrospective-footage rule).
     assert success_factors_version() == "2026-06-07"
     assert PERSONA_PROMPT_VERSION == "2026-06-07.1"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-07.1"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07.1"
 
 

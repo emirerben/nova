@@ -447,7 +447,7 @@ async def list_generative_style_sets() -> StyleSetListResponse:
 
     return StyleSetListResponse(
         style_sets=[
-            StyleSetSummary(**s, **style_set_preview(s["id"]))
+            StyleSetSummary(**{**s, **style_set_preview(s["id"])})
             for s in list_style_sets(applies_to="generative")
         ]
     )
