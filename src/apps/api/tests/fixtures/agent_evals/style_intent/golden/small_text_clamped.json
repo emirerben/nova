@@ -1,0 +1,28 @@
+{
+  "agent": "nova.plan.style_intent",
+  "prompt_version": "2026-06-07-v2",
+  "input": {
+    "utterance": "I like using small texts so it doesn't cover too much of the content",
+    "prior_turns": [],
+    "current_style_snapshot": {
+      "style_set_id": "default",
+      "instruction_level": "full",
+      "footage_type_bias": [],
+      "knobs": {"font_family": "Playfair Display", "text_size_px": 56, "text_color": "#FFFFFF", "stroke_width": 0, "cycle_fonts": false, "position": "bottom", "position_x_frac": 0.5, "position_y_frac": 0.85, "text_anchor": "center", "highlight_color": "#FFD700"},
+      "free_text": ""
+    }
+  },
+  "raw_text": "{\"intent\": \"style_edit\", \"fields\": {\"knobs\": {\"text_size_px\": 40}}, \"confidence\": 0.9, \"reply\": \"Done — I've set your text to 40px (the smallest readable size for 1080×1920 video). Your next render will use this.\", \"suggestions\": [\"Make it a bit bigger\", \"Move text to top\", \"Change text color\", \"Use a different font\"], \"needs_clarification\": false}",
+  "output": {
+    "intent": "style_edit",
+    "fields": {"knobs": {"text_size_px": 40}},
+    "confidence": 0.9,
+    "reply": "Done — I've set your text to 40px (the smallest readable size for 1080×1920 video). Your next render will use this.",
+    "suggestions": ["Make it a bit bigger", "Move text to top", "Change text color", "Use a different font"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "User requests small text — agent emits text_size_px at the floor (40) since 'small' maps to 40-48px. Added for 2026-06-07-v2 prompt which documents px scale."
+  }
+}

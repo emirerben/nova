@@ -1,0 +1,28 @@
+{
+  "agent": "nova.plan.style_intent",
+  "prompt_version": "2026-06-07-v2",
+  "input": {
+    "utterance": "What is my style set to right now?",
+    "prior_turns": [],
+    "current_style_snapshot": {
+      "style_set_id": "travel_editorial",
+      "instruction_level": "full",
+      "footage_type_bias": ["outdoor"],
+      "knobs": {"font_family": "Playfair Display", "text_size_px": 52, "text_color": "#FFFFFF", "stroke_width": 0, "cycle_fonts": false, "position": "bottom", "position_x_frac": 0.5, "position_y_frac": 0.85, "text_anchor": "center", "highlight_color": "#FFD700"},
+      "free_text": "Keep captions concise"
+    }
+  },
+  "raw_text": "{\"intent\": \"describe\", \"fields\": {}, \"confidence\": 0.95, \"reply\": \"Your current style: travel_editorial set, Playfair Display font at 52px, white text centered at bottom, no stroke, gold highlights. Footage bias: outdoor. Instruction: 'Keep captions concise'.\", \"suggestions\": [\"Make text bigger\", \"Change font\", \"Switch style set\", \"Adjust text color\"], \"needs_clarification\": false}",
+  "output": {
+    "intent": "describe",
+    "fields": {},
+    "confidence": 0.95,
+    "reply": "Your current style: travel_editorial set, Playfair Display font at 52px, white text centered at bottom, no stroke, gold highlights. Footage bias: outdoor. Instruction: 'Keep captions concise'.",
+    "suggestions": ["Make text bigger", "Change font", "Switch style set", "Adjust text color"],
+    "needs_clarification": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "User asks what their style is set to — agent returns describe intent and reads back from the snapshot. No write occurs. Added for 2026-06-07-v2 prompt which adds describe to the taxonomy."
+  }
+}

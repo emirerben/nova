@@ -459,3 +459,143 @@ def test_get_style_no_style_returns_deriving(client: TestClient) -> None:
     body = resp.json()
     assert body["status"] == "deriving"
     assert body["style"] is None
+
+
+# ── /agent/turn — regression: px-clamp + false-Done + read-back (2026-06-07) ─
+
+
+def test_agent_turn_style_edit_small_px_clamped_to_40(client: TestClient) -> None:
+    """Agent emits text_size_px=14 (CSS scale) → route clamps to 40, applied=True.
+
+    Root cause of the 2026-06-07 prod 500: StyleKnobs._clamp_px silently clamps
+    14→40 (passes), but StyleKnobsEdit(ge=40) was constructed from the RAW value
+    and raised outside any try/except → unhandled 500.
+    Fix: build StyleKnobsEdit from the clamped output, never from raw_knobs.
+    Pinned by this test — must fail on the unfixed route.
+    """
+    user = _fake_user()
+    row = _persona_row(user.id, style={"status": "ready", "knobs": {}})
+    db = _async_db(scalar_result=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    intent_result = _make_intent_result(
+        intent="style_edit",
+        fields={"knobs": {"text_size_px": 14}},  # CSS px — below 40px floor
+        reply="Done — your text is now smaller.",
+    )
+
+    with (
+        patch("app.config.settings", _settings()),
+        patch("app.routes.personas.asyncio") as mock_asyncio,
+        patch("app.routes.personas._apply_style_edit", new_callable=AsyncMock) as mock_apply,
+    ):
+        mock_asyncio.to_thread = AsyncMock(return_value=intent_result)
+        mock_apply.return_value = {"status": "edited", "knobs": {"text_size_px": 40}}
+
+        resp = client.post("/personas/agent/turn", json={"answer": "I like using small texts"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["applied"] is True
+    mock_apply.assert_called_once()
+    # Reply must contain an honest clamp note.
+    assert "40" in body["reply"], f"Clamp note missing from reply: {body['reply']!r}"
+
+
+def test_agent_turn_style_edit_free_text_only_no_write(client: TestClient) -> None:
+    """style_edit with only free_text and no structured field → applied=False, no DB write.
+
+    Root cause of the 2026-06-07 prod false 'Done': the agent returned only
+    free_text (no knobs/style_set_id/etc.), _apply_style_edit was called anyway,
+    wrote nothing except status='edited', and applied=True was set → frontend
+    showed 'Done' when nothing size-related was stored.
+    Fix: materiality check before _apply_style_edit.
+    """
+    user = _fake_user()
+    row = _persona_row(user.id, style={"status": "ready", "knobs": {}})
+    db = _async_db(scalar_result=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    # Only free_text — no structured knob or field.
+    intent_result = _make_intent_result(
+        intent="style_edit",
+        fields={"free_text": "aesthetic and not to cover the content"},
+        reply="Got it — I'll keep it aesthetic.",
+    )
+
+    with (
+        patch("app.config.settings", _settings()),
+        patch("app.routes.personas.asyncio") as mock_asyncio,
+        patch("app.routes.personas._apply_style_edit", new_callable=AsyncMock) as mock_apply,
+    ):
+        mock_asyncio.to_thread = AsyncMock(return_value=intent_result)
+
+        resp = client.post(
+            "/personas/agent/turn",
+            json={"answer": "I want it to look aesthetic and not to cover the content"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["applied"] is False, "Expected applied=False for a free_text-only style_edit"
+    mock_apply.assert_not_called()
+
+
+def test_agent_turn_describe_intent_no_write(client: TestClient) -> None:
+    """describe intent → agent reply is passed through, no DB write, applied=False."""
+    user = _fake_user()
+    row = _persona_row(
+        user.id,
+        style={
+            "status": "edited",
+            "knobs": {"text_size_px": 40, "font_family": "Playfair Display"},
+        },
+    )
+    db = _async_db(scalar_result=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    intent_result = _make_intent_result(
+        intent="describe",
+        reply="Your text size is 40px and font is Playfair Display.",
+        fields={},
+    )
+
+    with (
+        patch("app.config.settings", _settings()),
+        patch("app.routes.personas.asyncio") as mock_asyncio,
+        patch("app.routes.personas._apply_style_edit", new_callable=AsyncMock) as mock_apply,
+    ):
+        mock_asyncio.to_thread = AsyncMock(return_value=intent_result)
+
+        resp = client.post("/personas/agent/turn", json={"answer": "What is it set to right now?"})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["applied"] is False
+    assert body["intent"] == "describe"
+    assert "40px" in body["reply"]
+    mock_apply.assert_not_called()
+
+
+def test_validator_parity_text_size_px_boundary_values() -> None:
+    """StyleKnobs.model_validate + StyleKnobsEdit must agree on ALL boundary values.
+
+    Any raw px that passes StyleKnobs.model_validate (after clamping) MUST be
+    constructable via StyleKnobsEdit without raising. If this breaks, the route
+    will 500 on out-of-range agent values.
+    """
+    from app.agents._schemas.user_style import StyleKnobs
+    from app.routes.personas import StyleKnobsEdit
+
+    for raw_px in [1, 14, 39, 40, 80, 81, 200]:
+        validated = StyleKnobs.model_validate({"text_size_px": raw_px})
+        clamped = validated.model_dump(exclude_none=True)
+        # Must not raise — if it does, the route would 500.
+        knobs_edit = StyleKnobsEdit(**clamped)
+        assert knobs_edit.text_size_px is not None, f"raw={raw_px}: clamped px lost"
+        assert 40 <= knobs_edit.text_size_px <= 80, (
+            f"raw={raw_px}: clamped to {knobs_edit.text_size_px}, out of legal range"
+        )

@@ -187,3 +187,41 @@ Kill-switch byte-identical test:
 
 Apply: `fly secrets set LYRIC_DYNAMIC_CROSSFADE_ENABLED=false --app nova-video` then
 `fly machine restart <id>` on the worker process group.
+
+---
+
+## [2026-06-07] Style-chat 500 + false "Done": validator divergence incident
+
+**Symptom (prod):** user typed "I like using small texts…" → 500 "Something went wrong".
+Retry succeeded with "Done" but stored nothing size-related.
+
+**Root cause 1 — 500:** Two Pydantic validators for `text_size_px` disagreed.
+`StyleKnobs._clamp_px` silently clamps any value to `[40, 80]` (passes), but
+`StyleKnobsEdit(ge=40)` was constructed from the **raw** agent value (e.g. 14) and
+raised `ValidationError` outside any `try/except` → unhandled HTTP 500.
+The model emits CSS-scale px (12/14) because the prompt never stated the legal range
+or that these are 1080×1920 video-overlay px (not CSS px).
+
+**Root cause 2 — false "Done":** Retry returned `style_edit` with only `free_text` (no
+structured knob). Route called `_apply_style_edit` anyway, wrote only `status="edited"`,
+set `applied=True` → "Done — your next render will use this style." with nothing stored.
+
+**Root cause 3 — no read-back:** `_style_snapshot` exposed 3 of 10 knobs; the intent
+taxonomy had no `describe` intent; the prompt steered "what is it set to?" to `unknown`.
+
+**Fixes (PR #484):**
+- Route: build `StyleKnobsEdit` from the clamped `StyleKnobs` output, never from raw
+  agent dict. Detect clamping → append honest note to reply.
+- Route: materiality check before `_apply_style_edit` — free_text-only returns
+  `applied=False` without writing.
+- Prompt: document px range 40–80, semantic size map ("small"→40–48), and the rule
+  that `style_edit` MUST carry a concrete field.
+- Agent + route: add `describe` intent; expose all 10 knobs in `_style_snapshot`.
+- Pinned by `test_agent_turn_style_edit_small_px_clamped_to_40`,
+  `test_agent_turn_style_edit_free_text_only_no_write`,
+  `test_agent_turn_describe_intent_no_write`,
+  `test_validator_parity_text_size_px_boundary_values`.
+
+**Design rule going forward:** whenever two Pydantic validators cover the same field with
+different strictness (one clamps, one raises), always use the lenient validator's OUTPUT
+to construct the strict model — never the raw input.
