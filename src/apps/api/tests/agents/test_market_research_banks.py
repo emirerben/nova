@@ -216,8 +216,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-05: added posts_per_week field (structured post frequency 1-7).
     # Bump 2026-06-06: interview_turns replaces flat fields as primary input; added signature_quote.
     # Bump 2026-06-06.1: added $tiktok_analysis block (deep TikTok profile analysis).
-    assert archetypes_version() == "2026-05-31"
-    assert PERSONA_PROMPT_VERSION == "2026-06-06.1"
+    # Bump 2026-06-07: weekly research refresh — added adventure-humor-candid-01 archetype
+    #                  (izzsiomoi humor+extreme pattern, vi=124x).
+    assert archetypes_version() == "2026-06-07"
+    assert PERSONA_PROMPT_VERSION == "2026-06-07.1"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -230,8 +232,10 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             $target_item_count to produce the right idea count per week.
     # 2026-06-05.1: per-item filming_guide (2–4 shots keyed to edit_format).
     # 2026-06-06: added $tiktok_analysis block (deep TikTok profile analysis).
+    # 2026-06-07: weekly research refresh — added 4 new ideas (adventure-humor,
+    #             implied-question, serial-brand-chapter, art-cultural-moment).
     # 2026-06-08: retrospective-footage rule (past-event ideas).
-    assert content_ideas_version() == "2026-05-31"
+    assert content_ideas_version() == "2026-06-07"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
 
 
@@ -239,13 +243,14 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     from app.agents.intro_writer import IntroTextWriterAgent
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
-    # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-06-06.1
-    # (deep TikTok analysis), content plan to 2026-06-08 (retrospective-footage rule),
-    # and intro_writer to 2026-06-07 (filming_guide context block — M3).
-    assert success_factors_version() == "2026-05-30"
-    assert PERSONA_PROMPT_VERSION == "2026-06-06.1"
+    # intro). Bump 2026-06-07: weekly research refresh — added 3 corpus factors
+    # (implied-question-hook vi=120x, humor-extreme-adventure vi=124x,
+    # serial-brand-chapters consistent vi=2-5x across 5 founder chapter videos).
+    # Content plan subsequently bumped to 2026-06-08 (retrospective-footage rule).
+    assert success_factors_version() == "2026-06-07"
+    assert PERSONA_PROMPT_VERSION == "2026-06-07.1"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07.1"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -256,10 +261,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # `library_version()` (and re-trip this guard), and a consuming-agent prompt
     # change must bump that agent's prompt_version. Bump 2026-05-31: added 2 new
     # overlay examples (destination-qualifier-popin-01, city-morning-sensory-fadein-01).
-    # IntroTextWriterAgent bumped to 2026-06-07 for filming_guide block (M3).
-    assert library_version() == "2026-05-31"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-05-31"
+    # Bump 2026-06-07: weekly research refresh — added adventure-humor-scaleup-02
+    #                  and implied-question-static-02; bumped both consuming agents.
+    assert library_version() == "2026-06-07"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07.1"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-07"
 
 
 @pytest.mark.parametrize(

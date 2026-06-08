@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-31",
+  "version": "2026-06-07",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -199,6 +199,32 @@
       "highlight_color": "#FFE08A",
       "niche": "city lifestyle & food",
       "source": "tiktok market research 2026-05"
+    },
+    {
+      "id": "adventure-humor-scaleup-02",
+      "content_profile": "extreme outdoor or adventure moment — water, heights, speed — raw and unpolished, the creator is visibly unprepared for how intense it is",
+      "effect": "scale-up",
+      "text": "i was NOT ready for this",
+      "highlight_word": "NOT",
+      "position": "center",
+      "size_class": "jumbo",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FF6B6B",
+      "niche": "solo travel & outdoors",
+      "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "implied-question-static-02",
+      "content_profile": "one hero wide shot that visually answers an unasked question — a summit, a dramatic arrival, a payoff moment that speaks for itself",
+      "effect": "static",
+      "text": "my simplest answer",
+      "highlight_word": "simplest",
+      "position": "bottom",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#7FD1FF",
+      "niche": "solo travel & outdoors",
+      "source": "tiktok market research 2026-06"
     }
   ]
 }

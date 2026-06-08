@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-31",
+  "version": "2026-06-07",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -152,6 +152,46 @@
       "filming_context": "timelapse or quick cuts of the climb, hold on the sunrise payoff — let it breathe",
       "source": "tiktok:@izzsiomoi (2026-05)",
       "performance": {"engagement_rate": 0.103, "sampled_at": "2026-05"}
+    },
+    {
+      "id": "adventure-humor-one-liner-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "extreme adventure moments",
+      "idea": "a single raw action clip from an extreme or high-stakes moment, captioned with one self-deprecating line that names exactly how you felt",
+      "hook_pattern": "i was NOT ready for this",
+      "filming_context": "GoPro or handheld — capture the raw moment, no edit polish needed; the humor is in the gap between the epic setting and your honest reaction",
+      "source": "tiktok:@izzsiomoi (2026-06)",
+      "performance": {"engagement_rate": 0.087, "view_index": 123.6, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "implied-question-answer-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "mindset & growth",
+      "idea": "post your single most visually powerful clip and let it be the answer to a question you never state — the caption IS the conclusion",
+      "hook_pattern": "my simplest answer",
+      "filming_context": "one hero shot — wide vista, a summit, an arrival — that visually speaks for itself with no explanation needed",
+      "source": "tiktok:@izzsiomoi (2026-06)",
+      "performance": {"engagement_rate": 0.123, "view_index": 120.4, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "serial-brand-chapter-01",
+      "niche": "founder / product launch",
+      "pillar": "build process behind-the-scenes",
+      "idea": "document one specific chapter of your brand build as a standalone episode in a named series — each video covers a single decision or milestone in the journey",
+      "hook_pattern": "chapter [N]: [the decision/milestone]",
+      "filming_context": "candid to-camera or b-roll of the moment it happened; each video should be satisfying alone but reward people who follow the whole arc",
+      "source": "tiktok:@nermozdemir (2026-06)",
+      "performance": {"engagement_rate": 0.041, "view_index": 5.5, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "art-cultural-moment-01",
+      "niche": "city lifestyle & food",
+      "pillar": "hidden gems to save",
+      "idea": "a short artful clip inside a gallery, museum, or cultural landmark in your city — one striking installation or work — captioned with a single thoughtful observation",
+      "hook_pattern": "the [artwork/exhibit] nobody is talking about in [city]",
+      "filming_context": "slow pan or still hold on the work, natural museum light, respectful framing — let the art occupy the frame",
+      "source": "tiktok:@allexmarielle (2026-06)",
+      "performance": {"engagement_rate": 0.122, "view_index": 1.2, "sampled_at": "2026-06"}
     }
   ]
 }

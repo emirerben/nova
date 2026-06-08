@@ -1,5 +1,5 @@
 {
-  "version": "2026-05-31",
+  "version": "2026-06-07",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -44,6 +44,17 @@
       "audience": "people who follow for a calm, beautiful scroll and a feeling to borrow",
       "sample_hooks": ["a feeling, not a place", "this is the mood", "summer, distilled"],
       "source": "tiktok:@patricia.turchin (2026-05)"
+    },
+    {
+      "id": "adventure-humor-candid-01",
+      "niche": "solo travel & outdoors",
+      "summary": "You document wild outdoor and extreme adventures with a single self-deprecating line — the humor comes from your own unfiltered reaction to something beautiful or terrifying.",
+      "tone": "candid, self-aware, disarmingly funny",
+      "content_pillars": ["extreme adventure moments", "self-deprecating commentary", "relatable one-liners on striking settings", "physical challenge highlights"],
+      "audience": "people who wish they were braver and love watching someone else be terrified-and-delighted at the same time",
+      "sample_hooks": ["i was NOT ready for this", "my simplest answer", "the one that got me"],
+      "source": "tiktok:@izzsiomoi (2026-06)",
+      "performance": {"engagement_rate": 0.087, "view_index": 123.6, "sampled_at": "2026-06"}
     },
     {
       "id": "gap-in-market-founder-01",
