@@ -228,6 +228,30 @@ Execute `review`'s loaded instructions against `git diff origin/$_BASE...HEAD`. 
 - **Test gaps** → auto-add a test if the gap is in a directly-modified file (P1 + P5). Otherwise log as `TODOS.md` deferral.
 - **Performance concerns** without a measurement → log + continue (P6). Don't pre-optimize.
 
+### Empathy check (conditional — Nova only)
+
+If the diff touches any of these files, run the user-empathy audit before advancing:
+- `src/apps/api/prompts/interviewer.txt`
+- `src/apps/api/prompts/style_intent.txt`
+- `src/apps/web/src/app/plan/_components/OnboardingStep.tsx`
+
+```bash
+VENV=/Users/emirerben/Projects/nova/src/apps/api/.venv-test/bin/python
+SKILL=.claude/skills/audit-user-empathy
+mkdir -p /tmp/empathy-audit
+cd src/apps/api
+$VENV $SKILL/scripts/extract_surfaces.py --out /tmp/empathy-audit/surfaces.json
+$VENV $SKILL/scripts/grade_surfaces.py \
+  --inputs /tmp/empathy-audit/surfaces.json \
+  --out /tmp/empathy-audit/graded.json --report /tmp/empathy-audit/report.md
+cd ../..
+```
+
+Read `/tmp/empathy-audit/report.md`. Apply findings as follows:
+- `assumes_targeting_knowledge` or `puts_user_on_the_spot` on an **everyday persona** → **Blocker**. Stop. Surface the flagged question + proposed rewrite. Do not advance until addressed or the user explicitly overrides.
+- Any other flag on an everyday persona → **Taste** finding. Surface at the Approval Gate.
+- Flag on the marketer-savvy control only → log + continue (expected).
+
 Re-run the project's quality checks one more time before advancing. CI is going to run them anyway; catching it locally is cheaper than waiting for GitHub.
 
 Output: "Diff review complete. [N] findings ([M] auto-fixed, [K] deferred, [J] blockers). Advancing to ship."
