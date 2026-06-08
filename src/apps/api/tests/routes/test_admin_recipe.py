@@ -168,8 +168,9 @@ class TestGetRecipe:
 
     def test_strips_deprecated_font_alternatives(self, client):
         recipe = _make_recipe()
+        # Space Mono replaces Outfit here; Outfit was activated in PR #487.
         recipe["slots"][0]["text_overlays"][0]["font_alternatives"] = [
-            {"family": "Outfit", "similarity": 0.9},
+            {"family": "Space Mono", "similarity": 0.9},
             {"family": "DM Sans", "similarity": 0.8},
         ]
         template = _mock_template(recipe_cached=recipe)
@@ -354,7 +355,8 @@ class TestSaveRecipe:
 
     def test_rejects_deprecated_overlay_font_family(self, client):
         recipe = _make_recipe()
-        recipe["slots"][0]["text_overlays"][0]["font_family"] = "Outfit"
+        # Space Mono replaces Outfit here; Outfit was activated in PR #487.
+        recipe["slots"][0]["text_overlays"][0]["font_family"] = "Space Mono"
 
         with patch("app.routes.admin.settings") as mock_settings:
             mock_settings.admin_api_key = VALID_TOKEN

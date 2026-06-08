@@ -157,7 +157,7 @@ class TestSetFontDefault:
         res, added, _, mock_db = self._run(
             client,
             recipe,
-            {"font_default": "Outfit"},
+            {"font_default": "Space Mono"},  # Space Mono is deprecated (Outfit was, pre-PR #487)
         )
 
         assert res.status_code == 400
@@ -170,7 +170,7 @@ def test_cascade_font_default_change_rejects_deprecated():
     from app.pipeline.font_identification import DeprecatedFontError, cascade_font_default_change
 
     with pytest.raises(DeprecatedFontError):
-        cascade_font_default_change(_recipe_with_overlays(), "Outfit")
+        cascade_font_default_change(_recipe_with_overlays(), "Space Mono")
 
 
 class TestMigrationStaticLink:

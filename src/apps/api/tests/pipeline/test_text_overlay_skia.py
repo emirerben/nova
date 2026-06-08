@@ -1203,6 +1203,108 @@ def test_both_renderers_honor_text_anchor(renderer):
     )
 
 
+# ── Renderer parity: text_gradient honored by both Skia and Pillow ───────────
+# Lock the CLAUDE.md renderer-parity invariant for the new `text_gradient`
+# field.  When a gradient is set (red→blue, top→bottom), the top of the text
+# block should have substantially more RED than BLUE, and the bottom
+# substantially more BLUE than RED.  A renderer that ignores text_gradient
+# falls back to solid white fill — then both halves are nearly white
+# (R ≈ B ≈ 255) and the directional assertion fails, exposing the regression.
+#
+# Two-line text is intentional: it forces a taller block, making the gradient
+# sweep more visible and making top/bottom sampling more reliable.
+
+
+@pytest.mark.parametrize("renderer", ["skia", "pillow"])
+def test_both_renderers_honor_text_gradient(renderer):
+    """Both renderers must paint glyph fills with the requested gradient.
+
+    The parity contract (CLAUDE.md "renderer-parity invariant", #296 class):
+    every field carried in the burn dict MUST be honored by BOTH the Pillow
+    and Skia renderers.  `text_gradient` was introduced in PR #487 together
+    with renderer support on both sides; this test is the sentinel.
+    """
+    import numpy as np
+
+    overlay = {
+        "text": "NOVA\nGRADIENT",
+        "effect": "none",
+        "text_size_px": 72,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.45,
+        "text_color": "#FFFFFF",  # solid fallback (should NOT appear when gradient is set)
+        "start_s": 0.0,
+        "end_s": 2.0,
+        # Red at the top → blue at the bottom, top-to-bottom (angle 90°).
+        "text_gradient": {
+            "colors": ["#FF0000", "#0000FF"],
+            "angle_deg": 90,
+        },
+    }
+
+    bbox_fn = _frame_bbox if renderer == "skia" else _pillow_bbox
+    bbox, _width = bbox_fn(overlay)
+    assert bbox is not None, f"{renderer}: gradient overlay produced no visible pixels"
+
+    # Re-render to get the full image (bbox_fn discards it)
+    if renderer == "skia":
+        img = _skia_rgba_image(overlay)
+    else:
+        img = _pillow_rgba_image(overlay)
+
+    arr = np.array(img)  # (H, W, 4) uint8 RGBA
+
+    # Restrict to glyph bbox so we don't sample transparent padding
+    y0, x0, y1, x1 = bbox[1], bbox[0], bbox[3], bbox[2]
+    block_h = y1 - y0
+
+    # Sample the TOP quarter and BOTTOM quarter of the glyph block.
+    top_band = arr[y0 : y0 + block_h // 4, x0:x1]
+    bot_band = arr[y1 - block_h // 4 : y1, x0:x1]
+
+    # Keep only opaque-ish pixels (alpha > 128) so we measure glyph fill only.
+    top_opaque = top_band[top_band[..., 3] > 128]
+    bot_opaque = bot_band[bot_band[..., 3] > 128]
+
+    assert len(top_opaque) > 50, f"{renderer}: top band has too few opaque pixels"
+    assert len(bot_opaque) > 50, f"{renderer}: bottom band has too few opaque pixels"
+
+    top_r = float(top_opaque[:, 0].mean())
+    top_b = float(top_opaque[:, 2].mean())
+    bot_r = float(bot_opaque[:, 0].mean())
+    bot_b = float(bot_opaque[:, 2].mean())
+
+    assert top_r > top_b + 30, (
+        f"{renderer}: top of gradient should be red (R={top_r:.0f} B={top_b:.0f}). "
+        "If the renderer ignores text_gradient the fill is solid white and R≈B."
+    )
+    assert bot_b > bot_r + 30, (
+        f"{renderer}: bottom of gradient should be blue (R={bot_r:.0f} B={bot_b:.0f}). "
+        "If the renderer ignores text_gradient the fill is solid white and R≈B."
+    )
+
+
+def _skia_rgba_image(overlay: dict) -> Image.Image:
+    """Render overlay at t=0.5s via the Skia path and return the RGBA PIL image."""
+    from app.pipeline.text_overlay_skia import _draw_frame
+
+    skia_img = _draw_frame(overlay, 0.5, 2.0)
+    pil = Image.frombytes("RGBA", (skia_img.width(), skia_img.height()), skia_img.tobytes())
+    return pil
+
+
+def _pillow_rgba_image(overlay: dict) -> Image.Image:
+    """Render overlay at t=2.0s via the Pillow path and return the RGBA PIL image."""
+    import tempfile as _tf
+
+    from app.pipeline.text_overlay import render_overlays_at_time
+
+    with _tf.TemporaryDirectory(prefix="pillow_grad_") as d:
+        out = os.path.join(d, "p.png")
+        render_overlays_at_time([overlay], 2.0, 1.0, out)
+        return Image.open(out).convert("RGBA").copy()
+
+
 # ── Renderer parity: display_text honored by both Skia and Pillow ────────────
 # Lock the CLAUDE.md renderer-parity invariant for the new `display_text`
 # field. Layer 2's `_finalize_lyric_audible_window` writes `display_text` on

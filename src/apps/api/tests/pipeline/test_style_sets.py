@@ -115,3 +115,75 @@ def test_validation_catches_bad_font() -> None:
     }
     problems = validate_style_sets(bad)
     assert any("font_family" in p for p in problems)
+
+
+# ── Gradient preset tests ────────────────────────────────────────────────────
+
+_GRADIENT_PRESET_IDS = [
+    "iridescent",
+    "sunset_gradient",
+    "ocean_drift",
+    "candy_pop",
+    "aurora",
+]
+
+
+def test_gradient_presets_present() -> None:
+    """All 5 gradient style-set presets must be in the library."""
+    ids = set(style_set_ids())
+    missing = [sid for sid in _GRADIENT_PRESET_IDS if sid not in ids]
+    assert not missing, f"Gradient presets missing from library: {missing}"
+
+
+def test_gradient_presets_pass_validation() -> None:
+    """validate_style_sets() must return no problems (covers gradient color checks)."""
+    problems = validate_style_sets()
+    gradient_problems = [p for p in problems if any(pid in p for pid in _GRADIENT_PRESET_IDS)]
+    assert not gradient_problems, f"Gradient presets have validation problems: {gradient_problems}"
+
+
+def test_gradient_preset_resolve_returns_text_gradient() -> None:
+    """resolve_overlay_style on a gradient preset yields a text_gradient with ≥2 colors."""
+    for preset_id in _GRADIENT_PRESET_IDS:
+        resolved = resolve_overlay_style(preset_id, "hook")
+        gradient = resolved.get("text_gradient")
+        assert gradient is not None, (
+            f"resolve_overlay_style('{preset_id}', 'hook') returned no text_gradient"
+        )
+        colors = gradient.get("colors", [])
+        assert len(colors) >= 2, (
+            f"Gradient preset '{preset_id}' has fewer than 2 color stops: {colors}"
+        )
+        # Verify all colors are valid hex strings
+        import re
+
+        hex_re = re.compile(r"^#[0-9A-Fa-f]{6}$")
+        bad = [c for c in colors if not hex_re.match(c)]
+        assert not bad, f"Preset '{preset_id}' has invalid hex colors: {bad}"
+
+
+def test_gradient_presets_target_agentic_or_generative() -> None:
+    """Gradient presets must target agentic or generative (Skia renderer paths)."""
+    for preset_id in _GRADIENT_PRESET_IDS:
+        s = get_style_set(preset_id)
+        applies_to = s.get("applies_to", [])
+        assert any(t in applies_to for t in ("agentic", "generative")), (
+            f"Gradient preset '{preset_id}' does not target agentic/generative: {applies_to}"
+        )
+
+
+def test_validation_catches_bad_gradient_color() -> None:
+    """validate_style_sets catches malformed hex in text_gradient."""
+    bad = {
+        "version": "x",
+        "sets": [
+            {
+                "id": "default",
+                "roles": {"hook": {"text_gradient": {"colors": ["not-a-hex", "#FFFFFF"]}}},
+            }
+        ],
+    }
+    problems = validate_style_sets(bad)
+    assert any("text_gradient" in p or "gradient" in p for p in problems), (
+        f"Expected gradient color problem, got: {problems}"
+    )
