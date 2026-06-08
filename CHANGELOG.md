@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.94.0] — 2026-06-08
+
+### Added
+- **Gradient text fill — both renderers (Skia + Pillow).** New `text_gradient` burn-dict field (`{"colors": ["#HEX", ...], "angle_deg": 90, "stops": [0.0, …, 1.0]}`) paints glyph fills with a smooth multi-color gradient — the "ice cover" effect where each letter reveals a flowing color sweep. Gradient spans the full block bbox for multi-line overlays, so consecutive lines share one continuous sweep. Skia path: `GradientShader.MakeLinear` projected across the block; Pillow path: numpy glyph-mask composite over a gradient RGBA image. Shadow + stroke layers stay solid (unaffected). libass (classic animated `.ass`) degrades gracefully to the first gradient stop.
+- **5 gradient style-set presets** targeting agentic and generative templates (Skia renderer): `iridescent` (holographic violet → cyan → magenta), `sunset_gradient` (amber → orange → deep rose), `ocean_drift` (deep teal → sky → mint), `candy_pop` (hot pink → violet → indigo), `aurora` (teal → jade → electric lime). Each preset bundles a display font, gradient spec, and per-role sizing. Version key bumped to `style-sets-2026-06-08-gradient` (feeds `TEXT_OVERLAY_VERSION_V2`).
+- **6 new display fonts (OFL/Apache-2.0):** Great Vibes (script, substitute for Big Curls), Satisfy (script, substitute for Swirls and Curls), Patrick Hand (handwritten, substitute for Rascal), EB Garamond variable (editorial serif, substitute for Apple Garamond), Outfit variable font (activated from deprecated — substitute for ZT Bros Oskon 90s), Plus Jakarta Sans variable (clean grotesk, substitute for Alter Haas Grotesk). Font registry: 47 entries (39 active, 8 soft-deprecated). Embeddings + web sync updated.
+- **Admin overlay editor: gradient fill control.** `PropertyPanel` gains a "Gradient Fill" section: per-stop hex inputs, angle slider, and a "Clear gradient" action. `OverlayPreview` renders true `linear-gradient` text fill via `-webkit-background-clip: text` so the canvas preview matches rendered output.
+- **Renderer-parity test** (`test_both_renderers_honor_text_gradient`): renders a 2-color gradient overlay through both the Skia and Pillow paths and asserts endpoint pixel colors match within tolerance — guards the parity invariant for the new field.
+
 ## [0.4.93.0] — 2026-06-08
 
 ### Added
