@@ -4013,6 +4013,10 @@ def _collect_absolute_overlays(
             # Pass through stroke_width (TikTok-style outline)
             if ov.get("stroke_width") is not None:
                 entry["stroke_width"] = ov["stroke_width"]
+            # Gradient text fill: dict with keys colors/angle_deg/stops.
+            # Supplied by style-set presets; never forced on classic overlays.
+            if ov.get("text_gradient") is not None:
+                entry["text_gradient"] = ov["text_gradient"]
 
             # 3b. Style set (agentic): the chosen set owns per-role styling.
             # Resolve font/size/color/effect/position/anchor/stroke from the set
