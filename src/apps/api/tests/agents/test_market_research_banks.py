@@ -230,8 +230,9 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             $target_item_count to produce the right idea count per week.
     # 2026-06-05.1: per-item filming_guide (2–4 shots keyed to edit_format).
     # 2026-06-06: added $tiktok_analysis block (deep TikTok profile analysis).
+    # 2026-06-08: retrospective-footage rule (past-event ideas).
     assert content_ideas_version() == "2026-05-31"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-07"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -239,11 +240,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
 
     # The success-factor bank is part of THREE prompts (persona, content plan,
     # intro). The bank itself is unchanged (2026-05-30); persona led to 2026-06-06.1
-    # (deep TikTok analysis), content plan to 2026-06-06 (TikTok analysis), and
-    # intro_writer to 2026-06-07 (filming_guide context block — M3).
+    # (deep TikTok analysis), content plan to 2026-06-08 (retrospective-footage rule),
+    # and intro_writer to 2026-06-07 (filming_guide context block — M3).
     assert success_factors_version() == "2026-05-30"
     assert PERSONA_PROMPT_VERSION == "2026-06-06.1"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-07"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07"
 
 
