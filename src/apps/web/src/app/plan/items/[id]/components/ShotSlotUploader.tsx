@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   attachClips,
   requestUploadUrls,
@@ -283,21 +284,25 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     durationLabel: string | undefined,
     filename: string,
   ) {
-    // Get the latest state at commit time (avoid stale closure).
+    // Capture the latest state synchronously using flushSync.
+    // React functional updaters are called lazily during reconciliation, not
+    // synchronously when setState is called — the setTimeout(0) trick is
+    // unreliable in React 18 concurrent mode (both are macrotasks, ordering
+    // is not guaranteed). flushSync forces all pending updates to flush now,
+    // so latestSlots/latestPool are populated before we enqueue the attach.
     let latestSlots: Record<string, SlotState> = {};
     let latestPool: ClipAssignment[] = [];
 
-    setSlotState((prev) => {
-      latestSlots = { ...prev, [sid]: { phase: "committing", filename, progress: 1, gcsPaths: gcsPath } };
-      return latestSlots;
+    flushSync(() => {
+      setSlotState((prev) => {
+        latestSlots = { ...prev, [sid]: { phase: "committing", filename, progress: 1, gcsPaths: gcsPath } };
+        return latestSlots;
+      });
+      setPoolPaths((prev) => {
+        latestPool = prev;
+        return prev;
+      });
     });
-    setPoolPaths((prev) => {
-      latestPool = prev;
-      return prev;
-    });
-
-    // Wait one tick to ensure state is flushed, then enqueue.
-    await new Promise<void>((r) => setTimeout(r, 0));
 
     attachQueue.current = attachQueue.current.then(async () => {
       const assignments = buildAssignments(latestSlots, latestPool);
