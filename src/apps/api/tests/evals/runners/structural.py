@@ -1429,7 +1429,7 @@ def check_style_intent(output: Any) -> list[str]:
     """Structural floor for nova.plan.style_intent (Creator Agent M2).
 
     Hard invariants:
-    - intent must be one of the 5 valid literal values
+    - intent must be one of the 6 valid literal values (incl. describe added 2026-06-07)
     - confidence must be in [0.0, 1.0]
     - reply must be non-empty (agent must always produce a user-visible reply)
     - suggestions must be a list (may be empty; max 5)
@@ -1450,7 +1450,7 @@ def check_style_intent(output: Any) -> list[str]:
             "cycle_fonts",
         }
     )
-    _VALID_INTENTS = {"style_edit", "persona_preference", "scope_reduction", "clarify", "unknown"}
+    _VALID_INTENTS = {"style_edit", "persona_preference", "scope_reduction", "clarify", "describe", "unknown"}
 
     failures: list[str] = []
 
