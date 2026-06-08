@@ -84,7 +84,8 @@ describe("FontAlternatives", () => {
       <FontAlternatives
         overlay={overlay({
           font_alternatives: [
-            { family: "Outfit", similarity: 0.99 },
+            // Caveat Brush is deprecated — should be filtered out.
+            { family: "Caveat Brush", similarity: 0.99 },
             { family: "Montserrat", similarity: 0.98 },
             { family: "Bebas Neue", similarity: 0.97 },
             { family: "Anton", similarity: 0.96 },
@@ -100,7 +101,7 @@ describe("FontAlternatives", () => {
     );
 
     expect(screen.getByText("Top matches (5)")).toBeInTheDocument();
-    expect(screen.queryByText("Outfit")).not.toBeInTheDocument();
+    expect(screen.queryByText("Caveat Brush")).not.toBeInTheDocument();
     expect(screen.getAllByText("Bangers").length).toBeGreaterThan(0);
     expect(screen.queryByText("Space Grotesk")).not.toBeInTheDocument();
 
@@ -118,12 +119,17 @@ describe("FontAlternatives", () => {
 describe("FontLibraryBrowser", () => {
   test("groups active fonts by vibe and dispatches picks", () => {
     const grouped = fontsByVibe();
-    expect(grouped.viral_headlines).toHaveLength(11);
+    // v0.4.94.0: +Outfit VF (activated), +Plus Jakarta Sans VF → viral_headlines=13
+    //            +EB Garamond VF → editorial=11
+    //            +Patrick Hand → handwritten=2
+    //            +Great Vibes, +Satisfy → script=3
+    expect(grouped.viral_headlines).toHaveLength(13);
     expect(grouped.clean_captions).toHaveLength(10);
-    expect(grouped.editorial).toHaveLength(10);
-    expect(grouped.handwritten).toHaveLength(1);
-    expect(grouped.script).toHaveLength(1);
-    expect(Object.values(grouped).flat()).not.toContain("Outfit");
+    expect(grouped.editorial).toHaveLength(11);
+    expect(grouped.handwritten).toHaveLength(2);
+    expect(grouped.script).toHaveLength(3);
+    // Deprecated fonts must be excluded; Caveat Brush is deprecated.
+    expect(Object.values(grouped).flat()).not.toContain("Caveat Brush");
 
     const onPickFont = jest.fn();
     render(<FontLibraryBrowser onPickFont={onPickFont} />);
@@ -151,9 +157,11 @@ describe("PropertyPanel", () => {
       <PropertyPanel
         recipe={recipe(
           overlay({
-            font_family: "Outfit",
+            // Outfit was deprecated in this registry but is now active.
+            // Use Caveat Brush, which remains deprecated.
+            font_family: "Caveat Brush",
             font_alternatives: [
-              { family: "Outfit", similarity: 0.9 },
+              { family: "Caveat Brush", similarity: 0.9 },
               { family: "Bangers", similarity: 0.8 },
             ],
           }),
@@ -164,7 +172,7 @@ describe("PropertyPanel", () => {
     );
 
     expect(screen.getByText("deprecated")).toBeInTheDocument();
-    expect(screen.getByText("Outfit")).toBeInTheDocument();
+    expect(screen.getByText("Caveat Brush")).toBeInTheDocument();
 
     fireEvent.click(screen.getByText("Switch to active alternative"));
     expect(dispatch).toHaveBeenCalledWith({
