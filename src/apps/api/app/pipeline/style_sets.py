@@ -15,12 +15,12 @@ hand-curated, version-controlled JSON at `assets/style_sets/style-sets.json`.
 The top-level `version` string is folded into the Layer-2 cache key so editing
 the library invalidates stale agentic recipes.
 
-Design invariant (CLAUDE.md #296 class): a style set introduces NO new renderer
-fields. Every field it emits (`font_family`, `text_size`/`text_size_px`,
-`text_color`, `highlight_color`, `effect`, `position`, `position_x_frac`,
-`position_y_frac`, `text_anchor`, `stroke_width`, `cycle_fonts`) is already
-honored by BOTH the Pillow and Skia renderers. That is what keeps style-set
-resolution parity-safe by construction.
+Renderer-parity contract (CLAUDE.md #296 class): every field a style set emits
+must be honored by BOTH the Pillow and Skia renderers.  All fields in
+``_STYLE_KEYS`` satisfy this invariant — including ``text_gradient``, which was
+added together with renderer support in both paths (PR #487).  Adding a new
+field here without updating both renderers breaks the invariant; the parity test
+``test_both_renderers_honor_text_gradient`` is the sentinel.
 """
 
 from __future__ import annotations
@@ -92,6 +92,10 @@ _STYLE_KEYS: tuple[str, ...] = (
     "text_anchor",
     "stroke_width",
     "cycle_fonts",
+    # Gradient text fill — dict {colors, angle_deg, stops}.  Both renderers
+    # honor this field (Skia: GradientShader, Pillow: numpy image composite).
+    # Parity test: test_both_renderers_honor_text_gradient.
+    "text_gradient",
 )
 
 # Role fallback chains: when a set doesn't define the requested role, try the
@@ -397,6 +401,24 @@ def validate_style_sets(data: dict | None = None) -> list[str]:
             pos = block.get("position")
             if pos is not None and pos not in valid_positions:
                 problems.append(f"{sid}.{role}: position {pos!r} not in _POSITION_Y")
+            grad = block.get("text_gradient")
+            if grad is not None:
+                if not isinstance(grad, dict):
+                    problems.append(f"{sid}.{role}: text_gradient must be a dict")
+                else:
+                    gcolors = grad.get("colors")
+                    if not isinstance(gcolors, list) or len(gcolors) < 2:
+                        problems.append(
+                            f"{sid}.{role}: text_gradient.colors must be a list of ≥2 hex strings"
+                        )
+                    else:
+                        _hex_re_check = __import__("re").compile(r"^#[0-9A-Fa-f]{6}$")
+                        for c in gcolors:
+                            if not _hex_re_check.match(str(c)):
+                                problems.append(
+                                    f"{sid}.{role}: text_gradient color"
+                                    f" {c!r} is not a valid #RRGGBB hex"
+                                )
     if _DEFAULT_SET_ID not in ids_seen:
         problems.append(f"missing required set id {_DEFAULT_SET_ID!r}")
     return problems
