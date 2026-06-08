@@ -119,7 +119,7 @@ export function StyleCard({ style, status, styleSetPreview, fontPreview }: Style
             {textColor && (
               <span className="flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] text-[#3f3f46]">
                 <span className="inline-block h-3 w-3 rounded-full border border-zinc-200" style={{ background: textColor }} aria-hidden="true" />
-                Text
+                Text color
               </span>
             )}
             {highlightColor && (
