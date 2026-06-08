@@ -103,7 +103,7 @@ export function StyleCard({ style, status, styleSetPreview, fontPreview }: Style
         <div className="mt-3">
           <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-[#a1a1aa]">Font</p>
           <span
-            className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-[12px]"
+            className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-[12px] text-[#3f3f46]"
             style={cssFamily ? { fontFamily: cssFamily } : undefined}
           >
             {fontName}
