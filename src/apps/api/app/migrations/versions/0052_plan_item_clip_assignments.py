@@ -71,7 +71,7 @@ def upgrade() -> None:
             import json
 
             conn.execute(
-                text("UPDATE plan_items SET filming_guide = :guide::jsonb WHERE id = :id"),
+                text("UPDATE plan_items SET filming_guide = CAST(:guide AS jsonb) WHERE id = :id"),
                 {"guide": json.dumps(new_guide), "id": str(item_id)},
             )
 
