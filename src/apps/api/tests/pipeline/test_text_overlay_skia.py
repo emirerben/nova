@@ -139,11 +139,10 @@ _TR_UNSAFE_FONTS: set[str] = {
     # the form matcher's TR hint biases toward simpler effects which sharply
     # narrows this exposure.
     "PermanentMarker-Regular.ttf",
-    # Script / handwriting faces added in v0.4.94.0 — none cover the full TR
-    # diacritic set (İ ı Ş ş Ğ ğ). Same TODO(tr-cycle-filter) applies.
-    "GreatVibes-Regular.ttf",
+    # Satisfy added in v0.4.94.0 — script font lacks Turkish diacritics (İ ı Ş ş Ğ ğ).
+    # Great Vibes and Patrick Hand DO cover the TR diacritic set and are NOT listed here.
+    # Same TODO(tr-cycle-filter) applies.
     "Satisfy-Regular.ttf",
-    "PatrickHand-Regular.ttf",
 }
 
 
