@@ -206,6 +206,10 @@ def _run_generative_job(job_id: str) -> None:
         # intro_writer for hook voice. Absent on public/legacy jobs → empty list →
         # byte-identical to pre-M3 behavior.
         filming_guide_candidates: list[dict] = list(all_candidates.get("filming_guide") or [])
+        # Narrative clip order (filming-guide alignment): the first N entries of
+        # clip_paths are the guide's shot clips, in guide order (derived at
+        # dispatch by _dispatch_item_render). 0/absent on public/legacy jobs.
+        narrative_shot_count: int = int(all_candidates.get("narrative_shot_count") or 0)
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -234,6 +238,21 @@ def _run_generative_job(job_id: str) -> None:
             "clip_metadata_done",
             {"clips": len(clip_metas), "available_footage_s": round(available_footage_s, 3)},
         )
+
+        # Narrative order: clip_id_to_gcs preserves clip_paths order (insertion
+        # order = upload index), so the first N keys ARE the guide clips in
+        # guide order. The matcher tolerates ids missing from clip_metas
+        # (degraded analysis) — it drops them from the spine with a warning.
+        narrative_order = _resolve_narrative_order(
+            narrative_shot_count, clip_id_to_gcs, job_id=job_id
+        )
+        if narrative_order:
+            # Ground the hook text in the clip that actually OPENS the edit
+            # (the guide's first shot), not the max-hook_score clip. Intro
+            # SIZING (_hero_composition) is intentionally untouched — it picks
+            # the most text-friendly clip because the overlay persists across
+            # the whole video.
+            hero = next((m for m in clip_metas if m.clip_id == narrative_order[0]), hero)
 
         # The pre-render phase has three independent workstreams that used to run
         # strictly serially (~tonemap + ~20s text/style + up to ~64s matcher).
@@ -443,6 +462,7 @@ def _run_generative_job(job_id: str) -> None:
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        narrative_order=narrative_order,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -555,6 +575,44 @@ def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dic
         },
         "hero": max(clip_metas, key=lambda m: float(getattr(m, "hook_score", 0.0) or 0.0)),
     }
+
+
+def _resolve_narrative_order(
+    narrative_shot_count: int,
+    clip_id_to_gcs: dict[str, str],
+    *,
+    job_id: str,
+) -> list[str] | None:
+    """clip_ids of the filming guide's shot clips, in guide order — or None.
+
+    `clip_id_to_gcs` preserves clip_paths order (built by index enumeration),
+    so the first `narrative_shot_count` keys are the guide clips in guide
+    order (dispatch contract: _dispatch_item_render reorders clip_paths).
+
+    Render-time kill switch: NARRATIVE_CLIP_ORDER_ENABLED=false makes every
+    render (queued jobs and re-renders alike) fall back to pure greedy
+    matching — worker restart, no deploy. Both outcomes emit a pipeline event
+    so /admin/jobs shows why an edit was or wasn't guide-ordered.
+    """
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    if narrative_shot_count <= 0:
+        return None
+    if not settings.NARRATIVE_CLIP_ORDER_ENABLED:
+        record_pipeline_event(
+            "assembly",
+            "narrative_order_skipped",
+            {"reason": "kill_switch", "shot_count": narrative_shot_count},
+        )
+        log.info("narrative_order_kill_switch", job_id=job_id)
+        return None
+    ordered_ids = list(clip_id_to_gcs)[:narrative_shot_count]
+    record_pipeline_event(
+        "assembly",
+        "narrative_order_applied",
+        {"shot_count": narrative_shot_count, "clip_ids": ordered_ids},
+    )
+    return ordered_ids
 
 
 def _pretonemap_hdr_clips(
@@ -1004,6 +1062,11 @@ def _run_regenerate_variant(
         filming_guide_regen: list[dict] = list(
             (job.all_candidates or {}).get("filming_guide") or []
         )
+        # Re-renders inherit the narrative clip order too — otherwise the first
+        # song swap would silently reshuffle a guide-ordered edit back to random.
+        narrative_shot_count_regen: int = int(
+            (job.all_candidates or {}).get("narrative_shot_count") or 0
+        )
         # Voiceover jobs re-render the same voice bed; the mix slider is the only knob
         # that changes here. Both come from the Job row (single source of truth).
         voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
@@ -1134,6 +1197,18 @@ def _run_regenerate_variant(
         ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
         available_footage_s = _available_footage_s(ingest["probe_map"])
 
+        # Narrative order survives re-renders (same dispatch contract as the
+        # first render). Hook text grounds in the clip that opens the edit.
+        narrative_order_regen = _resolve_narrative_order(
+            narrative_shot_count_regen, ingest["clip_id_to_gcs"], job_id=job_id
+        )
+        regen_hero = ingest["hero"]
+        if narrative_order_regen:
+            regen_hero = next(
+                (m for m in ingest["clip_metas"] if m.clip_id == narrative_order_regen[0]),
+                regen_hero,
+            )
+
         # Resolve text mode + agent_text in one step.  _resolve_regen_text re-uses
         # persisted intro_text when the user is only changing font/size/style — no LLM.
         agent_text, agent_form, text_mode = _resolve_regen_text(
@@ -1144,7 +1219,7 @@ def _run_regenerate_variant(
             persisted_highlight=persisted_highlight,
             run_text_agents_fn=lambda: _run_text_agents(
                 ingest["clip_metas"],
-                ingest["hero"],
+                regen_hero,
                 job_id=job_id,
                 language=language,
                 persona=persona,
@@ -1191,6 +1266,7 @@ def _run_regenerate_variant(
             style_set_id=resolved_style_set_id,
             intro_size_override_px=resolved_size_override_px,
             user_style_knobs=existing_user_style_knobs,
+            narrative_order=narrative_order_regen,
         )
 
     _update_variant_entry(job_id, variant_id, result)
@@ -1744,8 +1820,13 @@ def _render_generative_variant(
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    narrative_order: list[str] | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
+
+    `narrative_order` (filming-guide alignment) is the guide clips' ids in
+    shot order; forwarded to template_matcher.match so the edit's sequence
+    follows the guide. None = classic greedy (public/legacy jobs).
 
     `intro_size_override_px` carries a user-pinned intro size (the public ±size
     nudge). When None the size is computed from the hero clip's composition; when
@@ -1890,7 +1971,7 @@ def _render_generative_variant(
         recipe = build_recipe(recipe_dict)
         try:
             recipe = consolidate_slots(recipe, clip_metas)
-            assembly_plan = match(recipe, clip_metas)
+            assembly_plan = match(recipe, clip_metas, narrative_order=narrative_order)
         except TemplateMismatchError as exc:
             raise ValueError(f"{exc.code}: {exc.message}") from exc
 

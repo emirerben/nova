@@ -307,6 +307,48 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
 PLAN_JOBS_QUEUE = "plan-jobs"
 
 
+def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[str], int]:
+    """Reorder clip_paths so guide-shot clips lead IN GUIDE ORDER, pool after.
+
+    Returns (ordered_paths, narrative_shot_count). narrative_shot_count == 0
+    means no usable guide ordering (no guide, no shot-bound clips, or stale
+    shot_ids) — callers then dispatch with today's behavior, unchanged.
+
+    clip_assignments stores {gcs_path, shot_id} in attach-request order, which
+    is client-controlled; the filming guide's shot sequence is the narrative
+    truth, so we derive the order from the guide. shot_ids are re-validated
+    against the live guide (a reroll can demote assignments; stale ids become
+    pool clips). Paths in clip_paths but not in clip_assignments (legacy rows)
+    join the pool tail in their existing order.
+    """
+    guide = list(item.filming_guide or [])
+    assignments = list(item.clip_assignments or [])
+    if not guide or not assignments:
+        return clip_paths, 0
+    path_by_shot: dict[str, str] = {
+        str(a.get("shot_id")): str(a.get("gcs_path"))
+        for a in assignments
+        if a.get("shot_id") and a.get("gcs_path")
+    }
+    known_paths = set(clip_paths)
+    ordered: list[str] = []
+    for shot in guide:
+        sid = str(shot.get("shot_id") or "")
+        path = path_by_shot.get(sid)
+        if path and path in known_paths and path not in ordered:
+            ordered.append(path)
+    if not ordered:
+        return clip_paths, 0
+    pool = [p for p in clip_paths if p not in ordered]
+    log.info(
+        "plan_item_render.narrative_order",
+        plan_item_id=str(item.id),
+        shot_clips=len(ordered),
+        pool_clips=len(pool),
+    )
+    return ordered + pool, len(ordered)
+
+
 def _dispatch_item_render(
     session,  # noqa: ANN001
     item: PlanItem,
@@ -334,6 +376,12 @@ def _dispatch_item_render(
     if not clip_paths:
         log.warning("plan_item_render.no_clips", plan_item_id=str(item.id))
         return None
+    # Narrative clip order (filming-guide alignment): reorder clip_paths so the
+    # guide's shot clips come first IN GUIDE ORDER (clip_assignments stores them
+    # in attach-request order, which is client-controlled and not the guide
+    # order), pool clips after. narrative_shot_count tells the render path how
+    # many of the leading paths form the narrative spine.
+    clip_paths, narrative_shot_count = _narrative_clip_order(item, clip_paths)
     try:
         job = build_generative_job(
             user_id=plan.user_id,
@@ -358,6 +406,9 @@ def _dispatch_item_render(
             # Filming guide (Creator Agent M3 / B2). Plain plan data, threaded down
             # to intro_writer so the hook voice reflects the intended shots.
             filming_guide=list(item.filming_guide or []),
+            # Filming-guide alignment: how many leading clip_paths are guide
+            # shots (in guide order). 0 = no narrative ordering (pure greedy).
+            narrative_shot_count=narrative_shot_count,
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))

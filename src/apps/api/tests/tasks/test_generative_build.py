@@ -240,7 +240,10 @@ def _patch_render_helpers(monkeypatch, mix_calls: list):
     )
     monkeypatch.setattr(tm, "consolidate_slots", lambda recipe, metas: recipe, raising=False)
     monkeypatch.setattr(
-        tm, "match", lambda recipe, metas: types.SimpleNamespace(steps=[]), raising=False
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(steps=[]),
+        raising=False,
     )
 
     class _Mismatch(Exception):
@@ -1988,3 +1991,93 @@ def test_fast_path_burn_copy_through_marks_failed(monkeypatch):
             size_override_px=None,
             settings=gb.settings,
         )
+
+
+# ── Narrative order (filming-guide alignment) ─────────────────────────────────
+
+
+def test_resolve_narrative_order_zero_count_is_none():
+    assert gb._resolve_narrative_order(0, {"a": "g/a.mp4"}, job_id="j") is None
+
+
+def test_resolve_narrative_order_returns_first_n_ids_in_order():
+    c2g = {"id_a": "g/a.mp4", "id_b": "g/b.mp4", "id_c": "g/c.mp4"}
+    assert gb._resolve_narrative_order(2, c2g, job_id="j") == ["id_a", "id_b"]
+
+
+def test_resolve_narrative_order_kill_switch(monkeypatch):
+    monkeypatch.setattr(gb.settings, "NARRATIVE_CLIP_ORDER_ENABLED", False)
+    assert gb._resolve_narrative_order(2, {"a": "g/a.mp4", "b": "g/b.mp4"}, job_id="j") is None
+
+
+def test_render_variant_threads_narrative_order_to_match(monkeypatch, tmp_path):
+    """The defining plumbing assertion: narrative_order reaches match()."""
+    import app.pipeline.template_matcher as tm
+
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+    received: dict = {}
+
+    def _capture_match(recipe, metas, **kw):
+        received.update(kw)
+        return types.SimpleNamespace(steps=[])
+
+    monkeypatch.setattr(tm, "match", _capture_match, raising=False)
+    vdir = tmp_path / "vn"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 1, "text_mode": "none", "track": None}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0), _Meta("c2", 4.0)],
+        clip_id_to_local={"c1": "/x.mp4", "c2": "/y.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4", "c2": "music-uploads/y.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        narrative_order=["c2", "c1"],
+    )
+    assert res["ok"] is True
+    assert received.get("narrative_order") == ["c2", "c1"]
+
+
+def test_build_generative_job_persists_narrative_shot_count():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4", "users/u/plan/i/b.mp4"],
+        mode="content_plan",
+        narrative_shot_count=2,
+    )
+    assert job.all_candidates["narrative_shot_count"] == 2
+
+
+def test_build_generative_job_omits_key_when_zero():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+    )
+    assert "narrative_shot_count" not in job.all_candidates
+
+
+def test_build_generative_job_clamps_count_to_clip_count():
+    import uuid as _uuid
+
+    from app.services.generative_jobs import build_generative_job
+
+    job = build_generative_job(
+        user_id=_uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        narrative_shot_count=5,
+    )
+    assert job.all_candidates["narrative_shot_count"] == 1

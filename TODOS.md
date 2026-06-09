@@ -49,6 +49,14 @@
 **Effort:** M (CC: ~1h)
 **Priority:** P3
 
+### Narrative clip order for PUBLIC generative jobs
+**What:** Plan-item edits now follow the filming guide's shot order (`narrative_order` in `template_matcher.match`, kill switch `NARRATIVE_CLIP_ORDER_ENABLED`). Public generative jobs (no plan item) still use pure greedy matching — upload order is ignored. Decide whether upload order should become a soft narrative signal there, or whether the LLM `clip_router` (`app/agents/clip_router.py`, already has a `sequence_variety` eval rubric in `tests/evals/rubrics/clip_router.md`) should rank a sequence for the public flow.
+**Why:** The "edit feels random" complaint applies to public uploads too; users tend to upload in the order they filmed. But upload order is a much weaker signal than an explicit guide, and energy-greedy may genuinely beat it for dump-style uploads — needs a judge-eval before committing.
+**How:** Option A: pass `narrative_order=upload-order` for public jobs behind a separate flag. Option B: route public montage through `agentic_match()` with sequence-aware prompting. Either way, run the `edit-quality-review` workflow (`.claude/workflows/edit-quality-review.js`) on before/after renders to judge.
+**Effort:** S (CC: ~30 min for A; M ~1.5h for B with eval)
+**Priority:** P3
+**Depends on:** filming-guide narrative ordering (this PR) proving out in prod
+
 ### Shot-count hint on the content-plan calendar card
 **What:** The calendar card today shows the day's theme and idea. Adding a tiny `3 shots` badge would give the user a sense of filming effort before tapping into the item.
 **Why:** Helps plan filming sessions — a 4-shot montage vs a 1-shot talking head are very different commitment levels.

@@ -1183,3 +1183,135 @@ class TestConsolidateSlots:
             assert count <= 2, (
                 f"Clip {clip_id} appears {count} times — consolidation should prevent this"
             )
+
+
+# ── Narrative order (filming-guide alignment) ─────────────────────────────────
+
+
+class TestNarrativeOrder:
+    """match(narrative_order=[...]) — guide clips must FIRST APPEAR in guide
+    order; pool clips interleave but never open the edit; greedy unchanged
+    when the param is absent."""
+
+    def _first_appearance(self, plan: AssemblyPlan) -> list[str]:
+        seen: list[str] = []
+        for step in plan.steps:
+            if step.clip_id not in seen:
+                seen.append(step.clip_id)
+        return seen
+
+    def test_spine_first_appearance_monotonic(self):
+        recipe = _make_recipe([_slot(i, 5.0, priority=11 - i) for i in range(1, 9)])
+        guide = [
+            _make_clip("g1", [_moment(0, 5, energy=3.0), _moment(5, 10, energy=4.0)]),
+            _make_clip("g2", [_moment(0, 5, energy=9.0), _moment(5, 10, energy=8.0)]),
+            _make_clip("g3", [_moment(0, 5, energy=6.0), _moment(5, 10, energy=7.0)]),
+        ]
+        pool = [
+            _make_clip("p1", [_moment(0, 5, energy=9.5), _moment(5, 10, energy=9.0)]),
+            _make_clip("p2", [_moment(0, 5, energy=8.5), _moment(5, 10, energy=2.0)]),
+        ]
+        plan = match(recipe, guide + pool, narrative_order=["g1", "g2", "g3"])
+
+        first = self._first_appearance(plan)
+        g_positions = [first.index(g) for g in ("g1", "g2", "g3")]
+        assert g_positions == sorted(g_positions), (
+            f"guide clips out of order: {first}"
+        )
+        # The guide's first shot OPENS the edit even though pool p1 has the
+        # highest energy.
+        assert plan.steps[0].clip_id == "g1"
+
+    def test_every_guide_clip_lands_when_slots_suffice(self):
+        recipe = _make_recipe([_slot(i, 5.0) for i in range(1, 4)])
+        guide = [
+            _make_clip("g1", [_moment(0, 5, energy=1.0)]),
+            _make_clip("g2", [_moment(0, 5, energy=1.5)]),
+            _make_clip("g3", [_moment(0, 5, energy=2.0)]),
+        ]
+        pool = [_make_clip("p1", [_moment(0, 5, energy=9.9)])]
+        plan = match(recipe, guide + pool, narrative_order=["g1", "g2", "g3"])
+
+        # 3 slots, 3 guide clips → forced advance owes every slot to the guide.
+        assert [s.clip_id for s in plan.steps] == ["g1", "g2", "g3"]
+
+    def test_more_guide_clips_than_slots_keeps_ordered_prefix(self):
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0)])
+        guide = [
+            _make_clip(f"g{i}", [_moment(0, 5, energy=5.0)]) for i in range(1, 5)
+        ]
+        plan = match(recipe, guide, narrative_order=["g1", "g2", "g3", "g4"])
+
+        assert [s.clip_id for s in plan.steps] == ["g1", "g2"]
+
+    def test_guide_clip_without_moments_dropped_from_spine(self):
+        recipe = _make_recipe([_slot(i, 5.0) for i in range(1, 4)])
+        guide = [
+            _make_clip("g1", [_moment(0, 5)]),
+            _make_clip("g2", []),  # degraded analysis — no usable moments
+            _make_clip("g3", [_moment(0, 5)]),
+        ]
+        plan = match(recipe, guide, narrative_order=["g1", "g2", "g3"])
+
+        clip_ids = [s.clip_id for s in plan.steps]
+        assert "g2" not in clip_ids
+        assert clip_ids[0] == "g1"
+        first = self._first_appearance(plan)
+        assert first.index("g1") < first.index("g3")
+
+    def test_missing_guide_id_ignored(self):
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0)])
+        clips = [
+            _make_clip("g1", [_moment(0, 5)]),
+            _make_clip("g2", [_moment(0, 5)]),
+        ]
+        plan = match(recipe, clips, narrative_order=["ghost", "g1", "g2"])
+
+        assert [s.clip_id for s in plan.steps] == ["g1", "g2"]
+
+    def test_adjacent_duplicates_persist_no_dedup_swap(self):
+        """Narrative mode must NOT run _dedup_adjacent — it swaps assignments
+        across positions and would scramble the spine."""
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0)])
+        guide = [
+            _make_clip("a", [_moment(0, 5, energy=9.0), _moment(5, 10, energy=9.0)]),
+            _make_clip("b", [_moment(0, 5, energy=5.0)]),
+        ]
+        plan = match(recipe, guide, narrative_order=["a", "b"])
+
+        # Slot 1 anchors on a; b wins slot 2 on energy-fit (slot energy 5.0);
+        # slot 3 can only be b again (a is behind the cursor). The b,b adjacency
+        # persists — dedup would have swapped a's spare moment into slot 3.
+        assert [s.clip_id for s in plan.steps] == ["a", "b", "b"]
+
+    def test_pinned_assignment_wins_over_narrative(self):
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0)])
+        guide = [
+            _make_clip("g1", [_moment(0, 5)]),
+            _make_clip("g2", [_moment(0, 5)]),
+        ]
+        pool = [_make_clip("face", [_moment(0, 5)])]
+        plan = match(
+            recipe,
+            guide + pool,
+            pinned_assignments={1: "face"},
+            narrative_order=["g1", "g2"],
+        )
+
+        assert plan.steps[0].clip_id == "face"
+        rest = [s.clip_id for s in plan.steps[1:]]
+        assert rest == ["g1", "g2"]
+
+    def test_none_param_identical_to_omitted(self):
+        recipe = _make_recipe([_slot(i, 5.0, priority=11 - i) for i in range(1, 6)])
+        clips = [
+            _make_clip("c1", [_moment(0, 5, energy=8.0), _moment(5, 10, energy=3.0)]),
+            _make_clip("c2", [_moment(0, 5, energy=6.0)]),
+            _make_clip("c3", [_moment(0, 5, energy=7.0), _moment(10, 15, energy=9.0)]),
+        ]
+        baseline = match(recipe, clips)
+        explicit_none = match(recipe, clips, narrative_order=None)
+
+        assert [(s.slot.get("position"), s.clip_id, s.moment) for s in baseline.steps] == [
+            (s.slot.get("position"), s.clip_id, s.moment) for s in explicit_none.steps
+        ]
