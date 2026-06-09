@@ -1,0 +1,201 @@
+/**
+ * Instant-edit session semantics:
+ * - draft seeds from the variant on enterEdit and polls never clobber it
+ * - commit builds a MINIMAL payload (only changed fields) and fires ONCE
+ * - edits while a render is in flight coalesce into one follow-up commit
+ * - a no-change Done fires nothing (no wasted render)
+ */
+
+import { act, renderHook } from "@testing-library/react";
+import {
+  buildEditPayload,
+  useVariantEditSession,
+  type EditDraft,
+} from "@/app/generative/useVariantEditSession";
+import type { EditVariantPayload, GenerativeVariant } from "@/lib/generative-api";
+
+function makeVariant(over: Partial<GenerativeVariant> = {}): GenerativeVariant {
+  return {
+    variant_id: "song_text",
+    rank: 1,
+    text_mode: "agent_text",
+    music_track_id: "t1",
+    track_title: "Track",
+    style_set_id: "travel_editorial",
+    output_url: "https://x/out.mp4",
+    video_path: "generative-jobs/j/v.mp4",
+    render_status: "ready",
+    ok: true,
+    error: null,
+    intro_text_size_px: 56,
+    intro_size_source: "computed",
+    intro_text: "original hook",
+    base_video_url: "https://x/base.mp4?sig=1",
+    ...over,
+  } as GenerativeVariant;
+}
+
+const baselineDraft: EditDraft = {
+  text: "original hook",
+  removed: false,
+  styleSetId: "travel_editorial",
+  sizePx: 56,
+};
+
+describe("buildEditPayload", () => {
+  it("sends only changed fields", () => {
+    expect(
+      buildEditPayload({ ...baselineDraft, styleSetId: "word_reveal" }, baselineDraft),
+    ).toEqual({ style_set_id: "word_reveal" });
+    expect(buildEditPayload({ ...baselineDraft, text: "new" }, baselineDraft)).toEqual({
+      text: "new",
+    });
+    expect(buildEditPayload({ ...baselineDraft, sizePx: 70 }, baselineDraft)).toEqual({
+      text_size_px: 70,
+    });
+  });
+
+  it("maps removal to remove_text and ignores size while removed", () => {
+    expect(
+      buildEditPayload({ ...baselineDraft, removed: true, sizePx: 70 }, baselineDraft),
+    ).toEqual({ remove_text: true });
+  });
+
+  it("re-adding text after removal sends the text even when unchanged", () => {
+    const removedBaseline = { ...baselineDraft, removed: true };
+    expect(
+      buildEditPayload({ ...baselineDraft, removed: false }, removedBaseline),
+    ).toEqual({ text: "original hook" });
+  });
+
+  it("returns empty payload for no changes", () => {
+    expect(buildEditPayload(baselineDraft, baselineDraft)).toEqual({});
+  });
+});
+
+describe("useVariantEditSession", () => {
+  it("seeds the draft on enterEdit and tracks dirtiness", () => {
+    const { result } = renderHook(() => useVariantEditSession(makeVariant(), jest.fn()));
+
+    act(() => result.current.enterEdit());
+    expect(result.current.isEditing).toBe(true);
+    expect(result.current.draft.text).toBe("original hook");
+    expect(result.current.isDirty).toBe(false);
+
+    act(() => result.current.setText("typed live"));
+    expect(result.current.isDirty).toBe(true);
+  });
+
+  it("polls do not clobber the draft while editing", () => {
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, jest.fn()),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("my edit"));
+
+    // A poll delivers a refreshed variant (new signed URLs etc.).
+    rerender({ v: makeVariant({ base_video_url: "https://x/base.mp4?sig=2" }) });
+    expect(result.current.draft.text).toBe("my edit");
+    expect(result.current.isEditing).toBe(true);
+  });
+
+  it("commits once with the combined minimal payload", async () => {
+    const commits: EditVariantPayload[] = [];
+    const onCommit = jest.fn(async (p: EditVariantPayload) => {
+      commits.push(p);
+    });
+    const { result } = renderHook(() => useVariantEditSession(makeVariant(), onCommit));
+
+    act(() => result.current.enterEdit());
+    act(() => {
+      result.current.setText("new text");
+      result.current.setStyle("word_reveal");
+      result.current.setSize(64);
+    });
+    await act(async () => result.current.commit());
+
+    expect(commits).toEqual([
+      { text: "new text", style_set_id: "word_reveal", text_size_px: 64 },
+    ]);
+    expect(result.current.isEditing).toBe(false);
+    expect(result.current.isSaving).toBe(true); // preview stays up until ready
+  });
+
+  it("a no-change Done fires nothing", async () => {
+    const onCommit = jest.fn(async () => {});
+    const { result } = renderHook(() => useVariantEditSession(makeVariant(), onCommit));
+
+    act(() => result.current.enterEdit());
+    await act(async () => result.current.commit());
+
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(result.current.isSaving).toBe(false);
+  });
+
+  it("settles when the committed render comes back ready", async () => {
+    const onCommit = jest.fn(async () => {});
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("new text"));
+    await act(async () => result.current.commit());
+    expect(result.current.isSaving).toBe(true);
+
+    rerender({ v: makeVariant({ render_status: "rendering" }) });
+    expect(result.current.isSaving).toBe(true);
+
+    rerender({ v: makeVariant({ render_status: "ready", intro_text: "new text" }) });
+    expect(result.current.isSaving).toBe(false);
+    expect(result.current.isActive).toBe(false);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it("coalesces edits made while a render is in flight into ONE follow-up", async () => {
+    const commits: EditVariantPayload[] = [];
+    const onCommit = jest.fn(async (p: EditVariantPayload) => {
+      commits.push(p);
+    });
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("first"));
+    await act(async () => result.current.commit());
+    rerender({ v: makeVariant({ render_status: "rendering" }) });
+
+    // User edits again mid-render and hits Done — must queue, not fire.
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("second"));
+    await act(async () => result.current.commit());
+    expect(commits).toHaveLength(1);
+
+    // First render completes → the queued edit fires exactly once.
+    await act(async () => {
+      rerender({ v: makeVariant({ render_status: "ready", intro_text: "first" }) });
+    });
+    expect(commits).toHaveLength(2);
+    expect(commits[1]).toEqual({ text: "second" });
+  });
+
+  it("drops out of the preview when the committed render fails", async () => {
+    const onCommit = jest.fn(async () => {});
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("doomed"));
+    await act(async () => result.current.commit());
+
+    rerender({ v: makeVariant({ render_status: "failed", error_class: "render_error" }) });
+    expect(result.current.isActive).toBe(false); // failure card takes over
+  });
+});
