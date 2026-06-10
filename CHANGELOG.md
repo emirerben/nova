@@ -2,11 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.4.95.0] — 2026-06-10
+## [0.4.96.0] — 2026-06-10
 
 ### Added
 - **Filming-guide narrative clip order (plan-item edits).** Plan-item renders now follow the filming guide's shot sequence instead of pure greedy assembly — the guide's first shot opens the edit, guide shots first-appear in guide order, and extra-footage pool clips interleave as b-roll. `_dispatch_item_render` derives guide-ordered `clip_paths` from `filming_guide` × `clip_assignments` (guide order is the truth, not the client's attach order; stale `shot_id`s demote to pool) and stamps `all_candidates["narrative_shot_count"]`. `template_matcher.match()` gains a `narrative_order` mode: slots fill in position order via a cursor over guide clips with forced advance (every guide clip lands, in order), the existing energy/variety/usage-cap scoring picks moments inside each eligible set, and the tail rotates across all clips. Coverage pass and `_dedup_adjacent` are skipped in narrative mode (both move assignments across slot positions). Threaded through BOTH first renders and re-renders (swap-song/retext/restyle), so a song swap can't silently reshuffle a guide-ordered edit. The intro hook text now grounds in the clip that actually opens the edit (intro *sizing* unchanged — still the most text-friendly clip). Pipeline events `narrative_order_applied`/`narrative_order_skipped` surface the decision in /admin/jobs. Kill switch: `NARRATIVE_CLIP_ORDER_ENABLED` (render-time read, default true). Public generative jobs, template jobs, and music jobs are byte-identical (pinned by `test_none_param_identical_to_omitted`). Verified end-to-end: synthetic color-coded clips attached in scrambled order render in guide order (frame-level proof, all 3 variants), and a real-footage render passed an adversarial sequence-alignment judge at 8.5/10.
 - **`edit-quality-review` judge workflow** (`.claude/workflows/edit-quality-review.js`): given a rendered edit + filming guide, fans out parallel judges (sequence alignment, hook strength, pacing/beat feel, influencer readiness) with adversarial verification of FAIL verdicts; returns a scored verdict + improvement list. Used to grade this feature's real-footage output; its hook/readiness findings are captured as TODOS (time-boxed hook text, first-frame text, payoff duration weighting).
+
+## [0.4.95.0] — 2026-06-10
+
+### Added
+- **Instant text editor for generative variants (Instagram-style, 0-latency).** Eligible variants (`agent_text`/`none` with a fast-reburn base) get an "Edit text & style" mode: the card plays the **text-free base video** under a live DOM overlay rendered in the real registry typeface; text (inline contentEditable), style-set chips, and a size slider all update the preview instantly with **zero network traffic**. "Done" commits the whole session as ONE `POST /generative-jobs/{id}/variants/{vid}/edit` → a single combined fast reburn (~3s) instead of one render per field. While the render runs, the preview stays up with a "Saving…" badge and swaps to the fresh output on completion. Lyrics/legacy variants and the admin page keep the existing controls.
+- **`POST /variants/{vid}/edit` combined endpoint.** Carries `text` / `remove_text` / `style_set_id` / `text_size_px` in one request → one `regenerate_generative_variant` enqueue (the task always accepted combined kwargs; the per-field routes never combined them). Validation mirrors the per-field endpoints; size on a lyrics variant is rejected (would silently drop).
+- **`base_video_url` on the variant status response** — fresh-signed from the persisted `base_video_path` on every read (mirrors `output_url` re-signing), present even while `rendering` so the editor keeps playing the base during a committed re-render.
+- **`StyleSetSummary.intro` preview block** (`style_set_intro_preview`): the full intro-role look — font, colors, effect, position, x/y frac, text_anchor, stroke — projected display-only for the client preview. Deliberately omits `text_gradient` (the generative intro burn doesn't receive it).
+- **TS port of the server text layout** (`src/lib/overlay-layout.ts` + `src/lib/canvas-measure.ts`): greedy wrap, shrink-to-fit (×0.85 trunc, ≤6 iters, 24px floor), balanced word wrap, block metrics, anchor math — measured via canvas `measureText` over the same registry TTFs the server burns with. Shared overlay constants extracted to `src/lib/overlay-constants.ts` (admin editor re-exports; import paths unchanged).
+- **`?job=<id>` resume on `/generative`** — recovers the results view after a refresh.
+
+### Fixed
+- **Re-adding text to a removed-text variant silently no-oped.** `_resolve_regen_text` kept `text_mode="none"` (truthy) on a text override, so `_reburn_text_on_base` skipped the burn. Now flips `none → agent_text` when text is supplied; lyrics mode preserved.
+- **Post-terminal status polling never resumed.** `usePolledJobStatus` cleared its interval permanently at terminal status; after a variant re-render (legacy retext/swap-song too) the UI stayed blind to completion until a tab refocus. The interval now re-arms when a refetch returns non-terminal data, and the edit session drives refresh while saving (covers the commit-vs-status-flip race).
 
 ## [0.4.94.0] — 2026-06-08
 

@@ -26,10 +26,12 @@ export function usePolledJobStatus<T>(
   const fetcherRef = useRef(fetcher);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const intervalMsRef = useRef(intervalMs);
 
   // Keep refs fresh without triggering re-subscriptions.
   isTerminalRef.current = isTerminal;
   fetcherRef.current = fetcher;
+  intervalMsRef.current = intervalMs;
 
   const doFetch = useCallback(async () => {
     try {
@@ -42,12 +44,21 @@ export function usePolledJobStatus<T>(
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
+      // Re-arm when a refetch shows NON-terminal data after polling stopped:
+      // a post-terminal mutation (variant re-render / instant-edit commit)
+      // flips a variant back to "rendering", and without this the UI would
+      // stay blind to its completion until a tab refocus.
+      if (!isTerminalRef.current(result) && timerRef.current == null) {
+        timerRef.current = setInterval(() => void doFetchRef.current(), intervalMsRef.current);
+      }
     } catch (e) {
       if (!mountedRef.current) return;
       setError(e instanceof Error ? e : new Error(String(e)));
       // Do NOT stop polling on transient error — let the interval re-arm.
     }
   }, []);
+  const doFetchRef = useRef(doFetch);
+  doFetchRef.current = doFetch;
 
   const refetch = useCallback(() => {
     void doFetch();

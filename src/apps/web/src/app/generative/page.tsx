@@ -2,23 +2,20 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
-  changeVariantStyle,
   createGenerativeJob,
   getGenerativeJobStatus,
   getGenerativeStyleSets,
   GENERATIVE_TERMINAL_STATUSES,
   retextVariant,
-  setVariantIntroSize,
-  setVariantMix,
-  swapVariantSong,
   uploadGenerativeClip,
   type GenerativeJobStatus,
   type GenerativeStyleSet,
   type GenerativeVariant,
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
-import { VariantCard } from "./VariantCard";
+import { VariantTile } from "./VariantTile";
 import { VoiceRecorder } from "./VoiceRecorder";
+import { FONT_FACES } from "@/lib/font-faces";
 import {
   GENERATIVE_PHASE_ORDER,
   GENERATIVE_PHASE_LABEL,
@@ -26,7 +23,6 @@ import {
 import {
   ProgressTheater,
   PayoffField,
-  VariantRenderCard,
 } from "@/components/progress";
 import { formatElapsed } from "@/components/progress/logic";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
@@ -89,6 +85,15 @@ export default function GenerativePage() {
       .catch(() => setTracks([]));
     loadStyleSets();
   }, [loadStyleSets]);
+
+  // Resume an existing job via ?job=<id> — recovers the results view after a
+  // refresh (in-memory state otherwise loses the job) and doubles as the QA
+  // entry point for the instant editor. Read from window (not useSearchParams)
+  // to avoid the app-router Suspense-boundary build requirement.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("job");
+    if (id) setJobId(id);
+  }, []);
 
   // ===== Polling =====
   const fetcher = useCallback(async () => {
@@ -182,6 +187,10 @@ export default function GenerativePage() {
 
   return (
     <LightShell size="wide">
+      {/* @font-face for the instant-edit preview + style chips — the registry
+          fonts must be loaded on this PUBLIC page (admin gets them via its
+          layout) or the client overlay renders in a fallback face. */}
+      <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
       {/* Page header */}
       <div className="mb-10">
         <Eyebrow tone="lime" className="mb-3">Generative edit</Eyebrow>
@@ -317,47 +326,16 @@ export default function GenerativePage() {
                 const gv = variant as GenerativeVariant;
 
                 return (
-                  <div key={gv.variant_id} className="flex flex-col gap-4">
-                    <VariantRenderCard
-                      variant={gv}
-                      isNewlyReady={isNewlyReady}
-                      onRetry={() => void handleRetry(gv.variant_id)}
-                      tone="light"
-                    />
-
-                    {gv.render_status === "ready" && (
-                      <VariantCard
-                        variant={gv}
-                        tracks={tracks}
-                        styleSets={styleSets}
-                        tone="light"
-                        onSwap={async (trackId) => {
-                          await swapVariantSong(jobId, gv.variant_id, trackId);
-                          refresh();
-                        }}
-                        onRetext={async (text) => {
-                          await retextVariant(jobId, gv.variant_id, { text });
-                          refresh();
-                        }}
-                        onRemoveText={async () => {
-                          await retextVariant(jobId, gv.variant_id, { remove: true });
-                          refresh();
-                        }}
-                        onChangeStyle={async (styleSetId) => {
-                          await changeVariantStyle(jobId, gv.variant_id, styleSetId);
-                          refresh();
-                        }}
-                        onResize={async (px) => {
-                          await setVariantIntroSize(jobId, gv.variant_id, px);
-                          refresh();
-                        }}
-                        onSetMix={async (mix) => {
-                          await setVariantMix(jobId, gv.variant_id, mix);
-                          refresh();
-                        }}
-                      />
-                    )}
-                  </div>
+                  <VariantTile
+                    key={gv.variant_id}
+                    variant={gv}
+                    jobId={jobId}
+                    tracks={tracks}
+                    styleSets={styleSets}
+                    isNewlyReady={isNewlyReady}
+                    onRetry={() => void handleRetry(gv.variant_id)}
+                    refresh={refresh}
+                  />
                 );
               }}
             />

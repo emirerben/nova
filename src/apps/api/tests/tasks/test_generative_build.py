@@ -1481,6 +1481,57 @@ def test_resolve_regen_text_override_beats_persisted():
     assert agent_text.text == "new text"
 
 
+def test_resolve_regen_text_override_on_removed_variant_restores_agent_text():
+    """Re-adding text to a text-removed variant flips mode none → agent_text.
+
+    "none" is truthy, so the old `existing_text_mode or "agent_text"` kept the
+    variant in "none" mode and _reburn_text_on_base silently skipped the burn —
+    "add text back after removing it" no-oped. Regression guard for that fix.
+    """
+    agent_text, _agent_form, text_mode = gb._resolve_regen_text(
+        override_text="hello again",
+        remove_text=False,
+        existing_text_mode="none",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=lambda: (None, {}),
+    )
+
+    assert agent_text is not None
+    assert agent_text.text == "hello again"
+    assert text_mode == "agent_text"
+
+
+def test_resolve_regen_text_override_preserves_lyrics_mode():
+    """A lyrics variant keeps its mode on a text override (no flip to agent_text)."""
+    _agent_text, _agent_form, text_mode = gb._resolve_regen_text(
+        override_text="custom line",
+        remove_text=False,
+        existing_text_mode="lyrics",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=lambda: (None, {}),
+    )
+
+    assert text_mode == "lyrics"
+
+
+def test_resolve_regen_text_unrenderable_override_keeps_none_mode():
+    """Junk text that sanitizes to nothing must NOT flip a "none" variant to a
+    text-less "agent_text" (which would re-trigger intro_writer on a later edit)."""
+    agent_text, _agent_form, text_mode = gb._resolve_regen_text(
+        override_text="https://example.com",  # URL-only → stripped to nothing
+        remove_text=False,
+        existing_text_mode="none",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=lambda: (None, {}),
+    )
+
+    assert agent_text is None
+    assert text_mode == "none"
+
+
 # ── Fast-reburn: _is_fast_reburn_eligible ───────────────────────────────────────
 
 

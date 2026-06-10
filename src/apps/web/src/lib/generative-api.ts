@@ -41,6 +41,30 @@ export interface GenerativeVariant {
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
+  // Instant edit: fresh-signed playback URL of the text-free fast-reburn base
+  // (agent_text/none variants only). Present even while render_status is
+  // "rendering" so the editor keeps playing the base during a committed
+  // re-render. Absent on lyrics/legacy variants → instant editor hidden.
+  base_video_url?: string | null;
+  base_video_path?: string | null;
+}
+
+/** Full intro-role look of a style set — drives the instant-edit client preview.
+ * Display-only projection (never reaches the renderer burn dict). */
+export interface StyleSetIntroPreview {
+  font_family?: string | null;
+  css_family?: string | null;
+  font_file?: string | null;
+  font_weight?: number | null;
+  text_color?: string | null;
+  highlight_color?: string | null;
+  effect?: string | null;
+  position?: string | null;
+  position_x_frac?: number | null;
+  position_y_frac?: number | null;
+  text_anchor?: string | null;
+  stroke_width?: number | null;
+  text_size_px?: number | null;
 }
 
 export interface GenerativeStyleSet {
@@ -58,6 +82,9 @@ export interface GenerativeStyleSet {
   text_color?: string | null;
   highlight_color?: string | null;
   effect?: string | null;
+  // Full intro-role look for the instant-edit preview. Optional — older API
+  // builds omit it and the preview falls back to renderer defaults.
+  intro?: StyleSetIntroPreview | null;
 }
 
 export interface GenerativeJobResponse {
@@ -233,6 +260,36 @@ export async function setVariantMix(
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail ?? "Failed to set mix");
   }
+}
+
+/** One instant-edit session commit: text + style + size in a single request →
+ * a single re-render. `text` and `remove_text` are mutually exclusive. */
+export interface EditVariantPayload {
+  text?: string;
+  remove_text?: boolean;
+  style_set_id?: string;
+  text_size_px?: number;
+}
+
+export async function editVariant(
+  jobId: string,
+  variantId: string,
+  payload: EditVariantPayload,
+): Promise<GenerativeJobResponse> {
+  const res = await fetch(`${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/edit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ...payload,
+      text_size_px:
+        payload.text_size_px !== undefined ? Math.round(payload.text_size_px) : undefined,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(detail.detail ?? "Failed to save edits");
+  }
+  return res.json();
 }
 
 export async function setVariantIntroSize(

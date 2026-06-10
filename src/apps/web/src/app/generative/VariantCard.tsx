@@ -10,6 +10,10 @@ import {
 } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import { downloadVideo } from "@/lib/download-video";
+import { IntroTextPreview } from "./IntroTextPreview";
+import { EditToolbar } from "./EditToolbar";
+import { resolveIntroParams } from "./resolve-intro-params";
+import type { VariantEditSession } from "./useVariantEditSession";
 
 export const TEXT_MODE_LABEL: Record<string, string> = {
   lyrics: "Lyrics",
@@ -17,11 +21,25 @@ export const TEXT_MODE_LABEL: Record<string, string> = {
   none: "No text",
 };
 
+/** Instant edit needs the text-free base video AND an editable text mode —
+ * lyrics variants have neither (no cached base; lyric typography is set-driven). */
+export function isInstantEditEligible(variant: GenerativeVariant): boolean {
+  return (
+    !!variant.base_video_url &&
+    (variant.text_mode === "agent_text" || variant.text_mode === "none")
+  );
+}
+
 /**
  * One generative-edit variant: video preview + the re-render controls (edit text,
  * remove text, swap song, change style). Shared by the public generative page and
  * the admin generative detail page — both drive the same public endpoints, so the
  * card stays presentation-only and takes the actions as callbacks.
+ *
+ * `editSession` (optional) switches eligible variants to the instant editor: the
+ * well plays the text-free base video under a live DOM text overlay, all edits
+ * are local, and "Done" commits ONE combined /edit render. Callers that omit it
+ * (admin) keep the legacy per-field controls byte-for-byte.
  *
  * D20: tone="light" renders on cream canvas. Admin omits tone → default dark.
  */
@@ -36,6 +54,7 @@ export function VariantCard({
   onResize,
   onSetMix,
   tone = "dark",
+  editSession,
 }: {
   variant: GenerativeVariant;
   tracks: MusicTrackSummary[];
@@ -47,10 +66,28 @@ export function VariantCard({
   onResize?: (textSizePx: number) => Promise<void>;
   onSetMix?: (mix: number) => Promise<void>;
   tone?: "dark" | "light";
+  editSession?: VariantEditSession;
 }) {
   const [busy, setBusy] = useState(false);
   const rendering = variant.render_status === "rendering" || busy;
   const failed = variant.render_status === "failed";
+
+  const instantEligible = !!editSession && isInstantEditEligible(variant);
+  const editActive = !!editSession && editSession.isActive;
+
+  // Pin the base-video src for the whole session: every poll re-signs the URL
+  // (new query string), and swapping <video src> restarts playback. On a media
+  // error (expired signature in a very long session) fall forward to the
+  // freshest signed URL from the latest poll.
+  const baseSrcRef = useRef<string | null>(null);
+  const [baseSrcNonce, setBaseSrcNonce] = useState(0);
+  if (editActive && baseSrcRef.current === null && variant.base_video_url) {
+    baseSrcRef.current = variant.base_video_url;
+  }
+  if (!editActive && baseSrcRef.current !== null) {
+    baseSrcRef.current = null;
+  }
+  void baseSrcNonce; // re-render trigger only
 
   // Voice/footage mix for voiceover variants.
   const isVoiceover = variant.variant_id.startsWith("voiceover");
@@ -111,6 +148,76 @@ export function VariantCard({
   const mixPctClass = tone === "light" ? "tabular-nums text-[#71717a]" : "tabular-nums text-zinc-500";
   const sliderAccent = tone === "light" ? "accent-lime-600" : "accent-white";
 
+  // ── Instant edit mode ──────────────────────────────────────────────────────
+  // The well plays the text-free base (final audio mix) under the live DOM
+  // overlay; every toolbar change updates the preview at 0 latency. While a
+  // committed render runs, the preview stays up with a "Saving…" badge — the
+  // user never stares at a "Rendering…" placeholder for a text tweak.
+  if (editActive && editSession) {
+    const introParams = resolveIntroParams(variant, styleSets, editSession.draft);
+    return (
+      <div className={cardClass}>
+        <div className="mb-2 flex items-center justify-between">
+          <span className={badgeClass}>
+            {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
+            {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
+          </span>
+          {editSession.isSaving && (
+            <span className="rounded bg-lime-100 px-2 py-0.5 text-xs text-lime-700">
+              Saving…
+            </span>
+          )}
+        </div>
+
+        <div className={`relative ${videoWellClass}`}>
+          {baseSrcRef.current ? (
+            <video
+              src={baseSrcRef.current}
+              controls
+              loop
+              autoPlay
+              muted
+              playsInline
+              className="h-full w-full object-contain"
+              onError={() => {
+                // Expired signature mid-session → fall forward to the freshest
+                // signed URL the poll delivered.
+                if (
+                  variant.base_video_url &&
+                  baseSrcRef.current !== variant.base_video_url
+                ) {
+                  baseSrcRef.current = variant.base_video_url;
+                  setBaseSrcNonce((n) => n + 1);
+                }
+              }}
+            />
+          ) : (
+            <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
+              No preview
+            </div>
+          )}
+          <IntroTextPreview
+            params={introParams}
+            editable={editSession.isEditing}
+            onTextChange={editSession.setText}
+          />
+        </div>
+
+        {editSession.isEditing ? (
+          <EditToolbar
+            session={editSession}
+            styleSets={styleSets}
+            fallbackSizePx={variant.intro_text_size_px ?? null}
+          />
+        ) : (
+          <p className="mt-3 text-xs text-[#71717a]">
+            Saving your edits — this preview already shows the final look.
+          </p>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={cardClass}>
       <div className="mb-2 flex items-center justify-between">
@@ -149,24 +256,38 @@ export function VariantCard({
             Download
           </button>
         )}
-        <button
-          disabled={rendering}
-          onClick={() => {
-            const next = prompt("New intro text:", variant.intro_text ?? "");
-            if (next && next.trim()) run(() => onRetext(next.trim()));
-          }}
-          className={btnClass}
-        >
-          Edit text
-        </button>
-        <button
-          disabled={rendering}
-          onClick={() => run(onRemoveText)}
-          className={btnClass}
-        >
-          Remove text
-        </button>
-        {onResize && curPx != null && (
+        {instantEligible && editSession ? (
+          // Instant editor entry point — supersedes the prompt()-based text
+          // controls below for eligible variants (one batched render on Done).
+          <button
+            disabled={rendering}
+            onClick={editSession.enterEdit}
+            className={btnClass}
+          >
+            Edit text &amp; style
+          </button>
+        ) : (
+          <>
+            <button
+              disabled={rendering}
+              onClick={() => {
+                const next = prompt("New intro text:", variant.intro_text ?? "");
+                if (next && next.trim()) run(() => onRetext(next.trim()));
+              }}
+              className={btnClass}
+            >
+              Edit text
+            </button>
+            <button
+              disabled={rendering}
+              onClick={() => run(onRemoveText)}
+              className={btnClass}
+            >
+              Remove text
+            </button>
+          </>
+        )}
+        {!instantEligible && onResize && curPx != null && (
           <div className={sizeControlClass}>
             <button
               disabled={rendering || curPx <= INTRO_SIZE_MIN}
@@ -200,7 +321,7 @@ export function VariantCard({
             </button>
           </div>
         )}
-        {styleSets.length > 0 && (
+        {!instantEligible && styleSets.length > 0 && (
           <select
             disabled={rendering}
             value={variant.style_set_id ?? ""}

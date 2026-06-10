@@ -333,6 +333,41 @@ def style_set_preview(set_id: str) -> dict:
     }
 
 
+def style_set_intro_preview(set_id: str) -> dict:
+    """Display-only `intro`-role styling of a set, for the instant-edit preview.
+
+    The generative instant editor renders the hero intro client-side (DOM overlay
+    on the fast-reburn base video), so it needs the FULL intro look — anchor, x/y
+    frac, stroke — not just the chip typography `style_set_preview` projects from
+    the hook role. Same projection-only contract: these fields go to the browser
+    and never reach the renderer burn dict (#296 parity invariant intact).
+
+    Deliberately omits `text_gradient`: `_resolve_intro_overlay_params` doesn't
+    project it into the intro burn, so the server renders solid fill — a gradient
+    preview would lie about the committed render. Walks the role-fallback chain
+    via `_role_block`; always returns a dict.
+    """
+    catalog = get_style_set(set_id)
+    block = _role_block(catalog, "intro") or {}
+    family = block.get("font_family")
+    reg = _FONT_REGISTRY.get("fonts", {}).get(family or "", {})
+    return {
+        "font_family": family,
+        "css_family": reg.get("css_family"),
+        "font_file": reg.get("file"),
+        "font_weight": reg.get("weight"),
+        "text_color": block.get("text_color"),
+        "highlight_color": block.get("highlight_color"),
+        "effect": block.get("effect"),
+        "position": block.get("position"),
+        "position_x_frac": block.get("position_x_frac"),
+        "position_y_frac": block.get("position_y_frac"),
+        "text_anchor": block.get("text_anchor"),
+        "stroke_width": block.get("stroke_width"),
+        "text_size_px": block.get("text_size_px"),
+    }
+
+
 # ── Lyric role ⇄ injector style mapping ──────────────────────────────────────
 # The music lyric injector (`app.pipeline.lyric_injector`) runs one of three
 # injectors keyed by `style`; each maps to a lyric role in a style set.

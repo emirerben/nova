@@ -861,7 +861,8 @@ def _resolve_regen_text(
 
     Priority:
     1. remove_text → text_mode="none", no overlay.
-    2. override_text → sanitised SimpleNamespace, mode unchanged.
+    2. override_text → sanitised SimpleNamespace; a "none"-mode variant flips back
+       to "agent_text" (re-adding text after removal), lyrics mode is preserved.
     3. persisted intro_text present + mode agent_text → reuse (no LLM).
     4. else → run intro_writer (first render or legacy variant).
     """
@@ -880,8 +881,18 @@ def _resolve_regen_text(
         if cleaned:
             agent_text = _types.SimpleNamespace(text=cleaned, highlight_word=None)
             agent_form = {"effect": "karaoke-line"}
-            return agent_text, agent_form, existing_text_mode or "agent_text"
+            # A text-removed variant ("none" — truthy!) must flip back to
+            # "agent_text" when the user supplies new text, or _reburn_text_on_base
+            # skips the burn and the edit silently no-ops. Lyrics keep their mode.
+            mode = (
+                "agent_text"
+                if existing_text_mode in (None, "none", "agent_text")
+                else existing_text_mode
+            )
+            return agent_text, agent_form, mode
         # Nothing renderable after sanitization → no overlay (footage only).
+        # Mode unchanged: a "none" variant stays text-free rather than becoming a
+        # text-less "agent_text" that would re-trigger intro_writer later.
         return None, None, existing_text_mode or "agent_text"
 
     if persisted_text and existing_text_mode == "agent_text":
