@@ -49,6 +49,7 @@ function makeSession(over: Partial<VariantEditSession> = {}): VariantEditSession
     isActive: false,
     draft: { text: "hello world", removed: false, styleSetId: "travel_editorial", sizePx: 56 },
     isDirty: false,
+    commitError: null,
     enterEdit: jest.fn(),
     cancel: jest.fn(),
     setText: jest.fn(),

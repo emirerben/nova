@@ -86,6 +86,15 @@ export default function GenerativePage() {
     loadStyleSets();
   }, [loadStyleSets]);
 
+  // Resume an existing job via ?job=<id> — recovers the results view after a
+  // refresh (in-memory state otherwise loses the job) and doubles as the QA
+  // entry point for the instant editor. Read from window (not useSearchParams)
+  // to avoid the app-router Suspense-boundary build requirement.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("job");
+    if (id) setJobId(id);
+  }, []);
+
   // ===== Polling =====
   const fetcher = useCallback(async () => {
     if (!jobId) throw new Error("no jobId");

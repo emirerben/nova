@@ -1,0 +1,16 @@
+[dev-no-docker] Running alembic migrations...
+[dev-no-docker] Starting API on :8000 (uvicorn --reload)...
+[dev-no-docker] Starting Celery worker (watchfiles auto-restart)...
+[dev-no-docker] Starting Next.js on :3000...
+[dev-no-docker] 
+[dev-no-docker] Dev environment started:
+[dev-no-docker]   API:      http://localhost:8000
+[dev-no-docker]   Worker:   celery (auto-restart on .py edits)
+[dev-no-docker]   Frontend: http://localhost:3000
+[dev-no-docker] 
+[dev-no-docker] Logs:
+[dev-no-docker]   tail -f /Users/emirerben/Projects/nova-instant-text-preview/.dev/api.log
+[dev-no-docker]   tail -f /Users/emirerben/Projects/nova-instant-text-preview/.dev/worker.log
+[dev-no-docker]   tail -f /Users/emirerben/Projects/nova-instant-text-preview/.dev/web.log
+[dev-no-docker] 
+[dev-no-docker] Stop everything: ./scripts/dev-stop.sh

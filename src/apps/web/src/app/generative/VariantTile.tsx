@@ -12,6 +12,7 @@
  * so the editing preview survives the commit round-trip.
  */
 
+import { useEffect } from "react";
 import {
   changeVariantStyle,
   editVariant,
@@ -48,6 +49,17 @@ export function VariantTile({
     await editVariant(jobId, variant.variant_id, payload);
     refresh();
   });
+
+  // Saving-state poll driver. The page's job poller stops at terminal status,
+  // and the single post-commit refresh can race AHEAD of the worker flipping
+  // render_status to "rendering" (stale-terminal data → no re-arm). The
+  // session itself knows it's awaiting a render — keep refreshing until it
+  // settles, so the preview swaps to the fresh output without a tab refocus.
+  useEffect(() => {
+    if (!session.isSaving) return;
+    const t = setInterval(refresh, 2000);
+    return () => clearInterval(t);
+  }, [session.isSaving, refresh]);
 
   return (
     <div className="flex flex-col gap-4">
