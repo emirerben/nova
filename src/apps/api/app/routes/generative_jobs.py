@@ -123,6 +123,11 @@ class GenerativeVariant(BaseModel):
     # Persisted AI-intro text (agent_text variants) — the instant-edit overlay seed.
     intro_text: str | None = None
     intro_highlight_word: str | None = None
+    # Effective intro layout: "linear" (default) or "cluster" (editorial word-
+    # cluster). The instant text editor MUST NOT local-preview cluster intros —
+    # its TS layout mirror only models the linear single-block layout; cluster
+    # edits go through the server reburn path instead.
+    intro_layout: str | None = None
     # Fast-reburn base: the text-free, audio-mixed video behind agent_text variants.
     # `base_video_path` is the persisted GCS key; `base_video_url` is a fresh-signed
     # playback URL minted on every status read (mirrors output_url re-signing) so

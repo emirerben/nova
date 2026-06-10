@@ -91,6 +91,11 @@ class IntroWriterInput(BaseModel):
 class IntroWriterOutput(BaseModel):
     text: str = Field(min_length=1)
     highlight_word: str | None = None
+    # Cluster layouts only (form.layout == "cluster"): per-word role annotation
+    # aligned to text.split() — "hero" | "connector" | "closer". None for linear
+    # layouts or when the model's annotation is unusable; the layout engine
+    # (app/pipeline/intro_cluster.py) then derives roles heuristically.
+    word_roles: list[str] | None = None
 
 
 def _strip_unsafe_tokens(s: str) -> str:
@@ -218,6 +223,35 @@ def _filming_guide_block(guide: list[dict]) -> str:
     )
 
 
+def _cluster_instructions(form: dict) -> str:
+    """The cluster-layout block — or "" when the chosen form is linear.
+
+    Rendered ONLY for cluster layouts so the (vastly more common) linear prompt
+    stays byte-identical to the proven baseline (inert blocks measurably dilute
+    hook quality — see _preferences_block)."""
+    if form.get("layout") != "cluster":
+        return ""
+    return (
+        "\n## Word-cluster layout (the chosen form)\n\n"
+        "This hook renders as an editorial WORD-CLUSTER: each key word becomes its "
+        "own text block at a different size and position (magazine-style). Two extra "
+        "rules:\n"
+        "- Keep the hook 3-6 words. Every word must earn its place.\n"
+        '- Return "word_roles": one role per word of your text, in order. Roles: '
+        '"hero" (a big focal word — pick 1-3, the words that carry the feeling), '
+        '"connector" (small glue words like "the", "your", "we"), '
+        '"closer" (the final word when it lands the thought, often with ? or !). '
+        "At least one word must be hero.\n"
+    )
+
+
+def _word_roles_output(form: dict) -> str:
+    """JSON-shape hint for word_roles — "" for linear (baseline byte-identical)."""
+    if form.get("layout") != "cluster":
+        return ""
+    return ',\n  "word_roles": ["<one of hero|connector|closer per word of text>"]'
+
+
 def _persona_context(input: IntroWriterInput) -> str:  # noqa: A002
     """Render the creator-persona / series-context block for the prompt.
 
@@ -259,6 +293,9 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-06-10 — cluster layouts: added $cluster_instructions +
+        #              $word_roles_output blocks (both "" for linear → baseline
+        #              byte-identical) and 3 cluster entries in overlay_examples.json.
         # 2026-06-07 — Creator Agent M3 / B2: added $filming_guide block — the
         #              plan item's intended shot list as hook-grounding DATA context.
         #              Empty → byte-identical to pre-M3 baseline (no "(none)" filler).
@@ -273,7 +310,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-06-07.1",
+        prompt_version="2026-06-10",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -322,6 +359,10 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
             # Filming guide context — the WHOLE block, or "" when the guide is empty
             # (keeps the no-guide prompt byte-identical to the pre-M3 baseline).
             filming_guide=_filming_guide_block(input.filming_guide),
+            # Cluster-layout steering + word_roles output shape — both "" for
+            # linear forms (keeps the common prompt byte-identical to baseline).
+            cluster_instructions=_cluster_instructions(input.form),
+            word_roles_output=_word_roles_output(input.form),
             # Codified hook-relevant TikTok success factors (reference, not data).
             success_factors=format_success_factors("hook"),
         )
@@ -353,8 +394,27 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         else:
             highlight = None
 
+        # word_roles: accepted only for cluster forms, and only when it aligns
+        # 1:1 with the final (sanitized) text and contains at least one hero.
+        # Anything else → None; the layout engine derives roles heuristically.
+        word_roles: list[str] | None = None
+        if input.form.get("layout") == "cluster":
+            from app.pipeline.intro_cluster import VALID_ROLES  # noqa: PLC0415
+
+            raw_roles = data.get("word_roles")
+            if (
+                isinstance(raw_roles, list)
+                and len(raw_roles) == len(text.split())
+                and all(isinstance(r, str) and r in VALID_ROLES for r in raw_roles)
+                and "hero" in raw_roles
+                # closer is strictly the FINAL word — the cluster geometry tucks
+                # it under the last hero; a mid-text closer would overlap blocks.
+                and "closer" not in raw_roles[:-1]
+            ):
+                word_roles = [str(r) for r in raw_roles]
+
         try:
-            return IntroWriterOutput(text=text, highlight_word=highlight)
+            return IntroWriterOutput(text=text, highlight_word=highlight, word_roles=word_roles)
         except ValidationError as exc:
             raise SchemaError(f"intro_writer: output validation — {exc}") from exc
 

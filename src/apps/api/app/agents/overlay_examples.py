@@ -31,6 +31,9 @@ class OverlayExample(BaseModel):
     size_class: str = "jumbo"
     text_color: str = "#FFFFFF"
     highlight_color: str = "#FFD24A"
+    # "linear" (one centered block) or "cluster" (editorial word-cluster — multiple
+    # positioned blocks with mixed sizes; see app/pipeline/intro_cluster.py).
+    layout: str = "linear"
     # Optional provenance from the weekly market-research agent. Hand-written
     # entries omit these; mined entries tag their niche + attribution. Style
     # reference only — the intro writer composes new text, never verbatim.

@@ -247,10 +247,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # (implied-question-hook vi=120x, humor-extreme-adventure vi=124x,
     # serial-brand-chapters consistent vi=2-5x across 5 founder chapter videos).
     # Content plan subsequently bumped to 2026-06-08 (retrospective-footage rule).
+    # Intro subsequently bumped to 2026-06-10 (word-cluster layout: $cluster_instructions
+    # + $word_roles_output blocks; bank itself unchanged).
     assert success_factors_version() == "2026-06-07"
     assert PERSONA_PROMPT_VERSION == "2026-06-07.1"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07.1"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-10"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -263,9 +265,12 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # overlay examples (destination-qualifier-popin-01, city-morning-sensory-fadein-01).
     # Bump 2026-06-07: weekly research refresh — added adventure-humor-scaleup-02
     #                  and implied-question-static-02; bumped both consuming agents.
-    assert library_version() == "2026-06-07"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07.1"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-07"
+    # Bump 2026-06-10: word-cluster layout — added 3 cluster examples
+    #                  (travel-scenic-cluster-01, lifestyle-moment-cluster-01,
+    #                  travel-city-cluster-01) + `layout` field; bumped both agents.
+    assert library_version() == "2026-06-10"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-10"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-10"
 
 
 @pytest.mark.parametrize(

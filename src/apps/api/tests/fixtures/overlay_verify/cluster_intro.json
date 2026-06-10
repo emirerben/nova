@@ -1,0 +1,52 @@
+{
+  "overlays": [
+    {
+      "role": "generative_intro",
+      "text": "what's your",
+      "effect": "fade-in",
+      "start_s": 0.0,
+      "end_s": 0.7,
+      "position": "center",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "font_family": "Playfair Display Regular",
+      "text_size_px": 54,
+      "position_x_frac": 0.195047,
+      "position_y_frac": 0.432601
+    },
+    {
+      "role": "generative_intro",
+      "text": "favorite",
+      "effect": "fade-in",
+      "start_s": 0.39,
+      "end_s": 1.09,
+      "position": "center",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "font_family": "Playfair Display",
+      "text_size_px": 156,
+      "position_x_frac": 0.575,
+      "position_y_frac": 0.420601
+    },
+    {
+      "role": "generative_intro",
+      "text": "place?",
+      "effect": "fade-in",
+      "start_s": 0.51,
+      "end_s": 1.21,
+      "position": "center",
+      "text_anchor": "center",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "subject_substitute": false,
+      "font_family": "Playfair Display",
+      "text_size_px": 84,
+      "position_x_frac": 0.62,
+      "position_y_frac": 0.484393
+    }
+  ]
+}

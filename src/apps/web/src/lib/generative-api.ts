@@ -31,6 +31,10 @@ export interface GenerativeVariant {
   intro_size_source: "computed" | "user" | null;
   intro_text?: string | null;
   intro_highlight_word?: string | null;
+  // Effective intro layout. "cluster" = editorial word-cluster (multi-block,
+  // engine-positioned) — the instant editor must NOT local-preview it (the TS
+  // mirror only models the linear layout); edits use the server-reburn controls.
+  intro_layout?: "linear" | "cluster" | null;
   // Voice/bed mix for voiceover variants (0..1; 1.0 = voice only / bed ducked,
   // 0.0 = bed full). null on non-voiceover variants.
   mix?: number | null;

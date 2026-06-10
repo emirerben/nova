@@ -856,6 +856,8 @@ def _resolve_regen_text(
     persisted_highlight: str | None,
     *,
     run_text_agents_fn,  # callable: () -> (agent_text, agent_form)
+    persisted_layout: str | None = None,
+    persisted_word_roles: list[str] | None = None,
 ) -> tuple:
     """Return (agent_text, agent_form, text_mode) without running the LLM when possible.
 
@@ -865,6 +867,12 @@ def _resolve_regen_text(
        to "agent_text" (re-adding text after removal), lyrics mode is preserved.
     3. persisted intro_text present + mode agent_text → reuse (no LLM).
     4. else → run intro_writer (first render or legacy variant).
+
+    `persisted_layout` / `persisted_word_roles` keep a cluster intro a cluster
+    across no-LLM re-renders. On override_text the roles are STALE (they aligned
+    to the old words) so they are dropped — the layout engine re-derives roles
+    heuristically, and falls back to linear when the new text doesn't suit a
+    cluster. Absent fields (legacy variants) → "linear"/None, byte-identical.
     """
     import types as _types  # noqa: PLC0415
 
@@ -879,8 +887,10 @@ def _resolve_regen_text(
 
         cleaned = _clamp(_strip_unsafe_tokens(_sanitize_aligned_line(override_text)))
         if cleaned:
+            # word_roles deliberately absent: stale roles must never be applied
+            # to user-typed words (the engine re-derives them).
             agent_text = _types.SimpleNamespace(text=cleaned, highlight_word=None)
-            agent_form = {"effect": "karaoke-line"}
+            agent_form = {"effect": "karaoke-line", "layout": persisted_layout or "linear"}
             # A text-removed variant ("none" — truthy!) must flip back to
             # "agent_text" when the user supplies new text, or _reburn_text_on_base
             # skips the burn and the edit silently no-ops. Lyrics keep their mode.
@@ -897,8 +907,12 @@ def _resolve_regen_text(
 
     if persisted_text and existing_text_mode == "agent_text":
         # Reuse persisted text — NO LLM call.
-        agent_text = _types.SimpleNamespace(text=persisted_text, highlight_word=persisted_highlight)
-        agent_form = {"effect": "karaoke-line"}
+        agent_text = _types.SimpleNamespace(
+            text=persisted_text,
+            highlight_word=persisted_highlight,
+            word_roles=persisted_word_roles,
+        )
+        agent_form = {"effect": "karaoke-line", "layout": persisted_layout or "linear"}
         return agent_text, agent_form, "agent_text"
 
     # Fall through: run intro_writer (first render or legacy variant without persisted text).
@@ -986,6 +1000,8 @@ def _reburn_text_on_base(
         final_path = os.path.join(tmpdir, "final.mp4")
         intro_px = existing_size_px
         intro_source = existing_size_source
+        reburn_layout = existing.get("intro_layout")
+        reburn_word_roles = existing.get("intro_word_roles")
 
         if agent_text is not None and text_mode == "agent_text":
             # Always pass final_size_px as size_override_px so we never try to
@@ -1002,11 +1018,14 @@ def _reburn_text_on_base(
             # inside the resolver, which would label it "user"; restore the real
             # source so pixel-stability logic downstream remains correct.
             intro_source = final_size_source
+            reburn_word_roles = params.get("word_roles")
             overlays = build_persistent_intro_overlays(
                 reveal_window_s=reveal_window_s,
                 beats=[],  # even-split reveal; talking-head precedent
                 **params,
             )
+            # EFFECTIVE layout (cluster = 2 overlays per block; linear = one pair).
+            reburn_layout = "cluster" if len(overlays) > 2 else "linear"
             burn_text_overlays_skia(local_base, overlays, final_path, tmpdir)
 
             # Detect silent copy-through (burn failed with non-empty overlays)
@@ -1032,6 +1051,8 @@ def _reburn_text_on_base(
             "intro_highlight_word": (
                 getattr(agent_text, "highlight_word", None) if agent_text else None
             ),
+            "intro_layout": (reburn_layout if agent_text else None),
+            "intro_word_roles": (reburn_word_roles if agent_text else None),
             "intro_text_size_px": intro_px if agent_text else existing_size_px,
             "intro_size_source": intro_source if agent_text else existing_size_source,
             "style_set_id": resolved_style_set_id,
@@ -1102,6 +1123,10 @@ def _run_regenerate_variant(
         # intro_writer on font/size/style edits where the user's text hasn't changed.
         persisted_text: str | None = existing.get("intro_text") or None
         persisted_highlight: str | None = existing.get("intro_highlight_word") or None
+        # Cluster persistence — keeps a cluster intro a cluster on no-LLM re-renders
+        # (font/size/style/swap-song). Absent on legacy variants → linear/None.
+        persisted_layout: str | None = existing.get("intro_layout") or None
+        persisted_word_roles: list[str] | None = existing.get("intro_word_roles") or None
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -1148,6 +1173,8 @@ def _run_regenerate_variant(
             persisted_text=persisted_text,
             persisted_highlight=persisted_highlight,
             run_text_agents_fn=lambda: (None, None),  # unreachable: persisted text exists
+            persisted_layout=persisted_layout,
+            persisted_word_roles=persisted_word_roles,
         )
         _used_fast_path = False
         try:
@@ -1236,6 +1263,8 @@ def _run_regenerate_variant(
                 persona=persona,
                 filming_guide=filming_guide_regen,
             ),
+            persisted_layout=persisted_layout,
+            persisted_word_roles=persisted_word_roles,
         )
 
         spec: dict[str, Any] = {
@@ -1889,6 +1918,10 @@ def _render_generative_variant(
         # Persisted intro text so re-renders can reuse it without re-running intro_writer.
         "intro_text": None,
         "intro_highlight_word": None,
+        # Effective intro layout ("linear" | "cluster") + the word-role annotation
+        # that rebuilds a cluster deterministically on re-render (no LLM).
+        "intro_layout": None,
+        "intro_word_roles": None,
         # Voice-prominence slider for voiceover variants; None otherwise.
         "mix": mix if voiceover_gcs_path else None,
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted so
@@ -1978,6 +2011,10 @@ def _render_generative_variant(
             base["intro_highlight_word"] = (
                 getattr(agent_text, "highlight_word", None) if agent_text is not None else None
             )
+            # EFFECTIVE layout (post kill-switch / position-pin forcing), not the
+            # agent's raw choice — the FE gates instant text preview on this.
+            base["intro_layout"] = _at_params.get("layout", "linear")
+            base["intro_word_roles"] = _at_params.get("word_roles")
 
         recipe = build_recipe(recipe_dict)
         try:
@@ -2088,6 +2125,10 @@ def _render_generative_variant(
                 beats=beats,
                 **_at_params,
             )
+            # EFFECTIVE layout: the engine can decline at build time (word count,
+            # fit) and fall back to linear — a linear pair is exactly 2 overlays,
+            # a cluster is 2 per block. The FE gates instant editing on this.
+            base["intro_layout"] = "cluster" if len(overlays) > 2 else "linear"
             burn_text_overlays_skia(audio_mixed_path, overlays, final_path, variant_dir)
         else:
             # lyrics / none / voiceover: no text burn; base caching not supported in v1.
@@ -2173,6 +2214,10 @@ def _render_talking_head_variant(
         # Persisted intro text so re-renders can reuse it without re-running intro_writer.
         "intro_text": None,
         "intro_highlight_word": None,
+        # Effective intro layout ("linear" | "cluster") + the word-role annotation
+        # that rebuilds a cluster deterministically on re-render (no LLM).
+        "intro_layout": None,
+        "intro_word_roles": None,
         "resolved_archetype": "talking_head",
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted for
         # re-renders (same as _render_generative_variant).
@@ -2234,6 +2279,9 @@ def _render_talking_head_variant(
             base["intro_highlight_word"] = (
                 getattr(agent_text, "highlight_word", None) if agent_text is not None else None
             )
+            # EFFECTIVE layout (cluster = 2 overlays per block; linear = one pair).
+            base["intro_layout"] = "cluster" if len(overlays) > 2 else "linear"
+            base["intro_word_roles"] = params.get("word_roles")
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty output")
@@ -2528,6 +2576,20 @@ def _resolve_intro_overlay_params(
             else style.get("position_y_frac")
         ),
     }
+
+    # Layout (linear | cluster). Linear is forced when the kill switch is off or
+    # when ANY explicit position exists (knob/set fracs, or a RESOLVED named
+    # position other than center — knob, curated set, or agent advisory alike):
+    # the cluster's geometry is engine-owned and always centers, so honoring a
+    # requested "top"/"bottom" means rendering it as a linear block there.
+    layout = str(agent_form.get("layout") or "linear")
+    position_pinned = any(
+        params[k] is not None for k in ("position_x_frac", "position_y_frac")
+    ) or params["position"] not in (None, "", "center")
+    if not getattr(settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", True) or position_pinned:
+        layout = "linear"
+    params["layout"] = layout
+    params["word_roles"] = getattr(agent_text, "word_roles", None)
     return params, intro_px, intro_source
 
 

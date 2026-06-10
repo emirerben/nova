@@ -34,6 +34,9 @@ _DEFAULT_EFFECT = "static"
 _SIZE_CLASSES = ("small", "medium", "large", "xlarge", "xxlarge", "jumbo")
 _POSITIONS = ("center", "center-above", "center-label", "center-below", "top", "bottom")
 _ANCHORS = ("left", "right", "center")
+# "linear" = one centered block (the historical intro); "cluster" = editorial
+# word-cluster (multiple positioned blocks, mixed sizes — intro_cluster.py).
+_LAYOUTS = ("linear", "cluster")
 _HEX_LEN = (4, 7)  # "#RGB" or "#RRGGBB"
 
 
@@ -52,6 +55,7 @@ class OverlayFormatMatcherOutput(BaseModel):
     text_color: str = "#FFFFFF"
     highlight_color: str = "#FFD24A"
     text_anchor: str = "center"
+    layout: str = "linear"
     matched_example_ids: list[str] = Field(default_factory=list)
 
 
@@ -74,8 +78,8 @@ def _coerce_hex(value: object, default: str) -> str:
 def _format_example(e) -> str:
     return (
         f'- id={e.id} | profile="{_sanitize_text(e.content_profile)}" | '
-        f"effect={e.effect} | position={e.position} | size={e.size_class} | "
-        f"colors={e.text_color}/{e.highlight_color} | "
+        f"effect={e.effect} | layout={e.layout} | position={e.position} | "
+        f"size={e.size_class} | colors={e.text_color}/{e.highlight_color} | "
         f'sample="{_sanitize_text(e.text)}"'
     )
 
@@ -90,7 +94,9 @@ _LANGUAGE_HINTS: dict[str, str] = {
         "are longer on average than English, so AVOID forms that depend on a short "
         "snappy 2-3 word reveal (e.g. dense karaoke-line on a packed 10-word phrase). "
         "Prefer simpler forms (`fade-in`, `static`) when a Turkish phrasing would "
-        "overflow a karaoke reveal. Lowercase Turkish is the norm; choose colors "
+        "overflow a karaoke reveal. Be conservative with `layout=cluster` — long "
+        "Turkish words crowd a word-cluster; pick it only when the hook would be "
+        "3-5 SHORT words. Lowercase Turkish is the norm; choose colors "
         "that respect that voice."
     ),
 }
@@ -100,9 +106,11 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.overlay_format_matcher",
         prompt_id="match_overlay_format",
+        # 2026-06-10 — added `layout` (linear|cluster) + 3 cluster examples in
+        #              overlay_examples.json (editorial word-cluster intro).
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_hint block (en|tr).
-        prompt_version="2026-06-07",
+        prompt_version="2026-06-10",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -135,6 +143,7 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
             valid_positions=", ".join(_POSITIONS),
             valid_sizes=", ".join(_SIZE_CLASSES),
             valid_anchors=", ".join(_ANCHORS),
+            valid_layouts=", ".join(_LAYOUTS),
             language_hint=_LANGUAGE_HINTS.get(input.language, _LANGUAGE_HINTS["en"]),
         )
 
@@ -157,14 +166,23 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
             if isinstance(i, str) and str(i).strip() in valid_ids
         ]
 
+        effect = _coerce_choice(data.get("effect"), _SKIA_EFFECTS, _DEFAULT_EFFECT)
+        layout = _coerce_choice(data.get("layout"), _LAYOUTS, "linear")
+        # A cluster owns its reveal (per-block staggered fade-in); karaoke's
+        # word-by-word sweep is incompatible with multi-block geometry. Keep the
+        # layout choice and settle the effect.
+        if layout == "cluster" and effect == "karaoke-line":
+            effect = "fade-in"
+
         try:
             return OverlayFormatMatcherOutput(
-                effect=_coerce_choice(data.get("effect"), _SKIA_EFFECTS, _DEFAULT_EFFECT),
+                effect=effect,
                 position=_coerce_choice(data.get("position"), _POSITIONS, "center"),
                 size_class=_coerce_choice(data.get("size_class"), _SIZE_CLASSES, "jumbo"),
                 text_color=_coerce_hex(data.get("text_color"), "#FFFFFF"),
                 highlight_color=_coerce_hex(data.get("highlight_color"), "#FFD24A"),
                 text_anchor=_coerce_choice(data.get("text_anchor"), _ANCHORS, "center"),
+                layout=layout,
                 matched_example_ids=matched,
             )
         except ValidationError as exc:
@@ -173,6 +191,8 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
     def schema_clarification(self) -> str:
         return (
             "\n\nIMPORTANT: Return ONLY a JSON object with keys effect, position, "
-            "size_class, text_color, highlight_color, text_anchor, matched_example_ids. "
-            f"`effect` MUST be one of: {', '.join(_SKIA_EFFECTS)}."
+            "size_class, text_color, highlight_color, text_anchor, layout, "
+            "matched_example_ids. "
+            f"`effect` MUST be one of: {', '.join(_SKIA_EFFECTS)}. "
+            f"`layout` MUST be one of: {', '.join(_LAYOUTS)}."
         )

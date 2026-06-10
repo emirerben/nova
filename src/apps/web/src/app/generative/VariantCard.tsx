@@ -22,11 +22,15 @@ export const TEXT_MODE_LABEL: Record<string, string> = {
 };
 
 /** Instant edit needs the text-free base video AND an editable text mode —
- * lyrics variants have neither (no cached base; lyric typography is set-driven). */
+ * lyrics variants have neither (no cached base; lyric typography is set-driven).
+ * Cluster intros (intro_layout === "cluster") are also excluded: the local DOM
+ * preview only models the linear single-block layout, so cluster text edits go
+ * through the legacy server-reburn controls (still fast — reuses the base). */
 export function isInstantEditEligible(variant: GenerativeVariant): boolean {
   return (
     !!variant.base_video_url &&
-    (variant.text_mode === "agent_text" || variant.text_mode === "none")
+    (variant.text_mode === "agent_text" || variant.text_mode === "none") &&
+    variant.intro_layout !== "cluster"
   );
 }
 

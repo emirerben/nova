@@ -31,6 +31,13 @@ $example_lines
 - Pick colors that read against typical footage (white primary almost always; a warm or high-contrast highlight). Avoid low-contrast combinations.
 - Default position is `center` with size `jumbo` for a hero intro unless the content suggests otherwise.
 
+## Layout
+
+`layout` chooses how the hook text is composed on the frame:
+
+- `linear` — one centered text block (the default). Right for energetic, punchy, or wordy hooks, and for anything driven by a word-by-word reveal.
+- `cluster` — an editorial word-cluster: the hook's key words render as separate blocks with mixed sizes at offset positions (magazine-style), fading in one after another. Choose it ONLY for calm, scenic, aesthetic content (travel, nature, slow lifestyle montages) where the hook will be a SHORT phrase of roughly 3-6 words. The text writer will keep the hook short when you pick cluster. Never pair `cluster` with `karaoke-line` — use `fade-in`.
+
 ## Output
 
 Return ONLY this JSON object (no markdown):
@@ -42,5 +49,6 @@ Return ONLY this JSON object (no markdown):
   "text_color": "#RRGGBB",
   "highlight_color": "#RRGGBB",
   "text_anchor": one of [$valid_anchors],
+  "layout": one of [$valid_layouts],
   "matched_example_ids": ["<ids from the library you matched against>"]
 }
