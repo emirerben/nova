@@ -599,3 +599,90 @@ def test_reroll_exclude_list_is_all_plan_ideas() -> None:
     excluded = captured_inputs[0].exclude_ideas
     assert "film the dark start" in excluded
     assert "cook a quick meal" in excluded
+
+
+# ── Narrative clip order (filming-guide alignment) ────────────────────────────
+
+
+def _narrative_item(guide: list[dict], assignments: list[dict]) -> MagicMock:
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.filming_guide = guide
+    item.clip_assignments = assignments
+    return item
+
+
+def test_narrative_order_derives_guide_order_not_attach_order() -> None:
+    """clip_assignments arrive in client attach order; the guide's shot
+    sequence must win."""
+    from app.tasks.content_plan_build import _narrative_clip_order
+
+    guide = [
+        {"shot_id": "s1", "what": "opening", "duration_s": 4},
+        {"shot_id": "s2", "what": "middle", "duration_s": 5},
+        {"shot_id": "s3", "what": "ending", "duration_s": 3},
+    ]
+    # Attached scrambled: s3's clip first, pool clip, s1's, s2's.
+    assignments = [
+        {"gcs_path": "u/c3.mp4", "shot_id": "s3"},
+        {"gcs_path": "u/pool.mp4", "shot_id": None},
+        {"gcs_path": "u/c1.mp4", "shot_id": "s1"},
+        {"gcs_path": "u/c2.mp4", "shot_id": "s2"},
+    ]
+    # set_item_clips puts slot clips first (attach order), pool after:
+    clip_paths = ["u/c3.mp4", "u/c1.mp4", "u/c2.mp4", "u/pool.mp4"]
+    item = _narrative_item(guide, assignments)
+
+    ordered, count = _narrative_clip_order(item, clip_paths)
+
+    assert ordered == ["u/c1.mp4", "u/c2.mp4", "u/c3.mp4", "u/pool.mp4"]
+    assert count == 3
+
+
+def test_narrative_order_stale_shot_id_becomes_pool() -> None:
+    from app.tasks.content_plan_build import _narrative_clip_order
+
+    guide = [{"shot_id": "s1", "what": "opening", "duration_s": 4}]
+    assignments = [
+        {"gcs_path": "u/stale.mp4", "shot_id": "s-removed-by-reroll"},
+        {"gcs_path": "u/c1.mp4", "shot_id": "s1"},
+    ]
+    clip_paths = ["u/stale.mp4", "u/c1.mp4"]
+    item = _narrative_item(guide, assignments)
+
+    ordered, count = _narrative_clip_order(item, clip_paths)
+
+    assert ordered == ["u/c1.mp4", "u/stale.mp4"]
+    assert count == 1
+
+
+def test_narrative_order_no_guide_is_noop() -> None:
+    from app.tasks.content_plan_build import _narrative_clip_order
+
+    item = _narrative_item([], [{"gcs_path": "u/a.mp4", "shot_id": None}])
+    ordered, count = _narrative_clip_order(item, ["u/a.mp4"])
+
+    assert ordered == ["u/a.mp4"]
+    assert count == 0
+
+
+def test_narrative_order_no_shot_assignments_is_noop() -> None:
+    from app.tasks.content_plan_build import _narrative_clip_order
+
+    guide = [{"shot_id": "s1", "what": "opening", "duration_s": 4}]
+    item = _narrative_item(guide, [{"gcs_path": "u/a.mp4", "shot_id": None}])
+    ordered, count = _narrative_clip_order(item, ["u/a.mp4"])
+
+    assert ordered == ["u/a.mp4"]
+    assert count == 0
+
+
+def test_narrative_order_assignment_path_not_in_clip_paths_ignored() -> None:
+    from app.tasks.content_plan_build import _narrative_clip_order
+
+    guide = [{"shot_id": "s1", "what": "opening", "duration_s": 4}]
+    item = _narrative_item(guide, [{"gcs_path": "u/ghost.mp4", "shot_id": "s1"}])
+    ordered, count = _narrative_clip_order(item, ["u/real.mp4"])
+
+    assert ordered == ["u/real.mp4"]
+    assert count == 0

@@ -218,6 +218,14 @@ class Settings(BaseSettings):
         "Layer-1 text persistence stays active regardless.",
     )
 
+    NARRATIVE_CLIP_ORDER_ENABLED: bool = Field(
+        default=True,
+        description="Order plan-item edits by the filming guide's shot sequence "
+        "(narrative mode in template_matcher.match). Read at render time, so "
+        "flipping it affects queued jobs and re-renders after a worker restart. "
+        "Set to false to fall back to pure greedy clip-to-slot matching.",
+    )
+
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
     # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows

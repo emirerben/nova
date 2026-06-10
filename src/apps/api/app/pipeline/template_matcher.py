@@ -24,7 +24,6 @@ Raises TemplateMismatchError when:
   - No clip can satisfy a slot's duration requirement
 """
 
-
 import dataclasses
 import math
 from collections import defaultdict
@@ -40,11 +39,11 @@ from app.pipeline.agents.gemini_analyzer import (
 
 log = structlog.get_logger()
 
-DURATION_TOLERANCE_PRIMARY_S = 2.0   # tight pass — prefer close duration matches
+DURATION_TOLERANCE_PRIMARY_S = 2.0  # tight pass — prefer close duration matches
 DURATION_TOLERANCE_FALLBACK_S = 6.0  # loose pass — only if no tight match exists
 
-MAX_MERGED_DURATION_S = 20.0   # hard cap — no single slot longer than this
-CONSOLIDATION_MIN_SLOTS = 2    # absolute floor (even if only 1 slot type)
+MAX_MERGED_DURATION_S = 20.0  # hard cap — no single slot longer than this
+CONSOLIDATION_MIN_SLOTS = 2  # absolute floor (even if only 1 slot type)
 
 # Sentinel clip_id for slots locked to the original template's source video.
 # Resolved to template.gcs_path's local download in the orchestrator.
@@ -53,6 +52,7 @@ LOCKED_TEMPLATE_CLIP_ID = "__TEMPLATE_LOCKED__"
 
 def _is_locked_slot(slot: dict) -> bool:
     return bool(slot.get("locked", False))
+
 
 # Curtain-close constraints (must stay in sync with text_overlay.py)
 _MIN_CURTAIN_ANIMATE_S = 4.0
@@ -65,12 +65,46 @@ _CURTAIN_MAX_RATIO = 0.6
 # vague/non-action moments even when energy/duration fits worse.
 # Mirror of gemini_analyzer._BALL_WHITELIST (kept in sync deliberately).
 _BALL_ACTION_KEYWORDS = (
-    "ball", "top ", " top", "shot", "şut", "vuruş", "pass", "pas ", "asist",
-    "goal", "gol", "dribble", "çalım", "save", "kurtarış", "kurtardı",
-    "tackle", "tekleme", "header", "kafa", "cross", "ortaladı",
-    "strike", "volley", "voleyle", "korner", "corner", "freekick", "frikik",
-    "penalty", "penaltı", "intercept", "kesme", "control", "kontrol",
-    "attack", "atak", "hücum", "finish", "bitiriş",
+    "ball",
+    "top ",
+    " top",
+    "shot",
+    "şut",
+    "vuruş",
+    "pass",
+    "pas ",
+    "asist",
+    "goal",
+    "gol",
+    "dribble",
+    "çalım",
+    "save",
+    "kurtarış",
+    "kurtardı",
+    "tackle",
+    "tekleme",
+    "header",
+    "kafa",
+    "cross",
+    "ortaladı",
+    "strike",
+    "volley",
+    "voleyle",
+    "korner",
+    "corner",
+    "freekick",
+    "frikik",
+    "penalty",
+    "penaltı",
+    "intercept",
+    "kesme",
+    "control",
+    "kontrol",
+    "attack",
+    "atak",
+    "hücum",
+    "finish",
+    "bitiriş",
 )
 _FOOTBALL_HINT_KEYS = ("ball", "top", "futbol", "football", "soccer")
 
@@ -99,9 +133,7 @@ def _ball_bonus(moment: dict) -> float:
 class TemplateMismatchError(Exception):
     """Raised when clips cannot satisfy the template's slot requirements."""
 
-    def __init__(
-        self, message: str, code: str = "TEMPLATE_CLIP_DURATION_MISMATCH"
-    ) -> None:
+    def __init__(self, message: str, code: str = "TEMPLATE_CLIP_DURATION_MISMATCH") -> None:
         super().__init__(message)
         self.code = code
         self.message = message
@@ -123,12 +155,8 @@ def _score_merge_pair(
     """
     type_a = slot_a.get("slot_type", "broll")
     type_b = slot_b.get("slot_type", "broll")
-    dur_a = float(
-        slot_a.get("target_duration_s", slot_a.get("target_duration", 5.0))
-    )
-    dur_b = float(
-        slot_b.get("target_duration_s", slot_b.get("target_duration", 5.0))
-    )
+    dur_a = float(slot_a.get("target_duration_s", slot_a.get("target_duration", 5.0)))
+    dur_b = float(slot_b.get("target_duration_s", slot_b.get("target_duration", 5.0)))
     energy_a = float(slot_a.get("energy", 5.0))
     energy_b = float(slot_b.get("energy", 5.0))
     combined_dur = dur_a + dur_b
@@ -210,12 +238,8 @@ def consolidate_slots(
         return recipe
 
     # Compute target slot count — preserve structural arc
-    n_distinct_types = len(
-        {s.get("slot_type", "broll") for s in recipe.slots}
-    )
-    target = max(
-        n_unique_clips, n_distinct_types, CONSOLIDATION_MIN_SLOTS, recipe_min_slots
-    )
+    n_distinct_types = len({s.get("slot_type", "broll") for s in recipe.slots})
+    target = max(n_unique_clips, n_distinct_types, CONSOLIDATION_MIN_SLOTS, recipe_min_slots)
 
     if target >= n_slots:
         return recipe  # nothing to consolidate
@@ -231,16 +255,10 @@ def consolidate_slots(
     )
 
     # Deep-copy slots to avoid mutating the original recipe's dicts
-    slots = [
-        dict(s) for s in sorted(
-            recipe.slots, key=lambda s: s.get("position", 0)
-        )
-    ]
+    slots = [dict(s) for s in sorted(recipe.slots, key=lambda s: s.get("position", 0))]
 
     # Collect interstitial after-slot positions
-    interstitial_positions = {
-        inter.get("after_slot", 0) for inter in (recipe.interstitials or [])
-    }
+    interstitial_positions = {inter.get("after_slot", 0) for inter in (recipe.interstitials or [])}
     interstitials = list(recipe.interstitials or [])
 
     for _ in range(slots_to_remove):
@@ -250,9 +268,7 @@ def consolidate_slots(
         # Score all adjacent pairs
         pairs: list[tuple[float, int]] = []
         for i in range(len(slots) - 1):
-            score = _score_merge_pair(
-                slots[i], slots[i + 1], clip_metas, interstitial_positions
-            )
+            score = _score_merge_pair(slots[i], slots[i + 1], clip_metas, interstitial_positions)
             pairs.append((score, i))
 
         if not pairs:
@@ -269,16 +285,8 @@ def consolidate_slots(
         slot_b = slots[best_idx + 1]
         pos_a = slot_a.get("position", 0)
         pos_b = slot_b.get("position", 0)
-        dur_a = float(
-            slot_a.get(
-                "target_duration_s", slot_a.get("target_duration", 5.0)
-            )
-        )
-        dur_b = float(
-            slot_b.get(
-                "target_duration_s", slot_b.get("target_duration", 5.0)
-            )
-        )
+        dur_a = float(slot_a.get("target_duration_s", slot_a.get("target_duration", 5.0)))
+        dur_b = float(slot_b.get("target_duration_s", slot_b.get("target_duration", 5.0)))
         energy_a = float(slot_a.get("energy", 5.0))
         energy_b = float(slot_b.get("energy", 5.0))
         combined_dur = dur_a + dur_b
@@ -286,13 +294,9 @@ def consolidate_slots(
         # -- Merge execution --
         merged_slot = dict(slot_a)  # start from slot A
         merged_slot["target_duration_s"] = combined_dur
-        merged_slot["priority"] = max(
-            slot_a.get("priority", 1), slot_b.get("priority", 1)
-        )
+        merged_slot["priority"] = max(slot_a.get("priority", 1), slot_b.get("priority", 1))
         # Weighted average energy
-        merged_slot["energy"] = (
-            (energy_a * dur_a + energy_b * dur_b) / combined_dur
-        )
+        merged_slot["energy"] = (energy_a * dur_a + energy_b * dur_b) / combined_dur
         # Mixed types → broll
         if slot_a.get("slot_type") != slot_b.get("slot_type"):
             merged_slot["slot_type"] = "broll"
@@ -306,27 +310,17 @@ def consolidate_slots(
             shifted = dict(ob)
             shifted["start_s"] = float(shifted.get("start_s", 0.0)) + dur_a
             shifted["end_s"] = float(shifted.get("end_s", 0.0)) + dur_a
-            if (
-                "start_s_override" in shifted
-                and shifted["start_s_override"] is not None
-            ):
-                shifted["start_s_override"] = (
-                    float(shifted["start_s_override"]) + dur_a
-                )
-            if (
-                "end_s_override" in shifted
-                and shifted["end_s_override"] is not None
-            ):
-                shifted["end_s_override"] = (
-                    float(shifted["end_s_override"]) + dur_a
-                )
+            if "start_s_override" in shifted and shifted["start_s_override"] is not None:
+                shifted["start_s_override"] = float(shifted["start_s_override"]) + dur_a
+            if "end_s_override" in shifted and shifted["end_s_override"] is not None:
+                shifted["end_s_override"] = float(shifted["end_s_override"]) + dur_a
 
             # Intra-slot dedup: extend matching overlay instead of adding dup
             deduped = False
             for oa in merged_overlays:
-                if oa.get("text") == shifted.get("text") and oa.get(
+                if oa.get("text") == shifted.get("text") and oa.get("position") == shifted.get(
                     "position"
-                ) == shifted.get("position"):
+                ):
                     oa["end_s"] = max(
                         float(oa.get("end_s", 0.0)),
                         float(shifted.get("end_s", 0.0)),
@@ -356,12 +350,10 @@ def consolidate_slots(
         interstitials = new_interstitials
 
         # Update interstitial_positions for next iteration
-        interstitial_positions = {
-            inter.get("after_slot", 0) for inter in interstitials
-        }
+        interstitial_positions = {inter.get("after_slot", 0) for inter in interstitials}
 
         # Replace pair with merged slot
-        slots = slots[:best_idx] + [merged_slot] + slots[best_idx + 2:]
+        slots = slots[:best_idx] + [merged_slot] + slots[best_idx + 2 :]
 
     # -- Renumber positions sequentially (before curtain validation) --
     for i, slot in enumerate(slots):
@@ -372,9 +364,7 @@ def consolidate_slots(
     for inter in interstitials:
         if inter.get("type") == "curtain-close":
             after = inter.get("after_slot", 0)
-            target_slot = next(
-                (s for s in slots if s.get("position", 0) == after), None
-            )
+            target_slot = next((s for s in slots if s.get("position", 0) == after), None)
             if target_slot:
                 slot_dur = float(
                     target_slot.get(
@@ -392,10 +382,7 @@ def consolidate_slots(
                     continue  # drop this curtain
         validated_interstitials.append(inter)
 
-    new_total = sum(
-        float(s.get("target_duration_s", s.get("target_duration", 5.0)))
-        for s in slots
-    )
+    new_total = sum(float(s.get("target_duration_s", s.get("target_duration", 5.0))) for s in slots)
 
     result = dataclasses.replace(
         recipe,
@@ -439,9 +426,7 @@ def _minimum_coverage_pass(
     for meta in clip_metas:
         valid: list[tuple[dict, dict]] = []
         for slot in unlocked_slots:
-            target_dur = float(
-                slot.get("target_duration_s", slot.get("target_duration", 5.0))
-            )
+            target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
             candidates_for_slot: list[dict] = []
             for moment in meta.best_moments:
                 if not isinstance(moment, dict):
@@ -452,8 +437,9 @@ def _minimum_coverage_pass(
                 continue
             if apply_ball_bonus:
                 # Pick the ball-action moment if any matches; else first available.
-                best = max(candidates_for_slot,
-                           key=lambda m: (_ball_bonus(m), m.get("energy", 5.0)))
+                best = max(
+                    candidates_for_slot, key=lambda m: (_ball_bonus(m), m.get("energy", 5.0))
+                )
             else:
                 best = candidates_for_slot[0]
             valid.append((slot, best))
@@ -485,9 +471,7 @@ def _minimum_coverage_pass(
             pos = slot.get("position", 0)
             if pos in assigned_positions:
                 continue
-            target_dur = float(
-                slot.get("target_duration_s", slot.get("target_duration", 5.0))
-            )
+            target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
             slot_energy = float(slot.get("energy", 5.0))
             ball = _ball_bonus(moment) if apply_ball_bonus else 0.0
             dur_fit = -abs(_moment_duration(moment) - target_dur)
@@ -516,11 +500,317 @@ def _minimum_coverage_pass(
 # ── Greedy match ─────────────────────────────────────────────────────────────
 
 
+def _slot_candidates(
+    slot: dict,
+    metas: list[ClipMeta],
+    clip_use_count: dict[str, int],
+    max_uses: int,
+) -> list[tuple[ClipMeta, dict]]:
+    """Candidate (clip, moment) pairs for one slot, shared by greedy + narrative.
+
+    Two-pass duration search (tight ±2s, loose ±6s), then a last-resort
+    any-moment fallback — moment-duration mismatch is not fatal because the
+    downstream assembler trims to slot.target_duration_s. Usage-cap filtering
+    mirrors the historical greedy behavior: prefer clips under the cap, relax
+    duration for unused clips before ever reusing a capped clip.
+
+    Returns [] when no meta has any usable moment (callers decide whether
+    that's fatal — greedy raises, narrative advances past the clip).
+    """
+    target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
+    slot_position = slot.get("position", 1)
+
+    tight_candidates = [
+        (meta, moment)
+        for meta in metas
+        for moment in meta.best_moments
+        if isinstance(moment, dict)
+        and abs(_moment_duration(moment) - target_dur) <= DURATION_TOLERANCE_PRIMARY_S
+    ]
+    # Use tight if any found; otherwise broaden to loose tolerance
+    loose_candidates = tight_candidates or [
+        (meta, moment)
+        for meta in metas
+        for moment in meta.best_moments
+        if isinstance(moment, dict)
+        and abs(_moment_duration(moment) - target_dur) <= DURATION_TOLERANCE_FALLBACK_S
+    ]
+
+    # Last-resort fallback: moment-duration mismatch is not actually fatal.
+    # The downstream assembler in template_orchestrate uses moment.start_s
+    # and trims to slot.target_duration_s — it does NOT need the moment's
+    # duration to match the slot. So when both tight and loose passes are
+    # empty (Gemini extracted one super-long moment for a short clip, or
+    # only short moments for a long slot), accept any moment from any clip
+    # rather than failing the whole job. The assembler will handle the trim.
+    if not loose_candidates:
+        loose_candidates = [
+            (meta, moment)
+            for meta in metas
+            for moment in meta.best_moments
+            if isinstance(moment, dict)
+        ]
+        if loose_candidates:
+            log.warning(
+                "matcher_duration_fallback",
+                slot_position=slot_position,
+                target_dur=target_dur,
+                n_candidates=len(loose_candidates),
+            )
+
+    if not loose_candidates:
+        return []
+
+    # First pass: only clips under usage cap
+    capped_candidates = [
+        (meta, moment)
+        for meta, moment in loose_candidates
+        if clip_use_count[meta.clip_id] < max_uses
+    ]
+
+    # Variety-first fallback: if no clip-under-cap satisfies the duration
+    # tolerance, but unused clips still exist in the pool, pull ALL moments
+    # from those unused clips regardless of duration. The assembler trims
+    # to slot.target_duration_s downstream (see the same insight at the
+    # last-resort duration block above), so duration-fit on the matcher
+    # side is advisory. Reusing a clip while unused clips sit idle is
+    # surprising to users when they uploaded enough material to cover
+    # every slot uniquely.
+    if not capped_candidates:
+        relaxed_unused = [
+            (meta, moment)
+            for meta in metas
+            if clip_use_count[meta.clip_id] < max_uses
+            for moment in meta.best_moments
+            if isinstance(moment, dict)
+        ]
+        if relaxed_unused:
+            log.info(
+                "matcher_relaxed_duration_for_variety",
+                slot_position=slot_position,
+                target_dur=target_dur,
+                n_unused=len({m.clip_id for m, _ in relaxed_unused}),
+            )
+            capped_candidates = relaxed_unused
+
+    # Final fallback: reuse only when truly no unused clip remains
+    return capped_candidates if capped_candidates else loose_candidates
+
+
+def _candidate_score(
+    pair: tuple[ClipMeta, dict],
+    *,
+    slot_energy: float,
+    clip_use_count: dict[str, int],
+    used_moments: set[tuple[str, float, float]],
+    apply_ball_bonus: bool,
+) -> tuple:
+    """Scoring tuple (highest wins), shared by greedy + narrative passes:
+    (1) ball-action bonus (when filter_hint is football) — ball moments outrank vague,
+    (2) variety penalty — moments already used in another slot rank lower,
+    (3) least-used clips first (round-robin ensures all clips featured),
+    (4) closest energy match to slot's musical intensity,
+    (5) highest absolute energy as final tiebreaker.
+    """
+    meta, moment = pair
+    ball = _ball_bonus(moment) if apply_ball_bonus else 0.0
+    mkey = (meta.clip_id, float(moment.get("start_s", 0.0)), float(moment.get("end_s", 0.0)))
+    variety = -1.0 if mkey in used_moments else 0.0
+    return (
+        ball,
+        variety,
+        -clip_use_count[meta.clip_id],
+        -abs(moment.get("energy", 5.0) - slot_energy),
+        moment.get("energy", 5.0),
+    )
+
+
+def _narrative_pass(
+    *,
+    unlocked_slots: list[dict],
+    clip_metas: list[ClipMeta],
+    narrative_order: list[str],
+    pre_assigned_positions: set[int],
+    pinned_clip_ids: set[str],
+    clip_use_count: dict[str, int],
+    used_moments: set[tuple[str, float, float]],
+    max_uses: int,
+    apply_ball_bonus: bool,
+) -> list[AssemblyStep]:
+    """Fill slots in POSITION order so guide clips first appear in guide order.
+
+    A cursor walks `narrative_order` (the filming guide's shot sequence):
+
+      slot 1            → guide[0] only (the guide's opening shot OPENS the edit)
+      cursor unplaced   → pool clips compete with guide[cursor]
+      cursor placed     → pool + guide[cursor] + guide[cursor+1] (picking the
+                          next guide clip advances the cursor)
+      forced advance    → when remaining slots == unplaced guide clips, only
+                          the next unplaced guide clip is eligible (guarantees
+                          every guide clip lands, in order)
+      cursor exhausted  → pool + any guide clip (spine already locked; tail
+                          reuse is normal montage filler)
+
+    Guide clips behind the cursor never re-enter ahead of it, so the FIRST
+    APPEARANCE order is monotonic by construction. Existing scoring (variety,
+    usage cap, energy fit) ranks candidates inside each eligible set. A guide
+    clip with no usable moments (degraded analysis) is dropped from the spine
+    with a warning rather than failing the job; if more guide clips exist than
+    slots, the tail shots are dropped and logged.
+    """
+    metas_by_id = {m.clip_id: m for m in clip_metas}
+    # Dedupe defensively (shipped dispatch can't produce duplicates, but match()
+    # is a public API) — a duplicate id would desync the placed/cursor bookkeeping.
+    guide_ids: list[str] = []
+    for cid in narrative_order:
+        if cid in metas_by_id and cid not in pinned_clip_ids and cid not in guide_ids:
+            guide_ids.append(cid)
+    dropped_missing = [cid for cid in narrative_order if cid not in metas_by_id]
+    if dropped_missing:
+        log.warning("narrative_guide_clips_missing", clip_ids=dropped_missing)
+    guide_set = set(guide_ids)
+    pool_metas = [
+        m for m in clip_metas if m.clip_id not in guide_set and m.clip_id not in pinned_clip_ids
+    ]
+
+    slots = sorted(
+        (s for s in unlocked_slots if s.get("position", 0) not in pre_assigned_positions),
+        key=lambda s: s.get("position", 0),
+    )
+
+    steps: list[AssemblyStep] = []
+    cursor = 0
+    placed: list[bool] = [False] * len(guide_ids)
+
+    for idx, slot in enumerate(slots):
+        remaining_slots = len(slots) - idx
+        chosen: tuple[ClipMeta, dict] | None = None
+
+        while chosen is None:
+            spine_done = cursor >= len(guide_ids) or all(placed)
+            if spine_done:
+                # Spine fully placed — tail slots are normal montage filler.
+                # ALL guide clips are eligible again (first-appearance order is
+                # already locked), so the usage-cap round-robin rotates the tail
+                # instead of hammering the last guide clip when pool is empty.
+                eligible = [*pool_metas, *(metas_by_id[cid] for cid in guide_ids)]
+            else:
+                unplaced = (len(guide_ids) - cursor) - (1 if placed[cursor] else 0)
+                next_unplaced_idx = cursor if not placed[cursor] else cursor + 1
+                if unplaced >= remaining_slots:
+                    # Forced advance: every remaining slot is owed to a guide clip.
+                    eligible = [metas_by_id[guide_ids[next_unplaced_idx]]]
+                elif idx == 0 and not placed[0]:
+                    # The guide's first shot opens the edit — non-negotiable.
+                    eligible = [metas_by_id[guide_ids[0]]]
+                elif not placed[cursor]:
+                    eligible = [*pool_metas, metas_by_id[guide_ids[cursor]]]
+                else:
+                    eligible = [*pool_metas, metas_by_id[guide_ids[cursor]]]
+                    if cursor + 1 < len(guide_ids):
+                        eligible.append(metas_by_id[guide_ids[cursor + 1]])
+
+            candidates = _slot_candidates(slot, eligible, clip_use_count, max_uses)
+            if candidates:
+                chosen = max(
+                    candidates,
+                    key=lambda pair: _candidate_score(
+                        pair,
+                        slot_energy=float(slot.get("energy", 5.0)),
+                        clip_use_count=clip_use_count,
+                        used_moments=used_moments,
+                        apply_ball_bonus=apply_ball_bonus,
+                    ),
+                )
+                break
+
+            # No usable moment in the eligible set. If a guide clip was the
+            # only candidate (degraded analysis), drop it from the spine and
+            # retry this slot; otherwise fall back to every clip (last resort
+            # — mirrors the greedy any-moment fallback) before giving up.
+            if cursor < len(guide_ids) and len(eligible) == 1 and eligible[0].clip_id in guide_set:
+                bad_idx = guide_ids.index(eligible[0].clip_id)
+                log.warning("narrative_guide_clip_unusable", clip_id=eligible[0].clip_id)
+                del guide_ids[bad_idx]
+                del placed[bad_idx]
+                guide_set.discard(eligible[0].clip_id)
+                if cursor > bad_idx:
+                    cursor -= 1
+                continue
+            # Last resort excludes pinned clips (same contract as the greedy
+            # pass) — fall back to them only if nothing else has any moment.
+            non_pinned = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
+            last_resort = _slot_candidates(slot, non_pinned or clip_metas, clip_use_count, max_uses)
+            if not last_resort:
+                target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
+                raise TemplateMismatchError(
+                    f"No usable moments in any clip for slot "
+                    f"{slot.get('position', 1)} (target ~{target_dur:.1f}s). "
+                    "The clips may have failed analysis — try re-uploading or "
+                    "use a shorter clip.",
+                    code="TEMPLATE_CLIP_DURATION_MISMATCH",
+                )
+            log.warning("narrative_last_resort_fallback", slot_position=slot.get("position", 1))
+            chosen = max(
+                last_resort,
+                key=lambda pair: _candidate_score(
+                    pair,
+                    slot_energy=float(slot.get("energy", 5.0)),
+                    clip_use_count=clip_use_count,
+                    used_moments=used_moments,
+                    apply_ball_bonus=apply_ball_bonus,
+                ),
+            )
+
+        best_meta, best_moment = chosen
+        used_moments.add(
+            (
+                best_meta.clip_id,
+                float(best_moment.get("start_s", 0.0)),
+                float(best_moment.get("end_s", 0.0)),
+            )
+        )
+        clip_use_count[best_meta.clip_id] += 1
+        steps.append(AssemblyStep(slot=slot, clip_id=best_meta.clip_id, moment=best_moment))
+
+        # Advance the cursor on first appearances. The general placed-marking
+        # also covers the rare last-resort path picking a guide clip ahead of
+        # the cursor — without it, a later forced advance would place that
+        # shot a second time as if it never appeared.
+        if best_meta.clip_id in guide_set:
+            placed[guide_ids.index(best_meta.clip_id)] = True
+        if cursor + 1 < len(guide_ids) and best_meta.clip_id == guide_ids[cursor + 1]:
+            cursor += 1
+        # A placed cursor clip winning again, or a pool clip, leaves the cursor.
+        # Once the cursor clip is placed and the NEXT one is too, move past it.
+        while (
+            cursor < len(guide_ids)
+            and placed[cursor]
+            and cursor + 1 < len(guide_ids)
+            and placed[cursor + 1]
+        ):
+            cursor += 1
+
+        log.debug(
+            "narrative_slot_assigned",
+            position=slot.get("position", 0),
+            clip_id=best_meta.clip_id,
+            cursor=cursor,
+            energy=best_moment.get("energy"),
+        )
+
+    dropped_tail = [guide_ids[i] for i in range(len(guide_ids)) if not placed[i]]
+    if dropped_tail:
+        log.warning("narrative_shots_dropped", n_dropped=len(dropped_tail), clip_ids=dropped_tail)
+    return steps
+
+
 def match(
     recipe: TemplateRecipe,
     clip_metas: list[ClipMeta],
     pinned_assignments: dict[int, str] | None = None,
     filter_hint: str = "",
+    narrative_order: list[str] | None = None,
 ) -> AssemblyPlan:
     """Greedy template match. Returns AssemblyPlan sorted by slot.position.
 
@@ -534,6 +824,13 @@ def match(
                     Pinned slots bypass coverage + greedy passes; the pinned
                     clip's best matching moment is used, falling back to a
                     synthetic head-of-clip moment if no moment fits the slot.
+        narrative_order: optional list of clip_ids that must FIRST APPEAR in
+                    exactly this order (the filming guide's shot sequence).
+                    Activates narrative mode: slots fill in position order via
+                    a cursor over these "guide" clips; clips NOT in the list
+                    ("pool" footage) interleave freely after the opening slot.
+                    Coverage pass and adjacent-dedup are skipped (both move
+                    assignments across positions). None = classic greedy.
 
     Raises:
         TemplateMismatchError: if no clips are provided, if any slot cannot be
@@ -562,19 +859,24 @@ def match(
         if not _is_locked_slot(slot):
             continue
         src_start = float(slot.get("source_start_s", 0.0))
-        src_end = float(slot.get("source_end_s", src_start + float(
-            slot.get("target_duration_s", slot.get("target_duration", 0.0))
-        )))
-        plan.append(AssemblyStep(
-            slot=slot,
-            clip_id=LOCKED_TEMPLATE_CLIP_ID,
-            moment={
-                "start_s": src_start,
-                "end_s": src_end,
-                "energy": float(slot.get("energy", 5.0)),
-                "description": "locked template source",
-            },
-        ))
+        src_end = float(
+            slot.get(
+                "source_end_s",
+                src_start + float(slot.get("target_duration_s", slot.get("target_duration", 0.0))),
+            )
+        )
+        plan.append(
+            AssemblyStep(
+                slot=slot,
+                clip_id=LOCKED_TEMPLATE_CLIP_ID,
+                moment={
+                    "start_s": src_start,
+                    "end_s": src_end,
+                    "energy": float(slot.get("energy", 5.0)),
+                    "description": "locked template source",
+                },
+            )
+        )
         locked_positions.add(slot.get("position", 0))
 
     unlocked_slots = [s for s in recipe.slots if not _is_locked_slot(s)]
@@ -592,9 +894,7 @@ def match(
             )
 
     # Sort slots by priority descending — assign best moments to highest-priority slots
-    slots_by_priority = sorted(
-        unlocked_slots, key=lambda s: s.get("priority", 1), reverse=True
-    )
+    slots_by_priority = sorted(unlocked_slots, key=lambda s: s.get("priority", 1), reverse=True)
 
     n_slots = len(unlocked_slots)
     n_clips = len(clip_metas)
@@ -621,8 +921,35 @@ def match(
         pinned_clip_ids.add(clip_id)
         pre_assigned_positions.add(pos)
         plan.append(AssemblyStep(slot=slot, clip_id=clip_id, moment=moment))
-        log.info("slot_pinned", position=pos, clip_id=clip_id,
-                 target_dur=slot.get("target_duration_s"))
+        log.info(
+            "slot_pinned", position=pos, clip_id=clip_id, target_dur=slot.get("target_duration_s")
+        )
+
+    # ── Narrative mode: filming-guide order wins over priority greedy ─────
+    # Coverage pass and _dedup_adjacent both move assignments across slot
+    # positions, which would scramble the guide sequence — narrative mode
+    # replaces them with a cursor pass that guarantees guide clips first
+    # appear in guide order (forced-advance supplies the coverage guarantee).
+    if narrative_order:
+        plan.extend(
+            _narrative_pass(
+                unlocked_slots=unlocked_slots,
+                clip_metas=clip_metas,
+                narrative_order=narrative_order,
+                pre_assigned_positions=pre_assigned_positions,
+                pinned_clip_ids=pinned_clip_ids,
+                clip_use_count=clip_use_count,
+                used_moments=used_moments,
+                max_uses=max_uses,
+                apply_ball_bonus=apply_ball_bonus,
+            )
+        )
+        sorted_plan = sorted(plan, key=lambda step: step.slot.get("position", 0))
+        clips_used = len({s.clip_id for s in sorted_plan})
+        log.info(
+            "template_match_done", slots=len(sorted_plan), clips_used=clips_used, narrative=True
+        )
+        return AssemblyPlan(steps=sorted_plan)
 
     # Coverage pass excludes locked slots, pinned slots, and pinned clips.
     coverage_slots = [
@@ -631,24 +958,21 @@ def match(
     coverage_metas = [m for m in clip_metas if m.clip_id not in pinned_clip_ids]
     pre_assigned = (
         _minimum_coverage_pass(coverage_slots, coverage_metas, apply_ball_bonus=apply_ball_bonus)
-        if coverage_metas else {}
+        if coverage_metas
+        else {}
     )
 
     # Seed used_moments from coverage to give the greedy variety pass an accurate base
     for _pos, (_meta, _mom) in pre_assigned.items():
-        used_moments.add((_meta.clip_id,
-                          float(_mom.get("start_s", 0.0)),
-                          float(_mom.get("end_s", 0.0))))
+        used_moments.add(
+            (_meta.clip_id, float(_mom.get("start_s", 0.0)), float(_mom.get("end_s", 0.0)))
+        )
 
     # Seed plan + use counts from pre-assigned slots
     for pos, (meta, moment) in pre_assigned.items():
-        slot = next(
-            s for s in recipe.slots if s.get("position", 0) == pos
-        )
+        slot = next(s for s in recipe.slots if s.get("position", 0) == pos)
         clip_use_count[meta.clip_id] += 1
-        plan.append(
-            AssemblyStep(slot=slot, clip_id=meta.clip_id, moment=moment)
-        )
+        plan.append(AssemblyStep(slot=slot, clip_id=meta.clip_id, moment=moment))
         log.debug(
             "slot_pre_assigned",
             position=pos,
@@ -681,57 +1005,17 @@ def match(
         # Skip slots already handled by coverage pass
         if slot.get("position", 0) in pre_assigned_positions:
             continue
-        target_dur = float(
-            slot.get("target_duration_s", slot.get("target_duration", 5.0))
-        )
+        target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
         slot_position = slot.get("position", 1)
         slot_priority = slot.get("priority", 1)
         slot_energy = float(slot.get("energy", 5.0))
 
         # Two-pass candidate search: tight (±2s) preferred; loose (±6s) fallback.
         # Greedy candidates exclude pinned clips so a pinned face/hook clip
-        # never bleeds into a non-pinned slot.
-        tight_candidates = [
-            (meta, moment)
-            for meta in greedy_metas
-            for moment in meta.best_moments
-            if isinstance(moment, dict)
-            and abs(_moment_duration(moment) - target_dur)
-            <= DURATION_TOLERANCE_PRIMARY_S
-        ]
-        # Use tight if any found; otherwise broaden to loose tolerance
-        loose_candidates = tight_candidates or [
-            (meta, moment)
-            for meta in greedy_metas
-            for moment in meta.best_moments
-            if isinstance(moment, dict)
-            and abs(_moment_duration(moment) - target_dur)
-            <= DURATION_TOLERANCE_FALLBACK_S
-        ]
-
-        # Last-resort fallback: moment-duration mismatch is not actually fatal.
-        # The downstream assembler in template_orchestrate uses moment.start_s
-        # and trims to slot.target_duration_s — it does NOT need the moment's
-        # duration to match the slot. So when both tight and loose passes are
-        # empty (Gemini extracted one super-long moment for a short clip, or
-        # only short moments for a long slot), accept any moment from any clip
-        # rather than failing the whole job. The assembler will handle the trim.
-        if not loose_candidates:
-            loose_candidates = [
-                (meta, moment)
-                for meta in greedy_metas
-                for moment in meta.best_moments
-                if isinstance(moment, dict)
-            ]
-            if loose_candidates:
-                log.warning(
-                    "matcher_duration_fallback",
-                    slot_position=slot_position,
-                    target_dur=target_dur,
-                    n_candidates=len(loose_candidates),
-                )
-
-        if not loose_candidates:
+        # never bleeds into a non-pinned slot. (Search + cap/variety fallbacks
+        # extracted to _slot_candidates, shared with the narrative pass.)
+        candidates = _slot_candidates(slot, greedy_metas, clip_use_count, max_uses)
+        if not candidates:
             # Truly nothing to assemble — Gemini returned no usable moments
             # for any clip. This is a Gemini-side failure, not a template
             # mismatch. We surface it as user_clip_unusable upstream.
@@ -742,73 +1026,26 @@ def match(
                 code="TEMPLATE_CLIP_DURATION_MISMATCH",
             )
 
-        # First pass: only clips under usage cap
-        capped_candidates = [
-            (meta, moment)
-            for meta, moment in loose_candidates
-            if clip_use_count[meta.clip_id] < max_uses
-        ]
-
-        # Variety-first fallback: if no clip-under-cap satisfies the duration
-        # tolerance, but unused clips still exist in the pool, pull ALL moments
-        # from those unused clips regardless of duration. The assembler trims
-        # to slot.target_duration_s downstream (see the same insight at the
-        # last-resort duration block above), so duration-fit on the matcher
-        # side is advisory. Reusing a clip while unused clips sit idle is
-        # surprising to users when they uploaded enough material to cover
-        # every slot uniquely.
-        if not capped_candidates:
-            relaxed_unused = [
-                (meta, moment)
-                for meta in greedy_metas
-                if clip_use_count[meta.clip_id] < max_uses
-                for moment in meta.best_moments
-                if isinstance(moment, dict)
-            ]
-            if relaxed_unused:
-                log.info(
-                    "matcher_relaxed_duration_for_variety",
-                    slot_position=slot_position,
-                    target_dur=target_dur,
-                    n_unused=len({m.clip_id for m, _ in relaxed_unused}),
-                )
-                capped_candidates = relaxed_unused
-
-        # Final fallback: reuse only when truly no unused clip remains
-        candidates = capped_candidates if capped_candidates else loose_candidates
-
-        # Scoring (highest tuple wins):
-        # (1) ball-action bonus (when filter_hint is football) — ball moments outrank vague,
-        # (2) variety penalty — moments already used in another slot rank lower,
-        # (3) least-used clips first (round-robin ensures all clips featured),
-        # (4) closest energy match to slot's musical intensity,
-        # (5) highest absolute energy as final tiebreaker.
-        def _score_candidate(pair: tuple[ClipMeta, dict]) -> tuple:
-            meta, moment = pair
-            ball = _ball_bonus(moment) if apply_ball_bonus else 0.0
-            mkey = (meta.clip_id,
-                    float(moment.get("start_s", 0.0)),
-                    float(moment.get("end_s", 0.0)))
-            variety = -1.0 if mkey in used_moments else 0.0
-            return (
-                ball,
-                variety,
-                -clip_use_count[meta.clip_id],
-                -abs(moment.get("energy", 5.0) - slot_energy),
-                moment.get("energy", 5.0),
-            )
-
-        best_meta, best_moment = max(candidates, key=_score_candidate)
-        used_moments.add((best_meta.clip_id,
-                          float(best_moment.get("start_s", 0.0)),
-                          float(best_moment.get("end_s", 0.0))))
-
-        clip_use_count[best_meta.clip_id] += 1
-        plan.append(
-            AssemblyStep(
-                slot=slot, clip_id=best_meta.clip_id, moment=best_moment
+        best_meta, best_moment = max(
+            candidates,
+            key=lambda pair: _candidate_score(
+                pair,
+                slot_energy=slot_energy,
+                clip_use_count=clip_use_count,
+                used_moments=used_moments,
+                apply_ball_bonus=apply_ball_bonus,
+            ),
+        )
+        used_moments.add(
+            (
+                best_meta.clip_id,
+                float(best_moment.get("start_s", 0.0)),
+                float(best_moment.get("end_s", 0.0)),
             )
         )
+
+        clip_use_count[best_meta.clip_id] += 1
+        plan.append(AssemblyStep(slot=slot, clip_id=best_meta.clip_id, moment=best_moment))
 
         log.debug(
             "slot_assigned",
@@ -818,13 +1055,11 @@ def match(
             energy=best_moment.get("energy"),
             target_dur=target_dur,
             use_count=clip_use_count[best_meta.clip_id],
-            cap_enforced=bool(capped_candidates),
+            cap_enforced=clip_use_count[best_meta.clip_id] <= max_uses,
         )
 
     # CRITICAL: sort by slot.position before returning — FFmpeg concat needs temporal order
-    sorted_plan = sorted(
-        plan, key=lambda step: step.slot.get("position", 0)
-    )
+    sorted_plan = sorted(plan, key=lambda step: step.slot.get("position", 0))
     sorted_plan = _dedup_adjacent(sorted_plan)
 
     clips_used = len({s.clip_id for s in sorted_plan})
@@ -854,20 +1089,14 @@ def _dedup_adjacent(steps: list[AssemblyStep]) -> list[AssemblyStep]:
                 if steps[j].clip_id == LOCKED_TEMPLATE_CLIP_ID:
                     continue  # don't swap into locked position
                 if steps[j].clip_id != steps[i - 1].clip_id:
-                    dur_i = float(
-                        steps[i].slot.get("target_duration_s", 5.0)
-                    )
-                    dur_j = float(
-                        steps[j].slot.get("target_duration_s", 5.0)
-                    )
+                    dur_i = float(steps[i].slot.get("target_duration_s", 5.0))
+                    dur_j = float(steps[j].slot.get("target_duration_s", 5.0))
                     moment_i_dur = _moment_duration(steps[i].moment)
                     moment_j_dur = _moment_duration(steps[j].moment)
 
                     if (
-                        abs(moment_i_dur - dur_j)
-                        <= DURATION_TOLERANCE_PRIMARY_S
-                        and abs(moment_j_dur - dur_i)
-                        <= DURATION_TOLERANCE_PRIMARY_S
+                        abs(moment_i_dur - dur_j) <= DURATION_TOLERANCE_PRIMARY_S
+                        and abs(moment_j_dur - dur_i) <= DURATION_TOLERANCE_PRIMARY_S
                     ):
                         steps[i].clip_id, steps[j].clip_id = (
                             steps[j].clip_id,
@@ -896,9 +1125,7 @@ def _resolve_pinned_moment(meta: ClipMeta, slot: dict) -> dict:
     a face clip, we use the first ``target_duration_s`` of it even when Gemini
     didn't surface a matching moment.
     """
-    target_dur = float(
-        slot.get("target_duration_s", slot.get("target_duration", 5.0))
-    )
+    target_dur = float(slot.get("target_duration_s", slot.get("target_duration", 5.0)))
     tight: list[dict] = []
     loose: list[dict] = []
     for moment in meta.best_moments:

@@ -162,6 +162,7 @@ def build_generative_job(
     tiktok_summary: str = "",
     user_style: dict | None = None,
     filming_guide: list[dict] | None = None,
+    narrative_shot_count: int = 0,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -219,6 +220,14 @@ def build_generative_job(
     guide_ctx = _build_filming_guide_context(filming_guide)
     if guide_ctx:
         all_candidates["filming_guide"] = guide_ctx
+    # Narrative clip order (filming-guide alignment). Contract: the first N
+    # entries of clip_paths are the guide's shot clips IN GUIDE ORDER — the
+    # caller (_dispatch_item_render) derives that ordering. Omit the key when
+    # 0/absent so public and legacy jobs keep byte-identical all_candidates
+    # shape (same discipline as the optional keys above). The render path
+    # additionally gates on NARRATIVE_CLIP_ORDER_ENABLED at render time.
+    if narrative_shot_count > 0:
+        all_candidates["narrative_shot_count"] = min(int(narrative_shot_count), len(clip_paths))
     return Job(
         user_id=user_id,
         job_type="generative",

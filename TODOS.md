@@ -49,6 +49,37 @@
 **Effort:** M (CC: ~1h)
 **Priority:** P3
 
+### Narrative clip order for PUBLIC generative jobs
+**What:** Plan-item edits now follow the filming guide's shot order (`narrative_order` in `template_matcher.match`, kill switch `NARRATIVE_CLIP_ORDER_ENABLED`). Public generative jobs (no plan item) still use pure greedy matching — upload order is ignored. Decide whether upload order should become a soft narrative signal there, or whether the LLM `clip_router` (`app/agents/clip_router.py`, already has a `sequence_variety` eval rubric in `tests/evals/rubrics/clip_router.md`) should rank a sequence for the public flow.
+**Why:** The "edit feels random" complaint applies to public uploads too; users tend to upload in the order they filmed. But upload order is a much weaker signal than an explicit guide, and energy-greedy may genuinely beat it for dump-style uploads — needs a judge-eval before committing.
+**How:** Option A: pass `narrative_order=upload-order` for public jobs behind a separate flag. Option B: route public montage through `agentic_match()` with sequence-aware prompting. Either way, run the `edit-quality-review` workflow (`.claude/workflows/edit-quality-review.js`) on before/after renders to judge.
+**Effort:** S (CC: ~30 min for A; M ~1.5h for B with eval)
+**Priority:** P3
+**Depends on:** filming-guide narrative ordering (this PR) proving out in prod
+
+### Time-boxed hook text (judge-workflow finding, 2026-06-10)
+**What:** The agent intro line burns verbatim for the FULL video. The `edit-quality-review` judge workflow graded a real guide-ordered render: influencer_readiness 5/10 FAIL, naming static full-duration text "the strongest templated-AI tell". Show the hook only for the first ~2.5-3s, then fade out (or swap to a payoff line when the closing scene lands).
+**Why:** It's the top blocker between "correct edit" and "edit an established influencer would post" now that sequence alignment passes (8.5/10).
+**How:** Overlay end-time support exists in the burn dict (lyrics use timed overlays); intro path pins end=video duration. Plumb a `hook_window_s` through `_resolve_intro_overlay_params` → both renderers (renderer-parity invariant! extend `test_both_renderers_honor_text_anchor_left` pattern) + fast-reburn base unaffected (text burns on base). Run `make verify-overlays` + judge workflow before/after.
+**Effort:** M (CC: ~1-2h incl. parity tests)
+**Priority:** P2
+**Depends on:** nothing; verify with `.claude/workflows/edit-quality-review.js`
+
+### Hook visible on literal first frame + contrast scrim (judge finding)
+**What:** hook_strength 6/10 FAIL: text fades in by ~t=0.4 so the feed-preview frame has NO text; white serif over bright/busy zones crosses faces. Render text from frame 0 and add composition-aware nudge/scrim.
+**Why:** The first frame is what feed previews show; hooks that appear late lose the scroll-stop.
+**How:** Style-set fade-in start → 0 for the intro overlay; reuse `text_safe_zone` (already computed per clip) for vertical nudge away from face boxes + drop-shadow/scrim when background luminance is high. Parity-sensitive (both renderers).
+**Effort:** S-M (CC: ~1h)
+**Priority:** P2
+
+### Narrative payoff duration weighting (judge finding)
+**What:** pacing 7/10 noted the guide's climax shot (intended ~6s) rendered as the SHORTEST slot (3.1s) while setup footage got 7.8s. v1 narrative mode deliberately ignores guide `duration_s` (beat grid owns timing). Consider biasing recipe slot generation (or slot→run weighting) by guide durations when narrative mode is active.
+**Why:** Setup:payoff at 2.5:1 makes the climax feel cut off; influencers proportion toward the payoff.
+**How:** In `generate_music_recipe`/`_build_no_music_recipe`, when narrative_shot_count>0, weight slot durations by normalized guide `duration_s` before beat-snap. Judge with the workflow before/after.
+**Effort:** M (CC: ~1-2h)
+**Priority:** P3
+**Depends on:** narrative ordering (this PR)
+
 ### Shot-count hint on the content-plan calendar card
 **What:** The calendar card today shows the day's theme and idea. Adding a tiny `3 shots` badge would give the user a sense of filming effort before tapping into the item.
 **Why:** Helps plan filming sessions — a 4-shot montage vs a 1-shot talking head are very different commitment levels.
