@@ -9,10 +9,11 @@ export const meta = {
   ],
 }
 
-const videoPath = args?.videoPath
+const a = typeof args === 'string' ? JSON.parse(args) : (args || {})
+const videoPath = a.videoPath
 if (!videoPath) throw new Error('args.videoPath required')
-const guide = args?.filmingGuide || []
-const colorKey = args?.clipColorKey || ''
+const guide = a.filmingGuide || []
+const colorKey = a.clipColorKey || ''
 
 phase('Probe')
 const probe = await agent(

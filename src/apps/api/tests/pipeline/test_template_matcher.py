@@ -15,6 +15,7 @@ from app.pipeline.template_matcher import (
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
+
 def _make_recipe(slots: list[dict]) -> TemplateRecipe:
     return TemplateRecipe(
         shot_count=len(slots),
@@ -51,12 +52,15 @@ def _moment(start_s: float, end_s: float, energy: float = 7.0) -> dict:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
+
 class TestTemplateMatcher:
     def test_happy_path_returns_assembly_plan(self):
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=10, slot_type="hook"),
-            _slot(2, 10.0, priority=5, slot_type="broll"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=10, slot_type="hook"),
+                _slot(2, 10.0, priority=5, slot_type="broll"),
+            ]
+        )
         clips = [
             _make_clip("clip_a", [_moment(0.0, 5.0, energy=9.0)]),
             _make_clip("clip_b", [_moment(0.0, 10.0, energy=6.0)]),
@@ -69,16 +73,21 @@ class TestTemplateMatcher:
 
     def test_output_sorted_by_slot_position(self):
         """Critical: FFmpeg concat needs temporal order, not priority order."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=1),   # low priority, first position
-            _slot(2, 5.0, priority=10),  # high priority, second position
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=1),  # low priority, first position
+                _slot(2, 5.0, priority=10),  # high priority, second position
+            ]
+        )
         # One clip covers both durations
         clips = [
-            _make_clip("clip_a", [
-                _moment(0.0, 5.0, energy=8.0),
-                _moment(5.0, 10.0, energy=9.0),
-            ]),
+            _make_clip(
+                "clip_a",
+                [
+                    _moment(0.0, 5.0, energy=8.0),
+                    _moment(5.0, 10.0, energy=9.0),
+                ],
+            ),
         ]
 
         plan = match(recipe, clips)
@@ -88,10 +97,12 @@ class TestTemplateMatcher:
 
     def test_variety_penalty_prefers_different_clips(self):
         """Adjacent slots should prefer different clips when options exist."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=5),
-            _slot(2, 5.0, priority=5),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=5),
+                _slot(2, 5.0, priority=5),
+            ]
+        )
         clip_a = _make_clip("clip_a", [_moment(0.0, 5.0, energy=8.0)])
         clip_b = _make_clip("clip_b", [_moment(0.0, 5.0, energy=7.8)])  # slightly lower energy
 
@@ -131,10 +142,12 @@ class TestTemplateMatcher:
         whose slots want ~5s, Gemini extracts one full-clip moment of duration
         12s, |12-5|=7 > 6 tolerance. Old behavior: TemplateMismatchError. New
         behavior: matches via fallback — the assembler trims to 5s anyway."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=10),
-            _slot(2, 5.0, priority=5),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=10),
+                _slot(2, 5.0, priority=5),
+            ]
+        )
         clips = [
             # Single 12s clip with one full-clip moment — exactly the prod failure.
             _make_clip("clip_a", [_moment(0.0, 12.0)])
@@ -183,14 +196,19 @@ class TestTemplateMatcher:
 
     def test_greedy_matches_energy_to_slot(self):
         """Highest priority slot gets the best energy-matched moment."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=1),
-            _slot(2, 5.0, priority=10),  # highest priority, default energy=5.0
-        ])
-        clip = _make_clip("clip_a", [
-            _moment(0.0, 5.0, energy=9.0),   # far from slot energy 5.0
-            _moment(5.0, 10.0, energy=5.0),   # exact match to slot energy 5.0
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=1),
+                _slot(2, 5.0, priority=10),  # highest priority, default energy=5.0
+            ]
+        )
+        clip = _make_clip(
+            "clip_a",
+            [
+                _moment(0.0, 5.0, energy=9.0),  # far from slot energy 5.0
+                _moment(5.0, 10.0, energy=5.0),  # exact match to slot energy 5.0
+            ],
+        )
 
         plan = match(recipe, [clip])
 
@@ -202,21 +220,28 @@ class TestTemplateMatcher:
         """Slot with high energy rating gets matched to high-energy footage."""
         slots = [
             {
-                "position": 1, "target_duration_s": 5.0,
-                "priority": 5, "slot_type": "broll",
+                "position": 1,
+                "target_duration_s": 5.0,
+                "priority": 5,
+                "slot_type": "broll",
                 "energy": 2.0,
             },
             {
-                "position": 2, "target_duration_s": 5.0,
-                "priority": 5, "slot_type": "broll",
+                "position": 2,
+                "target_duration_s": 5.0,
+                "priority": 5,
+                "slot_type": "broll",
                 "energy": 9.0,
             },
         ]
         recipe = _make_recipe(slots)
-        clip = _make_clip("clip_a", [
-            _moment(0.0, 5.0, energy=8.5),   # high energy
-            _moment(5.0, 10.0, energy=2.5),   # low energy
-        ])
+        clip = _make_clip(
+            "clip_a",
+            [
+                _moment(0.0, 5.0, energy=8.5),  # high energy
+                _moment(5.0, 10.0, energy=2.5),  # low energy
+            ],
+        )
 
         plan = match(recipe, [clip])
 
@@ -246,16 +271,21 @@ class TestPinnedClipReuse:
         """1 clip, 2 unlocked slots, slot 1 pinned (hook). Both slots filled,
         same clip_id, different moments via variety dedup. This is the exact
         Just Fine — Sunset Reassurance failure path."""
-        recipe = _make_recipe([
-            _slot(1, 3.468, priority=9, slot_type="hook"),
-            _slot(2, 5.002, priority=9, slot_type="outro"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 3.468, priority=9, slot_type="hook"),
+                _slot(2, 5.002, priority=9, slot_type="outro"),
+            ]
+        )
         # 12s clip with three moments — enough variety for slot 1 + slot 2
-        clip = _make_clip("clip_0", [
-            _moment(0.0, 3.5, energy=6.0),
-            _moment(3.5, 8.5, energy=8.0),
-            _moment(7.0, 12.0, energy=7.0),
-        ])
+        clip = _make_clip(
+            "clip_0",
+            [
+                _moment(0.0, 3.5, energy=6.0),
+                _moment(3.5, 8.5, energy=8.0),
+                _moment(7.0, 12.0, energy=7.0),
+            ],
+        )
 
         plan = match(recipe, [clip], pinned_assignments={1: "clip_0"})
 
@@ -267,44 +297,46 @@ class TestPinnedClipReuse:
         # Variety dedup: slot 2 must pick a different moment than slot 1
         slot1_key = (slot1.moment["start_s"], slot1.moment["end_s"])
         slot2_key = (slot2.moment["start_s"], slot2.moment["end_s"])
-        assert slot1_key != slot2_key, (
-            "Variety dedup failed — both slots got the same moment range"
-        )
+        assert slot1_key != slot2_key, "Variety dedup failed — both slots got the same moment range"
 
     def test_pinned_reuse_only_when_no_alternatives(self):
         """2 clips, slot 1 pinned to clip_0. Slot 2 must go to clip_1, NOT
         reuse the pinned clip. The contract still holds when alternatives
         exist."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=9, slot_type="hook"),
-            _slot(2, 5.0, priority=5, slot_type="broll"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=9, slot_type="hook"),
+                _slot(2, 5.0, priority=5, slot_type="broll"),
+            ]
+        )
         clip_0 = _make_clip("clip_0", [_moment(0.0, 5.0, energy=8.0)])
         clip_1 = _make_clip("clip_1", [_moment(0.0, 5.0, energy=7.0)])
 
-        plan = match(
-            recipe, [clip_0, clip_1], pinned_assignments={1: "clip_0"}
-        )
+        plan = match(recipe, [clip_0, clip_1], pinned_assignments={1: "clip_0"})
 
         slot2 = next(s for s in plan.steps if s.slot["position"] == 2)
         assert slot2.clip_id == "clip_1", (
-            "Pinned clip leaked into a non-pinned slot when an alternative "
-            "was available"
+            "Pinned clip leaked into a non-pinned slot when an alternative was available"
         )
 
     def test_three_slots_one_clip_pinned(self):
         """1 clip, 3 unlocked slots, slot 1 pinned. All three filled, all
         from the same clip, with max_uses=ceil(3/1)=3 honored."""
-        recipe = _make_recipe([
-            _slot(1, 4.0, priority=9, slot_type="hook"),
-            _slot(2, 5.0, priority=7, slot_type="broll"),
-            _slot(3, 6.0, priority=5, slot_type="outro"),
-        ])
-        clip = _make_clip("clip_0", [
-            _moment(0.0, 4.0, energy=8.0),
-            _moment(4.0, 9.0, energy=7.0),
-            _moment(9.0, 15.0, energy=6.0),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 4.0, priority=9, slot_type="hook"),
+                _slot(2, 5.0, priority=7, slot_type="broll"),
+                _slot(3, 6.0, priority=5, slot_type="outro"),
+            ]
+        )
+        clip = _make_clip(
+            "clip_0",
+            [
+                _moment(0.0, 4.0, energy=8.0),
+                _moment(4.0, 9.0, energy=7.0),
+                _moment(9.0, 15.0, energy=6.0),
+            ],
+        )
 
         plan = match(recipe, [clip], pinned_assignments={1: "clip_0"})
 
@@ -335,13 +367,15 @@ class TestNoReuseWhenSupplySufficient:
         other four uploaded clips have moments well outside the duration
         tolerance. Pre-fix slot 2 reused the fitting clip; post-fix it picks
         an unused clip via the duration-relaxed branch."""
-        recipe = _make_recipe([
-            _slot(1, 4.0, priority=10, slot_type="hook"),
-            _slot(2, 4.0, priority=9, slot_type="broll"),
-            _slot(3, 4.0, priority=8, slot_type="broll"),
-            _slot(4, 4.0, priority=7, slot_type="broll"),
-            _slot(5, 4.0, priority=5, slot_type="outro"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 4.0, priority=10, slot_type="hook"),
+                _slot(2, 4.0, priority=9, slot_type="broll"),
+                _slot(3, 4.0, priority=8, slot_type="broll"),
+                _slot(4, 4.0, priority=7, slot_type="broll"),
+                _slot(5, 4.0, priority=5, slot_type="outro"),
+            ]
+        )
         # clip_a has a fitting 4s moment; b/c/d/e only have 15s moments
         # (|15 - 4| = 11s > DURATION_TOLERANCE_FALLBACK_S=6s).
         clips = [
@@ -388,16 +422,22 @@ class TestNoReuseWhenSupplySufficient:
         # Each clip has several moments so the matcher has variety to choose
         # from per-slot without depleting one clip's moments before reuse.
         clips = [
-            _make_clip("clip_a", [
-                _moment(0.0, 4.0, energy=8.0),
-                _moment(4.0, 8.0, energy=7.0),
-                _moment(8.0, 12.0, energy=6.0),
-            ]),
-            _make_clip("clip_b", [
-                _moment(0.0, 4.0, energy=7.5),
-                _moment(4.0, 8.0, energy=6.5),
-                _moment(8.0, 12.0, energy=5.5),
-            ]),
+            _make_clip(
+                "clip_a",
+                [
+                    _moment(0.0, 4.0, energy=8.0),
+                    _moment(4.0, 8.0, energy=7.0),
+                    _moment(8.0, 12.0, energy=6.0),
+                ],
+            ),
+            _make_clip(
+                "clip_b",
+                [
+                    _moment(0.0, 4.0, energy=7.5),
+                    _moment(4.0, 8.0, energy=6.5),
+                    _moment(8.0, 12.0, energy=5.5),
+                ],
+            ),
         ]
 
         plan = match(recipe, clips)
@@ -410,8 +450,7 @@ class TestNoReuseWhenSupplySufficient:
         # max_uses=3, each clip used 2 or 3 times
         for clip_id, n in counts.items():
             assert 2 <= n <= 3, (
-                f"clip {clip_id} used {n} times — expected 2 or 3 with "
-                f"supply=2 demand=5 max_uses=3"
+                f"clip {clip_id} used {n} times — expected 2 or 3 with supply=2 demand=5 max_uses=3"
             )
 
     def test_variety_relaxation_emits_log_when_fired(self, monkeypatch):
@@ -437,10 +476,12 @@ class TestNoReuseWhenSupplySufficient:
 
         monkeypatch.setattr(template_matcher, "log", _Recorder())
 
-        recipe = _make_recipe([
-            _slot(1, 4.0, priority=10, slot_type="hook"),
-            _slot(2, 4.0, priority=9, slot_type="broll"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 4.0, priority=10, slot_type="hook"),
+                _slot(2, 4.0, priority=9, slot_type="broll"),
+            ]
+        )
         # Setup forces the variety-relaxed branch on slot 2:
         # clip_a fits perfectly, clip_b's moment is far outside tolerance.
         clips = [
@@ -484,13 +525,15 @@ class TestNoReuseWhenSupplySufficient:
         and the unpinned clips' moments got rejected by the duration
         filter before they could be considered.
         """
-        recipe = _make_recipe([
-            _slot(1, 4.0, priority=10, slot_type="hook"),
-            _slot(2, 5.0, priority=8, slot_type="broll"),
-            _slot(3, 5.0, priority=7, slot_type="broll"),
-            _slot(4, 5.0, priority=6, slot_type="broll"),
-            _slot(5, 5.0, priority=5, slot_type="outro"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 4.0, priority=10, slot_type="hook"),
+                _slot(2, 5.0, priority=8, slot_type="broll"),
+                _slot(3, 5.0, priority=7, slot_type="broll"),
+                _slot(4, 5.0, priority=6, slot_type="broll"),
+                _slot(5, 5.0, priority=5, slot_type="outro"),
+            ]
+        )
         # clip_0 (pinned to slot 1): has a 4s moment that fits slot 1
         # and would also fit slots 2-5 if unpinned. The other four clips
         # have 15s moments — outside the ±6s tolerance for the 5s slots.
@@ -509,9 +552,7 @@ class TestNoReuseWhenSupplySufficient:
         assert slot_1.clip_id == "clip_0"
 
         # Slots 2-5 each used a different unpinned clip, no reuse
-        other_slot_clip_ids = sorted(
-            s.clip_id for s in plan.steps if s.slot["position"] != 1
-        )
+        other_slot_clip_ids = sorted(s.clip_id for s in plan.steps if s.slot["position"] != 1)
         assert other_slot_clip_ids == ["clip_a", "clip_b", "clip_c", "clip_d"], (
             f"Pinned clip_0 leaked into a non-pinned slot OR the unpinned "
             f"clips were not all used. Got: {other_slot_clip_ids}"
@@ -545,10 +586,12 @@ class TestLockedHookSlot:
         locked_slot["locked"] = True
         locked_slot["source_start_s"] = 0.0
         locked_slot["source_end_s"] = 1.3
-        recipe = _make_recipe([
-            locked_slot,
-            _slot(2, 5.0, priority=5, slot_type="broll"),
-        ])
+        recipe = _make_recipe(
+            [
+                locked_slot,
+                _slot(2, 5.0, priority=5, slot_type="broll"),
+            ]
+        )
         clip = _make_clip("clip_0", [_moment(0.0, 5.0, energy=7.0)])
 
         plan = match(recipe, [clip])
@@ -569,10 +612,12 @@ class TestLockedHookSlot:
         locked_slot["locked"] = True
         locked_slot["source_start_s"] = 0.0
         locked_slot["source_end_s"] = 1.3
-        recipe = _make_recipe([
-            locked_slot,
-            _slot(2, 5.0, priority=5, slot_type="broll"),
-        ])
+        recipe = _make_recipe(
+            [
+                locked_slot,
+                _slot(2, 5.0, priority=5, slot_type="broll"),
+            ]
+        )
         clip = _make_clip("clip_0", [_moment(0.0, 5.0, energy=7.0)])
 
         with pytest.raises(TemplateMismatchError) as exc_info:
@@ -667,13 +712,15 @@ class TestDedupAdjacent:
 
     def test_match_integration_both_clips_used(self):
         """End-to-end: match() with 5 slots, 2 clips → both clips appear."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=5),
-            _slot(2, 5.0, priority=4),
-            _slot(3, 5.0, priority=3),
-            _slot(4, 5.0, priority=2),
-            _slot(5, 5.0, priority=1),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=5),
+                _slot(2, 5.0, priority=4),
+                _slot(3, 5.0, priority=3),
+                _slot(4, 5.0, priority=2),
+                _slot(5, 5.0, priority=1),
+            ]
+        )
         clips = [
             _make_clip("clip_a", [_moment(0.0, 5.0, energy=8.0), _moment(5.0, 10.0, energy=7.0)]),
             _make_clip("clip_b", [_moment(0.0, 5.0, energy=7.5), _moment(5.0, 10.0, energy=6.5)]),
@@ -696,10 +743,7 @@ class TestMinimumCoveragePass:
     def test_all_clips_used_when_slots_match(self):
         """N clips with N slots of compatible duration → all clips assigned."""
         slots = [_slot(i + 1, 5.0) for i in range(4)]
-        clips = [
-            _make_clip(f"clip_{i}", [_moment(0.0, 5.0, energy=7.0)])
-            for i in range(4)
-        ]
+        clips = [_make_clip(f"clip_{i}", [_moment(0.0, 5.0, energy=7.0)]) for i in range(4)]
 
         pre = _minimum_coverage_pass(slots, clips)
 
@@ -729,10 +773,7 @@ class TestMinimumCoveragePass:
     def test_more_clips_than_slots_partial_coverage(self):
         """8 clips, 4 slots → only 4 clips get assigned (graceful partial)."""
         slots = [_slot(i + 1, 5.0) for i in range(4)]
-        clips = [
-            _make_clip(f"clip_{i}", [_moment(0.0, 5.0)])
-            for i in range(8)
-        ]
+        clips = [_make_clip(f"clip_{i}", [_moment(0.0, 5.0)]) for i in range(8)]
 
         pre = _minimum_coverage_pass(slots, clips)
 
@@ -758,8 +799,7 @@ class TestMinimumCoveragePass:
         slots = [_slot(i + 1, 5.0, priority=10 - i) for i in range(8)]
         recipe = _make_recipe(slots)
         clips = [
-            _make_clip(f"clip_{i}", [_moment(0.0, 5.0, energy=5.0 + i * 0.2)])
-            for i in range(16)
+            _make_clip(f"clip_{i}", [_moment(0.0, 5.0, energy=5.0 + i * 0.2)]) for i in range(16)
         ]
 
         plan = match(recipe, clips)
@@ -794,11 +834,13 @@ class TestConsolidateSlots:
 
     def test_t1_noop_when_clips_gte_slots(self):
         """T1: n_clips >= n_slots → recipe returned unchanged."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, slot_type="hook"),
-            _slot(2, 5.0),
-            _slot(3, 5.0),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, slot_type="hook"),
+                _slot(2, 5.0),
+                _slot(3, 5.0),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 5)]),
             _make_clip("c2", [_moment(0, 5)]),
@@ -811,12 +853,14 @@ class TestConsolidateSlots:
 
     def test_t2_basic_merge_2_clips_4_broll(self):
         """T2: 2 clips, 4 broll slots → merged down to 2 slots."""
-        recipe = _make_recipe([
-            _slot(1, 5.0, priority=5),
-            _slot(2, 5.0, priority=4),
-            _slot(3, 5.0, priority=3),
-            _slot(4, 5.0, priority=2),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0, priority=5),
+                _slot(2, 5.0, priority=4),
+                _slot(3, 5.0, priority=3),
+                _slot(4, 5.0, priority=2),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 10, energy=7.0)]),
             _make_clip("c2", [_moment(0, 10, energy=6.0)]),
@@ -833,12 +877,14 @@ class TestConsolidateSlots:
 
     def test_t3_hook_never_merged(self):
         """T3: Hook at position 1 is never merged with adjacent slot."""
-        recipe = _make_recipe([
-            _slot(1, 3.0, priority=10, slot_type="hook"),
-            _slot(2, 5.0, priority=5),
-            _slot(3, 5.0, priority=4),
-            _slot(4, 5.0, priority=3),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 3.0, priority=10, slot_type="hook"),
+                _slot(2, 5.0, priority=5),
+                _slot(3, 5.0, priority=4),
+                _slot(4, 5.0, priority=3),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 5)]),
             _make_clip("c2", [_moment(0, 10)]),
@@ -853,19 +899,21 @@ class TestConsolidateSlots:
 
     def test_t3b_multi_hook_slots_merge_together(self):
         """T3b: Multiple hook slots merge with each other but not with broll."""
-        recipe = _make_recipe([
-            _slot(1, 0.7, priority=8, slot_type="hook"),
-            _slot(2, 0.7, priority=8, slot_type="hook"),
-            _slot(3, 0.9, priority=7, slot_type="hook"),
-            _slot(4, 0.9, priority=7, slot_type="hook"),
-            _slot(5, 0.9, priority=7, slot_type="hook"),
-            _slot(6, 0.8, priority=8, slot_type="broll"),
-            _slot(7, 0.9, priority=8, slot_type="broll"),
-            _slot(8, 1.7, priority=9, slot_type="broll"),
-            _slot(9, 1.3, priority=9, slot_type="broll"),
-            _slot(10, 2.5, priority=9, slot_type="broll"),
-            _slot(11, 2.5, priority=9, slot_type="broll"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 0.7, priority=8, slot_type="hook"),
+                _slot(2, 0.7, priority=8, slot_type="hook"),
+                _slot(3, 0.9, priority=7, slot_type="hook"),
+                _slot(4, 0.9, priority=7, slot_type="hook"),
+                _slot(5, 0.9, priority=7, slot_type="hook"),
+                _slot(6, 0.8, priority=8, slot_type="broll"),
+                _slot(7, 0.9, priority=8, slot_type="broll"),
+                _slot(8, 1.7, priority=9, slot_type="broll"),
+                _slot(9, 1.3, priority=9, slot_type="broll"),
+                _slot(10, 2.5, priority=9, slot_type="broll"),
+                _slot(11, 2.5, priority=9, slot_type="broll"),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 2, energy=9.0)]),
             _make_clip("c2", [_moment(0, 5, energy=6.0)]),
@@ -889,13 +937,15 @@ class TestConsolidateSlots:
 
     def test_t4_min_floor_distinct_types(self):
         """T4: Distinct slot types preserved — hook+broll+outro → min 3 even with 1 clip."""
-        recipe = _make_recipe([
-            _slot(1, 3.0, slot_type="hook"),
-            _slot(2, 5.0, slot_type="broll"),
-            _slot(3, 5.0, slot_type="broll"),
-            _slot(4, 5.0, slot_type="broll"),
-            _slot(5, 4.0, slot_type="outro"),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 3.0, slot_type="hook"),
+                _slot(2, 5.0, slot_type="broll"),
+                _slot(3, 5.0, slot_type="broll"),
+                _slot(4, 5.0, slot_type="broll"),
+                _slot(5, 4.0, slot_type="outro"),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 15, energy=6.0)]),
         ]
@@ -907,10 +957,16 @@ class TestConsolidateSlots:
 
     def test_t5_single_type_floor_is_n_clips(self):
         """T5: All broll → floor = max(n_clips, 1 type, 2) = n_clips."""
-        recipe = _make_recipe([
-            _slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0),
-            _slot(4, 5.0), _slot(5, 5.0), _slot(6, 5.0),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0),
+                _slot(2, 5.0),
+                _slot(3, 5.0),
+                _slot(4, 5.0),
+                _slot(5, 5.0),
+                _slot(6, 5.0),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 10)]),
             _make_clip("c2", [_moment(0, 10)]),
@@ -923,11 +979,13 @@ class TestConsolidateSlots:
 
     def test_t6_max_duration_cap_skips_merge(self):
         """T6: Two 15s slots → combined 30s > MAX_MERGED_DURATION_S → skip."""
-        recipe = _make_recipe([
-            _slot(1, 15.0, priority=5),
-            _slot(2, 15.0, priority=4),
-            _slot(3, 5.0, priority=3),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 15.0, priority=5),
+                _slot(2, 15.0, priority=4),
+                _slot(3, 5.0, priority=3),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 15)]),
         ]
@@ -941,12 +999,14 @@ class TestConsolidateSlots:
 
     def test_t7_clip_aware_scoring_prefers_matching_duration(self):
         """T7: Prefers merge whose combined duration matches a clip moment."""
-        recipe = _make_recipe([
-            _slot(1, 3.0, priority=5),   # pair 1-2: 3+3=6s
-            _slot(2, 3.0, priority=4),
-            _slot(3, 5.0, priority=3),   # pair 3-4: 5+5=10s
-            _slot(4, 5.0, priority=2),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 3.0, priority=5),  # pair 1-2: 3+3=6s
+                _slot(2, 3.0, priority=4),
+                _slot(3, 5.0, priority=3),  # pair 3-4: 5+5=10s
+                _slot(4, 5.0, priority=2),
+            ]
+        )
         # Only 10s clip moments — pair (3,4)=10s gets exact fit score 3.0,
         # pair (1,2)=6s gets partial fit score ~1.0 (|10-6|=4, 3*(1-4/6))
         clips = [
@@ -1050,9 +1110,14 @@ class TestConsolidateSlots:
 
     def test_t11_positions_renumbered_sequentially(self):
         """T11: After merges, positions are sequential 1..N."""
-        recipe = _make_recipe([
-            _slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0), _slot(4, 5.0),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 5.0),
+                _slot(2, 5.0),
+                _slot(3, 5.0),
+                _slot(4, 5.0),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 10)]),
             _make_clip("c2", [_moment(0, 10)]),
@@ -1065,15 +1130,25 @@ class TestConsolidateSlots:
 
     def test_t12_text_overlay_time_shifting(self):
         """T12: Slot B overlays get dur_A offset when merged."""
-        recipe = _make_recipe([
-            _slot_with_overlays(1, 5.0, text_overlays=[
-                {"text": "hello", "position": "center", "start_s": 0.0, "end_s": 3.0},
-            ]),
-            _slot_with_overlays(2, 5.0, text_overlays=[
-                {"text": "world", "position": "bottom", "start_s": 1.0, "end_s": 4.0},
-            ]),
-            _slot_with_overlays(3, 5.0),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot_with_overlays(
+                    1,
+                    5.0,
+                    text_overlays=[
+                        {"text": "hello", "position": "center", "start_s": 0.0, "end_s": 3.0},
+                    ],
+                ),
+                _slot_with_overlays(
+                    2,
+                    5.0,
+                    text_overlays=[
+                        {"text": "world", "position": "bottom", "start_s": 1.0, "end_s": 4.0},
+                    ],
+                ),
+                _slot_with_overlays(3, 5.0),
+            ]
+        )
         clips = [
             _make_clip("c1", [_moment(0, 10)]),
             _make_clip("c2", [_moment(0, 5)]),
@@ -1083,8 +1158,7 @@ class TestConsolidateSlots:
 
         # Find the merged slot (should have ~10s duration)
         merged = next(
-            s for s in result.slots
-            if float(s["target_duration_s"]) == pytest.approx(10.0)
+            s for s in result.slots if float(s["target_duration_s"]) == pytest.approx(10.0)
         )
         overlays = merged.get("text_overlays", [])
         assert len(overlays) == 2
@@ -1097,32 +1171,46 @@ class TestConsolidateSlots:
         # Second overlay (from slot B) shifted by dur_A=5.0
         world_ov = next(o for o in overlays if o["text"] == "world")
         assert world_ov["start_s"] == pytest.approx(6.0)  # 1.0 + 5.0
-        assert world_ov["end_s"] == pytest.approx(9.0)    # 4.0 + 5.0
+        assert world_ov["end_s"] == pytest.approx(9.0)  # 4.0 + 5.0
 
     def test_t13_integration_consolidate_then_match_no_repetition(self):
         """T13: consolidate → match produces plan where all clips are used."""
         # Use shorter broll slots (3s each) so merges stay under the 20s cap.
-        recipe = _make_recipe([
-            _slot(1, 3.0, priority=10, slot_type="hook"),
-            _slot(2, 3.0, priority=5),
-            _slot(3, 3.0, priority=4),
-            _slot(4, 3.0, priority=3),
-            _slot(5, 3.0, priority=2),
-            _slot(6, 3.0, priority=1),
-            _slot(7, 3.0, priority=1),
-            _slot(8, 3.0, priority=1),
-        ])
+        recipe = _make_recipe(
+            [
+                _slot(1, 3.0, priority=10, slot_type="hook"),
+                _slot(2, 3.0, priority=5),
+                _slot(3, 3.0, priority=4),
+                _slot(4, 3.0, priority=3),
+                _slot(5, 3.0, priority=2),
+                _slot(6, 3.0, priority=1),
+                _slot(7, 3.0, priority=1),
+                _slot(8, 3.0, priority=1),
+            ]
+        )
         # Each clip provides moments spanning a wide duration range.
         clips = [
-            _make_clip("c1", [
-                _moment(0, 3, energy=9.0), _moment(0, 12, energy=7.0),
-            ]),
-            _make_clip("c2", [
-                _moment(0, 12, energy=6.0), _moment(0, 9, energy=5.5),
-            ]),
-            _make_clip("c3", [
-                _moment(0, 12, energy=7.5), _moment(0, 9, energy=6.0),
-            ]),
+            _make_clip(
+                "c1",
+                [
+                    _moment(0, 3, energy=9.0),
+                    _moment(0, 12, energy=7.0),
+                ],
+            ),
+            _make_clip(
+                "c2",
+                [
+                    _moment(0, 12, energy=6.0),
+                    _moment(0, 9, energy=5.5),
+                ],
+            ),
+            _make_clip(
+                "c3",
+                [
+                    _moment(0, 12, energy=7.5),
+                    _moment(0, 9, energy=6.0),
+                ],
+            ),
         ]
 
         consolidated = consolidate_slots(recipe, clips)
@@ -1131,9 +1219,7 @@ class TestConsolidateSlots:
         clip_ids = [step.clip_id for step in plan.steps]
         assert len(clip_ids) == len(consolidated.slots)
         # All 3 clips should be used (no clip left out)
-        assert len(set(clip_ids)) == 3, (
-            f"Expected all 3 clips used, got: {clip_ids}"
-        )
+        assert len(set(clip_ids)) == 3, f"Expected all 3 clips used, got: {clip_ids}"
 
     def test_t14_regression_3clips_11slots_no_excessive_repetition(self):
         """T14: Regression — 3 clips + 11 slots (passport vlog scenario).
@@ -1142,30 +1228,44 @@ class TestConsolidateSlots:
         3-4 times. With consolidation, slots merge down toward 3, so each clip
         appears at most twice (limited by MAX_MERGED_DURATION_S).
         """
-        recipe = _make_recipe([
-            # 5 hook slots + 6 broll slots, mimicking the passport vlog template
-            _slot(1, 3.0, priority=10, slot_type="hook"),
-            _slot(2, 3.0, priority=9, slot_type="hook"),
-            _slot(3, 3.0, priority=8, slot_type="hook"),
-            _slot(4, 3.0, priority=7, slot_type="hook"),
-            _slot(5, 3.0, priority=6, slot_type="hook"),
-            _slot(6, 3.0, priority=5),
-            _slot(7, 3.0, priority=4),
-            _slot(8, 3.0, priority=3),
-            _slot(9, 3.0, priority=2),
-            _slot(10, 3.0, priority=1),
-            _slot(11, 3.0, priority=1),
-        ])
+        recipe = _make_recipe(
+            [
+                # 5 hook slots + 6 broll slots, mimicking the passport vlog template
+                _slot(1, 3.0, priority=10, slot_type="hook"),
+                _slot(2, 3.0, priority=9, slot_type="hook"),
+                _slot(3, 3.0, priority=8, slot_type="hook"),
+                _slot(4, 3.0, priority=7, slot_type="hook"),
+                _slot(5, 3.0, priority=6, slot_type="hook"),
+                _slot(6, 3.0, priority=5),
+                _slot(7, 3.0, priority=4),
+                _slot(8, 3.0, priority=3),
+                _slot(9, 3.0, priority=2),
+                _slot(10, 3.0, priority=1),
+                _slot(11, 3.0, priority=1),
+            ]
+        )
         clips = [
-            _make_clip("c1", [
-                _moment(0, 3, energy=9.0), _moment(0, 15, energy=7.0),
-            ]),
-            _make_clip("c2", [
-                _moment(0, 15, energy=6.0), _moment(0, 10, energy=5.5),
-            ]),
-            _make_clip("c3", [
-                _moment(0, 15, energy=7.5), _moment(0, 10, energy=6.0),
-            ]),
+            _make_clip(
+                "c1",
+                [
+                    _moment(0, 3, energy=9.0),
+                    _moment(0, 15, energy=7.0),
+                ],
+            ),
+            _make_clip(
+                "c2",
+                [
+                    _moment(0, 15, energy=6.0),
+                    _moment(0, 10, energy=5.5),
+                ],
+            ),
+            _make_clip(
+                "c3",
+                [
+                    _moment(0, 15, energy=7.5),
+                    _moment(0, 10, energy=6.0),
+                ],
+            ),
         ]
 
         consolidated = consolidate_slots(recipe, clips)
@@ -1178,6 +1278,7 @@ class TestConsolidateSlots:
         )
         # No clip should appear more than twice (ideally once after full consolidation)
         from collections import Counter
+
         counts = Counter(clip_ids)
         for clip_id, count in counts.items():
             assert count <= 2, (
@@ -1215,9 +1316,7 @@ class TestNarrativeOrder:
 
         first = self._first_appearance(plan)
         g_positions = [first.index(g) for g in ("g1", "g2", "g3")]
-        assert g_positions == sorted(g_positions), (
-            f"guide clips out of order: {first}"
-        )
+        assert g_positions == sorted(g_positions), f"guide clips out of order: {first}"
         # The guide's first shot OPENS the edit even though pool p1 has the
         # highest energy.
         assert plan.steps[0].clip_id == "g1"
@@ -1237,9 +1336,7 @@ class TestNarrativeOrder:
 
     def test_more_guide_clips_than_slots_keeps_ordered_prefix(self):
         recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0)])
-        guide = [
-            _make_clip(f"g{i}", [_moment(0, 5, energy=5.0)]) for i in range(1, 5)
-        ]
+        guide = [_make_clip(f"g{i}", [_moment(0, 5, energy=5.0)]) for i in range(1, 5)]
         plan = match(recipe, guide, narrative_order=["g1", "g2", "g3", "g4"])
 
         assert [s.clip_id for s in plan.steps] == ["g1", "g2"]
@@ -1274,15 +1371,28 @@ class TestNarrativeOrder:
         across positions and would scramble the spine."""
         recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0)])
         guide = [
+            _make_clip("a", [_moment(0, 5, energy=5.0)]),  # single moment
+            _make_clip("b", [_moment(0, 5, energy=5.0), _moment(5, 10, energy=5.0)]),
+        ]
+        plan = match(recipe, guide, narrative_order=["a", "b"])
+
+        # Slot 1 anchors on a; b wins slot 2; in the tail slot 3 b's unused
+        # moment outranks re-using a's only (already-used) moment, so the b,b
+        # adjacency persists — _dedup_adjacent would have swapped a into slot 3
+        # (its moment is duration-compatible), proving dedup is skipped.
+        assert [s.clip_id for s in plan.steps] == ["a", "b", "b"]
+
+    def test_tail_prefers_unused_moments_over_adjacency(self):
+        """Counterpart to the dedup-skip test: when the earlier guide clip has
+        a spare unused moment, the tail rotates to it instead of repeating."""
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0)])
+        guide = [
             _make_clip("a", [_moment(0, 5, energy=9.0), _moment(5, 10, energy=9.0)]),
             _make_clip("b", [_moment(0, 5, energy=5.0)]),
         ]
         plan = match(recipe, guide, narrative_order=["a", "b"])
 
-        # Slot 1 anchors on a; b wins slot 2 on energy-fit (slot energy 5.0);
-        # slot 3 can only be b again (a is behind the cursor). The b,b adjacency
-        # persists — dedup would have swapped a's spare moment into slot 3.
-        assert [s.clip_id for s in plan.steps] == ["a", "b", "b"]
+        assert [s.clip_id for s in plan.steps] == ["a", "b", "a"]
 
     def test_pinned_assignment_wins_over_narrative(self):
         recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0), _slot(3, 5.0)])
@@ -1315,3 +1425,41 @@ class TestNarrativeOrder:
         assert [(s.slot.get("position"), s.clip_id, s.moment) for s in baseline.steps] == [
             (s.slot.get("position"), s.clip_id, s.moment) for s in explicit_none.steps
         ]
+
+    def test_tail_rotates_all_guide_clips_when_no_pool(self):
+        """P1 review fix: after the spine is placed, tail slots must rotate
+        across ALL guide clips (usage-cap round-robin), not hammer the last
+        one. 3 guide clips, 0 pool, 8 slots → max_uses=ceil(8/3)=3."""
+        recipe = _make_recipe([_slot(i, 5.0) for i in range(1, 9)])
+        guide = [
+            _make_clip(
+                f"g{i}",
+                [
+                    _moment(0, 5, energy=5.0),
+                    _moment(5, 10, energy=6.0),
+                    _moment(10, 15, energy=7.0),
+                ],
+            )
+            for i in range(1, 4)
+        ]
+        plan = match(recipe, guide, narrative_order=["g1", "g2", "g3"])
+
+        clip_ids = [s.clip_id for s in plan.steps]
+        first = self._first_appearance(plan)
+        assert first == ["g1", "g2", "g3"]
+        from collections import Counter
+
+        counts = Counter(clip_ids)
+        # Rotation, not domination: every clip respects the usage cap.
+        assert all(c <= 3 for c in counts.values()), counts
+        assert set(counts) == {"g1", "g2", "g3"}
+
+    def test_duplicate_ids_in_narrative_order_deduped(self):
+        recipe = _make_recipe([_slot(1, 5.0), _slot(2, 5.0)])
+        clips = [
+            _make_clip("g1", [_moment(0, 5)]),
+            _make_clip("g2", [_moment(0, 5)]),
+        ]
+        plan = match(recipe, clips, narrative_order=["g1", "g1", "g2"])
+
+        assert [s.clip_id for s in plan.steps] == ["g1", "g2"]
