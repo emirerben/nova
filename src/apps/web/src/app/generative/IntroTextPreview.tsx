@@ -34,7 +34,7 @@ import {
   shrinkToFit,
   type IntroOverlayParams,
 } from "@/lib/overlay-layout";
-import { ensureFontLoaded, makeCanvasMeasureAt } from "@/lib/canvas-measure";
+import { ensureFontLoaded, fontLineHeight, makeCanvasMeasureAt } from "@/lib/canvas-measure";
 
 export function IntroTextPreview({
   params,
@@ -56,12 +56,14 @@ export function IntroTextPreview({
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+    // Seed BEFORE observing: an observer that fires synchronously must not be
+    // overwritten by the (possibly stale/zero) initial rect measurement.
+    setContainerWidth(el.getBoundingClientRect().width);
     const observer = new ResizeObserver((entries) => {
       const w = entries[0]?.contentRect.width ?? 0;
       setContainerWidth(w);
     });
     observer.observe(el);
-    setContainerWidth(el.getBoundingClientRect().width);
     return () => observer.disconnect();
   }, []);
 
@@ -78,28 +80,65 @@ export function IntroTextPreview({
 
   const text = (params.text ?? "").trim();
 
-  // Server-parity font size: shrink-to-fit against 90% of the 1080px canvas.
+  // Server-parity typography: shrink-to-fit against 90% of the 1080px canvas
+  // for the size, and Skia's `int((descent - ascent) × 1.15)` line step for
+  // multi-line spacing (CSS `line-height: 1.15` would be em-relative — these
+  // faces run ~1.25–1.35 em tall, leaving the preview ~25% too tight).
   // fontTick re-runs this when the @font-face finishes loading.
-  const sizePx = useMemo(() => {
-    if (!text) return resolveFontSizePx(params);
+  const { sizePx, lineStepPx } = useMemo(() => {
     const measureAt = makeCanvasMeasureAt(font.family, font.weight);
-    return shrinkToFit(text, measureAt, resolveFontSizePx(params), CANVAS_W * MAX_LINE_W_FRAC)
-      .sizePx;
+    const size = !text
+      ? resolveFontSizePx(params)
+      : shrinkToFit(text, measureAt, resolveFontSizePx(params), CANVAS_W * MAX_LINE_W_FRAC)
+          .sizePx;
+    return {
+      sizePx: size,
+      lineStepPx: Math.trunc(fontLineHeight(font.family, font.weight, size) * 1.15),
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, params.textSizePx, params.textSize, font.family, font.weight, fontTick]);
 
   // Sync external text into the contentEditable node ONLY when not focused —
   // rewriting children under an active caret would reset it on every keystroke.
+  // The node mounts LATER than the first text render (it waits for the
+  // ResizeObserver width), so initialization must happen in the ref callback —
+  // an effect keyed on [text] has already run (and no-oped) by then.
+  const textIsCurrent = useCallback(
+    (el: HTMLDivElement) =>
+      (el.innerText ?? el.textContent ?? "").replace(/\s+$/, "") === text,
+    [text],
+  );
+  const attachTextNode = useCallback(
+    (el: HTMLDivElement | null) => {
+      textRef.current = el;
+      if (el && document.activeElement !== el && !textIsCurrent(el)) {
+        el.textContent = text;
+      }
+    },
+    [text, textIsCurrent],
+  );
   useEffect(() => {
     const el = textRef.current;
     if (!el) return;
     if (document.activeElement === el) return;
-    if ((el.textContent ?? "") !== text) el.textContent = text;
-  }, [text]);
+    if (!textIsCurrent(el)) el.textContent = text;
+  }, [text, textIsCurrent]);
 
   const handleInput = useCallback(() => {
-    onTextChange?.(textRef.current?.textContent ?? "");
+    const el = textRef.current;
+    if (!el) return;
+    // innerText preserves line breaks as \n (the server wraps each segment
+    // separately); textContent would glue "hello⏎world" into "helloworld".
+    onTextChange?.(el.innerText ?? el.textContent ?? "");
   }, [onTextChange]);
+
+  // Paste as plain text — rich-text paste would inject styled spans into the
+  // preview and lie about the burned result.
+  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const plain = e.clipboardData.getData("text/plain");
+    document.execCommand("insertText", false, plain);
+  }, []);
 
   const scale = containerWidth > 0 ? containerWidth / CANVAS_W : 0;
   const anchor = params.textAnchor ?? "center";
@@ -118,10 +157,11 @@ export function IntroTextPreview({
     <div ref={containerRef} className="pointer-events-none absolute inset-0 overflow-hidden">
       {show && (
         <div
-          ref={textRef}
+          ref={attachTextNode}
           contentEditable={editable}
           suppressContentEditableWarning
           onInput={handleInput}
+          onPaste={handlePaste}
           data-placeholder="Tap to add text"
           role={editable ? "textbox" : undefined}
           aria-label={editable ? "Intro text" : undefined}
@@ -144,8 +184,11 @@ export function IntroTextPreview({
             fontFamily: font.family,
             fontWeight: font.weight,
             fontSize: `${sizePx * scale}px`,
-            lineHeight: 1.15,
+            lineHeight: `${lineStepPx * scale}px`,
             color,
+            // Empty-state hit target: an empty inline box would be ~0×0 px and
+            // untappable (the placeholder ::before rule lives in globals.css).
+            ...(editable ? { minWidth: "6ch", minHeight: "1em" } : {}),
             // ≈ Skia shadow: black α160, blur σ12 (CSS radius ~2σ), +6px down.
             textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
             ...(strokePx > 0

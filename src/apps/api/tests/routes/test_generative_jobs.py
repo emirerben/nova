@@ -894,3 +894,24 @@ def test_style_set_intro_preview_unknown_id_falls_back():
     block = style_set_intro_preview("no-such-set")
     assert block["font_family"]  # default set's intro role
     assert block["effect"]
+
+
+def test_dispatch_edit_size_with_text_still_rejected_on_lyrics_variant(monkeypatch):
+    """Lyrics typography is set-driven — a size override would silently drop
+    downstream, so reject it even when the edit also carries text."""
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(text_mode="lyrics"),
+            "song_text",
+            text="new line",
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=60,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []

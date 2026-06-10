@@ -36,6 +36,8 @@ export interface VariantEditSession {
   isActive: boolean;
   draft: EditDraft;
   isDirty: boolean;
+  /** Last commit failure, shown in the toolbar; cleared on the next commit. */
+  commitError: string | null;
   enterEdit: () => void;
   cancel: () => void;
   setText: (text: string) => void;
@@ -66,7 +68,11 @@ function draftsEqual(a: EditDraft, b: EditDraft): boolean {
 /** Minimal payload: only fields that differ from the baseline go to the server. */
 export function buildEditPayload(draft: EditDraft, baseline: EditDraft): EditVariantPayload {
   const payload: EditVariantPayload = {};
-  if (draft.removed) {
+  // Deleting every character means "remove the text" — without this, an empty
+  // draft would produce no `text` field, the payload would be empty, and Done
+  // would silently bring the old burned text back.
+  const removed = draft.removed || !draft.text.trim();
+  if (removed) {
     if (!baseline.removed) payload.remove_text = true;
   } else {
     const text = draft.text.trim();
@@ -92,6 +98,7 @@ export function useVariantEditSession(
   const [awaitingRender, setAwaitingRender] = useState(false);
   const [pendingDraft, setPendingDraft] = useState<EditDraft | null>(null);
   const [sawRendering, setSawRendering] = useState(false);
+  const [commitError, setCommitError] = useState<string | null>(null);
 
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
@@ -110,6 +117,7 @@ export function useVariantEditSession(
     const seed = draftFromVariant(variant);
     setBaseline(seed);
     setDraft(seed);
+    setCommitError(null);
     setIsEditing(true);
   }, [variant]);
 
@@ -156,19 +164,26 @@ export function useVariantEditSession(
   );
 
   const commit = useCallback(async () => {
+    setCommitError(null);
     setIsEditing(false);
     if (variant.render_status === "rendering" || committing || awaitingRender) {
-      // A render is already in flight — coalesce; fired on the next ready poll.
+      // A render is already in flight (ours, or one started from another tab /
+      // the admin page) — coalesce; the watcher fires it on the next ready
+      // poll. awaitingRender must engage the watcher even for an EXTERNAL
+      // render, or the queued draft would strand silently.
+      commitMarkerRef.current = variantFinishedAt;
       setPendingDraft(draft);
+      setAwaitingRender(true);
       return;
     }
     try {
       await fireCommit(draft, baseline, variantFinishedAt);
-    } catch {
-      // Commit failed at the HTTP layer (e.g. a 409 race) — queue it for the
-      // next ready poll instead of losing the user's edits.
-      setPendingDraft(draft);
-      setAwaitingRender(true);
+    } catch (e) {
+      // Commit failed at the HTTP layer — NO silent retry (a refire loop would
+      // hammer the API during an outage). Reopen the editor with the draft
+      // intact and let the user hit Done again.
+      setCommitError(e instanceof Error ? e.message : "Couldn't save — try again.");
+      setIsEditing(true);
     }
   }, [
     variant.render_status,
@@ -194,9 +209,14 @@ export function useVariantEditSession(
       if (pendingDraft && !draftsEqual(pendingDraft, baseline)) {
         const toCommit = pendingDraft;
         setPendingDraft(null);
-        void fireCommit(toCommit, baseline, variantFinishedAt).catch(() =>
-          setPendingDraft(toCommit),
-        );
+        void fireCommit(toCommit, baseline, variantFinishedAt).catch((e) => {
+          // Same no-silent-retry policy as commit(): surface + reopen the
+          // editor with the queued draft so nothing is lost.
+          setDraft(toCommit);
+          setCommitError(e instanceof Error ? e.message : "Couldn't save — try again.");
+          setAwaitingRender(false);
+          setIsEditing(true);
+        });
       } else {
         setPendingDraft(null);
         setAwaitingRender(false);
@@ -235,6 +255,7 @@ export function useVariantEditSession(
     isActive,
     draft,
     isDirty,
+    commitError,
     enterEdit,
     cancel,
     setText,

@@ -29,8 +29,13 @@ export function makeCanvasMeasureAt(cssFamily: string, weight: number): MeasureA
   return (sizePx: number) => {
     const ctx = context();
     if (!ctx) return (text: string) => text.length * sizePx * 0.6; // SSR/jsdom fallback
-    ctx.font = `${weight} ${sizePx}px ${cssFamily}`;
-    return (text: string) => ctx.measureText(text).width;
+    const fontSpec = `${weight} ${sizePx}px ${cssFamily}`;
+    return (text: string) => {
+      // Re-assert per call — the context is shared, so an interleaved factory
+      // (e.g. two previews measuring different faces) must not corrupt widths.
+      ctx.font = fontSpec;
+      return ctx.measureText(text).width;
+    };
   };
 }
 

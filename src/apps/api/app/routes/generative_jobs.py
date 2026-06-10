@@ -467,8 +467,12 @@ def dispatch_edit_variant(
     size_override_px: int | None = None
     if text_size_px is not None:
         # Same guard as dispatch_set_intro_size, relaxed for the add-text case: a
-        # `none`-mode variant gains a resizable overlay when this edit supplies text.
-        if variant.get("text_mode") != "agent_text" and text is None:
+        # `none`-mode variant gains a resizable overlay when this edit supplies
+        # text. Lyrics variants never have a resizable intro (their typography is
+        # set-driven) — reject even with text, or the size silently drops.
+        text_mode = variant.get("text_mode")
+        size_ok = text_mode == "agent_text" or (text_mode == "none" and text is not None)
+        if not size_ok:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="This edit has no resizable intro text.",

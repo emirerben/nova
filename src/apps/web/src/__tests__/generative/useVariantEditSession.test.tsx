@@ -71,6 +71,12 @@ describe("buildEditPayload", () => {
   it("returns empty payload for no changes", () => {
     expect(buildEditPayload(baselineDraft, baselineDraft)).toEqual({});
   });
+
+  it("treats deleted-to-empty text as removal (no silent no-op)", () => {
+    expect(buildEditPayload({ ...baselineDraft, text: "   " }, baselineDraft)).toEqual({
+      remove_text: true,
+    });
+  });
 });
 
 describe("useVariantEditSession", () => {
@@ -182,6 +188,67 @@ describe("useVariantEditSession", () => {
     });
     expect(commits).toHaveLength(2);
     expect(commits[1]).toEqual({ text: "second" });
+  });
+
+  it("does NOT retry-storm on commit failure — one call, error surfaced, editor reopens", async () => {
+    // Regression: the old failure path queued the draft as pending while the
+    // render fingerprint still looked fresh → the watcher refired immediately
+    // → unbounded request loop during an API outage (26 POSTs in one flush).
+    const onCommit = jest.fn(async () => {
+      throw new Error("boom");
+    });
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant({ render_finished_at: "2026-06-09T00:00:00Z" }) } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("new text"));
+    await act(async () => result.current.commit());
+
+    // Several poll cycles pass — no further attempts may fire.
+    rerender({
+      v: makeVariant({ render_finished_at: "2026-06-09T00:00:00Z", output_url: "https://x/2" }),
+    });
+    rerender({
+      v: makeVariant({ render_finished_at: "2026-06-09T00:00:00Z", output_url: "https://x/3" }),
+    });
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
+    expect(result.current.commitError).toBe("boom");
+    expect(result.current.isEditing).toBe(true); // editor reopened, draft intact
+    expect(result.current.draft.text).toBe("new text");
+    expect(result.current.isSaving).toBe(false);
+  });
+
+  it("commit during an EXTERNAL render queues and stays in saving state", async () => {
+    // Regression: a render started elsewhere (admin page / second tab) while
+    // editing meant the queued draft stranded silently — awaitingRender never
+    // engaged the watcher and the session closed.
+    const commits: EditVariantPayload[] = [];
+    const onCommit = jest.fn(async (p: EditVariantPayload) => {
+      commits.push(p);
+    });
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    // External actor flips the variant to rendering mid-edit.
+    rerender({ v: makeVariant({ render_status: "rendering" }) });
+    act(() => result.current.setText("queued edit"));
+    await act(async () => result.current.commit());
+
+    expect(commits).toHaveLength(0);
+    expect(result.current.isSaving).toBe(true); // watcher engaged
+
+    await act(async () => {
+      rerender({
+        v: makeVariant({ render_status: "ready", render_finished_at: "2026-06-09T01:00:00Z" }),
+      });
+    });
+    expect(commits).toEqual([{ text: "queued edit" }]);
   });
 
   it("drops out of the preview when the committed render fails", async () => {

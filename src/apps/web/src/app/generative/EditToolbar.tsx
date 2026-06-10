@@ -75,6 +75,12 @@ export function EditToolbar({
         </div>
       )}
 
+      {session.commitError && (
+        <p className="text-xs text-red-600" role="alert">
+          {session.commitError}
+        </p>
+      )}
+
       <div className="flex items-center justify-between">
         <button
           onClick={() => session.setRemoved(!draft.removed)}
