@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.95.0] — 2026-06-10
+
+### Added
+- **Filming-guide narrative clip order (plan-item edits).** Plan-item renders now follow the filming guide's shot sequence instead of pure greedy assembly — the guide's first shot opens the edit, guide shots first-appear in guide order, and extra-footage pool clips interleave as b-roll. `_dispatch_item_render` derives guide-ordered `clip_paths` from `filming_guide` × `clip_assignments` (guide order is the truth, not the client's attach order; stale `shot_id`s demote to pool) and stamps `all_candidates["narrative_shot_count"]`. `template_matcher.match()` gains a `narrative_order` mode: slots fill in position order via a cursor over guide clips with forced advance (every guide clip lands, in order), the existing energy/variety/usage-cap scoring picks moments inside each eligible set, and the tail rotates across all clips. Coverage pass and `_dedup_adjacent` are skipped in narrative mode (both move assignments across slot positions). Threaded through BOTH first renders and re-renders (swap-song/retext/restyle), so a song swap can't silently reshuffle a guide-ordered edit. The intro hook text now grounds in the clip that actually opens the edit (intro *sizing* unchanged — still the most text-friendly clip). Pipeline events `narrative_order_applied`/`narrative_order_skipped` surface the decision in /admin/jobs. Kill switch: `NARRATIVE_CLIP_ORDER_ENABLED` (render-time read, default true). Public generative jobs, template jobs, and music jobs are byte-identical (pinned by `test_none_param_identical_to_omitted`). Verified end-to-end: synthetic color-coded clips attached in scrambled order render in guide order (frame-level proof, all 3 variants), and a real-footage render passed an adversarial sequence-alignment judge at 8.5/10.
+- **`edit-quality-review` judge workflow** (`.claude/workflows/edit-quality-review.js`): given a rendered edit + filming guide, fans out parallel judges (sequence alignment, hook strength, pacing/beat feel, influencer readiness) with adversarial verification of FAIL verdicts; returns a scored verdict + improvement list. Used to grade this feature's real-footage output; its hook/readiness findings are captured as TODOS (time-boxed hook text, first-frame text, payoff duration weighting).
+
 ## [0.4.94.0] — 2026-06-08
 
 ### Added
