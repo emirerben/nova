@@ -523,3 +523,395 @@ def test_phase_baselines_unknown_pipeline_returns_none():
 
     assert get_baselines("template") is None
     assert get_baselines("music") is None
+
+
+# ── Instant edit: base_video_url re-signing ──────────────────────────────────────
+# The instant editor plays the text-free fast-reburn base under a client-side DOM
+# overlay. `base_video_path` is a persisted GCS key; `_variants_for_response` must
+# mint a fresh `base_video_url` on every read (mirrors output_url re-signing).
+
+
+def _base_video_job():
+    import types
+    import uuid
+
+    return types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/j/variant_1_song_text.mp4",
+                    "base_video_path": "generative-jobs/j/base_1_song_text.mp4",
+                    "output_url": "https://stale.example/expired",
+                    "ok": True,
+                },
+                {
+                    "variant_id": "song_lyrics",
+                    "render_status": "ready",
+                    "video_path": "generative-jobs/j/variant_2_song_lyrics.mp4",
+                    "output_url": "https://stale.example/expired2",
+                    "ok": True,
+                },
+                {
+                    "variant_id": "original_text",
+                    "render_status": "rendering",
+                    "video_path": "generative-jobs/j/variant_3_original_text.mp4",
+                    "base_video_path": "generative-jobs/j/base_3_original_text.mp4",
+                    "output_url": None,
+                    "ok": None,
+                },
+            ]
+        },
+    )
+
+
+def test_variants_for_response_signs_base_video_url(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    calls: list = []
+
+    def fake_sign(path, ttl):
+        calls.append((path, ttl))
+        return f"https://fresh.example/{path}?sig=new"
+
+    monkeypatch.setattr(gj, "signed_get_url", fake_sign)
+    out = gj._variants_for_response(_base_video_job())
+
+    ready = next(v for v in out if v["variant_id"] == "song_text")
+    assert ready["base_video_url"] == (
+        "https://fresh.example/generative-jobs/j/base_1_song_text.mp4?sig=new"
+    )
+    assert ("generative-jobs/j/base_1_song_text.mp4", gj.PLAYBACK_URL_TTL_MIN) in calls
+
+
+def test_variants_for_response_base_url_present_while_rendering(monkeypatch):
+    """The editor keeps playing the base during a committed re-render, so the
+    base URL must be signed even when render_status != ready (output_url is not)."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda p, t: f"https://fresh.example/{p}")
+    out = gj._variants_for_response(_base_video_job())
+
+    rendering = next(v for v in out if v["variant_id"] == "original_text")
+    assert rendering["base_video_url"] == (
+        "https://fresh.example/generative-jobs/j/base_3_original_text.mp4"
+    )
+    # output_url is NOT re-signed for a non-ready variant.
+    assert rendering["output_url"] is None
+
+
+def test_variants_for_response_no_base_no_url(monkeypatch):
+    """Lyrics/legacy variants without a base key must not grow a base_video_url."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda p, t: f"https://fresh.example/{p}")
+    out = gj._variants_for_response(_base_video_job())
+
+    lyrics = next(v for v in out if v["variant_id"] == "song_lyrics")
+    assert "base_video_url" not in lyrics
+
+
+def test_variants_for_response_base_sign_failure_omits_url(monkeypatch):
+    """A base-signing failure must not 500 the poll NOR break output_url signing."""
+    import app.routes.generative_jobs as gj
+
+    def sign(path, ttl):
+        if "base_" in path:
+            raise RuntimeError("no credentials")
+        return f"https://fresh.example/{path}"
+
+    monkeypatch.setattr(gj, "signed_get_url", sign)
+    out = gj._variants_for_response(_base_video_job())
+
+    ready = next(v for v in out if v["variant_id"] == "song_text")
+    assert "base_video_url" not in ready
+    assert ready["output_url"] == "https://fresh.example/generative-jobs/j/variant_1_song_text.mp4"
+
+
+def test_variants_for_response_base_does_not_mutate_stored_dicts(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "signed_get_url", lambda p, t: "https://fresh.example/x")
+    job = _base_video_job()
+    gj._variants_for_response(job)
+
+    stored = job.assembly_plan["variants"][0]
+    assert "base_video_url" not in stored
+
+
+# ── Instant edit: combined /edit dispatch ────────────────────────────────────────
+# One commit → ONE regenerate_generative_variant enqueue carrying all overrides.
+
+
+def _editable_job(text_mode="agent_text", render_status="ready"):
+    import types
+    import uuid
+
+    return types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": render_status,
+                    "text_mode": text_mode,
+                }
+            ]
+        },
+    )
+
+
+def _capture_delay(monkeypatch):
+    import types
+
+    import app.tasks.generative_build as gb
+
+    calls: list = []
+    fake = types.SimpleNamespace(delay=lambda *a, **k: calls.append((a, k)))
+    monkeypatch.setattr(gb, "regenerate_generative_variant", fake, raising=False)
+    return calls
+
+
+def test_dispatch_edit_enqueues_combined_kwargs(monkeypatch):
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text="  new hook  ",
+        remove_text=False,
+        style_set_id="travel_editorial",
+        text_size_px=64,
+    )
+
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["override_text"] == "new hook"
+    assert kwargs["remove_text"] is False
+    assert kwargs["style_set_id"] == "travel_editorial"
+    assert kwargs["size_override_px"] == 64
+
+
+def test_dispatch_edit_rejects_empty_payload(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_rejects_text_and_remove(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text="hi",
+            remove_text=True,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_rejects_blank_text(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text="   ",
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_rejects_unknown_style_set(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id="lyric_karaoke_bold",
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_size_only_rejected_on_non_text_variant(monkeypatch):
+    """Size without text on a lyrics variant → 422 (same rule as /intro-size)."""
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(text_mode="lyrics"),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=60,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_size_with_new_text_allowed_on_none_variant(monkeypatch):
+    """A text-removed variant gains a resizable overlay when the edit adds text."""
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(text_mode="none"),
+        "song_text",
+        text="fresh text",
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=60,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["override_text"] == "fresh text"
+    assert calls[0][1]["size_override_px"] == 60
+
+
+def test_dispatch_edit_clamps_size(monkeypatch):
+    from app.pipeline.overlay_sizing import MAX_INTRO_PX
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=500,
+    )
+
+    assert calls[0][1]["size_override_px"] == MAX_INTRO_PX
+
+
+def test_dispatch_edit_409_while_rendering(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(render_status="rendering"),
+            "song_text",
+            text="hi",
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 409
+    assert calls == []
+
+
+def test_dispatch_edit_remove_text_only(monkeypatch):
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text=None,
+        remove_text=True,
+        style_set_id=None,
+        text_size_px=None,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["override_text"] is None
+    assert calls[0][1]["remove_text"] is True
+
+
+# ── Instant edit: style-set intro preview block ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_style_sets_includes_intro_preview_block():
+    """Every generative set carries the full intro-role look for the client preview
+    (anchor + x-frac drive left-anchored sets like word_reveal)."""
+    resp = await list_generative_style_sets()
+    by_id = {s.id: s for s in resp.style_sets}
+
+    word_reveal = by_id["word_reveal"]
+    assert word_reveal.intro is not None
+    assert word_reveal.intro.text_anchor == "left"
+    assert word_reveal.intro.position_x_frac == 0.06
+
+    # Every set resolves an intro block with effect + font (fallback chain covers
+    # sets without an explicit intro role).
+    for s in resp.style_sets:
+        assert s.intro is not None
+        assert s.intro.effect
+        assert s.intro.font_family
+        assert s.intro.css_family
+
+
+def test_style_set_intro_preview_unknown_id_falls_back():
+    from app.pipeline.style_sets import style_set_intro_preview
+
+    block = style_set_intro_preview("no-such-set")
+    assert block["font_family"]  # default set's intro role
+    assert block["effect"]
+
+
+def test_dispatch_edit_size_with_text_still_rejected_on_lyrics_variant(monkeypatch):
+    """Lyrics typography is set-driven — a size override would silently drop
+    downstream, so reject it even when the edit also carries text."""
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(text_mode="lyrics"),
+            "song_text",
+            text="new line",
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=60,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []

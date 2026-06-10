@@ -1,67 +1,31 @@
-import fontRegistryJson from "@/data/font-registry.json";
 import type { RecipeTextOverlay, TextSpan, OverlayPosition, OverlayRole, TextSize } from "./recipe-types";
 
 // ── Backend-to-frontend mapping ─────────────────────────────────────────────
-// Must match src/apps/api/app/pipeline/text_overlay.py constants
+// Canvas dims, position/size maps and the font registry are shared with the
+// public generative instant editor — single-sourced in @/lib/overlay-constants
+// (must match src/apps/api/app/pipeline/text_overlay.py). Re-exported here so
+// the admin editor's many importers keep their import paths.
+import {
+  CANVAS_W,
+  FONT_REGISTRY,
+  FONT_SIZE_MAP,
+  FONT_VIBES,
+  POSITION_Y_MAP,
+  STYLE_DEFAULTS,
+  type FontRegistryEntry,
+  type FontVibe,
+} from "@/lib/overlay-constants";
 
-export const CANVAS_W = 1080;
+export { CANVAS_W, FONT_REGISTRY, FONT_SIZE_MAP, FONT_VIBES, POSITION_Y_MAP };
+export type { FontRegistryEntry, FontVibe };
+
 export const PREVIEW_W = 280;
 export const SCALE = PREVIEW_W / CANVAS_W; // 0.259
 
-export const POSITION_Y_MAP: Record<OverlayPosition, number> = {
-  top: 0.15,
-  "center-above": 0.42,
-  center: 0.45,
-  "center-label": 0.4720,
-  "center-below": 0.55,
-  bottom: 0.85,
-};
-
-export const FONT_SIZE_MAP: Record<string, number> = {
-  small: 36,
-  medium: 72,
-  large: 120,
-  xlarge: 150,
-  xxlarge: 250,
-  jumbo: 199,
-};
-
-// ── Font registry (sourced from src/data/font-registry.json) ─────────────────
-// The JSON is a byte-identical mirror of src/apps/api/assets/fonts/font-registry.json,
-// kept in sync by `scripts/sync-font-registry.mjs` (runs on `npm run dev`,
-// checked on `npm run build`). Edit the backend file; the web copy follows.
-
-export interface FontRegistryEntry {
-  file: string;
-  ass_name: string;
-  weight: number;
-  category: string;
-  css_family: string;
-  cycle_role?: string;
-  vibe?: FontVibe;
-  deprecated?: true;
-}
-
-interface FontRegistryFile {
-  fonts: Record<string, FontRegistryEntry>;
-  style_defaults: Record<string, string>;
-}
-
-const _registry = fontRegistryJson as FontRegistryFile;
-export const FONT_REGISTRY: Record<string, FontRegistryEntry> = _registry.fonts;
 export const FONT_NAMES = Object.keys(FONT_REGISTRY);
 export const ACTIVE_FONT_NAMES = FONT_NAMES.filter(
   (name) => !FONT_REGISTRY[name]?.deprecated,
 );
-
-export const FONT_VIBES = [
-  "viral_headlines",
-  "clean_captions",
-  "editorial",
-  "handwritten",
-  "script",
-] as const;
-export type FontVibe = (typeof FONT_VIBES)[number];
 
 export const FONT_VIBE_LABELS: Record<FontVibe, string> = {
   viral_headlines: "Viral Headlines",
@@ -82,8 +46,6 @@ export function isActiveFont(family: string | null | undefined): boolean {
 export function fontPreviewSlug(family: string): string {
   return family.toLowerCase().replace(/\s+/g, "-");
 }
-
-const STYLE_DEFAULTS: Record<string, string> = _registry.style_defaults;
 
 /** Legacy map — kept for code that still references it by font_style key */
 export const FONT_FAMILY_MAP: Record<string, { family: string; weight: number; italic?: boolean }> = {

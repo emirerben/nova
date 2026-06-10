@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.95.0] — 2026-06-10
+
+### Added
+- **Instant text editor for generative variants (Instagram-style, 0-latency).** Eligible variants (`agent_text`/`none` with a fast-reburn base) get an "Edit text & style" mode: the card plays the **text-free base video** under a live DOM overlay rendered in the real registry typeface; text (inline contentEditable), style-set chips, and a size slider all update the preview instantly with **zero network traffic**. "Done" commits the whole session as ONE `POST /generative-jobs/{id}/variants/{vid}/edit` → a single combined fast reburn (~3s) instead of one render per field. While the render runs, the preview stays up with a "Saving…" badge and swaps to the fresh output on completion. Lyrics/legacy variants and the admin page keep the existing controls.
+- **`POST /variants/{vid}/edit` combined endpoint.** Carries `text` / `remove_text` / `style_set_id` / `text_size_px` in one request → one `regenerate_generative_variant` enqueue (the task always accepted combined kwargs; the per-field routes never combined them). Validation mirrors the per-field endpoints; size on a lyrics variant is rejected (would silently drop).
+- **`base_video_url` on the variant status response** — fresh-signed from the persisted `base_video_path` on every read (mirrors `output_url` re-signing), present even while `rendering` so the editor keeps playing the base during a committed re-render.
+- **`StyleSetSummary.intro` preview block** (`style_set_intro_preview`): the full intro-role look — font, colors, effect, position, x/y frac, text_anchor, stroke — projected display-only for the client preview. Deliberately omits `text_gradient` (the generative intro burn doesn't receive it).
+- **TS port of the server text layout** (`src/lib/overlay-layout.ts` + `src/lib/canvas-measure.ts`): greedy wrap, shrink-to-fit (×0.85 trunc, ≤6 iters, 24px floor), balanced word wrap, block metrics, anchor math — measured via canvas `measureText` over the same registry TTFs the server burns with. Shared overlay constants extracted to `src/lib/overlay-constants.ts` (admin editor re-exports; import paths unchanged).
+- **`?job=<id>` resume on `/generative`** — recovers the results view after a refresh.
+
+### Fixed
+- **Re-adding text to a removed-text variant silently no-oped.** `_resolve_regen_text` kept `text_mode="none"` (truthy) on a text override, so `_reburn_text_on_base` skipped the burn. Now flips `none → agent_text` when text is supplied; lyrics mode preserved.
+- **Post-terminal status polling never resumed.** `usePolledJobStatus` cleared its interval permanently at terminal status; after a variant re-render (legacy retext/swap-song too) the UI stayed blind to completion until a tab refocus. The interval now re-arms when a refetch returns non-terminal data, and the edit session drives refresh while saving (covers the commit-vs-status-flip race).
+
 ## [0.4.94.0] — 2026-06-08
 
 ### Added

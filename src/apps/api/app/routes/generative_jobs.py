@@ -6,6 +6,7 @@ GET  /generative-jobs/{id}/status                      — poll status + variant
 POST /generative-jobs/{id}/variants/{vid}/swap-song    — async re-slot against a new song
 POST /generative-jobs/{id}/variants/{vid}/retext       — async re-render with new/removed text
 POST /generative-jobs/{id}/variants/{vid}/change-style — async re-render with a new style set
+POST /generative-jobs/{id}/variants/{vid}/edit         — combined text+style+size in ONE render
 
 A generative job needs no pre-selected song or template — the orchestrator auto-matches
 a track, writes its own intro text, and renders three variants. Per-variant state lives
@@ -119,6 +120,15 @@ class GenerativeVariant(BaseModel):
     # Machine-readable error class for the frontend copy taxonomy (PR2).
     # The raw `error` field stays as-is (admin-only debug detail).
     error_class: str | None = None
+    # Persisted AI-intro text (agent_text variants) — the instant-edit overlay seed.
+    intro_text: str | None = None
+    intro_highlight_word: str | None = None
+    # Fast-reburn base: the text-free, audio-mixed video behind agent_text variants.
+    # `base_video_path` is the persisted GCS key; `base_video_url` is a fresh-signed
+    # playback URL minted on every status read (mirrors output_url re-signing) so
+    # the browser can play the base under a client-side text overlay (instant edit).
+    base_video_path: str | None = None
+    base_video_url: str | None = None
 
     model_config = {"extra": "allow"}
 
@@ -170,6 +180,41 @@ class SetMixRequest(BaseModel):
     mix: float = Field(..., ge=0.0, le=1.0)
 
 
+class EditVariantRequest(BaseModel):
+    """Combined text/style/size edit — the instant-edit "Done" commit.
+
+    The browser previews edits locally (base video + DOM overlay) and commits the
+    whole editing session as ONE request → ONE `regenerate_generative_variant` run,
+    instead of the legacy one-render-per-field endpoints. At least one field must
+    be set; `text` and `remove_text` are mutually exclusive.
+    """
+
+    text: str | None = None
+    remove_text: bool = False
+    style_set_id: str | None = None
+    text_size_px: int | None = Field(None, gt=0)
+
+
+class StyleSetIntroPreview(BaseModel):
+    """Display-only `intro`-role styling, consumed by the instant-edit client
+    preview (DOM overlay on the base video). Projection-only — never reaches the
+    renderer burn dict (see style_sets.style_set_intro_preview)."""
+
+    font_family: str | None = None
+    css_family: str | None = None
+    font_file: str | None = None
+    font_weight: int | None = None
+    text_color: str | None = None
+    highlight_color: str | None = None
+    effect: str | None = None
+    position: str | None = None
+    position_x_frac: float | None = None
+    position_y_frac: float | None = None
+    text_anchor: str | None = None
+    stroke_width: int | None = None
+    text_size_px: int | None = None
+
+
 class StyleSetSummary(BaseModel):
     id: str
     label: str
@@ -184,6 +229,8 @@ class StyleSetSummary(BaseModel):
     text_color: str | None = None
     highlight_color: str | None = None
     effect: str | None = None
+    # Full intro-role look for the instant-edit client preview.
+    intro: StyleSetIntroPreview | None = None
 
 
 class StyleSetListResponse(BaseModel):
@@ -219,7 +266,7 @@ def _variants_of(job: Job) -> list[dict]:
 
 
 def _variants_for_response(job: Job) -> list[dict]:
-    """Variants with `output_url` re-signed fresh on read.
+    """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
     The stored `output_url` is a 1-day-TTL signature minted at render time, but the
     blob persists forever (see PLAYBACK_URL_TTL_MIN). Return shallow copies with a
@@ -227,6 +274,11 @@ def _variants_for_response(job: Job) -> list[dict]:
     serves an expired signature. Must NOT mutate the raw variant dicts — the mutate
     endpoints read those via `_variants_of` and we never want a re-signed URL written
     back to the DB. Failed/unrendered variants (no `video_path`) keep their value.
+
+    `base_video_path` (the text-free fast-reburn base) gets the same treatment into
+    `base_video_url` — regardless of `render_status`, because the instant editor keeps
+    playing the base while a committed re-render is in flight. A signing failure just
+    omits the key (the editor degrades to the legacy controls).
     """
     out: list[dict] = []
     for v in _variants_of(job):
@@ -243,6 +295,19 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # fall through with the stored (possibly stale) output_url
+        base_video_path = v.get("base_video_path")
+        if base_video_path:
+            try:
+                v = {**v, "base_video_url": signed_get_url(base_video_path, PLAYBACK_URL_TTL_MIN)}
+            except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
+                log.warning(
+                    "variant_base_resign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    base_video_path=base_video_path,
+                    exc_info=True,
+                )
+                # no base_video_url key → the instant editor simply stays hidden
         out.append(v)
     return out
 
@@ -357,6 +422,77 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
     regenerate_generative_variant.delay(str(job.id), variant_id, size_override_px=px)
 
 
+def dispatch_edit_variant(
+    job: Job,
+    variant_id: str,
+    *,
+    text: str | None,
+    remove_text: bool,
+    style_set_id: str | None,
+    text_size_px: int | None,
+) -> None:
+    """Validate + enqueue a combined text/style/size edit as ONE re-render.
+
+    The instant editor batches an entire editing session into a single commit, so
+    the user pays for one render instead of one per field. Reuses the same
+    validation rules as the per-field dispatchers; `regenerate_generative_variant`
+    already accepts all overrides together.
+    """
+    variant = require_editable_variant(job, variant_id)
+
+    if text is None and not remove_text and style_set_id is None and text_size_px is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide at least one edit field.",
+        )
+    if text is not None and remove_text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="`text` and `remove_text` are mutually exclusive.",
+        )
+    if text is not None and not text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide `text` to update, or set `remove_text=true` to clear the overlay.",
+        )
+    if style_set_id is not None:
+        from app.pipeline.style_sets import style_set_ids  # noqa: PLC0415
+
+        if style_set_id not in set(style_set_ids(applies_to="generative")):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Unknown or non-generative style set.",
+            )
+
+    size_override_px: int | None = None
+    if text_size_px is not None:
+        # Same guard as dispatch_set_intro_size, relaxed for the add-text case: a
+        # `none`-mode variant gains a resizable overlay when this edit supplies
+        # text. Lyrics variants never have a resizable intro (their typography is
+        # set-driven) — reject even with text, or the size silently drops.
+        text_mode = variant.get("text_mode")
+        size_ok = text_mode == "agent_text" or (text_mode == "none" and text is not None)
+        if not size_ok:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This edit has no resizable intro text.",
+            )
+        from app.pipeline.overlay_sizing import clamp_intro_px  # noqa: PLC0415
+
+        size_override_px = clamp_intro_px(text_size_px)
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        override_text=(text.strip() if text and not remove_text else None),
+        remove_text=bool(remove_text),
+        style_set_id=style_set_id,
+        size_override_px=size_override_px,
+    )
+
+
 def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
     """Validate + enqueue a voice/bed mix change for one voiceover variant."""
     variant = require_editable_variant(job, variant_id)
@@ -443,11 +579,18 @@ async def list_generative_style_sets() -> StyleSetListResponse:
     — the gallery the swap-song picker reads. Declared BEFORE `/{job_id}/status` so
     the literal path isn't captured as a job id.
     """
-    from app.pipeline.style_sets import list_style_sets, style_set_preview  # noqa: PLC0415
+    from app.pipeline.style_sets import (  # noqa: PLC0415
+        list_style_sets,
+        style_set_intro_preview,
+        style_set_preview,
+    )
 
     return StyleSetListResponse(
         style_sets=[
-            StyleSetSummary(**{**s, **style_set_preview(s["id"])})
+            StyleSetSummary(
+                **{**s, **style_set_preview(s["id"])},
+                intro=StyleSetIntroPreview(**style_set_intro_preview(s["id"])),
+            )
             for s in list_style_sets(applies_to="generative")
         ]
     )
@@ -559,6 +702,40 @@ async def set_intro_size(
         job_id=str(job.id),
         variant_id=variant_id,
         px=req.text_size_px,
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post("/{job_id}/variants/{variant_id}/edit", response_model=GenerativeJobResponse)
+async def edit_variant(
+    job_id: str,
+    variant_id: str,
+    req: EditVariantRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Apply a whole instant-edit session (text + style + size) in ONE re-render.
+
+    The browser previews these edits at 0 latency (base video + client overlay) and
+    commits them here on "Done". Supersedes chaining /retext + /change-style +
+    /intro-size, which would enqueue one render each.
+    """
+    job = await _load_generative_job(job_id, db)
+    dispatch_edit_variant(
+        job,
+        variant_id,
+        text=req.text,
+        remove_text=req.remove_text,
+        style_set_id=req.style_set_id,
+        text_size_px=req.text_size_px,
+    )
+    log.info(
+        "generative_edit_variant",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        has_text=req.text is not None,
+        remove_text=req.remove_text,
+        style_set_id=req.style_set_id,
+        text_size_px=req.text_size_px,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
