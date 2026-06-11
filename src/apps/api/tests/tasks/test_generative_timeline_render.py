@@ -925,3 +925,69 @@ def test_regenerate_task_threads_timeline_override(monkeypatch):
     gb.regenerate_generative_variant.run("j", "song_text", timeline_override=timeline)
 
     assert seen["kwargs"]["timeline_override"] == timeline
+
+
+# ── Finalization whitelist (the prod `no_timeline` bug) ──────────────────────────
+
+
+def test_finalize_job_preserves_ai_timeline(monkeypatch):
+    """`_finalize_job` rebuilds every variant entry through an explicit whitelist.
+
+    The mid-render success upsert persists the full result (incl. ai_timeline),
+    then finalization REPLACES the variants list — any field missing from the
+    whitelist is silently stripped. Prod jobs 568ced7b/22c0bc36 (2026-06-11)
+    rendered correct timelines and lost them seconds later, so every variant
+    reported `no_timeline` and the editor never appeared.
+    """
+    captured: dict = {}
+
+    def _capture_set_status(job_id, status, extra_plan=None):
+        captured["status"] = status
+        captured["plan"] = extra_plan
+
+    monkeypatch.setattr(gb, "_set_status", _capture_set_status)
+
+    ai_timeline = {
+        "beat_grid": [0.0, 0.5, 1.1],
+        "slots": [
+            {
+                "slot_id": "s1",
+                "clip_index": 0,
+                "source_gcs_path": "generative-jobs/j/sources/000_a.mp4",
+                "source_duration_s": 8.0,
+                "in_s": 0.0,
+                "duration_s": 1.1,
+                "duration_beats": 2,
+                "order": 0,
+                "moment_energy": 7.0,
+                "moment_description": "m",
+            }
+        ],
+    }
+    results = [
+        {
+            "variant_id": "song_text",
+            "rank": 1,
+            "text_mode": "agent_text",
+            "render_status": "ready",
+            "ok": True,
+            "ai_timeline": ai_timeline,
+            "mix": None,
+        },
+        {
+            "variant_id": "voiceover_only",
+            "rank": 2,
+            "text_mode": "agent_text",
+            "render_status": "ready",
+            "ok": True,
+            "ai_timeline": None,
+            "mix": 0.7,
+        },
+    ]
+
+    gb._finalize_job("00000000-0000-0000-0000-000000000001", results)
+
+    variants = captured["plan"]["variants"]
+    assert variants[0]["ai_timeline"] == ai_timeline, "finalize stripped ai_timeline"
+    # voiceover mix survives finalization too (same whitelist-strip class)
+    assert variants[1]["mix"] == 0.7

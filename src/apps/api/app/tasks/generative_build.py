@@ -3192,6 +3192,15 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_text": r.get("intro_text"),
                     "intro_highlight_word": r.get("intro_highlight_word"),
                     "base_video_path": r.get("base_video_path"),
+                    # clip-editor timeline — MUST survive finalization or every
+                    # variant reports `no_timeline` and the editor never appears.
+                    # This whitelist silently strips anything the render persisted
+                    # that isn't re-listed here; pinned by
+                    # test_finalize_job_preserves_ai_timeline.
+                    "ai_timeline": r.get("ai_timeline"),
+                    # voiceover variants: mix must survive or the voice/bed slider
+                    # resets after the first completed render (same strip class).
+                    "mix": r.get("mix"),
                 }
                 for r in results
             ],
