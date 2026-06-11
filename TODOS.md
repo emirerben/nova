@@ -19,9 +19,34 @@
 **What:** Planner reads `style.instruction_level` + `preferred_edit_format_mix`; `filming_guide` threaded into `build_generative_job` → `all_candidates["filming_guide"]` → `intro_writer`; `footage_type_bias` biases `_select_archetype`.
 **Effort:** L
 
-### M4 — Per-item single-video upload + conformance agent
-**What:** UI uploads one video per plan item; `ConformanceFeedbackAgent` compares footage against `filming_guide` (clip_metadata signals) → "this looks like X instead of Y; engagement risk Z".
+## Plan dogfood fixes — deferred follow-ups (2026-06-11)
+
+### CJK lyric support (full karaoke for zh/ja/ko tracks)
+**What:** Real CJK lyric rendering: word segmentation (jieba or equivalent), a CJK-capable font bundle (~15MB Noto Sans SC), per-character karaoke timing in `lyric_injector.py`/`text_overlay_skia.py`.
+**Why:** Chinese/Japanese/Korean tracks currently lose the Lyrics variant entirely — the language gate (`app/pipeline/lyric_support.py`) skips it cleanly and the song picker says "language not supported yet", but the variant itself is the durable fix.
+**Depends on:** Docker-image size budget decision (font bundle grows the prod image).
 **Effort:** XL
+**Priority:** P3
+
+### Persistent media library (supersedes the per-plan footage pool)
+**What:** Per-user clip library with notes + metadata, reusable across plans; browsing/search UI. The 2026-06-11 footage pool (`content_plans.pool`, `users/{uid}/plan-pool/{plan_id}/`) is plan-scoped by design.
+**Why:** Users will want trip footage to feed NEXT month's plan too, not just the current one.
+**Depends on:** auth milestone + `users/{user_id}/` GCS prefix retention decisions (CLAUDE.md storage-retention note).
+**Effort:** XL
+**Priority:** P3
+
+### Ask Nova thread persistence (v2)
+**What:** Server-side conversation storage for `/plan-items/{id}/agent/turn` threads. v1 is deliberately ephemeral (client-held `prior_turns`, lost on reload); contested-verdict outcomes persist via the clip-note PATCH, not chat.
+**Why:** A user who reloads mid-conversation loses the advisor's reasoning; support/debugging also can't see what the advisor said.
+**Effort:** M (CC: ~1h)
+**Priority:** P3
+
+### Clip notes → intro_writer (overlay text uses creator context)
+**What:** `all_candidates["clip_notes"]` already rides every plan-item render job (gcs_path → note). Thread it into `intro_writer`'s prompt so overlay/hook text can use facts like "famous vegan restaurant in Buenos Aires".
+**Why:** Deferred at eng review: intro_writer is the highest-traffic prompt and the prompt-change rule requires live evals — a rushed bump risks hook quality for a nice-to-have. Data is already plumbed; this is prompt-only work.
+**Depends on:** intro_writer live-eval run budget.
+**Effort:** S (CC: ~30min + eval run)
+**Priority:** P2
 
 ## Light editorial system — follow-up work
 

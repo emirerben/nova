@@ -35,6 +35,15 @@ export interface MusicTrackSummary {
    */
   preview_audio_url?: string | null;
   preview_start_s?: number;
+  /**
+   * Lyric-variant support (P6 prevention-first surfacing): has_lyrics=false →
+   * choosing this song never yields a Lyrics variant; has_lyrics=true +
+   * lyrics_variant_supported=false → lyrics exist but the language isn't
+   * renderable yet — the picker annotates the row BEFORE the user swaps.
+   */
+  has_lyrics?: boolean;
+  lyrics_variant_supported?: boolean;
+  lyric_language?: string;
 }
 
 export interface SlotUploadResponse {

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   changePlanItemStyle,
+  dismissConformance,
   generatePlanItem,
   getPlanItem,
   getPlanItemJobStatus,
@@ -20,10 +21,12 @@ import {
   uploadToGcs,
 } from "@/lib/plan-api";
 import ShotSlotUploader from "./components/ShotSlotUploader";
+import AskNovaPanel from "./components/AskNovaPanel";
 import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
+import { variantFailureCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { ProgressTheater } from "@/components/progress";
@@ -60,6 +63,8 @@ export default function PlanItemPage() {
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
+  // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
+  const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
   const pendingEdits = useRef<Map<string, { priorOutputUrl: string | null }>>(new Map());
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
@@ -256,6 +261,15 @@ export default function PlanItemPage() {
 
   const clipCount = item.clip_gcs_paths.length;
   const isGenerating = item.status === "generating";
+  // Conformance in-flight: clips attached + guide present + verdict pending,
+  // bounded by the poll window — resolves to the tile, the on-track line, or
+  // (when guards skipped the run) silently vanishes. Never hangs.
+  const conformanceChecking =
+    clipCount > 0 &&
+    (item.filming_guide?.length ?? 0) > 0 &&
+    item.instruction_level !== "none" &&
+    !item.conformance &&
+    conformancePolls.current < 3;
   const focused = variants.find((v) => v.variant_id === focusedVariantId) ?? null;
   const focusedEditable =
     focused && (!!focused.output_url || focused.render_status === "failed");
@@ -331,6 +345,33 @@ export default function PlanItemPage() {
             </>
           )}
 
+          {/* Conformance read — ABOVE Generate so the read informs the action,
+              with the explicit generate-anyway line so proximity never reads as
+              a gate. State machine: checking shimmer → tile / one-liner / nothing. */}
+          {conformanceChecking ? (
+            <p
+              className="mb-4 text-sm text-[#71717a] motion-safe:animate-pulse"
+              role="status"
+              aria-live="polite"
+            >
+              Reading your clips against the brief…
+            </p>
+          ) : (
+            item.conformance && (
+              <ConformanceVerdictPanel
+                conformance={item.conformance}
+                onTellNova={() => setAskNova("contest")}
+                onDismiss={async () => {
+                  try {
+                    await dismissConformance(itemId);
+                  } finally {
+                    refetch();
+                  }
+                }}
+              />
+            )
+          )}
+
           {/* Generate button (D6: also disabled while ShotSlotUploader has in-flight uploads) */}
           <InkButton
             onClick={handleGenerate}
@@ -355,10 +396,29 @@ export default function PlanItemPage() {
             <p className="mt-2 text-sm text-[#a1a1aa]">Finishing upload…</p>
           )}
 
-          {/* Conformance verdict panel — display-only, never blocks Generate */}
-          {item.conformance && (
-            <ConformanceVerdictPanel conformance={item.conformance} />
-          )}
+          {/* Ask Nova — collapsed trigger + bounded panel BELOW Generate (the
+              page's primary action keeps its page). */}
+          <div className="mt-4">
+            {askNova === null ? (
+              <button
+                type="button"
+                onClick={() => setAskNova("default")}
+                className="text-sm font-medium text-lime-700 underline-offset-2 hover:underline"
+              >
+                Not sure which clip fits? Ask Nova
+              </button>
+            ) : (
+              <AskNovaPanel
+                item={item}
+                mode={askNova}
+                onClose={() => setAskNova(null)}
+                onItemChanged={() => {
+                  conformancePolls.current = 0;
+                  refetch();
+                }}
+              />
+            )}
+          </div>
 
           {/* "Why this works" — D5: moved below the film card + Generate */}
           {item.rationale && (
@@ -502,8 +562,8 @@ function Hero({
       {variant.output_url ? (
         <video src={variant.output_url} controls className="h-full w-full object-contain" />
       ) : failed ? (
-        <div className="flex h-full items-center justify-center px-4 text-center text-sm text-red-600">
-          This variant failed — try editing again.
+        <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[#3f3f46]">
+          {variantFailureCopy(variant.error_class)}
         </div>
       ) : (
         <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
@@ -536,62 +596,93 @@ function slugify(s: string): string {
     .slice(0, 40);
 }
 
-// ── Conformance verdict panel ──────────────────────────────────────────────────
-// Display-only: shows the ConformanceFeedbackAgent's verdict after clip attach.
-// Never disables or blocks the Generate button — purely informational.
+// ── Conformance verdict tile ────────────────────────────────────────────────────
+// Display-only: never disables or blocks Generate. Redesigned per DESIGN.md §7-D10
+// after the wrong-brief incident: dashed zinc (no red walls), a READ AGAINST
+// evidence line so the user can SEE what was judged, advice voice, and real
+// recourse ("Tell Nova" re-reads the clip; "Hide this read" dismisses).
 
-const VERDICT_STYLE: Record<
-  "on_track" | "minor_drift" | "off_brief",
-  { border: string; badge: string; label: string }
-> = {
-  on_track: {
-    border: "border-lime-200",
-    badge: "bg-lime-100 text-lime-800",
-    label: "On track",
-  },
-  minor_drift: {
-    border: "border-amber-200",
-    badge: "bg-amber-100 text-amber-800",
-    label: "Minor drift",
-  },
-  off_brief: {
-    border: "border-red-200",
-    badge: "bg-red-50 text-red-700",
-    label: "Off brief",
-  },
+const VERDICT_LABEL: Record<"minor_drift" | "off_brief", string> = {
+  minor_drift: "Close — one tweak",
+  off_brief: "Different from the brief",
 };
 
-function ConformanceVerdictPanel({ conformance }: { conformance: ConformanceVerdict }) {
-  const style = VERDICT_STYLE[conformance.verdict] ?? VERDICT_STYLE.off_brief;
+function ConformanceVerdictPanel({
+  conformance,
+  onTellNova,
+  onDismiss,
+}: {
+  conformance: ConformanceVerdict;
+  onTellNova: () => void;
+  onDismiss: () => void;
+}) {
+  // Render gates: dismissed/suppressed verdicts and low-confidence reads show
+  // nothing — silence beats a read the user can't trust.
+  if (conformance.dismissed || conformance.suppressed) return null;
+  if ((conformance.confidence ?? 0) < 0.6) return null;
+
+  if (conformance.verdict === "on_track") {
+    return (
+      <p
+        className="mb-4 text-sm text-[#3f3f46]"
+        role="status"
+        aria-live="polite"
+        data-testid="conformance-verdict-panel"
+      >
+        <span className="text-lime-700">✓</span> Looks on-brief.
+      </p>
+    );
+  }
+
+  const label = VERDICT_LABEL[conformance.verdict] ?? VERDICT_LABEL.off_brief;
+  // Label promises "one tweak" for minor drift — the advice keeps that promise.
+  const adviceCap = conformance.verdict === "minor_drift" ? 1 : 2;
+  const advice = (conformance.suggestions ?? []).slice(0, adviceCap);
+
   return (
     <div
-      className={`mb-6 rounded-lg border ${style.border} bg-white p-4`}
+      className="mb-6 rounded-xl border border-dashed border-zinc-300 bg-white p-4"
+      role="status"
+      aria-live="polite"
       data-testid="conformance-verdict-panel"
     >
-      <div className="mb-2 flex items-center gap-2">
-        <span className={`rounded px-2 py-0.5 text-xs font-semibold ${style.badge}`}>
-          {style.label}
-        </span>
-        <p className="text-sm text-[#3f3f46]">{conformance.summary}</p>
+      {conformance.evaluated_theme && (
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]">
+          Read against: &ldquo;{conformance.evaluated_theme}&rdquo;
+        </p>
+      )}
+      <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#52525b]">
+        {label}
+      </p>
+      <p className="text-sm text-[#0c0c0e]">{conformance.summary}</p>
+      {advice.length > 0 && (
+        <ul className="mt-1 space-y-0.5">
+          {advice.map((s, i) => (
+            <li key={i} className="text-sm text-[#3f3f46]">
+              {s}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 flex gap-4">
+        <button
+          type="button"
+          onClick={onTellNova}
+          className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
+        >
+          Looks wrong? Tell Nova
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+        >
+          Hide this read
+        </button>
       </div>
-      {conformance.mismatches && conformance.mismatches.length > 0 && (
-        <ul className="mb-2 space-y-0.5">
-          {conformance.mismatches.map((m, i) => (
-            <li key={i} className="text-xs text-[#71717a]">
-              &bull; {m}
-            </li>
-          ))}
-        </ul>
-      )}
-      {conformance.suggestions && conformance.suggestions.length > 0 && (
-        <ul className="space-y-0.5">
-          {conformance.suggestions.map((s, i) => (
-            <li key={i} className="text-xs text-lime-700">
-              &rarr; {s}
-            </li>
-          ))}
-        </ul>
-      )}
+      <p className="mt-2 text-xs text-[#a1a1aa]">
+        You can generate anyway — this is just a read on the brief.
+      </p>
     </div>
   );
 }

@@ -128,12 +128,18 @@ class PlanItemResponse(BaseModel):
     # ConformanceFeedbackAgent verdict (best-effort, display-only). NULL until the
     # agent runs (flag on + clip attached). Never blocks Generate.
     conformance: dict | None = None
+    # Persona content mode (direction fork, 2026-06-11): drives the film-card
+    # header copy — "HOW TO FILM THIS" (create_new/legacy) vs "WHAT TO LOOK FOR"
+    # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Populated on the item
+    # GET (the page's poll path); other responses default to create_new.
+    content_mode: str = "create_new"
 
 
 def plan_item_response(
     item: PlanItem,
     *,
     instruction_level: str = "full",
+    content_mode: str = "create_new",
 ) -> PlanItemResponse:
     # Tolerate missing keys in individual JSONB shots — each shot is constructed
     # via .get() so a hand-corrupted row or a migration-era partial row never raises.
@@ -180,7 +186,22 @@ def plan_item_response(
         user_edited=item.user_edited,
         instruction_level=instruction_level,
         conformance=item.conformance,
+        content_mode=content_mode if content_mode in ("existing_footage", "create_new", "mixed") else "create_new",
     )
+
+
+async def _get_content_mode(item: PlanItem, db: AsyncSession) -> str:
+    """Persona content_mode via item → plan → persona JSONB; default create_new."""
+    try:
+        plan = await db.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            return "create_new"
+        persona = await db.get(Persona, plan.persona_id)
+        if persona is None or not isinstance(persona.persona, dict):
+            return "create_new"
+        return str(persona.persona.get("content_mode") or "create_new")
+    except Exception:  # noqa: BLE001
+        return "create_new"
 
 
 async def _get_instruction_level(item: PlanItem, db: AsyncSession) -> str:
@@ -211,7 +232,10 @@ async def get_plan_item(
 ) -> PlanItemResponse:
     item = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(item, db)
-    return plan_item_response(item, instruction_level=instruction_level)
+    content_mode = await _get_content_mode(item, db)
+    return plan_item_response(
+        item, instruction_level=instruction_level, content_mode=content_mode
+    )
 
 
 class PlanItemEdit(BaseModel):
