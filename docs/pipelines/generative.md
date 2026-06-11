@@ -18,6 +18,16 @@ Net-new render behavior:
 - **Intro overlay injection**: `generative_overlays.py` builds the agent-authored "hero
   intro" overlay and injects it directly into the recipe (same pattern as lyric
   injection; bypasses `template_text`/`text_designer` schemas).
+- **Word-cluster intro layout** (v0.4.97.0): `overlay_format_matcher` may pick
+  `layout: "cluster"` (calm/scenic content, 3-6 word hooks). `intro_writer` annotates
+  `word_roles` (hero/connector/closer); the deterministic engine in
+  `app/pipeline/intro_cluster.py` computes per-block geometry from Skia glyph
+  measurement and `generative_overlays` emits one [fade-in reveal, static hold] pair
+  per block — existing renderer fields only, no renderer change. Engine declines
+  (unsuitable word count / unfittable words) → linear fallback, never a lost intro.
+  Effective `intro_layout` + `intro_word_roles` persist on the variant; the instant
+  text editor gates on `intro_layout == "cluster"` (server reburn instead of local
+  preview). Kill switch: `GENERATIVE_CLUSTER_INTRO_ENABLED`.
 
 ## Three variants
 

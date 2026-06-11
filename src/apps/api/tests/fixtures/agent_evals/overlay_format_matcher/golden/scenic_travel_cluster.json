@@ -1,0 +1,32 @@
+{
+  "agent": "nova.compose.overlay_format_matcher",
+  "prompt_version": "2026-06-10",
+  "input": {
+    "clip_set_summary": "n_clips=6 | avg_hook_score=5.0 | avg_energy=3.5 — cinematic travel montage, mountains and beaches at golden hour, slow aesthetic b-roll",
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 7.0,
+      "subject": "woman walking along an empty beach below red mountains at dusk",
+      "hook_text": "",
+      "hook_score": 5.5,
+      "energy": 3.0,
+      "description": "wide static frame, warm dusk light, calm and editorial"
+    }
+  },
+  "raw_text": "{\"effect\": \"fade-in\", \"position\": \"center\", \"size_class\": \"large\", \"text_color\": \"#FFFFFF\", \"highlight_color\": \"#FFD24A\", \"text_anchor\": \"center\", \"layout\": \"cluster\", \"matched_example_ids\": [\"travel-scenic-cluster-01\"]}",
+  "output": {
+    "effect": "fade-in",
+    "position": "center",
+    "size_class": "large",
+    "text_color": "#FFFFFF",
+    "highlight_color": "#FFD24A",
+    "text_anchor": "center",
+    "layout": "cluster",
+    "matched_example_ids": ["travel-scenic-cluster-01"]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "calm cinematic travel montage → editorial word-cluster layout with fade-in (never karaoke), matched the cluster exemplar"
+  }
+}

@@ -2132,3 +2132,101 @@ def test_build_generative_job_clamps_count_to_clip_count():
         narrative_shot_count=5,
     )
     assert job.all_candidates["narrative_shot_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Cluster layout — _resolve_intro_overlay_params + _resolve_regen_text threading
+# ---------------------------------------------------------------------------
+
+
+def _cluster_agent_text(text: str = "what's your favorite place?"):
+    return types.SimpleNamespace(
+        text=text,
+        highlight_word="favorite",
+        word_roles=["connector", "hero", "hero", "closer"],
+    )
+
+
+class TestResolveIntroOverlayParamsLayout:
+    def test_cluster_layout_passes_through(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(), {"effect": "fade-in", "layout": "cluster"}, None
+        )
+        assert params["layout"] == "cluster"
+        assert params["word_roles"] == ["connector", "hero", "hero", "closer"]
+
+    def test_layout_defaults_to_linear(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(), {"effect": "karaoke-line"}, None
+        )
+        assert params["layout"] == "linear"
+        assert params["word_roles"] is None  # SimpleNamespace without the attr
+
+    def test_kill_switch_forces_linear(self, monkeypatch):
+        monkeypatch.setattr(gb.settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", False, raising=False)
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(), {"effect": "fade-in", "layout": "cluster"}, None
+        )
+        assert params["layout"] == "linear"
+
+    def test_user_position_knob_forces_linear(self):
+        # A manual position pin conflicts with engine-owned cluster geometry.
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(),
+            {"effect": "fade-in", "layout": "cluster"},
+            None,
+            user_style_knobs={"position_y_frac": 0.8},
+        )
+        assert params["layout"] == "linear"
+
+    def test_user_named_position_knob_forces_linear(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(),
+            {"effect": "fade-in", "layout": "cluster"},
+            None,
+            user_style_knobs={"position": "bottom"},
+        )
+        assert params["layout"] == "linear"
+
+
+class TestResolveRegenTextClusterPersistence:
+    def test_persisted_cluster_layout_and_roles_reused_without_llm(self):
+        agent_text, agent_form, text_mode = gb._resolve_regen_text(
+            override_text=None,
+            remove_text=False,
+            existing_text_mode="agent_text",
+            persisted_text="what's your favorite place?",
+            persisted_highlight="favorite",
+            run_text_agents_fn=lambda: (None, None),
+            persisted_layout="cluster",
+            persisted_word_roles=["connector", "hero", "hero", "closer"],
+        )
+        assert text_mode == "agent_text"
+        assert agent_form["layout"] == "cluster"
+        assert agent_text.word_roles == ["connector", "hero", "hero", "closer"]
+
+    def test_override_text_keeps_layout_but_drops_stale_roles(self):
+        agent_text, agent_form, _ = gb._resolve_regen_text(
+            override_text="completely new words here",
+            remove_text=False,
+            existing_text_mode="agent_text",
+            persisted_text="what's your favorite place?",
+            persisted_highlight=None,
+            run_text_agents_fn=lambda: (None, None),
+            persisted_layout="cluster",
+            persisted_word_roles=["connector", "hero", "hero", "closer"],
+        )
+        assert agent_form["layout"] == "cluster"  # cluster stays sticky
+        # Stale roles must never apply to user-typed words — engine re-derives.
+        assert getattr(agent_text, "word_roles", None) is None
+
+    def test_legacy_variant_without_layout_defaults_linear(self):
+        _, agent_form, _ = gb._resolve_regen_text(
+            override_text=None,
+            remove_text=False,
+            existing_text_mode="agent_text",
+            persisted_text="my old hook",
+            persisted_highlight=None,
+            run_text_agents_fn=lambda: (None, None),
+        )
+        assert agent_form["layout"] == "linear"

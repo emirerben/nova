@@ -17,8 +17,13 @@ Score each output on these dimensions, **integer 1-5**:
    - 3: matched exemplars are loosely related
    - 1: matched exemplars are unrelated, or the form contradicts the exemplars it cites
 
+4. **layout_fits_content** — Is `layout` right? `cluster` (editorial word-cluster) belongs ONLY on calm / scenic / aesthetic content (travel, nature, slow lifestyle) where a short 3-6 word hook works; everything else — energetic, punchy, wordy, karaoke-driven — wants `linear`. `cluster` paired with `karaoke-line` is always wrong.
+   - 5: layout matches the content's mood and pacing; cluster only where editorial calm suits it
+   - 3: defensible but not obviously right (linear on a calm scenic set that could carry a cluster)
+   - 1: cluster on energetic/punchy content, or cluster + karaoke-line
+
 Pass threshold: avg ≥ 3.5
 
 Return ONLY:
 
-    {"scores": {"form_fits_content": 4, "legibility": 4, "exemplar_grounding": 4}, "reasoning": "<one sentence>"}
+    {"scores": {"form_fits_content": 4, "legibility": 4, "exemplar_grounding": 4, "layout_fits_content": 4}, "reasoning": "<one sentence>"}

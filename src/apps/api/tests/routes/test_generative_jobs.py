@@ -915,3 +915,168 @@ def test_dispatch_edit_size_with_text_still_rejected_on_lyrics_variant(monkeypat
         )
     assert exc.value.status_code == 422
     assert calls == []
+
+
+# ── dispatch_edit_variant: intro_layout (post-render layout pick) ───────────────
+
+
+def _layout_job(text_mode="agent_text", intro_text="what's your favorite place?"):
+    import types
+    import uuid
+
+    return types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "song_text",
+                    "render_status": "ready",
+                    "text_mode": text_mode,
+                    "intro_text": intro_text,
+                }
+            ]
+        },
+    )
+
+
+def test_dispatch_edit_layout_cluster_enqueues_override(monkeypatch):
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _layout_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        intro_layout="cluster",
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["layout_override"] == "cluster"
+
+
+def test_dispatch_edit_layout_alone_is_a_valid_edit(monkeypatch):
+    # intro_layout must count as "at least one edit field".
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _layout_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        intro_layout="linear",
+    )
+    assert len(calls) == 1
+
+
+def test_dispatch_edit_layout_unknown_value_422(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    _capture_delay(monkeypatch)
+    import pytest
+
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _layout_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            intro_layout="diagonal",
+        )
+    assert exc.value.status_code == 422
+
+
+def test_dispatch_edit_layout_cluster_rejects_wordy_text(monkeypatch):
+    # Persisted hook has 8 words → cluster can't lay it out; reject with an
+    # actionable message instead of silently rendering linear.
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    _capture_delay(monkeypatch)
+    import pytest
+
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _layout_job(intro_text="when they don't even listen to your feelings"),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            intro_layout="cluster",
+        )
+    assert exc.value.status_code == 422
+    assert "3-6 word" in exc.value.detail
+
+
+def test_dispatch_edit_layout_cluster_validates_override_text(monkeypatch):
+    # A new short text in the SAME edit makes cluster valid even when the
+    # persisted text is wordy.
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _layout_job(intro_text="when they don't even listen to your feelings"),
+        "song_text",
+        text="the quiet side of bangkok",
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        intro_layout="cluster",
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["layout_override"] == "cluster"
+    assert kwargs["override_text"] == "the quiet side of bangkok"
+
+
+def test_dispatch_edit_layout_rejected_on_lyrics_variant(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    _capture_delay(monkeypatch)
+    import pytest
+
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _layout_job(text_mode="lyrics"),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            intro_layout="cluster",
+        )
+    assert exc.value.status_code == 422
+
+
+def test_dispatch_edit_layout_rejected_with_remove_text(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    _capture_delay(monkeypatch)
+    import pytest
+
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _layout_job(),
+            "song_text",
+            text=None,
+            remove_text=True,
+            style_set_id=None,
+            text_size_px=None,
+            intro_layout="cluster",
+        )
+    assert exc.value.status_code == 422

@@ -28,11 +28,15 @@ export const TEXT_MODE_LABEL: Record<string, string> = {
 };
 
 /** Instant edit needs the text-free base video AND an editable text mode —
- * lyrics variants have neither (no cached base; lyric typography is set-driven). */
+ * lyrics variants have neither (no cached base; lyric typography is set-driven).
+ * Cluster intros (intro_layout === "cluster") are also excluded: the local DOM
+ * preview only models the linear single-block layout, so cluster text edits go
+ * through the legacy server-reburn controls (still fast — reuses the base). */
 export function isInstantEditEligible(variant: GenerativeVariant): boolean {
   return (
     !!variant.base_video_url &&
-    (variant.text_mode === "agent_text" || variant.text_mode === "none")
+    (variant.text_mode === "agent_text" || variant.text_mode === "none") &&
+    variant.intro_layout !== "cluster"
   );
 }
 
@@ -59,6 +63,7 @@ export function VariantCard({
   onChangeStyle,
   onResize,
   onSetMix,
+  onChangeLayout,
   tone = "dark",
   editSession,
   timelineSession,
@@ -72,6 +77,7 @@ export function VariantCard({
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize?: (textSizePx: number) => Promise<void>;
   onSetMix?: (mix: number) => Promise<void>;
+  onChangeLayout?: (layout: "linear" | "cluster") => Promise<void>;
   tone?: "dark" | "light";
   editSession?: VariantEditSession;
   /** Clip-timeline editor session (public generative page only — admin omits). */
@@ -404,6 +410,38 @@ export function VariantCard({
             ))}
           </select>
         )}
+        {onChangeLayout && variant.text_mode === "agent_text" && (() => {
+          // Post-render layout pick. The editorial word-cluster only works on
+          // short hooks (server enforces 3-6 words; the chip pre-disables with
+          // a hint so the user isn't bounced by a 422).
+          const layout = variant.intro_layout === "cluster" ? "cluster" : "linear";
+          const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
+          const clusterBlocked = words < 3 || words > 6;
+          return (
+            <div className={sizeControlClass} role="group" aria-label="Intro text layout">
+              <button
+                disabled={rendering || layout === "linear"}
+                onClick={() => run(() => onChangeLayout("linear"))}
+                title="Classic centered text"
+                className={`${sizeBtnClass} ${layout === "linear" ? "font-semibold underline" : ""}`}
+              >
+                Classic
+              </button>
+              <button
+                disabled={rendering || layout === "cluster" || clusterBlocked}
+                onClick={() => run(() => onChangeLayout("cluster"))}
+                title={
+                  clusterBlocked
+                    ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                    : "Editorial word-cluster — mixed sizes, magazine-style"
+                }
+                className={`${sizeBtnClass} ${layout === "cluster" ? "font-semibold underline" : ""}`}
+              >
+                Editorial
+              </button>
+            </div>
+          );
+        })()}
         {tracks.length > 0 && variant.music_track_id !== null && (
           <select
             disabled={rendering}

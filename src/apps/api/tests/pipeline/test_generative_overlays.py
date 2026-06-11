@@ -401,3 +401,125 @@ def test_persistent_intro_survives_collect_absolute_overlays():
     assert hold["end_s"] >= sum(slot_durs)
     # Internal bookkeeping is stripped before return.
     assert "_no_merge" not in hold
+
+
+# -- Word-cluster layout (layout="cluster") -----------------------------------
+
+
+def _cluster_overlays(**kw):
+    defaults = dict(
+        text="what's your favorite place?",
+        effect="fade-in",
+        reveal_window_s=3.0,
+        layout="cluster",
+        text_size_px=60,
+    )
+    defaults.update(kw)
+    return build_persistent_intro_overlays(**defaults)
+
+
+def test_cluster_emits_reveal_hold_pair_per_block():
+    overlays = _cluster_overlays()
+    assert len(overlays) >= 4 and len(overlays) % 2 == 0
+    reveals = [o for o in overlays if o["effect"] == "fade-in"]
+    holds = [o for o in overlays if o["effect"] == "static"]
+    assert len(reveals) == len(holds)
+    for r, h in zip(reveals, holds, strict=True):
+        assert r["text"] == h["text"]
+        assert r["position_x_frac"] == h["position_x_frac"]
+        assert r["position_y_frac"] == h["position_y_frac"]
+        assert r["text_size_px"] == h["text_size_px"]
+        assert h["start_s"] == r["end_s"]
+        assert h["end_s"] == _HOLD_TO_END_S
+        # No-merge protection (Dedup 1) hinges on this role.
+        assert r["role"] == h["role"] == "generative_intro"
+        assert r["subject_substitute"] is False
+    # Staggered reveal: not every block starts at 0.
+    starts = sorted(r["start_s"] for r in reveals)
+    assert starts[0] == 0.0 and starts[-1] > 0.0
+
+
+def test_cluster_blocks_cover_all_words():
+    overlays = _cluster_overlays()
+    reveals = [o for o in overlays if o["effect"] == "fade-in"]
+    assert " ".join(o["text"] for o in reveals) == "what's your favorite place?"
+
+
+def test_cluster_blocks_have_mixed_sizes_and_positions():
+    overlays = _cluster_overlays()
+    reveals = [o for o in overlays if o["effect"] == "fade-in"]
+    sizes = {o["text_size_px"] for o in reveals}
+    positions = {(o["position_x_frac"], o["position_y_frac"]) for o in reveals}
+    assert len(sizes) >= 2  # the whole point: NOT one uniform block
+    assert len(positions) == len(reveals)
+
+
+def test_cluster_engine_failure_falls_back_to_linear(monkeypatch):
+    import app.pipeline.intro_cluster as ic
+
+    def boom(*a, **kw):
+        raise RuntimeError("engine exploded")
+
+    monkeypatch.setattr(ic, "compute_cluster_blocks", boom)
+    overlays = _cluster_overlays()
+    linear = build_persistent_intro_overlays(
+        text="what's your favorite place?",
+        effect="fade-in",
+        reveal_window_s=3.0,
+        layout="linear",
+        text_size_px=60,
+    )
+    assert overlays == linear  # exact linear pair — fallback parity
+
+
+def test_cluster_unsuitable_text_falls_back_to_linear():
+    # 2 words < MIN_WORDS → engine declines → linear [reveal, hold].
+    overlays = _cluster_overlays(text="hello world")
+    assert len(overlays) == 2
+    assert overlays[0]["text"] == "hello world"
+
+
+def test_linear_layout_output_unchanged_by_cluster_kwargs():
+    # layout="linear" + word_roles must be byte-identical to the legacy call.
+    legacy = build_persistent_intro_overlays(
+        text="i did not expect", effect="karaoke-line", reveal_window_s=3.0
+    )
+    with_kwargs = build_persistent_intro_overlays(
+        text="i did not expect",
+        effect="karaoke-line",
+        reveal_window_s=3.0,
+        layout="linear",
+        word_roles=["hero", "connector", "connector", "hero"],
+    )
+    assert legacy == with_kwargs
+
+
+def test_inject_persistent_intro_forwards_cluster_layout():
+    recipe = {"slots": [{"position": 1, "target_duration_s": 5.0, "text_overlays": []}]}
+    out = inject_persistent_intro(
+        recipe,
+        0,
+        text="what's your favorite place?",
+        effect="fade-in",
+        reveal_window_s=3.0,
+        layout="cluster",
+        text_size_px=60,
+    )
+    overlays = out["slots"][0]["text_overlays"]
+    assert len(overlays) >= 4  # multi-block cluster, not the linear pair
+
+
+def test_cluster_reveal_windows_are_frame_budget_bounded():
+    # Perf lock: each animated reveal is a per-frame PNG sequence at 30fps. A
+    # bounded ~0.7s window (~22 frames/block) keeps a 5-block cluster cheaper
+    # than one full-length karaoke intro (~91 frames). The holds are static
+    # (1 looped PNG each) so only the fade-in windows matter.
+    overlays = _cluster_overlays(text="the days we never planned", reveal_window_s=3.0)
+    reveals = [o for o in overlays if o["effect"] == "fade-in"]
+    assert reveals
+    total_animated_s = 0.0
+    for o in reveals:
+        window = o["end_s"] - o["start_s"]
+        assert window <= 0.71, f"unbounded reveal window on {o['text']!r}"
+        total_animated_s += window
+    assert total_animated_s * 30 <= 150  # ≤ ~150 animated frames per cluster

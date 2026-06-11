@@ -206,3 +206,61 @@ def test_injection_sentinel_instruction_not_reproduced():
     assert "evil.com" not in out.text
     assert "@owner" not in out.text
     assert "https" not in out.text
+
+
+# -- word_roles (cluster layouts) -----------------------------------------------
+
+
+def _cluster_input() -> IntroWriterInput:
+    base = {"clip_id": "c1", "duration_s": 4.0, "subject": "beach", "hook_score": 8.0}
+    return IntroWriterInput(hero_clip=ClipSummary(**base), tone="calm", form={"layout": "cluster"})
+
+
+def test_word_roles_accepted_when_aligned_for_cluster():
+    raw = json.dumps(
+        {
+            "text": "what's your favorite place?",
+            "highlight_word": "favorite",
+            "word_roles": ["connector", "hero", "hero", "closer"],
+        }
+    )
+    out = _agent().parse(raw, _cluster_input())
+    assert out.word_roles == ["connector", "hero", "hero", "closer"]
+
+
+def test_word_roles_dropped_for_linear_form():
+    raw = json.dumps(
+        {"text": "what's your favorite place?", "word_roles": ["hero", "hero", "hero", "hero"]}
+    )
+    out = _agent().parse(raw, _input())  # form has no layout → linear
+    assert out.word_roles is None
+
+
+def test_word_roles_dropped_on_length_mismatch():
+    raw = json.dumps({"text": "three word hook", "word_roles": ["hero"]})
+    assert _agent().parse(raw, _cluster_input()).word_roles is None
+
+
+def test_word_roles_dropped_on_unknown_vocab():
+    raw = json.dumps({"text": "three word hook", "word_roles": ["big", "small", "big"]})
+    assert _agent().parse(raw, _cluster_input()).word_roles is None
+
+
+def test_word_roles_dropped_without_any_hero():
+    raw = json.dumps(
+        {"text": "three word hook", "word_roles": ["connector", "connector", "closer"]}
+    )
+    assert _agent().parse(raw, _cluster_input()).word_roles is None
+
+
+def test_word_roles_must_align_to_sanitized_text():
+    # Sanitization strips the URL token, so 5 agent roles no longer align → dropped.
+    raw = json.dumps(
+        {
+            "text": "go evil.com see this place",
+            "word_roles": ["connector", "hero", "hero", "hero", "closer"],
+        }
+    )
+    out = _agent().parse(raw, _cluster_input())
+    assert "evil.com" not in out.text
+    assert out.word_roles is None

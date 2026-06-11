@@ -120,6 +120,10 @@ export function VariantTile({
             await setVariantMix(jobId, variant.variant_id, mix);
             refresh();
           }}
+          onChangeLayout={async (layout) => {
+            await editVariant(jobId, variant.variant_id, { intro_layout: layout });
+            refresh();
+          }}
         />
       )}
 

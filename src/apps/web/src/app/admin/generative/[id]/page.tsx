@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   changeVariantStyle,
+  editVariant,
   getGenerativeJobStatus,
   getGenerativeStyleSets,
   GENERATIVE_TERMINAL_STATUSES,
@@ -145,6 +146,11 @@ export default function AdminGenerativeDetailPage({
               onChangeStyle={async (styleSetId) => {
                 markVariantRendering(v.variant_id);
                 await changeVariantStyle(jobId, v.variant_id, styleSetId);
+                await refresh();
+              }}
+              onChangeLayout={async (layout) => {
+                markVariantRendering(v.variant_id);
+                await editVariant(jobId, v.variant_id, { intro_layout: layout });
                 await refresh();
               }}
             />
