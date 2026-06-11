@@ -12,7 +12,7 @@
  * nothing auto-renders. Counts come from real backend state only (§7-D6).
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   attachPoolClips,
   rematchPoolClips,
@@ -45,6 +45,15 @@ export function FootagePool({
   const unmatchedCount = Math.max(0, clipCount - matchedCount);
   const matching = poolStatus === "matching";
   const planFull = pendingItems.length === 0;
+
+  // While the matcher runs, the status only changes server-side — poll so
+  // "Sorting…" resolves to matched/failed without a manual reload (dogfood
+  // finding: the line sat on "Sorting…" after the task had already failed).
+  useEffect(() => {
+    if (!matching) return;
+    const t = setInterval(onRefresh, 5000);
+    return () => clearInterval(t);
+  }, [matching, onRefresh]);
 
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;

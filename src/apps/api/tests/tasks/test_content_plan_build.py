@@ -686,3 +686,31 @@ def test_narrative_order_assignment_path_not_in_clip_paths_ignored() -> None:
 
     assert ordered == ["u/real.mp4"]
     assert count == 0
+
+
+# ── Footage pool ────────────────────────────────────────────────────────────────
+
+
+def test_pool_match_limit_within_matcher_schema():
+    """_POOL_MATCH_LIMIT must validate against ClipPlanMatcherInput's schema bound.
+
+    Regression: the pool shipped with limit 8 against a le=7 field — every pool
+    match failed at pydantic validation before the matcher ever ran (dogfood,
+    2026-06-11)."""
+    from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipSummary, PlanItemSummary
+    from app.tasks.content_plan_build import _POOL_MATCH_LIMIT
+
+    inp = ClipPlanMatcherInput(
+        clips=[
+            ClipSummary(
+                clip_gcs_path="users/u/plan-pool/p/a.mp4",
+                hook_text="",
+                hook_score=5.0,
+                detected_subject="street scene",
+                transcript_excerpt="",
+            )
+        ],
+        items=[PlanItemSummary(item_id="i1", theme="t", idea="i", filming_suggestion="")],
+        max_assignments=_POOL_MATCH_LIMIT,
+    )
+    assert inp.max_assignments == _POOL_MATCH_LIMIT

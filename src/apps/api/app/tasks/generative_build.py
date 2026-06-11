@@ -541,11 +541,20 @@ def _run_generative_job(job_id: str) -> None:
 # ── Ingest (shared by the full job + the single-variant re-render) ──────────────
 
 
-def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dict[str, Any]:
+def _ingest_clips(
+    clip_paths_gcs: list[str],
+    tmpdir: str,
+    *,
+    job_id: str,
+    min_success_fraction: float = 0.5,
+) -> dict[str, Any]:
     """Download → probe → Gemini upload → clip_metadata. Reuses the proven helpers.
 
     Returns clip_metas, clip_id↔gcs/local maps, the probe map, and the hero clip.
-    Raises if more than half the clips fail metadata extraction.
+    Raises when the analyzed fraction drops below ``min_success_fraction``
+    (default: more than half failing aborts — right for renders, where cutting
+    with half-garbage footage is worse than failing). Pool MATCHING passes 0.0:
+    any analyzed subset is worth matching; only total failure raises.
     """
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         _analyze_clips_parallel,
@@ -567,9 +576,10 @@ def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dic
         file_refs, local_clip_paths, probe_map, job_id=job_id
     )
     total = len(clip_metas) + failed_count
-    if total == 0 or failed_count > total * 0.5:
+    if total == 0 or len(clip_metas) == 0 or failed_count > total * (1.0 - min_success_fraction):
         raise ValueError(
-            f"{failed_count}/{total} clips failed clip_metadata — aborting generative job"
+            f"{failed_count}/{total} clips failed clip_metadata — aborting "
+            f"(min_success_fraction={min_success_fraction})"
         )
     return {
         "clip_metas": clip_metas,

@@ -639,8 +639,10 @@ def _set_activation_phase(session, plan: ContentPlan, phase: str) -> None:  # no
 
 # Footage pool (dogfood feedback #4): how many pending items one pool match may
 # fill. Unlike the activation seed there is NO auto-render (the user keeps/swaps
-# first), so this is a spread cap, not a render-budget cap.
-_POOL_MATCH_LIMIT = 8
+# first), so this is a spread cap, not a render-budget cap. MUST stay within
+# ClipPlanMatcherInput.max_assignments' schema bound (le=7) — pinned by
+# test_pool_match_limit_within_matcher_schema.
+_POOL_MATCH_LIMIT = 7
 
 
 def _set_pool_status(session, plan: ContentPlan, status_value: str) -> None:  # noqa: ANN001
@@ -718,7 +720,10 @@ def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
     trace_scope = f"pool-match-{plan_id}"
     try:
         with pipeline_trace_for(trace_scope), tempfile.TemporaryDirectory() as tmpdir:
-            ingest = _ingest_clips(unmatched, tmpdir, job_id=trace_scope)
+            # min_success_fraction=0.0: matching WHATEVER analyzed beats matching
+            # nothing — a Gemini 503 spike on half the batch must not abort the
+            # pool (unmatched clips stay listed with "Match again").
+            ingest = _ingest_clips(unmatched, tmpdir, job_id=trace_scope, min_success_fraction=0.0)
             clip_id_to_gcs: dict[str, str] = ingest["clip_id_to_gcs"]
             clips: list[ClipSummary] = []
             for meta in ingest["clip_metas"]:
@@ -737,9 +742,7 @@ def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
             if not clips:
                 raise ValueError("no pool clip produced a usable metadata summary")
             matched = ClipPlanMatcherAgent(default_client()).run(
-                ClipPlanMatcherInput(
-                    clips=clips, items=items, max_assignments=_POOL_MATCH_LIMIT
-                ),
+                ClipPlanMatcherInput(clips=clips, items=items, max_assignments=_POOL_MATCH_LIMIT),
                 ctx=RunContext(job_id=None),
             )
     except Exception as exc:  # noqa: BLE001 — best-effort; items stay untouched
@@ -768,10 +771,7 @@ def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
             # Same trusted-server prefix argument as activation seed paths.
             set_item_clips(
                 item,
-                [
-                    ClipAssignment(gcs_path=p, shot_id=None, machine_matched=True)
-                    for p in paths
-                ],
+                [ClipAssignment(gcs_path=p, shot_id=None, machine_matched=True) for p in paths],
             )
             session.flush()
             for p in paths:
