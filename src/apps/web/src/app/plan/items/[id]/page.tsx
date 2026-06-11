@@ -524,6 +524,7 @@ function FocusedVariantEditor({
   onRemoveText,
   onChangeStyle,
   onResize,
+  onChangeLayout,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -536,6 +537,7 @@ function FocusedVariantEditor({
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize: (textSizePx: number) => Promise<void>;
+  onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
   return (
@@ -549,6 +551,7 @@ function FocusedVariantEditor({
         onRemoveText={onRemoveText}
         onChangeStyle={onChangeStyle}
         onResize={onResize}
+        onChangeLayout={onChangeLayout}
         onEditClips={timeline.openEditor}
         showClipEditor={timeline.entryVisible}
         clipSlotCount={timeline.slotCount}
