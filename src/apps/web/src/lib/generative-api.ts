@@ -399,40 +399,56 @@ async function throwTimelineError(res: Response): Promise<never> {
   throw new TimelineApiError(res.status, code);
 }
 
+/**
+ * Which backend route family owns the timeline. The plan-item mirror endpoints
+ * (`/plan-items/{item_id}/variants/{vid}/timeline`) reuse the generative dispatch
+ * helpers server-side — identical request/response shapes — but are ownership-
+ * checked, so they go through the authenticated same-origin /api/plan proxy
+ * (relative URL, session cookie) exactly like the mutations in plan-api.ts.
+ */
+export type TimelineBase = "generative" | "plan-item";
+
+/** `ownerId` is the generative job id, or the plan-item id for "plan-item". */
+function timelineUrl(base: TimelineBase, ownerId: string, variantId: string): string {
+  return base === "plan-item"
+    ? `/api/plan/plan-items/${ownerId}/variants/${variantId}/timeline`
+    : `${API_BASE}/generative-jobs/${ownerId}/variants/${variantId}/timeline`;
+}
+
 export async function getTimeline(
-  jobId: string,
+  ownerId: string,
   variantId: string,
+  base: TimelineBase = "generative",
 ): Promise<TimelineResponse> {
-  const res = await fetch(
-    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/timeline`,
-  );
+  const res = await fetch(timelineUrl(base, ownerId, variantId));
   if (!res.ok) return throwTimelineError(res);
   return res.json();
 }
 
 /** Submit an edited cut — enqueues a re-render on success. */
 export async function editTimeline(
-  jobId: string,
+  ownerId: string,
   variantId: string,
   slots: TimelineEditSlotPayload[],
+  base: TimelineBase = "generative",
 ): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/timeline`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slots }),
-    },
-  );
+  const res = await fetch(timelineUrl(base, ownerId, variantId), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slots }),
+  });
   if (!res.ok) return throwTimelineError(res);
 }
 
 /** Reset to the AI cut — discards user edits and re-renders. */
-export async function resetTimeline(jobId: string, variantId: string): Promise<void> {
-  const res = await fetch(
-    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/timeline`,
-    { method: "DELETE" },
-  );
+export async function resetTimeline(
+  ownerId: string,
+  variantId: string,
+  base: TimelineBase = "generative",
+): Promise<void> {
+  const res = await fetch(timelineUrl(base, ownerId, variantId), {
+    method: "DELETE",
+  });
   if (!res.ok) return throwTimelineError(res);
 }
 

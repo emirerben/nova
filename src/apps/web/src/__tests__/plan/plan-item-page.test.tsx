@@ -66,6 +66,13 @@ jest.mock("@/lib/plan-api", () => ({
 
 jest.mock("@/lib/generative-api", () => ({
   getGenerativeStyleSets: jest.fn().mockResolvedValue([]),
+  // The focused-variant timeline session lazy-GETs on mount; a never-resolving
+  // promise keeps the "Edit clips" entry hidden without act() noise.
+  getTimeline: jest.fn(() => new Promise(() => {})),
+  TimelineApiError: class TimelineApiError extends Error {
+    status = 0;
+    code: string | null = null;
+  },
 }));
 
 jest.mock("@/lib/music-api", () => ({
