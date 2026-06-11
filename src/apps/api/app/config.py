@@ -235,6 +235,18 @@ class Settings(BaseSettings):
         "Set to false to fall back to pure greedy clip-to-slot matching.",
     )
 
+    GENERATIVE_TIMELINE_EDITOR_ENABLED: bool = Field(
+        default=True,
+        description="Enable the post-generation clip timeline editor: durable "
+        "per-job source copies, ai_timeline persistence on each montage variant, "
+        "and the user_timeline override path on re-renders. Read at render time, "
+        "so flipping it affects queued jobs and re-renders after a worker "
+        "restart. Set to false to fall back to fresh clip matching on every "
+        "re-render (timelines neither written nor honored). Kill switch: "
+        "`fly secrets set GENERATIVE_TIMELINE_EDITOR_ENABLED=false --app "
+        "nova-video` + `fly machine restart <id>` — no deploy needed.",
+    )
+
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
     # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows

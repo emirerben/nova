@@ -214,6 +214,14 @@ def _run_generative_job(job_id: str) -> None:
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
 
+    # Durable per-job source copies (clip timeline editor). User uploads under
+    # the 24h-lifecycle prefixes are snapshot to `generative-jobs/{job_id}/sources/`
+    # BEFORE ingest, so a timeline edit days later can still re-render from the
+    # original bytes. Strictly order-preserving 1:1 — _resolve_narrative_order
+    # slices the first N keys of clip_id_to_gcs, so clip_paths order is
+    # load-bearing. Best-effort: on any copy failure ALL original paths are kept.
+    clip_paths_gcs = _persist_durable_sources(job_id, clip_paths_gcs)
+
     # ignore_cleanup_errors: on a soft-time-limit abort, an orphaned pre-tonemap
     # ffmpeg thread (outer pool shutdown wait=False) may still be writing sdr_*
     # files into tmpdir as this block unwinds. Without this flag a racing rmtree
@@ -615,6 +623,61 @@ def _resolve_narrative_order(
     return ordered_ids
 
 
+def _durable_sources_prefix(job_id: str) -> str:
+    """GCS prefix for a job's durable source-clip snapshots (clip timeline editor)."""
+    return f"generative-jobs/{job_id}/sources/"
+
+
+def _persist_durable_sources(job_id: str, clip_paths: list[str]) -> list[str]:
+    """Snapshot each uploaded clip to a durable per-job key and rewrite clip_paths.
+
+    `generative-jobs/*` is exempt from the 24h GCS lifecycle rule, so timeline
+    edits can re-render long after the original `dev-user/*` uploads expire.
+    Copies are server-side (`storage.copy_object`) — no egress.
+
+    Contract:
+      - STRICTLY order-preserving 1:1 rewrite (`{i:03d}_{basename}` keys) —
+        downstream `clip_index` identity and narrative ordering both key off
+        clip_paths positions.
+      - All-or-nothing: ANY failure (copy or DB persist) logs a warning and
+        returns ALL original paths — never a mixed list, never a failed job.
+      - Idempotent: paths already under the durable prefix are not re-copied;
+        an entirely-durable list short-circuits (acks_late re-runs).
+    """
+    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
+        return clip_paths
+    from app.storage import copy_object  # noqa: PLC0415
+
+    prefix = _durable_sources_prefix(job_id)
+    if all(p.startswith(prefix) for p in clip_paths):
+        return clip_paths  # already durable — idempotent re-run
+    try:
+        durable: list[str] = []
+        for i, src in enumerate(clip_paths):
+            if src.startswith(prefix):
+                durable.append(src)
+                continue
+            dst = f"{prefix}{i:03d}_{os.path.basename(src)}"
+            copy_object(src, dst)
+            durable.append(dst)
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is not None:
+                all_candidates = dict(job.all_candidates or {})
+                all_candidates["clip_paths"] = list(durable)
+                job.all_candidates = all_candidates
+                db.commit()
+    except Exception as exc:  # noqa: BLE001 — durability is best-effort, never job-fatal
+        log.warning(
+            "generative_durable_sources_failed",
+            job_id=job_id,
+            error=str(exc),
+        )
+        return clip_paths
+    log.info("generative_durable_sources_persisted", job_id=job_id, clips=len(durable))
+    return durable
+
+
 def _pretonemap_hdr_clips(
     clip_id_to_local: dict[str, str],
     probe_map: dict,
@@ -797,12 +860,18 @@ def regenerate_generative_variant(
     size_override_px: int | None = None,
     mix_override: float | None = None,
     layout_override: str | None = None,
+    timeline_override: list[dict] | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
     Async by design (plan Decision 4): a re-slot against a new song is a full pipeline
     re-run, not an instant preview. Re-runs clip ingest, renders just the target
     variant, and updates that entry in `Job.assembly_plan["variants"]` in place.
+
+    `timeline_override` (clip timeline editor): user-edited slot list — takes
+    precedence over the variant's persisted `user_timeline`. On montage
+    song_text/original_text variants an active timeline skips the whole
+    ingest+Gemini+match leg (see `_run_regenerate_variant`).
     """
     log.info(
         "generative_regenerate_start",
@@ -828,6 +897,7 @@ def regenerate_generative_variant(
                 size_override_px,
                 mix_override,
                 layout_override,
+                timeline_override=timeline_override,
             )
         except OperationalError:
             raise
@@ -1069,6 +1139,225 @@ def _reburn_text_on_base(
         }
 
 
+# ── Clip timeline editor (durable sources + ai_timeline + override render) ──────
+
+# Beat-span match tolerance for `duration_beats` derivation: a slot duration is
+# only labeled with a whole-beat count when some consecutive beat-grid span
+# matches it within this window. Wider would mislabel footage-trimmed slots;
+# tighter would miss beat-snapped slots after float rounding.
+_BEAT_SPAN_TOLERANCE_S = 0.05
+
+# Variants whose layout is a beat-driven montage — the only ones the timeline
+# override path may re-assemble. Lyrics need re-injection against the matcher
+# plan and voiceover/talking_head layouts follow a spine, not a slot grid.
+_TIMELINE_OVERRIDE_VARIANTS = frozenset({"song_text", "original_text"})
+
+
+def _derive_duration_beats(durations: list[float], beat_grid: list[float]) -> list[int | None]:
+    """Per-slot whole-beat counts: for each slot duration, the consecutive
+    beat-grid span (walked left-to-right with a cursor) whose length matches
+    within `_BEAT_SPAN_TOLERANCE_S`. None when no span matches — e.g. a slot
+    trimmed to real footage length rather than snapped to the grid. An off-grid
+    slot re-anchors the cursor at the beat nearest its end so it doesn't
+    misalign every later span."""
+    if len(beat_grid) < 2:
+        return [None for _ in durations]
+    out: list[int | None] = []
+    cursor = 0
+    for duration in durations:
+        best_n: int | None = None
+        best_err = float("inf")
+        for n in range(1, len(beat_grid) - cursor):
+            err = abs((beat_grid[cursor + n] - beat_grid[cursor]) - duration)
+            if err < best_err:
+                best_err, best_n = err, n
+        if best_n is not None and best_err <= _BEAT_SPAN_TOLERANCE_S:
+            out.append(best_n)
+            cursor += best_n
+        else:
+            out.append(None)
+            anchor = beat_grid[min(cursor, len(beat_grid) - 1)] + duration
+            cursor = min(range(len(beat_grid)), key=lambda k: abs(beat_grid[k] - anchor))
+    return out
+
+
+def _build_ai_timeline(
+    *,
+    steps: list,
+    resolved_plans: list[dict],
+    clip_id_to_gcs: dict[str, str],
+    clip_id_to_local: dict[str, str],
+    probe_map: dict,
+    beat_grid: list[float],
+) -> dict[str, Any] | None:
+    """Build the persisted `ai_timeline` blob from a completed montage assembly.
+
+    `clip_index` — THE stable slot identity — is each step's source position in
+    `all_candidates["clip_paths"]` (matcher clip_ids are Gemini-ref-derived and
+    unstable across re-renders). `clip_id_to_gcs` preserves clip_paths order 1:1
+    (index enumeration in both the ingest and timeline-override paths), so
+    position-in-values == clip_index. Windows come from the POST-resolution
+    plans `_assemble_clips` actually rendered (`resolved_plans_out` sink), not
+    the matcher's requested moments. `beat_grid` is the section-relative beat
+    list the assembly snapped against (`generate_music_recipe` already shifts
+    window beats by best_start_s); empty for no-music variants.
+
+    Best-effort: returns None when the assembly can't be mapped — a timeline is
+    a UX nicety, never a render blocker.
+    """
+    try:
+        if len(resolved_plans) != len(steps):
+            return None
+        gcs_to_index = {gcs: i for i, gcs in enumerate(clip_id_to_gcs.values())}
+        durations = [float(p.get("duration_s") or 0.0) for p in resolved_plans]
+        beats_per_slot = _derive_duration_beats(durations, [float(b) for b in beat_grid or []])
+        slots: list[dict[str, Any]] = []
+        for order, (step, plan) in enumerate(zip(steps, resolved_plans)):
+            gcs = clip_id_to_gcs.get(step.clip_id)
+            if gcs is None or gcs not in gcs_to_index:
+                return None
+            probe = probe_map.get(clip_id_to_local.get(step.clip_id))
+            moment = getattr(step, "moment", None) or {}
+            slots.append(
+                {
+                    "slot_id": uuid.uuid4().hex,
+                    "clip_index": gcs_to_index[gcs],
+                    "source_gcs_path": gcs,
+                    "source_duration_s": round(float(getattr(probe, "duration_s", 0.0) or 0.0), 3),
+                    "in_s": round(float(plan["start_s"]), 3),
+                    "duration_s": round(float(plan["duration_s"]), 3),
+                    "duration_beats": beats_per_slot[order],
+                    "order": order,
+                    "moment_energy": moment.get("energy"),
+                    "moment_description": moment.get("description"),
+                }
+            )
+        return {
+            "beat_grid": [round(float(b), 3) for b in beat_grid or []],
+            "slots": slots,
+        }
+    except Exception as exc:  # noqa: BLE001 — never block a render on timeline mapping
+        log.warning("generative_ai_timeline_build_failed", error=str(exc))
+        return None
+
+
+def _prepare_timeline_assembly(
+    timeline_slots: list[dict],
+    clip_paths_gcs: list[str],
+    tmpdir: str,
+    *,
+    job_id: str,
+) -> dict[str, Any] | None:
+    """Resolve user-timeline slots into ready-to-assemble exact-window steps.
+
+    Download + probe ONLY: no Gemini upload, no clip_metadata, no clip_cache,
+    no narrative order — the user's slots ARE the plan. `clip_id_to_gcs` is
+    rebuilt over the FULL clip_paths list (clip_{i} → path, index enumeration)
+    so `_build_ai_timeline`'s position-in-values == clip_index invariant holds;
+    only the clips the timeline actually uses are downloaded.
+
+    Returns None when the timeline is corrupt/unresolvable (bad clip_index,
+    missing/invalid fields, nothing left after removals) so the caller falls
+    back to a fresh match.
+    """
+    from app.tasks.template_orchestrate import (  # noqa: PLC0415
+        _download_clips_parallel,
+        _probe_clips,
+    )
+
+    resolved: list[tuple[int, float, float, Any, Any]] = []
+    for slot in timeline_slots:
+        try:
+            clip_index = int(slot["clip_index"])
+            in_s = float(slot["in_s"])
+            duration_s = float(slot["duration_s"])
+        except (KeyError, TypeError, ValueError):
+            log.warning("generative_timeline_corrupt_slot", job_id=job_id, slot=slot)
+            return None
+        if not (0 <= clip_index < len(clip_paths_gcs)) or duration_s <= 0 or in_s < 0:
+            log.warning(
+                "generative_timeline_unresolvable_slot",
+                job_id=job_id,
+                clip_index=clip_index,
+                in_s=in_s,
+                duration_s=duration_s,
+            )
+            return None
+        resolved.append(
+            (
+                clip_index,
+                in_s,
+                duration_s,
+                slot.get("moment_energy"),
+                slot.get("moment_description"),
+            )
+        )
+    if not resolved:
+        return None
+
+    used_indices = sorted({r[0] for r in resolved})
+    local_paths = _download_clips_parallel([clip_paths_gcs[i] for i in used_indices], tmpdir)
+    probe_map = _probe_clips(local_paths)
+    clip_id_to_local = {f"clip_{i}": path for i, path in zip(used_indices, local_paths)}
+    clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
+
+    # Clamp every window against the REAL probed duration — the route skips
+    # bounds checks on clips the AI never probed (its comment promises "the
+    # worker's probe will clamp"; this is that clamp). Slots that collapse
+    # below 0.1s after clamping are dropped with a warning.
+    clamped: list[tuple[int, float, float, Any, Any]] = []
+    for clip_index, in_s, duration_s, moment_energy, moment_description in resolved:
+        probe = probe_map.get(clip_id_to_local[f"clip_{clip_index}"])
+        probe_duration = float(getattr(probe, "duration_s", 0.0) or 0.0)
+        if probe_duration > 0:
+            in_s = min(in_s, max(0.0, probe_duration - 0.1))
+            end = min(in_s + duration_s, probe_duration)
+            duration_s = end - in_s
+        if duration_s < 0.1:
+            log.warning(
+                "generative_timeline_slot_clamped_away",
+                job_id=job_id,
+                clip_index=clip_index,
+                in_s=in_s,
+                probe_duration_s=probe_duration,
+            )
+            continue
+        clamped.append((clip_index, in_s, duration_s, moment_energy, moment_description))
+    if not clamped:
+        return None
+
+    from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
+
+    steps = [
+        AssemblyStep(
+            slot={
+                "position": i + 1,
+                "slot_type": "broll",
+                "target_duration_s": duration_s,
+                # exact_window: _plan_slots renders this verbatim source range —
+                # no beat-snap, no cursor sharing, no speed ramp.
+                "exact_window": True,
+            },
+            clip_id=f"clip_{clip_index}",
+            moment={
+                "start_s": in_s,
+                "end_s": in_s + duration_s,
+                "energy": moment_energy or 5.0,
+                "description": moment_description or "",
+            },
+        )
+        for i, (clip_index, in_s, duration_s, moment_energy, moment_description) in enumerate(
+            clamped
+        )
+    ]
+    return {
+        "steps": steps,
+        "clip_id_to_local": clip_id_to_local,
+        "clip_id_to_gcs": clip_id_to_gcs,
+        "probe_map": probe_map,
+    }
+
+
 def _run_regenerate_variant(
     job_id: str,
     variant_id: str,
@@ -1079,7 +1368,10 @@ def _run_regenerate_variant(
     size_override_px: int | None = None,
     mix_override: float | None = None,
     layout_override: str | None = None,
+    timeline_override: list[dict] | None = None,
 ) -> None:
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
@@ -1162,6 +1454,38 @@ def _run_regenerate_variant(
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")
 
+    # ── Timeline resolution (clip timeline editor) ────────────────────────────
+    # Precedence: explicit timeline_override kwarg → the variant's persisted
+    # user_timeline → None (fresh match, today's behavior). Slots marked
+    # `removed` are dropped; the rest render in list order.
+    #
+    # Swap-song exception: a new track means a new beat grid, so the user's cut
+    # no longer lines up with the music. Clear the persisted user_timeline and
+    # force a fresh match — this is the contract the frontend ConfirmDialog
+    # states ("your clip edits will be reset") and docs/pipelines/generative.md
+    # documents.
+    if new_track_id is not None:
+        timeline_override = None
+        _clear_user_timeline(job_id, variant_id)
+    active_timeline_slots: list[dict] | None = None
+    if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and new_track_id is None:
+        raw_timeline_slots = timeline_override
+        if raw_timeline_slots is None:
+            raw_timeline_slots = (existing.get("user_timeline") or {}).get("slots") or None
+        if raw_timeline_slots:
+            kept_slots = [s for s in raw_timeline_slots if not s.get("removed")]
+            record_pipeline_event(
+                "assembly",
+                "timeline_edit_received",
+                {
+                    "slot_count": len(raw_timeline_slots),
+                    "removed_count": len(raw_timeline_slots) - len(kept_slots),
+                    "has_override": timeline_override is not None,
+                },
+            )
+            # Everything removed → nothing to assemble → fresh match below.
+            active_timeline_slots = kept_slots or None
+
     # Mark this variant as re-rendering so the UI can show a spinner immediately.
     _update_variant_entry(
         job_id, variant_id, {"render_status": "rendering", "ok": False, "error": None}
@@ -1170,7 +1494,12 @@ def _run_regenerate_variant(
     # ── Fast-reburn path ──────────────────────────────────────────────────────
     # When the edit is a pure text/style/size change (no audio change, base cached),
     # skip the full clip ingest + re-assemble. Download the base → reburn text → done.
-    if _is_fast_reburn_eligible(existing, new_track_id, mix_override, settings):
+    # An EXPLICIT timeline_override always forces a re-assembly — the cached base
+    # was rendered from the previous slot layout. (A merely-persisted user_timeline
+    # is fine: the base was re-cached by the override render that persisted it.)
+    if timeline_override is None and _is_fast_reburn_eligible(
+        existing, new_track_id, mix_override, settings
+    ):
         # Resolve text WITHOUT ingest (no LLM needed: persisted text or override).
         # The run_text_agents_fn is never called on the fast path because eligibility
         # already guarantees base_video_path is set, which only happens after a
@@ -1235,46 +1564,114 @@ def _run_regenerate_variant(
             raise ValueError(f"Track {track_id} is not available for re-render")
 
     with tempfile.TemporaryDirectory(prefix="nova_generative_re_") as tmpdir:
-        # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
-        # clip_metadata) on every swap/retext, even remove_text. Acceptable for v1
-        # (async re-render, reject-if-rendering guard caps spam), but the Gemini
-        # analysis is cacheable — persist clip_metas after the first orchestrate run
-        # and skip re-analysis here (only re-download + re-probe are truly needed for
-        # the render). Follow-up once the feature is real-render-verified.
-        ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
-        available_footage_s = _available_footage_s(ingest["probe_map"])
-
-        # Narrative order survives re-renders (same dispatch contract as the
-        # first render). Hook text grounds in the clip that opens the edit.
-        narrative_order_regen = _resolve_narrative_order(
-            narrative_shot_count_regen, ingest["clip_id_to_gcs"], job_id=job_id
-        )
-        regen_hero = ingest["hero"]
-        if narrative_order_regen:
-            regen_hero = next(
-                (m for m in ingest["clip_metas"] if m.clip_id == narrative_order_regen[0]),
-                regen_hero,
+        # ── Timeline-override assembly (clip timeline editor) ─────────────────
+        # Montage variants with an active timeline skip the ENTIRE
+        # ingest+Gemini+match leg: the user's slots ARE the plan (download +
+        # probe only). Corrupt/unresolvable timelines fall back to fresh match.
+        timeline_assembly: dict[str, Any] | None = None
+        if active_timeline_slots is not None and variant_id in _TIMELINE_OVERRIDE_VARIANTS:
+            timeline_assembly = _prepare_timeline_assembly(
+                active_timeline_slots, clip_paths_gcs, tmpdir, job_id=job_id
             )
+            if timeline_assembly is None:
+                log.warning(
+                    "generative_timeline_fallback_fresh_match",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                )
 
-        # Resolve text mode + agent_text in one step.  _resolve_regen_text re-uses
-        # persisted intro_text when the user is only changing font/size/style — no LLM.
-        agent_text, agent_form, text_mode = _resolve_regen_text(
-            override_text=override_text,
-            remove_text=remove_text,
-            existing_text_mode=existing_text_mode,
-            persisted_text=persisted_text,
-            persisted_highlight=persisted_highlight,
-            run_text_agents_fn=lambda: _run_text_agents(
-                ingest["clip_metas"],
-                regen_hero,
-                job_id=job_id,
-                language=language,
-                persona=persona,
-                filming_guide=filming_guide_regen,
-            ),
-            persisted_layout=persisted_layout,
-            persisted_word_roles=persisted_word_roles,
-        )
+        assembly_steps_override: list | None = None
+        if timeline_assembly is not None:
+            assembly_steps_override = timeline_assembly["steps"]
+            record_pipeline_event(
+                "assembly",
+                "timeline_override_path",
+                {"variant_id": variant_id, "slot_count": len(assembly_steps_override)},
+            )
+            render_clip_metas: list = []  # no Gemini analysis on this path
+            render_clip_id_to_local = timeline_assembly["clip_id_to_local"]
+            render_clip_id_to_gcs = timeline_assembly["clip_id_to_gcs"]
+            render_probe_map = timeline_assembly["probe_map"]
+            available_footage_s = _available_footage_s(render_probe_map)
+            narrative_order_regen = None
+            # Persisted intro_text is reused verbatim — the timeline path never
+            # runs intro_writer (no clip_metas to ground a fresh hook in).
+            agent_text, agent_form, text_mode = _resolve_regen_text(
+                override_text=override_text,
+                remove_text=remove_text,
+                existing_text_mode=existing_text_mode,
+                persisted_text=persisted_text,
+                persisted_highlight=persisted_highlight,
+                run_text_agents_fn=lambda: (None, None),
+                persisted_layout=persisted_layout,
+                persisted_word_roles=persisted_word_roles,
+            )
+        else:
+            # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
+            # clip_metadata) on every swap/retext, even remove_text. Acceptable for v1
+            # (async re-render, reject-if-rendering guard caps spam), but the Gemini
+            # analysis is cacheable — persist clip_metas after the first orchestrate run
+            # and skip re-analysis here (only re-download + re-probe are truly needed for
+            # the render). Follow-up once the feature is real-render-verified.
+            ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+            render_clip_metas = ingest["clip_metas"]
+            render_clip_id_to_local = ingest["clip_id_to_local"]
+            render_clip_id_to_gcs = ingest["clip_id_to_gcs"]
+            render_probe_map = ingest["probe_map"]
+            available_footage_s = _available_footage_s(render_probe_map)
+
+            # Narrative order survives re-renders (same dispatch contract as the
+            # first render). Hook text grounds in the clip that opens the edit.
+            narrative_order_regen = _resolve_narrative_order(
+                narrative_shot_count_regen, ingest["clip_id_to_gcs"], job_id=job_id
+            )
+            regen_hero = ingest["hero"]
+            if active_timeline_slots:
+                # Hook regrounding: a timeline-edited job opens with the
+                # timeline's slot-0 clip — ground the hook there, not in the
+                # guide's first shot. (This branch runs for timeline-active
+                # variants that still take the full leg, e.g. song_lyrics.)
+                slot0_gcs: str | None = None
+                try:
+                    slot0_index = int(active_timeline_slots[0]["clip_index"])
+                    if 0 <= slot0_index < len(clip_paths_gcs):
+                        slot0_gcs = clip_paths_gcs[slot0_index]
+                except (KeyError, TypeError, ValueError):
+                    slot0_gcs = None
+                if slot0_gcs is not None:
+                    slot0_clip_id = next(
+                        (cid for cid, g in ingest["clip_id_to_gcs"].items() if g == slot0_gcs),
+                        None,
+                    )
+                    regen_hero = next(
+                        (m for m in ingest["clip_metas"] if m.clip_id == slot0_clip_id),
+                        regen_hero,
+                    )
+            elif narrative_order_regen:
+                regen_hero = next(
+                    (m for m in ingest["clip_metas"] if m.clip_id == narrative_order_regen[0]),
+                    regen_hero,
+                )
+
+            # Resolve text mode + agent_text in one step.  _resolve_regen_text re-uses
+            # persisted intro_text when the user is only changing font/size/style — no LLM.
+            agent_text, agent_form, text_mode = _resolve_regen_text(
+                override_text=override_text,
+                remove_text=remove_text,
+                existing_text_mode=existing_text_mode,
+                persisted_text=persisted_text,
+                persisted_highlight=persisted_highlight,
+                run_text_agents_fn=lambda: _run_text_agents(
+                    ingest["clip_metas"],
+                    regen_hero,
+                    job_id=job_id,
+                    language=language,
+                    persona=persona,
+                    filming_guide=filming_guide_regen,
+                ),
+                persisted_layout=persisted_layout,
+                persisted_word_roles=persisted_word_roles,
+            )
 
         spec: dict[str, Any] = {
             "variant_id": variant_id,
@@ -1304,10 +1701,10 @@ def _run_regenerate_variant(
             job_id=job_id,
             rank=rank,
             spec=spec,
-            clip_metas=ingest["clip_metas"],
-            clip_id_to_local=ingest["clip_id_to_local"],
-            clip_id_to_gcs=ingest["clip_id_to_gcs"],
-            probe_map=ingest["probe_map"],
+            clip_metas=render_clip_metas,
+            clip_id_to_local=render_clip_id_to_local,
+            clip_id_to_gcs=render_clip_id_to_gcs,
+            probe_map=render_probe_map,
             available_footage_s=available_footage_s,
             agent_text=agent_text,
             agent_form=agent_form,
@@ -1316,9 +1713,23 @@ def _run_regenerate_variant(
             intro_size_override_px=resolved_size_override_px,
             user_style_knobs=existing_user_style_knobs,
             narrative_order=narrative_order_regen,
+            assembly_steps_override=assembly_steps_override,
         )
 
-    _update_variant_entry(job_id, variant_id, result)
+    if result.get("ok"):
+        _update_variant_entry(job_id, variant_id, result)
+    else:
+        # Failure-patch hygiene: the failure record spreads the fresh `base`
+        # dict, whose None values (base_video_path, intro_text, ...) would NULL
+        # the persisted fields through _update_variant_entry's merge — and
+        # video_path/output_url must never be overwritten on failure, so the
+        # last good render survives a failed edit.
+        failure_patch = {
+            k: v
+            for k, v in result.items()
+            if v is not None and k not in ("video_path", "output_url")
+        }
+        _update_variant_entry(job_id, variant_id, failure_patch)
 
 
 def _existing_variants(job_id: str) -> list[dict[str, Any]]:
@@ -1352,6 +1763,30 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
                 break
         else:
             variants.append(result)
+        plan["variants"] = variants
+        job.assembly_plan = plan
+        db.commit()
+
+
+def _clear_user_timeline(job_id: str, variant_id: str) -> None:
+    """Remove the persisted `user_timeline` key from one variant entry (row-locked).
+
+    `_update_variant_entry` can only merge keys, never drop them — swap-song
+    needs a true removal so the variant reads as "no user edits" afterwards
+    (mirrors `persist_user_timeline(..., None)` on the route side).
+    """
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        for i, v in enumerate(variants):
+            if v.get("variant_id") == variant_id and "user_timeline" in v:
+                updated = dict(v)
+                updated.pop("user_timeline", None)
+                variants[i] = updated
+                break
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
@@ -1870,12 +2305,18 @@ def _render_generative_variant(
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
     narrative_order: list[str] | None = None,
+    assembly_steps_override: list | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
     `narrative_order` (filming-guide alignment) is the guide clips' ids in
     shot order; forwarded to template_matcher.match so the edit's sequence
     follows the guide. None = classic greedy (public/legacy jobs).
+
+    `assembly_steps_override` (clip timeline editor): pre-built exact-window
+    AssemblySteps from a user timeline. When set, `consolidate_slots` and
+    `match()` are skipped entirely — the steps go straight to `_assemble_clips`
+    — and `clip_metas` may be empty (the override path runs no Gemini analysis).
 
     `intro_size_override_px` carries a user-pinned intro size (the public ±size
     nudge). When None the size is computed from the hero clip's composition; when
@@ -1940,6 +2381,9 @@ def _render_generative_variant(
         # Cached text-free, audio-mixed base for fast-reburn on style/font/size edits.
         # None for lyrics variants (full path in v1) and voiceover variants.
         "base_video_path": None,
+        # Post-assembly clip timeline (clip timeline editor). Rewritten on EVERY
+        # full montage assembly; None for voiceover/spine variants.
+        "ai_timeline": None,
     }
     try:
         beats: list[float] = []
@@ -2026,15 +2470,22 @@ def _render_generative_variant(
             base["intro_word_roles"] = _at_params.get("word_roles")
 
         recipe = build_recipe(recipe_dict)
-        try:
-            recipe = consolidate_slots(recipe, clip_metas)
-            assembly_plan = match(recipe, clip_metas, narrative_order=narrative_order)
-        except TemplateMismatchError as exc:
-            raise ValueError(f"{exc.code}: {exc.message}") from exc
+        if assembly_steps_override is not None:
+            # Timeline-override path: the user's exact-window slots ARE the
+            # plan — skip consolidate_slots and match() entirely.
+            steps = list(assembly_steps_override)
+        else:
+            try:
+                recipe = consolidate_slots(recipe, clip_metas)
+                assembly_plan = match(recipe, clip_metas, narrative_order=narrative_order)
+            except TemplateMismatchError as exc:
+                raise ValueError(f"{exc.code}: {exc.message}") from exc
+            steps = assembly_plan.steps
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
+        resolved_plans: list[dict] = []
         _assemble_clips(
-            assembly_plan.steps,
+            steps,
             clip_id_to_local,
             probe_map,
             assembled_path,
@@ -2051,7 +2502,36 @@ def _render_generative_variant(
             # clip is shorter than its slot, shrink the slot instead of slowing
             # the clip down — the output stays bounded by real footage length.
             allow_slowdown_fill=False,
+            # Post-resolution source windows per slot — the clip editor's
+            # ground truth for what each slot actually rendered.
+            resolved_plans_out=resolved_plans,
         )
+
+        # ai_timeline persistence (clip timeline editor): rewritten on every
+        # FRESH montage assembly (first render, swap-song, mix re-render), so
+        # the stored AI cut tracks what the matcher actually produced.
+        # Voiceover variants are skipped — the voice, not a slot grid, drives
+        # their layout. `beats` is the section-relative grid this assembly
+        # snapped against (empty for the no-music variant).
+        #
+        # Override path (user timeline render): the steps ARE the user's cut,
+        # not an AI cut — rebuilding here would make "Reset to AI cut" re-render
+        # the user's own edit. Pop the key so `_update_variant_entry`'s
+        # {**v, **patch} merge carries the variant's persisted ai_timeline
+        # forward untouched (writing None instead would null the stored
+        # timeline and flip the variant uneditable).
+        if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and not voiceover_gcs_path:
+            if assembly_steps_override is not None:
+                base.pop("ai_timeline", None)
+            else:
+                base["ai_timeline"] = _build_ai_timeline(
+                    steps=steps,
+                    resolved_plans=resolved_plans,
+                    clip_id_to_gcs=clip_id_to_gcs,
+                    clip_id_to_local=clip_id_to_local,
+                    probe_map=probe_map,
+                    beat_grid=beats,
+                )
 
         # audio_mixed_path: the assembled+audio-mixed video before text burn.
         # For agent_text variants this becomes the cached base.

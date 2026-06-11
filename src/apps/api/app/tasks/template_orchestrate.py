@@ -2466,8 +2466,11 @@ def _plan_slots(
         slot_target_dur = max(slot_target_dur, 0.5)
 
         is_locked = bool(step.slot.get("locked", False))
+        # exact_window = user-pinned window (clip editor): same verbatim-range
+        # arithmetic as locked, but WITHOUT the letterbox routing below.
+        is_exact = bool(step.slot.get("exact_window", False))
 
-        if is_locked:
+        if is_locked or is_exact:
             # Locked source range is exact — bypass beat-snap, cursor sharing,
             # and speed ramp so the segment matches the template audio frame-by-frame.
             start_s = float(moment.get("start_s", 0.0))
@@ -3022,6 +3025,11 @@ def _assemble_clips(
     # line-style finalization is skipped. The audible window's END is derived
     # internally from `best_start_s + sum(post_snap_durations)`.
     lyric_audio_mix_song_start_s: float | None = None,
+    # Optional sink: when provided, filled with one dict per slot (index-aligned
+    # with `steps`) carrying the POST-resolution source-time window each slot
+    # actually rendered. Consumed by the clip editor to round-trip windows as
+    # exact_window steps. Existing callers pass nothing → behavior unchanged.
+    resolved_plans_out: list | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3078,6 +3086,18 @@ def _assemble_clips(
         allow_slowdown_fill=allow_slowdown_fill,
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
+
+    if resolved_plans_out is not None:
+        for step, plan in zip(steps, plans):
+            resolved_plans_out.append(
+                {
+                    "clip_id": step.clip_id,
+                    "start_s": plan.start_s,
+                    "end_s": plan.end_s,
+                    "duration_s": plan.end_s - plan.start_s,
+                    "speed_factor": plan.speed_factor,
+                }
+            )
 
     # ── Gate: single-pass branch ──────────────────────────────────────────
     # ``force_single_pass`` is the ONLY gate here — callers
