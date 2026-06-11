@@ -57,6 +57,7 @@ export function VariantCard({
   onChangeStyle,
   onResize,
   onSetMix,
+  onChangeLayout,
   tone = "dark",
   editSession,
 }: {
@@ -69,6 +70,7 @@ export function VariantCard({
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize?: (textSizePx: number) => Promise<void>;
   onSetMix?: (mix: number) => Promise<void>;
+  onChangeLayout?: (layout: "linear" | "cluster") => Promise<void>;
   tone?: "dark" | "light";
   editSession?: VariantEditSession;
 }) {
@@ -346,6 +348,38 @@ export function VariantCard({
             ))}
           </select>
         )}
+        {onChangeLayout && variant.text_mode === "agent_text" && (() => {
+          // Post-render layout pick. The editorial word-cluster only works on
+          // short hooks (server enforces 3-6 words; the chip pre-disables with
+          // a hint so the user isn't bounced by a 422).
+          const layout = variant.intro_layout === "cluster" ? "cluster" : "linear";
+          const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
+          const clusterBlocked = words < 3 || words > 6;
+          return (
+            <div className={sizeControlClass} role="group" aria-label="Intro text layout">
+              <button
+                disabled={rendering || layout === "linear"}
+                onClick={() => run(() => onChangeLayout("linear"))}
+                title="Classic centered text"
+                className={`${sizeBtnClass} ${layout === "linear" ? "font-semibold underline" : ""}`}
+              >
+                Classic
+              </button>
+              <button
+                disabled={rendering || layout === "cluster" || clusterBlocked}
+                onClick={() => run(() => onChangeLayout("cluster"))}
+                title={
+                  clusterBlocked
+                    ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                    : "Editorial word-cluster — mixed sizes, magazine-style"
+                }
+                className={`${sizeBtnClass} ${layout === "cluster" ? "font-semibold underline" : ""}`}
+              >
+                Editorial
+              </button>
+            </div>
+          );
+        })()}
         {tracks.length > 0 && variant.music_track_id !== null && (
           <select
             disabled={rendering}

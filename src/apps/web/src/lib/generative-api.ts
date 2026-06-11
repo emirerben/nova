@@ -273,6 +273,9 @@ export interface EditVariantPayload {
   remove_text?: boolean;
   style_set_id?: string;
   text_size_px?: number;
+  // Post-render layout pick: "cluster" = editorial word-cluster (3-6 word hooks
+  // only — the server 422s otherwise), "linear" = classic centered block.
+  intro_layout?: "linear" | "cluster";
 }
 
 export async function editVariant(

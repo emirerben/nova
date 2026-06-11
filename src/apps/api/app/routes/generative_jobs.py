@@ -198,6 +198,10 @@ class EditVariantRequest(BaseModel):
     remove_text: bool = False
     style_set_id: str | None = None
     text_size_px: int | None = Field(None, gt=0)
+    # Intro layout pick: "linear" (one centered block) or "cluster" (editorial
+    # word-cluster). User-facing style option after render — applies via the
+    # fast-reburn path. Cluster requires a 3-6 word hook (validated below).
+    intro_layout: str | None = None
 
 
 class StyleSetIntroPreview(BaseModel):
@@ -435,8 +439,9 @@ def dispatch_edit_variant(
     remove_text: bool,
     style_set_id: str | None,
     text_size_px: int | None,
+    intro_layout: str | None = None,
 ) -> None:
-    """Validate + enqueue a combined text/style/size edit as ONE re-render.
+    """Validate + enqueue a combined text/style/size/layout edit as ONE re-render.
 
     The instant editor batches an entire editing session into a single commit, so
     the user pays for one render instead of one per field. Reuses the same
@@ -445,7 +450,13 @@ def dispatch_edit_variant(
     """
     variant = require_editable_variant(job, variant_id)
 
-    if text is None and not remove_text and style_set_id is None and text_size_px is None:
+    if (
+        text is None
+        and not remove_text
+        and style_set_id is None
+        and text_size_px is None
+        and intro_layout is None
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Provide at least one edit field.",
@@ -486,6 +497,39 @@ def dispatch_edit_variant(
 
         size_override_px = clamp_intro_px(text_size_px)
 
+    if intro_layout is not None:
+        if intro_layout not in ("linear", "cluster"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="`intro_layout` must be 'linear' or 'cluster'.",
+            )
+        # A layout applies to the AI-intro overlay only — same eligibility rule
+        # as size: agent_text, or a none-mode variant gaining text in this edit.
+        text_mode = variant.get("text_mode")
+        layout_ok = text_mode == "agent_text" or (text_mode == "none" and text is not None)
+        if not layout_ok or remove_text:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This edit has no intro text to lay out.",
+            )
+        if intro_layout == "cluster":
+            from app.pipeline.intro_cluster import MAX_WORDS, MIN_WORDS  # noqa: PLC0415
+
+            # Validate against the text that will actually render: the override
+            # if supplied, else the persisted intro. The layout engine enforces
+            # the same bound at render time (falling back to linear) — rejecting
+            # here turns a silent fallback into actionable feedback.
+            effective_text = (text or variant.get("intro_text") or "").strip()
+            n_words = len(effective_text.split())
+            if not (MIN_WORDS <= n_words <= MAX_WORDS):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"The editorial layout needs a {MIN_WORDS}-{MAX_WORDS} word hook "
+                        f"(this text has {n_words}). Shorten the text first."
+                    ),
+                )
+
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
     regenerate_generative_variant.delay(
@@ -495,6 +539,7 @@ def dispatch_edit_variant(
         remove_text=bool(remove_text),
         style_set_id=style_set_id,
         size_override_px=size_override_px,
+        layout_override=intro_layout,
     )
 
 
@@ -732,6 +777,7 @@ async def edit_variant(
         remove_text=req.remove_text,
         style_set_id=req.style_set_id,
         text_size_px=req.text_size_px,
+        intro_layout=req.intro_layout,
     )
     log.info(
         "generative_edit_variant",
@@ -741,6 +787,7 @@ async def edit_variant(
         remove_text=req.remove_text,
         style_set_id=req.style_set_id,
         text_size_px=req.text_size_px,
+        intro_layout=req.intro_layout,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 

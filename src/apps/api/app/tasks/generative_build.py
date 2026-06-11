@@ -796,6 +796,7 @@ def regenerate_generative_variant(
     style_set_id: str | None = None,
     size_override_px: int | None = None,
     mix_override: float | None = None,
+    layout_override: str | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -811,6 +812,7 @@ def regenerate_generative_variant(
         remove_text=remove_text,
         has_override=bool(override_text),
         style_set_id=style_set_id,
+        layout_override=layout_override,
     )
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
@@ -825,6 +827,7 @@ def regenerate_generative_variant(
                 style_set_id,
                 size_override_px,
                 mix_override,
+                layout_override,
             )
         except OperationalError:
             raise
@@ -1075,6 +1078,7 @@ def _run_regenerate_variant(
     style_set_id: str | None = None,
     size_override_px: int | None = None,
     mix_override: float | None = None,
+    layout_override: str | None = None,
 ) -> None:
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -1125,7 +1129,12 @@ def _run_regenerate_variant(
         persisted_highlight: str | None = existing.get("intro_highlight_word") or None
         # Cluster persistence — keeps a cluster intro a cluster on no-LLM re-renders
         # (font/size/style/swap-song). Absent on legacy variants → linear/None.
+        # A user layout pick (the post-render layout option) overrides what's
+        # persisted; the persisted text is kept. When switching INTO cluster on a
+        # variant that never had word roles, the engine derives them heuristically.
         persisted_layout: str | None = existing.get("intro_layout") or None
+        if layout_override in ("linear", "cluster"):
+            persisted_layout = layout_override
         persisted_word_roles: list[str] | None = existing.get("intro_word_roles") or None
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
