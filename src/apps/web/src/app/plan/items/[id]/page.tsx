@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   changePlanItemStyle,
+  editPlanItemVariant,
   generatePlanItem,
   getPlanItem,
   getPlanItemJobStatus,
@@ -468,6 +469,13 @@ export default function PlanItemPage() {
                       setPlanItemIntroSize(itemId, focused.variant_id, px),
                     )
                   }
+                  onChangeLayout={(layout) =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      editPlanItemVariant(itemId, focused.variant_id, {
+                        intro_layout: layout,
+                      }),
+                    )
+                  }
                 />
               ) : (
                 isGenerating && (
@@ -516,6 +524,7 @@ function FocusedVariantEditor({
   onRemoveText,
   onChangeStyle,
   onResize,
+  onChangeLayout,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -528,6 +537,7 @@ function FocusedVariantEditor({
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize: (textSizePx: number) => Promise<void>;
+  onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
   return (
@@ -541,6 +551,7 @@ function FocusedVariantEditor({
         onRemoveText={onRemoveText}
         onChangeStyle={onChangeStyle}
         onResize={onResize}
+        onChangeLayout={onChangeLayout}
         onEditClips={timeline.openEditor}
         showClipEditor={timeline.entryVisible}
         clipSlotCount={timeline.slotCount}

@@ -32,6 +32,7 @@ export default function PlanVariantEditor({
   onRemoveText,
   onChangeStyle,
   onResize,
+  onChangeLayout,
   onEditClips,
   showClipEditor = false,
   clipSlotCount = null,
@@ -45,6 +46,7 @@ export default function PlanVariantEditor({
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize?: (textSizePx: number) => Promise<void>;
+  onChangeLayout?: (layout: "linear" | "cluster") => Promise<void>;
   /** Opens the clip-timeline editor sheet (mounted by the parent page). */
   onEditClips?: () => void;
   /** From the timeline GET: editable, or uneditable for a transient reason
@@ -182,6 +184,54 @@ export default function PlanVariantEditor({
           </div>
         </section>
       )}
+
+      {/* ── Layout ──────────────────────────────────────────────── */}
+      {onChangeLayout &&
+        variant.text_mode === "agent_text" &&
+        (() => {
+          const layout = variant.intro_layout === "cluster" ? "cluster" : "linear";
+          const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
+          const clusterBlocked = words < 3 || words > 6;
+          const pill = (selected: boolean) =>
+            `rounded-full border px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              selected
+                ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
+                : "border-zinc-200 text-[#3f3f46] hover:border-zinc-400"
+            }`;
+          return (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Layout</h3>
+              <div role="radiogroup" aria-label="Intro text layout" className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={rendering || layout === "linear"}
+                  onClick={() => run(() => onChangeLayout("linear"))}
+                  className={pill(layout === "linear")}
+                >
+                  Classic
+                </button>
+                <button
+                  type="button"
+                  disabled={rendering || layout === "cluster" || clusterBlocked}
+                  title={
+                    clusterBlocked
+                      ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                      : "Editorial word-cluster — mixed sizes, magazine-style"
+                  }
+                  onClick={() => run(() => onChangeLayout("cluster"))}
+                  className={pill(layout === "cluster")}
+                >
+                  Editorial
+                </button>
+              </div>
+              {clusterBlocked && layout === "linear" && (
+                <p className="mt-1.5 text-xs text-[#a1a1aa]">
+                  Editorial needs a 3-6 word hook — shorten the caption to unlock it.
+                </p>
+              )}
+            </section>
+          );
+        })()}
 
       {/* ── Text style ──────────────────────────────────────────── */}
       {styleSets.length > 0 && (

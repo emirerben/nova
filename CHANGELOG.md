@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.98.1] — 2026-06-11
+
+### Added
+- **Intro layout pick on plan-item videos.** The Classic / Editorial toggle (shipped for public generative variants in 0.4.98.0) now works on content-plan renders: new `POST /plan-items/{id}/variants/{vid}/edit` route (ownership-checked, reuses `dispatch_edit_variant` — same combined-edit contract incl. `intro_layout` + the 3-6 word cluster validation), `editPlanItemVariant` in `plan-api.ts`, and `onChangeLayout` wired on the plan item page's VariantCard.
+
 ## [0.4.98.0] — 2026-06-11
 
 ### Added
