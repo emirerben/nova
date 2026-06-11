@@ -44,7 +44,10 @@ the JSON):
   "posts_per_week": 4,
   "sample_topics": ["5-8 concrete video ideas they could film this month, each a short specific phrase naming a real moment a camera can capture — never an abstract 'lesson' or thought-leadership take"],
   "rationale": "1-2 sentences, second person, shown to the creator as 'why this lane'. Say why this focus fits THEM and why it tends to work on TikTok — name one of the success factors above you leaned on (e.g. save-worthy guides, a felt-moment opener). Plain language, no jargon.",
-  "signature_quote": "The single most revealing or memorable thing the creator said in the conversation — copy it VERBATIM from their words. If the input was a flat questionnaire (no conversation), leave this empty string."
+  "signature_quote": "The single most revealing or memorable thing the creator said in the conversation — copy it VERBATIM from their words. If the input was a flat questionnaire (no conversation), leave this empty string.",
+  "goal": "what this page is in service of, in their own terms — e.g. 'grow my startup's audience', 'share my pottery', 'document life abroad'. Empty string if they never said.",
+  "content_mode": "exactly one of: existing_footage (they're working from clips already on their phone), create_new (they'll film new videos for this), mixed (clearly both). INFER it from the whole conversation — never default to existing_footage just because they mentioned old clips once.",
+  "current_situation": "one line on where their daily life happens RIGHT NOW, separating it from past footage — e.g. 'based in Istanbul; the Argentina clips are from a past trip'. Empty string if the conversation never made it clear. NEVER guess a current location from trip footage."
 }
 
 Rules:

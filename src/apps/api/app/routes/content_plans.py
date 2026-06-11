@@ -61,9 +61,17 @@ class ContentPlanResponse(BaseModel):
     seed_clip_count: int = 0
     generation_started_at: datetime | None = None
     start_date: date | None = None
+    # Footage pool (dogfood feedback #4). "none" until the user uploads a pool;
+    # then matching | matched | matched_empty | match_failed. Counts drive the
+    # workspace "Your footage" section ("12 clips sorted into 5 posts").
+    pool_status: str = "none"
+    pool_clip_count: int = 0
+    pool_matched_count: int = 0
 
 
 def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
+    pool = plan.pool or {}
+    pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
     return ContentPlanResponse(
         id=str(plan.id),
         plan_status=plan.plan_status,
@@ -75,6 +83,9 @@ def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
         generation_started_at=plan.generation_started_at,
         start_date=plan.start_date
         or (plan.generation_started_at.date() if plan.generation_started_at else None),
+        pool_status=str(pool.get("status") or "none"),
+        pool_clip_count=len(pool_clips),
+        pool_matched_count=sum(1 for c in pool_clips if c.get("matched_item_id")),
     )
 
 
@@ -290,6 +301,113 @@ async def attach_seed_clips(
     plan.seed_clip_paths = list(body.clip_gcs_paths)
     plan.activation_status = "seeding"
     await db.commit()
+    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
+
+
+# ── Footage pool ("dump the trip — Nova sorts it") ────────────────────────────
+
+_MAX_POOL_CLIPS = 40
+
+
+@router.post("/{plan_id}/pool/upload-urls", response_model=UploadUrlsResponse)
+async def create_pool_upload_urls(
+    plan_id: str,
+    body: UploadUrlsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> UploadUrlsResponse:
+    """Signed PUT URLs for the footage pool, under the persistent
+    users/{uid}/plan-pool/{plan_id}/ prefix (NOT swept by the 24h GCS rule)."""
+    plan = await _load_owned_plan(plan_id, user.id, db)
+    if not body.files or len(body.files) > _MAX_POOL_CLIPS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provide 1-{_MAX_POOL_CLIPS} files",
+        )
+    urls: list[UploadUrlItem] = []
+    for f in body.files:
+        if f.content_type not in _ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported content type: {f.content_type}",
+            )
+        if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_BYTES_PER_FILE:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
+        safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
+        url, gcs_path = storage.presigned_put_url_for_plan_pool(
+            user_id=str(user.id),
+            plan_id=str(plan.id),
+            filename=safe_name,
+            content_type=f.content_type,
+        )
+        urls.append(UploadUrlItem(upload_url=url, gcs_path=gcs_path))
+    return UploadUrlsResponse(urls=urls)
+
+
+class AttachPoolClipsBody(BaseModel):
+    clip_gcs_paths: list[str]
+
+
+@router.post("/{plan_id}/pool/clips", response_model=ContentPlanResponse)
+async def attach_pool_clips(
+    plan_id: str,
+    body: AttachPoolClipsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ContentPlanResponse:
+    """Add uploaded clips to the plan's footage pool and start matching them
+    across pending items. New clips MERGE with the existing pool (dedup by path)."""
+    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    expected = f"users/{user.id}/plan-pool/{plan.id}/"
+    for p in body.clip_gcs_paths:
+        if not p.startswith(expected):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Clip path outside this plan's pool upload prefix",
+            )
+    pool = dict(plan.pool or {})
+    clips = [c for c in pool.get("clips", []) if isinstance(c, dict) and c.get("gcs_path")]
+    known = {c["gcs_path"] for c in clips}
+    for p in body.clip_gcs_paths:
+        if p not in known:
+            clips.append({"gcs_path": p, "matched_item_id": None})
+            known.add(p)
+    if len(clips) > _MAX_POOL_CLIPS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Pool is full ({_MAX_POOL_CLIPS} clips max)",
+        )
+    pool["clips"] = clips
+    pool["status"] = "matching"
+    plan.pool = pool
+    await db.commit()
+
+    from app.tasks.content_plan_build import match_pool_clips  # noqa: PLC0415
+
+    match_pool_clips.delay(str(plan.id))
+    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
+
+
+@router.post("/{plan_id}/pool/match", response_model=ContentPlanResponse)
+async def rematch_pool_clips(
+    plan_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ContentPlanResponse:
+    """"Match again" — re-run pool matching (e.g. after new items free up)."""
+    plan = await _load_owned_plan(plan_id, user.id, db)
+    pool = dict(plan.pool or {})
+    if not pool.get("clips"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No pool clips yet")
+    if pool.get("status") == "matching":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Matching in progress")
+    pool["status"] = "matching"
+    plan.pool = pool
+    await db.commit()
+
+    from app.tasks.content_plan_build import match_pool_clips  # noqa: PLC0415
+
+    match_pool_clips.delay(str(plan.id))
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 

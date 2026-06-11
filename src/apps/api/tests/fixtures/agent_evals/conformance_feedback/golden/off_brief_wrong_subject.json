@@ -1,39 +1,48 @@
 {
-  "agent": "nova.plan.conformance_feedback",
-  "prompt_version": "2026-06-07",
-  "input": {
-    "filming_guide": [
-      {"what": "Overhead shot of meal prep on a cutting board", "how": "fixed tripod, top-down", "duration_s": 10},
-      {"what": "Tasting the dish and reacting", "how": "selfie angle, close-up face", "duration_s": 5}
-    ],
-    "clip_digest": {
-      "detected_subject": "person playing guitar in a living room",
-      "content_type": "talking_head",
-      "audio_type": "music",
-      "hook_text": "My evening music practice",
-      "transcript": "I've been practicing this song for three weeks now...",
-      "visual_density": 4.0,
-      "composition_note": "person seated with guitar, soft lamp light"
-    },
-    "theme": "Quick Weeknight Dinner",
-    "idea": "Show a 15-minute healthy weeknight dinner that anyone can make"
+ "agent": "nova.plan.conformance_feedback",
+ "prompt_version": "2026-06-11",
+ "input": {
+  "filming_guide": [
+   {
+    "what": "Overhead shot of meal prep on a cutting board",
+    "how": "fixed tripod, top-down",
+    "duration_s": 10
+   },
+   {
+    "what": "Tasting the dish and reacting",
+    "how": "selfie angle, close-up face",
+    "duration_s": 5
+   }
+  ],
+  "clip_digest": {
+   "detected_subject": "person playing guitar in a living room",
+   "content_type": "talking_head",
+   "audio_type": "music",
+   "hook_text": "My evening music practice",
+   "transcript": "I've been practicing this song for three weeks now...",
+   "visual_density": 4.0,
+   "composition_note": "person seated with guitar, soft lamp light"
   },
-  "raw_text": "{\"verdict\": \"off_brief\", \"confidence\": 0.92, \"summary\": \"Clip shows guitar practice instead of meal prep; fundamentally different subject from the shot list\", \"mismatches\": [\"Expected food/cooking footage, got music performance\", \"No kitchen or cutting board visible\"], \"suggestions\": [\"Reshoot with overhead tripod of your cutting board\", \"Film the tasting reaction as shot 2\"]}",
-  "output": {
-    "verdict": "off_brief",
-    "confidence": 0.92,
-    "summary": "Clip shows guitar practice instead of meal prep; fundamentally different subject from the shot list",
-    "mismatches": [
-      "Expected food/cooking footage, got music performance",
-      "No kitchen or cutting board visible"
-    ],
-    "suggestions": [
-      "Reshoot with overhead tripod of your cutting board",
-      "Film the tasting reaction as shot 2"
-    ]
-  },
-  "meta": {
-    "source": "hand_authored_golden",
-    "case": "Creator uploaded a guitar clip when the shot list asked for meal prep footage — expected off_brief with specific mismatches."
-  }
+  "theme": "Quick Weeknight Dinner",
+  "idea": "Show a 15-minute healthy weeknight dinner that anyone can make"
+ },
+ "raw_text": "{\"verdict\": \"off_brief\", \"confidence\": 0.92, \"summary\": \"Clip shows guitar practice instead of meal prep; fundamentally different subject from the shot list\", \"mismatches\": [\"Expected food/cooking footage, got music performance\", \"No kitchen or cutting board visible\"], \"suggestions\": [\"Reshoot with overhead tripod of your cutting board\", \"Film the tasting reaction as shot 2\"], \"evaluated_theme\": \"Quick Weeknight Dinner\"}",
+ "output": {
+  "verdict": "off_brief",
+  "confidence": 0.92,
+  "summary": "Clip shows guitar practice instead of meal prep; fundamentally different subject from the shot list",
+  "mismatches": [
+   "Expected food/cooking footage, got music performance",
+   "No kitchen or cutting board visible"
+  ],
+  "suggestions": [
+   "Reshoot with overhead tripod of your cutting board",
+   "Film the tasting reaction as shot 2"
+  ],
+  "evaluated_theme": "Quick Weeknight Dinner"
+ },
+ "meta": {
+  "source": "hand_authored_golden",
+  "case": "Creator uploaded a guitar clip when the shot list asked for meal prep footage — expected off_brief with specific mismatches."
+ }
 }

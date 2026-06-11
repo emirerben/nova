@@ -296,6 +296,12 @@ class Settings(BaseSettings):
     # When False: analyze_item_conformance task is a no-op; item.conformance stays NULL.
     conformance_feedback_enabled: bool = False
 
+    # Per-item "Ask Nova" advisor (plan dogfood feedback #2): conversational,
+    # read-only advice about which clip fits which shot. Additive + auth'd; it
+    # never writes state (the re-read offer goes through the clip-note PATCH).
+    # Kill switch: PLAN_ITEM_ADVISOR_ENABLED=false → route returns 404.
+    plan_item_advisor_enabled: bool = True
+
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65
     engagement_weight: float = 0.35

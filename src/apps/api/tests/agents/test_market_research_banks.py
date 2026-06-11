@@ -218,8 +218,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-06.1: added $tiktok_analysis block (deep TikTok profile analysis).
     # Bump 2026-06-07: weekly research refresh — added adventure-humor-candid-01 archetype
     #                  (izzsiomoi humor+extreme pattern, vi=124x).
+    # Bump 2026-06-11: direction fork — added goal / content_mode / current_situation
+    #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
     assert archetypes_version() == "2026-06-07"
-    assert PERSONA_PROMPT_VERSION == "2026-06-07.1"
+    assert PERSONA_PROMPT_VERSION == "2026-06-11"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -235,8 +237,10 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-07: weekly research refresh — added 4 new ideas (adventure-humor,
     #             implied-question, serial-brand-chapter, art-cultural-moment).
     # 2026-06-08: retrospective-footage rule (past-event ideas).
+    # 2026-06-11: direction-aware planning — $direction_lines, $content_mode_block,
+    #             past-trips-are-edit-material rule (Buenos Aires fix); banks untouched.
     assert content_ideas_version() == "2026-06-07"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-11"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -246,10 +250,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # intro). Bump 2026-06-07: weekly research refresh — added 3 corpus factors
     # (implied-question-hook vi=120x, humor-extreme-adventure vi=124x,
     # serial-brand-chapters consistent vi=2-5x across 5 founder chapter videos).
-    # Content plan subsequently bumped to 2026-06-08 (retrospective-footage rule).
+    # Content plan subsequently bumped to 2026-06-08 (retrospective-footage rule),
+    # then both persona + content plan to 2026-06-11 (direction fork + grounding);
+    # the bank itself is untouched and intro_writer is unchanged.
     assert success_factors_version() == "2026-06-07"
-    assert PERSONA_PROMPT_VERSION == "2026-06-07.1"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-08"
+    assert PERSONA_PROMPT_VERSION == "2026-06-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-11"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-07.1"
 
 

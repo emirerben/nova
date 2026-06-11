@@ -1924,3 +1924,33 @@ def test_libass_lyric_line_emits_fade_tags():
     assert r"\t(0,150" in tags and r"\alpha&H00&" in tags
     # Fade-out ramp: animates back to fully transparent over [750, 1000ms].
     assert r"\t(750,1000" in tags and tags.count(r"\alpha&HFF&") >= 2
+
+
+# -- Lyric glyph fail-fast (P6 backstop behind the language gate) --------------
+
+
+def test_lyric_burn_fails_fast_on_missing_glyphs():
+    """CJK lyric text against a Latin-only bundled face must raise
+    MissingGlyphsError (→ error_class=lyrics_unsupported_language) instead of
+    silently burning .notdef tofu boxes into the video."""
+    surf = skia.Surfaces.MakeRasterN32Premul(200, 200)
+    canvas = surf.getCanvas()
+    overlay = {
+        "text": "八方來財 八方來財",
+        "effect": "karaoke-line",
+        "font_family": "Inter",
+        "word_timings": [
+            {"text": "八方來財", "start_s": 0.0, "end_s": 0.5},
+            {"text": "八方來財", "start_s": 0.5, "end_s": 1.0},
+        ],
+    }
+    with pytest.raises(tos.MissingGlyphsError):
+        tos._draw_karaoke_line(canvas, overlay, 0.2, 1.0)
+
+
+def test_lyric_glyph_check_scopes_to_letters():
+    """assert_lyric_glyphs checks LETTERS only — a face missing an em-dash or a
+    curly quote must not fail a previously-working Latin lyric render."""
+    tf = tos._typeface_for_overlay({"font_family": "Inter"})
+    tos.assert_lyric_glyphs(tf, "don’t stop — believin’…")
+    tos.assert_lyric_glyphs(tf, "")  # empty text is a no-op, never raises

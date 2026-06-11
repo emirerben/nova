@@ -56,7 +56,12 @@ from app.agents._schemas.persona import Persona
 #                art-cultural-moment ideas; adventure-humor-scaleup-02 overlay).
 # 2026-06-08 — retrospective-footage rule: past-event ideas emit empty filming_guide
 #              + footage-selection filming_suggestion instead of a shot list.
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-08"
+# 2026-06-11 — direction-aware planning: $direction_lines (goal + current situation in
+#              the persona block), $content_mode_block (existing_footage/mixed
+#              directives; "" for create_new → near-baseline), and the static
+#              past-trips-are-edit-material rule (the Buenos Aires incident: planner
+#              assumed the creator lives where past-trip footage was shot).
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-11"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60

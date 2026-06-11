@@ -64,6 +64,10 @@ class TrackSummary(BaseModel):
     duration_s: float = Field(ge=0.0)
     slot_count: int = Field(default=0, ge=0)
     labels: MusicLabels
+    # ISO 639-1 of the track's cached lyrics ("" = no lyrics / unknown). A fact
+    # from lyrics extraction (lyrics_cached["language"]), NOT a classifier label —
+    # populated at candidate-load time so the library never needs re-classifying.
+    lyric_language: str = ""
 
 
 class MusicMatcherInput(BaseModel):
@@ -127,6 +131,7 @@ def _format_track_summary(t: TrackSummary) -> str:
     return (
         f"- track_id={t.track_id} | title=\"{_sanitize_text(t.title)}\" | "
         f"dur={t.duration_s:.1f}s | slots={t.slot_count} | "
+        f"lyric_lang={t.lyric_language or 'none'} | "
         f"genre={lab.genre} | energy={lab.energy} | pacing={lab.pacing} | "
         f"copy_tone={lab.copy_tone} | transition={lab.transition_style} | "
         f"vibe={','.join(lab.vibe_tags)} | "
@@ -157,7 +162,8 @@ class MusicMatcherAgent(Agent[MusicMatcherInput, MusicMatcherOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.audio.music_matcher",
         prompt_id="match_music",
-        prompt_version="2026-05-27",
+        # 2026-06-11 — lyric_lang tiebreaker line per track (language-aware matching).
+        prompt_version="2026-06-11",
         # Text-only matcher; flash is plenty. If quality drifts in prod logs,
         # swap to pro via fallback_models without a prompt_version bump.
         model="gemini-2.5-flash",

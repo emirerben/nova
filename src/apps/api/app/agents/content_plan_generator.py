@@ -30,7 +30,7 @@ from app.agents._schemas.content_plan import (
     PlanItemSpec,
     ShotSpec,
 )
-from app.agents._schemas.persona import resolve_posts_per_week
+from app.agents._schemas.persona import resolve_content_mode, resolve_posts_per_week
 from app.agents.music_matcher import _sanitize_text
 from app.agents.persona_examples import format_ideas_for_pillars, format_success_factors
 from app.pipeline.prompt_loader import load_prompt
@@ -121,6 +121,46 @@ def _tiktok_analysis_block(summary: str) -> str:
         "to bias the plan toward ideas similar to what already performs for this creator.\n\n"
         f"<<<TIKTOK_ANALYSIS (creator's own performance data)\n{cleaned}\nTIKTOK_ANALYSIS\n"
     )
+
+
+def _direction_lines(persona) -> str:  # noqa: ANN001
+    """goal / current-situation lines inside the PERSONA block — "" when a
+    legacy persona has neither (keeps the prompt near-baseline)."""
+    lines = []
+    goal = _sanitize_text(getattr(persona, "goal", "") or "")
+    situation = _sanitize_text(getattr(persona, "current_situation", "") or "")
+    if goal:
+        lines.append(f"goal: {goal}")
+    if situation:
+        lines.append(f"current situation: {situation}")
+    return "\n".join(lines)
+
+
+def _content_mode_block(mode: str) -> str:
+    """Mode directive — "" for create_new (today's de-facto behavior IS
+    create-new shot lists, so the baseline prompt stays byte-identical)."""
+    if mode == "existing_footage":
+        return (
+            "CONTENT MODE — EXISTING FOOTAGE:\n"
+            "This creator is building from footage already on their phone, not\n"
+            "filming new shots. Every idea must be assemblable from clips they\n"
+            "plausibly already have (per their persona and interview). Write\n"
+            "filming_guide entries as footage-selection guidance (what to FIND in\n"
+            "their gallery), or apply the retrospective-footage rule (empty\n"
+            "filming_guide + selection guidance in filming_suggestion) when the\n"
+            "idea is built on one past event. Never ask them to go film something\n"
+            "new.\n\n"
+        )
+    if mode == "mixed":
+        return (
+            "CONTENT MODE — MIXED:\n"
+            "This creator works from both existing footage and new filming. Per\n"
+            "idea, commit to ONE: past-footage ideas follow the\n"
+            "retrospective-footage rule; new-filming ideas get a normal shot list\n"
+            "anchored in their current situation. Phrase each filming_suggestion\n"
+            'so it is obvious which kind it is ("find it" vs "film it").\n\n'
+        )
+    return ""
 
 
 def _instruction_level_block(level: str) -> str:
@@ -216,6 +256,11 @@ class ContentPlanGeneratorAgent(Agent[ContentPlanInput, ContentPlanOutput]):
         target = min(input.horizon_days, ppw * weeks)
         return load_prompt(
             "generate_content_plan",
+            # Direction fields (2026-06-11): goal + current situation inside the
+            # persona block ("" when a legacy persona has neither), and the
+            # mode directive block ("" for create_new → near-baseline prompt).
+            direction_lines=_direction_lines(p),
+            content_mode_block=_content_mode_block(resolve_content_mode(p)),
             summary=_sanitize_text(p.summary),
             content_pillars=_sanitize_text(", ".join(p.content_pillars)),
             tone=_sanitize_text(p.tone),

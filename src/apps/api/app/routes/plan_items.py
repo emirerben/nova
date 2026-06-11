@@ -11,6 +11,7 @@ leave an item stuck "generating" forever.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import structlog
@@ -93,6 +94,11 @@ class ClipAssignmentResponse(BaseModel):
 
     gcs_path: str
     shot_id: str | None = None  # null = extra-footage pool
+    # Optional creator context about the clip; "" when unset.
+    user_note: str = ""
+    # True = the footage-pool matcher placed this clip (provisional chip in the
+    # UI; conformance suppressed until the user keeps/swaps/replaces it).
+    machine_matched: bool = False
 
 
 class PlanItemResponse(BaseModel):
@@ -152,6 +158,8 @@ def plan_item_response(
         ClipAssignmentResponse(
             gcs_path=a.get("gcs_path", ""),
             shot_id=a.get("shot_id") if a.get("shot_id") in live_shot_ids else None,
+            user_note=str(a.get("user_note") or ""),
+            machine_matched=bool(a.get("machine_matched")),
         )
         for a in raw_assignments
         if isinstance(a, dict) and a.get("gcs_path")
@@ -316,11 +324,18 @@ async def create_upload_urls(
     return UploadUrlsResponse(urls=urls)
 
 
+_MAX_NOTE_CHARS = 200
+
+
 class ClipAssignmentBody(BaseModel):
     """One clip assignment sent from the frontend."""
 
     gcs_path: str
     shot_id: str | None = None  # null = extra-footage pool
+    # Optional creator context ("famous vegan restaurant in Buenos Aires").
+    # UNTRUSTED free-text: length-capped here, sanitized + DATA-framed at every
+    # prompt boundary that consumes it.
+    user_note: str = ""
 
 
 class AttachClipsBody(BaseModel):
@@ -380,7 +395,12 @@ async def attach_clips(
                 )
 
         assignments = [
-            ClipAssignment(gcs_path=a.gcs_path, shot_id=a.shot_id) for a in body.assignments
+            ClipAssignment(
+                gcs_path=a.gcs_path,
+                shot_id=a.shot_id,
+                user_note=(a.user_note or "")[:_MAX_NOTE_CHARS],
+            )
+            for a in body.assignments
         ]
     else:
         # Legacy / uninstructed path: all clips go to pool.
@@ -412,6 +432,206 @@ async def attach_clips(
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+class ClipNoteBody(BaseModel):
+    gcs_path: str
+    user_note: str = ""
+
+
+@router.patch("/{item_id}/clips/note", response_model=PlanItemResponse)
+async def set_clip_note(
+    item_id: str,
+    body: ClipNoteBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set/clear the creator's context note on one attached clip.
+
+    Editing a note counts as the user touching the slot, so it also clears
+    machine_matched. The conformance verdict is reset to a carry-over stub
+    (contested flag only) and re-analysis is dispatched — the panel shows the
+    checking state, never a stale verdict, while the judge re-reads the clip
+    with the new context.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+    note = (body.user_note or "")[:_MAX_NOTE_CHARS]
+
+    assignments = list(item.clip_assignments or [])
+    hit = False
+    updated = []
+    for a in assignments:
+        entry = dict(a) if isinstance(a, dict) else {}
+        if entry.get("gcs_path") == body.gcs_path:
+            entry["user_note"] = note
+            entry["machine_matched"] = False
+            hit = True
+        updated.append(entry)
+    if not hit:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="No such clip on this item"
+        )
+    item.clip_assignments = updated
+
+    # Carry only the contested flag through the re-run (suppression memory);
+    # the old verdict itself must never render while the judge re-reads.
+    prev = item.conformance or {}
+    item.conformance = {"contested": True} if prev.get("contested") else None
+
+    await db.commit()
+    from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
+
+    analyze_item_conformance.delay(str(item.id))
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+@router.post("/{item_id}/conformance/dismiss", response_model=PlanItemResponse)
+async def dismiss_conformance(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """'Hide this read' — persist the dismissal so the verdict never re-renders
+    for this footage (a fresh attach nulls conformance and starts over)."""
+    item = await _load_owned_item(item_id, user.id, db)
+    if item.conformance:
+        item.conformance = {**item.conformance, "dismissed": True}
+        await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+@router.post("/{item_id}/conformance/contest", response_model=PlanItemResponse)
+async def contest_conformance(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """'Looks wrong? Tell Nova' — mark the verdict contested. From here on,
+    only high-confidence (≥0.8) verdicts may render on this footage."""
+    item = await _load_owned_item(item_id, user.id, db)
+    if item.conformance:
+        item.conformance = {**item.conformance, "contested": True}
+        await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+# ── Ask Nova (per-item filming advisor) ───────────────────────────────────────
+
+
+class AdvisorTurnBody(BaseModel):
+    answer: str = ""
+    # Full conversation so far: [{role: "agent"|"user", content: str}] — the
+    # advisor is stateless per turn (same contract as /personas/agent/turn).
+    prior_turns: list[dict] = []
+
+
+class AdvisorTurnResponse(BaseModel):
+    reply: str
+    suggestions: list[str] = []
+    # Non-empty when the agent proposes re-reading a clip with this distilled
+    # creator context; the frontend asks consent then PATCHes the clip note.
+    suggested_note: str = ""
+
+
+@router.post("/{item_id}/agent/turn", response_model=AdvisorTurnResponse)
+async def plan_item_advisor_turn(
+    item_id: str,
+    body: AdvisorTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> AdvisorTurnResponse:
+    """One "Ask Nova" turn on this item: which clip fits, what to film instead,
+    or contesting the brief read. Read-only — advice, never writes."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.plan_item_advisor_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="advisor_not_enabled")
+
+    item = await _load_owned_item(item_id, user.id, db)
+
+    # Persona context (summary + content_mode), null-safe.
+    persona_summary = ""
+    content_mode = "create_new"
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    if plan is not None:
+        persona_row = await db.get(Persona, plan.persona_id)
+        if persona_row is not None and isinstance(persona_row.persona, dict):
+            persona_summary = str(persona_row.persona.get("summary") or "")
+            content_mode = str(persona_row.persona.get("content_mode") or "create_new")
+
+    # Clips block: filename (uuid prefix stripped), slot label, creator note.
+    shot_label_by_id = {
+        s.get("shot_id"): f"shot {i + 1}"
+        for i, s in enumerate(item.filming_guide or [])
+        if isinstance(s, dict) and s.get("shot_id")
+    }
+    clips = []
+    for a in item.clip_assignments or []:
+        if not isinstance(a, dict) or not a.get("gcs_path"):
+            continue
+        raw_name = str(a["gcs_path"]).rsplit("/", 1)[-1]
+        filename = raw_name.split("-", 1)[1] if "-" in raw_name else raw_name
+        clips.append(
+            {
+                "filename": filename,
+                "shot_label": shot_label_by_id.get(a.get("shot_id"), "extra footage"),
+                "user_note": str(a.get("user_note") or ""),
+            }
+        )
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents.interviewer_agent import ConversationTurn  # noqa: PLC0415
+    from app.agents.plan_item_advisor import (  # noqa: PLC0415
+        PlanItemAdvisorAgent,
+        PlanItemAdvisorInput,
+    )
+
+    turns = [
+        ConversationTurn(role=str(t.get("role", "user")), content=str(t.get("content", "")))
+        for t in body.prior_turns
+        if isinstance(t, dict) and t.get("content")
+    ]
+    if body.answer.strip():
+        turns.append(ConversationTurn(role="user", content=body.answer.strip()))
+
+    agent_input = PlanItemAdvisorInput(
+        turns=turns,
+        theme=str(item.theme or ""),
+        idea=str(item.idea or ""),
+        edit_format=str(getattr(item, "edit_format", "") or "montage"),
+        filming_guide=list(item.filming_guide or []),
+        clips=clips,
+        conformance=item.conformance if isinstance(item.conformance, dict) else None,
+        job_phase=derive_item_status(item),
+        persona_summary=persona_summary,
+        content_mode=content_mode,
+    )
+
+    try:
+        result = await asyncio.to_thread(
+            PlanItemAdvisorAgent(default_client()).run, agent_input
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("plan_item_advisor.failed", item_id=item_id, error=str(exc)[:300])
+        return AdvisorTurnResponse(
+            reply=(
+                "I couldn't think that through just now — try asking again. "
+                "You can always generate with what you have."
+            ),
+            suggestions=["Which clip fits shot 1?", "What should I film instead?"],
+        )
+
+    return AdvisorTurnResponse(
+        reply=result.reply,
+        suggestions=result.suggestions,
+        suggested_note=result.suggested_note,
+    )
 
 
 @router.post("/{item_id}/generate", response_model=PlanItemResponse)

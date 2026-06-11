@@ -14,6 +14,9 @@ Design:
   that the profile already answers and goes deeper on gaps.
 
 Changelog:
+  2026-06-11 — Turn 1 is now DIRECTION (existing footage vs create-new fork, chips
+               carry the classification); conditional GROUNDING question pins
+               current location vs past-trip footage; turn-1 suggestions exception.
   2026-06-08 — Turn 3 audience question rewritten to remove 'secretly filming for' framing.
 """
 
@@ -31,7 +34,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-06-08"
+INTERVIEWER_PROMPT_VERSION = "2026-06-11"
 _HARD_CAP = 8
 
 

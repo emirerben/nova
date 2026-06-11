@@ -116,6 +116,26 @@ def _run(plan_item_id: str) -> None:
         theme = str(item.theme or "")
         idea = str(item.idea or "")
 
+        # The chosen clip's assignment entry: creator note + machine-matched flag.
+        chosen = next(
+            (a for a in assignments if isinstance(a, dict) and a.get("gcs_path") == clip_gcs_path),
+            {},
+        )
+        user_note = str(chosen.get("user_note") or "")
+        if chosen.get("machine_matched"):
+            # Pool-matched footage Nova picked itself: running the judge on it
+            # would have the product argue with its own matcher. Conformance
+            # runs only after the user touches the slot (keep / swap / replace).
+            log.info(
+                "conformance_build.skipped_machine_matched",
+                plan_item_id=plan_item_id,
+                clip_gcs_path=clip_gcs_path,
+            )
+            return
+        # Contested flag survives note-edit re-runs on the SAME footage; a fresh
+        # attach nulls conformance entirely (D7), which also resets it.
+        contested = bool((item.conformance or {}).get("contested"))
+
     # ── Download → Gemini upload → ClipMetadataAgent ──────────────────────────
     with tempfile.TemporaryDirectory() as tmpdir:
         import os  # noqa: PLC0415
@@ -146,6 +166,19 @@ def _run(plan_item_id: str) -> None:
             )
             return
 
+    if getattr(clip_meta, "failed", False) or getattr(clip_meta, "analysis_degraded", False):
+        # Garbage-in gate (wrong-brief incident): judging a degraded digest
+        # invites confabulation on BOTH sides of the comparison. No verdict
+        # beats a confidently wrong one.
+        log.info(
+            "conformance_build.skipped_degraded_analysis",
+            plan_item_id=plan_item_id,
+            clip_gcs_path=clip_gcs_path,
+            meta_failed=bool(getattr(clip_meta, "failed", False)),
+            meta_degraded=bool(getattr(clip_meta, "analysis_degraded", False)),
+        )
+        return
+
     # ── Build ConformanceInput from the clip metadata digest ─────────────────
     clip_digest = {
         "detected_subject": str(getattr(clip_meta, "detected_subject", "") or ""),
@@ -162,11 +195,40 @@ def _run(plan_item_id: str) -> None:
         clip_digest=clip_digest,
         theme=theme,
         idea=idea,
+        user_context=user_note,
     )
 
-    # ── Run ConformanceFeedbackAgent ──────────────────────────────────────────
+    # ── Run ConformanceFeedbackAgent (echo-back guarded) ─────────────────────
     agent = ConformanceFeedbackAgent(default_client())
-    output = agent.run(conformance_input, ctx=RunContext(job_id=None))
+    output = None
+    for attempt in (1, 2):
+        candidate = agent.run(conformance_input, ctx=RunContext(job_id=None))
+        if _themes_match(candidate.evaluated_theme, theme):
+            output = candidate
+            break
+        # Wrong-brief incident guard: the agent judged against something other
+        # than this item's brief (contaminated input or confabulation). Discard;
+        # one retry, then give up — no verdict beats a wrong one.
+        log.warning(
+            "conformance_brief_mismatch",
+            plan_item_id=plan_item_id,
+            clip_gcs_path=clip_gcs_path,
+            expected_theme=theme[:80],
+            evaluated_theme=str(candidate.evaluated_theme)[:80],
+            attempt=attempt,
+        )
+    if output is None:
+        return
+
+    verdict_dict = output.model_dump()
+    # Traceability (wrong-brief incident): which footage this verdict describes.
+    verdict_dict["clip_gcs_path"] = clip_gcs_path
+    if contested:
+        verdict_dict["contested"] = True
+        # After the creator contested once on this footage, only high-confidence
+        # verdicts may render again.
+        if output.confidence < 0.8:
+            verdict_dict["suppressed"] = True
 
     # ── Persist verdict ───────────────────────────────────────────────────────
     with sync_session() as session:
@@ -174,7 +236,7 @@ def _run(plan_item_id: str) -> None:
         if item is None:
             log.warning("conformance_build.item_gone_after_agent", plan_item_id=plan_item_id)
             return
-        item.conformance = output.model_dump()
+        item.conformance = verdict_dict
         session.commit()
 
     log.info(
@@ -183,6 +245,20 @@ def _run(plan_item_id: str) -> None:
         verdict=output.verdict,
         confidence=output.confidence,
     )
+
+
+def _themes_match(evaluated: str, expected: str) -> bool:
+    """Echo-back comparison: whitespace/case tolerant, never fuzzy.
+
+    The agent copies the theme verbatim; minor whitespace/case wobble from the
+    model is fine, but any substantive difference means it judged against the
+    wrong brief — exactly the contamination class this guard exists to catch.
+    """
+
+    def norm(s: str) -> str:
+        return " ".join(str(s or "").split()).strip().lower()
+
+    return norm(evaluated) == norm(expected)
 
 
 def _get_instruction_level(session, item: PlanItem) -> str:

@@ -605,6 +605,14 @@ class ContentPlan(Base):
     # NULL until the user leaves feedback + regenerates; the generator treats NULL
     # as "(none)".
     preference_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Footage pool (plan dogfood feedback #4): the post-activation "dump the
+    # whole trip" batch. Shape: {"status": "matching"|"matched"|"matched_empty"|
+    # "match_failed", "clips": [{"gcs_path": str, "matched_item_id": str|null}],
+    # "updated_at": iso}. Clips live under users/{uid}/plan-pool/{plan_id}/
+    # (persistent prefix). match_pool_clips assigns them across PENDING items as
+    # machine_matched provisional assignments — never auto-renders. NULL = no
+    # pool uploaded yet.
+    pool: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     generation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     activation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     activation_phase: Mapped[str | None] = mapped_column(Text, nullable=True)

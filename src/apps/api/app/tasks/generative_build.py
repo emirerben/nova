@@ -1782,11 +1782,27 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
     """The variants to render. Song variants only when a track matched; the lyrics
     variant only when that track actually has cached lyrics (otherwise it would render
     identically to song_text with no lyrics — a wasted render + a confusing "Lyrics"
-    card). Always emit the original-audio variant."""
+    card) AND the lyric language is renderable by the bundled Latin-script fonts
+    (a CJK track would tofu-render or break word alignment — skip cleanly instead
+    of shipping one broken card). Always emit the original-audio variant."""
+    from app.pipeline.lyric_support import (  # noqa: PLC0415
+        lyric_language,
+        lyrics_variant_renderable,
+    )
+
     specs: list[dict[str, Any]] = []
     if best_track is not None:
         if best_track.lyrics_cached:
-            specs.append({"variant_id": "song_lyrics", "text_mode": "lyrics", "track": best_track})
+            if lyrics_variant_renderable(best_track.lyrics_cached):
+                specs.append(
+                    {"variant_id": "song_lyrics", "text_mode": "lyrics", "track": best_track}
+                )
+            else:
+                log.info(
+                    "generative_lyrics_variant_skipped_language",
+                    track_id=str(getattr(best_track, "id", "")),
+                    lyric_language=lyric_language(best_track.lyrics_cached),
+                )
         specs.append({"variant_id": "song_text", "text_mode": "agent_text", "track": best_track})
     specs.append({"variant_id": "original_text", "text_mode": "agent_text", "track": None})
     return specs
@@ -2245,6 +2261,10 @@ def _classify_error(exc: BaseException) -> str:
         return "storage_error"
     if "clip" in name and ("read" in name or "read" in msg):
         return "clip_read_error"
+    if "missingglyphs" in name:
+        return "lyrics_unsupported_language"
+    if "lyric" in name or "karaoke" in name:
+        return "lyric_alignment_error"
     return "unknown"
 
 
