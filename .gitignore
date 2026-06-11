@@ -48,3 +48,4 @@ research/tiktok/raw/
 
 # gbrain per-worktree pin (machine-local, not shared)
 .gbrain-source
+.cluster-e2e/
