@@ -34,6 +34,8 @@ import { InkButton } from "@/components/ui/InkButton";
 import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
+import { TimelineEditor } from "../../../generative/TimelineEditor";
+import { useTimelineSession } from "../../../generative/useTimelineSession";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 
 function deriveReceiptText(job: PlanItemJobStatus): string {
@@ -434,10 +436,14 @@ export default function PlanItemPage() {
                 />
               )}
               {focused && focusedEditable ? (
-                <PlanVariantEditor
+                <FocusedVariantEditor
+                  key={focused.variant_id}
+                  itemId={itemId}
                   variant={focused}
                   tracks={tracks}
                   styleSets={styleSets}
+                  refetch={refetch}
+                  markVariantRendering={markVariantRendering}
                   onSwap={(trackId) =>
                     runEdit(focused.variant_id, focused.output_url, () =>
                       swapPlanItemSong(itemId, focused.variant_id, trackId),
@@ -491,6 +497,78 @@ export default function PlanItemPage() {
         )}
       </div>
     </LightShell>
+  );
+}
+
+/**
+ * The focused variant's edit panel + clip-timeline editor sheet.
+ *
+ * Wraps PlanVariantEditor with a timeline session against the plan-item mirror
+ * endpoints (`/plan-items/{itemId}/variants/{vid}/timeline`, via the /api/plan
+ * proxy). Keyed by variant_id in the parent so the session's cached GET resets
+ * when the user focuses a different variant.
+ *
+ * A committed timeline edit re-renders server-side; we flip the variant to
+ * "rendering" through the same markVariantRendering path retext uses, so the
+ * page keeps polling until the new output_url lands.
+ */
+function FocusedVariantEditor({
+  itemId,
+  variant,
+  tracks,
+  styleSets,
+  refetch,
+  markVariantRendering,
+  onSwap,
+  onRetext,
+  onRemoveText,
+  onChangeStyle,
+  onResize,
+}: {
+  itemId: string;
+  variant: PlanItemVariant;
+  tracks: MusicTrackSummary[];
+  styleSets: GenerativeStyleSet[];
+  refetch: () => void;
+  markVariantRendering: (variantId: string, priorOutputUrl: string | null) => void;
+  onSwap: (trackId: string) => Promise<void>;
+  onRetext: (text: string) => Promise<void>;
+  onRemoveText: () => Promise<void>;
+  onChangeStyle: (styleSetId: string) => Promise<void>;
+  onResize: (textSizePx: number) => Promise<void>;
+}) {
+  const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
+  return (
+    <>
+      <PlanVariantEditor
+        variant={variant}
+        tracks={tracks}
+        styleSets={styleSets}
+        onSwap={onSwap}
+        onRetext={onRetext}
+        onRemoveText={onRemoveText}
+        onChangeStyle={onChangeStyle}
+        onResize={onResize}
+        onEditClips={timeline.openEditor}
+        showClipEditor={timeline.entryVisible}
+        clipSlotCount={timeline.slotCount}
+        hasClipEdits={timeline.hasUserEdits}
+      />
+      {timeline.isEditorOpen && (
+        <TimelineEditor
+          ownerId={itemId}
+          variantId={variant.variant_id}
+          base="plan-item"
+          onClose={timeline.closeEditor}
+          onRenderEnqueued={() => {
+            // Close the sheet + refetch (session bookkeeping), then flip the
+            // variant to "rendering" exactly like a retext edit does.
+            timeline.onRenderEnqueued();
+            markVariantRendering(variant.variant_id, variant.output_url);
+          }}
+        />
+      )}
+    </>
   );
 }
 

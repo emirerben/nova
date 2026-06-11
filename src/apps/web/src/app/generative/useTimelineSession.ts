@@ -20,9 +20,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getTimeline,
   TimelineApiError,
-  type GenerativeVariant,
+  type TimelineBase,
   type TimelineResponse,
 } from "@/lib/generative-api";
+
+/** The slice of a variant the session needs — structurally satisfied by both
+ * GenerativeVariant (generative page) and PlanItemVariant (plan-item page). */
+export interface TimelineSessionVariant {
+  variant_id: string;
+  render_status: string | null;
+}
 
 /** ~2 min baseline for a single-variant re-render (drives the ETA ladder). */
 export const RERENDER_BASELINE_MS = 120_000;
@@ -62,9 +69,10 @@ export interface TimelineSession {
 const TRANSIENT_REASONS = new Set(["sources_expired"]);
 
 export function useTimelineSession(
-  jobId: string | null,
-  variant: GenerativeVariant,
+  ownerId: string | null,
+  variant: TimelineSessionVariant,
   refresh: () => void,
+  base: TimelineBase = "generative",
 ): TimelineSession {
   const [timeline, setTimeline] = useState<TimelineResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -78,8 +86,8 @@ export function useTimelineSession(
   const variantId = variant.variant_id;
 
   const fetchTimeline = useCallback(() => {
-    if (!jobId) return;
-    getTimeline(jobId, variantId)
+    if (!ownerId) return;
+    getTimeline(ownerId, variantId, base)
       .then((t) => {
         setTimeline(t);
         setNotFound(false);
@@ -88,14 +96,14 @@ export function useTimelineSession(
         if (e instanceof TimelineApiError && e.status === 404) setNotFound(true);
         // Other failures: keep timeline null — entry hidden until a refetch.
       });
-  }, [jobId, variantId]);
+  }, [ownerId, variantId, base]);
 
   // Lazy fetch once per tile lifetime (the count needs the GET; cache it).
   useEffect(() => {
-    if (fetchedRef.current || !jobId) return;
+    if (fetchedRef.current || !ownerId) return;
     fetchedRef.current = true;
     fetchTimeline();
-  }, [jobId, fetchTimeline]);
+  }, [ownerId, fetchTimeline]);
 
   // Refetch whenever the variant lands on "ready": the first lazy GET can race
   // the variant's initial render (timeline not written yet → editable:false),

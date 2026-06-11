@@ -24,6 +24,7 @@ import {
   getTimeline,
   resetTimeline,
   TimelineApiError,
+  type TimelineBase,
   type TimelineClip,
   type TimelineEditSlotPayload,
   type TimelineResponse,
@@ -179,16 +180,20 @@ function usePosterFrames(
 // ── Sheet shell (fetch + states) ──────────────────────────────────────────────
 
 export interface TimelineEditorProps {
-  jobId: string;
+  /** Generative job id, or the plan-item id when base="plan-item". */
+  ownerId: string;
   variantId: string;
+  /** Route family the editor talks to (default: the generative endpoints). */
+  base?: TimelineBase;
   onClose: () => void;
   /** Successful POST/DELETE — the session takes over the re-render wait. */
   onRenderEnqueued: () => void;
 }
 
 export function TimelineEditor({
-  jobId,
+  ownerId,
   variantId,
+  base = "generative",
   onClose,
   onRenderEnqueued,
 }: TimelineEditorProps) {
@@ -200,7 +205,7 @@ export function TimelineEditor({
     let cancelled = false;
     setTimeline(null);
     setFetchError(false);
-    getTimeline(jobId, variantId)
+    getTimeline(ownerId, variantId, base)
       .then((t) => {
         if (!cancelled) setTimeline(t);
       })
@@ -210,7 +215,7 @@ export function TimelineEditor({
     return () => {
       cancelled = true;
     };
-  }, [jobId, variantId, loadNonce]);
+  }, [ownerId, variantId, base, loadNonce]);
 
   // Lock page scroll while the sheet is open.
   useEffect(() => {
@@ -281,8 +286,9 @@ export function TimelineEditor({
       {timeline != null && timeline.editable && (
         <TimelineEditorBody
           key={loadNonce}
-          jobId={jobId}
+          ownerId={ownerId}
           variantId={variantId}
+          base={base}
           timeline={timeline}
           onClose={onClose}
           onRenderEnqueued={onRenderEnqueued}
@@ -398,15 +404,17 @@ interface DragState {
 }
 
 function TimelineEditorBody({
-  jobId,
+  ownerId,
   variantId,
+  base,
   timeline,
   onClose,
   onRenderEnqueued,
   reload,
 }: {
-  jobId: string;
+  ownerId: string;
   variantId: string;
+  base: TimelineBase;
   timeline: TimelineResponse;
   onClose: () => void;
   onRenderEnqueued: () => void;
@@ -622,7 +630,7 @@ function TimelineEditorBody({
     setSubmitError(null);
     setBusyNotice(false);
     try {
-      await editTimeline(jobId, variantId, buildPayload());
+      await editTimeline(ownerId, variantId, buildPayload(), base);
       onRenderEnqueued();
     } catch (e) {
       if (e instanceof TimelineApiError) {
@@ -641,7 +649,7 @@ function TimelineEditorBody({
     } finally {
       setSubmitting(false);
     }
-  }, [jobId, variantId, buildPayload, onRenderEnqueued, findOffendingSlot]);
+  }, [ownerId, variantId, base, buildPayload, onRenderEnqueued, findOffendingSlot]);
 
   const handleReset = useCallback(async () => {
     // No server-side edits yet (only local dirt): the AI cut is what's already
@@ -654,7 +662,7 @@ function TimelineEditorBody({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      await resetTimeline(jobId, variantId);
+      await resetTimeline(ownerId, variantId, base);
       onRenderEnqueued();
     } catch (e) {
       if (e instanceof TimelineApiError && e.code === "JOB_BUSY") setBusyNotice(true);
@@ -662,7 +670,7 @@ function TimelineEditorBody({
     } finally {
       setSubmitting(false);
     }
-  }, [jobId, variantId, onRenderEnqueued, timeline.has_user_edits, dispatch]);
+  }, [ownerId, variantId, base, onRenderEnqueued, timeline.has_user_edits, dispatch]);
 
   // CTA label
   const ctaLabel = submitting

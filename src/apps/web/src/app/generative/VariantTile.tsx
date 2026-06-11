@@ -129,7 +129,7 @@ export function VariantTile({
 
       {timelineSession.isEditorOpen && (
         <TimelineEditor
-          jobId={jobId}
+          ownerId={jobId}
           variantId={variant.variant_id}
           onClose={timelineSession.closeEditor}
           onRenderEnqueued={timelineSession.onRenderEnqueued}
