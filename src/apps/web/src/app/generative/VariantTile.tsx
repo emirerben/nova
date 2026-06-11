@@ -26,6 +26,8 @@ import {
 import type { MusicTrackSummary } from "@/lib/music-api";
 import { VariantRenderCard } from "@/components/progress";
 import { VariantCard } from "./VariantCard";
+import { TimelineEditor } from "./TimelineEditor";
+import { useTimelineSession } from "./useTimelineSession";
 import { useVariantEditSession } from "./useVariantEditSession";
 
 export function VariantTile({
@@ -50,23 +52,32 @@ export function VariantTile({
     refresh();
   });
 
+  // Clip-timeline editor session — lifted here for the same mounted-across-polls
+  // reason as the edit session: the re-render wait must survive the variant
+  // flipping to "rendering".
+  const timelineSession = useTimelineSession(jobId, variant, refresh);
+
   // Saving-state poll driver. The page's job poller stops at terminal status,
   // and the single post-commit refresh can race AHEAD of the worker flipping
   // render_status to "rendering" (stale-terminal data → no re-arm). The
   // session itself knows it's awaiting a render — keep refreshing until it
   // settles, so the preview swaps to the fresh output without a tab refocus.
+  // Same driver covers timeline re-renders.
+  const awaitingTimelineRender = timelineSession.wait.phase === "rendering";
   useEffect(() => {
-    if (!session.isSaving) return;
+    if (!session.isSaving && !awaitingTimelineRender) return;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [session.isSaving, refresh]);
+  }, [session.isSaving, awaitingTimelineRender, refresh]);
 
   return (
     <div className="flex flex-col gap-4">
       {/* The payoff/progress card duplicates the edit view while a session is
           active (and would flash "Rendering…" during a committed save) — the
-          edit card is the single focus until the session settles. */}
-      {!session.isActive && (
+          edit card is the single focus until the session settles. The same
+          applies to a timeline re-render: the VariantCard well owns that wait
+          (ETA band / failed tile), so the generic card hides. */}
+      {!session.isActive && !timelineSession.isWaiting && (
         <VariantRenderCard
           variant={variant}
           isNewlyReady={isNewlyReady}
@@ -75,13 +86,16 @@ export function VariantTile({
         />
       )}
 
-      {(variant.render_status === "ready" || session.isActive) && (
+      {(variant.render_status === "ready" ||
+        session.isActive ||
+        timelineSession.isWaiting) && (
         <VariantCard
           variant={variant}
           tracks={tracks}
           styleSets={styleSets}
           tone="light"
           editSession={session}
+          timelineSession={timelineSession}
           onSwap={async (trackId) => {
             await swapVariantSong(jobId, variant.variant_id, trackId);
             refresh();
@@ -106,6 +120,15 @@ export function VariantTile({
             await setVariantMix(jobId, variant.variant_id, mix);
             refresh();
           }}
+        />
+      )}
+
+      {timelineSession.isEditorOpen && (
+        <TimelineEditor
+          jobId={jobId}
+          variantId={variant.variant_id}
+          onClose={timelineSession.closeEditor}
+          onRenderEnqueued={timelineSession.onRenderEnqueued}
         />
       )}
     </div>

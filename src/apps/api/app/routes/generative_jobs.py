@@ -7,6 +7,9 @@ POST /generative-jobs/{id}/variants/{vid}/swap-song    — async re-slot against
 POST /generative-jobs/{id}/variants/{vid}/retext       — async re-render with new/removed text
 POST /generative-jobs/{id}/variants/{vid}/change-style — async re-render with a new style set
 POST /generative-jobs/{id}/variants/{vid}/edit         — combined text+style+size in ONE render
+GET  /generative-jobs/{id}/variants/{vid}/timeline     — effective clip timeline + clip pool
+POST /generative-jobs/{id}/variants/{vid}/timeline     — persist user timeline + re-render
+DELETE /generative-jobs/{id}/variants/{vid}/timeline   — reset to the AI timeline + re-render
 
 A generative job needs no pre-selected song or template — the orchestrator auto-matches
 a track, writes its own intro text, and renders three variants. Per-variant state lives
@@ -25,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import storage
 from app.auth import CurrentUserOrSynthetic
 from app.database import get_db
 from app.models import Job, MusicTrack
@@ -195,6 +199,92 @@ class EditVariantRequest(BaseModel):
     text_size_px: int | None = Field(None, gt=0)
 
 
+# ── Timeline editor schemas ────────────────────────────────────────────────────
+
+_TIMELINE_MAX_SLOTS = 50
+# Server-side guardrails on a user-edited timeline. The floor keeps a slot long
+# enough to register as a cut (and clear of xfade window collapse); the ceiling
+# matches the product's sub-60s short-form contract.
+TIMELINE_MIN_SLOT_S = 0.6
+TIMELINE_MAX_TOTAL_S = 60.0
+# No-music variants have no beat grid to quantize against — durations snap to a
+# 0.5s step instead (±1ms float tolerance for JSON round-trips).
+TIMELINE_STEP_S = 0.5
+_TIMELINE_STEP_TOL_S = 0.001
+# Only the montage text variants carry a user-editable slot timeline. Lyrics are
+# beat/line synced (re-cutting breaks sync), voiceover variants are fit to the
+# voice bed, talking_head has no slot layout at all.
+_TIMELINE_EDITABLE_VARIANTS = ("song_text", "original_text")
+
+
+class TimelineSlotEdit(BaseModel):
+    """One slot as posted by the timeline editor.
+
+    `slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`
+    indexes into `job.all_candidates["clip_paths"]` — clients never send paths.
+    Beat variants size slots in `duration_beats` (walked against the real grid);
+    no-grid variants send `duration_s` in 0.5s steps.
+    """
+
+    slot_id: str | None = None
+    clip_index: int
+    in_s: float
+    duration_beats: int | None = None
+    duration_s: float | None = None
+    removed: bool = False
+
+
+class TimelineEditRequest(BaseModel):
+    slots: list[TimelineSlotEdit]
+
+    @field_validator("slots")
+    @classmethod
+    def validate_slot_count(cls, v: list[TimelineSlotEdit]) -> list[TimelineSlotEdit]:
+        # Payload cap: a 9:16 sub-60s edit never needs more than 50 cuts.
+        if len(v) > _TIMELINE_MAX_SLOTS:
+            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS} timeline slots allowed")
+        return v
+
+
+class TimelineSlotOut(BaseModel):
+    """One effective-timeline slot on the GET response (user slot if edited,
+    else AI slot). All fields optional + extra-allowed so a worker-side schema
+    addition never 500s the read path."""
+
+    slot_id: str | None = None
+    clip_index: int | None = None
+    source_gcs_path: str | None = None
+    source_duration_s: float | None = None
+    in_s: float | None = None
+    duration_s: float | None = None
+    duration_beats: int | None = None
+    order: int | None = None
+    moment_energy: float | None = None
+    moment_description: str | None = None
+    removed: bool = False
+
+    model_config = {"extra": "allow"}
+
+
+class TimelineClipOut(BaseModel):
+    """One entry of the job's full clip pool (including clips not currently used)."""
+
+    clip_index: int
+    signed_url: str | None = None
+    duration_s: float | None = None
+    used: bool = False
+
+
+class TimelineResponse(BaseModel):
+    editable: bool
+    reason: str | None = None
+    beat_grid: list[float]
+    total_duration_s: float
+    has_user_edits: bool
+    slots: list[TimelineSlotOut]
+    clips: list[TimelineClipOut]
+
+
 class StyleSetIntroPreview(BaseModel):
     """Display-only `intro`-role styling, consumed by the instant-edit client
     preview (DOM overlay on the base video). Projection-only — never reaches the
@@ -283,7 +373,12 @@ def _variants_for_response(job: Job) -> list[dict]:
     out: list[dict] = []
     for v in _variants_of(job):
         video_path = v.get("video_path")
-        if v.get("render_status") == "ready" and video_path:
+        # Re-sign whenever a rendered video exists — NOT only when "ready". A variant
+        # whose re-render FAILED keeps its last good `video_path`, and that video must
+        # stay playable past the 24h signature expiry. Only an in-flight re-render
+        # ("rendering") keeps the stored URL untouched: the player holds the base/last
+        # frame until the poll flips the status.
+        if video_path and v.get("render_status") != "rendering":
             try:
                 v = {**v, "output_url": signed_get_url(video_path, PLAYBACK_URL_TTL_MIN)}
             except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
@@ -508,6 +603,309 @@ def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
     regenerate_generative_variant.delay(str(job.id), variant_id, mix_override=float(mix))
+
+
+# ── Timeline editor: eligibility + GET/POST/DELETE dispatch ─────────────────────
+# Single-sourced here so plan_items.py wraps the same logic verbatim (mirrors
+# dispatch_retext & friends). The worker (lane 2) writes `ai_timeline` on each
+# variant at render time and accepts `timeline_override` on regenerate.
+
+
+def _durable_sources_prefix(job: Job) -> str:
+    """Worker-copied per-job sources persist here (NOT in the 24h GCS delete rule).
+
+    Anything else on a slot's `source_gcs_path` is a legacy/pre-feature job whose
+    raw uploads may already be swept — treated as expired for editing purposes.
+    """
+    return f"generative-jobs/{job.id}/sources/"
+
+
+def _timeline_parts(variant: dict) -> tuple[list[dict], list[dict], list[float]]:
+    """(ai_slots, user_slots, beat_grid) with null-safe defaults."""
+    ai = variant.get("ai_timeline") or {}
+    ai_slots = [s for s in (ai.get("slots") or []) if isinstance(s, dict)]
+    user = variant.get("user_timeline") or {}
+    user_slots = [s for s in (user.get("slots") or []) if isinstance(s, dict)]
+    beat_grid = [float(b) for b in (ai.get("beat_grid") or [])]
+    return ai_slots, user_slots, beat_grid
+
+
+def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
+    """First matching reason this variant's timeline can't be edited, or None."""
+    from app.config import settings  # noqa: PLC0415
+
+    # getattr default True: tolerate deploy skew where the lane-2 flag hasn't
+    # landed yet — absence of the kill switch must not read as "killed".
+    if not getattr(settings, "generative_timeline_editor_enabled", True):
+        return "disabled"
+    vid = str(variant.get("variant_id") or "")
+    if vid == "song_lyrics" or variant.get("text_mode") == "lyrics":
+        return "lyrics_sync"  # lyric lines are beat-synced; re-cutting breaks sync
+    if vid.startswith("voiceover"):
+        return "voiceover_bed_fit"  # slots are fit to the voice bed, not user cuts
+    if variant.get("resolved_archetype") == "talking_head":
+        return "no_slot_timeline"  # talking_head renders have no slot layout
+    if vid not in _TIMELINE_EDITABLE_VARIANTS:
+        return "unsupported_variant"
+    ai_slots, _, _ = _timeline_parts(variant)
+    if not ai_slots:
+        return "no_timeline"  # legacy variant rendered before lane-2 instrumentation
+    prefix = _durable_sources_prefix(job)
+    if any(not str(s.get("source_gcs_path") or "").startswith(prefix) for s in ai_slots):
+        # Non-durable sources = legacy job cutting from 24h-swept uploads.
+        return "sources_expired"
+    return None
+
+
+def _timeline_error(status_code: int, code: str) -> HTTPException:
+    return HTTPException(status_code=status_code, detail={"code": code})
+
+
+def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
+    """Effective timeline (user_timeline if present, else ai_timeline) + clip pool.
+
+    Read-only and side-effect free; never raises for an ineligible variant — it
+    reports `editable=False` + `reason` so the frontend can render the right copy.
+    """
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    reason = _timeline_ineligibility(job, variant)
+    ai_slots, user_slots, beat_grid = _timeline_parts(variant)
+    has_user_edits = bool(user_slots)
+    effective = user_slots if has_user_edits else ai_slots
+    active = [s for s in effective if not s.get("removed")]
+    total = sum(float(s.get("duration_s") or 0.0) for s in active)
+    used_indices = {s.get("clip_index") for s in active}
+
+    # Source durations are only known where the worker probed them (ai_timeline).
+    dur_by_idx: dict[int, float] = {}
+    for s in ai_slots:
+        idx = s.get("clip_index")
+        if idx is not None and s.get("source_duration_s") is not None:
+            dur_by_idx.setdefault(idx, float(s["source_duration_s"]))
+
+    clips: list[dict] = []
+    for i, path in enumerate((job.all_candidates or {}).get("clip_paths") or []):
+        try:
+            url: str | None = signed_get_url(path, PLAYBACK_URL_TTL_MIN)
+        except Exception:  # noqa: BLE001 — one bad sign must not 500 the editor open
+            log.warning(
+                "timeline_clip_sign_failed", job_id=str(job.id), clip_index=i, exc_info=True
+            )
+            url = None
+        clips.append(
+            {
+                "clip_index": i,
+                "signed_url": url,
+                "duration_s": dur_by_idx.get(i),
+                "used": i in used_indices,
+            }
+        )
+
+    return {
+        "editable": reason is None,
+        "reason": reason,
+        "beat_grid": beat_grid,
+        "total_duration_s": round(total, 3),
+        "has_user_edits": has_user_edits,
+        "slots": [dict(s) for s in effective],
+        "clips": clips,
+    }
+
+
+async def persist_user_timeline(
+    db: AsyncSession, job_id: str, variant_id: str, slots: list[dict] | None
+) -> None:
+    """Row-locked merge of `user_timeline` into the variant entry; None removes it.
+
+    Re-fetches the Job FOR UPDATE — mirrors the worker's `_update_variant_entry`
+    RMW lock (generative_build.py): a concurrent `regenerate_generative_variant`
+    completing on a sibling variant must not clobber this write (or vice versa).
+    Reassigning a NEW `assembly_plan` dict is what marks the JSONB column dirty
+    (same pattern as the worker — no flag_modified needed).
+    """
+    job = await db.get(Job, uuid.UUID(str(job_id)), with_for_update=True)
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    plan = dict(job.assembly_plan or {})
+    variants = list(plan.get("variants") or [])
+    for i, v in enumerate(variants):
+        if v.get("variant_id") == variant_id:
+            updated = dict(v)
+            if slots is None:
+                updated.pop("user_timeline", None)
+            else:
+                updated["user_timeline"] = {"slots": slots}
+            variants[i] = updated
+            break
+    plan["variants"] = variants
+    job.assembly_plan = plan
+    await db.commit()
+
+
+async def dispatch_edit_timeline(
+    job: Job, variant_id: str, payload: TimelineEditRequest, *, db: AsyncSession
+) -> None:
+    """Validate a user timeline, persist it (row-locked), then enqueue the re-render.
+
+    Persist FIRST, enqueue second: a worker that picks the task up instantly must
+    always observe the committed `user_timeline` (the override travels with the
+    task too, but the persisted copy is what survives retries + the GET merge).
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    if not getattr(settings, "generative_timeline_editor_enabled", True):
+        raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 rendering
+    # A timeline re-render re-cuts from the shared per-job sources; let any in-flight
+    # sibling render finish first so two renders never race the same job row.
+    if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
+        raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
+    reason = _timeline_ineligibility(job, variant)
+    if reason is not None:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
+
+    ai_slots, user_slots, beat_grid = _timeline_parts(variant)
+
+    # STALE: a posted slot_id the server doesn't know means the client edited
+    # against an outdated timeline (e.g. a sibling tab re-rendered) — reject the
+    # whole edit rather than guess at intent.
+    known_ids = {s.get("slot_id") for s in [*ai_slots, *user_slots] if s.get("slot_id")}
+    for e in payload.slots:
+        if e.slot_id is not None and e.slot_id not in known_ids:
+            raise _timeline_error(status.HTTP_409_CONFLICT, "TIMELINE_STALE")
+
+    clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+    if not any(not e.removed for e in payload.slots):
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_EMPTY")
+    for e in payload.slots:
+        if e.clip_index < 0 or e.clip_index >= len(clip_paths):
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_UNKNOWN_CLIP")
+
+    # Per-clip lookups from the AI timeline (durable source path, probed duration,
+    # moment metadata). Prior user slots only contribute paths/durations they
+    # inherited — ai entries win via setdefault-first ordering.
+    src_dur_by_idx: dict[int, float] = {}
+    path_by_idx: dict[int, str] = {}
+    meta_by_idx: dict[int, dict] = {}
+    for is_ai, s in [*((True, s) for s in ai_slots), *((False, s) for s in user_slots)]:
+        idx = s.get("clip_index")
+        if idx is None:
+            continue
+        if s.get("source_duration_s") is not None:
+            src_dur_by_idx.setdefault(idx, float(s["source_duration_s"]))
+        if s.get("source_gcs_path"):
+            path_by_idx.setdefault(idx, str(s["source_gcs_path"]))
+        if is_ai:
+            meta_by_idx.setdefault(idx, s)
+
+    resolved: list[dict] = []
+    grid_offset = 0  # cumulative beat cursor — grids are NOT uniform
+    total = 0.0
+    for order, e in enumerate(payload.slots):
+        duration_s = e.duration_s
+        if not e.removed:
+            if beat_grid:
+                # Beat variant: walk the REAL grid cumulatively. Slot i's duration is
+                # grid[offset+beats] - grid[offset]; the offset then advances, so the
+                # same `duration_beats` can yield different seconds at different
+                # positions (non-uniform grids).
+                if e.duration_beats is None or e.duration_beats < 1:
+                    raise _timeline_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
+                    )
+                end = grid_offset + e.duration_beats
+                if end > len(beat_grid) - 1:
+                    raise _timeline_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
+                    )
+                duration_s = beat_grid[end] - beat_grid[grid_offset]
+                grid_offset = end
+            else:
+                # No grid (original-audio / unmatched): free seconds in 0.5 steps.
+                if e.duration_s is None:
+                    raise _timeline_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
+                    )
+                steps = round(e.duration_s / TIMELINE_STEP_S)
+                if abs(e.duration_s - steps * TIMELINE_STEP_S) > _TIMELINE_STEP_TOL_S:
+                    raise _timeline_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
+                    )
+                duration_s = float(e.duration_s)
+            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
+                raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
+            total += duration_s
+            # Bounds against the probed source duration. New clips the AI never
+            # probed have no known duration — skip; the worker's probe will clamp.
+            src_dur = src_dur_by_idx.get(e.clip_index)
+            if e.in_s < 0 or (src_dur is not None and e.in_s + duration_s > src_dur + 1e-6):
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS"
+                )
+        meta = meta_by_idx.get(e.clip_index) or {}
+        resolved.append(
+            {
+                "slot_id": e.slot_id or str(uuid.uuid4()),
+                "clip_index": e.clip_index,
+                # Pool-path fallback only for clips with no durable source yet —
+                # the worker re-resolves by clip_index either way.
+                "source_gcs_path": path_by_idx.get(e.clip_index) or clip_paths[e.clip_index],
+                "source_duration_s": src_dur_by_idx.get(e.clip_index),
+                "in_s": float(e.in_s),
+                "duration_s": round(float(duration_s), 3) if duration_s is not None else None,
+                "duration_beats": e.duration_beats,
+                "order": order,
+                "moment_energy": meta.get("moment_energy"),
+                "moment_description": meta.get("moment_description"),
+                "removed": bool(e.removed),
+            }
+        )
+    if total > TIMELINE_MAX_TOTAL_S + 1e-6:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_LONG")
+
+    # Hard existence check on every durable source we're about to cut from — a
+    # manually deleted blob must fail HERE, not 12 minutes into a worker render.
+    prefix = _durable_sources_prefix(job)
+    durable_refs = {
+        str(s["source_gcs_path"])
+        for s in resolved
+        if not s["removed"] and str(s["source_gcs_path"] or "").startswith(prefix)
+    }
+    for path in sorted(durable_refs):
+        if not storage.object_exists(path):
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "sources_expired")
+
+    await persist_user_timeline(db, str(job.id), variant_id, resolved)
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(str(job.id), variant_id, timeline_override=resolved)
+
+
+async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession) -> None:
+    """Drop the user timeline (row-locked) and re-render from the AI timeline."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not getattr(settings, "generative_timeline_editor_enabled", True):
+        raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
+    variant = require_editable_variant(job, variant_id)
+    if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
+        raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
+    ai_slots, _, _ = _timeline_parts(variant)
+    if not ai_slots:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "no_timeline")
+
+    await persist_user_timeline(db, str(job.id), variant_id, None)
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    # Pass the AI slots as the override: the regenerate path is identical to an
+    # edit, just sourced from the AI's own plan (simplest reset contract).
+    regenerate_generative_variant.delay(
+        str(job.id), variant_id, timeline_override=[dict(s) for s in ai_slots]
+    )
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -737,6 +1135,53 @@ async def edit_variant(
         style_set_id=req.style_set_id,
         text_size_px=req.text_size_px,
     )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.get("/{job_id}/variants/{variant_id}/timeline", response_model=TimelineResponse)
+async def get_variant_timeline(
+    job_id: str,
+    variant_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> TimelineResponse:
+    """The variant's effective clip timeline + the job's full clip pool.
+
+    Readable for the same modes as the status endpoint (the plan item page opens
+    the same editor). `editable=false` carries a `reason` instead of erroring.
+    """
+    job = await _load_generative_job(job_id, db, allowed_modes=_READABLE_MODES)
+    return TimelineResponse(**dispatch_get_timeline(job, variant_id))
+
+
+@router.post("/{job_id}/variants/{variant_id}/timeline", response_model=GenerativeJobResponse)
+async def edit_variant_timeline(
+    job_id: str,
+    variant_id: str,
+    req: TimelineEditRequest,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Persist a user-edited clip timeline and re-render the variant from it."""
+    job = await _load_generative_job(job_id, db)
+    await dispatch_edit_timeline(job, variant_id, req, db=db)
+    log.info(
+        "generative_edit_timeline",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        slots=len(req.slots),
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.delete("/{job_id}/variants/{variant_id}/timeline", response_model=GenerativeJobResponse)
+async def reset_variant_timeline(
+    job_id: str,
+    variant_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Discard the user timeline and re-render the variant from the AI timeline."""
+    job = await _load_generative_job(job_id, db)
+    await dispatch_reset_timeline(job, variant_id, db=db)
+    log.info("generative_reset_timeline", job_id=str(job.id), variant_id=variant_id)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
 

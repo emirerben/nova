@@ -30,7 +30,12 @@ from app.routes.generative_jobs import (
     RetextRequest,
     SetIntroSizeRequest,
     SwapSongRequest,
+    TimelineEditRequest,
+    TimelineResponse,
     dispatch_change_style,
+    dispatch_edit_timeline,
+    dispatch_get_timeline,
+    dispatch_reset_timeline,
     dispatch_retext,
     dispatch_set_intro_size,
     dispatch_swap_song,
@@ -510,6 +515,47 @@ async def set_item_intro_size(
     log.info(
         "plan_item_set_intro_size", item_id=item_id, variant_id=variant_id, px=req.text_size_px
     )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.get("/{item_id}/variants/{variant_id}/timeline", response_model=TimelineResponse)
+async def get_item_timeline(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TimelineResponse:
+    """The effective clip timeline of one of this item's variants (+ clip pool)."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    return TimelineResponse(**dispatch_get_timeline(job, variant_id))
+
+
+@router.post("/{item_id}/variants/{variant_id}/timeline", response_model=PlanItemResponse)
+async def edit_item_timeline(
+    item_id: str,
+    variant_id: str,
+    req: TimelineEditRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Persist a user-edited clip timeline for one of this item's variants + re-render."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await dispatch_edit_timeline(job, variant_id, req, db=db)
+    log.info("plan_item_edit_timeline", item_id=item_id, variant_id=variant_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.delete("/{item_id}/variants/{variant_id}/timeline", response_model=PlanItemResponse)
+async def reset_item_timeline(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Discard the user timeline on one of this item's variants + re-render from AI."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await dispatch_reset_timeline(job, variant_id, db=db)
+    log.info("plan_item_reset_timeline", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
