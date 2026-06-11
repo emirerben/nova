@@ -11,6 +11,7 @@ import {
   medianDefaultDuration,
   remainingBeats,
   slotWindows,
+  totalBeats,
   totalDurationS,
   type DraftSlot,
 } from "@/app/generative/timeline-math";
@@ -145,6 +146,59 @@ describe("slotWindows beat walk (non-uniform grid)", () => {
     expect(windows.map((w) => w.durationS)).toEqual([2, 2, 2]);
     expect(windows[2].startS).toBeCloseTo(4);
     expect(totalDurationS(state.slots, [])).toBeCloseTo(6);
+  });
+});
+
+// ── Null-beats slots on a grid timeline (footage-trimmed AI slots) ────────────
+
+describe("null-beats slots on a grid timeline", () => {
+  /** s2 becomes a footage-trimmed slot: exact seconds window, no beat count —
+   * the worker's `duration_beats: null` shape on song variants. */
+  function mixedTimeline(): TimelineResponse {
+    const t = gridTimeline();
+    t.slots[1] = { ...t.slots[1], duration_beats: null, duration_s: 1.137 };
+    return t;
+  }
+
+  it("walks at duration_s without consuming grid beats", () => {
+    const state = init(mixedTimeline());
+    const windows = slotWindows(state.slots, GRID);
+    // s1: offset 0, 2 beats → 1.2
+    expect(windows[0].durationS).toBeCloseTo(1.2);
+    // s2: exact window straight from duration_s; off the grid
+    expect(windows[1].durationS).toBeCloseTo(1.137);
+    expect(windows[1].offsetBeats).toBeNull();
+    expect(windows[1].startS).toBeCloseTo(1.2);
+    // s3 keeps walking from offset 2 — s2 consumed NO beats: grid[4]-grid[2] = 1.3
+    expect(windows[2].durationS).toBeCloseTo(1.3);
+    expect(windows[2].offsetBeats).toBe(2);
+    expect(totalBeats(state.slots)).toBe(4);
+    expect(totalDurationS(state.slots, GRID)).toBeCloseTo(1.2 + 1.137 + 1.3);
+  });
+
+  it("NUDGE steps duration_s ±0.5 from the AI base (no 0.5-multiple requirement)", () => {
+    let state = init(mixedTimeline());
+    state = run(state, { type: "NUDGE", key: "s2", delta: 1 });
+    expect(state.slots[1].durationS).toBeCloseTo(1.637);
+    expect(state.slots[1].durationBeats).toBeNull();
+    state = run(state, { type: "NUDGE", key: "s2", delta: -1 }, { type: "NUDGE", key: "s2", delta: -1 });
+    expect(state.slots[1].durationS).toBeCloseTo(0.637);
+    // 0.637 - 0.5 = 0.137 < 0.6 floor → clamped, flash
+    const before = state.clampNonce;
+    state = run(state, { type: "NUDGE", key: "s2", delta: -1 });
+    expect(state.slots[1].durationS).toBeCloseTo(0.637);
+    expect(state.clampNonce).toBe(before + 1);
+    expect(state.clampedKey).toBe("s2");
+  });
+
+  it("NUDGE + clamps at the source clip duration", () => {
+    let state = init(mixedTimeline());
+    // s2's source clip is 6s; growing from 1.137 stops at 5.637.
+    for (let i = 0; i < 12; i++) {
+      state = run(state, { type: "NUDGE", key: "s2", delta: 1 });
+    }
+    expect(state.slots[1].durationS).toBeCloseTo(5.637);
+    expect(state.clampedKey).toBe("s2");
   });
 });
 

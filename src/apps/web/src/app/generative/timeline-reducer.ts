@@ -133,9 +133,8 @@ export function timelineReducer(state: EditorState, action: EditorAction): Edito
       const slot = state.slots.find((s) => s.key === action.key);
       if (!slot || slot.removed) return state;
 
-      if (state.grid.length > 0) {
-        const beats = slot.durationBeats ?? 0;
-        const nextBeats = beats + action.delta;
+      if (state.grid.length > 0 && slot.durationBeats != null) {
+        const nextBeats = slot.durationBeats + action.delta;
         if (nextBeats < 1) return clampFlash(state, action.key);
         if (
           action.delta > 0 &&
@@ -152,12 +151,22 @@ export function timelineReducer(state: EditorState, action: EditorAction): Edito
         if (src != null && newWindow > src + 1e-6) {
           return clampFlash(state, action.key);
         }
+        // The 60s product cap holds in grid mode too.
+        if (
+          action.delta > 0 &&
+          totalDurationS(next, state.grid) > MAX_TOTAL_SECONDS + 1e-6
+        ) {
+          return clampFlash(state, action.key);
+        }
         return withHistory(state, reclampInPoints(state, next));
       }
 
-      // Seconds mode: 0.5s steps, 0.6s floor, total ≤ 60s.
+      // Seconds slot (no-grid variants, or null-beats footage-trimmed slots on
+      // grid variants): ±0.5s from the CURRENT value — no multiple-of-0.5
+      // requirement, so AI bases like 1.137 nudge to 1.637. 0.6s floor, source
+      // fit, total ≤ 60s.
       const dur = slot.durationS ?? 0;
-      const nextDur = Math.round((dur + action.delta * SECONDS_STEP) * 10) / 10;
+      const nextDur = Math.round((dur + action.delta * SECONDS_STEP) * 1000) / 1000;
       if (nextDur < SECONDS_FLOOR) return clampFlash(state, action.key);
       const src = sourceDuration(state, slot);
       if (src != null && nextDur > src + 1e-6) return clampFlash(state, action.key);
@@ -224,7 +233,28 @@ export function timelineReducer(state: EditorState, action: EditorAction): Edito
       if (state.grid.length > 0) {
         const available = maxGridBeats(state.grid) - totalBeats(state.slots);
         if (available < 1) return clampFlash(state, null);
-        durationBeats = Math.min(durationBeats ?? 1, available);
+        let beats = Math.min(durationBeats ?? 1, available);
+        // The appended slot starts where the walk ends (null-beats slots never
+        // advance the offset).
+        const offset = totalBeats(state.slots);
+        const windowAt = (b: number) =>
+          state.grid[Math.min(offset + b, state.grid.length - 1)] -
+          state.grid[Math.min(offset, state.grid.length - 1)];
+        // Source fit: clamp the default window to the chosen clip's duration
+        // (consistent with NUDGE's source-fit policy).
+        const srcDur = state.clipDurations[action.clipIndex];
+        if (srcDur != null) {
+          while (beats > 1 && windowAt(beats) > srcDur + 1e-6) beats -= 1;
+          if (windowAt(beats) > srcDur + 1e-6) return clampFlash(state, null);
+        }
+        // The 60s product cap holds in grid mode too.
+        if (
+          totalDurationS(state.slots, state.grid) + windowAt(beats) >
+          MAX_TOTAL_SECONDS + 1e-6
+        ) {
+          return clampFlash(state, null);
+        }
+        durationBeats = beats;
       } else {
         const room = MAX_TOTAL_SECONDS - totalDurationS(state.slots, state.grid);
         if (room < SECONDS_FLOOR) return clampFlash(state, null);

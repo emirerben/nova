@@ -1277,6 +1277,31 @@ def _prepare_timeline_assembly(
     clip_id_to_local = {f"clip_{i}": path for i, path in zip(used_indices, local_paths)}
     clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
 
+    # Clamp every window against the REAL probed duration — the route skips
+    # bounds checks on clips the AI never probed (its comment promises "the
+    # worker's probe will clamp"; this is that clamp). Slots that collapse
+    # below 0.1s after clamping are dropped with a warning.
+    clamped: list[tuple[int, float, float, Any, Any]] = []
+    for clip_index, in_s, duration_s, moment_energy, moment_description in resolved:
+        probe = probe_map.get(clip_id_to_local[f"clip_{clip_index}"])
+        probe_duration = float(getattr(probe, "duration_s", 0.0) or 0.0)
+        if probe_duration > 0:
+            in_s = min(in_s, max(0.0, probe_duration - 0.1))
+            end = min(in_s + duration_s, probe_duration)
+            duration_s = end - in_s
+        if duration_s < 0.1:
+            log.warning(
+                "generative_timeline_slot_clamped_away",
+                job_id=job_id,
+                clip_index=clip_index,
+                in_s=in_s,
+                probe_duration_s=probe_duration,
+            )
+            continue
+        clamped.append((clip_index, in_s, duration_s, moment_energy, moment_description))
+    if not clamped:
+        return None
+
     from app.pipeline.agents.gemini_analyzer import AssemblyStep  # noqa: PLC0415
 
     steps = [
@@ -1298,7 +1323,7 @@ def _prepare_timeline_assembly(
             },
         )
         for i, (clip_index, in_s, duration_s, moment_energy, moment_description) in enumerate(
-            resolved
+            clamped
         )
     ]
     return {
@@ -1399,8 +1424,17 @@ def _run_regenerate_variant(
     # Precedence: explicit timeline_override kwarg → the variant's persisted
     # user_timeline → None (fresh match, today's behavior). Slots marked
     # `removed` are dropped; the rest render in list order.
+    #
+    # Swap-song exception: a new track means a new beat grid, so the user's cut
+    # no longer lines up with the music. Clear the persisted user_timeline and
+    # force a fresh match — this is the contract the frontend ConfirmDialog
+    # states ("your clip edits will be reset") and docs/pipelines/generative.md
+    # documents.
+    if new_track_id is not None:
+        timeline_override = None
+        _clear_user_timeline(job_id, variant_id)
     active_timeline_slots: list[dict] | None = None
-    if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
+    if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and new_track_id is None:
         raw_timeline_slots = timeline_override
         if raw_timeline_slots is None:
             raw_timeline_slots = (existing.get("user_timeline") or {}).get("slots") or None
@@ -1689,6 +1723,30 @@ def _upsert_variant_entry(job_id: str, result: dict[str, Any]) -> None:
                 break
         else:
             variants.append(result)
+        plan["variants"] = variants
+        job.assembly_plan = plan
+        db.commit()
+
+
+def _clear_user_timeline(job_id: str, variant_id: str) -> None:
+    """Remove the persisted `user_timeline` key from one variant entry (row-locked).
+
+    `_update_variant_entry` can only merge keys, never drop them — swap-song
+    needs a true removal so the variant reads as "no user edits" afterwards
+    (mirrors `persist_user_timeline(..., None)` on the route side).
+    """
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        plan = dict(job.assembly_plan or {})
+        variants = list(plan.get("variants") or [])
+        for i, v in enumerate(variants):
+            if v.get("variant_id") == variant_id and "user_timeline" in v:
+                updated = dict(v)
+                updated.pop("user_timeline", None)
+                variants[i] = updated
+                break
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
@@ -2401,20 +2459,31 @@ def _render_generative_variant(
             resolved_plans_out=resolved_plans,
         )
 
-        # ai_timeline persistence (clip timeline editor): written on EVERY full
-        # montage assembly, so swap-song/mix/timeline re-renders rewrite it.
+        # ai_timeline persistence (clip timeline editor): rewritten on every
+        # FRESH montage assembly (first render, swap-song, mix re-render), so
+        # the stored AI cut tracks what the matcher actually produced.
         # Voiceover variants are skipped — the voice, not a slot grid, drives
         # their layout. `beats` is the section-relative grid this assembly
         # snapped against (empty for the no-music variant).
+        #
+        # Override path (user timeline render): the steps ARE the user's cut,
+        # not an AI cut — rebuilding here would make "Reset to AI cut" re-render
+        # the user's own edit. Pop the key so `_update_variant_entry`'s
+        # {**v, **patch} merge carries the variant's persisted ai_timeline
+        # forward untouched (writing None instead would null the stored
+        # timeline and flip the variant uneditable).
         if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and not voiceover_gcs_path:
-            base["ai_timeline"] = _build_ai_timeline(
-                steps=steps,
-                resolved_plans=resolved_plans,
-                clip_id_to_gcs=clip_id_to_gcs,
-                clip_id_to_local=clip_id_to_local,
-                probe_map=probe_map,
-                beat_grid=beats,
-            )
+            if assembly_steps_override is not None:
+                base.pop("ai_timeline", None)
+            else:
+                base["ai_timeline"] = _build_ai_timeline(
+                    steps=steps,
+                    resolved_plans=resolved_plans,
+                    clip_id_to_gcs=clip_id_to_gcs,
+                    clip_id_to_local=clip_id_to_local,
+                    probe_map=probe_map,
+                    beat_grid=beats,
+                )
 
         # audio_mixed_path: the assembled+audio-mixed video before text burn.
         # For agent_text variants this becomes the cached base.

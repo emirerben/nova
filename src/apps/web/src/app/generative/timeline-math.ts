@@ -4,9 +4,10 @@
  *
  * Beat math contract (matches the backend): the beat grid is NON-uniform.
  * Slot i's seconds = grid[offset + duration_beats] - grid[offset], where
- * offset is the cumulative beats of all PRIOR non-removed slots. When the
- * grid is empty (original_text variants) duration_s is authoritative:
- * 0.5s steps, 0.6s floor, total ≤ 60s.
+ * offset is the cumulative beats of all PRIOR non-removed beats-bearing
+ * slots. Slots with duration_beats null (no-grid variants, or footage-trimmed
+ * slots on grid variants) use duration_s directly and never advance the
+ * offset. Nudges step 0.5s with a 0.6s floor; total ≤ 60s.
  */
 
 import type { TimelineResponse, TimelineSlot } from "@/lib/generative-api";
@@ -66,6 +67,9 @@ export interface SlotWindow {
  * Walk the (non-uniform) beat grid across the non-removed slots, in order.
  * Returns one window per slot, aligned by index with the input array.
  * No-grid mode (empty grid): durations come straight from durationS.
+ * Null-beats slots on a GRID timeline (footage-trimmed AI slots) also use
+ * durationS directly and do NOT advance the grid offset — mirrors the server
+ * walk in dispatch_edit_timeline.
  */
 export function slotWindows(slots: DraftSlot[], grid: number[]): SlotWindow[] {
   const out: SlotWindow[] = [];
@@ -77,8 +81,8 @@ export function slotWindows(slots: DraftSlot[], grid: number[]): SlotWindow[] {
       out.push({ startS: null, durationS: 0, offsetBeats: null });
       continue;
     }
-    if (hasGrid) {
-      const beats = slot.durationBeats ?? 0;
+    if (hasGrid && slot.durationBeats != null) {
+      const beats = slot.durationBeats;
       const from = grid[Math.min(offset, grid.length - 1)];
       const to = grid[Math.min(offset + beats, grid.length - 1)];
       const dur = Math.max(0, to - from);

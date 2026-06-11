@@ -56,6 +56,13 @@ AI's assembly decisions, not pixels.
   locked-branch window arithmetic WITHOUT the letterbox output fit.
 - **Resolution order:** explicit `timeline_override` kwarg → persisted `user_timeline` →
   fresh match. Retext/restyle/mix re-renders therefore honor clip edits.
+  **Swap-song exception:** a `new_track_id` clears the persisted `user_timeline` and
+  forces a fresh match (the override is ignored) — a new track means a new beat grid, so
+  the old cut can't line up. Matches the frontend ConfirmDialog copy ("your clip edits
+  will be reset").
+- **ai_timeline carry-forward:** an override render persists NO `ai_timeline` (the key is
+  popped from the success patch) — the steps are the USER's cut, and "Reset to AI cut"
+  must keep pointing at the real AI plan. Only fresh-match assemblies rewrite it.
 - **Durable sources:** at orchestrate start, uploads are copied to
   `generative-jobs/{job_id}/sources/` (order-preserving rewrite of
   `all_candidates["clip_paths"]` — narrative order slices the first N keys, so order is

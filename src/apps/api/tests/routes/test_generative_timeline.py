@@ -103,10 +103,10 @@ def _timeline_job(
 def _set_flag(monkeypatch, enabled: bool) -> None:
     from app.config import settings
 
-    # Patch the instance __dict__ (where pydantic v2 stores field values): plain
-    # setattr raises on an unknown field, and lane 2 adds the real field in a
-    # parallel branch — this works both before AND after it lands.
-    monkeypatch.setitem(settings.__dict__, "generative_timeline_editor_enabled", enabled)
+    # Patch the REAL (case-sensitive, UPPERCASE) pydantic field — the routes read
+    # `settings.GENERATIVE_TIMELINE_EDITOR_ENABLED` directly. A lowercase patch
+    # here would pass trivially against dead getattr-with-default code.
+    monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", enabled)
 
 
 def _arm(monkeypatch, *, enabled=True, object_exists=True):
@@ -379,13 +379,48 @@ async def test_edit_unknown_clip_index(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_edit_beats_required_on_grid_variant(monkeypatch):
+async def test_edit_grid_slot_without_beats_or_seconds_invalid(monkeypatch):
+    # INVALID_DURATION only when BOTH duration_beats and duration_s are unusable.
     await _expect_422(
         monkeypatch,
         _timeline_job(),
-        [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 1.0}],  # no beats
+        [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0}],  # neither field
         "TIMELINE_INVALID_DURATION",
     )
+
+
+@pytest.mark.asyncio
+async def test_edit_grid_slot_with_nonpositive_values_invalid(monkeypatch):
+    await _expect_422(
+        monkeypatch,
+        _timeline_job(),
+        [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 0, "duration_s": 0.0}],
+        "TIMELINE_INVALID_DURATION",
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_grid_null_beats_slot_uses_duration_s_and_skips_grid(monkeypatch):
+    # B2: a footage-trimmed slot (duration_beats null) on a GRID variant carries
+    # its exact window in duration_s and must NOT walk or advance the grid —
+    # the next beats slot still starts at offset 0.
+    seq, _, delays = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        _timeline_job(),
+        "song_text",
+        _req(
+            [
+                {"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 1.137},
+                {"slot_id": "s2", "clip_index": 1, "in_s": 1.0, "duration_beats": 2},
+            ]
+        ),
+        db=None,
+    )
+    override = delays[0][1]["timeline_override"]
+    assert override[0]["duration_s"] == pytest.approx(1.137)
+    assert override[0]["duration_beats"] is None
+    # s2 walked from offset 0 (null-beats slot consumed no beats): grid[2]-grid[0].
+    assert override[1]["duration_s"] == pytest.approx(1.1)
 
 
 @pytest.mark.asyncio
@@ -438,13 +473,17 @@ async def test_edit_no_grid_requires_duration_s(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_edit_no_grid_rejects_off_step_duration(monkeypatch):
-    await _expect_422(
-        monkeypatch,
+async def test_edit_no_grid_accepts_off_step_duration(monkeypatch):
+    # B2: NO 0.5-step requirement — original_text AI durations are round(x, 3)
+    # and almost never 0.5-multiples; exact windows need no server quantization.
+    seq, _, delays = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
         _timeline_job(beat_grid=[]),
-        [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 1.3}],  # not 0.5-step
-        "TIMELINE_INVALID_DURATION",
+        "song_text",
+        _req([{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 1.3}]),
+        db=None,
     )
+    assert delays[0][1]["timeline_override"][0]["duration_s"] == pytest.approx(1.3)
 
 
 @pytest.mark.asyncio
@@ -461,13 +500,40 @@ async def test_edit_no_grid_accepts_half_steps(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_edit_too_short_floor(monkeypatch):
-    # 1 beat from grid start = 0.5s < the 0.6s floor.
+    # 1 beat from grid start = 0.5s < the 0.6s floor; the slot's window CHANGED
+    # (baseline s1 is 2 beats), so the floor applies.
     await _expect_422(
         monkeypatch,
         _timeline_job(),
         [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 1}],
         "TIMELINE_TOO_SHORT",
     )
+
+
+@pytest.mark.asyncio
+async def test_edit_floor_skipped_for_untouched_sub_floor_slot(monkeypatch):
+    # B2: the worker legitimately produces sub-0.6s slots (1 beat at fast BPM).
+    # An UNTOUCHED slot (same slot_id + in_s + duration_beats as the baseline)
+    # must never trip the floor on round-trip.
+    fast_grid = [0.0, 0.45, 0.9, 1.35]
+    job = _timeline_job(beat_grid=fast_grid)
+    variant = job.assembly_plan["variants"][0]
+    variant["ai_timeline"]["slots"][0].update({"duration_beats": 1, "duration_s": 0.45})
+    variant["ai_timeline"]["slots"][1].update({"duration_beats": 2, "duration_s": 0.9})
+    seq, _, delays = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        job,
+        "song_text",
+        _req(
+            [
+                {"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 1},
+                {"slot_id": "s2", "clip_index": 1, "in_s": 1.0, "duration_beats": 2},
+            ]
+        ),
+        db=None,
+    )
+    assert seq == ["persist", "enqueue"]
+    assert delays[0][1]["timeline_override"][0]["duration_s"] == pytest.approx(0.45)
 
 
 @pytest.mark.asyncio
@@ -650,6 +716,29 @@ async def test_reset_without_ai_timeline_422(monkeypatch):
     assert seq == []
 
 
+@pytest.mark.asyncio
+async def test_reset_ineligible_lyrics_variant_422(monkeypatch):
+    # M3: reset runs the SAME eligibility gate as POST — a lyrics variant must
+    # not be re-renderable through the reset endpoint either.
+    seq, _, _ = _arm(monkeypatch)
+    job = _timeline_job(variant_id="song_lyrics", text_mode="lyrics")
+    with pytest.raises(HTTPException) as exc:
+        await gj.dispatch_reset_timeline(job, "song_lyrics", db=None)
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "lyrics_sync"}
+    assert seq == []
+
+
+@pytest.mark.asyncio
+async def test_reset_expired_sources_422(monkeypatch):
+    seq, _, _ = _arm(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        await gj.dispatch_reset_timeline(_timeline_job(durable=False), "song_text", db=None)
+    assert exc.value.status_code == 422
+    assert exc.value.detail == {"code": "sources_expired"}
+    assert seq == []
+
+
 # ── persist_user_timeline (real function, fake row-locked session) ──────────────
 
 
@@ -732,3 +821,102 @@ def test_rendering_variant_keeps_stored_url(monkeypatch):
     monkeypatch.setattr(gj, "signed_get_url", lambda p, t: f"https://fresh.example/{p}")
     out = gj._variants_for_response(_last_good_job("rendering"))
     assert out[0]["output_url"] == "https://stale.example/expired"
+
+
+# ── Regression lock: unmodified GET→POST round-trip must never 422 ───────────────
+# The worker's ai_timeline legitimately contains slots route validation used to
+# reject: `duration_beats: null` footage-trimmed slots, round(x, 3) durations
+# like 1.137 that are no 0.5-multiple, and sub-0.6s 1-beat slots at fast BPM.
+# Feeding the GET's effective timeline straight back through POST (exactly what
+# the frontend does on an untouched draft) must succeed and enqueue.
+
+
+def _frontend_payload(slots: list[dict]) -> list[dict]:
+    """Mirror TimelineEditor.buildPayload: beats slots post beats only; null-beats
+    slots post their exact duration_s."""
+    return [
+        {
+            "slot_id": s["slot_id"],
+            "clip_index": s["clip_index"],
+            "in_s": round(float(s["in_s"]), 3),
+            "duration_beats": s.get("duration_beats"),
+            "duration_s": s["duration_s"] if s.get("duration_beats") is None else None,
+            "removed": bool(s.get("removed") or False),
+        }
+        for s in slots
+    ]
+
+
+def _worker_slot(slot_id, clip_index, prefix, *, in_s, duration_s, duration_beats, src_dur):
+    return {
+        "slot_id": slot_id,
+        "clip_index": clip_index,
+        "source_gcs_path": f"{prefix}clip_{clip_index}.mp4",
+        "source_duration_s": src_dur,
+        "in_s": in_s,
+        "duration_s": duration_s,
+        "duration_beats": duration_beats,
+        "order": 0,
+        "moment_energy": 5.0,
+        "moment_description": None,
+    }
+
+
+def _realistic_job(*, variant_id: str, grid: list[float]):
+    job = _timeline_job(variant_id=variant_id, beat_grid=grid)
+    prefix = f"generative-jobs/{job.id}/sources/"
+    if grid:
+        # Fast-BPM song_text: a sub-floor 1-beat slot, a footage-trimmed
+        # null-beats slot with a non-0.5-multiple duration, and a 3-beat slot.
+        slots = [
+            _worker_slot(
+                "s1", 0, prefix, in_s=2.4, duration_s=0.45, duration_beats=1, src_dur=10.0
+            ),
+            _worker_slot(
+                "s2", 1, prefix, in_s=0.0, duration_s=1.137, duration_beats=None, src_dur=1.137
+            ),
+            _worker_slot("s3", 2, prefix, in_s=1.2, duration_s=1.35, duration_beats=3, src_dur=8.0),
+        ]
+    else:
+        # original_text: every duration is round(x, 3) — none are 0.5-multiples,
+        # one is a sub-floor footage trim.
+        slots = [
+            _worker_slot(
+                "s1", 0, prefix, in_s=0.8, duration_s=1.137, duration_beats=None, src_dur=10.0
+            ),
+            _worker_slot(
+                "s2", 1, prefix, in_s=0.0, duration_s=2.503, duration_beats=None, src_dur=6.0
+            ),
+            _worker_slot(
+                "s3", 2, prefix, in_s=0.0, duration_s=0.583, duration_beats=None, src_dur=0.583
+            ),
+        ]
+    job.assembly_plan["variants"][0]["ai_timeline"]["slots"] = slots
+    return job
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("variant_id", "grid"),
+    [
+        ("song_text", [0.0, 0.45, 0.9, 1.35, 1.8, 2.25, 2.7, 3.15]),  # fast BPM
+        ("original_text", []),  # no grid
+    ],
+)
+async def test_unmodified_roundtrip_get_then_post_succeeds(monkeypatch, variant_id, grid):
+    seq, persists, delays = _arm(monkeypatch)
+    monkeypatch.setattr(gj, "signed_get_url", lambda p, t: f"https://fresh.example/{p}")
+    job = _realistic_job(variant_id=variant_id, grid=grid)
+
+    out = gj.dispatch_get_timeline(job, variant_id)
+    assert out["editable"] is True
+
+    await gj.dispatch_edit_timeline(job, variant_id, _req(_frontend_payload(out["slots"])), db=None)
+
+    assert seq == ["persist", "enqueue"]
+    override = delays[0][1]["timeline_override"]
+    assert [s["slot_id"] for s in override] == ["s1", "s2", "s3"]
+    # Null-beats slots round-trip their exact window; beats slots re-derive from
+    # the same grid at the same offsets.
+    expected = [s["duration_s"] for s in job.assembly_plan["variants"][0]["ai_timeline"]["slots"]]
+    assert [s["duration_s"] for s in override] == [pytest.approx(d) for d in expected]

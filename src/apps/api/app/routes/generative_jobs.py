@@ -203,14 +203,12 @@ class EditVariantRequest(BaseModel):
 
 _TIMELINE_MAX_SLOTS = 50
 # Server-side guardrails on a user-edited timeline. The floor keeps a slot long
-# enough to register as a cut (and clear of xfade window collapse); the ceiling
-# matches the product's sub-60s short-form contract.
+# enough to register as a cut (and clear of xfade window collapse); it applies
+# only to slots whose window the user CHANGED — the worker itself produces
+# sub-floor slots (1 beat at fast BPM, footage trims) that must round-trip.
+# The ceiling matches the product's sub-60s short-form contract.
 TIMELINE_MIN_SLOT_S = 0.6
 TIMELINE_MAX_TOTAL_S = 60.0
-# No-music variants have no beat grid to quantize against — durations snap to a
-# 0.5s step instead (±1ms float tolerance for JSON round-trips).
-TIMELINE_STEP_S = 0.5
-_TIMELINE_STEP_TOL_S = 0.001
 # Only the montage text variants carry a user-editable slot timeline. Lyrics are
 # beat/line synced (re-cutting breaks sync), voiceover variants are fit to the
 # voice bed, talking_head has no slot layout at all.
@@ -222,8 +220,9 @@ class TimelineSlotEdit(BaseModel):
 
     `slot_id=None` marks a NEW slot (the server assigns a uuid4). `clip_index`
     indexes into `job.all_candidates["clip_paths"]` — clients never send paths.
-    Beat variants size slots in `duration_beats` (walked against the real grid);
-    no-grid variants send `duration_s` in 0.5s steps.
+    Beat slots size in `duration_beats` (walked against the real grid); slots
+    with `duration_beats=None` (no-grid variants, or footage-trimmed slots on
+    grid variants) send their exact window in `duration_s`.
     """
 
     slot_id: str | None = None
@@ -634,9 +633,7 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
     """First matching reason this variant's timeline can't be edited, or None."""
     from app.config import settings  # noqa: PLC0415
 
-    # getattr default True: tolerate deploy skew where the lane-2 flag hasn't
-    # landed yet — absence of the kill switch must not read as "killed".
-    if not getattr(settings, "generative_timeline_editor_enabled", True):
+    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         return "disabled"
     vid = str(variant.get("variant_id") or "")
     if vid == "song_lyrics" or variant.get("text_mode") == "lyrics":
@@ -755,7 +752,7 @@ async def dispatch_edit_timeline(
     """
     from app.config import settings  # noqa: PLC0415
 
-    if not getattr(settings, "generative_timeline_editor_enabled", True):
+    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
     variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 rendering
     # A timeline re-render re-cuts from the shared per-job sources; let any in-flight
@@ -800,21 +797,45 @@ async def dispatch_edit_timeline(
         if is_ai:
             meta_by_idx.setdefault(idx, s)
 
+    # Baseline windows (current user_timeline if present, else ai_timeline) keyed
+    # by slot_id: the 0.6s floor only applies to slots whose window CHANGED — the
+    # worker legitimately produces sub-floor slots (1 beat at fast BPM, footage
+    # trims), and an unmodified round-trip must never 422.
+    baseline_by_id = {
+        s.get("slot_id"): s for s in (user_slots if user_slots else ai_slots) if s.get("slot_id")
+    }
+
+    def _window_changed(e: TimelineSlotEdit) -> bool:
+        # Compares the POSTED knobs (in_s + duration_beats, or in_s + duration_s
+        # for seconds slots) — NOT grid-derived seconds, which legitimately
+        # drift from the stored duration by up to the worker's 0.05s beat-span
+        # tolerance and would falsely flag untouched slots as edited.
+        base = baseline_by_id.get(e.slot_id)
+        if base is None:
+            return True  # new slot — always a user choice
+        if base.get("duration_beats") != e.duration_beats:
+            return True
+        base_in = base.get("in_s")
+        if base_in is None or abs(float(base_in) - e.in_s) > 1e-6:
+            return True
+        if e.duration_beats is None:
+            base_dur = base.get("duration_s")
+            if base_dur is None or e.duration_s is None:
+                return True
+            return abs(float(base_dur) - float(e.duration_s)) > 1e-6
+        return False
+
     resolved: list[dict] = []
     grid_offset = 0  # cumulative beat cursor — grids are NOT uniform
     total = 0.0
     for order, e in enumerate(payload.slots):
         duration_s = e.duration_s
         if not e.removed:
-            if beat_grid:
-                # Beat variant: walk the REAL grid cumulatively. Slot i's duration is
+            if beat_grid and e.duration_beats is not None and e.duration_beats >= 1:
+                # Beat slot: walk the REAL grid cumulatively. Slot i's duration is
                 # grid[offset+beats] - grid[offset]; the offset then advances, so the
                 # same `duration_beats` can yield different seconds at different
                 # positions (non-uniform grids).
-                if e.duration_beats is None or e.duration_beats < 1:
-                    raise _timeline_error(
-                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
-                    )
                 end = grid_offset + e.duration_beats
                 if end > len(beat_grid) - 1:
                     raise _timeline_error(
@@ -822,19 +843,20 @@ async def dispatch_edit_timeline(
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
-            else:
-                # No grid (original-audio / unmatched): free seconds in 0.5 steps.
-                if e.duration_s is None:
-                    raise _timeline_error(
-                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
-                    )
-                steps = round(e.duration_s / TIMELINE_STEP_S)
-                if abs(e.duration_s - steps * TIMELINE_STEP_S) > _TIMELINE_STEP_TOL_S:
-                    raise _timeline_error(
-                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
-                    )
+            elif e.duration_s is not None and e.duration_s > 0:
+                # Seconds slot: `duration_s` is the authoritative exact window. This
+                # covers no-grid variants AND footage-trimmed slots on grid variants
+                # (the worker's `duration_beats: null` slots) — those never walk the
+                # grid and don't advance the cursor. No step-multiple requirement:
+                # the worker emits round(x, 3) durations and the render is an exact
+                # window either way (quantization is a frontend nudge concern).
                 duration_s = float(e.duration_s)
-            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
+            else:
+                # Neither a usable beat count nor a usable duration.
+                raise _timeline_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
+                )
+            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9 and _window_changed(e):
                 raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
             total += duration_s
             # Bounds against the probed source duration. New clips the AI never
@@ -888,14 +910,17 @@ async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession
     """Drop the user timeline (row-locked) and re-render from the AI timeline."""
     from app.config import settings  # noqa: PLC0415
 
-    if not getattr(settings, "generative_timeline_editor_enabled", True):
+    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
     variant = require_editable_variant(job, variant_id)
     if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
         raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
+    # Same eligibility gate as POST: a reset re-render on a lyrics/voiceover/
+    # expired variant would render from a layout the variant doesn't have.
+    reason = _timeline_ineligibility(job, variant)
+    if reason is not None:
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
     ai_slots, _, _ = _timeline_parts(variant)
-    if not ai_slots:
-        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "no_timeline")
 
     await persist_user_timeline(db, str(job.id), variant_id, None)
 

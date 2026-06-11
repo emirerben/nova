@@ -302,6 +302,7 @@ export type TimelineUneditableReason =
   | "lyrics_sync"
   | "no_slot_timeline"
   | "voiceover_bed_fit"
+  | "unsupported_variant"
   | "no_timeline"
   | "sources_expired";
 
@@ -312,6 +313,7 @@ export type TimelineErrorCode =
   | "JOB_BUSY"
   | "TIMELINE_OUT_OF_BOUNDS"
   | "TIMELINE_TOO_SHORT"
+  | "TIMELINE_INVALID_DURATION"
   | "TIMELINE_EMPTY"
   | "TIMELINE_UNKNOWN_CLIP"
   | "TIMELINE_BEATS_EXHAUSTED"
@@ -322,7 +324,8 @@ export interface TimelineSlot {
   slot_id: string;
   clip_index: number;
   source_gcs_path: string;
-  source_duration_s: number;
+  /** null for clips the worker never probed (e.g. user-added pool clips). */
+  source_duration_s: number | null;
   in_s: number;
   duration_s: number;
   /** null on no-grid (original_text) timelines — duration_s is authoritative. */
@@ -335,7 +338,8 @@ export interface TimelineSlot {
 
 export interface TimelineClip {
   clip_index: number;
-  signed_url: string;
+  /** null when signing failed server-side — the editor still opens. */
+  signed_url: string | null;
   duration_s: number | null;
   used: boolean;
 }

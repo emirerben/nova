@@ -536,17 +536,23 @@ def test_timeline_override_kwarg_beats_persisted_user_timeline(monkeypatch):
 
 def test_persisted_user_timeline_drops_removed_and_honors_order(monkeypatch):
     """No kwarg → persisted user_timeline drives assembly: removed slots are
-    dropped and the remaining slots render in list order. A fresh ai_timeline
-    from THIS assembly is persisted."""
+    dropped and the remaining slots render in list order. The variant's
+    persisted ai_timeline is CARRIED FORWARD — the override steps are the
+    USER's cut, not an AI cut, so rebuilding ai_timeline here would make
+    "Reset to AI cut" re-render the user's own edit (B3). Carry-forward =
+    the key is ABSENT from the success patch ({**v, **patch} keeps the stored
+    value); it must never be None (that would flip the variant uneditable)."""
     assembled: list = []
+    ai_marker = {"beat_grid": [], "slots": [{"slot_id": "ai-s1", "clip_index": 0}]}
     variant = _existing_variant(
+        ai_timeline=ai_marker,
         user_timeline={
             "slots": [
                 _tl_slot(2, in_s=0.5, duration_s=2.0),
                 _tl_slot(0, removed=True),
                 _tl_slot(1, in_s=1.0, duration_s=1.0),
             ]
-        }
+        },
     )
     _job, updates, _dl = _regen_setup(monkeypatch, variants=[variant], assembled_steps=assembled)
 
@@ -558,10 +564,9 @@ def test_persisted_user_timeline_drops_removed_and_honors_order(monkeypatch):
 
     final = updates[-1]
     assert final["ok"] is True
-    tl = final["ai_timeline"]
-    assert [s["clip_index"] for s in tl["slots"]] == [2, 1]
-    assert tl["slots"][0]["in_s"] == 0.5 and tl["slots"][0]["duration_s"] == 2.0
-    assert tl["beat_grid"] == []  # original_text — no music
+    assert "ai_timeline" not in final  # carried forward via merge — not rebuilt, not nulled
+    # The stored AI plan is untouched on the variant entry.
+    assert _job.assembly_plan["variants"][0]["ai_timeline"] == ai_marker
 
 
 def test_override_path_never_calls_match_consolidate_or_gemini(monkeypatch):
@@ -586,6 +591,54 @@ def test_override_path_never_calls_match_consolidate_or_gemini(monkeypatch):
     gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False)
 
     assert updates[-1]["ok"] is True
+
+
+def test_prepare_timeline_assembly_clamps_windows_to_probe(monkeypatch, tmp_path):
+    """M2: the route skips bounds checks on never-probed clips, promising "the
+    worker's probe will clamp" — this is that clamp. in_s is pulled inside the
+    probed duration and the window end never runs past it."""
+    _patch_timeline_io(monkeypatch, duration_s=3.0)
+    out = gb._prepare_timeline_assembly(
+        [
+            _tl_slot(0, in_s=2.0, duration_s=5.0),  # end 7.0 → clamped to 3.0
+            _tl_slot(1, in_s=10.0, duration_s=2.0),  # in past probe → in 2.9, end 3.0
+        ],
+        CLIP_PATHS,
+        str(tmp_path),
+        job_id="j",
+    )
+    assert out is not None
+    s0, s1 = out["steps"]
+    assert s0.moment["start_s"] == 2.0 and s0.moment["end_s"] == 3.0
+    assert s0.slot["target_duration_s"] == 1.0
+    assert s1.moment["start_s"] == 2.9
+    assert s1.moment["end_s"] == 3.0
+
+
+def test_prepare_timeline_assembly_drops_collapsed_slots(monkeypatch, tmp_path):
+    """Slots that clamp below 0.1s are dropped (warning); all-dropped → None
+    (caller falls back to a fresh match). Survivors are renumbered."""
+    _patch_timeline_io(monkeypatch, duration_s=3.0)
+    out = gb._prepare_timeline_assembly(
+        [
+            _tl_slot(0, in_s=2.97, duration_s=0.05),  # collapses below 0.1s → dropped
+            _tl_slot(1, in_s=0.0, duration_s=1.0),
+        ],
+        CLIP_PATHS,
+        str(tmp_path),
+        job_id="j",
+    )
+    assert out is not None
+    assert [s.clip_id for s in out["steps"]] == ["clip_1"]
+    assert out["steps"][0].slot["position"] == 1  # renumbered
+
+    _patch_timeline_io(monkeypatch, duration_s=0.05)  # probe shorter than any cut
+    assert (
+        gb._prepare_timeline_assembly(
+            [_tl_slot(0, in_s=1.0, duration_s=2.0)], CLIP_PATHS, str(tmp_path), job_id="j"
+        )
+        is None
+    )
 
 
 def test_corrupt_user_timeline_falls_back_to_fresh_match(monkeypatch):
@@ -654,9 +707,14 @@ def test_no_timeline_takes_fresh_match_as_today(monkeypatch):
     assert updates[-1]["ok"] is True
 
 
-def test_swap_song_regenerate_rewrites_ai_timeline(monkeypatch):
-    """A swap-song re-render with an active timeline keeps the user's slot layout
-    AND persists a fresh ai_timeline against the new track's beat grid."""
+def test_swap_song_clears_user_timeline_and_takes_fresh_match(monkeypatch):
+    """M1: swap-song means a NEW beat grid — the user's cut no longer lines up.
+    The persisted user_timeline is REMOVED from the variant entry, the override
+    is ignored, a fresh ingest+match runs, and ai_timeline is rewritten from
+    the new assembly (matches the ConfirmDialog copy: "your clip edits will be
+    reset")."""
+    import app.pipeline.template_matcher as tm
+
     variant = _existing_variant(
         variant_id="song_text",
         rank=1,
@@ -665,21 +723,60 @@ def test_swap_song_regenerate_rewrites_ai_timeline(monkeypatch):
         ai_timeline={"beat_grid": [9.9], "slots": [{"clip_index": 0}]},  # stale marker
     )
     mix_calls: list = []
-    _job, updates, _dl = _regen_setup(
+    job, updates, _dl = _regen_setup(
         monkeypatch, variants=[variant], track=_track("t2"), mix_calls=mix_calls
     )
     _patch_music_recipe(monkeypatch, [0.0, 1.0, 2.0])
 
-    gb._run_regenerate_variant(JOB_ID, "song_text", "t2", None, False)
+    called = {"ingest": False, "match": False}
+    metas = [_Meta("g1", 5.0)]
+    ingest = {
+        "clip_metas": metas,
+        "clip_id_to_gcs": {"g1": CLIP_PATHS[0]},
+        "clip_id_to_local": {"g1": "/a.mp4"},
+        "probe_map": {"/a.mp4": _Probe(6.0)},
+        "hero": metas[0],
+    }
+    monkeypatch.setattr(
+        gb, "_ingest_clips", lambda *a, **k: called.update(ingest=True) or ingest, raising=False
+    )
+    fresh_steps = [
+        types.SimpleNamespace(
+            clip_id="g1",
+            slot={"position": 1},
+            moment={"start_s": 0.5, "end_s": 1.5, "energy": 5.0, "description": "fresh"},
+        )
+    ]
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda r, m, **kw: called.update(match=True) or types.SimpleNamespace(steps=fresh_steps),
+        raising=False,
+    )
 
+    # Explicit timeline_override included to prove it's ignored when a new track
+    # is set (kwarg precedence does NOT apply across a song swap).
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "song_text",
+        "t2",
+        None,
+        False,
+        timeline_override=[_tl_slot(1, in_s=2.0, duration_s=1.0)],
+    )
+
+    assert called["ingest"] and called["match"], "swap-song must take the fresh-match leg"
+    # Persisted user_timeline removed from the variant entry (row-locked pop).
+    assert "user_timeline" not in job.assembly_plan["variants"][0]
     final = updates[-1]
     assert final["ok"] is True
     assert final["music_track_id"] == "t2"
     assert len(mix_calls) == 1  # new song mixed in
     tl = final["ai_timeline"]
     assert tl["beat_grid"] == [0.0, 1.0, 2.0]  # rewritten — not the stale marker
-    assert tl["slots"][0]["clip_index"] == 1
-    assert tl["slots"][0]["in_s"] == 2.0 and tl["slots"][0]["duration_s"] == 1.0
+    # Fresh-match output, NOT the user's cut (clip 0 via g1, window 0.5-1.5).
+    assert tl["slots"][0]["clip_index"] == 0
+    assert tl["slots"][0]["in_s"] == 0.5 and tl["slots"][0]["duration_s"] == 1.0
     assert tl["slots"][0]["duration_beats"] == 1
 
 

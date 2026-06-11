@@ -57,6 +57,7 @@ const UNEDITABLE_COPY: Record<string, string> = {
   no_slot_timeline: "This edit was made before clip editing — your newer edits are editable.",
   no_timeline: "This edit was made before clip editing — your newer edits are editable.",
   voiceover_bed_fit: "This cut is fitted to your voiceover — its clips stay where they are.",
+  unsupported_variant: "This kind of edit doesn't support clip editing yet.",
   sources_expired: "These clips have expired from storage. New uploads stay editable.",
 };
 
@@ -67,6 +68,7 @@ const SUBMIT_ERROR_COPY: Record<string, string> = {
   TIMELINE_UNKNOWN_CLIP: "This clip isn't part of the edit anymore.",
   TIMELINE_BEATS_EXHAUSTED: "The song ran out of beats for this cut.",
   TIMELINE_TOO_LONG: "The cut runs past 60 seconds — trim it down.",
+  TIMELINE_INVALID_DURATION: "A slot lost its duration — undo that edit and try again.",
   sources_expired: "Some clips have expired from storage, so this cut can't re-render.",
   disabled: "Clip editing is turned off right now.",
 };
@@ -156,6 +158,11 @@ function usePosterFrames(
     for (const clip of clips) {
       if (startedRef.current.has(clip.clip_index)) continue;
       startedRef.current.add(clip.clip_index);
+      if (clip.signed_url == null) {
+        // Signing failed server-side — no URL to capture from.
+        setPosters((p) => ({ ...p, [clip.clip_index]: "failed" as const }));
+        continue;
+      }
       const firstSlot = slots.find((s) => s.clipIndex === clip.clip_index);
       queueRef.current.push({
         clipIndex: clip.clip_index,
@@ -581,7 +588,10 @@ function TimelineEditorBody({
       clip_index: s.clipIndex,
       in_s: Math.round(s.inS * 1000) / 1000,
       duration_beats: isNoGrid ? null : s.durationBeats,
-      duration_s: isNoGrid ? s.durationS : null,
+      // Null-beats slots (footage-trimmed AI slots on grid variants, and every
+      // no-grid slot) carry their exact window in duration_s — the server
+      // treats it as authoritative and never walks the grid for them.
+      duration_s: isNoGrid || s.durationBeats == null ? s.durationS : null,
       removed: s.removed,
     }));
   }, [state.slots, isNoGrid]);
@@ -634,6 +644,13 @@ function TimelineEditorBody({
   }, [jobId, variantId, buildPayload, onRenderEnqueued, findOffendingSlot]);
 
   const handleReset = useCallback(async () => {
+    // No server-side edits yet (only local dirt): the AI cut is what's already
+    // rendered — just reset the draft locally instead of burning a re-render.
+    if (!timeline.has_user_edits) {
+      dispatch({ type: "RESET_DRAFT" });
+      setSubmitError(null);
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -645,7 +662,7 @@ function TimelineEditorBody({
     } finally {
       setSubmitting(false);
     }
-  }, [jobId, variantId, onRenderEnqueued]);
+  }, [jobId, variantId, onRenderEnqueued, timeline.has_user_edits, dispatch]);
 
   // CTA label
   const ctaLabel = submitting
@@ -768,7 +785,7 @@ function TimelineEditorBody({
                   clips={timeline.clips}
                   posters={posters}
                   canAddBeats={
-                    isNoGrid
+                    isNoGrid || slot.durationBeats == null
                       ? totalS + 0.5 <= MAX_TOTAL_SECONDS
                       : remainingBeats(state.slots, state.grid) >= 1
                   }
@@ -915,16 +932,19 @@ function SlotCard({
   const sourceDur = clip?.duration_s ?? null;
   const startS = win.startS ?? 0;
   const endS = startS + win.durationS;
+  // Footage-trimmed AI slots on grid variants have no beat count — they read
+  // and nudge in plain seconds, exactly like no-grid slots.
+  const secondsOnly = isNoGrid || slot.durationBeats == null;
 
   const eyebrowParts = [
     `Slot ${index + 1}`,
     `${formatTimecode(startS)}–${formatTimecode(endS)}`,
   ];
-  if (!isNoGrid) eyebrowParts.push(`${slot.durationBeats ?? 0} beats`);
+  if (!secondsOnly) eyebrowParts.push(`${slot.durationBeats} beats`);
 
-  const chipText = isNoGrid
+  const chipText = secondsOnly
     ? formatSeconds(slot.durationS ?? 0)
-    : `${slot.durationBeats ?? 0} ${slot.durationBeats === 1 ? "beat" : "beats"} · ${formatSeconds(win.durationS)}`;
+    : `${slot.durationBeats} ${slot.durationBeats === 1 ? "beat" : "beats"} · ${formatSeconds(win.durationS)}`;
 
   return (
     <div
@@ -1055,7 +1075,7 @@ function SlotCard({
               <button
                 onClick={() => dispatch({ type: "NUDGE", key: slot.key, delta: -1 })}
                 disabled={
-                  isNoGrid
+                  secondsOnly
                     ? (slot.durationS ?? 0) - 0.5 < SECONDS_FLOOR
                     : (slot.durationBeats ?? 0) <= 1
                 }
@@ -1065,9 +1085,9 @@ function SlotCard({
                 −
               </button>
               <span className="min-w-[72px] select-none border-x border-zinc-200 px-2 text-center text-xs tabular-nums text-[#3f3f46]">
-                {isNoGrid
+                {secondsOnly
                   ? formatSeconds(slot.durationS ?? 0)
-                  : `${slot.durationBeats ?? 0} beats`}
+                  : `${slot.durationBeats} beats`}
               </span>
               <button
                 onClick={() => dispatch({ type: "NUDGE", key: slot.key, delta: 1 })}
@@ -1197,7 +1217,7 @@ function SlotPreview({
     if (Math.abs(v.currentTime - inS) > 0.25) v.currentTime = inS;
   }, [inS]);
 
-  if (!clip || decodeFailed) {
+  if (!clip || clip.signed_url == null || decodeFailed) {
     // HDR/HEVC no-decode fallback (or missing clip): dashed no-frame card.
     return (
       <div className="mb-3 flex aspect-video w-full flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-zinc-300 bg-zinc-50 px-4 text-center">
