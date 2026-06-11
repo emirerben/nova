@@ -360,3 +360,72 @@ def test_dispatch_retext_requires_text_or_remove() -> None:
     with pytest.raises(HTTPException) as exc:
         dispatch_retext(job, "song_text", text=None, remove=False)
     assert exc.value.status_code == 422
+
+
+# ── combined /edit (intro layout pick) ────────────────────────────────────────
+
+
+TEXT_VARIANT = {
+    "variant_id": "song_text",
+    "music_track_id": "track-123",
+    "render_status": "ready",
+    "rank": 2,
+    "style_set_id": "default",
+    "text_mode": "agent_text",
+    "intro_text": "what's your favorite place?",
+}
+
+
+def test_edit_intro_layout_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/edit",
+            json={"intro_layout": "cluster"},
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(
+        str(job.id),
+        "song_text",
+        override_text=None,
+        remove_text=False,
+        style_set_id=None,
+        size_override_px=None,
+        layout_override="cluster",
+    )
+
+
+def test_edit_intro_layout_rejects_wordy_hook(client: TestClient) -> None:
+    user = _user()
+    variant = dict(TEXT_VARIANT, intro_text="when they don't even listen to your feelings")
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/edit",
+            json={"intro_layout": "cluster"},
+        )
+    assert resp.status_code == 422
+    assert "3-6 word" in resp.json()["detail"]
+    regen.delay.assert_not_called()
+
+
+def test_edit_requires_at_least_one_field(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(f"/plan-items/{item.id}/variants/song_text/edit", json={})
+    assert resp.status_code == 422
+    regen.delay.assert_not_called()

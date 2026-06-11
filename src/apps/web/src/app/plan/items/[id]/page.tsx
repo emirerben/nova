@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   changePlanItemStyle,
+  editPlanItemVariant,
   generatePlanItem,
   getPlanItem,
   getPlanItemJobStatus,
@@ -460,6 +461,13 @@ export default function PlanItemPage() {
                   onResize={(px) =>
                     runEdit(focused.variant_id, focused.output_url, () =>
                       setPlanItemIntroSize(itemId, focused.variant_id, px),
+                    )
+                  }
+                  onChangeLayout={(layout) =>
+                    runEdit(focused.variant_id, focused.output_url, () =>
+                      editPlanItemVariant(itemId, focused.variant_id, {
+                        intro_layout: layout,
+                      }),
                     )
                   }
                 />
