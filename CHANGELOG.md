@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.97.0] — 2026-06-11
+
+### Added
+- **Post-generation clip timeline editor.** After a generative render, `song_text` / `original_text` montage variants get an "Edit clips" sheet: drag-to-reorder (handle-only touch drag with move-up/down a11y buttons), beat-quantized duration nudges (whole beats on the song grid; 0.5s steps for original-audio cuts), in-point scrubbing with a windowed-loop live preview and beat ticks, clip swap/add from the upload pool (incl. unused clips), remove/restore, undo/redo (50 deep), "why this moment" tooltips from the AI's clip analysis, and one-tap "Reset to AI cut". Re-render takes ~60-90s: the override path builds **exact-window assembly steps** (`exact_window` flag in `_plan_slots` reuses the locked-branch window arithmetic WITHOUT the letterbox fit) and skips `match()`, `consolidate_slots`, and the entire Gemini leg (download + probe only). Contract: `ai_timeline` (post-resolution windows, written once per assembly, carried forward on override renders so Reset survives) + `user_timeline` (persisted by the route pre-enqueue under the variant row-lock) on `assembly_plan.variants`, keyed by stable `clip_index` into `all_candidates["clip_paths"]`. Retext/restyle/size re-renders honor clip edits (resolution: kwarg → persisted → fresh match); swap-song clears edits behind an explicit confirm. Endpoints: GET/POST/DELETE `/generative-jobs/{id}/variants/{vid}/timeline` (+ plan-items mirrors) with non-uniform beat-grid walk validation, `JOB_BUSY` single-worker guard, `TIMELINE_STALE` draft protection, and a worker-output round-trip regression lock (unmodified GET→POST must always pass). Kill switch: `GENERATIVE_TIMELINE_EDITOR_ENABLED`. Guards: `tests/pipeline/test_exact_window_steps.py` window-parity (unmodified override render reproduces the original windows + framing; music/template jobs byte-identical).
+- **Durable generative sources.** Uploads are server-side copied to `generative-jobs/{job_id}/sources/` at orchestrate start (order-preserving rewrite of `clip_paths` — narrative order depends on it) so timeline edits AND swap-song keep working past the 24h upload lifecycle. All-or-nothing with graceful fallback; legacy jobs surface `sources_expired`.
+- **D18-compliant re-render wait on variant cards** (serif line + ETA ladder, never a bare "Rendering…"), "Edited cut" pill, quiet D10 failure tile that keeps the last good video playable ("That edit didn't render — your previous video is untouched." + Try again with edits preserved), and a light-editorial `ConfirmDialog` primitive (replaces `window.prompt`-class confirms). DESIGN.md gains the light-surface notice token.
+
+### Fixed
+- **Failed variant re-renders no longer serve expiring URLs** — `_variants_for_response` re-signs `output_url` whenever a `video_path` exists (was: only on `ready`), so a failed edit keeps the previous video playable past 24h.
+- **Regenerate failure patches no longer null `base_video_path`/`intro_text`** — a failed edit used to destroy the fast-reburn base and persisted intro text.
+
 ## [0.4.96.0] — 2026-06-10
 
 ### Added

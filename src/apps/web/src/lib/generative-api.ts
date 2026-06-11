@@ -292,6 +292,143 @@ export async function editVariant(
   return res.json();
 }
 
+// ── Clip-timeline editor ──────────────────────────────────────────────────────
+// Hand-mirrored from the backend timeline schema — keep literal unions in sync
+// with the Pydantic schema (same precedent as SongSection in music-api.ts).
+
+/** Why a variant's timeline is not editable (`editable: false`). */
+export type TimelineUneditableReason =
+  | "disabled"
+  | "lyrics_sync"
+  | "no_slot_timeline"
+  | "voiceover_bed_fit"
+  | "unsupported_variant"
+  | "no_timeline"
+  | "sources_expired";
+
+/** Machine codes the timeline POST can reject with (409/422). */
+export type TimelineErrorCode =
+  | "disabled"
+  | "TIMELINE_STALE"
+  | "JOB_BUSY"
+  | "TIMELINE_OUT_OF_BOUNDS"
+  | "TIMELINE_TOO_SHORT"
+  | "TIMELINE_INVALID_DURATION"
+  | "TIMELINE_EMPTY"
+  | "TIMELINE_UNKNOWN_CLIP"
+  | "TIMELINE_BEATS_EXHAUSTED"
+  | "TIMELINE_TOO_LONG"
+  | "sources_expired";
+
+export interface TimelineSlot {
+  slot_id: string;
+  clip_index: number;
+  source_gcs_path: string;
+  /** null for clips the worker never probed (e.g. user-added pool clips). */
+  source_duration_s: number | null;
+  in_s: number;
+  duration_s: number;
+  /** null on no-grid (original_text) timelines — duration_s is authoritative. */
+  duration_beats: number | null;
+  order: number;
+  moment_energy: number | null;
+  moment_description: string | null;
+  removed?: boolean;
+}
+
+export interface TimelineClip {
+  clip_index: number;
+  /** null when signing failed server-side — the editor still opens. */
+  signed_url: string | null;
+  duration_s: number | null;
+  used: boolean;
+}
+
+export interface TimelineResponse {
+  editable: boolean;
+  reason: TimelineUneditableReason | null;
+  /** Non-uniform beat timestamps (seconds). Empty for original_text variants. */
+  beat_grid: number[];
+  total_duration_s: number;
+  has_user_edits: boolean;
+  slots: TimelineSlot[];
+  clips: TimelineClip[];
+}
+
+/** One slot in the POST body. Exactly one of duration_beats / duration_s set. */
+export interface TimelineEditSlotPayload {
+  slot_id: string | null;
+  clip_index: number;
+  in_s: number;
+  duration_beats: number | null;
+  duration_s: number | null;
+  removed: boolean;
+}
+
+/** Timeline error with the machine code preserved (404 → code null). */
+export class TimelineApiError extends Error {
+  status: number;
+  code: string | null;
+  constructor(status: number, code: string | null, message?: string) {
+    super(message ?? `Timeline request failed (${status}${code ? ` ${code}` : ""})`);
+    this.name = "TimelineApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** The error payload may be wrapped in FastAPI `detail` — handle both
+ * `{code}` and `{detail: {code}}` (plus a bare string detail). */
+async function throwTimelineError(res: Response): Promise<never> {
+  let code: string | null = null;
+  try {
+    const body = await res.json();
+    if (typeof body?.code === "string") code = body.code;
+    else if (typeof body?.detail?.code === "string") code = body.detail.code;
+    else if (typeof body?.detail === "string") code = body.detail;
+  } catch {
+    // Non-JSON error body — keep code null.
+  }
+  throw new TimelineApiError(res.status, code);
+}
+
+export async function getTimeline(
+  jobId: string,
+  variantId: string,
+): Promise<TimelineResponse> {
+  const res = await fetch(
+    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/timeline`,
+  );
+  if (!res.ok) return throwTimelineError(res);
+  return res.json();
+}
+
+/** Submit an edited cut — enqueues a re-render on success. */
+export async function editTimeline(
+  jobId: string,
+  variantId: string,
+  slots: TimelineEditSlotPayload[],
+): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/timeline`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slots }),
+    },
+  );
+  if (!res.ok) return throwTimelineError(res);
+}
+
+/** Reset to the AI cut — discards user edits and re-renders. */
+export async function resetTimeline(jobId: string, variantId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE}/generative-jobs/${jobId}/variants/${variantId}/timeline`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) return throwTimelineError(res);
+}
+
 export async function setVariantIntroSize(
   jobId: string,
   variantId: string,

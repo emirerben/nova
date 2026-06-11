@@ -210,6 +210,19 @@ def copy_object_signed_url(src_object_path: str, dst_object_path: str) -> str:
     )
 
 
+def copy_object(src_object_path: str, dst_object_path: str) -> None:
+    """Server-side copy a GCS object to a new key (no signed URL).
+
+    Same `bucket.copy_blob` (server-side rewrite) mechanics as
+    `copy_object_signed_url` — no egress + re-upload bandwidth — for callers
+    that only need the durable copy to exist (e.g. the generative clip-editor's
+    per-job source snapshots), not a playback URL for it.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    src_blob = bucket.blob(src_object_path)
+    bucket.copy_blob(src_blob, bucket, dst_object_path)
+
+
 def object_exists(object_path: str) -> bool:
     """Check whether a GCS object exists. Used for GCS path validation."""
     bucket = _get_client().bucket(settings.storage_bucket)

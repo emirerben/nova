@@ -33,6 +33,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
   - `border-lime-600` — answer left-border (plan ChatInterview pull-quote)
   - `outline-lime-500` — selection
 - **Cards:** `rounded-2xl border border-zinc-200 shadow-sm`, fill `bg-white` or `bg-[#fafaf8]`.
+- **Notice line (light surfaces):** `border-zinc-200 bg-white text-[#3f3f46]` quiet informational line — transient warnings/conflicts (e.g. "another variant is rendering") stay zinc; NO amber on light surfaces (amber is the dark-render-system accent, §9).
 - **Media / phone tiles:** `rounded-[18px]` (marquee) / `rounded-[14px]` desktop, `rounded-[10px]` mobile; heavier shadow `shadow-[0_12px_30px_rgba(0,0,0,0.18)]`.
 - **Type scale:**
   - Hero h1: `font-display text-[clamp(36px,6vw,64px)] font-medium leading-[1.08]`
