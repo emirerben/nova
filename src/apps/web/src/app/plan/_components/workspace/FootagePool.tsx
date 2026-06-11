@@ -55,6 +55,22 @@ export function FootagePool({
     return () => clearInterval(t);
   }, [matching, onRefresh]);
 
+  // Terminal states can also change behind an open tab (a re-run from another
+  // tab/device). Re-fetch when the user comes back to this one (second dogfood
+  // finding: a stale "didn't finish" sat on screen after the match had
+  // succeeded).
+  useEffect(() => {
+    const onFocus = () => {
+      if (document.visibilityState === "visible") onRefresh();
+    };
+    document.addEventListener("visibilitychange", onFocus);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onFocus);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [onRefresh]);
+
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
