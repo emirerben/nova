@@ -185,6 +185,13 @@ def derive_word_roles(words: list[str], highlight_word: str | None = None) -> li
     - everything else is a hero.
     - If no hero survives (all-stopword hook), promote the longest non-closer
       word so the cluster always has a focal point.
+    - Contrast guarantees (the editorial look IS the size mix — an all-hero set
+      renders as a flat same-size stack, the prod regression behind this rule):
+      with no closer signal on a 4+ word hook, the final hero is demoted to
+      closer; with no connector on a 5+ word hook, the leading hero is demoted
+      to connector. Texts with no stopword/punctuation/highlight signal at all
+      (user overrides, Turkish hooks) land on the reference shape instead of
+      five identical hero lines.
     """
     highlight = (highlight_word or "").lower().strip(".,!?;:\"'")
     roles: list[str] = []
@@ -204,6 +211,28 @@ def derive_word_roles(words: list[str], highlight_word: str | None = None) -> li
             return roles
         longest = max(candidates, key=lambda i: len(words[i]))
         roles[longest] = ROLE_HERO
+
+    def _bare(word: str) -> str:
+        return word.lower().strip(".,!?;:\"'")
+
+    hero_count = roles.count(ROLE_HERO)
+    if (
+        ROLE_CLOSER not in roles
+        and len(words) >= 4
+        and roles[-1] == ROLE_HERO
+        and _bare(words[-1]) != highlight
+        and hero_count >= 2
+    ):
+        roles[-1] = ROLE_CLOSER
+        hero_count -= 1
+    if (
+        ROLE_CONNECTOR not in roles
+        and len(words) >= 5
+        and roles[0] == ROLE_HERO
+        and _bare(words[0]) != highlight
+        and hero_count >= 2
+    ):
+        roles[0] = ROLE_CONNECTOR
     return roles
 
 
@@ -226,15 +255,18 @@ def _group_blocks(words: list[str], roles: list[str]) -> list[dict] | None:
     if not hero_blocks:
         return None
 
-    # Merge surplus hero lines into the last allowed hero block. Removal is by
-    # IDENTITY, not value — list.remove would match the wrong dict when the hook
-    # repeats a word ("go go go go") and silently reorder the on-screen text.
+    # Fold surplus hero lines (and everything after them — reading order is
+    # sacred) into ONE final closer block. Merging surplus words into a HERO
+    # line was the prod flat-stack bug: the merged line renders at hero size
+    # (2.6x), its width forces the cluster-atomic shrink to crush every block,
+    # and the size hierarchy — the entire editorial look — flattens away.
+    # Closer-sized (1.4x) tail text keeps the heroes big. Block identity is used
+    # to find the fold point — duplicate hero dicts compare equal ("go go go").
     if len(hero_blocks) > _MAX_HERO_LINES:
-        keep = hero_blocks[:_MAX_HERO_LINES]
-        extras = hero_blocks[_MAX_HERO_LINES:]
-        for extra in extras:
-            keep[-1]["text"] += f" {extra['text']}"
-        blocks = [b for b in blocks if not any(b is e for e in extras)]
+        first_extra = hero_blocks[_MAX_HERO_LINES]
+        fold_at = next(i for i, b in enumerate(blocks) if b is first_extra)
+        tail_text = " ".join(b["text"] for b in blocks[fold_at:])
+        blocks = blocks[:fold_at] + [{"role": ROLE_CLOSER, "text": tail_text}]
 
     # Cap total block count by merging trailing non-hero blocks together.
     while len(blocks) > _MAX_BLOCKS:
@@ -315,6 +347,13 @@ def compute_cluster_blocks(
     blocks = _group_blocks(words, word_roles)
     if blocks is None:
         return None
+
+    # Editorial needs size contrast: a single-role (all-hero) cluster — agent
+    # annotations are allowed to be all-hero — renders as a flat same-size
+    # stack. Demote the final block to closer (closer-is-final is already the
+    # geometry's shape); strictly better than declining or rendering flat.
+    if len(blocks) > 1 and all(b["role"] == ROLE_HERO for b in blocks):
+        blocks[-1]["role"] = ROLE_CLOSER
 
     # Lazy skia import — measurement only. Unavailable skia → caller falls back.
     import skia  # noqa: PLC0415
