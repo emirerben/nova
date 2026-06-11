@@ -23,7 +23,7 @@ Return ONLY valid JSON with this exact shape:
 {
   "verdict": "<on_track|minor_drift|off_brief>",
   "confidence": <float 0.0-1.0>,
-  "summary": "<one-line: this looks like X instead of Y; engagement risk Z>",
+  "summary": "<one plain sentence a creator instantly gets: what the clip reads as vs what the brief asked — e.g. 'This reads as a restaurant scene — the brief asked for a landmark wide shot.' NEVER marketing jargon like 'engagement risk' or 'content strategy'>",
   "mismatches": ["<mismatch 1>", "<mismatch 2>"],
   "suggestions": ["<re-shoot tip 1>", "<re-shoot tip 2>"],
   "evaluated_theme": "<copy the Theme value from PLAN ITEM (DATA) above, verbatim>"
