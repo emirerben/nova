@@ -690,8 +690,11 @@ async def chat_start(
         ),
     )
 
-    # Compute turn_label server-side — LLM value is inconsistent (tildes drop, counter freezes).
-    computed_label = f"~{agent_count + 1} OF ~6"
+    # turn_label comes from InterviewerAgent.parse(), which derives N from the
+    # same counter we pass as turn_count and clamps the total (N ≤ M ≤ 7,
+    # final → M = N). The old hardcoded "OF ~6" here produced "~7 OF ~6" the
+    # moment the interview ran long (dogfood 2026-06-12).
+    computed_label = result.turn_label
 
     # Store Q + metadata so resume is free (no re-call on page refresh).
     turns_raw.append(
@@ -797,8 +800,9 @@ async def chat_turn(
     new_agent_count = agent_count + 1
     agent_is_final = result.is_final or new_agent_count >= _HARD_CAP
 
-    # Compute turn_label server-side — LLM value is inconsistent (tildes drop, counter freezes).
-    computed_label = f"~{new_agent_count} OF ~6"
+    # turn_label comes from InterviewerAgent.parse() — same contract as
+    # chat/start (N from our counter, N ≤ M ≤ 7, final → M = N).
+    computed_label = result.turn_label
 
     # Store the question; if agent flagged it as final, mark it so the NEXT
     # answer triggers generation (deferred — user must answer this Q first).
