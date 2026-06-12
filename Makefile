@@ -1,4 +1,4 @@
-.PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint \
+.PHONY: dev dev-web dev-api api-install-dev test test-api test-quality build lint verify \
         local-render local-render-build local-render-up local-render-down \
         local-render-logs local-render-migrate verify-overlays \
         workspace-pull workspace-push workspace-status
@@ -145,6 +145,12 @@ build:
 lint:
 	(cd src/apps/web && pnpm lint)
 	(cd src/apps/api && ruff check .)
+
+# ── Verify (one-command local gate: lint + typecheck + all tests) ──────────────
+
+verify: lint
+	(cd src/apps/web && npx tsc --noEmit)
+	$(MAKE) test
 
 # ── nova-workspace sync ────────────────────────────────────────────────────────
 # Syncs product docs (PROJECT.md, TASKS.md, PRD.md, etc.)
