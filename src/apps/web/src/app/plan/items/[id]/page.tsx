@@ -41,6 +41,12 @@ import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 
+// How long a dispatched render may take to register its Job before we admit
+// failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
+// queue waits can too. Keep this comfortably above both.
+const RENDER_REGISTER_TIMEOUT_MS = 45_000;
+const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
+
 function deriveReceiptText(job: PlanItemJobStatus): string {
   if (job.started_at && job.finished_at) {
     const ms = new Date(job.finished_at).getTime() - new Date(job.started_at).getTime();
@@ -72,11 +78,12 @@ export default function PlanItemPage() {
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
-  // Render-start polling: POST /generate dispatches a Celery task that mints the
-  // Job 1-2s AFTER the response — keep polling until current_job_id appears, or
-  // the first click silently "does nothing" (dogfood: only the second click
-  // seemed to start the render, and it actually minted a duplicate job).
-  const awaitingJobPolls = useRef(0);
+  // Render-start window: POST /generate dispatches a Celery task that mints the
+  // Job AFTER the response — keep polling until current_job_id appears, or the
+  // first click silently "does nothing" (dogfood). Time-based, not poll-count:
+  // a busy worker can take >12s to pick the task up (second dogfood round: the
+  // count-based window expired, showed the error, THEN the render started).
+  const awaitingJobSince = useRef<number | null>(null);
 
   useEffect(() => {
     getMusicTracks()
@@ -108,9 +115,11 @@ export default function PlanItemPage() {
 
       // Keep polling while a just-dispatched render hasn't minted its Job yet.
       if (item.current_job_id || item.status === "generating") {
-        awaitingJobPolls.current = 0;
-      } else if (awaitingJobPolls.current > 0) {
-        awaitingJobPolls.current -= 1;
+        awaitingJobSince.current = null;
+      } else if (
+        awaitingJobSince.current !== null &&
+        Date.now() - awaitingJobSince.current < RENDER_REGISTER_TIMEOUT_MS
+      ) {
         return false;
       }
 
@@ -278,12 +287,12 @@ export default function PlanItemPage() {
     setError(null);
     // Arm the wait window BEFORE the POST so the release-effect can't fire
     // early while the request is still in flight.
-    awaitingJobPolls.current = 6;
+    awaitingJobSince.current = Date.now();
     try {
       await generatePlanItem(itemId);
       refetch();
     } catch (err) {
-      awaitingJobPolls.current = 0;
+      awaitingJobSince.current = null;
       setError(err instanceof Error ? err.message : "Failed to start generation");
       setGenerating(false);
     }
@@ -292,12 +301,25 @@ export default function PlanItemPage() {
   // Release the Generate lock once the render registers (or the wait window
   // expires without a job — surface that instead of silently doing nothing).
   useEffect(() => {
+    const registered = !!(item?.current_job_id || item?.status === "generating");
+    if (registered) {
+      // A registered render moots any earlier didn't-register complaint —
+      // clear it even if it was shown in a previous attempt (dogfood: the
+      // banner outlived the render it was wrong about).
+      setError((prev) => (prev === RENDER_REGISTER_ERROR ? null : prev));
+    }
     if (!generating) return;
-    if (item?.current_job_id || item?.status === "generating") {
+    if (registered) {
+      awaitingJobSince.current = null;
       setGenerating(false);
-    } else if (awaitingJobPolls.current === 0 && data !== null) {
+    } else if (
+      awaitingJobSince.current !== null &&
+      Date.now() - awaitingJobSince.current >= RENDER_REGISTER_TIMEOUT_MS &&
+      data !== null
+    ) {
+      awaitingJobSince.current = null;
       setGenerating(false);
-      setError("The render didn't register — give it another go.");
+      setError(RENDER_REGISTER_ERROR);
     }
   }, [generating, item?.current_job_id, item?.status, data]);
 
