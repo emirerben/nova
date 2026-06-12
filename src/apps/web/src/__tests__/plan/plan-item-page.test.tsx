@@ -73,6 +73,7 @@ jest.mock("@/lib/generative-api", () => ({
     status = 0;
     code: string | null = null;
   },
+  GENERATIVE_TERMINAL_STATUSES: ["variants_ready", "variants_ready_partial", "variants_failed", "processing_failed"],
 }));
 
 jest.mock("@/lib/music-api", () => ({

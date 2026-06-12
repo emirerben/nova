@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.98.5] — 2026-06-12
+
+### Fixed
+- **Generative job stuck "rendering" forever after worker crash.** A SIGKILL'd worker (deploy / OOM) flipped `Job.status` to `processing_failed` but left per-variant `render_status` frozen at `"rendering"` — an impossible state the frontend poll-stop predicate (`anyRendering` check) kept alive forever. Three-layer fix: (1) **Backend** — `reaper.py` uses `RETURNING` to reconcile frozen variants in the same transaction as the job flip; `_fail_job` in `generative_build.py` does the same on soft-timeout / exception paths; any variant still at `"rendering"` or `"pending"` is flipped to `"failed"` with a human-readable error. (2) **Frontend poll** — `isTerminalFn` (plan-item page) and `isTerminalAndDone` (generative page) now treat a terminal `job.status` (`GENERATIVE_TERMINAL_STATUSES`) as authoritative regardless of per-variant state; `usePolledJobStatus` gains a 30-min max-poll safety cap mirroring `useJobStream`. (3) **Video reload glitch** — GCS signed URLs are re-generated on every poll, causing React to swap `<video src>` every 2 s and the browser to tear down the video. Three result-video locations now pin the `src` on first load and only advance on `onError` (expired signature): `VariantRenderCard` `ReadyCard`, `plan/items/[id]/page.tsx` `Hero`, and `generative/VariantCard.tsx` (reuses the `baseSrcRef` pattern already present for the instant-edit base). Backend + frontend test coverage added: 3 new reaper tests + 5 new `_fail_job` reconciliation tests.
+
 ## [0.4.98.4] — 2026-06-12
 
 ### Security

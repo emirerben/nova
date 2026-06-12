@@ -105,6 +105,15 @@ export function VariantCard({
   }
   void baseSrcNonce; // re-render trigger only
 
+  // Pin the result output_url for the ready-state preview.  Every poll
+  // re-signs output_url with a new query string; binding <video src> directly
+  // reloads the video on every 2s tick.  Same pattern as baseSrcRef above.
+  const outputSrcRef = useRef<string | null>(null);
+  if (variant.output_url && outputSrcRef.current === null) {
+    outputSrcRef.current = variant.output_url;
+  }
+  const pinnedOutputSrc = outputSrcRef.current ?? variant.output_url;
+
   // Voice/footage mix for voiceover variants.
   const isVoiceover = variant.variant_id.startsWith("voiceover");
   const [mix, setMix] = useState<number>(variant.mix ?? 1);
@@ -290,8 +299,18 @@ export function VariantCard({
           <div className={`flex h-full items-center justify-center px-3 text-center text-sm ${failedTextClass}`}>
             {variant.error ?? "Render failed"}
           </div>
-        ) : variant.output_url ? (
-          <video src={variant.output_url} controls className="h-full w-full object-contain" />
+        ) : pinnedOutputSrc ? (
+          <video
+            src={pinnedOutputSrc}
+            controls
+            className="h-full w-full object-contain"
+            onError={() => {
+              // Expired signature — fall forward to the freshest signed URL.
+              if (variant.output_url && variant.output_url !== outputSrcRef.current) {
+                outputSrcRef.current = variant.output_url;
+              }
+            }}
+          />
         ) : (
           <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
             No preview

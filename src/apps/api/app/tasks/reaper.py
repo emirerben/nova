@@ -124,21 +124,55 @@ def reap_orphans(
     if live:
         where_clauses.append(Job.id.notin_(live))
 
+    _ERROR_DETAIL = (
+        "Worker died with no recovery; reaped on worker startup. Resubmit your job."
+    )
+
     with sync_session() as db:
+        # Flip job-level status and collect reaped rows for variant reconciliation.
         stmt = (
             update(Job)
             .where(*where_clauses)
             .values(
                 status="processing_failed",
                 failure_reason="unknown",
-                error_detail=(
-                    "Worker died with no recovery; reaped on worker startup. Resubmit your job."
-                ),
+                error_detail=_ERROR_DETAIL,
             )
+            .returning(Job.id, Job.assembly_plan)  # type: ignore[attr-defined]
         )
-        result = db.execute(stmt)
+        reaped_rows = db.execute(stmt).fetchall()
+        count = len(reaped_rows)
+
+        # Reconcile per-variant render_status.  When the worker is SIGKILL'd
+        # mid-render the job-level status is now fixed, but any variant still at
+        # "rendering" or "pending" in assembly_plan["variants"] is permanently
+        # frozen — the frontend poll-stop predicate (anyRendering check) keeps
+        # polling forever on that frozen variant.  Flip those variants to
+        # "failed" here so the UI shows a terminal state immediately.
+        for job_id_val, assembly_plan in reaped_rows:
+            if not isinstance(assembly_plan, dict):
+                continue
+            variants = assembly_plan.get("variants")
+            if not variants:
+                continue
+            new_variants = [
+                {
+                    **v,
+                    "render_status": "failed",
+                    "error": v.get("error") or "render interrupted: worker died",
+                }
+                if v.get("render_status") in ("rendering", "pending")
+                else v
+                for v in variants
+            ]
+            if new_variants != variants:
+                db.execute(
+                    update(Job)
+                    .where(Job.id == job_id_val)
+                    .values(assembly_plan={**assembly_plan, "variants": new_variants})
+                )
+
         db.commit()
-        count = result.rowcount or 0
 
     if count:
         log.info(
