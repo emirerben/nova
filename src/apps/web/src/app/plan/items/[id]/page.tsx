@@ -72,6 +72,11 @@ export default function PlanItemPage() {
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
+  // Render-start polling: POST /generate dispatches a Celery task that mints the
+  // Job 1-2s AFTER the response — keep polling until current_job_id appears, or
+  // the first click silently "does nothing" (dogfood: only the second click
+  // seemed to start the render, and it actually minted a duplicate job).
+  const awaitingJobPolls = useRef(0);
 
   useEffect(() => {
     getMusicTracks()
@@ -100,6 +105,14 @@ export default function PlanItemPage() {
         pending.size === 0 &&
         item.status !== "generating" &&
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
+
+      // Keep polling while a just-dispatched render hasn't minted its Job yet.
+      if (item.current_job_id || item.status === "generating") {
+        awaitingJobPolls.current = 0;
+      } else if (awaitingJobPolls.current > 0) {
+        awaitingJobPolls.current -= 1;
+        return false;
+      }
 
       // Keep polling for up to 3 extra cycles when the item has clips but no
       // conformance verdict yet (the async task may still be running).
@@ -263,15 +276,30 @@ export default function PlanItemPage() {
   async function handleGenerate() {
     setGenerating(true);
     setError(null);
+    // Arm the wait window BEFORE the POST so the release-effect can't fire
+    // early while the request is still in flight.
+    awaitingJobPolls.current = 6;
     try {
       await generatePlanItem(itemId);
       refetch();
     } catch (err) {
+      awaitingJobPolls.current = 0;
       setError(err instanceof Error ? err.message : "Failed to start generation");
-    } finally {
       setGenerating(false);
     }
   }
+
+  // Release the Generate lock once the render registers (or the wait window
+  // expires without a job — surface that instead of silently doing nothing).
+  useEffect(() => {
+    if (!generating) return;
+    if (item?.current_job_id || item?.status === "generating") {
+      setGenerating(false);
+    } else if (awaitingJobPolls.current === 0 && data !== null) {
+      setGenerating(false);
+      setError("The render didn't register — give it another go.");
+    }
+  }, [generating, item?.current_job_id, item?.status, data]);
 
   if (needsAuth) {
     return (

@@ -186,7 +186,9 @@ def plan_item_response(
         user_edited=item.user_edited,
         instruction_level=instruction_level,
         conformance=item.conformance,
-        content_mode=content_mode if content_mode in ("existing_footage", "create_new", "mixed") else "create_new",
+        content_mode=content_mode
+        if content_mode in ("existing_footage", "create_new", "mixed")
+        else "create_new",
     )
 
 
@@ -233,9 +235,7 @@ async def get_plan_item(
     item = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(item, db)
     content_mode = await _get_content_mode(item, db)
-    return plan_item_response(
-        item, instruction_level=instruction_level, content_mode=content_mode
-    )
+    return plan_item_response(item, instruction_level=instruction_level, content_mode=content_mode)
 
 
 class PlanItemEdit(BaseModel):
@@ -638,9 +638,7 @@ async def plan_item_advisor_turn(
     )
 
     try:
-        result = await asyncio.to_thread(
-            PlanItemAdvisorAgent(default_client()).run, agent_input
-        )
+        result = await asyncio.to_thread(PlanItemAdvisorAgent(default_client()).run, agent_input)
     except Exception as exc:  # noqa: BLE001
         log.warning("plan_item_advisor.failed", item_id=item_id, error=str(exc)[:300])
         return AdvisorTurnResponse(
@@ -670,6 +668,14 @@ async def generate_item(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
+        )
+    # Idempotency guard (dogfood: double-clicking Generate minted two render
+    # jobs). The Job is created async by the task, so also reject while the
+    # row state says a dispatch is pending/in flight.
+    if derive_item_status(item) == "generating":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A render is already in progress for this item",
         )
     from app.tasks.content_plan_build import generate_plan_item_videos  # noqa: PLC0415
 
