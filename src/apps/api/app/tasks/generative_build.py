@@ -3117,13 +3117,23 @@ def _resolve_intro_overlay_params(
     # position other than center — knob, curated set, or agent advisory alike):
     # the cluster's geometry is engine-owned and always centers, so honoring a
     # requested "top"/"bottom" means rendering it as a linear block there.
-    layout = str(agent_form.get("layout") or "linear")
+    requested_layout = str(agent_form.get("layout") or "linear")
+    layout = requested_layout
     position_pinned = any(
         params[k] is not None for k in ("position_x_frac", "position_y_frac")
     ) or params["position"] not in (None, "", "center")
-    if not getattr(settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", True) or position_pinned:
+    layout_reason: str | None = None
+    if requested_layout == "cluster" and not getattr(
+        settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", True
+    ):
         layout = "linear"
+        layout_reason = "disabled"
+    elif requested_layout == "cluster" and position_pinned:
+        layout = "linear"
+        layout_reason = "position_pinned"
     params["layout"] = layout
+    params["requested_layout"] = requested_layout
+    params["layout_reason"] = layout_reason
     params["word_roles"] = getattr(agent_text, "word_roles", None)
     return params, intro_px, intro_source
 

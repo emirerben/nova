@@ -43,6 +43,7 @@ import shutil
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from typing import Any
 
 import skia
@@ -139,6 +140,33 @@ def _preload_typefaces() -> None:
 _preload_typefaces()
 
 
+@dataclass(frozen=True)
+class TypefaceResolution:
+    typeface: skia.Typeface
+    requested_font_family: str | None
+    requested_font_style: str | None
+    name: str
+    file: str
+    source: str
+
+    @property
+    def fallback(self) -> bool:
+        return bool(self.requested_font_family and self.name != self.requested_font_family)
+
+    def report_dict(self) -> dict[str, Any]:
+        return {
+            "requested_font_family": self.requested_font_family,
+            "requested_font_style": self.requested_font_style,
+            "name": self.name,
+            "file": self.file,
+            "source": self.source,
+            "fallback": self.fallback,
+        }
+
+    def event_typeface_dict(self) -> dict[str, str]:
+        return {"name": self.name, "file": self.file, "source": self.source}
+
+
 class MissingGlyphsError(ValueError):
     """Raised when a typeface lacks glyphs needed for the text it will render.
 
@@ -199,29 +227,56 @@ def _overlay_text(overlay: dict) -> str:
     return overlay.get("text", "") or ""
 
 
-def _typeface_for_overlay(overlay: dict, font_name_override: str | None = None) -> skia.Typeface:
+def _registry_typeface(name: str) -> tuple[str, str, skia.Typeface] | None:
+    entry = _FONT_REGISTRY.get("fonts", {}).get(name)
+    if not entry:
+        return None
+    path = os.path.join(FONTS_DIR, entry["file"])
+    tf = _TYPEFACE_BY_PATH.get(path)
+    if tf is None:
+        return None
+    return name, entry["file"], tf
+
+
+def _resolve_typeface_for_overlay(
+    overlay: dict, font_name_override: str | None = None
+) -> TypefaceResolution:
     """Resolve a typeface for an overlay following the same priority as
     text_overlay._draw_text_png: font_name_override → overlay.font_family →
     overlay.font_style → final fallback (Playfair Display Bold).
     """
-    name = font_name_override or overlay.get("font_family")
-    if name:
-        entry = _FONT_REGISTRY.get("fonts", {}).get(name)
-        if entry:
-            p = os.path.join(FONTS_DIR, entry["file"])
-            tf = _TYPEFACE_BY_PATH.get(p)
-            if tf is not None:
-                return tf
+    requested_family = overlay.get("font_family") or None
+    requested_style = overlay.get("font_style", "display") or None
 
-    style = overlay.get("font_style", "display")
+    name = font_name_override or requested_family
+    if name:
+        resolved = _registry_typeface(str(name))
+        if resolved is not None:
+            resolved_name, file_name, tf = resolved
+            source = "font_name_override" if font_name_override else "font_family"
+            return TypefaceResolution(
+                typeface=tf,
+                requested_font_family=requested_family,
+                requested_font_style=requested_style,
+                name=resolved_name,
+                file=file_name,
+                source=source,
+            )
+
+    style = requested_style or "display"
     style_default = _FONT_REGISTRY.get("style_defaults", {}).get(style)
     if style_default:
-        entry = _FONT_REGISTRY.get("fonts", {}).get(style_default)
-        if entry:
-            p = os.path.join(FONTS_DIR, entry["file"])
-            tf = _TYPEFACE_BY_PATH.get(p)
-            if tf is not None:
-                return tf
+        resolved = _registry_typeface(str(style_default))
+        if resolved is not None:
+            resolved_name, file_name, tf = resolved
+            return TypefaceResolution(
+                typeface=tf,
+                requested_font_family=requested_family,
+                requested_font_style=requested_style,
+                name=resolved_name,
+                file=file_name,
+                source="style_default",
+            )
 
     # Last resort: Playfair Display Bold (always in the registry)
     p = os.path.join(FONTS_DIR, "PlayfairDisplay-Bold.ttf")
@@ -229,7 +284,58 @@ def _typeface_for_overlay(overlay: dict, font_name_override: str | None = None) 
     if tf is None:
         # Should never happen — preload would have logged a warning
         tf = skia.Typeface.MakeFromFile(p)
-    return tf
+    return TypefaceResolution(
+        typeface=tf,
+        requested_font_family=requested_family,
+        requested_font_style=requested_style,
+        name="Playfair Display",
+        file="PlayfairDisplay-Bold.ttf",
+        source="last_resort",
+    )
+
+
+def resolved_typeface_for_overlay(overlay: dict) -> dict[str, Any]:
+    """Public metadata helper for overlay_verify report.json."""
+    return _resolved_typeface_for_render(overlay).report_dict()
+
+
+def _typeface_for_overlay(overlay: dict, font_name_override: str | None = None) -> skia.Typeface:
+    return _resolve_typeface_for_overlay(overlay, font_name_override).typeface
+
+
+def _resolved_typeface_for_render(overlay: dict) -> TypefaceResolution:
+    if overlay.get("effect") != "font-cycle":
+        return _resolve_typeface_for_overlay(overlay)
+
+    settle_name = overlay.get("font_family") or "Playfair Display"
+    resolution = _resolve_typeface_for_overlay(overlay, font_name_override=str(settle_name))
+    if resolution.source == "font_name_override":
+        return replace(resolution, source="font_cycle_settle")
+    return resolution
+
+
+def _record_font_resolved_event(overlay: dict, overlay_index: int) -> None:
+    resolution = _resolved_typeface_for_render(overlay)
+    level = "warning" if resolution.fallback else "info"
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "overlay",
+            "font_resolved",
+            {
+                "overlay_index": overlay_index,
+                "text": _overlay_text(overlay),
+                "effect": overlay.get("effect", "none"),
+                "requested_font_family": resolution.requested_font_family,
+                "requested_font_style": resolution.requested_font_style,
+                "resolved_typeface": resolution.event_typeface_dict(),
+                "fallback": resolution.fallback,
+                "level": level,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - instrumentation must never break render
+        log.warning("font_resolved_event_emit_failed", error=str(exc))
 
 
 def _cycle_contrast_font_names() -> list[str]:
@@ -1268,6 +1374,7 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
         return None
 
     pattern_prefix = f"skia_overlay_{idx:03d}_f"
+    _record_font_resolved_event(overlay, idx)
 
     if not _is_animated(overlay):
         out_path = os.path.join(work_dir, f"{pattern_prefix}0000.png")

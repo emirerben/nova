@@ -174,7 +174,9 @@ _STOPWORDS = {
 }
 
 
-def derive_word_roles(words: list[str], highlight_word: str | None = None) -> list[str]:
+def _derive_word_roles_with_guarantees(
+    words: list[str], highlight_word: str | None = None
+) -> tuple[list[str], dict[str, bool]]:
     """Heuristic word→role assignment when no agent annotation is available.
 
     Rules (deterministic):
@@ -193,6 +195,10 @@ def derive_word_roles(words: list[str], highlight_word: str | None = None) -> li
       (user overrides, Turkish hooks) land on the reference shape instead of
       five identical hero lines.
     """
+    guarantees = {
+        "hero_present_enforced": False,
+        "signal_free_contrast_enforced": False,
+    }
     highlight = (highlight_word or "").lower().strip(".,!?;:\"'")
     roles: list[str] = []
     for i, word in enumerate(words):
@@ -208,9 +214,10 @@ def derive_word_roles(words: list[str], highlight_word: str | None = None) -> li
     if ROLE_HERO not in roles:
         candidates = [i for i, r in enumerate(roles) if r != ROLE_CLOSER]
         if not candidates:
-            return roles
+            return roles, guarantees
         longest = max(candidates, key=lambda i: len(words[i]))
         roles[longest] = ROLE_HERO
+        guarantees["hero_present_enforced"] = True
 
     def _bare(word: str) -> str:
         return word.lower().strip(".,!?;:\"'")
@@ -225,6 +232,7 @@ def derive_word_roles(words: list[str], highlight_word: str | None = None) -> li
     ):
         roles[-1] = ROLE_CLOSER
         hero_count -= 1
+        guarantees["signal_free_contrast_enforced"] = True
     if (
         ROLE_CONNECTOR not in roles
         and len(words) >= 5
@@ -233,7 +241,67 @@ def derive_word_roles(words: list[str], highlight_word: str | None = None) -> li
         and hero_count >= 2
     ):
         roles[0] = ROLE_CONNECTOR
-    return roles
+        guarantees["signal_free_contrast_enforced"] = True
+    return roles, guarantees
+
+
+def derive_word_roles(words: list[str], highlight_word: str | None = None) -> list[str]:
+    return _derive_word_roles_with_guarantees(words, highlight_word)[0]
+
+
+def _record_cluster_roles_event(
+    *,
+    words: list[str],
+    input_roles: list[str] | None,
+    effective_roles: list[str],
+    role_source: str,
+    guarantees: dict[str, bool],
+) -> None:
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "overlay",
+            "cluster_roles_derived",
+            {
+                "words": words,
+                "input_roles": input_roles,
+                "effective_roles": effective_roles,
+                "role_source": role_source,
+                "guarantees": guarantees,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - instrumentation must never break layout
+        log.warning("cluster_roles_event_emit_failed", error=str(exc))
+
+
+def _record_cluster_shrink_event(
+    *,
+    text: str,
+    base_size_px: int,
+    scale: float,
+    measures: list[dict],
+    usable_w: float,
+    block_count: int,
+) -> None:
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "overlay",
+            "cluster_shrink_applied",
+            {
+                "text": text,
+                "base_size_px": base_size_px,
+                "scale": round(scale, 4),
+                "min_scale": _MIN_CLUSTER_SCALE,
+                "widest_block_frac": round(max(m["w_frac"] for m in measures), 4),
+                "usable_width_frac": round(usable_w, 4),
+                "block_count": block_count,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - instrumentation must never break layout
+        log.warning("cluster_shrink_event_emit_failed", error=str(exc))
 
 
 def _group_blocks(words: list[str], roles: list[str]) -> list[dict] | None:
@@ -333,6 +401,10 @@ def compute_cluster_blocks(
     if not (MIN_WORDS <= len(words) <= MAX_WORDS):
         return None
 
+    input_roles = list(word_roles) if word_roles is not None else None
+    invalid_roles_rederived = False
+    closer_final_enforced = False
+
     # Roles must align 1:1, use known vocab, and keep any closer STRICTLY final —
     # the geometry assumes the reference shape (closer tucks under the last hero);
     # a mid-text closer would stack two blocks at one position.
@@ -342,7 +414,33 @@ def compute_cluster_blocks(
         or not set(word_roles) <= set(VALID_ROLES)
         or ROLE_CLOSER in word_roles[:-1]
     ):
-        word_roles = derive_word_roles(words)
+        invalid_roles_rederived = word_roles is not None
+        closer_final_enforced = bool(word_roles and ROLE_CLOSER in word_roles[:-1])
+        word_roles, heuristic_guarantees = _derive_word_roles_with_guarantees(words)
+        role_source = "heuristic"
+    else:
+        heuristic_guarantees = {
+            "hero_present_enforced": False,
+            "signal_free_contrast_enforced": False,
+        }
+        role_source = "agent"
+
+    all_hero_demoted_to_closer = len(word_roles) > 1 and all(
+        role == ROLE_HERO for role in word_roles
+    )
+    _record_cluster_roles_event(
+        words=words,
+        input_roles=input_roles,
+        effective_roles=list(word_roles),
+        role_source=role_source,
+        guarantees={
+            "invalid_roles_rederived": invalid_roles_rederived,
+            "closer_final_enforced": closer_final_enforced,
+            "hero_present_enforced": heuristic_guarantees["hero_present_enforced"],
+            "signal_free_contrast_enforced": heuristic_guarantees["signal_free_contrast_enforced"],
+            "all_hero_demoted_to_closer": all_hero_demoted_to_closer,
+        },
+    )
 
     blocks = _group_blocks(words, word_roles)
     if blocks is None:
@@ -400,6 +498,16 @@ def compute_cluster_blocks(
         if scale < _MIN_CLUSTER_SCALE:
             log.info("intro_cluster_too_wide_for_frame", text=text)
             return None
+
+    if scale < 1.0:
+        _record_cluster_shrink_event(
+            text=text,
+            base_size_px=base_size_px,
+            scale=scale,
+            measures=measures,
+            usable_w=usable_w,
+            block_count=len(blocks),
+        )
 
     hero_idx = [i for i, b in enumerate(blocks) if b["role"] == ROLE_HERO]
     hero_step = max(m["h_frac"] for i, m in enumerate(measures) if i in hero_idx) * (

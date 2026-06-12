@@ -10,6 +10,8 @@ test_text_overlay_skia.py); pure-logic tests (roles, grouping, fallbacks) don't.
 
 from __future__ import annotations
 
+from unittest import mock
+
 import skia  # noqa: F401 — layout tests require the real measurement backend
 
 from app.pipeline.intro_cluster import (
@@ -148,6 +150,85 @@ def test_atomic_shrink_preserves_size_hierarchy():
         by_role.setdefault(blk["role"], blk["text_size_px"])
     assert by_role[ROLE_HERO] < 208  # shrink actually happened
     assert by_role[ROLE_HERO] > by_role[ROLE_CONNECTOR]
+
+
+def test_cluster_roles_and_shrink_events_have_documented_payloads():
+    with mock.patch("app.services.pipeline_trace.record_pipeline_event") as record:
+        blocks = _compute(
+            "wandering through golden istanbul",
+            word_roles=["hero", "connector", "connector", "hero"],
+            base_size_px=80,
+        )
+    assert blocks is not None
+    events = [(c.args[1], c.args[2]) for c in record.call_args_list]
+
+    roles_payload = next(payload for event, payload in events if event == "cluster_roles_derived")
+    assert roles_payload["words"] == ["wandering", "through", "golden", "istanbul"]
+    assert roles_payload["input_roles"] == ["hero", "connector", "connector", "hero"]
+    assert roles_payload["effective_roles"] == ["hero", "connector", "connector", "hero"]
+    assert roles_payload["role_source"] == "agent"
+    assert set(roles_payload["guarantees"]) == {
+        "invalid_roles_rederived",
+        "closer_final_enforced",
+        "hero_present_enforced",
+        "signal_free_contrast_enforced",
+        "all_hero_demoted_to_closer",
+    }
+
+    shrink_payload = next(payload for event, payload in events if event == "cluster_shrink_applied")
+    assert shrink_payload["text"] == "wandering through golden istanbul"
+    assert shrink_payload["base_size_px"] == 80
+    assert 0.55 <= shrink_payload["scale"] < 1.0
+    assert shrink_payload["min_scale"] == 0.55
+    assert shrink_payload["widest_block_frac"] <= shrink_payload["usable_width_frac"]
+    assert shrink_payload["block_count"] == len(blocks)
+
+
+def test_intro_layout_selected_event_has_documented_payload():
+    from app.pipeline.generative_overlays import build_persistent_intro_overlays
+
+    with mock.patch("app.services.pipeline_trace.record_pipeline_event") as record:
+        overlays = build_persistent_intro_overlays(
+            text="what's your favorite place?",
+            effect="static",
+            reveal_window_s=3.0,
+            layout="cluster",
+            word_roles=[ROLE_CONNECTOR, ROLE_HERO, ROLE_HERO, ROLE_CLOSER],
+            font_family="Playfair Display",
+            text_size_px=60,
+        )
+    assert len(overlays) > 2
+    layout_payload = next(
+        c.args[2] for c in record.call_args_list if c.args[1] == "intro_layout_selected"
+    )
+    assert layout_payload == {
+        "requested_layout": "cluster",
+        "selected_layout": "cluster",
+        "reason": "agent_pick",
+        "text": "what's your favorite place?",
+        "word_count": 4,
+        "has_word_roles": True,
+        "fallback": False,
+    }
+
+
+def test_cluster_roles_event_reports_per_word_roles_before_grouping():
+    with mock.patch("app.services.pipeline_trace.record_pipeline_event") as record:
+        blocks = _compute("one two three four five six", word_roles=[ROLE_HERO] * 6)
+    assert blocks is not None
+    roles_payload = next(
+        c.args[2] for c in record.call_args_list if c.args[1] == "cluster_roles_derived"
+    )
+    assert roles_payload["effective_roles"] == [ROLE_HERO] * 6
+    assert roles_payload["guarantees"]["all_hero_demoted_to_closer"] is True
+
+
+def test_cluster_event_emission_outside_trace_context_does_not_raise():
+    assert _compute(
+        "wandering through golden istanbul",
+        word_roles=["hero", "connector", "connector", "hero"],
+        base_size_px=80,
+    )
 
 
 def test_unfittable_long_words_decline_to_linear():

@@ -76,6 +76,56 @@ def test_typeface_for_overlay_falls_back_when_font_unknown():
     assert isinstance(tf, skia.Typeface)
 
 
+def test_resolved_typeface_reports_unknown_font_fallback():
+    resolved = tos.resolved_typeface_for_overlay(
+        {"font_family": "DefinitelyNotAFont", "font_style": "display"}
+    )
+    assert resolved["requested_font_family"] == "DefinitelyNotAFont"
+    assert resolved["name"] != "DefinitelyNotAFont"
+    assert resolved["fallback"] is True
+
+
+def test_font_cycle_reports_actual_settle_typeface_not_style_default():
+    resolved = tos.resolved_typeface_for_overlay({"effect": "font-cycle", "font_style": "sans"})
+    assert resolved["name"] == "Playfair Display"
+    assert resolved["source"] == "font_cycle_settle"
+    assert resolved["fallback"] is False
+
+
+def test_unknown_font_family_emits_fallback_font_resolved_event(tmp_workdir):
+    overlay = {
+        "text": "fallback font",
+        "effect": "static",
+        "font_family": "DefinitelyNotAFont",
+        "font_style": "display",
+        "text_size_px": 80,
+        "start_s": 0.0,
+        "end_s": 1.0,
+    }
+    with mock.patch("app.services.pipeline_trace.record_pipeline_event") as record:
+        seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 7)
+    assert seq is not None
+    record.assert_called_once()
+    stage, event, payload = record.call_args.args
+    assert stage == "overlay"
+    assert event == "font_resolved"
+    assert payload["requested_font_family"] == "DefinitelyNotAFont"
+    assert payload["fallback"] is True
+    assert payload["level"] == "warning"
+
+
+def test_font_resolved_event_no_trace_context_does_not_raise(tmp_workdir):
+    overlay = {
+        "text": "no trace context",
+        "effect": "static",
+        "font_family": "DefinitelyNotAFont",
+        "text_size_px": 80,
+        "start_s": 0.0,
+        "end_s": 1.0,
+    }
+    assert tos._generate_overlay_sequence(overlay, tmp_workdir, 8) is not None
+
+
 # -- Turkish-diacritic glyph coverage (TR regression) -------------------------
 #
 # Adding Turkish-language support to intro_writer/overlay_format_matcher is
