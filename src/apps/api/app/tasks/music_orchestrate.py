@@ -58,6 +58,7 @@ from app.tasks.template_orchestrate import (
     _mix_template_audio,
     _probe_clips,
     _upload_clips_parallel,
+    compute_snapped_slot_durations,
 )
 from app.worker import celery_app
 
@@ -658,7 +659,20 @@ def _run_music_job(job_id: str) -> None:
     # [3a] Inject lyric overlays (no-op when lyrics_config.enabled=False or
     # track has no cached lyrics). Done BEFORE TemplateRecipe is built so the
     # overlays flow through `_assemble_clips` like any other text overlay.
+    #
+    # Overwrite target_duration_s with post-beat-snap values FIRST so the
+    # injector clamps lyric windows to the slot boundaries _assemble_clips
+    # will actually produce (karaoke word-highlight drift fix).
     cfg = track_data["track_config"]
+    _beats = list(track_data.get("beat_timestamps_s") or [])
+    _snapped = compute_snapped_slot_durations(
+        recipe_dict.get("slots") or [],
+        _beats,
+        is_agentic=False,
+        user_total_dur_s=None,
+    )
+    for _i, _s in enumerate(_snapped):
+        recipe_dict["slots"][_i]["target_duration_s"] = _s
     recipe_dict = inject_lyric_overlays(
         recipe_dict,
         lyrics_cached,
@@ -1374,6 +1388,11 @@ def _run_templated_music_job(job_id: str) -> None:
     # Inject lyric overlays for templated tracks. `best_start_s` defaults to 0
     # for templated tracks (slot times already start at the beginning of the
     # audio file).
+    #
+    # No beat-snap pre-seeding here: _run_templated_music_job bypasses
+    # _assemble_clips entirely (_concat_pre_rendered_clips is used instead),
+    # so slot durations are never snapped — the recipe's target_duration_s
+    # values are already the final assembly boundaries.
     recipe_dict = inject_lyric_overlays(
         recipe_dict,
         lyrics_cached_tmpl,

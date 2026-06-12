@@ -2381,6 +2381,57 @@ def _extract_grid_params(slot: dict) -> dict:
     }
 
 
+def compute_snapped_slot_durations(
+    slots: list[dict],
+    beats: list[float],
+    *,
+    is_agentic: bool,
+    user_total_dur_s: float | None,
+) -> list[float]:
+    """Return post-beat-snap duration for each slot (pure, no I/O, no trace events).
+
+    Reproduces the same sequential arithmetic `_plan_slots` applies:
+    resolve_slot_duration → max(dur, 0.5) → locked/exact_window bypass
+    (no beat-snap) → _snap_to_beat with running cumulative_s →
+    max(0.5, snapped_end - cumulative_s).
+
+    Call this BEFORE inject_lyric_overlays so the injector clamps lyric
+    windows to the slot boundaries the assembler will actually produce.
+
+    Locked and exact_window slots bypass beat-snap.  When called before
+    template matching (no moment data), their duration is taken from
+    target_duration_s; _plan_slots later overrides with the verbatim
+    moment range, so any small discrepancy only affects cumulative_s for
+    subsequent slots in the helper's run — acceptable since locked slots
+    in music/generative recipes are rare and typically carry no lyrics.
+    """
+    from app.pipeline.agentic_timing import resolve_slot_duration  # noqa: PLC0415
+
+    # resolve_slot_duration expects float; None is valid for non-agentic callers
+    # (user_total_dur_s is ignored when is_agentic=False).
+    _user_dur: float = user_total_dur_s if user_total_dur_s is not None else 0.0
+
+    cumulative_s = 0.0
+    durations: list[float] = []
+    for slot in slots:
+        dur = max(
+            resolve_slot_duration(slot, is_agentic=is_agentic, user_total_dur_s=_user_dur),
+            0.5,
+        )
+        if slot.get("locked") or slot.get("exact_window"):
+            # Bypass beat-snap — duration is verbatim from the source range.
+            cumulative_s += dur
+        elif beats:
+            expected_end = cumulative_s + dur
+            snapped_end = _snap_to_beat(expected_end, beats)
+            dur = max(0.5, snapped_end - cumulative_s)
+            cumulative_s = snapped_end
+        else:
+            cumulative_s += dur
+        durations.append(dur)
+    return durations
+
+
 def _plan_slots(
     steps: list,
     clip_id_to_local: dict[str, str],
@@ -2450,6 +2501,16 @@ def _plan_slots(
         )
         user_total_dur_s = capped
 
+    # Pre-compute post-snap durations for all slots (pure helper, no I/O).
+    # _plan_slots then overrides locked/exact slots with actual moment ranges
+    # from the matched clip, and emits the beat_snap trace event.
+    _snapped_durations = compute_snapped_slot_durations(
+        [step.slot for step in steps],
+        beats,
+        is_agentic=is_agentic,
+        user_total_dur_s=user_total_dur_s,
+    )
+
     for i, step in enumerate(steps):
         clip_id = step.clip_id
         local_path = clip_id_to_local.get(clip_id)
@@ -2458,12 +2519,14 @@ def _plan_slots(
 
         probe = clip_probe_map.get(local_path)
         moment = step.moment
-        slot_target_dur = resolve_slot_duration(
-            step.slot,
-            is_agentic=is_agentic,
-            user_total_dur_s=user_total_dur_s,
+        # Pre-snap duration (needed for trace event drift computation).
+        pre_snap_dur = max(
+            resolve_slot_duration(
+                step.slot, is_agentic=is_agentic, user_total_dur_s=user_total_dur_s
+            ),
+            0.5,
         )
-        slot_target_dur = max(slot_target_dur, 0.5)
+        slot_target_dur = _snapped_durations[i]
 
         is_locked = bool(step.slot.get("locked", False))
         # exact_window = user-pinned window (clip editor): same verbatim-range
@@ -2479,15 +2542,12 @@ def _plan_slots(
             speed_factor = 1.0
             cumulative_s += slot_target_dur
         else:
-            # Beat-snap
+            # Beat-snap drift logging — the actual snap ran inside the helper;
+            # here we only emit the trace event for admin visibility.
             if beats:
-                expected_end = cumulative_s + slot_target_dur
-                snapped_end = _snap_to_beat(expected_end, beats)
+                expected_end = cumulative_s + pre_snap_dur
+                snapped_end = cumulative_s + slot_target_dur
                 drift_ms = int(round((snapped_end - expected_end) * 1000))
-                slot_target_dur = max(0.5, snapped_end - cumulative_s)
-                # Beat-snap drift is one of the most common "video looks
-                # off" causes — record per-slot offset so admins can spot
-                # which boundary drifted by how much.
                 from app.services.pipeline_trace import (  # noqa: PLC0415
                     record_pipeline_event,
                 )
@@ -4201,7 +4261,7 @@ def _collect_absolute_overlays(
     # 500 ms is well above expected drift but below "this is a different
     # rendition of the line." Tighten this once post-snap injection lands
     # (Architectural Debt TODO 1 in plans/geli-me-var-ama-hatalar-robust-reddy.md).
-    _LARGE_CONTINUATION_GAP_WARNING_S = 0.5
+    _LARGE_CONTINUATION_GAP_WARNING_S = 0.05
 
     def _same_lyric_visual_style(a: dict, b: dict) -> bool:
         """Visual-rendering attributes only, no originating-video-slot index."""
