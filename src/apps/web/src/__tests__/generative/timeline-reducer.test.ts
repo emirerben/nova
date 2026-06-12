@@ -402,6 +402,166 @@ describe("countEdits", () => {
   });
 });
 
+// ── SET_DURATION_BEATS (grid right-edge drag) ─────────────────────────────────
+
+describe("SET_DURATION_BEATS", () => {
+  it("sets an absolute beat count and re-clamps in-points", () => {
+    const state = run(
+      init(),
+      { type: "SET_DURATION_BEATS", key: "s1", beats: 3, record: true },
+    );
+    expect(state.slots[0].durationBeats).toBe(3);
+    expect(state.past).toHaveLength(1);
+  });
+
+  it("clamps to 1-beat floor and flashes", () => {
+    const before = init().clampNonce;
+    const state = run(init(), { type: "SET_DURATION_BEATS", key: "s1", beats: 0, record: true });
+    expect(state.slots[0].durationBeats).toBe(1); // stepped down to 1
+    expect(state.clampNonce).toBeGreaterThan(before);
+    expect(state.clampedKey).toBe("s1");
+  });
+
+  it("clamps to available grid beats (step-down, not hard-reject)", () => {
+    // Fixture has 6 beats used of 8. s1 = 2 beats. maxAvail for s1 = 8 - (6 - 2) = 4.
+    const state = run(init(), { type: "SET_DURATION_BEATS", key: "s1", beats: 99, record: true });
+    expect(state.slots[0].durationBeats).toBeLessThanOrEqual(4);
+    expect(state.clampNonce).toBeGreaterThan(0);
+  });
+
+  it("steps down on source-clip overflow and flashes", () => {
+    // s3: clip index 2, source 4s. Grid from offset 4:
+    //   k=1 → grid[5]-grid[4] = 3.0-2.5 = 0.5s
+    //   k=2 → grid[6]-grid[4] = 3.6-2.5 = 1.1s
+    //   k=3 → grid[7]-grid[4] = 4.0-2.5 = 1.5s
+    //   k=4 → grid[8]-grid[4] = 5.0-2.5 = 2.5s → still fits 4s source (inS=0)
+    // Only when window > source (4s) would it step down. Window at k=4 = 2.5s which fits.
+    // Let's try with a very short source: create a custom fixture
+    const t = gridTimeline();
+    t.slots[2] = { ...t.slots[2], source_duration_s: 0.6 }; // 0.6s source
+    t.clips[2] = { ...t.clips[2], duration_s: 0.6 };
+    const state = init(t);
+    // k=2 would give 1.1s window > 0.6s source → step down to k=1 (0.5s ≤ 0.6s)
+    const after = run(state, { type: "SET_DURATION_BEATS", key: "s3", beats: 2, record: true });
+    expect(after.slots[2].durationBeats).toBe(1);
+    expect(after.clampNonce).toBeGreaterThan(0);
+  });
+
+  it("record=false does not push history", () => {
+    const state = init();
+    const after1 = timelineReducer(state, { type: "SET_DURATION_BEATS", key: "s1", beats: 1, record: true });
+    const after2 = timelineReducer(after1, { type: "SET_DURATION_BEATS", key: "s1", beats: 2, record: false });
+    const after3 = timelineReducer(after2, { type: "SET_DURATION_BEATS", key: "s1", beats: 3, record: false });
+    expect(after3.past).toHaveLength(1); // only the record=true pushed
+    const undone = timelineReducer(after3, { type: "UNDO" });
+    expect(undone.slots[0].durationBeats).toBe(2); // back to baseline (2 beats)
+  });
+
+  it("is a no-op on a seconds (null-beats) slot", () => {
+    const state = init(secondsTimeline());
+    const after = run(state, { type: "SET_DURATION_BEATS", key: "s1", beats: 3, record: true });
+    expect(after).toBe(state); // reference equality → no-op
+  });
+
+  it("countEdits registers a beat change as 1 edit", () => {
+    const state = run(init(), { type: "SET_DURATION_BEATS", key: "s1", beats: 3, record: true });
+    expect(countEdits(state.baseline, state.slots)).toBe(1);
+  });
+});
+
+// ── SET_WINDOW (seconds both-edge drag) ───────────────────────────────────────
+
+describe("SET_WINDOW", () => {
+  it("sets inS and durationS together", () => {
+    const state = run(
+      init(secondsTimeline()),
+      { type: "SET_WINDOW", key: "s1", inS: 0.5, durationS: 1.5, record: true },
+    );
+    expect(state.slots[0].inS).toBeCloseTo(0.5);
+    expect(state.slots[0].durationS).toBeCloseTo(1.5);
+    expect(state.past).toHaveLength(1);
+  });
+
+  it("clamps inS to 0 and flashes", () => {
+    const state = run(
+      init(secondsTimeline()),
+      { type: "SET_WINDOW", key: "s1", inS: -1, durationS: 2.0, record: true },
+    );
+    expect(state.slots[0].inS).toBe(0);
+    expect(state.clampNonce).toBeGreaterThan(0);
+    expect(state.clampedKey).toBe("s1");
+  });
+
+  it("enforces 0.6s floor on durationS and flashes", () => {
+    const state = run(
+      init(secondsTimeline()),
+      { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 0.3, record: true },
+    );
+    expect(state.slots[0].durationS).toBeCloseTo(0.6);
+    expect(state.clampNonce).toBeGreaterThan(0);
+  });
+
+  it("enforces source-fit and flashes", () => {
+    // s1: clip index 0, source 10s. Window 8s starting at inS=5 would run to 13s > 10s.
+    const state = run(
+      init(secondsTimeline()),
+      { type: "SET_WINDOW", key: "s1", inS: 5, durationS: 8, record: true },
+    );
+    expect(state.slots[0].inS + (state.slots[0].durationS ?? 0)).toBeLessThanOrEqual(10 + 1e-6);
+    expect(state.clampNonce).toBeGreaterThan(0);
+  });
+
+  it("enforces 60s total and flashes", () => {
+    // seconds timeline: 3 slots × 2s = 6s total.
+    // Set s1 to a 56s window → total would be 56+2+2=60, ok. 57s → 61s > 60.
+    const state = run(
+      init(secondsTimeline()),
+      { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 57, record: true },
+    );
+    const total = (state.slots[0].durationS ?? 0) + (state.slots[1].durationS ?? 0) + (state.slots[2].durationS ?? 0);
+    expect(total).toBeLessThanOrEqual(60 + 1e-6);
+    expect(state.clampNonce).toBeGreaterThan(0);
+  });
+
+  it("left-edge drag keeps out-point fixed (out = inS + dur must stay constant)", () => {
+    // Simulate left-edge drag: capturedOut is fixed at pointer-down, inS moves left,
+    // durationS = capturedOut - inS.
+    const base = init(secondsTimeline());
+    const capturedOut = base.slots[0].inS + (base.slots[0].durationS ?? 0); // = 1.0 + 2.0 = 3.0
+    // Drag left: new inS=0.5 → dur = 3.0 - 0.5 = 2.5
+    const state = run(
+      base,
+      { type: "SET_WINDOW", key: "s1", inS: 0.5, durationS: capturedOut - 0.5, record: true },
+    );
+    expect(state.slots[0].inS).toBeCloseTo(0.5);
+    expect(state.slots[0].inS + (state.slots[0].durationS ?? 0)).toBeCloseTo(capturedOut);
+  });
+
+  it("record=false does not push history (one-gesture-one-undo)", () => {
+    const state = init(secondsTimeline());
+    const after1 = timelineReducer(state, { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 1.0, record: true });
+    const after2 = timelineReducer(after1, { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 1.5, record: false });
+    const after3 = timelineReducer(after2, { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 2.0, record: false });
+    expect(after3.past).toHaveLength(1);
+    const undone = timelineReducer(after3, { type: "UNDO" });
+    expect(undone.slots[0].durationS).toBeCloseTo(2.0); // back to baseline
+  });
+
+  it("is a no-op on a grid (beats-bearing) slot", () => {
+    const state = init(); // grid timeline — all slots have durationBeats
+    const after = run(state, { type: "SET_WINDOW", key: "s1", inS: 0, durationS: 2.0, record: true });
+    expect(after).toBe(state); // reference equality → no-op
+  });
+
+  it("countEdits registers both-field change as exactly 1 edit", () => {
+    const state = run(
+      init(secondsTimeline()),
+      { type: "SET_WINDOW", key: "s1", inS: 0.5, durationS: 1.5, record: true },
+    );
+    expect(countEdits(state.baseline, state.slots)).toBe(1);
+  });
+});
+
 // ── Median + formatting ───────────────────────────────────────────────────────
 
 describe("helpers", () => {
