@@ -29,9 +29,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
-from app.auth import CurrentUserOrSynthetic
+from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import get_db
-from app.models import Job, MusicTrack
+from app.models import Job, MusicTrack, User
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.storage import signed_get_url
 
@@ -346,7 +346,11 @@ _READABLE_MODES = ("generative", "content_plan")
 
 
 async def _load_generative_job(
-    job_id: str, db: AsyncSession, *, allowed_modes: tuple[str, ...] = ("generative",)
+    job_id: str,
+    db: AsyncSession,
+    current_user: User,
+    *,
+    allowed_modes: tuple[str, ...] = ("generative",),
 ) -> Job:
     try:
         job_uuid = uuid.UUID(job_id)
@@ -356,6 +360,7 @@ async def _load_generative_job(
     job = result.scalar_one_or_none()
     if job is None or job.mode not in allowed_modes:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    ensure_job_owner(job.user_id, current_user)
     return job
 
 
@@ -1072,6 +1077,7 @@ async def list_generative_style_sets() -> StyleSetListResponse:
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
 async def get_generative_job_status(
     job_id: str,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobStatusResponse:
     """Poll generative job status. `variants` carries the per-variant render state.
@@ -1080,7 +1086,7 @@ async def get_generative_job_status(
     """
     from app.services.phase_baselines import get_baselines, scale_render_variants  # noqa: PLC0415
 
-    job = await _load_generative_job(job_id, db, allowed_modes=_READABLE_MODES)
+    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
 
     # Count pending/rendering variants for baseline scaling.
     variants_list = (job.assembly_plan or {}).get("variants") or []
@@ -1112,10 +1118,11 @@ async def swap_song(
     job_id: str,
     variant_id: str,
     req: SwapSongRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Re-render a variant against a different library song (async re-slot)."""
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
     log.info(
         "generative_swap_song", job_id=str(job.id), variant_id=variant_id, track_id=req.new_track_id
@@ -1128,10 +1135,11 @@ async def retext(
     job_id: str,
     variant_id: str,
     req: RetextRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Re-render a variant with user-supplied intro text, or remove the text."""
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
     log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
@@ -1142,6 +1150,7 @@ async def change_style(
     job_id: str,
     variant_id: str,
     req: ChangeStyleRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Re-render a variant with a different curated text style set (async).
@@ -1149,7 +1158,7 @@ async def change_style(
     Unlike swap-song this applies to ALL variants — the style set governs the AI
     intro on the text variants and the lyric typography on the lyrics variant.
     """
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
     log.info(
         "generative_change_style",
@@ -1165,10 +1174,11 @@ async def set_intro_size(
     job_id: str,
     variant_id: str,
     req: SetIntroSizeRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Re-render a variant with a user-pinned AI-intro font size (the ±size nudge)."""
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
     log.info(
         "generative_set_intro_size",
@@ -1184,6 +1194,7 @@ async def edit_variant(
     job_id: str,
     variant_id: str,
     req: EditVariantRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Apply a whole instant-edit session (text + style + size) in ONE re-render.
@@ -1192,7 +1203,7 @@ async def edit_variant(
     commits them here on "Done". Supersedes chaining /retext + /change-style +
     /intro-size, which would enqueue one render each.
     """
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     dispatch_edit_variant(
         job,
         variant_id,
@@ -1219,6 +1230,7 @@ async def edit_variant(
 async def get_variant_timeline(
     job_id: str,
     variant_id: str,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> TimelineResponse:
     """The variant's effective clip timeline + the job's full clip pool.
@@ -1226,7 +1238,7 @@ async def get_variant_timeline(
     Readable for the same modes as the status endpoint (the plan item page opens
     the same editor). `editable=false` carries a `reason` instead of erroring.
     """
-    job = await _load_generative_job(job_id, db, allowed_modes=_READABLE_MODES)
+    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
     return TimelineResponse(**dispatch_get_timeline(job, variant_id))
 
 
@@ -1235,10 +1247,11 @@ async def edit_variant_timeline(
     job_id: str,
     variant_id: str,
     req: TimelineEditRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Persist a user-edited clip timeline and re-render the variant from it."""
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     await dispatch_edit_timeline(job, variant_id, req, db=db)
     log.info(
         "generative_edit_timeline",
@@ -1253,10 +1266,11 @@ async def edit_variant_timeline(
 async def reset_variant_timeline(
     job_id: str,
     variant_id: str,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Discard the user timeline and re-render the variant from the AI timeline."""
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     await dispatch_reset_timeline(job, variant_id, db=db)
     log.info("generative_reset_timeline", job_id=str(job.id), variant_id=variant_id)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
@@ -1267,10 +1281,11 @@ async def set_mix(
     job_id: str,
     variant_id: str,
     req: SetMixRequest,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> GenerativeJobResponse:
     """Re-render a voiceover variant at a new voice/bed mix (the mix slider)."""
-    job = await _load_generative_job(job_id, db)
+    job = await _load_generative_job(job_id, db, current_user)
     dispatch_set_mix(job, variant_id, mix=req.mix)
     log.info("generative_set_mix", job_id=str(job.id), variant_id=variant_id, mix=req.mix)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
