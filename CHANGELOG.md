@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.98.4] — 2026-06-12
+
+### Security
+- **Enforce job ownership on status + variant-edit endpoints.** `GET /generative-jobs/{id}/status`, all 9 generative variant-edit endpoints (`swap-song`, `retext`, `change-style`, `intro-size`, `edit`, `timeline` GET/POST/DELETE, `mix`), `GET /music-jobs/{id}/status`, and `GET /template-jobs/{id}/status` now check that the caller owns the job. Jobs owned by the synthetic dev user (anonymous public flow) remain reachable by UUID — no regression to unauthenticated flows. Real-user jobs (identified via `X-User-Id + Authorization: Bearer` from the Next.js plan proxy) return 404 for foreign callers. Added `ensure_job_owner` helper to `app/auth.py` and 21 ownership tests covering anonymous regression, no-auth 404, wrong-user 404, owner 200 for all three job families plus content_plan readability.
+
 ## [0.4.98.3] — 2026-06-12
 
 ### Security
