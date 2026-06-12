@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.98.2] — 2026-06-11
+
+### Fixed
+- **Editorial cluster rendered as a flat same-size stack on signal-free hooks (prod bug).** Toggling Editorial on a user-typed hook with no stopword/punctuation/highlight signal (typical for Turkish — diagnosed on plan item `7da07d29`, hook "Lutfen calis haydi inaniyorum haydi") derived ALL words as hero; the surplus-hero merge then built a triple-wide hero line whose width forced the cluster-atomic shrink to crush every block to one size — visually indistinguishable from the linear intro. Three-part fix in `intro_cluster.py`: (1) `derive_word_roles` now guarantees role contrast — no closer signal on a 4+ word hook demotes the final hero to closer, no connector on a 5+ word hook demotes the leading hero to connector; (2) surplus hero lines fold into ONE closer-sized tail block (reading order preserved) instead of a hero-sized mega-line, so heroes keep their 2.6× size; (3) an all-hero block set (agent annotations may legally be all-hero) demotes its final block to closer — a cluster now always carries ≥2 distinct sizes. Pinned by `test_flat_stack_regression_cluster_always_has_size_contrast` + `test_surplus_heroes_fold_into_closer_not_hero_line` + new `cluster_intro_signal_free.json` overlay-verify fixture. Verified by reburning the affected prod variant's real base through the prod image: the hook now renders as the reference shape (small connector, three 140px heroes, 76px closer) with zero shrink.
+
 ## [0.4.98.1] — 2026-06-11
 
 ### Added

@@ -55,6 +55,25 @@ def test_roles_all_stopword_text_promotes_longest_to_hero():
     assert ROLE_HERO in roles
 
 
+def test_roles_signal_free_text_still_gets_contrast():
+    # The prod flat-stack regression: a user-override hook with no stopword,
+    # punctuation, or highlight signal (typical for Turkish) must NOT come back
+    # all-hero — the heuristic demotes the edges so the cluster keeps its
+    # size hierarchy.
+    roles = derive_word_roles("Lutfen calis haydi inaniyorum haydi".split())
+    assert roles == [ROLE_CONNECTOR, ROLE_HERO, ROLE_HERO, ROLE_HERO, ROLE_CLOSER]
+    # 4 words: closer demotion only (heroes stay the dramatic majority).
+    assert derive_word_roles("london mornings hit different".split()) == [
+        ROLE_HERO,
+        ROLE_HERO,
+        ROLE_HERO,
+        ROLE_CLOSER,
+    ]
+    # Highlight on the final word blocks the closer demotion — highlight is hero.
+    roles = derive_word_roles(["calis", "haydi", "inaniyorum", "lutfen"], highlight_word="lutfen")
+    assert roles[-1] == ROLE_HERO
+
+
 # -- engine fallbacks ----------------------------------------------------------
 
 
@@ -134,7 +153,10 @@ def test_atomic_shrink_preserves_size_hierarchy():
 def test_unfittable_long_words_decline_to_linear():
     # A hero word so long the cluster would shrink past the readability floor
     # → engine declines (caller falls back to the proven linear intro).
-    assert _compute("absolutely unforgettable mediterranean adventures", base_size_px=80) is None
+    assert (
+        _compute("muvaffakiyetsizlestiricilestiriveremeyebileceklerimizdenmissinizcesine kal orada")
+        is None
+    )
 
 
 # -- structure / timing --------------------------------------------------------
@@ -181,11 +203,43 @@ def test_connector_uses_regular_weight_of_hero_face():
 
 
 def test_repeated_hero_words_keep_screen_order():
-    # "go go go go fast" — duplicate hero dicts compare equal; the hero-cap merge
-    # must remove by IDENTITY or the on-screen word order silently scrambles.
+    # "go go go go fast" — duplicate hero dicts compare equal; the hero-cap fold
+    # must locate the fold point by IDENTITY or the on-screen word order
+    # silently scrambles.
     blocks = _compute("go go go go fast", word_roles=["hero", "hero", "hero", "hero", "hero"])
     assert blocks is not None
     assert " ".join(b["text"] for b in blocks) == "go go go go fast"
+
+
+def test_flat_stack_regression_cluster_always_has_size_contrast():
+    # Prod regression (plan item 7da07d29, 2026-06-11): an all-hero role set —
+    # heuristic-derived OR agent-annotated — used to render every block at one
+    # size after the surplus-hero merge forced an atomic shrink. The result was
+    # indistinguishable from linear text. A cluster MUST carry ≥2 distinct
+    # sizes, and heroes must not have been crushed by the fold.
+    cases = [
+        ("Lutfen calis haydi inaniyorum haydi", None, 54),  # the prod text, heuristic path
+        ("go go go go fast", ["hero"] * 5, 60),  # agent-annotated all-hero
+        ("dream eat repeat", ["hero"] * 3, 60),  # minimal all-hero
+    ]
+    for text, roles, base in cases:
+        blocks = _compute(text, word_roles=roles, base_size_px=base)
+        assert blocks, f"engine declined {text!r}"
+        sizes = {b["text_size_px"] for b in blocks}
+        assert len(sizes) >= 2, f"flat cluster for {text!r}: {sizes}"
+        hero_px = max(b["text_size_px"] for b in blocks if b["role"] == ROLE_HERO)
+        assert hero_px == round(base * 2.6), f"hero crushed for {text!r}: {hero_px}"
+
+
+def test_surplus_heroes_fold_into_closer_not_hero_line():
+    # 6 hero words: the 3 surplus words become ONE closer-sized tail block, in
+    # reading order — never a triple-wide hero line that forces a shrink.
+    blocks = _compute("one two three four five six", word_roles=["hero"] * 6)
+    assert blocks is not None
+    assert " ".join(b["text"] for b in blocks) == "one two three four five six"
+    closers = [b for b in blocks if b["role"] == ROLE_CLOSER]
+    assert len(closers) == 1 and closers[-1]["text"] == "four five six"
+    assert len([b for b in blocks if b["role"] == ROLE_HERO]) == 3
 
 
 def test_mid_text_closer_annotation_falls_back_to_heuristic():
