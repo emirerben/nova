@@ -330,6 +330,7 @@ def test_reaper_reconciles_frozen_rendering_variants():
     Fix: reap_orphans() reconciles frozen variants in the same transaction.
     """
     import uuid as _uuid
+
     from app.tasks.reaper import reap_orphans
 
     frozen_job_id = _uuid.uuid4()
@@ -387,6 +388,7 @@ def test_reaper_no_variant_reconciliation_when_no_rows():
 def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
     """Jobs without assembly_plan (not yet at render step) skip variant pass."""
     import uuid as _uuid
+
     from app.tasks.reaper import reap_orphans
 
     app = _make_celery_with_inspect(active={}, reserved={})
