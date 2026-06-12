@@ -706,8 +706,9 @@ function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onRepla
 // Link-reveal — one visible input at a time, with a VISIBLE label (never
 // placeholder-as-label); saved notes collapse to italic zinc + Edit. Saving a
 // note re-runs the brief read server-side.
+// Exported: the uninstructed (no-shot-list) clip list on the item page reuses it.
 
-function ClipNoteControl({
+export function ClipNoteControl({
   note,
   onSave,
 }: {

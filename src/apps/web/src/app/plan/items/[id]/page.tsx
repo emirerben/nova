@@ -4,12 +4,15 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  attachClips,
   changePlanItemStyle,
   dismissConformance,
   generatePlanItem,
   getPlanItem,
   getPlanItemJobStatus,
   NotAuthenticatedError,
+  setClipNote,
+  type ClipAssignment,
   type ConformanceVerdict,
   type PlanItem,
   type PlanItemJobStatus,
@@ -20,7 +23,7 @@ import {
   swapPlanItemSong,
   uploadToGcs,
 } from "@/lib/plan-api";
-import ShotSlotUploader from "./components/ShotSlotUploader";
+import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskNovaPanel from "./components/AskNovaPanel";
 import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
@@ -202,14 +205,58 @@ export default function PlanItemPage() {
       );
       await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, list[i])));
       const newPaths = urls.map((u) => u.gcs_path);
-      const pathsToAttach = [...(item?.clip_gcs_paths ?? []), ...newPaths];
-      const { attachClips: attach } = await import("@/lib/plan-api");
-      await attach(itemId, pathsToAttach);
+      // Pass full assignments (not bare paths) so existing clips keep their
+      // user_note across an append — the bare-paths legacy form resets them.
+      const assignments = [
+        ...(item?.clip_assignments ?? []).map((a) => ({
+          gcs_path: a.gcs_path,
+          shot_id: a.shot_id,
+          user_note: a.user_note ?? "",
+        })),
+        ...newPaths.map((p) => ({ gcs_path: p, shot_id: null, user_note: "" })),
+      ];
+      await attachClips(
+        itemId,
+        assignments.map((a) => a.gcs_path),
+        assignments,
+      );
       refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
+    }
+  }
+
+  // ── Uninstructed clip actions (no-shot-list items: feedback #3 + pool Keep) ──
+
+  async function saveUninstructedNote(a: ClipAssignment, note: string) {
+    await setClipNote(itemId, a.gcs_path, note);
+    conformancePolls.current = 0;
+    refetch();
+  }
+
+  async function keepUninstructedMatch(a: ClipAssignment) {
+    try {
+      await saveUninstructedNote(a, a.user_note ?? "");
+    } catch {
+      setError("Couldn't keep that clip — try again.");
+    }
+  }
+
+  async function removeUninstructedClip(a: ClipAssignment) {
+    const remaining = (item?.clip_assignments ?? [])
+      .filter((x) => x.gcs_path !== a.gcs_path)
+      .map((x) => ({ gcs_path: x.gcs_path, shot_id: x.shot_id, user_note: x.user_note ?? "" }));
+    try {
+      await attachClips(
+        itemId,
+        remaining.map((x) => x.gcs_path),
+        remaining,
+      );
+      refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't remove that clip");
     }
   }
 
@@ -327,8 +374,55 @@ export default function PlanItemPage() {
               <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
                 <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
                 <p className="mb-4 text-sm text-[#71717a]">
-                  {`Upload footage for this idea. ${clipCount > 0 ? `${clipCount} uploaded.` : "None yet."}`}
+                  {clipCount > 0
+                    ? "The editor will use the best parts."
+                    : "Upload footage for this idea. None yet."}
                 </p>
+                {(item.clip_assignments?.length ?? 0) > 0 && (
+                  <ul className="mb-4 space-y-3">
+                    {item.clip_assignments!.map((a) => {
+                      const raw = a.gcs_path.split("/").pop() ?? a.gcs_path;
+                      const name = raw.includes("-") ? raw.slice(raw.indexOf("-") + 1) : raw;
+                      return (
+                        <li key={a.gcs_path} className="border-b border-zinc-100 pb-3 last:border-0 last:pb-0">
+                          <div className="flex items-center gap-3">
+                            {a.machine_matched ? (
+                              <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
+                                <span className="max-w-[180px] truncate">{name}</span>
+                                <span className="shrink-0 text-lime-700">· Matched — keep?</span>
+                              </span>
+                            ) : (
+                              <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
+                                <span>✓</span>
+                                <span className="max-w-[220px] truncate">{name}</span>
+                              </span>
+                            )}
+                            {a.machine_matched && (
+                              <button
+                                type="button"
+                                onClick={() => keepUninstructedMatch(a)}
+                                className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800"
+                              >
+                                Keep
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeUninstructedClip(a)}
+                              className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                          <ClipNoteControl
+                            note={a.user_note ?? ""}
+                            onSave={(note) => saveUninstructedNote(a, note)}
+                          />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
                 <label className="block">
                   <span className="sr-only">Upload video clips for this idea</span>
                   <input

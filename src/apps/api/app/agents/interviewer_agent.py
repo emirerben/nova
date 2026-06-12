@@ -14,6 +14,9 @@ Design:
   that the profile already answers and goes deeper on gaps.
 
 Changelog:
+  2026-06-12 — Turn-label consistency contract (M never below N; reaching your own
+               advertised M forces is_final) — dogfood: labels drifted to "7-8 OF ~6"
+               after the DIRECTION turn lengthened the arc. Aim tightened to 5-6 turns.
   2026-06-11 — Turn 1 is now DIRECTION (existing footage vs create-new fork, chips
                carry the classification); conditional GROUNDING question pins
                current location vs past-trip footage; turn-1 suggestions exception.
@@ -34,7 +37,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-06-11"
+INTERVIEWER_PROMPT_VERSION = "2026-06-12"
 _HARD_CAP = 8
 
 

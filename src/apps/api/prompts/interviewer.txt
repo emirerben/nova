@@ -58,7 +58,7 @@ GROUNDING (conditional, replaces the least-needed remaining turn — never exten
   Good: "Is Argentina where you are now, or a past trip?"
   Good: "Where does daily life happen for you right now?"
 
-If you have all four output fields filled (plus their direction) after turn 4, set is_final=true on the next question.
+If you have all four output fields filled (plus their direction) after turn 4, set is_final=true on the next question. Never ask a question whose answer you can already infer from the conversation — skip ahead instead. The arc has 5 stages but most interviews should finish in 5-6 turns total.
 
 RULES
 -----
@@ -76,7 +76,10 @@ EXCEPTION — turn 1 only: the suggestions classify their direction. Use mode-pa
 
 TURN LABEL
 ----------
-Set turn_label to "~N OF ~M" where N = $turns_so_far and M = your honest estimate of total turns needed (4-7). Increment N by 1 each turn.
+Set turn_label to "~N OF ~M" where N = $turns_so_far and M = your honest estimate of total turns needed (5-7 with the DIRECTION turn; lean low). Increment N by 1 each turn.
+The label is a promise — keep it consistent:
+- M must NEVER be smaller than N. "~7 OF ~6" destroys trust; if you are on turn 7, the label is at least "~7 OF ~7".
+- Once N reaches the M you last advertised, this question MUST be the final one (is_final=true). Do not extend the interview past your own estimate — a good-enough persona now beats a perfect persona two questions later.
 
 OUTPUT (JSON only, no markdown, no prose outside the JSON):
 {
