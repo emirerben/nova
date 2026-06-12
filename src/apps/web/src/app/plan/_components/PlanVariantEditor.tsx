@@ -9,6 +9,7 @@ import {
   type GenerativeStyleSet,
 } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import SongPicker from "./SongPicker";
 import StyleChip from "./StyleChip";
 
@@ -31,6 +32,11 @@ export default function PlanVariantEditor({
   onRemoveText,
   onChangeStyle,
   onResize,
+  onChangeLayout,
+  onEditClips,
+  showClipEditor = false,
+  clipSlotCount = null,
+  hasClipEdits = false,
 }: {
   variant: PlanItemVariant;
   tracks: MusicTrackSummary[];
@@ -40,10 +46,22 @@ export default function PlanVariantEditor({
   onRemoveText: () => Promise<void>;
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize?: (textSizePx: number) => Promise<void>;
+  onChangeLayout?: (layout: "linear" | "cluster") => Promise<void>;
+  /** Opens the clip-timeline editor sheet (mounted by the parent page). */
+  onEditClips?: () => void;
+  /** From the timeline GET: editable, or uneditable for a transient reason
+   * (sources_expired — the sheet explains). Hidden otherwise. */
+  showClipEditor?: boolean;
+  /** Non-removed slot count for the "Edit clips · N" label (null until loaded). */
+  clipSlotCount?: number | null;
+  /** has_user_edits from the timeline GET — a song swap rebuilds the cut, so
+   * confirm before destroying the user's clip edits (mirrors VariantCard). */
+  hasClipEdits?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [pendingSwapTrackId, setPendingSwapTrackId] = useState<string | null>(null);
   const rendering = variant.render_status === "rendering" || busy;
   // Swap only applies to song variants — the original-audio edit has no track.
   const canSwap = tracks.length > 0 && variant.music_track_id != null;
@@ -167,6 +185,54 @@ export default function PlanVariantEditor({
         </section>
       )}
 
+      {/* ── Layout ──────────────────────────────────────────────── */}
+      {onChangeLayout &&
+        variant.text_mode === "agent_text" &&
+        (() => {
+          const layout = variant.intro_layout === "cluster" ? "cluster" : "linear";
+          const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
+          const clusterBlocked = words < 3 || words > 6;
+          const pill = (selected: boolean) =>
+            `rounded-full border px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              selected
+                ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
+                : "border-zinc-200 text-[#3f3f46] hover:border-zinc-400"
+            }`;
+          return (
+            <section>
+              <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Layout</h3>
+              <div role="radiogroup" aria-label="Intro text layout" className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={rendering || layout === "linear"}
+                  onClick={() => run(() => onChangeLayout("linear"))}
+                  className={pill(layout === "linear")}
+                >
+                  Classic
+                </button>
+                <button
+                  type="button"
+                  disabled={rendering || layout === "cluster" || clusterBlocked}
+                  title={
+                    clusterBlocked
+                      ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                      : "Editorial word-cluster — mixed sizes, magazine-style"
+                  }
+                  onClick={() => run(() => onChangeLayout("cluster"))}
+                  className={pill(layout === "cluster")}
+                >
+                  Editorial
+                </button>
+              </div>
+              {clusterBlocked && layout === "linear" && (
+                <p className="mt-1.5 text-xs text-[#a1a1aa]">
+                  Editorial needs a 3-6 word hook — shorten the caption to unlock it.
+                </p>
+              )}
+            </section>
+          );
+        })()}
+
       {/* ── Text style ──────────────────────────────────────────── */}
       {styleSets.length > 0 && (
         <section>
@@ -195,10 +261,50 @@ export default function PlanVariantEditor({
             tracks={tracks}
             currentTrackId={variant.music_track_id ?? null}
             disabled={rendering}
-            onSelect={(trackId) => run(() => onSwap(trackId))}
+            onSelect={(trackId) => {
+              // A song swap rebuilds the cut server-side — if the user has
+              // clip edits, confirm before destroying them.
+              if (hasClipEdits) setPendingSwapTrackId(trackId);
+              else void run(() => onSwap(trackId));
+            }}
           />
         </section>
       )}
+
+      {/* ── Clips ───────────────────────────────────────────────── */}
+      {onEditClips && showClipEditor && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Clips</h3>
+          <button
+            type="button"
+            disabled={rendering}
+            onClick={onEditClips}
+            className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Edit clips
+            {clipSlotCount != null ? ` · ${clipSlotCount}` : ""}
+          </button>
+          {hasClipEdits && !rendering && (
+            <span className="ml-3 rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
+              Edited cut
+            </span>
+          )}
+        </section>
+      )}
+
+      <ConfirmDialog
+        open={pendingSwapTrackId !== null}
+        question="Swap the song?"
+        detail="Swapping the song rebuilds the cut — your clip edits will be reset."
+        confirmLabel="Swap song"
+        cancelLabel="Keep this song"
+        onConfirm={() => {
+          const trackId = pendingSwapTrackId;
+          setPendingSwapTrackId(null);
+          if (trackId) void run(() => onSwap(trackId));
+        }}
+        onCancel={() => setPendingSwapTrackId(null)}
+      />
     </div>
   );
 }

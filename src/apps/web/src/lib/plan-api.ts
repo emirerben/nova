@@ -409,6 +409,10 @@ export interface PlanItemVariant {
   // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
   intro_text_size_px?: number | null;
   intro_size_source?: "computed" | "user" | null;
+  // Persisted intro text + effective layout — drive the Classic/Editorial pick
+  // (cluster needs a 3-6 word hook, so the chip gates on intro_text length).
+  intro_text?: string | null;
+  intro_layout?: "linear" | "cluster" | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
@@ -443,6 +447,19 @@ export function retextPlanItem(
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/retext`, {
     method: "POST",
     body: JSON.stringify({ text: opts.text ?? null, remove: opts.remove ?? false }),
+  });
+}
+
+export function editPlanItemVariant(
+  itemId: string,
+  variantId: string,
+  payload: { intro_layout?: "linear" | "cluster"; text?: string; text_size_px?: number },
+): Promise<PlanItem> {
+  // Combined-edit endpoint (mirrors the public generative /edit) — currently
+  // used by the plan page for the intro layout pick (Classic / Editorial).
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/edit`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 

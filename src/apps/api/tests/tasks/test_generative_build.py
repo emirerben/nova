@@ -2179,3 +2179,198 @@ def test_build_generative_job_clamps_count_to_clip_count():
         narrative_shot_count=5,
     )
     assert job.all_candidates["narrative_shot_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Cluster layout — _resolve_intro_overlay_params + _resolve_regen_text threading
+# ---------------------------------------------------------------------------
+
+
+def _cluster_agent_text(text: str = "what's your favorite place?"):
+    return types.SimpleNamespace(
+        text=text,
+        highlight_word="favorite",
+        word_roles=["connector", "hero", "hero", "closer"],
+    )
+
+
+class TestResolveIntroOverlayParamsLayout:
+    def test_cluster_layout_passes_through(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(), {"effect": "fade-in", "layout": "cluster"}, None
+        )
+        assert params["layout"] == "cluster"
+        assert params["word_roles"] == ["connector", "hero", "hero", "closer"]
+
+    def test_layout_defaults_to_linear(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(), {"effect": "karaoke-line"}, None
+        )
+        assert params["layout"] == "linear"
+        assert params["word_roles"] is None  # SimpleNamespace without the attr
+
+    def test_kill_switch_forces_linear(self, monkeypatch):
+        monkeypatch.setattr(gb.settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", False, raising=False)
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(), {"effect": "fade-in", "layout": "cluster"}, None
+        )
+        assert params["layout"] == "linear"
+
+    def test_user_position_knob_forces_linear(self):
+        # A manual position pin conflicts with engine-owned cluster geometry.
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(),
+            {"effect": "fade-in", "layout": "cluster"},
+            None,
+            user_style_knobs={"position_y_frac": 0.8},
+        )
+        assert params["layout"] == "linear"
+
+    def test_user_named_position_knob_forces_linear(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(),
+            {"effect": "fade-in", "layout": "cluster"},
+            None,
+            user_style_knobs={"position": "bottom"},
+        )
+        assert params["layout"] == "linear"
+
+
+class TestResolveRegenTextClusterPersistence:
+    def test_persisted_cluster_layout_and_roles_reused_without_llm(self):
+        agent_text, agent_form, text_mode = gb._resolve_regen_text(
+            override_text=None,
+            remove_text=False,
+            existing_text_mode="agent_text",
+            persisted_text="what's your favorite place?",
+            persisted_highlight="favorite",
+            run_text_agents_fn=lambda: (None, None),
+            persisted_layout="cluster",
+            persisted_word_roles=["connector", "hero", "hero", "closer"],
+        )
+        assert text_mode == "agent_text"
+        assert agent_form["layout"] == "cluster"
+        assert agent_text.word_roles == ["connector", "hero", "hero", "closer"]
+
+    def test_override_text_keeps_layout_but_drops_stale_roles(self):
+        agent_text, agent_form, _ = gb._resolve_regen_text(
+            override_text="completely new words here",
+            remove_text=False,
+            existing_text_mode="agent_text",
+            persisted_text="what's your favorite place?",
+            persisted_highlight=None,
+            run_text_agents_fn=lambda: (None, None),
+            persisted_layout="cluster",
+            persisted_word_roles=["connector", "hero", "hero", "closer"],
+        )
+        assert agent_form["layout"] == "cluster"  # cluster stays sticky
+        # Stale roles must never apply to user-typed words — engine re-derives.
+        assert getattr(agent_text, "word_roles", None) is None
+
+    def test_legacy_variant_without_layout_defaults_linear(self):
+        _, agent_form, _ = gb._resolve_regen_text(
+            override_text=None,
+            remove_text=False,
+            existing_text_mode="agent_text",
+            persisted_text="my old hook",
+            persisted_highlight=None,
+            run_text_agents_fn=lambda: (None, None),
+        )
+        assert agent_form["layout"] == "linear"
+
+
+# ---------------------------------------------------------------------------
+# _fail_job: variant + PlanItem reconciliation
+# ---------------------------------------------------------------------------
+
+class TestFailJobVariantReconciliation:
+    """Regression: _fail_job must flip 'rendering'/'pending' variants to 'failed'.
+
+    Prod incident (job df883a50): worker died mid-render_variants; reaper
+    flipped job-level status to processing_failed but _fail_job (triggered by
+    soft-timeout/exception paths) had the same gap.  Frontend anyRendering
+    kept the poll alive forever.  Fix: _fail_job reconciles per-variant
+    render_status inside the same transaction.
+    """
+
+    def _make_job(self, assembly_plan: dict | None):
+        """Return a minimal fake Job with the given assembly_plan."""
+        import types
+        job = types.SimpleNamespace()
+        job.status = "processing"
+        job.error_detail = None
+        job.failure_reason = None
+        job.assembly_plan = assembly_plan
+        job.content_plan_item_id = None
+        return job
+
+    def _call_fail_job(self, job, monkeypatch):
+        """Call _fail_job with a mocked DB session holding `job`."""
+        from unittest.mock import MagicMock, patch
+
+        session = MagicMock()
+        session.get.return_value = job
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=session)
+        ctx.__exit__ = MagicMock(return_value=False)
+
+        with patch("app.tasks.generative_build._sync_session", return_value=ctx):
+            gb._fail_job("00000000-0000-0000-0000-000000000001", "test error")
+
+        return job
+
+    def test_flips_rendering_variant_to_failed(self, monkeypatch):
+        assembly_plan = {
+            "variants": [
+                {"variant_id": "song_lyrics", "render_status": "ready"},
+                {"variant_id": "original_text", "render_status": "rendering"},
+            ]
+        }
+        job = self._make_job(assembly_plan)
+        self._call_fail_job(job, monkeypatch)
+
+        variants = {v["variant_id"]: v for v in job.assembly_plan["variants"]}
+        assert variants["original_text"]["render_status"] == "failed", (
+            "Frozen 'rendering' variant must be flipped to 'failed' by _fail_job"
+        )
+        assert variants["song_lyrics"]["render_status"] == "ready", (
+            "Ready variants must not be touched"
+        )
+
+    def test_flips_pending_variant_to_failed(self, monkeypatch):
+        assembly_plan = {
+            "variants": [
+                {"variant_id": "song_text", "render_status": "pending"},
+            ]
+        }
+        job = self._make_job(assembly_plan)
+        self._call_fail_job(job, monkeypatch)
+
+        assert job.assembly_plan["variants"][0]["render_status"] == "failed"
+
+    def test_noop_when_no_assembly_plan(self, monkeypatch):
+        """Jobs without assembly_plan (failed before render step) must not crash."""
+        job = self._make_job(None)
+        self._call_fail_job(job, monkeypatch)
+        assert job.assembly_plan is None  # not mutated
+
+    def test_noop_when_all_variants_terminal(self, monkeypatch):
+        """All variants already terminal — assembly_plan must not be mutated."""
+        assembly_plan = {
+            "variants": [
+                {"variant_id": "song_lyrics", "render_status": "ready"},
+                {"variant_id": "song_text", "render_status": "failed"},
+            ]
+        }
+        job = self._make_job(assembly_plan)
+        original_ap = dict(assembly_plan)
+        self._call_fail_job(job, monkeypatch)
+
+        # assembly_plan must not have been replaced (no frozen variants to fix)
+        assert job.assembly_plan == original_ap
+
+    def test_job_status_set_to_processing_failed(self, monkeypatch):
+        job = self._make_job(None)
+        self._call_fail_job(job, monkeypatch)
+        assert job.status == "processing_failed"

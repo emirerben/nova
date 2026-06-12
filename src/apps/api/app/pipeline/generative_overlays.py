@@ -208,6 +208,78 @@ def inject_intro_overlay(recipe: dict, hero_slot_index: int, overlay: dict | Non
 _HOLD_TO_END_S = 3600.0
 
 
+def _build_cluster_intro_overlays(
+    *,
+    text: str,
+    reveal_window_s: float,
+    word_roles: list[str] | None,
+    text_color: str,
+    highlight_color: str,
+    **style_kwargs,
+) -> list[dict] | None:
+    """Build the editorial word-cluster intro: one [reveal, hold] pair PER block.
+
+    Geometry comes from the deterministic engine in `intro_cluster` (the agent only
+    annotates word roles — see that module's docstring). Each block is an ordinary
+    overlay using only fields both renderers already honor, so the cluster needs no
+    renderer change: reveal is a bounded `fade-in` (well under the animated frame
+    cap), hold is one looped static PNG to EOF — the same persistence mechanics as
+    the linear intro, multiplied per block.
+
+    Returns None when the engine declines the text (word count, fit) or skia is
+    unavailable — the caller falls back to the linear intro. Never raises.
+    """
+    from app.pipeline.intro_cluster import compute_cluster_blocks  # noqa: PLC0415
+
+    base_px = style_kwargs.get("text_size_px")
+    blocks = compute_cluster_blocks(
+        text,
+        word_roles=word_roles,
+        base_size_px=int(base_px) if base_px else 60,
+        font_family=style_kwargs.get("font_family"),
+        reveal_window_s=reveal_window_s,
+    )
+    if not blocks:
+        return None
+
+    # Per-block style: the cluster owns geometry/size/font/anchor; only the
+    # caller's color + stroke survive from the resolved style params.
+    stroke_width = style_kwargs.get("stroke_width")
+    overlays: list[dict] = []
+    for block in blocks:
+        common = {
+            "position": "center",  # overridden by the explicit fracs below
+            "text_anchor": "center",
+            "text_color": text_color,
+            "highlight_color": highlight_color,
+            "font_family": block["font_family"],
+            "stroke_width": stroke_width,
+            "text_size_px": block["text_size_px"],
+            "position_x_frac": block["position_x_frac"],
+            "position_y_frac": block["position_y_frac"],
+        }
+        reveal_end = min(block["start_offset_s"] + block["reveal_s"], _HOLD_TO_END_S)
+        reveal = build_intro_overlay(
+            block["text"],
+            effect="fade-in",
+            start_s=block["start_offset_s"],
+            end_s=reveal_end,
+            **common,
+        )
+        if reveal is not None:
+            overlays.append(reveal)
+        hold = build_intro_overlay(
+            block["text"],
+            effect="static",
+            start_s=reveal_end,
+            end_s=_HOLD_TO_END_S,
+            **common,
+        )
+        if hold is not None:
+            overlays.append(hold)
+    return overlays or None
+
+
 def build_persistent_intro_overlays(
     *,
     text: str,
@@ -216,10 +288,18 @@ def build_persistent_intro_overlays(
     beats: list[float] | None = None,
     text_color: str = _DEFAULT_TEXT_COLOR,
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
+    layout: str = "linear",
+    word_roles: list[str] | None = None,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
     section-relative timestamps from 0). Returns [] when nothing is renderable.
+
+    `layout="cluster"` renders the editorial word-cluster (multiple positioned
+    blocks, staggered reveal — see `_build_cluster_intro_overlays`); any cluster
+    failure falls back to the linear path below, so the cluster can never lose an
+    intro that would have rendered. `layout="linear"` (default) is byte-identical
+    to the pre-cluster behavior.
 
     A persistent intro keeps the hero text on screen for the WHOLE video: animate it in
     over the opening, then hold the settled text statically until the video ends. The
@@ -246,6 +326,24 @@ def build_persistent_intro_overlays(
     if not (text or "").strip():
         return []
     reveal_end = max(0.0, float(reveal_window_s))
+
+    if layout == "cluster":
+        try:
+            cluster = _build_cluster_intro_overlays(
+                text=text,
+                reveal_window_s=reveal_end,
+                word_roles=word_roles,
+                text_color=text_color,
+                highlight_color=highlight_color,
+                **style_kwargs,
+            )
+        except Exception as exc:
+            log.warning("generative_cluster_intro_failed_falling_back_linear", error=str(exc))
+            cluster = None
+        if cluster:
+            return cluster
+        # Engine declined (word count / fit / no skia) → proven linear intro.
+
     overlays: list[dict] = []
     reveal = build_intro_overlay(
         text,
@@ -287,6 +385,8 @@ def inject_persistent_intro(
     beats: list[float] | None = None,
     text_color: str = _DEFAULT_TEXT_COLOR,
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
+    layout: str = "linear",
+    word_roles: list[str] | None = None,
     **style_kwargs,
 ) -> dict:
     """Inject the persistent hero intro (reveal + static hold) into the hero slot.
@@ -318,6 +418,8 @@ def inject_persistent_intro(
         beats=beats,
         text_color=text_color,
         highlight_color=highlight_color,
+        layout=layout,
+        word_roles=word_roles,
         **style_kwargs,
     )
     for overlay in overlays:

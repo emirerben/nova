@@ -218,6 +218,15 @@ class Settings(BaseSettings):
         "Layer-1 text persistence stays active regardless.",
     )
 
+    GENERATIVE_CLUSTER_INTRO_ENABLED: bool = Field(
+        default=True,
+        description="Allow the editorial word-cluster intro layout for generative edits "
+        "(overlay_format_matcher layout='cluster' → app/pipeline/intro_cluster.py). "
+        "Set to false to force every intro to the linear layout (kill switch: "
+        "`fly secrets set GENERATIVE_CLUSTER_INTRO_ENABLED=false --app nova-video` "
+        "+ worker restart). Persisted cluster variants re-render as linear too.",
+    )
+
     NARRATIVE_CLIP_ORDER_ENABLED: bool = Field(
         default=True,
         description="Order plan-item edits by the filming guide's shot sequence "

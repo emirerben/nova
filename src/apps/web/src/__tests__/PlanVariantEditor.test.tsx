@@ -42,6 +42,7 @@ function renderEditor(variant: PlanItemVariant, overrides = {}) {
     onRemoveText: jest.fn().mockResolvedValue(undefined),
     onChangeStyle: jest.fn().mockResolvedValue(undefined),
     onResize: jest.fn().mockResolvedValue(undefined),
+    onChangeLayout: jest.fn().mockResolvedValue(undefined),
     ...overrides,
   };
   render(
@@ -54,6 +55,7 @@ function renderEditor(variant: PlanItemVariant, overrides = {}) {
       onRemoveText={cbs.onRemoveText}
       onChangeStyle={cbs.onChangeStyle}
       onResize={cbs.onResize}
+      onChangeLayout={cbs.onChangeLayout}
     />,
   );
   return cbs;
@@ -150,4 +152,45 @@ test("size stepper clamps at the envelope bounds", () => {
   renderEditor({ ...songVariant, intro_text_size_px: 80, intro_size_source: "user" });
   expect(screen.getByRole("button", { name: "Bigger intro text" })).toBeDisabled(); // at MAX
   expect(screen.getByRole("button", { name: "Smaller intro text" })).not.toBeDisabled();
+});
+
+
+// ── Layout pick (Classic / Editorial) ─────────────────────────────────────────
+
+test("editorial layout pick fires onChangeLayout for a short hook", async () => {
+  const cbs = renderEditor({ ...songVariant, intro_text: "what's your favorite place?" });
+  const editorial = screen.getByRole("button", { name: "Editorial" });
+  expect(editorial).toBeEnabled();
+  await act(async () => {
+    fireEvent.click(editorial);
+  });
+  expect(cbs.onChangeLayout).toHaveBeenCalledWith("cluster");
+});
+
+test("editorial chip disables on a wordy hook with a hint", () => {
+  renderEditor({
+    ...songVariant,
+    intro_text: "when they don't even listen to your feelings",
+  });
+  expect(screen.getByRole("button", { name: "Editorial" })).toBeDisabled();
+  expect(screen.getByText(/shorten the caption/i)).toBeInTheDocument();
+});
+
+test("cluster variant shows Classic as the way back", async () => {
+  const cbs = renderEditor({
+    ...songVariant,
+    intro_text: "what's your favorite place?",
+    intro_layout: "cluster",
+  });
+  expect(screen.getByRole("button", { name: "Editorial" })).toBeDisabled(); // already active
+  const classic = screen.getByRole("button", { name: "Classic" });
+  await act(async () => {
+    fireEvent.click(classic);
+  });
+  expect(cbs.onChangeLayout).toHaveBeenCalledWith("linear");
+});
+
+test("layout section hidden for lyrics variants", () => {
+  renderEditor({ ...songVariant, text_mode: "lyrics", intro_text: "three word hook" });
+  expect(screen.queryByRole("radiogroup", { name: "Intro text layout" })).toBeNull();
 });

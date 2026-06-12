@@ -120,12 +120,16 @@ export function VariantTile({
             await setVariantMix(jobId, variant.variant_id, mix);
             refresh();
           }}
+          onChangeLayout={async (layout) => {
+            await editVariant(jobId, variant.variant_id, { intro_layout: layout });
+            refresh();
+          }}
         />
       )}
 
       {timelineSession.isEditorOpen && (
         <TimelineEditor
-          jobId={jobId}
+          ownerId={jobId}
           variantId={variant.variant_id}
           onClose={timelineSession.closeEditor}
           onRenderEnqueued={timelineSession.onRenderEnqueued}

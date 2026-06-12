@@ -809,3 +809,13 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** L (human: ~2 days / CC: ~1h)
 **Priority:** P3
 **Depends on:** `shot_id` + `clip_assignments` (shipped v0.4.93.0). See plan file `we-recently-changed-the-lively-hollerith.md` TODO-2.
+
+## Word-cluster intro (shipped) — follow-up work
+
+### Narrative caption arc across body clips (the other half of the reference aesthetic)
+**What:** The juliakursten reference edit (TikTok 7635975632727379222, analyzed 2026-06-10) pairs the word-cluster intro with a NARRATIVE caption arc over the body clips: small italic one-liners at the bottom of each segment that tell a story across the whole edit ("I don't have a favorite place" → "I have my favorite people" → "that place becomes my favorite"). We shipped the cluster intro; the arc is the remaining piece.
+**Why:** The arc is what makes the reference feel authored rather than assembled — it converts a montage into a story. Biggest remaining aesthetic gap vs top travel/lifestyle edits.
+**How:** New writer output (per-clip caption list grounded in clip_metadata order, 4-8 words each, italic serif `Instrument Serif`, position "bottom"), injected per slot in `orchestrate_generative_job` (same `text_overlays` mechanics as the cluster — no renderer change). Reuse `intro_cluster`-style deterministic timing (caption spans its slot, 0.3s fade). Needs: an agent (extend intro_writer or a sibling `narrative_writer`), per-slot injection in `_render_generative_variant`, persistence for retext, and a `GENERATIVE_NARRATIVE_CAPTIONS_ENABLED` kill switch. Gemini-text-leak rules apply: captions are LLM-authored from clip understanding (same trust boundary as intro_writer, NOT the forbidden metadata-to-screen path).
+**Depends on:** cluster-intro PR merged; eval fixtures for the new writer.
+**Effort:** L (CC: ~2h)
+**Priority:** P2

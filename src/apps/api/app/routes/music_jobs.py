@@ -16,7 +16,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import CurrentUserOrSynthetic
+from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.config import settings
 from app.database import get_db
 from app.models import Job, MusicTrack
@@ -333,6 +333,7 @@ async def upload_slot_clip(
 @router.get("/{job_id}/status", response_model=MusicJobStatusResponse)
 async def get_music_job_status(
     job_id: str,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> MusicJobStatusResponse:
     """Poll music job status."""
@@ -346,6 +347,8 @@ async def get_music_job_status(
 
     if job is None or job.job_type != "music":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    ensure_job_owner(job.user_id, current_user)
 
     return MusicJobStatusResponse(
         job_id=str(job.id),

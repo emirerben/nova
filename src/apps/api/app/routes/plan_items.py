@@ -28,6 +28,7 @@ from app.database import get_db
 from app.models import ContentPlan, Job, Persona, PlanItem
 from app.routes.generative_jobs import (
     ChangeStyleRequest,
+    EditVariantRequest,
     RetextRequest,
     SetIntroSizeRequest,
     SwapSongRequest,
@@ -35,6 +36,7 @@ from app.routes.generative_jobs import (
     TimelineResponse,
     dispatch_change_style,
     dispatch_edit_timeline,
+    dispatch_edit_variant,
     dispatch_get_timeline,
     dispatch_reset_timeline,
     dispatch_retext,
@@ -775,6 +777,40 @@ async def change_item_style(
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
     log.info("plan_item_change_style", item_id=item_id, variant_id=variant_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/edit", response_model=PlanItemResponse)
+async def edit_item_variant(
+    item_id: str,
+    variant_id: str,
+    req: EditVariantRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Combined text/style/size/layout edit for one of this item's variants.
+
+    Same contract as the public generative /edit endpoint — notably this is how
+    the plan page picks the intro layout (Classic / Editorial word-cluster)
+    after a render. One request → one re-render.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_edit_variant(
+        job,
+        variant_id,
+        text=req.text,
+        remove_text=req.remove_text,
+        style_set_id=req.style_set_id,
+        text_size_px=req.text_size_px,
+        intro_layout=req.intro_layout,
+    )
+    log.info(
+        "plan_item_edit_variant",
+        item_id=item_id,
+        variant_id=variant_id,
+        has_text=req.text is not None,
+        intro_layout=req.intro_layout,
+    )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 

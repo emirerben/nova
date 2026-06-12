@@ -78,6 +78,12 @@ describe("isInstantEditEligible", () => {
     expect(isInstantEditEligible(makeVariant({ text_mode: "lyrics" }))).toBe(false);
     expect(isInstantEditEligible(makeVariant({ base_video_url: null }))).toBe(false);
   });
+
+  it("excludes cluster intros — the TS mirror only models the linear layout", () => {
+    expect(isInstantEditEligible(makeVariant({ intro_layout: "cluster" }))).toBe(false);
+    expect(isInstantEditEligible(makeVariant({ intro_layout: "linear" }))).toBe(true);
+    expect(isInstantEditEligible(makeVariant({ intro_layout: null }))).toBe(true);
+  });
 });
 
 describe("VariantCard instant-edit entry", () => {

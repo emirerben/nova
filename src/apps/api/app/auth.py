@@ -32,6 +32,19 @@ SYNTHETIC_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 _INTERNAL_API_KEY_HEADER = "authorization"
 
 
+def ensure_job_owner(job_user_id: uuid.UUID | None, current_user: "User") -> None:
+    """Raise 404 when job_user_id belongs to a real user other than current_user.
+
+    Jobs owned by the synthetic dev user (or with no owner) stay reachable by
+    UUID — the documented transitional model for the anonymous public flows.
+    404 (not 403) so a forbidden job is indistinguishable from a missing one.
+    """
+    if job_user_id is None or job_user_id == SYNTHETIC_USER_ID:
+        return
+    if job_user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+
 def _verify_internal_key(authorization: str | None) -> None:
     """Raise 401 unless the bearer token matches INTERNAL_API_KEY.
 
@@ -123,3 +136,12 @@ async def get_current_user_or_synthetic(
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
 CurrentUserOrSynthetic = Annotated[User, Depends(get_current_user_or_synthetic)]
+
+__all__ = [
+    "SYNTHETIC_USER_ID",
+    "CurrentUser",
+    "CurrentUserOrSynthetic",
+    "ensure_job_owner",
+    "get_current_user",
+    "get_current_user_or_synthetic",
+]

@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import CurrentUserOrSynthetic
+from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import AsyncSessionLocal, get_db
 from app.models import Job, VideoTemplate
 from app.services.template_validation import (
@@ -498,6 +498,7 @@ async def get_template_job_eval(
 @router.get("/{job_id}/status", response_model=TemplateJobStatusResponse)
 async def get_template_job_status(
     job_id: str,
+    current_user: CurrentUserOrSynthetic,
     db: AsyncSession = Depends(get_db),
 ) -> TemplateJobStatusResponse:
     """Poll template job status."""
@@ -510,6 +511,7 @@ async def get_template_job_status(
     job = result.scalar_one_or_none()
     if job is None or job.job_type != "template":
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    ensure_job_owner(job.user_id, current_user)
 
     return TemplateJobStatusResponse(
         job_id=str(job.id),

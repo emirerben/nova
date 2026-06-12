@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-07",
+  "version": "2026-06-10",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -225,6 +225,42 @@
       "highlight_color": "#7FD1FF",
       "niche": "solo travel & outdoors",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "travel-scenic-cluster-01",
+      "content_profile": "scenic travel or nature footage, calm aesthetic mood, golden hour, a reflective question or wanderlust feeling",
+      "effect": "fade-in",
+      "text": "what's your favorite place?",
+      "highlight_word": "favorite",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "layout": "cluster"
+    },
+    {
+      "id": "lifestyle-moment-cluster-01",
+      "content_profile": "slow lifestyle montage, friends or quiet moments, sentimental and editorial — a short hook that names the feeling",
+      "effect": "fade-in",
+      "text": "the days we never planned",
+      "highlight_word": "never",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "layout": "cluster"
+    },
+    {
+      "id": "travel-city-cluster-01",
+      "content_profile": "city exploration or weekend trip recap, cinematic b-roll, aspirational but soft energy",
+      "effect": "fade-in",
+      "text": "we found the quiet side",
+      "highlight_word": "quiet",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "layout": "cluster"
     }
   ]
 }
