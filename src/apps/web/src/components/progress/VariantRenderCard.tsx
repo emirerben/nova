@@ -135,6 +135,16 @@ function ReadyCard({
   isNew: boolean;
   tone: "dark" | "light";
 }) {
+  // Pin the video src for the session lifetime.  Every status poll re-signs the
+  // GCS URL with a fresh query string; swapping <video src> restarts playback.
+  // Only advance to the new URL on a media error (expired sig after a very long
+  // session).  Pattern mirrors VariantCard.tsx baseSrcRef.
+  const pinnedSrcRef = useRef<string | null>(null);
+  if (outputUrl && pinnedSrcRef.current === null) {
+    pinnedSrcRef.current = outputUrl;
+  }
+  const videoSrc = pinnedSrcRef.current ?? outputUrl;
+
   const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
   const ringClass = tone === "light" ? "ring-lime-600/60" : "ring-amber-400/60";
   const emptyTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
@@ -153,15 +163,22 @@ function ReadyCard({
         .filter(Boolean)
         .join(" ")}
     >
-      {outputUrl ? (
+      {videoSrc ? (
         <div className="flex h-full flex-col">
           <video
-            src={outputUrl}
+            src={videoSrc}
             controls
             playsInline
             loop
             className="h-full w-full object-cover"
             aria-label={`${displayName} edit preview`}
+            onError={() => {
+              // Signed URL expired (very long session) — fall forward to the
+              // freshest URL from the latest poll.
+              if (outputUrl && outputUrl !== pinnedSrcRef.current) {
+                pinnedSrcRef.current = outputUrl;
+              }
+            }}
           />
         </div>
       ) : (
@@ -170,16 +187,16 @@ function ReadyCard({
         </div>
       )}
       {/* Download / Share actions */}
-      {outputUrl && (
+      {videoSrc && (
         <div className="flex gap-2 pt-2">
           <a
-            href={outputUrl}
+            href={videoSrc}
             download
             className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
           >
             Download
           </a>
-          <ShareButton url={outputUrl} label={displayName} tone={tone} />
+          <ShareButton url={videoSrc} label={displayName} tone={tone} />
         </div>
       )}
     </div>

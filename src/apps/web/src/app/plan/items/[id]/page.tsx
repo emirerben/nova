@@ -21,7 +21,7 @@ import {
   uploadToGcs,
 } from "@/lib/plan-api";
 import ShotSlotUploader from "./components/ShotSlotUploader";
-import { getGenerativeStyleSets, type GenerativeStyleSet } from "@/lib/generative-api";
+import { getGenerativeStyleSets, type GenerativeStyleSet, GENERATIVE_TERMINAL_STATUSES } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
@@ -90,8 +90,16 @@ export default function PlanItemPage() {
       const anyRendering =
         job?.variants?.some((v) => v.render_status === "rendering") ?? false;
       const pending = pendingEdits.current;
+      // If the job-level status is already terminal (processing_failed,
+      // variants_failed, etc.) treat it as done regardless of any frozen
+      // per-variant render_status.  A stuck "rendering" variant after a
+      // terminal job is a backend data-integrity gap — it should not keep the
+      // frontend polling forever.  The failed variant renders via the existing
+      // "failed" UI branch.
+      const jobTerminal =
+        job?.status != null && GENERATIVE_TERMINAL_STATUSES.includes(job.status);
       const baseTerminal =
-        !anyRendering &&
+        (jobTerminal || !anyRendering) &&
         pending.size === 0 &&
         item.status !== "generating" &&
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
@@ -583,13 +591,38 @@ function Hero({
   variant: PlanItemVariant | null;
   generating: boolean;
 }) {
+  // Pin the video src for the session lifetime.  Every 2s poll re-signs the GCS
+  // URL with a fresh query string; swapping <video src> restarts playback.
+  // Only advance on media error (expired sig in a very long session).
+  const pinnedSrcRef = useRef<string | null>(null);
+  if (variant?.output_url && pinnedSrcRef.current === null) {
+    pinnedSrcRef.current = variant.output_url;
+  }
+  // Reset pin when switching to a different variant (different video entirely).
+  const prevVariantIdRef = useRef<string | null>(null);
+  if (variant?.variant_id !== prevVariantIdRef.current) {
+    prevVariantIdRef.current = variant?.variant_id ?? null;
+    pinnedSrcRef.current = variant?.output_url ?? null;
+  }
+  const videoSrc = pinnedSrcRef.current ?? variant?.output_url ?? null;
+
   if (!variant) return <SkeletonTile />;
   const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {variant.output_url ? (
-        <video src={variant.output_url} controls className="h-full w-full object-contain" />
+      {videoSrc ? (
+        <video
+          src={videoSrc}
+          controls
+          className="h-full w-full object-contain"
+          onError={() => {
+            // Expired signature — fall forward to the freshest signed URL.
+            if (variant?.output_url && variant.output_url !== pinnedSrcRef.current) {
+              pinnedSrcRef.current = variant.output_url;
+            }
+          }}
+        />
       ) : failed ? (
         <div className="flex h-full items-center justify-center px-4 text-center text-sm text-red-600">
           This variant failed — try editing again.

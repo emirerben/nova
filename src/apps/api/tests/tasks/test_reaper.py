@@ -28,13 +28,33 @@ def _make_celery_with_inspect(active=None, reserved=None, raises=None):
     return app
 
 
-def _patch_sync_session(rowcount: int = 0):
-    """Returns a patch context for sync_session that yields a fake session
-    whose db.execute(...) returns a result with the given rowcount."""
+def _patch_sync_session(rowcount: int = 0, reaped_rows: list | None = None):
+    """Returns a patch context for sync_session that yields a fake session.
+
+    The first execute() call (the RETURNING UPDATE) returns a result whose
+    fetchall() yields `reaped_rows` (default: `rowcount` empty-assembly-plan
+    tuples so the variant-reconciliation loop is a no-op).  Subsequent
+    execute() calls return a plain rowcount result to absorb the variant /
+    PlanItem reconciliation UPDATEs without raising.
+    """
+    if reaped_rows is None:
+        import uuid as _uuid
+        reaped_rows = [(_uuid.uuid4(), None) for _ in range(rowcount)]
+
     session = MagicMock()
-    result = MagicMock()
-    result.rowcount = rowcount
-    session.execute.return_value = result
+
+    # First execute: the RETURNING UPDATE
+    first_result = MagicMock()
+    first_result.rowcount = len(reaped_rows)
+    first_result.fetchall.return_value = reaped_rows
+
+    # Subsequent executes: variant/PlanItem reconciliation UPDATEs
+    subsequent_result = MagicMock()
+    subsequent_result.rowcount = 0
+    subsequent_result.fetchall.return_value = []
+
+    # Return first_result on the first call, subsequent_result on later calls.
+    session.execute.side_effect = [first_result] + [subsequent_result] * 20
 
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
@@ -106,8 +126,8 @@ class TestReapOrphans:
         patch_ctx, session = _patch_sync_session(rowcount=5)
         with patch_ctx:
             assert reap_orphans(app) == 5
-        # Verify it actually ran an UPDATE + commit.
-        session.execute.assert_called_once()
+        # At least one UPDATE + one commit must have happened.
+        assert session.execute.call_count >= 1
         session.commit.assert_called_once()
 
     def test_zero_rowcount_returns_zero(self):
@@ -295,3 +315,90 @@ def test_reaper_sweeps_a_stale_rendering_job():
     assert any(
         "rendering" in v for v in bound if isinstance(v, (list, tuple))
     ), "rendering must appear in the status-IN filter"
+
+
+def test_reaper_reconciles_frozen_rendering_variants():
+    """Regression: reaped job with a frozen 'rendering' variant must have that
+    variant flipped to 'failed' in assembly_plan.
+
+    Prod incident (job df883a50): worker died mid-render_variants; reaper
+    flipped job-level status to processing_failed but left original_text at
+    render_status='rendering' in assembly_plan['variants'].  Frontend
+    anyRendering check kept polling every 2s forever and re-signed GCS URLs
+    caused the ready videos to reload on every poll (the "glitch").
+
+    Fix: reap_orphans() reconciles frozen variants in the same transaction.
+    """
+    import uuid as _uuid
+    from app.tasks.reaper import reap_orphans
+
+    frozen_job_id = _uuid.uuid4()
+    assembly_plan_with_stuck_variant = {
+        "variants": [
+            {"variant_id": "song_lyrics", "render_status": "ready", "video_path": "gcs/..."},
+            {"variant_id": "song_text", "render_status": "ready", "video_path": "gcs/..."},
+            {"variant_id": "original_text", "render_status": "rendering", "video_path": None},
+        ]
+    }
+
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(
+        rowcount=1,
+        reaped_rows=[(frozen_job_id, assembly_plan_with_stuck_variant)],
+    )
+    with patch_ctx:
+        count = reap_orphans(app)
+
+    assert count == 1
+
+    # The second execute() call should be the variant-reconciliation UPDATE.
+    # Extract it and verify it writes original_text → "failed".
+    assert session.execute.call_count >= 2, (
+        "Expected at least 2 execute() calls: RETURNING UPDATE + variant reconciliation"
+    )
+    # Find the reconciliation UPDATE (second call to execute after the RETURNING one).
+    recon_stmt = session.execute.call_args_list[1][0][0]
+    params = recon_stmt.compile().params
+    # The updated assembly_plan should have the stuck variant flipped to "failed".
+    new_ap = next(
+        (v for v in params.values() if isinstance(v, dict) and "variants" in v),
+        None,
+    )
+    assert new_ap is not None, "Variant-reconciliation UPDATE must carry new assembly_plan"
+    new_statuses = {v["variant_id"]: v["render_status"] for v in new_ap["variants"]}
+    assert new_statuses["original_text"] == "failed", (
+        "Frozen 'rendering' variant must be flipped to 'failed' by the reaper"
+    )
+    assert new_statuses["song_lyrics"] == "ready", "Ready variants must not be touched"
+    assert new_statuses["song_text"] == "ready", "Ready variants must not be touched"
+
+
+def test_reaper_no_variant_reconciliation_when_no_rows():
+    """When the reaper reaped zero rows, no variant reconciliation runs."""
+    from app.tasks.reaper import reap_orphans
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(rowcount=0)
+    with patch_ctx:
+        assert reap_orphans(app) == 0
+    # Only the RETURNING UPDATE; no extra variant UPDATEs when nothing was reaped.
+    assert session.execute.call_count == 1
+
+
+def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
+    """Jobs without assembly_plan (not yet at render step) skip variant pass."""
+    import uuid as _uuid
+    from app.tasks.reaper import reap_orphans
+
+    app = _make_celery_with_inspect(active={}, reserved={})
+    patch_ctx, session = _patch_sync_session(
+        rowcount=1,
+        reaped_rows=[(_uuid.uuid4(), None)],  # assembly_plan=None
+    )
+    with patch_ctx:
+        count = reap_orphans(app)
+
+    assert count == 1
+    # Only the RETURNING UPDATE — no extra variant UPDATE when assembly_plan is None.
+    assert session.execute.call_count == 1, (
+        "No variant UPDATE expected when assembly_plan is None"
+    )

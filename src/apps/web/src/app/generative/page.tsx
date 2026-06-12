@@ -103,9 +103,11 @@ export default function GenerativePage() {
 
   const isTerminalAndDone = useCallback(
     (data: GenerativeJobStatus) => {
-      const terminal = isTerminalStatus(data);
-      const anyRendering = data.variants?.some((v) => v.render_status === "rendering") ?? false;
-      return terminal && !anyRendering;
+      // Job-level terminal status is authoritative.  A stuck "rendering" variant
+      // after a terminal job (processing_failed etc.) is a backend data-integrity
+      // gap — never block the UI on it.  The failed variant renders via the
+      // existing "failed" UI branch.
+      return isTerminalStatus(data);
     },
     [],
   );

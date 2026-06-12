@@ -3252,6 +3252,28 @@ def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None)
                 job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
                 if failure_reason:
                     job.failure_reason = failure_reason
+
+                # Reconcile per-variant render_status.  Any variant still at
+                # "rendering" or "pending" when the task fails will freeze the
+                # frontend poll loop forever (the anyRendering predicate keeps
+                # polling while any variant claims to be rendering).  Flip those
+                # to "failed" now so the UI reaches a terminal state immediately.
+                ap = job.assembly_plan or {}
+                if isinstance(ap, dict):
+                    variants = ap.get("variants") or []
+                    new_variants = [
+                        {
+                            **v,
+                            "render_status": "failed",
+                            "error": v.get("error") or error_detail[:200],
+                        }
+                        if v.get("render_status") in ("rendering", "pending")
+                        else v
+                        for v in variants
+                    ]
+                    if new_variants != variants:
+                        job.assembly_plan = {**ap, "variants": new_variants}
+
                 db.commit()
     except Exception as exc:
         log.error("generative_fail_job_db_error", job_id=job_id, error=str(exc))
