@@ -26,6 +26,7 @@ Changelog:
 from __future__ import annotations
 
 import json
+import re
 from typing import ClassVar
 
 import structlog
@@ -39,6 +40,11 @@ log = structlog.get_logger()
 
 INTERVIEWER_PROMPT_VERSION = "2026-06-12"
 _HARD_CAP = 8
+# Server-side turn contract (parse() enforces; the prompt only *aims*):
+# question _FORCE_FINAL_AT is always the last one, and turn_label is derived
+# from the route's counter — the model's label arithmetic is never trusted.
+_FORCE_FINAL_AT = 7
+_DEFAULT_TOTAL_ESTIMATE = 6
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -123,7 +129,7 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
     def parse(
         self,
         raw_text: str,
-        input: InterviewerInput,  # noqa: A002, ARG002
+        input: InterviewerInput,  # noqa: A002
     ) -> InterviewerOutput:
         try:
             data = json.loads(raw_text)
@@ -137,16 +143,33 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
         except ValidationError as exc:
             raise RefusalError(f"interviewer: validation — {exc}") from exc
 
-        # Ensure final-Q prefix is present when agent says is_final
-        if output.is_final and not output.question.startswith("One last thing"):
-            output = InterviewerOutput(
-                question=f"One last thing — {output.question}",
-                suggestions=output.suggestions,
-                is_final=True,
-                turn_label=output.turn_label,
-            )
+        # ── Server-enforced turn contract (dogfood: model emitted "~7 OF ~6") ──
+        # The prompt ASKS for label consistency and a 5-6 turn finish, but
+        # arithmetic promises can't be left to the model. N comes from the
+        # route's own counter; the model only contributes its estimate of M.
+        n = max(1, int(input.turn_count or 1))
 
-        return output
+        # Soft cap: at question _FORCE_FINAL_AT the interview closes regardless
+        # of what the model wanted (route's hard cap stays the backstop).
+        is_final = output.is_final or n >= _FORCE_FINAL_AT
+
+        question = output.question
+        if is_final and not question.startswith("One last thing"):
+            question = f"One last thing — {question}"
+
+        # Label: final question is always "~n OF ~n"; otherwise at least one
+        # more question follows, so the advertised total is ≥ n+1 (and never
+        # above the cap). The model's M survives only within those bounds.
+        m_match = re.search(r"OF\s*~?(\d+)", output.turn_label or "")
+        model_m = int(m_match.group(1)) if m_match else _DEFAULT_TOTAL_ESTIMATE
+        m = n if is_final else min(max(model_m, n + 1), _FORCE_FINAL_AT)
+
+        return InterviewerOutput(
+            question=question,
+            suggestions=output.suggestions,
+            is_final=is_final,
+            turn_label=f"~{n} OF ~{m}",
+        )
 
     def schema_clarification(self) -> str:
         return (
