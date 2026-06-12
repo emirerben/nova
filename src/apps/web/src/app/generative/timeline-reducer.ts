@@ -45,6 +45,10 @@ export type EditorAction =
   | { type: "REORDER"; from: number; to: number }
   | { type: "NUDGE"; key: string; delta: 1 | -1 }
   | { type: "SET_IN"; key: string; inS: number; record: boolean }
+  /** Right-edge drag on grid slots: absolute beat count, record-aware. */
+  | { type: "SET_DURATION_BEATS"; key: string; beats: number; record: boolean }
+  /** Both-edge drag on seconds slots: sets inS + durationS in one action, record-aware. */
+  | { type: "SET_WINDOW"; key: string; inS: number; durationS: number; record: boolean }
   | { type: "SWAP"; key: string; clipIndex: number }
   | { type: "REMOVE"; key: string }
   | { type: "RESTORE"; key: string }
@@ -192,6 +196,94 @@ export function timelineReducer(state: EditorState, action: EditorAction): Edito
       );
       if (action.record) return withHistory(state, next);
       return { ...state, slots: next };
+    }
+
+    case "SET_DURATION_BEATS": {
+      // Right-edge drag for grid slots. Steps down gracefully on source/60s overflow
+      // so the handle doesn't freeze mid-drag.
+      const slot = state.slots.find((s) => s.key === action.key);
+      if (!slot || slot.removed || slot.durationBeats == null) return state;
+
+      const ownBeats = slot.durationBeats;
+      const maxAvail = maxGridBeats(state.grid) - (totalBeats(state.slots) - ownBeats);
+
+      // Clamp to [1, maxAvail] first (grid-beats exhausted)
+      let beats = Math.max(1, Math.min(action.beats, maxAvail));
+
+      // Step down until source-fit + 60s both hold
+      while (beats > 1) {
+        const candidate = state.slots.map((s) =>
+          s.key === action.key ? { ...s, durationBeats: beats } : s,
+        );
+        const newWindow = windowSeconds(state, candidate, action.key);
+        const src = sourceDuration(state, slot);
+        const sourceOk = src == null || newWindow <= src + 1e-6;
+        const totalOk = totalDurationS(candidate, state.grid) <= MAX_TOTAL_SECONDS + 1e-6;
+        if (sourceOk && totalOk) break;
+        beats -= 1;
+      }
+      // Verify even 1 beat fits the source clip
+      {
+        const candidate = state.slots.map((s) =>
+          s.key === action.key ? { ...s, durationBeats: beats } : s,
+        );
+        const newWindow = windowSeconds(state, candidate, action.key);
+        const src = sourceDuration(state, slot);
+        if (src != null && newWindow > src + 1e-6) return clampFlash(state, action.key);
+      }
+
+      // Flash if the result differs from what was requested (clamped up OR down).
+      const clamped = beats !== action.beats;
+      const next = reclampInPoints(state, state.slots.map((s) =>
+        s.key === action.key ? { ...s, durationBeats: beats } : s,
+      ));
+      const result = action.record ? withHistory(state, next) : { ...state, slots: next };
+      return clamped ? clampFlash(result, action.key) : result;
+    }
+
+    case "SET_WINDOW": {
+      // Both-edge drag for seconds slots (null-beats). Guard: reject grid slots.
+      const slot = state.slots.find((s) => s.key === action.key);
+      if (!slot || slot.removed || slot.durationBeats != null) return state;
+
+      let { inS, durationS } = action;
+      let didClamp = false;
+
+      // 1. inS ≥ 0
+      if (inS < 0) { inS = 0; didClamp = true; }
+
+      // 2. Duration ≥ SECONDS_FLOOR
+      if (durationS < SECONDS_FLOOR) { durationS = SECONDS_FLOOR; didClamp = true; }
+
+      // 3. Source fit: inS + durationS ≤ src
+      const src = sourceDuration(state, slot);
+      if (src != null && inS + durationS > src + 1e-6) {
+        // Push inS back, then clamp duration if still needed
+        inS = Math.min(inS, Math.max(0, src - durationS));
+        if (inS + durationS > src + 1e-6) {
+          durationS = src - inS;
+          if (durationS < SECONDS_FLOOR) { durationS = SECONDS_FLOOR; inS = Math.max(0, src - SECONDS_FLOOR); }
+        }
+        didClamp = true;
+      }
+
+      // 4. Total ≤ 60s (excluding this slot's current contribution)
+      const currentWin = slot.durationS ?? 0;
+      const otherTotal = totalDurationS(state.slots, state.grid) - currentWin;
+      if (otherTotal + durationS > MAX_TOTAL_SECONDS + 1e-6) {
+        durationS = Math.max(SECONDS_FLOOR, MAX_TOTAL_SECONDS - otherTotal);
+        // Re-fit inS after 60s cap
+        if (src != null && inS + durationS > src + 1e-6) {
+          inS = Math.max(0, src - durationS);
+        }
+        didClamp = true;
+      }
+
+      const next = state.slots.map((s) =>
+        s.key === action.key ? { ...s, inS, durationS } : s,
+      );
+      const result = action.record ? withHistory(state, next) : { ...state, slots: next };
+      return didClamp ? clampFlash(result, action.key) : result;
     }
 
     case "SWAP": {

@@ -158,7 +158,7 @@ export function medianDefaultDuration(
 
 // ── Edit counting (CTA label "Re-render N edits") ────────────────────────────
 
-function fieldsDiffer(a: DraftSlot, b: DraftSlot): boolean {
+export function fieldsDiffer(a: DraftSlot, b: DraftSlot): boolean {
   return (
     a.clipIndex !== b.clipIndex ||
     Math.abs(a.inS - b.inS) > 1e-6 ||
@@ -208,6 +208,34 @@ export function countEdits(baseline: DraftSlot[], slots: DraftSlot[]): number {
   const draftShared = slots.map((s) => s.key).filter((k) => baseByKey.has(k));
   edits += baseShared.length - lcsLength(baseShared, draftShared);
   return edits;
+}
+
+/**
+ * Beat-snap for the right-edge drag on grid slots.
+ * Returns the beat count k ∈ [1, min(maxK, maxGridBeats−offsetBeats)] whose
+ * grid window length best matches targetWindowS (= pointer source-time − inS).
+ * Linear scan; grid is typically < 64 entries.
+ */
+export function beatsForWindowSeconds(
+  grid: number[],
+  offsetBeats: number,
+  targetWindowS: number,
+  maxK: number,
+): number {
+  const limit = Math.min(maxK, maxGridBeats(grid) - offsetBeats);
+  if (limit < 1) return 1;
+  const base = grid[Math.min(offsetBeats, grid.length - 1)];
+  let best = 1;
+  let bestDiff = Infinity;
+  for (let k = 1; k <= limit; k++) {
+    const windowS = grid[Math.min(offsetBeats + k, grid.length - 1)] - base;
+    const diff = Math.abs(windowS - targetWindowS);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = k;
+    }
+  }
+  return best;
 }
 
 // ── Formatting ────────────────────────────────────────────────────────────────

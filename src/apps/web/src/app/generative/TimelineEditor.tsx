@@ -32,7 +32,9 @@ import {
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import {
+  beatsForWindowSeconds,
   countEdits,
+  fieldsDiffer,
   formatInPoint,
   formatSeconds,
   formatTimecode,
@@ -672,15 +674,26 @@ function TimelineEditorBody({
     }
   }, [ownerId, variantId, base, onRenderEnqueued, timeline.has_user_edits, dispatch]);
 
-  // CTA label
+  // CTA label — names the cost ("re-renders") and the action ("Apply") to make
+  // the single commit step unmistakable.
   const ctaLabel = submitting
     ? "Re-rendering…"
     : edits > 0
-      ? `Re-render ${edits} ${edits === 1 ? "edit" : "edits"} · ~2 min`
-      : "Re-render · ~2 min";
+      ? `Apply ${edits} ${edits === 1 ? "edit" : "edits"} · re-renders ~2 min`
+      : "Apply · re-renders ~2 min";
   const showReset = timeline.has_user_edits || dirty;
 
   const totalS = totalDurationS(state.slots, state.grid);
+
+  // Per-slot "edited" badge: diff each live slot against the server baseline.
+  const baselineByKey = useMemo(
+    () => new Map(state.baseline.map((s) => [s.key, s])),
+    [state.baseline],
+  );
+  const gridBeatsRemaining = useMemo(
+    () => remainingBeats(state.slots, state.grid),
+    [state.slots, state.grid],
+  );
 
   return (
     <SheetFrame onRequestClose={requestClose} dirty>
@@ -795,7 +808,12 @@ function TimelineEditorBody({
                   canAddBeats={
                     isNoGrid || slot.durationBeats == null
                       ? totalS + 0.5 <= MAX_TOTAL_SECONDS
-                      : remainingBeats(state.slots, state.grid) >= 1
+                      : gridBeatsRemaining >= 1
+                  }
+                  remainingGridBeats={gridBeatsRemaining}
+                  isEdited={
+                    !baselineByKey.has(slot.key) ||
+                    fieldsDiffer(baselineByKey.get(slot.key)!, slot)
                   }
                 />
                 {drag?.lifted && drag.targetIndex === i && drag.index < i && (
@@ -895,6 +913,8 @@ function SlotCard({
   clips,
   posters,
   canAddBeats,
+  remainingGridBeats,
+  isEdited,
 }: {
   cardRef: (el: HTMLDivElement | null) => void;
   slot: DraftSlot;
@@ -919,11 +939,17 @@ function SlotCard({
   clips: TimelineClip[];
   posters: Record<number, string | "failed" | undefined>;
   canAddBeats: boolean;
+  /** Remaining unclaimed beat count (for right-edge grid snapping). */
+  remainingGridBeats: number;
+  /** Whether this slot differs from the server baseline (shows "edited" badge). */
+  isEdited: boolean;
 }) {
   const [whyOpen, setWhyOpen] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
   const [chipFlash, setChipFlash] = useState(false);
   const lastClampNonce = useRef(clampNonce);
+  // Captures the out-point at left-edge pointer-down so it stays fixed mid-drag.
+  const capturedOutRef = useRef(0);
 
   // Chip flash when a clamp hit THIS slot.
   useEffect(() => {
@@ -998,13 +1024,20 @@ function SlotCard({
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
             {eyebrowParts.join(" · ")}
           </p>
-          <span
-            className={[
-              "mt-1.5 inline-block rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-[11px] text-lime-800",
-              chipFlash ? "motion-safe:animate-pulse border-lime-500" : "",
-            ].join(" ")}
-          >
-            {chipText}
+          <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+            <span
+              className={[
+                "inline-block rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-[11px] text-lime-800",
+                chipFlash ? "motion-safe:animate-pulse border-lime-500" : "",
+              ].join(" ")}
+            >
+              {chipText}
+            </span>
+            {isEdited && (
+              <span className="inline-block rounded-full border border-zinc-300 bg-zinc-100 px-2 py-0.5 text-[10px] font-medium text-zinc-500">
+                edited
+              </span>
+            )}
           </span>
           {slot.momentDescription && !selected && (
             <p className="mt-1 truncate text-xs text-[#a1a1aa]">
@@ -1072,9 +1105,29 @@ function SlotCard({
             grid={grid}
             offsetBeats={win.offsetBeats}
             durationBeats={slot.durationBeats}
-            onChange={(inS, record) =>
-              dispatch({ type: "SET_IN", key: slot.key, inS, record })
+            isSeconds={secondsOnly}
+            onChange={(newInS, record) =>
+              dispatch({ type: "SET_IN", key: slot.key, inS: newInS, record })
             }
+            onResizeLeft={(srcTime, record) => {
+              // Capture out-point on pointer-down (record=true), hold for the gesture.
+              if (record) capturedOutRef.current = slot.inS + win.durationS;
+              const newInS = srcTime;
+              const newDurS = capturedOutRef.current - newInS;
+              dispatch({ type: "SET_WINDOW", key: slot.key, inS: newInS, durationS: newDurS, record });
+            }}
+            onResizeRight={(srcTime, record) => {
+              if (secondsOnly) {
+                // Seconds: continuous window grow/shrink
+                dispatch({ type: "SET_WINDOW", key: slot.key, inS: slot.inS, durationS: srcTime - slot.inS, record });
+              } else {
+                // Grid: snap to nearest beat boundary
+                const targetWindowS = srcTime - slot.inS;
+                const maxK = remainingGridBeats + (slot.durationBeats ?? 0);
+                const snappedBeats = beatsForWindowSeconds(grid, win.offsetBeats ?? 0, targetWindowS, maxK);
+                dispatch({ type: "SET_DURATION_BEATS", key: slot.key, beats: snappedBeats, record });
+              }
+            }}
           />
 
           {/* Duration steppers */}
@@ -1266,6 +1319,12 @@ function SlotPreview({
 
 // ── In-point scrubber ─────────────────────────────────────────────────────────
 
+/** Hit width (px) for left/right edge handles. Zones are classified in the
+ * parent strip's onPointerDown, so this controls the visual + hit boundaries. */
+const HANDLE_PX = 12;
+
+type ScrubZone = "left" | "right" | "body";
+
 function InPointScrubber({
   inS,
   windowS,
@@ -1273,7 +1332,10 @@ function InPointScrubber({
   grid,
   offsetBeats,
   durationBeats,
+  isSeconds,
   onChange,
+  onResizeLeft,
+  onResizeRight,
 }: {
   inS: number;
   windowS: number;
@@ -1281,32 +1343,80 @@ function InPointScrubber({
   grid: number[];
   offsetBeats: number | null;
   durationBeats: number | null;
+  /** true = seconds slot (original_text / null-beats); false = grid slot. */
+  isSeconds: boolean;
   onChange: (inS: number, record: boolean) => void;
+  /** Left-edge drag (seconds-only): called with new source in-point. */
+  onResizeLeft?: (srcTime: number, record: boolean) => void;
+  /** Right-edge drag (both grid and seconds): called with pointer source-time. */
+  onResizeRight?: (srcTime: number, record: boolean) => void;
 }) {
   const stripRef = useRef<HTMLDivElement>(null);
   const recordedRef = useRef(false);
   const src = sourceDurationS ?? Math.max(inS + windowS, 1);
   const maxIn = Math.max(0, src - windowS);
 
-  const posToIn = useCallback(
+  /** Map a clientX to an unclamped source-time position (fraction of the strip). */
+  const posToSrc = useCallback(
     (clientX: number) => {
       const el = stripRef.current;
       if (!el) return inS;
       const r = el.getBoundingClientRect();
       const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-      // Drag positions the WINDOW START across the whole source strip.
-      return Math.min(maxIn, frac * src);
+      return frac * src;
     },
-    [inS, maxIn, src],
+    [inS, src],
+  );
+
+  /** Map a clientX to an in-point (clamped to [0, maxIn]). Body-drag / SET_IN. */
+  const posToIn = useCallback(
+    (clientX: number) => Math.min(maxIn, posToSrc(clientX)),
+    [maxIn, posToSrc],
+  );
+
+  /** Classify pointer-down into a drag zone. */
+  const classifyZone = useCallback(
+    (clientX: number): ScrubZone => {
+      const el = stripRef.current;
+      if (!el) return "body";
+      const r = el.getBoundingClientRect();
+      const px = clientX - r.left; // offset from strip left edge
+      const fillLeft = (inS / src) * r.width;
+      const fillRight = ((inS + windowS) / src) * r.width;
+      const fillWidth = fillRight - fillLeft;
+
+      // Degenerate fill: assign zone by which half of the fill the pointer is in
+      if (fillWidth <= HANDLE_PX * 2) {
+        return px < fillLeft + fillWidth / 2 ? "left" : "right";
+      }
+      if (px <= fillLeft + HANDLE_PX) return "left";
+      if (px >= fillRight - HANDLE_PX) return "right";
+      return "body";
+    },
+    [inS, windowS, src],
   );
 
   const handlePointer = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
+      const zone = classifyZone(e.clientX);
       const record = !recordedRef.current;
       recordedRef.current = true;
-      onChange(posToIn(e.clientX), record);
-      const onMove = (ev: PointerEvent) => onChange(posToIn(ev.clientX), false);
+
+      const dispatch = (clientX: number, rec: boolean) => {
+        const srcTime = posToSrc(clientX);
+        if (zone === "right" && onResizeRight) {
+          onResizeRight(srcTime, rec);
+        } else if (zone === "left" && isSeconds && onResizeLeft) {
+          onResizeLeft(srcTime, rec);
+        } else {
+          // Body drag + grid-left: slide the window (SET_IN)
+          onChange(posToIn(clientX), rec);
+        }
+      };
+
+      dispatch(e.clientX, record);
+      const onMove = (ev: PointerEvent) => dispatch(ev.clientX, false);
       const onUp = () => {
         recordedRef.current = false;
         window.removeEventListener("pointermove", onMove);
@@ -1315,7 +1425,7 @@ function InPointScrubber({
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     },
-    [onChange, posToIn],
+    [classifyZone, posToSrc, posToIn, onChange, onResizeLeft, onResizeRight, isSeconds],
   );
 
   // Beat ticks: beats that fall INSIDE the current window, in source time.
@@ -1354,9 +1464,16 @@ function InPointScrubber({
             width: `${Math.min(100, (windowS / src) * 100)}%`,
           }}
         >
-          {/* Handles */}
-          <div className="absolute inset-y-0 left-0 w-1 rounded-l-md bg-lime-700" aria-hidden="true" />
-          <div className="absolute inset-y-0 right-0 w-1 rounded-r-md bg-lime-700" aria-hidden="true" />
+          {/* Left handle — interactive */}
+          <div
+            className="absolute inset-y-0 left-0 w-3 cursor-col-resize rounded-l-md bg-lime-700"
+            aria-hidden="true"
+          />
+          {/* Right handle — interactive */}
+          <div
+            className="absolute inset-y-0 right-0 w-3 cursor-col-resize rounded-r-md bg-lime-700"
+            aria-hidden="true"
+          />
         </div>
         {/* Beat ticks */}
         {ticks.map((t, i) => (
