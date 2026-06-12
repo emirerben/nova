@@ -2811,6 +2811,22 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | Non
         ensure_fresh_lyrics_cached_for_render,
     )
     from app.services.lyrics_config_effective import effective_lyrics_config  # noqa: PLC0415
+    from app.tasks.template_orchestrate import (  # noqa: PLC0415
+        compute_snapped_slot_durations,
+    )
+
+    # Overwrite target_duration_s with post-beat-snap values before injection
+    # so lyric windows are clamped to the slot boundaries _assemble_clips will
+    # actually produce (karaoke word-highlight drift fix).
+    _beats = list(track.beat_timestamps_s or [])
+    _snapped = compute_snapped_slot_durations(
+        recipe_dict.get("slots") or [],
+        _beats,
+        is_agentic=False,
+        user_total_dur_s=None,
+    )
+    for _i, _s in enumerate(_snapped):
+        recipe_dict["slots"][_i]["target_duration_s"] = _s
 
     cfg = track.track_config or {}
     if style_set_id:
