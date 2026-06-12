@@ -1194,6 +1194,8 @@ def check_overlay_format_matcher(output: OverlayFormatMatcherOutput) -> list[str
         failures.append(f"size_class={output.size_class!r} not in {_SIZE_CLASSES}")
     if output.text_anchor not in _ANCHORS:
         failures.append(f"text_anchor={output.text_anchor!r} not in {_ANCHORS}")
+    if output.layout_source not in ("model", "coerced_default"):
+        failures.append(f"layout_source={output.layout_source!r} is invalid")
     for field_name in ("text_color", "highlight_color"):
         val = getattr(output, field_name)
         if not _HEX_RE.match(val):
@@ -1451,7 +1453,12 @@ def check_style_intent(output: Any) -> list[str]:
         }
     )
     _VALID_INTENTS = {
-        "style_edit", "persona_preference", "scope_reduction", "clarify", "describe", "unknown"
+        "style_edit",
+        "persona_preference",
+        "scope_reduction",
+        "clarify",
+        "describe",
+        "unknown",
     }
 
     failures: list[str] = []

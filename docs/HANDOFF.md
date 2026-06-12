@@ -179,6 +179,127 @@ Job `63e0cc36-f01f-442c-8b89-977ceac38daa`, `GET /admin/jobs/63e0cc36-f01f-442c-
 | authenticated debug JSON | `/private/tmp/local-debug-63e0cc36-f01f-442c-8b89-977ceac38daa.json` |
 | `song_text` still, 1.0s | `/private/tmp/nova-overlay-synthetic/stills/local-song_text-1.0s.png` |
 
+## Slice 2 results (raw)
+
+### Test output
+
+| Command | Exit | Raw result |
+|---|---:|---|
+| `cd src/apps/api && pytest -p no:cacheprovider tests/pipeline/test_intro_cluster.py -q` | 0 | `25 passed in 0.12s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/ -k "overlay_format or intro_writer or overlay_verify"` | 0 | `86 passed, 4989 deselected in 5.66s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/ -k "overlay_format or intro_writer or overlay_verify or intro_cluster" -q` | 0 | `111 passed, 4965 deselected in 5.24s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/` | 0 | `5017 passed, 58 skipped, 168 warnings in 214.53s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/` | 1 | `11 failed, 5007 passed, 58 skipped, 166 warnings in 428.56s` |
+| `cd src/apps/api && pytest -p no:cacheprovider <9 redis/celery failed tests> -q` | 0 | `9 passed, 2 warnings in 1.99s` |
+| `cd src/apps/api && ruff check --no-cache .` | 0 | `All checks passed!` |
+| `cd src/apps/api && ruff format --check --no-cache <13 touched Python files>` | 0 | `13 files already formatted` |
+| `cd src/apps/api && ruff check --no-cache app/pipeline/intro_cluster.py tests/pipeline/test_intro_cluster.py` | 0 | `All checks passed!` |
+| `cd src/apps/api && ruff format --check --no-cache app/pipeline/intro_cluster.py tests/pipeline/test_intro_cluster.py` | 0 | `2 files already formatted` |
+| `make verify-overlays` | 0 | `overlay-verify: PASS (PASS=19 WARN=0 FAIL=0 SKIPPED=0)` |
+| `NOVA_EVAL_MODE=live pytest -p no:cacheprovider tests/evals/test_overlay_format_matcher_evals.py -v --eval-mode=live --with-judge --allow-cost` | 0 | `3 passed in 24.79s` |
+| `NOVA_EVAL_MODE=live pytest -p no:cacheprovider tests/evals/test_intro_writer_evals.py -v --eval-mode=live --with-judge --allow-cost` | 0 | `10 passed in 82.37s` |
+
+### Overlay verify expected-fail
+
+| Field | Value |
+|---|---|
+| report | `.overlay-verify/report.json` |
+| overall | `PASS` |
+| counts | `PASS=19 FAIL=0 WARN=0 SKIPPED=0` |
+| expected-fail slot/overlay | `7/0` |
+| text | `font fallback must be loud` |
+| requested font | `Definitely Not A Real Nova Font` |
+| resolved font | `Playfair Display` |
+| fallback | `true` |
+| expected_failure | `{"verdict":"FAIL","reason_contains":"fallback"}` |
+| expectation_matched | `true` |
+
+### Replay measurement
+
+| Field | Value |
+|---|---|
+| rows | `15` |
+| selection | `first 15 eligible 3-6 word prod matcher rows from 20-row run` |
+| source | `/private/tmp/nova-slice2-evidence/replay-results.json` |
+| artifact | `/private/tmp/nova-slice2-evidence/replay-results-eligible15.json` |
+| cluster_after | `5` |
+| cluster_after_rate | `0.3333` |
+| cluster_words_all_3_to_6 | `true` |
+
+| Prod job | Hook words | Before layout | After layout | Layout source | After effect | Matched examples | Cluster word floor |
+|---|---:|---|---|---|---|---|---|
+| `a2a1d3c5-3aee-45ee-b347-2abb6bee39e7` | 3 | `linear` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `fitness-grind-scaleup-01` | `true` |
+| `f891019a-74c0-4886-ae56-1b8308a2b63f` | 3 | `null` | `linear` | `model` | `fade-in` | `milestone-emotional-fadein-01` | `true` |
+| `49249ac1-abfb-4239-941d-c457828c2480` | 6 | `null` | `linear` | `model` | `karaoke-line` | `tutorial-tip-karaoke-01`, `transformation-before-after-karaoke-01` | `true` |
+| `454d0f1d-e640-44a2-b7e6-dba67ce6bf71` | 3 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+| `41a5fcdb-103f-4214-b5e0-76032f243591` | 6 | `null` | `linear` | `model` | `scale-up` | `energetic-payoff-cluster-01`, `fitness-grind-scaleup-01` | `true` |
+| `11432066-5d2b-4c0b-a431-65d1e84dcb7a` | 3 | `null` | `linear` | `model` | `karaoke-line` | `pov-surprise-karaoke-01`, `pov-social-karaoke-01` | `true` |
+| `ed671211-6fb9-46af-be53-796b72620f72` | 3 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01`, `energetic-payoff-cluster-01` | `true` |
+| `73495ae2-f353-4cd2-b978-71ac257653c0` | 6 | `null` | `linear` | `model` | `scale-up` | `adventure-humor-scaleup-02`, `fitness-grind-scaleup-01`, `energetic-payoff-cluster-01` | `true` |
+| `9df59b4c-8ae5-4127-a02c-b0894a8568d3` | 3 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+| `6f8eaa78-e504-447d-aa7f-23463325adcd` | 4 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+| `011ab4d0-6f81-47ec-9549-6dcf9e49f514` | 3 | `null` | `linear` | `model` | `scale-up` | `pov-social-karaoke-01`, `energetic-payoff-cluster-01` | `true` |
+| `fd8a6a0d-9e0b-46ab-b710-16907c7d944a` | 5 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01` | `true` |
+| `f02e2b90-d98b-4f64-8fc5-0851d9b221a2` | 5 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01` | `true` |
+| `901fe271-dc8b-46ae-80dc-c5182298658d` | 6 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01`, `energetic-payoff-cluster-01` | `true` |
+| `448c7e05-6ed9-430e-bd68-84be1434b729` | 3 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+
+### Local-render proof
+
+| Prod job | Local job | Status | Rendered outputs | Log |
+|---|---|---|---|---|
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `1fb75578-bb3e-433e-a61c-d79409a84f39` | `variants_ready` | `.local-render/1fb75578-bb3e-433e-a61c-d79409a84f39-song_lyrics.mp4`, `.local-render/1fb75578-bb3e-433e-a61c-d79409a84f39-song_text.mp4`, `.local-render/1fb75578-bb3e-433e-a61c-d79409a84f39-original_text.mp4` | `/private/tmp/nova-slice2-evidence/local-render-logs/22c0bc36.log` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `b8b365c3-5c29-48c9-aaaf-319234c64bc8` | `variants_ready` | `.local-render/b8b365c3-5c29-48c9-aaaf-319234c64bc8-song_lyrics.mp4`, `.local-render/b8b365c3-5c29-48c9-aaaf-319234c64bc8-song_text.mp4`, `.local-render/b8b365c3-5c29-48c9-aaaf-319234c64bc8-original_text.mp4` | `/private/tmp/nova-slice2-evidence/local-render-logs/568ced7b.log` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `f73dc75a-f678-4152-beb5-3f95285e4b98` | `variants_ready` | `.local-render/f73dc75a-f678-4152-beb5-3f95285e4b98-original_text.mp4` | `/private/tmp/nova-slice2-evidence/local-render-logs/dfb9713d.log` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `7e7ac3bb-5dca-4a87-b58e-797bead1c0bd` | `variants_ready` | `.local-render/7e7ac3bb-5dca-4a87-b58e-797bead1c0bd-original_text.mp4` | `stdout` |
+
+| Prod job | Local debug JSON | Intro stills |
+|---|---|---|
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `/private/tmp/nova-slice2-evidence/local-debug/1fb75578-bb3e-433e-a61c-d79409a84f39-debug.json` | `/private/tmp/nova-slice2-evidence/stills/22c0bc36/song_text_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/22c0bc36/song_lyrics_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/22c0bc36/original_text_t1.jpg` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `/private/tmp/nova-slice2-evidence/local-debug/b8b365c3-5c29-48c9-aaaf-319234c64bc8-debug.json` | `/private/tmp/nova-slice2-evidence/stills/568ced7b/song_text_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/568ced7b/song_lyrics_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/568ced7b/original_text_t1.jpg` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `/private/tmp/nova-slice2-evidence/local-debug/f73dc75a-f678-4152-beb5-3f95285e4b98-debug.json` | `/private/tmp/nova-slice2-evidence/stills/dfb9713d/original_text_t1.jpg` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `/private/tmp/nova-slice2-evidence/local-debug/7e7ac3bb-5dca-4a87-b58e-797bead1c0bd-pipeline_trace.json` | `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/original_text_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/forced_cluster_this_bridge_sunset_clean_t15.jpg` |
+
+### Local-render layout events
+
+| Prod job | Local job | Text | Requested layout | Selected layout | Layout source | Reason | Word count | Has word roles |
+|---|---|---|---|---|---|---|---:|---|
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `1fb75578-bb3e-433e-a61c-d79409a84f39` | `the bell sounds slower than the glyph. why?` | `linear` | `linear` | `model` | `explicit_linear` | 8 | `false` |
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `1fb75578-bb3e-433e-a61c-d79409a84f39` | `the bell sounds slower than the glyph. why?` | `linear` | `linear` | `model` | `explicit_linear` | 8 | `false` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `b8b365c3-5c29-48c9-aaaf-319234c64bc8` | `when he asked 'why put all my thoughts on my heart?'` | `linear` | `linear` | `model` | `explicit_linear` | 11 | `false` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `b8b365c3-5c29-48c9-aaaf-319234c64bc8` | `when he asked 'why put all my thoughts on my heart?'` | `linear` | `linear` | `model` | `explicit_linear` | 11 | `false` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `f73dc75a-f678-4152-beb5-3f95285e4b98` | `this bridge sunset` | `cluster` | `cluster` | `model` | `agent_pick` | 3 | `true` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `7e7ac3bb-5dca-4a87-b58e-797bead1c0bd` | `pov: this sunset over the bridge` | `linear` | `linear` | `model` | `explicit_linear` | 6 | `false` |
+
+### Scenic cluster rendered-size measurement
+
+| Field | Value |
+|---|---|
+| source image | `/private/tmp/nova-slice2-evidence/stills/dfb9713d/original_text_t1.jpg` |
+| measurement artifact | `/private/tmp/nova-slice2-evidence/scenic-cluster-size-measurement.json` |
+| crop_xyxy | `[150, 650, 950, 1180]` |
+| threshold | `gray>230, close kernel 35x18` |
+| boxes | `[{"x":227,"y":680,"w":675,"h":169,"area":56482},{"x":303,"y":902,"w":574,"h":107,"area":44616}]` |
+| distinct_box_sizes | `[[574,107],[675,169]]` |
+| distinct_height_count | `2` |
+
+### Scenic cluster spacing measurement
+
+| Field | Value |
+|---|---|
+| text | `this bridge sunset` |
+| roles | `["connector","hero","hero"]` |
+| measurement artifact | `/private/tmp/nova-slice2-evidence/scenic-cluster-spacing-y-tight-measurement.json` |
+| clean forced-cluster still | `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/forced_cluster_this_bridge_sunset_y_tight_clean_t15.jpg` |
+| live rerender still | `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/original_text_t1.jpg` |
+| live rerender video | `.local-render/7e7ac3bb-5dca-4a87-b58e-797bead1c0bd-original_text.mp4` |
+| collisions | `0` |
+| this_bridge_gap_x_frac | `0.025` |
+| this_bridge_overlap_y_frac | `0.037491` |
+| this_bridge_center_y_delta_frac | `0.012` |
+| bridge_sunset_overlap_x_frac | `0.404994` |
+| bridge_sunset_gap_y_frac | `0.008665` |
+
 ## Next slice spec
 
 ### Slice 1 — "Make prod text-overlay degradation observable and loud" (FROZEN 2026-06-12)
