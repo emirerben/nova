@@ -319,7 +319,10 @@ def _run_with_mocks(item, *, agent_outputs, meta=None):
 
     plan = _make_plan()
     persona = _make_persona()
-    persist_item = _make_item()
+    # The persist-session item must still hold the analyzed clip, or the
+    # stale-clip guard (drops a verdict for footage the user already replaced)
+    # discards it.
+    persist_item = _make_item(clip_assignments=[{"gcs_path": _CLIP, "shot_id": None}])
     cm1, _ = _make_session_ctx(item=item, plan=plan, persona=persona)
     cm2, _ = _make_session_ctx(item=persist_item, plan=plan, persona=persona)
     calls = {"n": 0}

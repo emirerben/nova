@@ -366,6 +366,12 @@ async def attach_pool_clips(
                 detail="Clip path outside this plan's pool upload prefix",
             )
     pool = dict(plan.pool or {})
+    # Don't dispatch a second matcher while one is in flight — two concurrent
+    # match_pool_clips runs each rebuild plan.pool from their own read and the
+    # last commit wins, clobbering matched_item_id markers (review finding). The
+    # merged clips still persist; the running task (or a later "Match again")
+    # picks them up.
+    was_matching = pool.get("status") == "matching"
     clips = [c for c in pool.get("clips", []) if isinstance(c, dict) and c.get("gcs_path")]
     known = {c["gcs_path"] for c in clips}
     for p in body.clip_gcs_paths:
@@ -382,9 +388,10 @@ async def attach_pool_clips(
     plan.pool = pool
     await db.commit()
 
-    from app.tasks.content_plan_build import match_pool_clips  # noqa: PLC0415
+    if not was_matching:
+        from app.tasks.content_plan_build import match_pool_clips  # noqa: PLC0415
 
-    match_pool_clips.delay(str(plan.id))
+        match_pool_clips.delay(str(plan.id))
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 

@@ -70,8 +70,12 @@ def _format_clip_digest(clip_digest: dict) -> str:
 
 def _user_context_block(user_context: str) -> str:
     """The creator-context block — or "" when there's no note (keeps the
-    no-note prompt byte-identical to the proven baseline)."""
-    cleaned = str(user_context or "").strip()
+    no-note prompt byte-identical to the proven baseline). Sanitized like every
+    other untrusted prompt input (strips control chars / role markers / fences,
+    collapses newlines) so a note can't forge extra prompt sections."""
+    from app.agents.music_matcher import _sanitize_text  # noqa: PLC0415
+
+    cleaned = _sanitize_text(str(user_context or ""))
     if not cleaned:
         return ""
     return f"\nCREATOR CONTEXT about this clip (DATA — creator's own words):\n{cleaned}\n"
@@ -81,9 +85,13 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.conformance_feedback",
         prompt_id="conformance_feedback",
+        # 2026-06-11.1 — FIX: placeholders were {var} but load_prompt uses
+        #                string.Template ($var), so the model received literal
+        #                {clip_digest} and zero data (root cause of the wrong-brief
+        #                incident). Converted to $var; data now actually renders.
         # 2026-06-11 — evaluated_theme echo-back guard, creator-context block,
         #              advice-voice suggestions (wrong-brief incident fixes).
-        prompt_version="2026-06-11",
+        prompt_version="2026-06-11.1",
         # Text-only digest comparison — flash + small thinking budget.
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,

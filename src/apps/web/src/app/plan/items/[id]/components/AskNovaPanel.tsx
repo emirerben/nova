@@ -70,10 +70,16 @@ export default function AskNovaPanel({ item, mode, onClose, onItemChanged }: Ask
     setTurns(nextTurns);
     setThinking(true);
     try {
-      // Contest mode marks the verdict contested exactly once (idempotent server-side).
+      // Contest mode marks the verdict contested exactly once (idempotent
+      // server-side). Set the ref only AFTER the POST succeeds — otherwise a
+      // failed contest is never retried and the backend never learns of it
+      // (review finding).
       if (mode === "contest" && !contested.current) {
-        contested.current = true;
-        contestConformance(item.id).catch(() => {});
+        contestConformance(item.id)
+          .then(() => {
+            contested.current = true;
+          })
+          .catch(() => {});
       }
       const res = await planItemAdvisorTurn(item.id, message, nextTurns.slice(0, -1));
       setTurns([...nextTurns, { role: "agent", content: res.reply }]);

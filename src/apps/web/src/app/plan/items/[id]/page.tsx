@@ -127,8 +127,12 @@ export default function PlanItemPage() {
       // conformance verdict yet (the async task may still be running).
       const hasClips = (item.clip_gcs_paths?.length ?? 0) > 0;
       const hasFilmingGuide = (item.filming_guide?.length ?? 0) > 0;
+      // Gate on the absence of a VERDICT, not the conformance object — after a
+      // note edit the carry-over stub ({contested:true}, no verdict) is truthy,
+      // so the old `!item.conformance` check never resumed polling and the
+      // re-read never appeared (review finding).
       const awaitingConformance =
-        hasClips && hasFilmingGuide && !item.conformance && conformancePolls.current < 3;
+        hasClips && hasFilmingGuide && !item.conformance?.verdict && conformancePolls.current < 3;
       if (awaitingConformance) {
         conformancePolls.current += 1;
         return false;
@@ -365,7 +369,7 @@ export default function PlanItemPage() {
     clipCount > 0 &&
     (item.filming_guide?.length ?? 0) > 0 &&
     item.instruction_level !== "none" &&
-    !item.conformance &&
+    !item.conformance?.verdict &&
     conformancePolls.current < 3;
   const focused = variants.find((v) => v.variant_id === focusedVariantId) ?? null;
   const focusedEditable =
@@ -416,11 +420,6 @@ export default function PlanItemPage() {
               {item.filming_suggestion ? (
                 <p className="mb-4 text-sm text-[#71717a]">📋 {item.filming_suggestion}</p>
               ) : null}
-              {error && (
-                <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
-                  {error}
-                </div>
-              )}
               <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
                 <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
                 <p className="mb-4 text-sm text-[#71717a]">
@@ -489,6 +488,16 @@ export default function PlanItemPage() {
             </>
           )}
 
+          {/* Error banner — outside the instructed/uninstructed fork so the
+              render-register error (and any other) shows on BOTH item types
+              (dogfood: it was trapped in the uninstructed branch, so the
+              first-click fix never surfaced on filming-guide items). */}
+          {error && (
+            <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
+              {error}
+            </div>
+          )}
+
           {/* Conformance read — ABOVE Generate so the read informs the action,
               with the explicit generate-anyway line so proximity never reads as
               a gate. State machine: checking shimmer → tile / one-liner / nothing. */}
@@ -501,7 +510,7 @@ export default function PlanItemPage() {
               Reading your clips against the brief…
             </p>
           ) : (
-            item.conformance && (
+            item.conformance?.verdict && (
               <ConformanceVerdictPanel
                 conformance={item.conformance}
                 onTellNova={() => setAskNova("contest")}
@@ -791,7 +800,7 @@ function ConformanceVerdictPanel({
       data-testid="conformance-verdict-panel"
     >
       {conformance.evaluated_theme && (
-        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]">
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#71717a]">
           Read against: &ldquo;{conformance.evaluated_theme}&rdquo;
         </p>
       )}
@@ -824,7 +833,7 @@ function ConformanceVerdictPanel({
           Hide this read
         </button>
       </div>
-      <p className="mt-2 text-xs text-[#a1a1aa]">
+      <p className="mt-2 text-xs text-[#71717a]">
         You can generate anyway — this is just a read on the brief.
       </p>
     </div>

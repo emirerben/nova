@@ -126,7 +126,7 @@ export default function SongPicker({
                     </p>
                     {/* Prevention-first (P6): say it BEFORE they swap, not after a dead render. */}
                     {t.has_lyrics && t.lyrics_variant_supported === false && (
-                      <p className="truncate text-xs text-[#a1a1aa]">
+                      <p className="truncate text-xs text-[#71717a]">
                         No lyric variant — language not supported yet
                       </p>
                     )}

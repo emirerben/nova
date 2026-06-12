@@ -328,7 +328,7 @@ def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[s
     path_by_shot: dict[str, str] = {
         str(a.get("shot_id")): str(a.get("gcs_path"))
         for a in assignments
-        if a.get("shot_id") and a.get("gcs_path")
+        if isinstance(a, dict) and a.get("shot_id") and a.get("gcs_path")
     }
     known_paths = set(clip_paths)
     ordered: list[str] = []
@@ -658,6 +658,12 @@ def _set_pool_status(session, plan: ContentPlan, status_value: str) -> None:  # 
     name="app.tasks.content_plan_build.match_pool_clips",
     bind=True,
     max_retries=0,
+    # Celery time-limit invariant (CLAUDE.md / prod 08532ba3): must stay strictly
+    # under the broker visibility_timeout (1900s) or a long ingest gets redelivered
+    # and double-runs — duplicate Gemini spend + tmpfs blowout. Mirrors the render
+    # orchestrators. Pinned by tests/tasks/test_task_time_limits.py.
+    soft_time_limit=1740,
+    time_limit=1800,
 )
 def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
     """Distribute the plan's footage pool across PENDING items (provisional).
@@ -668,9 +674,31 @@ def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
     the conformance judge skips them until the user touches the slot), and it
     NEVER auto-renders — the user keeps/swaps, then generates.
 
-    Best-effort: any failure lands pool.status="match_failed" with items
-    untouched; the user can hit "Match again".
+    Best-effort: any failure (including the soft time limit) lands
+    pool.status="match_failed" with items untouched; the user can hit
+    "Match again".
     """
+    try:
+        _run_pool_match(plan_id)
+    except Exception as exc:  # noqa: BLE001
+        # Never let the pool wedge in "matching" forever — ANY failure (soft time
+        # limit, a DB error in the write-back block that the inner try/except
+        # doesn't cover, a worker kill) flips the status so the UI shows
+        # "Match again" instead of polling indefinitely.
+        log.warning("pool_match.failed_terminal", plan_id=plan_id, error=str(exc)[:300])
+        try:
+            with sync_session() as session:
+                plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+                if plan is not None and (plan.pool or {}).get("status") == "matching":
+                    _set_pool_status(session, plan, "match_failed")
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+
+def _run_pool_match(plan_id: str) -> None:
+    """Inner body of match_pool_clips (separated so the soft-time-limit handler
+    can wrap it and still mark the pool failed)."""
     import tempfile  # noqa: PLC0415
 
     from app.agents._model_client import default_client  # noqa: PLC0415
@@ -891,8 +919,16 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
         from app.services.plan_clips import ClipAssignment, set_item_clips  # noqa: PLC0415
 
         existing_assignments = item.clip_assignments or []
+        # Demote shot → pool but carry the per-clip metadata: user_note is about
+        # the CLIP not the slot, and machine_matched must survive a reroll
+        # (dropping them silently wiped creator context — review finding).
         demoted = [
-            ClipAssignment(gcs_path=a["gcs_path"], shot_id=None)
+            ClipAssignment(
+                gcs_path=a["gcs_path"],
+                shot_id=None,
+                user_note=str(a.get("user_note") or ""),
+                machine_matched=bool(a.get("machine_matched")),
+            )
             for a in existing_assignments
             if isinstance(a, dict) and a.get("gcs_path")
         ]

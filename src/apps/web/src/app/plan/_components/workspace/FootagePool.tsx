@@ -13,7 +13,7 @@
  */
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   attachPoolClips,
   rematchPoolClips,
@@ -34,7 +34,6 @@ export function FootagePool({
   const [uploading, setUploading] = useState(false);
   const [uploadedCount, setUploadedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const items = plan.items ?? [];
   const pendingItems = items.filter(
@@ -93,7 +92,8 @@ export function FootagePool({
           file_size_bytes: f.size,
         })),
       );
-      // Sequential-ish with count progress (real events only — no fake bars).
+      // Concurrent uploads; the counter advances per completion (real events
+      // only — no fake progress bars).
       let done = 0;
       await Promise.all(
         urls.map(async (u, i) => {
@@ -156,7 +156,6 @@ export function FootagePool({
               <label className="inline-flex min-h-11 cursor-pointer items-center rounded-full border border-zinc-200 px-5 py-2 text-sm font-medium text-[#0c0c0e] transition-colors hover:border-zinc-400 focus-within:ring-2 focus-within:ring-lime-600 focus-within:ring-offset-2">
                 Add footage
                 <input
-                  ref={inputRef}
                   type="file"
                   accept="video/mp4,video/quicktime"
                   multiple
@@ -215,7 +214,7 @@ export function FootagePool({
           {!matching && (poolStatus === "matched" || poolStatus === "matched_empty") && unmatchedCount > 0 && (
             <div className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-xs text-[#3f3f46]">
               {unmatchedCount} clip{unmatchedCount === 1 ? "" : "s"} didn&apos;t fit this plan yet —
-              kept here with your plan.{" "}
+              they&apos;ll stay in your footage pool.{" "}
               {pendingItems.length > 0 && (
                 <button
                   type="button"

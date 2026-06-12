@@ -13,7 +13,7 @@
  * ~/.gstack/projects/emirerben-nova/designs/plan-item-shot-slots-20260607/
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   attachClips,
@@ -715,6 +715,10 @@ export function ClipNoteControl({
   note: string;
   onSave: (note: string) => Promise<void>;
 }) {
+  // Unique per instance — this control renders once per slot AND once per clip
+  // in the uninstructed list, so a hardcoded id produced duplicate DOM ids and
+  // broke label association for screen readers (review finding).
+  const inputId = useId();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(note);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -741,12 +745,12 @@ export function ClipNoteControl({
           void save();
         }}
       >
-        <label className="mb-1 block text-xs font-medium text-[#3f3f46]" htmlFor="clip-note">
+        <label className="mb-1 block text-xs font-medium text-[#3f3f46]" htmlFor={inputId}>
           Context <span className="font-normal text-[#a1a1aa]">optional</span>
         </label>
         <div className="flex gap-2">
           <input
-            id="clip-note"
+            id={inputId}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             maxLength={200}
@@ -804,7 +808,7 @@ export function ClipNoteControl({
     <button
       type="button"
       onClick={() => setEditing(true)}
-      className="mt-1.5 text-xs text-[#a1a1aa] underline-offset-2 hover:text-[#71717a] hover:underline"
+      className="mt-1.5 text-xs text-[#71717a] underline-offset-2 hover:text-[#0c0c0e] hover:underline"
     >
       + Add context
     </button>

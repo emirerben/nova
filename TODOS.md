@@ -1,5 +1,32 @@
 # Nova — Deferred Work
 
+## Plan dogfood fixes — review-deferred items (2026-06-12)
+
+These surfaced in the pre-PR `/review` (footage pool + Ask Nova + conformance branch).
+Correctness bugs were fixed in-branch; these are the genuinely bigger or
+lower-probability items deferred so the PR stays scoped.
+
+### Pool JSONB concurrent-write safety (row locking)
+**What:** `attach_pool_clips`, `rematch_pool_clips`, and `match_pool_clips`'s write-back all do unlocked read-modify-write on `content_plans.pool`. The duplicate-dispatch path is mitigated (no second task while `status=="matching"`), but two interleaved commits can still last-writer-wins on the whole JSONB. **How:** `select(...).with_for_update()` on the ContentPlan row in all three paths, or switch to `jsonb_set` partial updates. **Why deferred:** single-user feature, low collision probability; the cheap dispatch-guard covers the common case. **Priority:** P3.
+
+### Pool `matched_item_id` reconciliation on swap/remove
+**What:** Once a pool clip is matched to an item, `matched_item_id` is write-once. If the user later removes/replaces that clip, the pool entry still points at the item, so `pool_matched_count` over-reports and "Match again" skips it forever. **How:** at rematch (or in `_plan_response`), validate `matched_item_id` against the item's live `clip_assignments` and reset stale entries to null. **Priority:** P3.
+
+### Pool clip metadata caching
+**What:** every `match_pool_clips` run (incl. "Match again" and incremental uploads) re-downloads + re-runs Gemini `clip_metadata` on all still-unmatched clips. **How:** persist the digest on `pool["clips"][i]` after first analysis; skip re-ingest for entries that already have it. **Priority:** P3 (cost optimization).
+
+### Pool clip storage sweeper
+**What:** `users/{uid}/plan-pool/*` persists forever with no sweeper; the feature invites 40-clip dumps, and abandoned pools accumulate (extends the `users/` lifecycle gap already flagged in CLAUDE.md). **How:** revisit with the auth/lifecycle-prefix work. **Priority:** P3.
+
+### Pool matches on shot-list items: Keep/Swap UI
+**What:** pool clips attach with `shot_id=None`, so on filming-guide items they land in the "Extra footage" strip as plain chips — the dashed "Matched — keep?" SlotWell branch is only reachable on uninstructed items. The conformance suppression still works (machine_matched), but there's no in-slot Keep affordance there. **How:** surface provisional pool matches in the shot rows or the extra-footage strip with Keep/Swap. **Priority:** P2.
+
+### Test-coverage backlog for the new surfaces
+**What:** the review's testing pass flagged ~14 untested new code paths worth covering as a focused sweep: pool routes (prefix-reject, dedup-merge, 4xx branches, `match_pool_clips` behavioral tests), advisor route (kill-switch 404, agent-failure fallback), `set_clip_note` route (404, note cap, machine_matched clear, verdict reset), `/generate` 409 guard, `_ingest_clips` `min_success_fraction` threshold, the three new `/music-tracks` fields, and the React components `FootagePool` / `AskNovaPanel` / `ShotSlotUploader` new branches + the render-register state machine (fake timers). **Why deferred:** the correctness fixes shipped with targeted guards (render_prompt, time-limit, conformance harness); this is the broader belt-and-suspenders sweep. **Priority:** P2.
+
+### Advisor prompt: exclude dismissed/suppressed verdicts
+**What:** `_format_conformance` in `plan_item_advisor.py` includes the verdict even when the user dismissed/suppressed it, so Nova may quote a read the user explicitly hid. **How:** skip the conformance block when `dismissed`/`suppressed`. **Priority:** P3.
+
 ## Creator Agent — follow-up work (M1 shipped dark in v0.4.90.0)
 
 ### Enable USER_STYLE_ENABLED + live-eval validation (pre-flip gate)

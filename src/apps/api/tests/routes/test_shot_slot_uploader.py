@@ -103,9 +103,9 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
         "users/u/plan/p/pool.mp4",
     ]
     assert item.clip_assignments == [
-        {"gcs_path": "users/u/plan/p/a.mp4", "shot_id": "sid-a", "user_note": "", "machine_matched": False},
-        {"gcs_path": "users/u/plan/p/pool.mp4", "shot_id": None, "user_note": "", "machine_matched": False},
-        {"gcs_path": "users/u/plan/p/b.mp4", "shot_id": "sid-b", "user_note": "", "machine_matched": False},
+        {"gcs_path": "users/u/plan/p/a.mp4", "shot_id": "sid-a", "user_note": "", "machine_matched": False},  # noqa: E501
+        {"gcs_path": "users/u/plan/p/pool.mp4", "shot_id": None, "user_note": "", "machine_matched": False},  # noqa: E501
+        {"gcs_path": "users/u/plan/p/b.mp4", "shot_id": "sid-b", "user_note": "", "machine_matched": False},  # noqa: E501
     ]
 
 

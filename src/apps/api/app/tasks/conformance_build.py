@@ -223,12 +223,6 @@ def _run(plan_item_id: str) -> None:
     verdict_dict = output.model_dump()
     # Traceability (wrong-brief incident): which footage this verdict describes.
     verdict_dict["clip_gcs_path"] = clip_gcs_path
-    if contested:
-        verdict_dict["contested"] = True
-        # After the creator contested once on this footage, only high-confidence
-        # verdicts may render again.
-        if output.confidence < 0.8:
-            verdict_dict["suppressed"] = True
 
     # ── Persist verdict ───────────────────────────────────────────────────────
     with sync_session() as session:
@@ -236,6 +230,38 @@ def _run(plan_item_id: str) -> None:
         if item is None:
             log.warning("conformance_build.item_gone_after_agent", plan_item_id=plan_item_id)
             return
+
+        # Re-read the live flags HERE, not at task start — the user may have
+        # dismissed or contested while the agent ran, and that intent must
+        # survive (review finding: dismissed was dropped on every fresh persist,
+        # and a contest mid-run was lost).
+        current = item.conformance if isinstance(item.conformance, dict) else {}
+        now_contested = bool(current.get("contested")) or contested
+        if current.get("dismissed"):
+            verdict_dict["dismissed"] = True
+        if now_contested:
+            verdict_dict["contested"] = True
+            # After the creator contested once on this footage, only
+            # high-confidence verdicts may render again.
+            if output.confidence < 0.8:
+                verdict_dict["suppressed"] = True
+
+        # Guard against persisting a verdict for footage the user already
+        # replaced (a note-PATCH + attach can race; the older task must not
+        # land last). If the analyzed clip is no longer attached, drop it.
+        live_paths = {
+            a.get("gcs_path")
+            for a in (item.clip_assignments or [])
+            if isinstance(a, dict)
+        }
+        if clip_gcs_path not in live_paths:
+            log.info(
+                "conformance_build.stale_clip_discarded",
+                plan_item_id=plan_item_id,
+                clip_gcs_path=clip_gcs_path,
+            )
+            return
+
         item.conformance = verdict_dict
         session.commit()
 

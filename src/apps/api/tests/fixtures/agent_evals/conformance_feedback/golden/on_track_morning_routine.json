@@ -1,6 +1,6 @@
 {
  "agent": "nova.plan.conformance_feedback",
- "prompt_version": "2026-06-11",
+ "prompt_version": "2026-06-11.1",
  "input": {
   "filming_guide": [
    {

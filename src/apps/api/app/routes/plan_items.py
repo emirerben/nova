@@ -16,7 +16,7 @@ import uuid
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -393,12 +393,30 @@ async def attach_clips(
     )
 
     item = await _load_owned_item(item_id, user.id, db)
-    expected_prefix = f"users/{user.id}/plan/{item.id}/"
+    # Accept clips uploaded to THIS item's prefix OR matched in from the plan's
+    # footage pool (users/{uid}/plan-pool/{plan_id}/). The frontend re-sends the
+    # full assignment set on every attach, so without the pool prefix any
+    # remove/add on a pool-matched item would 422 (dogfood: keep/swap broke).
+    item_prefix = f"users/{user.id}/plan/{item.id}/"
+    pool_prefix = f"users/{user.id}/plan-pool/{item.content_plan_id}/"
+
+    def _allowed(path: str) -> bool:
+        return path.startswith(item_prefix) or path.startswith(pool_prefix)
+
+    # Preserve machine_matched ONLY for clips that keep the same gcs_path + slot
+    # across this re-attach — a full re-send must not silently "confirm" untouched
+    # provisional matches (machine_matched isn't on the wire), but moving/replacing
+    # a clip legitimately drops the flag.
+    prior_mm: dict[tuple[str, str | None], bool] = {
+        (a["gcs_path"], a.get("shot_id")): True
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("gcs_path") and a.get("machine_matched")
+    }
 
     if body.assignments is not None:
         # Shot-slot uploader path: validate prefix, then validate shot_ids.
         for a in body.assignments:
-            if not a.gcs_path.startswith(expected_prefix):
+            if not _allowed(a.gcs_path):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Clip path outside this plan item's upload prefix",
@@ -423,18 +441,24 @@ async def attach_clips(
                 gcs_path=a.gcs_path,
                 shot_id=a.shot_id,
                 user_note=(a.user_note or "")[:_MAX_NOTE_CHARS],
+                machine_matched=prior_mm.get((a.gcs_path, a.shot_id), False),
             )
             for a in body.assignments
         ]
     else:
         # Legacy / uninstructed path: all clips go to pool.
         for p in body.clip_gcs_paths:
-            if not p.startswith(expected_prefix):
+            if not _allowed(p):
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="Clip path outside this plan item's upload prefix",
                 )
-        assignments = [ClipAssignment(gcs_path=p, shot_id=None) for p in body.clip_gcs_paths]
+        assignments = [
+            ClipAssignment(
+                gcs_path=p, shot_id=None, machine_matched=prior_mm.get((p, None), False)
+            )
+            for p in body.clip_gcs_paths
+        ]
 
     try:
         set_item_clips(item, assignments)
@@ -549,10 +573,13 @@ async def contest_conformance(
 
 
 class AdvisorTurnBody(BaseModel):
-    answer: str = ""
+    # Caps bound the per-call Gemini prompt — one authenticated request can't
+    # carry tens of thousands of turns into an unbounded prompt (cost abuse).
+    # The agent is stateless per turn, so old turns past the window are droppable.
+    answer: str = Field(default="", max_length=2000)
     # Full conversation so far: [{role: "agent"|"user", content: str}] — the
     # advisor is stateless per turn (same contract as /personas/agent/turn).
-    prior_turns: list[dict] = []
+    prior_turns: list[dict] = Field(default_factory=list, max_length=40)
 
 
 class AdvisorTurnResponse(BaseModel):
