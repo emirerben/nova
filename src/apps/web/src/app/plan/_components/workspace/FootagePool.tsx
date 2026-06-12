@@ -12,6 +12,7 @@
  * nothing auto-renders. Counts come from real backend state only (§7-D6).
  */
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   attachPoolClips,
@@ -45,6 +46,12 @@ export function FootagePool({
   const unmatchedCount = Math.max(0, clipCount - matchedCount);
   const matching = poolStatus === "matching";
   const planFull = pendingItems.length === 0;
+  // Days holding provisional (not-yet-kept) matches — the receipt links straight
+  // to them so "2 of 8 sorted" is one tap from review + Generate, not a
+  // calendar hunt (dogfood: "nereye aktarıldı göremiyorum").
+  const matchedItems = items
+    .filter((i) => i.clip_assignments?.some((a) => a.machine_matched))
+    .sort((a, b) => a.day_index - b.day_index);
 
   // While the matcher runs, the status only changes server-side — poll so
   // "Sorting…" resolves to matched/failed without a manual reload (dogfood
@@ -175,10 +182,35 @@ export function FootagePool({
             </p>
           )}
           {!matching && poolStatus === "matched" && matchedCount > 0 && (
-            <p className="mt-3 text-sm text-[#3f3f46]">
-              <span className="text-lime-700">✓</span> {matchedCount} of {clipCount} clips
-              sorted into your plan — look for &ldquo;Matched&rdquo; chips on those days.
-            </p>
+            <div className="mt-3">
+              <p className="text-sm text-[#3f3f46]">
+                <span className="text-lime-700">✓</span> {matchedCount} of {clipCount} clips
+                sorted into your plan{matchedItems.length > 0 ? ":" : " — all reviewed."}
+              </p>
+              {matchedItems.length > 0 && (
+                <ul className="mt-1.5 space-y-1">
+                  {matchedItems.map((i) => {
+                    const n =
+                      i.clip_assignments?.filter((a) => a.machine_matched).length ?? 0;
+                    return (
+                      <li key={i.id}>
+                        <Link
+                          href={`/plan/items/${i.id}`}
+                          className="group inline-flex items-baseline gap-2 text-sm"
+                        >
+                          <span className="font-medium text-lime-700 underline-offset-2 group-hover:underline">
+                            Day {i.day_index} — {i.theme}
+                          </span>
+                          <span className="text-xs text-[#71717a]">
+                            {n} clip{n === 1 ? "" : "s"} · review &amp; generate →
+                          </span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           )}
           {!matching && (poolStatus === "matched" || poolStatus === "matched_empty") && unmatchedCount > 0 && (
             <div className="mt-2 rounded border border-zinc-200 bg-white px-3 py-2 text-xs text-[#3f3f46]">
