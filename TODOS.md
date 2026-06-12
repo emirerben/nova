@@ -1,5 +1,32 @@
 # Nova — Deferred Work
 
+## Plan dogfood fixes — review-deferred items (2026-06-12)
+
+These surfaced in the pre-PR `/review` (footage pool + Ask Nova + conformance branch).
+Correctness bugs were fixed in-branch; these are the genuinely bigger or
+lower-probability items deferred so the PR stays scoped.
+
+### Pool JSONB concurrent-write safety (row locking)
+**What:** `attach_pool_clips`, `rematch_pool_clips`, and `match_pool_clips`'s write-back all do unlocked read-modify-write on `content_plans.pool`. The duplicate-dispatch path is mitigated (no second task while `status=="matching"`), but two interleaved commits can still last-writer-wins on the whole JSONB. **How:** `select(...).with_for_update()` on the ContentPlan row in all three paths, or switch to `jsonb_set` partial updates. **Why deferred:** single-user feature, low collision probability; the cheap dispatch-guard covers the common case. **Priority:** P3.
+
+### Pool `matched_item_id` reconciliation on swap/remove
+**What:** Once a pool clip is matched to an item, `matched_item_id` is write-once. If the user later removes/replaces that clip, the pool entry still points at the item, so `pool_matched_count` over-reports and "Match again" skips it forever. **How:** at rematch (or in `_plan_response`), validate `matched_item_id` against the item's live `clip_assignments` and reset stale entries to null. **Priority:** P3.
+
+### Pool clip metadata caching
+**What:** every `match_pool_clips` run (incl. "Match again" and incremental uploads) re-downloads + re-runs Gemini `clip_metadata` on all still-unmatched clips. **How:** persist the digest on `pool["clips"][i]` after first analysis; skip re-ingest for entries that already have it. **Priority:** P3 (cost optimization).
+
+### Pool clip storage sweeper
+**What:** `users/{uid}/plan-pool/*` persists forever with no sweeper; the feature invites 40-clip dumps, and abandoned pools accumulate (extends the `users/` lifecycle gap already flagged in CLAUDE.md). **How:** revisit with the auth/lifecycle-prefix work. **Priority:** P3.
+
+### Pool matches on shot-list items: Keep/Swap UI
+**What:** pool clips attach with `shot_id=None`, so on filming-guide items they land in the "Extra footage" strip as plain chips — the dashed "Matched — keep?" SlotWell branch is only reachable on uninstructed items. The conformance suppression still works (machine_matched), but there's no in-slot Keep affordance there. **How:** surface provisional pool matches in the shot rows or the extra-footage strip with Keep/Swap. **Priority:** P2.
+
+### Test-coverage backlog for the new surfaces
+**What:** the review's testing pass flagged ~14 untested new code paths worth covering as a focused sweep: pool routes (prefix-reject, dedup-merge, 4xx branches, `match_pool_clips` behavioral tests), advisor route (kill-switch 404, agent-failure fallback), `set_clip_note` route (404, note cap, machine_matched clear, verdict reset), `/generate` 409 guard, `_ingest_clips` `min_success_fraction` threshold, the three new `/music-tracks` fields, and the React components `FootagePool` / `AskNovaPanel` / `ShotSlotUploader` new branches + the render-register state machine (fake timers). **Why deferred:** the correctness fixes shipped with targeted guards (render_prompt, time-limit, conformance harness); this is the broader belt-and-suspenders sweep. **Priority:** P2.
+
+### Advisor prompt: exclude dismissed/suppressed verdicts
+**What:** `_format_conformance` in `plan_item_advisor.py` includes the verdict even when the user dismissed/suppressed it, so Nova may quote a read the user explicitly hid. **How:** skip the conformance block when `dismissed`/`suppressed`. **Priority:** P3.
+
 ## Creator Agent — follow-up work (M1 shipped dark in v0.4.90.0)
 
 ### Enable USER_STYLE_ENABLED + live-eval validation (pre-flip gate)
@@ -19,9 +46,34 @@
 **What:** Planner reads `style.instruction_level` + `preferred_edit_format_mix`; `filming_guide` threaded into `build_generative_job` → `all_candidates["filming_guide"]` → `intro_writer`; `footage_type_bias` biases `_select_archetype`.
 **Effort:** L
 
-### M4 — Per-item single-video upload + conformance agent
-**What:** UI uploads one video per plan item; `ConformanceFeedbackAgent` compares footage against `filming_guide` (clip_metadata signals) → "this looks like X instead of Y; engagement risk Z".
+## Plan dogfood fixes — deferred follow-ups (2026-06-11)
+
+### CJK lyric support (full karaoke for zh/ja/ko tracks)
+**What:** Real CJK lyric rendering: word segmentation (jieba or equivalent), a CJK-capable font bundle (~15MB Noto Sans SC), per-character karaoke timing in `lyric_injector.py`/`text_overlay_skia.py`.
+**Why:** Chinese/Japanese/Korean tracks currently lose the Lyrics variant entirely — the language gate (`app/pipeline/lyric_support.py`) skips it cleanly and the song picker says "language not supported yet", but the variant itself is the durable fix.
+**Depends on:** Docker-image size budget decision (font bundle grows the prod image).
 **Effort:** XL
+**Priority:** P3
+
+### Persistent media library (supersedes the per-plan footage pool)
+**What:** Per-user clip library with notes + metadata, reusable across plans; browsing/search UI. The 2026-06-11 footage pool (`content_plans.pool`, `users/{uid}/plan-pool/{plan_id}/`) is plan-scoped by design.
+**Why:** Users will want trip footage to feed NEXT month's plan too, not just the current one.
+**Depends on:** auth milestone + `users/{user_id}/` GCS prefix retention decisions (CLAUDE.md storage-retention note).
+**Effort:** XL
+**Priority:** P3
+
+### Ask Nova thread persistence (v2)
+**What:** Server-side conversation storage for `/plan-items/{id}/agent/turn` threads. v1 is deliberately ephemeral (client-held `prior_turns`, lost on reload); contested-verdict outcomes persist via the clip-note PATCH, not chat.
+**Why:** A user who reloads mid-conversation loses the advisor's reasoning; support/debugging also can't see what the advisor said.
+**Effort:** M (CC: ~1h)
+**Priority:** P3
+
+### Clip notes → intro_writer (overlay text uses creator context)
+**What:** `all_candidates["clip_notes"]` already rides every plan-item render job (gcs_path → note). Thread it into `intro_writer`'s prompt so overlay/hook text can use facts like "famous vegan restaurant in Buenos Aires".
+**Why:** Deferred at eng review: intro_writer is the highest-traffic prompt and the prompt-change rule requires live evals — a rushed bump risks hook quality for a nice-to-have. Data is already plumbed; this is prompt-only work.
+**Depends on:** intro_writer live-eval run budget.
+**Effort:** S (CC: ~30min + eval run)
+**Priority:** P2
 
 ## Light editorial system — follow-up work
 

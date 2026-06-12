@@ -163,6 +163,7 @@ def build_generative_job(
     user_style: dict | None = None,
     filming_guide: list[dict] | None = None,
     narrative_shot_count: int = 0,
+    clip_notes: dict[str, str] | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -228,6 +229,18 @@ def build_generative_job(
     # additionally gates on NARRATIVE_CLIP_ORDER_ENABLED at render time.
     if narrative_shot_count > 0:
         all_candidates["narrative_shot_count"] = min(int(narrative_shot_count), len(clip_paths))
+    # Creator clip notes (dogfood feedback #3): gcs_path → note, only for clips
+    # in THIS job and only non-empty notes. Stored for render-time consumers
+    # (future intro_writer pickup — deferred pending live-eval budget) and
+    # admin/debug. Omit the key entirely when empty (byte-identity discipline).
+    if clip_notes:
+        notes_ctx = {
+            p: str(n)[:200]
+            for p, n in clip_notes.items()
+            if p in set(clip_paths) and str(n or "").strip()
+        }
+        if notes_ctx:
+            all_candidates["clip_notes"] = notes_ctx
     return Job(
         user_id=user_id,
         job_type="generative",

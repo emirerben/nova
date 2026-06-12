@@ -611,6 +611,8 @@ def _run_music_matcher(
     )
 
     clip_summaries = [_clip_meta_to_summary(ClipSummary, m) for m in clip_metas]
+    from app.pipeline.lyric_support import lyric_language  # noqa: PLC0415
+
     track_summaries: list[TrackSummary] = []
     for t in candidate_tracks:
         labels_dict = (t.ai_labels or {}).get("labels") or t.ai_labels or {}
@@ -630,6 +632,7 @@ def _run_music_matcher(
                 duration_s=float(t.duration_s or 0.0),
                 slot_count=_track_slot_count(t),
                 labels=labels,
+                lyric_language=lyric_language(t.lyrics_cached),
             )
         )
 

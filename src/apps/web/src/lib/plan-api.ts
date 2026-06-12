@@ -682,3 +682,120 @@ export function styleAgentTurn(
     body: JSON.stringify({ answer, prior_turns: priorTurns ?? [] }),
   });
 }
+
+// ── Plan dogfood fixes (2026-06-11): clip notes, conformance trust actions, ────
+// Ask Nova advisor, footage pool. Append-only — do not edit code above.
+
+// Clip notes + provisional machine matches (interface merging, append-only rule).
+export interface ClipAssignment {
+  /** Creator context about the clip ("famous vegan restaurant"). "" = none. */
+  user_note?: string;
+  /** True = the footage-pool matcher placed this clip (provisional chip). */
+  machine_matched?: boolean;
+}
+
+// Conformance trust fields (echo-back evidence + dismissal/contest state).
+export interface ConformanceVerdict {
+  /** The theme the judge actually evaluated — rendered as READ AGAINST evidence. */
+  evaluated_theme?: string;
+  /** Contested + sub-0.8 confidence → never rendered. */
+  suppressed?: boolean;
+  /** User clicked "Hide this read" — never rendered for this footage. */
+  dismissed?: boolean;
+  /** User contested once on this footage. */
+  contested?: boolean;
+  clip_gcs_path?: string;
+}
+
+// Mode-aware header copy: how this persona sources content.
+export interface PlanItem {
+  content_mode?: "existing_footage" | "create_new" | "mixed";
+}
+
+// Direction-fork persona fields (interface merging, append-only rule). All
+// optional: personas generated before 2026-06-11 won't have them.
+export interface PersonaContent {
+  goal?: string;
+  content_mode?: "existing_footage" | "create_new" | "mixed" | null;
+  /** "based in Istanbul; the Argentina footage is a past trip" — the planner's
+   * location/temporal anchor, surfaced as the "Planning around" trust line. */
+  current_situation?: string;
+}
+
+/** Footage pool lifecycle on the plan. */
+export type PoolStatus = "none" | "matching" | "matched" | "matched_empty" | "match_failed";
+
+export interface ContentPlan {
+  pool_status?: PoolStatus;
+  pool_clip_count?: number;
+  pool_matched_count?: number;
+}
+
+/** Set/clear the creator's context note on one attached clip (re-runs the brief read). */
+export function setClipNote(
+  itemId: string,
+  gcsPath: string,
+  userNote: string,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/clips/note`, {
+    method: "PATCH",
+    body: JSON.stringify({ gcs_path: gcsPath, user_note: userNote }),
+  });
+}
+
+/** "Hide this read" — persist dismissal of the current conformance verdict. */
+export function dismissConformance(itemId: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/conformance/dismiss`, { method: "POST" });
+}
+
+/** "Looks wrong? Tell Nova" — mark the verdict contested (suppresses low-confidence re-reads). */
+export function contestConformance(itemId: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/conformance/contest`, { method: "POST" });
+}
+
+export interface AdvisorTurnResponse {
+  reply: string;
+  suggestions: string[];
+  /** Non-empty = the agent proposes re-reading a clip with this distilled note. */
+  suggested_note: string;
+}
+
+/**
+ * POST /plan-items/{id}/agent/turn — one "Ask Nova" advisor turn for this item.
+ * Stateless: priorTurns carries the whole conversation. 404 when the
+ * PLAN_ITEM_ADVISOR_ENABLED kill switch is off (the page hides the entry).
+ */
+export function planItemAdvisorTurn(
+  itemId: string,
+  answer: string,
+  priorTurns?: { role: "agent" | "user"; content: string }[],
+): Promise<AdvisorTurnResponse> {
+  return request<AdvisorTurnResponse>(`/plan-items/${itemId}/agent/turn`, {
+    method: "POST",
+    body: JSON.stringify({ answer, prior_turns: priorTurns ?? [] }),
+  });
+}
+
+/** Signed PUT URLs for the footage pool (users/{uid}/plan-pool/{plan_id}/). */
+export function requestPoolUploadUrls(
+  planId: string,
+  files: { filename: string; content_type: string; file_size_bytes: number }[],
+): Promise<{ upload_url: string; gcs_path: string }[]> {
+  return request<{ urls: { upload_url: string; gcs_path: string }[] }>(
+    `/content-plans/${planId}/pool/upload-urls`,
+    { method: "POST", body: JSON.stringify({ files }) },
+  ).then((r) => r.urls);
+}
+
+/** Add uploaded clips to the pool and start matching them across pending items. */
+export function attachPoolClips(planId: string, clipGcsPaths: string[]): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/pool/clips`, {
+    method: "POST",
+    body: JSON.stringify({ clip_gcs_paths: clipGcsPaths }),
+  });
+}
+
+/** "Match again" — re-run pool matching (e.g. after new items freed up). */
+export function rematchPoolClips(planId: string): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/pool/match`, { method: "POST" });
+}

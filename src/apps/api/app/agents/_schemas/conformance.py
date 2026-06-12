@@ -26,6 +26,10 @@ class ConformanceInput(BaseModel):
     # what "on-brief" means even if the shot list is empty.
     theme: str
     idea: str
+    # Optional creator-provided note about the analyzed clip ("this is a famous
+    # vegan restaurant in Buenos Aires"). UNTRUSTED user free-text — rendered as
+    # DATA; it can legitimately upgrade a verdict. "" = no note.
+    user_context: str = ""
 
 
 class ConformanceOutput(BaseModel):
@@ -40,3 +44,9 @@ class ConformanceOutput(BaseModel):
     mismatches: list[str] = Field(default_factory=list, max_length=3)
     # Max 3 items — actionable re-shoot tips.
     suggestions: list[str] = Field(default_factory=list, max_length=3)
+    # Echo-back guard (prod wrong-brief incident): the agent copies the theme it
+    # actually evaluated. The task asserts it matches the item's theme before
+    # persisting — a mismatch means contaminated inputs, and the verdict is
+    # discarded rather than shown. Also rendered in the UI as the evidence line
+    # (READ AGAINST: "<theme>").
+    evaluated_theme: str = ""

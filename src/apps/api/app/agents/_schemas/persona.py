@@ -10,12 +10,18 @@ plan's T7).
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 # Bump when prompts/generate_persona.txt OR prompts/persona_archetypes.json OR
 # prompts/tiktok_success_factors.json changes (CLAUDE.md prompt-change rule; the
 # archetype bank + success-factor bank are part of the prompt).
+# 2026-06-11 — added goal, content_mode (existing_footage|create_new|mixed) and
+#              current_situation outputs: the interview now forks on "footage you
+#              have vs videos you'll film" and grounds WHERE the creator's daily
+#              life happens (stops the planner assuming they live where past-trip
+#              footage was shot — the Buenos Aires incident).
 # 2026-06-06.1 — added $tiktok_analysis block (deep TikTok profile analysis from
 #                analyze_tiktok_profile task — creator's own proven hooks/themes/voice).
 #                Injected call-time only; not stored on the questionnaire row. Absent
@@ -32,7 +38,7 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-06-07.1"
+PERSONA_PROMPT_VERSION = "2026-06-11"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -94,9 +100,31 @@ class Persona(BaseModel):
     # shown verbatim as "You said: '...'" on the persona reveal (aha moment).
     # Empty for personas generated from the old flat-field questionnaire.
     signature_quote: str = ""
+    # What this page is in service of, in the creator's own terms (e.g. "grow
+    # Nova's TikTok audience", "share my pottery"). "" for legacy personas.
+    goal: str = ""
+    # Where the content comes from. Optional so legacy personas validate;
+    # resolve_content_mode() derives the effective value (default create_new —
+    # today's de-facto planner behavior).
+    content_mode: Literal["existing_footage", "create_new", "mixed"] | None = None
+    # The creator's CURRENT situation/location in one line ("based in Istanbul;
+    # the Argentina footage is from a past trip"). The planner anchors
+    # new-filming ideas ONLY here — never in places that exist only as past
+    # footage. "" = unknown → planner writes location-neutral ideas.
+    current_situation: str = ""
 
     def to_dict(self) -> dict:
         return self.model_dump()
+
+
+def resolve_content_mode(persona: Persona) -> str:
+    """Effective content mode for this persona.
+
+    Default "create_new" — the planner's de-facto behavior before the field
+    existed (shot lists written as filming instructions), so every legacy
+    persona keeps today's output shape.
+    """
+    return persona.content_mode or "create_new"
 
 
 def resolve_posts_per_week(persona: Persona) -> int:

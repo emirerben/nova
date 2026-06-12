@@ -10,6 +10,7 @@ import {
 } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
 import { downloadVideo } from "@/lib/download-video";
+import { variantFailureCopy } from "@/lib/variant-failure-copy";
 import { etaLadder, formatElapsed } from "@/components/progress/logic";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { IntroTextPreview } from "./IntroTextPreview";
@@ -150,7 +151,8 @@ export function VariantCard({
     ? "aspect-[9/16] w-full overflow-hidden rounded bg-zinc-100"
     : "aspect-[9/16] w-full overflow-hidden rounded bg-black";
   const renderingTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
-  const failedTextClass = tone === "light" ? "text-red-600" : "text-red-300";
+  // D10 failure tone: quiet zinc, never a red wall.
+  const failedTextClass = tone === "light" ? "text-[#3f3f46]" : "text-zinc-400";
   const emptyTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-600";
   const btnClass = tone === "light"
     ? "rounded border border-zinc-200 px-2 py-1 text-xs text-[#3f3f46] disabled:opacity-40"
@@ -297,7 +299,7 @@ export function VariantCard({
           </div>
         ) : failed ? (
           <div className={`flex h-full items-center justify-center px-3 text-center text-sm ${failedTextClass}`}>
-            {variant.error ?? "Render failed"}
+            {variantFailureCopy(variant.error_class)}
           </div>
         ) : pinnedOutputSrc ? (
           <video

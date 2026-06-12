@@ -541,11 +541,20 @@ def _run_generative_job(job_id: str) -> None:
 # ── Ingest (shared by the full job + the single-variant re-render) ──────────────
 
 
-def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dict[str, Any]:
+def _ingest_clips(
+    clip_paths_gcs: list[str],
+    tmpdir: str,
+    *,
+    job_id: str,
+    min_success_fraction: float = 0.5,
+) -> dict[str, Any]:
     """Download → probe → Gemini upload → clip_metadata. Reuses the proven helpers.
 
     Returns clip_metas, clip_id↔gcs/local maps, the probe map, and the hero clip.
-    Raises if more than half the clips fail metadata extraction.
+    Raises when the analyzed fraction drops below ``min_success_fraction``
+    (default: more than half failing aborts — right for renders, where cutting
+    with half-garbage footage is worse than failing). Pool MATCHING passes 0.0:
+    any analyzed subset is worth matching; only total failure raises.
     """
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         _analyze_clips_parallel,
@@ -567,9 +576,10 @@ def _ingest_clips(clip_paths_gcs: list[str], tmpdir: str, *, job_id: str) -> dic
         file_refs, local_clip_paths, probe_map, job_id=job_id
     )
     total = len(clip_metas) + failed_count
-    if total == 0 or failed_count > total * 0.5:
+    if total == 0 or len(clip_metas) == 0 or failed_count > total * (1.0 - min_success_fraction):
         raise ValueError(
-            f"{failed_count}/{total} clips failed clip_metadata — aborting generative job"
+            f"{failed_count}/{total} clips failed clip_metadata — aborting "
+            f"(min_success_fraction={min_success_fraction})"
         )
     return {
         "clip_metas": clip_metas,
@@ -1822,11 +1832,27 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
     """The variants to render. Song variants only when a track matched; the lyrics
     variant only when that track actually has cached lyrics (otherwise it would render
     identically to song_text with no lyrics — a wasted render + a confusing "Lyrics"
-    card). Always emit the original-audio variant."""
+    card) AND the lyric language is renderable by the bundled Latin-script fonts
+    (a CJK track would tofu-render or break word alignment — skip cleanly instead
+    of shipping one broken card). Always emit the original-audio variant."""
+    from app.pipeline.lyric_support import (  # noqa: PLC0415
+        lyric_language,
+        lyrics_variant_renderable,
+    )
+
     specs: list[dict[str, Any]] = []
     if best_track is not None:
         if best_track.lyrics_cached:
-            specs.append({"variant_id": "song_lyrics", "text_mode": "lyrics", "track": best_track})
+            if lyrics_variant_renderable(best_track.lyrics_cached):
+                specs.append(
+                    {"variant_id": "song_lyrics", "text_mode": "lyrics", "track": best_track}
+                )
+            else:
+                log.info(
+                    "generative_lyrics_variant_skipped_language",
+                    track_id=str(getattr(best_track, "id", "")),
+                    lyric_language=lyric_language(best_track.lyrics_cached),
+                )
         specs.append({"variant_id": "song_text", "text_mode": "agent_text", "track": best_track})
     specs.append({"variant_id": "original_text", "text_mode": "agent_text", "track": None})
     return specs
@@ -2285,6 +2311,10 @@ def _classify_error(exc: BaseException) -> str:
         return "storage_error"
     if "clip" in name and ("read" in name or "read" in msg):
         return "clip_read_error"
+    if "missingglyphs" in name:
+        return "lyrics_unsupported_language"
+    if "lyric" in name or "karaoke" in name:
+        return "lyric_alignment_error"
     return "unknown"
 
 

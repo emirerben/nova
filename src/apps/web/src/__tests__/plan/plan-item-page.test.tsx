@@ -288,8 +288,8 @@ describe("PlanItemPage — pendingEdits overlay", () => {
 
 // ── M4: conformance verdict panel ──────────────────────────────────────────────
 
-describe("PlanItemPage — M4 conformance verdict panel", () => {
-  it("test_conformance_on_track_panel_rendered: lime verdict badge visible", async () => {
+describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
+  it("test_conformance_on_track_renders_quiet_line: one-liner, no card chrome", async () => {
     const item = makeItem({
       status: "awaiting_clips",
       clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
@@ -314,11 +314,10 @@ describe("PlanItemPage — M4 conformance verdict panel", () => {
     });
 
     expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
-    expect(screen.getByText(/on track/i)).toBeInTheDocument();
-    expect(screen.getByText(/Clip matches the brief well/)).toBeInTheDocument();
+    expect(screen.getByText(/Looks on-brief/)).toBeInTheDocument();
   });
 
-  it("test_conformance_off_brief_panel_rendered: red verdict badge visible", async () => {
+  it("test_conformance_off_brief_tile: calm label, evidence line, advice voice, recourse", async () => {
     const item = makeItem({
       status: "awaiting_clips",
       clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
@@ -326,9 +325,10 @@ describe("PlanItemPage — M4 conformance verdict panel", () => {
       conformance: {
         verdict: "off_brief" as const,
         confidence: 0.85,
-        summary: "Wrong subject — guitar instead of cooking",
+        summary: "This reads as a guitar session — the brief asked for cooking.",
+        evaluated_theme: "Quick Weeknight Dinner",
         mismatches: ["Expected kitchen footage, got guitar"],
-        suggestions: ["Reshoot with overhead angle above the cutting board"],
+        suggestions: ["A steady overhead of the cutting board would land closer"],
       },
     });
 
@@ -343,10 +343,71 @@ describe("PlanItemPage — M4 conformance verdict panel", () => {
     });
 
     expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
-    expect(screen.getByText(/off brief/i)).toBeInTheDocument();
-    expect(screen.getByText(/Wrong subject/)).toBeInTheDocument();
-    expect(screen.getByText(/Expected kitchen footage/)).toBeInTheDocument();
-    expect(screen.getByText(/Reshoot with overhead/)).toBeInTheDocument();
+    // Evidence line: the user can SEE which brief was judged (wrong-brief incident fix).
+    expect(screen.getByText(/Read against:/i)).toBeInTheDocument();
+    expect(screen.getByText(/Quick Weeknight Dinner/)).toBeInTheDocument();
+    expect(screen.getByText(/Different from the brief/i)).toBeInTheDocument();
+    expect(screen.getByText(/This reads as a guitar session/)).toBeInTheDocument();
+    expect(screen.getByText(/steady overhead of the cutting board/)).toBeInTheDocument();
+    // Mismatch bullets are data, not display — the tile stays calm.
+    expect(screen.queryByText(/Expected kitchen footage/)).toBeNull();
+    // Recourse + never-a-gate line.
+    expect(screen.getByText(/Looks wrong\? Tell Nova/)).toBeInTheDocument();
+    expect(screen.getByText(/Hide this read/)).toBeInTheDocument();
+    expect(screen.getByText(/You can generate anyway/)).toBeInTheDocument();
+  });
+
+  it("test_conformance_suppressed_or_dismissed_renders_nothing", async () => {
+    for (const extra of [{ suppressed: true }, { dismissed: true }]) {
+      const item = makeItem({
+        status: "awaiting_clips",
+        clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+        filming_guide: [{ what: "x", how: "", duration_s: 5 }],
+        conformance: {
+          verdict: "off_brief" as const,
+          confidence: 0.9,
+          summary: "irrelevant",
+          mismatches: [],
+          suggestions: [],
+          ...extra,
+        },
+      });
+      mockUsePolledJobStatus.mockReturnValue({
+        data: { item, job: null },
+        error: null,
+        refetch: mockRefetch,
+      });
+      let view: ReturnType<typeof render> | undefined;
+      await act(async () => {
+        view = render(<PlanItemPage />);
+      });
+      expect(screen.queryByTestId("conformance-verdict-panel")).toBeNull();
+      view?.unmount();
+    }
+  });
+
+  it("test_conformance_low_confidence_renders_nothing", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+      filming_guide: [{ what: "x", how: "", duration_s: 5 }],
+      conformance: {
+        verdict: "off_brief" as const,
+        confidence: 0.4,
+        summary: "a guess",
+        mismatches: [],
+        suggestions: [],
+      },
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    expect(screen.queryByTestId("conformance-verdict-panel")).toBeNull();
   });
 
   it("test_conformance_absent_no_panel: panel not rendered when conformance is null", async () => {

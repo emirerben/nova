@@ -26,10 +26,18 @@ class ClipAssignment:
 
     shot_id = None  →  extra-footage pool
     shot_id = str   →  linked to filming_guide[*].shot_id
+    user_note       →  optional creator context about the clip ("famous vegan
+                       restaurant in Buenos Aires"); untrusted free-text, capped
+                       by the route, rendered as DATA in every prompt.
+    machine_matched →  True when the footage pool matcher placed this clip (not
+                       the user). Suppresses the conformance judge until the
+                       user touches the slot, and renders as a provisional chip.
     """
 
     gcs_path: str
     shot_id: str | None = None
+    user_note: str = ""
+    machine_matched: bool = False
 
 
 class ClipAssignmentError(ValueError):
@@ -73,5 +81,13 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
     slot_clips = [a.gcs_path for a in assignments if a.shot_id is not None]
     pool_clips = [a.gcs_path for a in assignments if a.shot_id is None]
 
-    item.clip_assignments = [{"gcs_path": a.gcs_path, "shot_id": a.shot_id} for a in assignments]
+    item.clip_assignments = [
+        {
+            "gcs_path": a.gcs_path,
+            "shot_id": a.shot_id,
+            "user_note": a.user_note or "",
+            "machine_matched": bool(a.machine_matched),
+        }
+        for a in assignments
+    ]
     item.clip_gcs_paths = slot_clips + pool_clips

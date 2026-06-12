@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.99.0] — 2026-06-12
+
+### Added
+- **Footage pool — "dump the trip, Nova sorts it into your plan."** A new workspace section (`FootagePool`) lets a creator upload a whole batch of clips after onboarding; `match_pool_clips` reuses the existing `clip_plan_matcher` to distribute them across pending plan items as provisional `machine_matched` assignments (dashed "Matched — keep?" chips, conformance judge suppressed until the user keeps/swaps). Matched days are surfaced as deep links + a calendar dot. New migration `0053` adds `content_plans.pool` (JSONB); clips live under the persistent `users/{uid}/plan-pool/{plan_id}/` prefix. Routes: `POST /content-plans/{id}/pool/upload-urls|clips|match`.
+- **"Ask Nova" per-item advisor.** A bounded editorial chat on the plan-item page (`PlanItemAdvisorAgent` + `POST /plan-items/{id}/agent/turn`) gives a read on which clip fits a shot, or what to film instead — stateless per turn, read-only, kill-switch `PLAN_ITEM_ADVISOR_ENABLED`.
+- **Optional clip context (feedback #3).** "+ Add context" per attached clip (`user_note`, link-reveal with a visible label) flows into the conformance read and the render's `all_candidates.clip_notes`; PATCH `/plan-items/{id}/clips/note` re-runs the brief read.
+- **Interview direction fork (feedback #1) + location grounding (feedback #7).** Turn 1 now forks "footage you already have vs videos you'll film"; persona gains `goal` / `content_mode` / `current_situation`; the planner anchors new-filming ideas in the creator's current situation and treats past-trip footage as edit material (kills the "you're still in Buenos Aires" assumption). Server-enforced interview turn label (no more "~7 OF ~6").
+
+### Fixed
+- **Conformance prompt was silently dead (root cause of the wrong-brief verdicts).** `conformance_feedback.txt` used `{var}` placeholders but `load_prompt` substitutes `string.Template` `$var`, so the model received literal `{clip_digest}` with zero data and confabulated verdicts. Converted to `$var`, added a `render_prompt` guard test, sanitized the creator note. The verdict tile was also redesigned to §7-D10 failure tone (dashed zinc, a `READ AGAINST: "<theme>"` evidence line, advice voice, "Tell Nova" recourse) with server-side echo-back / degraded-clip / confidence guards.
+- **Lyrics variant failed opaquely on non-Latin songs (feedback #6).** `song_lyrics` is now skipped for languages the bundled fonts can't render (`lyric_support.RENDERABLE_LYRIC_LANGUAGES`); the song picker annotates such tracks; failure copy names the reason instead of "try editing again"; the matcher prefers language-matching tracks.
+- **Generate's first click now starts the render** (poll until the async job registers; 409 guard against duplicate dispatch). `match_pool_clips` gains Celery time limits (acks_late double-run protection). `attach_clips` accepts pool-prefixed clips so keep/swap/remove works on matched items.
+
 ## [0.4.98.5] — 2026-06-12
 
 ### Fixed

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import MusicTrack
+from app.pipeline.lyric_support import lyric_language, lyrics_variant_renderable
 from app.storage import signed_get_url
 
 log = structlog.get_logger()
@@ -58,6 +59,13 @@ class MusicTrackSummary(BaseModel):
     # the track has no stored audio or signing fails (picker hides the play btn).
     preview_audio_url: str | None = None
     preview_start_s: float = 0.0
+    # Lyric-variant support for the song picker (P6 prevention-first surfacing).
+    # has_lyrics=False → swapping to this song never yields a Lyrics variant;
+    # has_lyrics=True + lyrics_variant_supported=False → lyrics exist but the
+    # language isn't renderable yet (picker shows "language not supported").
+    has_lyrics: bool = False
+    lyrics_variant_supported: bool = False
+    lyric_language: str = ""
 
 
 class MusicTrackListResponse(BaseModel):
@@ -119,6 +127,9 @@ async def list_music_tracks(
                 user_slot_accepts=accepts,
                 preview_audio_url=_preview_audio_url(t.audio_gcs_path),
                 preview_start_s=round(float(cfg.get("best_start_s", 0.0)), 2),
+                has_lyrics=bool(t.lyrics_cached),
+                lyrics_variant_supported=lyrics_variant_renderable(t.lyrics_cached),
+                lyric_language=lyric_language(t.lyrics_cached),
             )
         )
 

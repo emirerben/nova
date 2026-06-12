@@ -33,6 +33,7 @@ Score each track on a 0-10 scale of how well it serves THIS clip set, not its qu
 - **Energy + pacing match** — average clip energy and the song's `energy` / `pacing` should agree. High-energy clips with a slow song will feel sluggish; mellow clips with `peaks_high` energy will feel mismatched.
 - **Downstream compatibility** — `copy_tone`, `transition_style`, and `color_grade` should be plausible for the subject matter of the clips. Sentimental copy over a hype track of someone's kid's birthday is wrong.
 - **Slot feasibility** — the user has $clip_count clip(s). Tracks with `slots` much higher than `2 × clip_count` will produce a degenerate edit; rank them lower even if the vibe matches.
+- **Lyric language (tiebreaker)** — `lyric_lang` is the language of the track's vocals/lyrics (`none` = no lyrics on file). When two tracks score within ~0.5 points, prefer the one whose `lyric_lang` matches the language of the clips' transcripts and hooks — a lyric language the viewer (and our lyric captions) can't read weakens the edit. This is a tiebreaker only: never move a track more than half a point for it.
 
 ## Diversity in the top-K
 

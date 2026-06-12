@@ -167,6 +167,21 @@ def assert_glyphs_present(typeface: skia.Typeface, text: str) -> None:
         raise MissingGlyphsError(f"Typeface missing {len(missing)} glyph(s): {', '.join(missing)}")
 
 
+def assert_lyric_glyphs(typeface: skia.Typeface, text: str) -> None:
+    """Glyph-coverage fail-fast for the lyric burn paths (karaoke / lyric pop).
+
+    Checks alphabetic codepoints only: a display face missing an em-dash or a
+    curly quote renders one tofu char (cosmetic), but missing LETTERS means the
+    whole lyric line is unreadable — the CJK-track case. Raising here turns
+    "silently render tofu" into a typed per-variant failure
+    (error_class=lyrics_unsupported_language in generative_build). Letters-only
+    scope keeps previously-working Latin renders unaffected.
+    """
+    letters = "".join(ch for ch in text if ch.isalpha())
+    if letters:
+        assert_glyphs_present(typeface, letters)
+
+
 def _overlay_text(overlay: dict) -> str:
     """Return the text the renderer should burn for this overlay.
 
@@ -826,6 +841,7 @@ def _draw_pop_in_with_suffix(
         return
 
     typeface = _typeface_for_overlay(overlay)
+    assert_lyric_glyphs(typeface, text)
     initial_size = _resolve_font_size_px(overlay)
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
@@ -959,6 +975,7 @@ def _draw_karaoke_line(
         return
 
     typeface = _typeface_for_overlay(overlay)
+    assert_lyric_glyphs(typeface, " ".join(words))
     initial_size = _resolve_font_size_px(overlay)
     font = skia.Font(typeface, initial_size)
     font.setSubpixel(True)

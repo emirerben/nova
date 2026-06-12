@@ -178,6 +178,11 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
             # Verbatim creator quote for the aha-moment reveal. Sanitized but
             # quote length is capped to prevent bloated persona rows.
             signature_quote=_sanitize_text(persona.signature_quote)[:_MAX_QUOTE_LEN],
+            # Direction fields (2026-06-11): goal + current_situation are
+            # free-text → sanitized; content_mode is enum-validated by Pydantic.
+            goal=_sanitize_text(persona.goal),
+            content_mode=persona.content_mode,
+            current_situation=_sanitize_text(persona.current_situation),
         )
         if not cleaned.content_pillars:
             raise RefusalError("persona_generator: content_pillars empty after sanitize")
@@ -187,10 +192,12 @@ class PersonaGeneratorAgent(Agent[PersonaQuestionnaire, Persona]):
         return (
             "\n\nIMPORTANT: Return ONLY the JSON object with keys summary, "
             "content_pillars, tone, audience, posting_cadence, posts_per_week, "
-            "sample_topics, rationale, signature_quote. "
+            "sample_topics, rationale, signature_quote, goal, content_mode, "
+            "current_situation. "
             "content_pillars MUST have 3-5 short items; sample_topics 5-8. "
             "posts_per_week MUST be an integer 1-7, consistent with posting_cadence. "
             "signature_quote must be a verbatim creator quote or empty string. "
+            "content_mode MUST be exactly one of: existing_footage, create_new, mixed. "
             "No markdown, no text outside the JSON."
         )
 

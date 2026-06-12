@@ -134,6 +134,33 @@ def presigned_put_url_for_plan_seed(
     return url, object_path
 
 
+def presigned_put_url_for_plan_pool(
+    user_id: str,
+    plan_id: str,
+    filename: str,
+    content_type: str = "video/mp4",
+) -> tuple[str, str]:
+    """Signed PUT URL for the post-activation footage pool ("dump the trip").
+
+    Lands under `users/{user_id}/plan-pool/{plan_id}/...` — the same PERSISTENT
+    `users/` namespace as themed and seed uploads (NOT swept by the 24h GCS
+    rule, accepted by build_generative_job's users/ allowlist). Pool clips are
+    matched across PENDING plan items by match_pool_clips; matched items
+    reference these paths directly (no GCS copy, same trust argument as the
+    activation seed).
+    """
+    object_path = f"users/{user_id}/plan-pool/{plan_id}/{filename}"
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    url = blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=15),
+        method="PUT",
+        content_type=content_type,
+    )
+    return url, object_path
+
+
 def upload_public_read(local_path: str, object_path: str, content_type: str = "video/mp4") -> str:
     """Upload a local file to GCS and return a signed URL valid for 1 day.
 

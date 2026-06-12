@@ -70,10 +70,13 @@ echo $! >> "$PID_FILE"
 # queue (per-item + activation renders route to plan-jobs). Must match prod
 # fly.toml — without plan-jobs those renders never run locally (no output).
 log "Starting Celery worker (watchfiles auto-restart)..."
+# CELERY_POOL: prefork (default, matches prod) | threads. On some macOS setups
+# (observed on Python 3.14 venvs) prefork children die in a SIGKILL boot loop
+# ("Timed out waiting for UP message") — set CELERY_POOL=threads in .env.
 (
   cd "$REPO/src/apps/api"
   PATH="$REPO/src/apps/api/.venv/bin:$PATH" exec .venv/bin/watchfiles --filter python \
-    'celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 -Q celery,plan-jobs' \
+    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs" \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
