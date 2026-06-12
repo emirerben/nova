@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.98.3] — 2026-06-12
+
+### Security
+- **Bump Next.js 14.2.3 → 14.2.35.** 32 patch releases including the CVE-2025-29927 middleware-authorization-bypass fix window and accumulated cache-poisoning / DoS / image-optimizer patches. `eslint-config-next` bumped in lockstep. Exact pin preserved; React stays on ^18; no API changes. Vercel deployment mitigates CVE-2025-29927 at the edge, but the pin was two years stale on the exact component (`src/apps/web/src/middleware.ts`) that guards `/admin/*`.
+
 ## [0.4.98.2] — 2026-06-11
 
 ### Fixed
