@@ -97,6 +97,7 @@ local-render: local-render-migrate
 # add automated OCR content matching, run the host stage afterward:
 #   cd src/apps/api && python -m app.cli.verify_overlays --stage ocr --out ../../../.overlay-verify
 OVERLAY_VERIFY_OUT ?= .overlay-verify
+ARGS ?= --fixtures
 
 verify-overlays:
 	@mkdir -p $(OVERLAY_VERIFY_OUT)

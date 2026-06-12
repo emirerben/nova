@@ -26,6 +26,10 @@ from app.pipeline import overlay_verify as ov  # noqa: E402
 
 CANVAS_W, CANVAS_H = ov.tos.CANVAS_W, ov.tos.CANVAS_H
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "overlay_verify"
+UNKNOWN_FONT_FIXTURE = "unknown_font_family.json"
+PREEXISTING_FIXTURES = sorted(
+    p.name for p in FIXTURES.glob("*.json") if p.name != UNKNOWN_FONT_FIXTURE
+)
 
 
 # -- helpers: synthetic frames ------------------------------------------------
@@ -149,7 +153,7 @@ def _fixture_overlays(name: str) -> list[dict]:
     return data["overlays"]
 
 
-@pytest.mark.parametrize("fixture", sorted(p.name for p in FIXTURES.glob("*.json")))
+@pytest.mark.parametrize("fixture", PREEXISTING_FIXTURES)
 def test_fixtures_render_unclipped(fixture):
     """Every committed fixture must render un-clipped through the real Skia path.
     This is the renderer's regression set — a future Skia change that re-breaks
@@ -162,6 +166,36 @@ def test_fixtures_render_unclipped(fixture):
     assert report.overlays, f"{fixture} produced no overlays"
     for o in report.overlays:
         assert o.clipping == "PASS", f"{fixture} ov{o.overlay_index}: {o.reasons}"
+        assert o.resolved_typeface, f"{fixture} ov{o.overlay_index}: missing typeface report"
+        assert "fallback" in o.resolved_typeface
+
+
+def test_unknown_font_family_fixture_fails_loudly():
+    report = ov.verify_recipe(
+        {"overlays": _fixture_overlays(UNKNOWN_FONT_FIXTURE)},
+        render_mode=ov.RENDER_DRAW_FRAME,
+        run_ocr=False,
+    )
+    assert report.overall == "FAIL"
+    assert report.overlays[0].resolved_typeface["requested_font_family"] == (
+        "Definitely Not A Real Nova Font"
+    )
+    assert report.overlays[0].resolved_typeface["fallback"] is True
+    assert any("fallback" in r for r in report.overlays[0].reasons)
+
+
+@pytest.mark.parametrize("fixture", ["cluster_intro.json", "cluster_intro_signal_free.json"])
+def test_cluster_intro_fixtures_render_distinct_text_sizes(fixture):
+    heights = []
+    for overlay in _fixture_overlays(fixture):
+        controlled = {**overlay, "text": "Hgj"}
+        result = ov.verify_overlay(controlled, run_ocr=False)
+        assert result.bbox is not None and result.verdict == "PASS", result.reasons
+        heights.append(result.bbox[3] - result.bbox[1])
+
+    assert max(heights) / min(heights) >= 1.5, (
+        f"{fixture} rendered flat controlled-glyph heights: {sorted(set(heights))}"
+    )
 
 
 def test_negative_control_offcanvas_overlay_is_flagged():

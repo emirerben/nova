@@ -1,0 +1,17 @@
+{
+  "overlays": [
+    {
+      "text": "font fallback must be loud",
+      "effect": "static",
+      "font_family": "Definitely Not A Real Nova Font",
+      "font_style": "display",
+      "text_size_px": 96,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.45,
+      "text_color": "#FFFFFF",
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.0
+    }
+  ]
+}

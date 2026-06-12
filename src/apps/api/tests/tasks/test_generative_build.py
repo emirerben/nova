@@ -2168,6 +2168,15 @@ class TestResolveIntroOverlayParamsLayout:
             _cluster_agent_text(), {"effect": "fade-in", "layout": "cluster"}, None
         )
         assert params["layout"] == "linear"
+        assert params["layout_reason"] == "disabled"
+
+    def test_explicit_linear_is_not_mislabeled_when_kill_switch_is_off(self, monkeypatch):
+        monkeypatch.setattr(gb.settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", False, raising=False)
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(), {"effect": "fade-in", "layout": "linear"}, None
+        )
+        assert params["layout"] == "linear"
+        assert params["layout_reason"] is None
 
     def test_user_position_knob_forces_linear(self):
         # A manual position pin conflicts with engine-owned cluster geometry.
@@ -2178,6 +2187,17 @@ class TestResolveIntroOverlayParamsLayout:
             user_style_knobs={"position_y_frac": 0.8},
         )
         assert params["layout"] == "linear"
+        assert params["layout_reason"] == "position_pinned"
+
+    def test_explicit_linear_is_not_mislabeled_when_position_is_pinned(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(),
+            {"effect": "fade-in", "layout": "linear"},
+            None,
+            user_style_knobs={"position_y_frac": 0.8},
+        )
+        assert params["layout"] == "linear"
+        assert params["layout_reason"] is None
 
     def test_user_named_position_knob_forces_linear(self):
         params, _, _ = gb._resolve_intro_overlay_params(
@@ -2236,6 +2256,7 @@ class TestResolveRegenTextClusterPersistence:
 # _fail_job: variant + PlanItem reconciliation
 # ---------------------------------------------------------------------------
 
+
 class TestFailJobVariantReconciliation:
     """Regression: _fail_job must flip 'rendering'/'pending' variants to 'failed'.
 
@@ -2249,6 +2270,7 @@ class TestFailJobVariantReconciliation:
     def _make_job(self, assembly_plan: dict | None):
         """Return a minimal fake Job with the given assembly_plan."""
         import types
+
         job = types.SimpleNamespace()
         job.status = "processing"
         job.error_detail = None

@@ -131,6 +131,7 @@ class OverlayResult:
     similarity: float | None = None
     bbox: tuple[int, int, int, int] | None = None
     frame_path: str | None = None
+    resolved_typeface: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -408,6 +409,7 @@ def verify_overlay(
         verdict="SKIPPED",
         clipping="SKIPPED",
         content="SKIPPED",
+        resolved_typeface=tos.resolved_typeface_for_overlay(overlay),
     )
 
     if effect == "player-card":
@@ -456,6 +458,13 @@ def verify_overlay(
         fp = os.path.join(frame_out_dir, frame_name(slot_index, overlay_index))
         frame.save(fp, "PNG")
         res.frame_path = fp
+
+    font_fallback = bool(res.resolved_typeface.get("fallback"))
+    if font_fallback:
+        res.clipping = _worst(res.clipping, "FAIL")
+        requested = res.resolved_typeface.get("requested_font_family")
+        resolved = res.resolved_typeface.get("name")
+        res.reasons.append(f"requested font_family {requested!r} resolved to {resolved!r} fallback")
 
     res.verdict = _worst(res.clipping, res.content)
     return res

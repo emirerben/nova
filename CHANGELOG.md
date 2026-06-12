@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.98.6] — 2026-06-12
+
+### Added
+- **Observable text-overlay degradation.** Generative intro layout selection, cluster role derivation, cluster shrink, and Skia font resolution now emit documented pipeline-trace events visible in the admin job debug view. Font resolution records the requested family/style, actual registry name/file, source, and fallback status without requiring an active trace context.
+
+### Changed
+- **Overlay verification fails loudly on unknown fonts.** `report.json` now includes `resolved_typeface` for every overlay, requested-font fallback is a verification failure, and the fixture suite includes a deliberate unknown-font negative control. Existing fixtures remain passing, including rendered editorial-cluster size contrast checks.
+
 ## [0.4.98.5] — 2026-06-12
 
 ### Fixed

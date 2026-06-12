@@ -208,6 +208,35 @@ def inject_intro_overlay(recipe: dict, hero_slot_index: int, overlay: dict | Non
 _HOLD_TO_END_S = 3600.0
 
 
+def _record_intro_layout_selected(
+    *,
+    requested_layout: str,
+    selected_layout: str,
+    reason: str,
+    text: str,
+    word_roles: list[str] | None,
+    fallback: bool,
+) -> None:
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "overlay",
+            "intro_layout_selected",
+            {
+                "requested_layout": requested_layout,
+                "selected_layout": selected_layout,
+                "reason": reason,
+                "text": text,
+                "word_count": len((text or "").split()),
+                "has_word_roles": bool(word_roles),
+                "fallback": fallback,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - instrumentation must never break render
+        log.warning("intro_layout_selected_event_emit_failed", error=str(exc))
+
+
 def _build_cluster_intro_overlays(
     *,
     text: str,
@@ -289,6 +318,8 @@ def build_persistent_intro_overlays(
     text_color: str = _DEFAULT_TEXT_COLOR,
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
     layout: str = "linear",
+    requested_layout: str | None = None,
+    layout_reason: str | None = None,
     word_roles: list[str] | None = None,
     **style_kwargs,
 ) -> list[dict]:
@@ -323,11 +354,21 @@ def build_persistent_intro_overlays(
     `_collect_absolute_overlays` rebase them, while the talking-head path burns them
     directly onto the composite via `burn_text_overlays_skia` (also absolute).
     """
+    requested = requested_layout or layout
     if not (text or "").strip():
+        _record_intro_layout_selected(
+            requested_layout=requested,
+            selected_layout="linear",
+            reason="empty_text",
+            text=text,
+            word_roles=word_roles,
+            fallback=requested == "cluster",
+        )
         return []
     reveal_end = max(0.0, float(reveal_window_s))
 
     if layout == "cluster":
+        cluster_error = False
         try:
             cluster = _build_cluster_intro_overlays(
                 text=text,
@@ -340,9 +381,35 @@ def build_persistent_intro_overlays(
         except Exception as exc:
             log.warning("generative_cluster_intro_failed_falling_back_linear", error=str(exc))
             cluster = None
+            cluster_error = True
         if cluster:
+            _record_intro_layout_selected(
+                requested_layout=requested,
+                selected_layout="cluster",
+                reason=layout_reason or "agent_pick",
+                text=text,
+                word_roles=word_roles,
+                fallback=False,
+            )
             return cluster
         # Engine declined (word count / fit / no skia) → proven linear intro.
+        _record_intro_layout_selected(
+            requested_layout=requested,
+            selected_layout="linear",
+            reason="cluster_error_fallback" if cluster_error else "cluster_declined",
+            text=text,
+            word_roles=word_roles,
+            fallback=True,
+        )
+    else:
+        _record_intro_layout_selected(
+            requested_layout=requested,
+            selected_layout="linear",
+            reason=layout_reason or "explicit_linear",
+            text=text,
+            word_roles=word_roles,
+            fallback=requested == "cluster",
+        )
 
     overlays: list[dict] = []
     reveal = build_intro_overlay(
@@ -386,6 +453,8 @@ def inject_persistent_intro(
     text_color: str = _DEFAULT_TEXT_COLOR,
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
     layout: str = "linear",
+    requested_layout: str | None = None,
+    layout_reason: str | None = None,
     word_roles: list[str] | None = None,
     **style_kwargs,
 ) -> dict:
@@ -419,6 +488,8 @@ def inject_persistent_intro(
         text_color=text_color,
         highlight_color=highlight_color,
         layout=layout,
+        requested_layout=requested_layout,
+        layout_reason=layout_reason,
         word_roles=word_roles,
         **style_kwargs,
     )
