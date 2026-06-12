@@ -13,16 +13,25 @@
  * ~/.gstack/projects/emirerben-nova/designs/plan-item-shot-slots-20260607/
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   attachClips,
   requestUploadUrls,
+  setClipNote,
   uploadToGcsWithProgress,
   type ClipAssignment,
   type FilmingShot,
   type PlanItem,
 } from "@/lib/plan-api";
+
+// Mode-aware header (direction fork, 2026-06-11): an existing-footage creator
+// FINDS clips in their gallery; a create-new creator FILMS them.
+const HEADER_BY_MODE: Record<string, string> = {
+  existing_footage: "What to look for",
+  mixed: "Find it or film it",
+  create_new: "How to film this",
+};
 
 // ── Slot state machine types ──────────────────────────────────────────────────
 
@@ -39,6 +48,10 @@ interface SlotState {
   objectUrl?: string; // only when local file is still available
   durationLabel?: string; // "0:18"
   gcsPaths?: string; // the committed gcs_path
+  /** Creator context note on this clip ("" = none). */
+  userNote?: string;
+  /** True = footage-pool matcher placed this clip (provisional chip). */
+  machineMatched?: boolean;
   // error phase
   errorPhase?: ErrorPhase;
   pendingGcsPath?: string; // attach-phase retry: skip re-upload
@@ -99,6 +112,8 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
             phase: "filled",
             filename: assignment.gcs_path.split("/").pop() ?? assignment.gcs_path,
             gcsPaths: assignment.gcs_path,
+            userNote: assignment.user_note ?? "",
+            machineMatched: !!assignment.machine_matched,
           }
         : { phase: "idle" };
     }
@@ -149,11 +164,12 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
       const s = currentSlots[sid];
       // Include both "filled" and "committing" phases: GCS upload succeeded in both.
       if ((s?.phase === "filled" || s?.phase === "committing") && s.gcsPaths) {
-        result.push({ gcs_path: s.gcsPaths, shot_id: sid });
+        // Carry the note through full re-attaches so it never silently drops.
+        result.push({ gcs_path: s.gcsPaths, shot_id: sid, user_note: s.userNote ?? "" });
       }
     }
     for (const p of currentPool) {
-      result.push({ gcs_path: p.gcs_path, shot_id: null });
+      result.push({ gcs_path: p.gcs_path, shot_id: null, user_note: p.user_note ?? "" });
     }
     return result;
   }
@@ -365,6 +381,37 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     setSlotState((prev) => ({ ...prev, [sid]: { phase: "idle" } }));
   }
 
+  // ── Clip note + provisional-match actions ─────────────────────────────────
+  // Both route through PATCH /clips/note: it persists the note, clears
+  // machine_matched (the user touched the slot), and re-runs the brief read.
+
+  async function handleSaveNote(sid: string, note: string) {
+    const s = slotState[sid];
+    if (!s?.gcsPaths) return;
+    const updated = await setClipNote(item.id, s.gcsPaths, note);
+    setSlotState((prev) => ({
+      ...prev,
+      [sid]: { ...prev[sid], userNote: note, machineMatched: false },
+    }));
+    onAttached(updated);
+  }
+
+  async function handleKeepMatch(sid: string) {
+    const s = slotState[sid];
+    if (!s?.gcsPaths) return;
+    try {
+      const updated = await setClipNote(item.id, s.gcsPaths, s.userNote ?? "");
+      setSlotState((prev) => ({
+        ...prev,
+        [sid]: { ...prev[sid], machineMatched: false },
+      }));
+      setAnnouncement("Clip kept");
+      onAttached(updated);
+    } catch {
+      // Non-fatal: chip stays provisional; user can retry.
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -374,10 +421,10 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
         {announcement}
       </div>
 
-      {/* Header row (D12: typographic eyebrow, no emoji) */}
+      {/* Header row (D12: typographic eyebrow, no emoji; mode-aware copy) */}
       <div className="mb-4 flex items-center justify-between">
         <span className="text-xs font-medium uppercase tracking-[0.08em] text-lime-700">
-          How to film this
+          {HEADER_BY_MODE[item.content_mode ?? "create_new"] ?? HEADER_BY_MODE.create_new}
         </span>
         {/* Progress pill */}
         {anyFilled ? (
@@ -424,6 +471,8 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                 onCancel={() => handleCancel(sid)}
                 onReplace={() => handleReplace(sid)}
                 onRetry={() => handleRetry(shot)}
+                onKeepMatch={() => handleKeepMatch(sid)}
+                onSaveNote={(note) => handleSaveNote(sid, note)}
               />
             </div>
           );
@@ -490,9 +539,11 @@ interface SlotWellProps {
   onCancel: () => void;
   onReplace: () => void;
   onRetry: () => void;
+  onKeepMatch: () => void;
+  onSaveNote: (note: string) => Promise<void>;
 }
 
-function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onReplace, onRetry }: SlotWellProps) {
+function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onReplace, onRetry, onKeepMatch, onSaveNote }: SlotWellProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ariaLabel = `Upload shot ${shotIndex + 1}: ${shot.what}`;
@@ -568,33 +619,63 @@ function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onRepla
     const filename = state.filename ?? "";
     const duration = state.durationLabel;
     return (
-      <div className="flex min-h-[56px] items-center gap-3">
-        {/* Thumbnail only available when local file is in memory (fresh upload, not reload) */}
-        {state.objectUrl && (
-          <div className="h-10 w-16 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-100">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <video
-              src={state.objectUrl}
-              className="h-full w-full object-cover"
-              muted
-              playsInline
-              preload="metadata"
-            />
-          </div>
-        )}
-        {/* Chip */}
-        <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
-          <span>✓</span>
-          <span className="max-w-[200px] truncate">{filename}</span>
-          {duration && <span className="shrink-0 text-lime-700"> · {duration}</span>}
-        </span>
-        <button
-          type="button"
-          onClick={onReplace}
-          className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
-        >
-          Replace
-        </button>
+      <div className="min-h-[56px]">
+        <div className="flex items-center gap-3">
+          {/* Thumbnail only available when local file is in memory (fresh upload, not reload) */}
+          {state.objectUrl && (
+            <div className="h-10 w-16 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-100">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <video
+                src={state.objectUrl}
+                className="h-full w-full object-cover"
+                muted
+                playsInline
+                preload="metadata"
+              />
+            </div>
+          )}
+          {/* Chip — provisional (machine-matched) reads dashed, "keep?" pending;
+              a kept/user clip reads solid lime with the ✓. */}
+          {state.machineMatched ? (
+            <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
+              <span className="max-w-[160px] truncate">{filename}</span>
+              <span className="shrink-0 text-lime-700">· Matched — keep?</span>
+            </span>
+          ) : (
+            <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
+              <span>✓</span>
+              <span className="max-w-[200px] truncate">{filename}</span>
+              {duration && <span className="shrink-0 text-lime-700"> · {duration}</span>}
+            </span>
+          )}
+          {state.machineMatched ? (
+            <>
+              <button
+                type="button"
+                onClick={onKeepMatch}
+                className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+              >
+                Keep
+              </button>
+              <button
+                type="button"
+                onClick={onReplace}
+                className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+              >
+                Swap
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onReplace}
+              className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+            >
+              Replace
+            </button>
+          )}
+        </div>
+        <ClipNoteControl note={state.userNote ?? ""} onSave={onSaveNote} />
       </div>
     );
   }
@@ -618,4 +699,118 @@ function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onRepla
   }
 
   return null;
+}
+
+// ── ClipNoteControl ──────────────────────────────────────────────────────────
+// Optional creator context on an attached clip (dogfood feedback #3).
+// Link-reveal — one visible input at a time, with a VISIBLE label (never
+// placeholder-as-label); saved notes collapse to italic zinc + Edit. Saving a
+// note re-runs the brief read server-side.
+// Exported: the uninstructed (no-shot-list) clip list on the item page reuses it.
+
+export function ClipNoteControl({
+  note,
+  onSave,
+}: {
+  note: string;
+  onSave: (note: string) => Promise<void>;
+}) {
+  // Unique per instance — this control renders once per slot AND once per clip
+  // in the uninstructed list, so a hardcoded id produced duplicate DOM ids and
+  // broke label association for screen readers (review finding).
+  const inputId = useId();
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(note);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  async function save() {
+    const value = draft.trim().slice(0, 200);
+    setSaveState("saving");
+    try {
+      await onSave(value);
+      setSaveState("saved");
+      setEditing(false);
+      setTimeout(() => setSaveState("idle"), 2500);
+    } catch {
+      setSaveState("error");
+    }
+  }
+
+  if (editing) {
+    return (
+      <form
+        className="mt-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <label className="mb-1 block text-xs font-medium text-[#3f3f46]" htmlFor={inputId}>
+          Context <span className="font-normal text-[#a1a1aa]">optional</span>
+        </label>
+        <div className="flex gap-2">
+          <input
+            id={inputId}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            maxLength={200}
+            placeholder="e.g. a famous vegan restaurant in Buenos Aires"
+            className="w-full rounded border border-zinc-200 bg-white px-2 py-1.5 text-xs text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-600 focus:outline-none"
+          />
+          <button
+            type="submit"
+            disabled={saveState === "saving"}
+            className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 disabled:opacity-50"
+          >
+            {saveState === "saving" ? "Saving…" : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDraft(note);
+              setEditing(false);
+              setSaveState("idle");
+            }}
+            className="shrink-0 text-xs text-[#71717a] underline underline-offset-2"
+          >
+            Cancel
+          </button>
+        </div>
+        {saveState === "error" && (
+          <p className="mt-1 rounded border border-zinc-200 bg-white px-2 py-1 text-xs text-[#3f3f46]">
+            Couldn&apos;t save — try again.
+          </p>
+        )}
+      </form>
+    );
+  }
+
+  if (note) {
+    return (
+      <p className="mt-1.5 text-xs italic text-[#71717a]">
+        &ldquo;{note}&rdquo;{" "}
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(note);
+            setEditing(true);
+          }}
+          className="not-italic text-lime-700 underline-offset-2 hover:underline"
+        >
+          Edit
+        </button>
+        {saveState === "saved" && <span className="ml-2 not-italic text-[#a1a1aa]">Saved ✓</span>}
+      </p>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      className="mt-1.5 text-xs text-[#71717a] underline-offset-2 hover:text-[#0c0c0e] hover:underline"
+    >
+      + Add context
+    </button>
+  );
 }

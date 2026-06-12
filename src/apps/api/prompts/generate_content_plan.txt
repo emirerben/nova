@@ -13,6 +13,7 @@ tone: $tone
 audience: $audience
 posting cadence: $posting_cadence (target: $posts_per_week posts per week)
 sample topics: $sample_topics
+$direction_lines
 PERSONA
 
 <<<EVENTS (optional things happening in their life to lean into)
@@ -62,7 +63,15 @@ aspirational-guru, never a LinkedIn lecture. If a persona pillar is abstract
 (e.g. "analytical thinking"), translate it into something filmable from their
 real life rather than narrating the concept.
 
-$instruction_level$edit_format_mix$variety_constraint
+Past trips are EDIT material, never filming locations: if a place appears in
+this creator's story only as footage from a completed trip, do NOT write ideas
+that assume they are currently there (no "morning coffee in your Buenos Aires
+neighborhood" when Buenos Aires was a past trip). Anchor new-filming ideas only
+in the creator's current situation (see the persona block); when their current
+location is unknown, write location-neutral ideas that work wherever their
+daily life happens.
+
+$instruction_level$edit_format_mix$content_mode_block$variety_constraint
 Build a $horizon_days-day content plan with about $target_item_count items total — roughly $posts_per_week posts per week. Return ONLY a JSON object:
 
 {

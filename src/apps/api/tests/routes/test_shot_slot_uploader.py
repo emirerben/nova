@@ -103,9 +103,9 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
         "users/u/plan/p/pool.mp4",
     ]
     assert item.clip_assignments == [
-        {"gcs_path": "users/u/plan/p/a.mp4", "shot_id": "sid-a"},
-        {"gcs_path": "users/u/plan/p/pool.mp4", "shot_id": None},
-        {"gcs_path": "users/u/plan/p/b.mp4", "shot_id": "sid-b"},
+        {"gcs_path": "users/u/plan/p/a.mp4", "shot_id": "sid-a", "user_note": "", "machine_matched": False},  # noqa: E501
+        {"gcs_path": "users/u/plan/p/pool.mp4", "shot_id": None, "user_note": "", "machine_matched": False},  # noqa: E501
+        {"gcs_path": "users/u/plan/p/b.mp4", "shot_id": "sid-b", "user_note": "", "machine_matched": False},  # noqa: E501
     ]
 
 
@@ -300,7 +300,9 @@ def test_attach_clips_legacy_no_assignments(client: TestClient) -> None:
         )
     assert resp.status_code == 200
     # All clips should be in pool (shot_id=None).
-    expected_assignments = [{"gcs_path": clip_path, "shot_id": None}]
+    expected_assignments = [
+        {"gcs_path": clip_path, "shot_id": None, "user_note": "", "machine_matched": False}
+    ]
     assert item.clip_assignments == expected_assignments
 
 

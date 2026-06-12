@@ -37,8 +37,8 @@ N/A — no completed slice to judge.
 
 | Command | Exit | Raw result |
 |---|---:|---|
-| `pytest tests/pipeline/test_intro_cluster.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py tests/pipeline/test_generative_overlays.py tests/tasks/test_generative_build.py` | 0 | `267 passed, 1 warning in 15.70s` |
-| `pytest` | 0 | `4970 passed, 58 skipped, 168 warnings in 209.06s` |
+| `pytest tests/pipeline/test_intro_cluster.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py tests/pipeline/test_generative_overlays.py tests/tasks/test_generative_build.py` | 0 | `267 passed, 1 warning in 20.94s` |
+| `pytest` | 0 | `5012 passed, 58 skipped, 168 warnings in 212.31s` |
 | `ruff check .` | 0 | `All checks passed!` |
 | `ruff format --check` (9 touched Python files) | 0 | `9 files already formatted` |
 | `git diff --check` | 0 | no output |

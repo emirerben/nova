@@ -328,7 +328,7 @@ def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[s
     path_by_shot: dict[str, str] = {
         str(a.get("shot_id")): str(a.get("gcs_path"))
         for a in assignments
-        if a.get("shot_id") and a.get("gcs_path")
+        if isinstance(a, dict) and a.get("shot_id") and a.get("gcs_path")
     }
     known_paths = set(clip_paths)
     ordered: list[str] = []
@@ -409,6 +409,13 @@ def _dispatch_item_render(
             # Filming-guide alignment: how many leading clip_paths are guide
             # shots (in guide order). 0 = no narrative ordering (pure greedy).
             narrative_shot_count=narrative_shot_count,
+            # Creator clip notes (feedback #3) — ride all_candidates for
+            # render-time consumers + admin/debug.
+            clip_notes={
+                a["gcs_path"]: a["user_note"]
+                for a in (item.clip_assignments or [])
+                if isinstance(a, dict) and a.get("gcs_path") and a.get("user_note")
+            },
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))
@@ -630,6 +637,193 @@ def _set_activation_phase(session, plan: ContentPlan, phase: str) -> None:  # no
     session.commit()
 
 
+# Footage pool (dogfood feedback #4): how many pending items one pool match may
+# fill. Unlike the activation seed there is NO auto-render (the user keeps/swaps
+# first), so this is a spread cap, not a render-budget cap. MUST stay within
+# ClipPlanMatcherInput.max_assignments' schema bound (le=7) — pinned by
+# test_pool_match_limit_within_matcher_schema.
+_POOL_MATCH_LIMIT = 7
+
+
+def _set_pool_status(session, plan: ContentPlan, status_value: str) -> None:  # noqa: ANN001
+    pool = dict(plan.pool or {})
+    pool["status"] = status_value
+    pool["updated_at"] = datetime.now(UTC).isoformat()
+    plan.pool = pool
+    session.add(plan)
+    session.commit()
+
+
+@celery_app.task(
+    name="app.tasks.content_plan_build.match_pool_clips",
+    bind=True,
+    max_retries=0,
+    # Celery time-limit invariant (CLAUDE.md / prod 08532ba3): must stay strictly
+    # under the broker visibility_timeout (1900s) or a long ingest gets redelivered
+    # and double-runs — duplicate Gemini spend + tmpfs blowout. Mirrors the render
+    # orchestrators. Pinned by tests/tasks/test_task_time_limits.py.
+    soft_time_limit=1740,
+    time_limit=1800,
+)
+def match_pool_clips(self, plan_id: str) -> None:  # noqa: ANN001
+    """Distribute the plan's footage pool across PENDING items (provisional).
+
+    Activation's sibling, with three deliberate differences: it matches only
+    UNMATCHED pool clips into items that have no clips yet, attaches them as
+    machine_matched provisional assignments (dashed "Matched — keep?" chips;
+    the conformance judge skips them until the user touches the slot), and it
+    NEVER auto-renders — the user keeps/swaps, then generates.
+
+    Best-effort: any failure (including the soft time limit) lands
+    pool.status="match_failed" with items untouched; the user can hit
+    "Match again".
+    """
+    try:
+        _run_pool_match(plan_id)
+    except Exception as exc:  # noqa: BLE001
+        # Never let the pool wedge in "matching" forever — ANY failure (soft time
+        # limit, a DB error in the write-back block that the inner try/except
+        # doesn't cover, a worker kill) flips the status so the UI shows
+        # "Match again" instead of polling indefinitely.
+        log.warning("pool_match.failed_terminal", plan_id=plan_id, error=str(exc)[:300])
+        try:
+            with sync_session() as session:
+                plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+                if plan is not None and (plan.pool or {}).get("status") == "matching":
+                    _set_pool_status(session, plan, "match_failed")
+        except Exception:  # noqa: BLE001
+            pass
+        raise
+
+
+def _run_pool_match(plan_id: str) -> None:
+    """Inner body of match_pool_clips (separated so the soft-time-limit handler
+    can wrap it and still mark the pool failed)."""
+    import tempfile  # noqa: PLC0415
+
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents.clip_plan_matcher import (  # noqa: PLC0415
+        ClipPlanMatcherAgent,
+        ClipPlanMatcherInput,
+        ClipSummary,
+        PlanItemSummary,
+    )
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+    from app.services.plan_clips import ClipAssignment, set_item_clips  # noqa: PLC0415
+    from app.tasks.generative_build import _ingest_clips  # noqa: PLC0415
+
+    pid = uuid.UUID(str(plan_id))
+    with sync_session() as session:
+        plan = session.get(ContentPlan, pid)
+        if plan is None:
+            log.warning("pool_match.missing_row", plan_id=plan_id)
+            return
+        pool = dict(plan.pool or {})
+        pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict) and c.get("gcs_path")]
+        unmatched = [c["gcs_path"] for c in pool_clips if not c.get("matched_item_id")]
+        if not unmatched:
+            _set_pool_status(session, plan, "matched_empty" if not pool_clips else "matched")
+            return
+        # Pending = items the pool may fill: no render yet, no clips yet.
+        items = [
+            PlanItemSummary(
+                item_id=str(it.id),
+                theme=it.theme or "",
+                idea=it.idea or "",
+                filming_suggestion=it.filming_suggestion or "",
+            )
+            for it in plan.items
+            if it.current_job_id is None and not (it.clip_gcs_paths or [])
+        ]
+        _set_pool_status(session, plan, "matching")
+
+    if not items:
+        with sync_session() as session:
+            plan = session.get(ContentPlan, pid)
+            if plan is not None:
+                _set_pool_status(session, plan, "matched_empty")
+        return
+
+    trace_scope = f"pool-match-{plan_id}"
+    try:
+        with pipeline_trace_for(trace_scope), tempfile.TemporaryDirectory() as tmpdir:
+            # min_success_fraction=0.0: matching WHATEVER analyzed beats matching
+            # nothing — a Gemini 503 spike on half the batch must not abort the
+            # pool (unmatched clips stay listed with "Match again").
+            ingest = _ingest_clips(unmatched, tmpdir, job_id=trace_scope, min_success_fraction=0.0)
+            clip_id_to_gcs: dict[str, str] = ingest["clip_id_to_gcs"]
+            clips: list[ClipSummary] = []
+            for meta in ingest["clip_metas"]:
+                gcs = clip_id_to_gcs.get(getattr(meta, "clip_id", ""))
+                if not gcs:
+                    continue
+                clips.append(
+                    ClipSummary(
+                        clip_gcs_path=gcs,
+                        hook_text=str(getattr(meta, "hook_text", "") or ""),
+                        hook_score=float(getattr(meta, "hook_score", 0.0) or 0.0),
+                        detected_subject=str(getattr(meta, "detected_subject", "") or ""),
+                        transcript_excerpt=str(getattr(meta, "transcript", "") or ""),
+                    )
+                )
+            if not clips:
+                raise ValueError("no pool clip produced a usable metadata summary")
+            matched = ClipPlanMatcherAgent(default_client()).run(
+                ClipPlanMatcherInput(clips=clips, items=items, max_assignments=_POOL_MATCH_LIMIT),
+                ctx=RunContext(job_id=None),
+            )
+    except Exception as exc:  # noqa: BLE001 — best-effort; items stay untouched
+        log.warning("pool_match.failed", plan_id=plan_id, error=str(exc))
+        with sync_session() as session:
+            plan = session.get(ContentPlan, pid)
+            if plan is not None:
+                _set_pool_status(session, plan, "match_failed")
+        return
+
+    by_item: dict[str, list[str]] = {}
+    for a in matched.assignments:
+        by_item.setdefault(a.item_id, []).append(a.clip_gcs_path)
+
+    assigned_paths: dict[str, str] = {}  # gcs_path → item_id actually attached
+    with sync_session() as session:
+        plan = session.get(ContentPlan, pid)
+        if plan is None:
+            return
+        for item_id, paths in by_item.items():
+            item = session.get(PlanItem, uuid.UUID(item_id))
+            if item is None or item.content_plan_id != plan.id:
+                continue
+            if item.current_job_id is not None or (item.clip_gcs_paths or []):
+                continue  # raced: item got footage/render since the load
+            # Same trusted-server prefix argument as activation seed paths.
+            set_item_clips(
+                item,
+                [ClipAssignment(gcs_path=p, shot_id=None, machine_matched=True) for p in paths],
+            )
+            session.flush()
+            for p in paths:
+                assigned_paths[p] = item_id
+
+        # Write back per-clip match results + terminal status.
+        pool = dict(plan.pool or {})
+        clips_out = []
+        for c in pool.get("clips", []):
+            if not isinstance(c, dict):
+                continue
+            entry = dict(c)
+            if entry.get("gcs_path") in assigned_paths:
+                entry["matched_item_id"] = assigned_paths[entry["gcs_path"]]
+            clips_out.append(entry)
+        pool["clips"] = clips_out
+        pool["status"] = "matched" if assigned_paths else "matched_empty"
+        pool["updated_at"] = datetime.now(UTC).isoformat()
+        plan.pool = pool
+        session.add(plan)
+        session.commit()
+    log.info("pool_match.done", plan_id=plan_id, assigned=len(assigned_paths))
+
+
 @celery_app.task(
     name="app.tasks.content_plan_build.reroll_plan_item",
     bind=True,
@@ -725,8 +919,16 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
         from app.services.plan_clips import ClipAssignment, set_item_clips  # noqa: PLC0415
 
         existing_assignments = item.clip_assignments or []
+        # Demote shot → pool but carry the per-clip metadata: user_note is about
+        # the CLIP not the slot, and machine_matched must survive a reroll
+        # (dropping them silently wiped creator context — review finding).
         demoted = [
-            ClipAssignment(gcs_path=a["gcs_path"], shot_id=None)
+            ClipAssignment(
+                gcs_path=a["gcs_path"],
+                shot_id=None,
+                user_note=str(a.get("user_note") or ""),
+                machine_matched=bool(a.get("machine_matched")),
+            )
             for a in existing_assignments
             if isinstance(a, dict) and a.get("gcs_path")
         ]

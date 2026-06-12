@@ -28,13 +28,14 @@ _CLIP = "users/u1/plan/item1/clip.mp4"
 _GUIDE = [{"what": "creator to camera", "how": "eye level", "duration_s": 8}]
 
 
-def _make_item(*, filming_guide=None, clip_gcs_paths=None, conformance=None):
+def _make_item(*, filming_guide=None, clip_gcs_paths=None, conformance=None, clip_assignments=None):
     item = MagicMock()
     item.id = uuid.UUID(_ITEM_ID)
     item.content_plan_id = uuid.UUID(_PLAN_ID)
     item.filming_guide = filming_guide if filming_guide is not None else _GUIDE
     item.clip_gcs_paths = clip_gcs_paths if clip_gcs_paths is not None else [_CLIP]
     item.conformance = conformance
+    item.clip_assignments = clip_assignments
     item.theme = "Morning Routine"
     item.idea = "Show your morning ritual"
     return item
@@ -283,3 +284,150 @@ class TestConformanceBuildBestEffort:
 
         # conformance field stays None (not written).
         assert item.conformance is None
+
+
+# ---------------------------------------------------------------------------
+# Defense-in-depth guards (wrong-brief incident, 2026-06)
+# ---------------------------------------------------------------------------
+
+
+def _meta(*, failed=False, degraded=False):
+    m = MagicMock()
+    m.detected_subject = "restaurant interior"
+    m.hook_text = ""
+    m.transcript = ""
+    m.visual_density = 4.0
+    m.failed = failed
+    m.analysis_degraded = degraded
+    return m
+
+
+def _verdict(evaluated_theme, confidence=0.9):
+    from app.agents._schemas.conformance import ConformanceOutput
+
+    return ConformanceOutput(
+        verdict="off_brief",
+        confidence=confidence,
+        summary="This reads as a restaurant scene; the brief asked for a landmark.",
+        evaluated_theme=evaluated_theme,
+    )
+
+
+def _run_with_mocks(item, *, agent_outputs, meta=None):
+    """Drive _run with a fully mocked pipeline. Returns (persist_item, mock_agent)."""
+    from app.tasks.conformance_build import _run
+
+    plan = _make_plan()
+    persona = _make_persona()
+    # The persist-session item must still hold the analyzed clip, or the
+    # stale-clip guard (drops a verdict for footage the user already replaced)
+    # discards it.
+    persist_item = _make_item(clip_assignments=[{"gcs_path": _CLIP, "shot_id": None}])
+    cm1, _ = _make_session_ctx(item=item, plan=plan, persona=persona)
+    cm2, _ = _make_session_ctx(item=persist_item, plan=plan, persona=persona)
+    calls = {"n": 0}
+
+    def _session_factory():
+        calls["n"] += 1
+        return cm1 if calls["n"] == 1 else cm2
+
+    with (
+        patch("app.tasks.conformance_build.sync_session", side_effect=_session_factory),
+        patch("app.tasks.conformance_build.tempfile.TemporaryDirectory") as mock_tmpdir,
+        patch(
+            "app.pipeline.agents.gemini_analyzer.gemini_upload_and_wait",
+            return_value=MagicMock(),
+        ),
+        patch("app.pipeline.agents.gemini_analyzer.analyze_clip", return_value=meta or _meta()),
+        patch("app.storage.download_to_file"),
+        patch("app.agents.conformance_feedback.ConformanceFeedbackAgent") as MockAgent,
+        patch("app.agents._model_client.default_client", return_value=MagicMock()),
+    ):
+        mock_ctx = MagicMock()
+        mock_ctx.__enter__ = MagicMock(return_value="/tmp/fake")
+        mock_ctx.__exit__ = MagicMock(return_value=False)
+        mock_tmpdir.return_value = mock_ctx
+        MockAgent.return_value.run.side_effect = list(agent_outputs)
+        _run(_ITEM_ID)
+        return persist_item, MockAgent
+
+
+class TestConformanceDefenseInDepth:
+    def test_conformance_skipped_on_degraded_clip_analysis(self) -> None:
+        """failed/analysis_degraded ClipMeta → no judge run, nothing persisted.
+        Judging a degraded digest is how the wrong-brief confabulation happened."""
+        item = _make_item()
+        persist_item, MockAgent = _run_with_mocks(
+            item, agent_outputs=[_verdict("Morning Routine")], meta=_meta(degraded=True)
+        )
+        MockAgent.return_value.run.assert_not_called()
+        assert not isinstance(persist_item.conformance, dict)
+
+    def test_conformance_echo_back_mismatch_discards(self) -> None:
+        """Agent evaluating a DIFFERENT brief (the prod DIY-tech incident) →
+        one retry, then discard. The wrong verdict must never persist."""
+        item = _make_item()
+        wrong = _verdict("DIY Tech Tutorial")
+        persist_item, MockAgent = _run_with_mocks(item, agent_outputs=[wrong, wrong])
+        assert MockAgent.return_value.run.call_count == 2
+        assert not isinstance(persist_item.conformance, dict)
+
+    def test_conformance_echo_back_match_persists_with_trace(self) -> None:
+        """Whitespace/case wobble in the echo is tolerated; the persisted dict
+        carries the analyzed clip path for traceability."""
+        item = _make_item()
+        persist_item, MockAgent = _run_with_mocks(
+            item, agent_outputs=[_verdict("  morning   ROUTINE ")]
+        )
+        assert MockAgent.return_value.run.call_count == 1
+        assert isinstance(persist_item.conformance, dict)
+        assert persist_item.conformance["clip_gcs_path"] == _CLIP
+        assert persist_item.conformance["verdict"] == "off_brief"
+
+    def test_machine_matched_clips_skip_conformance(self) -> None:
+        """Pool-matched footage Nova placed itself never gets judged — the
+        product must not argue with its own matcher."""
+        item = _make_item(
+            clip_assignments=[{"gcs_path": _CLIP, "shot_id": None, "machine_matched": True}]
+        )
+        persist_item, MockAgent = _run_with_mocks(item, agent_outputs=[_verdict("Morning Routine")])
+        MockAgent.return_value.run.assert_not_called()
+        assert not isinstance(persist_item.conformance, dict)
+
+    def test_contested_low_confidence_suppressed(self) -> None:
+        """After the creator contests once, sub-0.8-confidence verdicts persist
+        but are flagged suppressed (the tile never renders them)."""
+        item = _make_item(conformance={"contested": True})
+        persist_item, _ = _run_with_mocks(
+            item, agent_outputs=[_verdict("Morning Routine", confidence=0.6)]
+        )
+        assert persist_item.conformance["contested"] is True
+        assert persist_item.conformance["suppressed"] is True
+
+    def test_contested_high_confidence_renders(self) -> None:
+        item = _make_item(conformance={"contested": True})
+        persist_item, _ = _run_with_mocks(
+            item, agent_outputs=[_verdict("Morning Routine", confidence=0.92)]
+        )
+        assert persist_item.conformance["contested"] is True
+        assert "suppressed" not in persist_item.conformance
+
+    def test_user_note_reaches_agent_input(self) -> None:
+        """The creator's clip note must reach ConformanceInput.user_context."""
+        item = _make_item(
+            clip_assignments=[
+                {"gcs_path": _CLIP, "shot_id": None, "user_note": "famous vegan restaurant"}
+            ]
+        )
+        _, MockAgent = _run_with_mocks(item, agent_outputs=[_verdict("Morning Routine")])
+        sent_input = MockAgent.return_value.run.call_args[0][0]
+        assert sent_input.user_context == "famous vegan restaurant"
+
+
+class TestThemesMatch:
+    def test_normalizes_case_and_whitespace(self) -> None:
+        from app.tasks.conformance_build import _themes_match
+
+        assert _themes_match(" Morning  Routine ", "morning routine")
+        assert not _themes_match("DIY Tech Tutorial", "Morning Routine")
+        assert not _themes_match("", "Morning Routine")

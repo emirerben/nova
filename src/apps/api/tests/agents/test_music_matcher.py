@@ -283,7 +283,8 @@ class TestAgentSpec:
         spec = MusicMatcherAgent.spec
         assert spec.name == "nova.audio.music_matcher"
         assert spec.prompt_id == "match_music"
-        assert spec.prompt_version == "2026-05-27"
+        # 2026-06-11: lyric_lang tiebreaker per track (language-aware matching).
+        assert spec.prompt_version == "2026-06-11"
         # Sanity: matcher is text-only — no media_uri override.
         assert MusicMatcherAgent(model_client=None).media_uri(_input()) is None  # type: ignore[arg-type]
 

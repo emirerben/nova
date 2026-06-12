@@ -48,6 +48,10 @@ export function MonthCalendarGrid({
             <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-zinc-200" />
             done
           </span>
+          <span>
+            <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-lime-600" />
+            footage matched
+          </span>
         </div>
       </div>
       <LightCard className="p-4">
@@ -58,6 +62,9 @@ export function MonthCalendarGrid({
             const isToday = todayDay !== null && dayN === todayDay;
             const protected_ = item ? isProtected(item) : false;
             const shouldShimmer = regenerating && !protected_ && item !== null;
+            // Pool matcher dropped footage here that awaits review (Keep/Swap).
+            const hasMatch =
+              item?.clip_assignments?.some((a) => a.machine_matched) ?? false;
 
             const cellClasses = (() => {
               const base =
@@ -77,21 +84,32 @@ export function MonthCalendarGrid({
             })();
 
             const ariaLabel = item
-              ? `Day ${dayN} — ${item.theme}, ${state}`
+              ? `Day ${dayN} — ${item.theme}, ${state}${hasMatch ? ", new footage matched" : ""}`
               : `Day ${dayN} — rest`;
 
             const inner = (
               <div className={cellClasses} aria-label={ariaLabel}>
-                <span
-                  className={`text-[10px] ${
-                    state === "post" || state === "today-post"
-                      ? "text-white"
-                      : state === "film" || state === "today-film"
-                        ? "text-lime-800"
-                        : "text-[#a1a1aa]"
-                  }`}
-                >
-                  {dayN}
+                <span className="flex items-center justify-between">
+                  <span
+                    className={`text-[10px] ${
+                      state === "post" || state === "today-post"
+                        ? "text-white"
+                        : state === "film" || state === "today-film"
+                          ? "text-lime-800"
+                          : "text-[#a1a1aa]"
+                    }`}
+                  >
+                    {dayN}
+                  </span>
+                  {hasMatch && (
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        state === "post" || state === "today-post"
+                          ? "bg-white"
+                          : "bg-lime-600"
+                      }`}
+                    />
+                  )}
                 </span>
                 {item && state !== "rest" && (
                   <span

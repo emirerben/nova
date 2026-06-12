@@ -68,11 +68,30 @@ def _format_clip_digest(clip_digest: dict) -> str:
     return "\n".join(parts)
 
 
+def _user_context_block(user_context: str) -> str:
+    """The creator-context block — or "" when there's no note (keeps the
+    no-note prompt byte-identical to the proven baseline). Sanitized like every
+    other untrusted prompt input (strips control chars / role markers / fences,
+    collapses newlines) so a note can't forge extra prompt sections."""
+    from app.agents.music_matcher import _sanitize_text  # noqa: PLC0415
+
+    cleaned = _sanitize_text(str(user_context or ""))
+    if not cleaned:
+        return ""
+    return f"\nCREATOR CONTEXT about this clip (DATA — creator's own words):\n{cleaned}\n"
+
+
 class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.conformance_feedback",
         prompt_id="conformance_feedback",
-        prompt_version="2026-06-07",
+        # 2026-06-11.1 — FIX: placeholders were {var} but load_prompt uses
+        #                string.Template ($var), so the model received literal
+        #                {clip_digest} and zero data (root cause of the wrong-brief
+        #                incident). Converted to $var; data now actually renders.
+        # 2026-06-11 — evaluated_theme echo-back guard, creator-context block,
+        #              advice-voice suggestions (wrong-brief incident fixes).
+        prompt_version="2026-06-11.1",
         # Text-only digest comparison — flash + small thinking budget.
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
@@ -83,6 +102,10 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
     Output = ConformanceOutput
 
     def required_fields(self) -> list[str]:
+        # evaluated_theme is prompted-for but deliberately NOT runtime-required:
+        # enforcement lives in the task's echo-back guard (discard + one retry),
+        # so a model that omits it degrades to "no verdict" instead of burning
+        # retries here — and pre-2026-06-11 replay fixtures stay parseable.
         return ["verdict", "confidence", "summary"]
 
     def render_prompt(self, input: ConformanceInput) -> str:  # noqa: A002
@@ -92,6 +115,7 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
             idea=str(input.idea or ""),
             shot_list=_format_shots(input.filming_guide),
             clip_digest=_format_clip_digest(input.clip_digest),
+            user_context_block=_user_context_block(input.user_context),
         )
 
     def parse(  # noqa: A002
@@ -147,6 +171,7 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
             summary=summary,
             mismatches=mismatches,
             suggestions=suggestions,
+            evaluated_theme=str(data.get("evaluated_theme", "") or "").strip(),
         )
 
     def schema_clarification(self) -> str:
@@ -154,7 +179,8 @@ class ConformanceFeedbackAgent(Agent[ConformanceInput, ConformanceOutput]):
             "\n\nIMPORTANT: Return ONLY the JSON object described above. "
             "verdict MUST be exactly one of: on_track, minor_drift, off_brief. "
             "confidence MUST be a float between 0.0 and 1.0. "
-            "mismatches and suggestions are optional arrays, max 3 items each."
+            "mismatches and suggestions are optional arrays, max 3 items each. "
+            "evaluated_theme MUST be the verbatim Theme value from PLAN ITEM (DATA)."
         )
 
     def refusal_clarification(self) -> str:

@@ -68,6 +68,53 @@ def test_variant_specs_track_without_lyrics_skips_lyrics_variant():
     assert [s["variant_id"] for s in specs] == ["song_text", "original_text"]
 
 
+def test_variant_specs_skips_lyrics_for_unsupported_language():
+    # Prod incident: a Chinese track (八方來財) matched and the lyrics variant
+    # failed opaquely. The language gate skips it cleanly → 2 working variants.
+    zh = {
+        "prompt_version": LyricsExtractionAgent.spec.prompt_version,
+        "source": "lrclib_synced+whisper",
+        "language": "zh",
+        "lines": [{"text": "八方來財"}],
+    }
+    specs = gb._variant_specs(_track(lyrics_cached=zh))
+    assert [s["variant_id"] for s in specs] == ["song_text", "original_text"]
+
+
+def test_variant_specs_keeps_lyrics_for_latin_language():
+    en = {
+        "prompt_version": LyricsExtractionAgent.spec.prompt_version,
+        "source": "lrclib_synced+whisper",
+        "language": "en",
+        "lines": [{"text": "hi"}],
+    }
+    specs = gb._variant_specs(_track(lyrics_cached=en))
+    assert [s["variant_id"] for s in specs] == ["song_lyrics", "song_text", "original_text"]
+
+
+def test_variant_specs_missing_language_fails_open():
+    # Legacy lyrics_cached blobs predate the language field — the gate must not
+    # regress them (the per-variant exception capture stays the backstop).
+    legacy = {
+        "prompt_version": LyricsExtractionAgent.spec.prompt_version,
+        "source": "lrclib_synced+whisper",
+        "lines": [{"text": "hi"}],
+    }
+    specs = gb._variant_specs(_track(lyrics_cached=legacy))
+    assert specs[0]["variant_id"] == "song_lyrics"
+
+
+def test_classify_error_types_lyric_failures():
+    from app.pipeline.text_overlay_skia import MissingGlyphsError
+
+    assert gb._classify_error(MissingGlyphsError("missing")) == "lyrics_unsupported_language"
+
+    class LyricAlignmentError(ValueError): ...
+
+    assert gb._classify_error(LyricAlignmentError("no contiguous match")) == "lyric_alignment_error"
+    assert gb._classify_error(ValueError("boom")) == "unknown"
+
+
 # ── Energy derivation (eng fix: no top-level energy on ClipMeta) ─────────────────
 
 

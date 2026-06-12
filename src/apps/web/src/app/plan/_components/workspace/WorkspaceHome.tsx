@@ -9,6 +9,7 @@ import { StyleCard } from "./StyleCard";
 import { ThisWeekStrip } from "./ThisWeekStrip";
 import { MonthCalendarGrid } from "./MonthCalendarGrid";
 import { PlanReadyBanner } from "./PlanReadyBanner";
+import { FootagePool } from "./FootagePool";
 import SeedUploadCard from "../SeedUploadCard";
 import SteerInput from "../SteerInput";
 
@@ -113,6 +114,12 @@ export function WorkspaceHome({
               todayDay={todayDay}
               regenerating={regenerating}
             />
+
+            {/* Footage pool — a power-up below the calendar; suppressed during
+                activation (SeedUploadCard IS the pool at that moment). */}
+            {!activating && (
+              <FootagePool plan={plan} onRefresh={onRefresh} onError={onError} />
+            )}
 
             {/* SteerInput — recessive, below the grid */}
             <div className="mt-2">
