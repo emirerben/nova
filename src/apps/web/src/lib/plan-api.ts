@@ -753,6 +753,22 @@ export interface PersonaContent {
   current_situation?: string;
 }
 
+// Onboarding state fields on PersonaQuestionnaire (interface merging, append-only rule).
+// These track where the user is in the edits-first footage funnel.
+export interface PersonaQuestionnaire {
+  // edits-first funnel: chosen path ("existing_footage" | "create_new" | "mixed")
+  content_mode?: "existing_footage" | "create_new" | "mixed";
+  // optional context the user typed in EditContextStep
+  onboarding_topic?: string;
+  onboarding_intent?: string;
+  // generative job kicked off from the onboarding upload step
+  onboarding_edit_job_id?: string;
+  // clip GCS paths used for that job
+  onboarding_clip_paths?: string[];
+  // true once the user has seen and interacted with the payoff screen
+  onboarding_payoff_done?: boolean;
+}
+
 /** Footage pool lifecycle on the plan. */
 export type PoolStatus = "none" | "matching" | "matched" | "matched_empty" | "match_failed";
 
@@ -829,4 +845,29 @@ export function attachPoolClips(planId: string, clipGcsPaths: string[]): Promise
 /** "Match again" — re-run pool matching (e.g. after new items freed up). */
 export function rematchPoolClips(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/pool/match`, { method: "POST" });
+}
+
+// ── Edits-first onboarding fork (append-only rule) ────────────────────────────
+
+/**
+ * POST /personas/onboarding-fork — persist the fork choice and optional
+ * context/footage state on the persona's questionnaire. Called at each
+ * step of the footage funnel so the server is the source of truth, and
+ * the user can resume if they close the tab.
+ */
+export function recordOnboardingFork(data: {
+  content_mode: string;
+  topic?: string;
+  intent?: string;
+  onboarding_clip_paths?: string[];
+  onboarding_edit_job_id?: string;
+  onboarding_payoff_done?: boolean;
+}): Promise<{ persona_id: string; persona_status: string }> {
+  return request<{ persona_id: string; persona_status: string }>(
+    "/personas/onboarding-fork",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    },
+  );
 }

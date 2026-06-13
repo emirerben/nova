@@ -152,3 +152,37 @@ describe("VariantRenderCard tone contract", () => {
     expect(divs.some((el) => el.className.includes("bg-zinc-900"))).toBe(true);
   });
 });
+
+// ── EditPayoff tone contract (T6) ───────────────────────────────────────────
+// Verify PayoffField and PhaseChipRow receive tone="light" in EditPayoff.
+// We test the sub-components directly to avoid mocking the generative fetch hook.
+
+describe("EditPayoff sub-component tone pins", () => {
+  it("test_payoff_field_light_in_edit_payoff: PayoffField light mode renders zinc-300 border (not zinc-800)", () => {
+    // EditPayoff passes tone="light" to PayoffField — pin via direct render.
+    const { container } = render(
+      <PayoffField variants={[]} renderCard={() => null} tone="light" />
+    );
+    const allEls = Array.from(container.querySelectorAll("*"));
+    expect(
+      allEls.some((el) => (el as HTMLElement).className?.includes("border-zinc-300"))
+    ).toBe(true);
+    expect(
+      allEls.every((el) => !(el as HTMLElement).className?.includes("border-zinc-800"))
+    ).toBe(true);
+  });
+
+  it("test_progress_theater_light_in_edit_payoff: PhaseChipRow light mode renders cream fade mask", () => {
+    // EditPayoff passes tone="light" to ProgressTheater → PhaseChipRow.
+    const { container } = render(
+      <PhaseChipRow
+        phases={["analyze", "render"]}
+        phaseLabels={{ analyze: "Analyzing", render: "Rendering" }}
+        currentPhase="analyze"
+        tone="light"
+      />
+    );
+    const divs = Array.from(container.querySelectorAll("div"));
+    expect(divs.some((el) => el.className.includes("from-[#fafaf8]"))).toBe(true);
+  });
+});

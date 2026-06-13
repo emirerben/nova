@@ -175,6 +175,7 @@ export async function uploadVoiceover(
 export async function createGenerativeJob(
   clip_gcs_paths: string[],
   voiceover_gcs_path: string | null = null,
+  opts: { topic?: string; intent?: string } = {},
 ): Promise<GenerativeJobResponse> {
   // No target length: the backend derives output length from the uploaded
   // footage (and the matched song's beat structure), so the edit can never run
@@ -183,7 +184,12 @@ export async function createGenerativeJob(
   const res = await fetch(`${API_BASE}/generative-jobs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ clip_gcs_paths, voiceover_gcs_path }),
+    body: JSON.stringify({
+      clip_gcs_paths,
+      voiceover_gcs_path,
+      topic: opts.topic ?? undefined,
+      intent: opts.intent ?? undefined,
+    }),
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
