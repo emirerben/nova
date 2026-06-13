@@ -342,3 +342,117 @@ def test_regenerate_preserves_start_date() -> None:
 
     # The original anchor date must not be overwritten.
     assert plan.start_date == original_date
+
+
+# ── T3: seed-pool carry (onboarding-fork → create_plan) ──────────────────────
+
+
+def _ready_persona(questionnaire: dict | None = None) -> MagicMock:
+    """A persona in 'ready' state with a real dict questionnaire."""
+    persona = MagicMock()
+    persona.persona_status = "ready"
+    persona.id = uuid.uuid4()
+    # Use a real dict so .get() works correctly (MagicMock.get() returns MagicMock).
+    persona.questionnaire = questionnaire if questionnaire is not None else {}
+    return persona
+
+
+def test_create_plan_carries_durable_onboarding_paths(client: TestClient) -> None:
+    """Durable generative-jobs/*/sources/ paths in onboarding_clip_paths → seed_clip_paths."""
+    user = _fake_user()
+    durable_paths = [
+        "generative-jobs/abc123/sources/clip1.mp4",
+        "generative-jobs/abc123/sources/clip2.mp4",
+    ]
+    persona = _ready_persona(questionnaire={"onboarding_clip_paths": durable_paths})
+    db = _async_db(scalar_result=persona)
+
+    # Capture the ContentPlan instance added to the session.
+    added_plans: list = []
+
+    def _capture_add(obj):  # noqa: E301
+        from app.models import ContentPlan  # noqa: PLC0415
+
+        if isinstance(obj, ContentPlan):
+            added_plans.append(obj)
+
+    db.add = MagicMock(side_effect=_capture_add)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.generate_content_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+
+    assert resp.status_code == 201
+    assert added_plans, "ContentPlan must have been added to the session"
+    plan = added_plans[0]
+    assert plan.seed_clip_paths == durable_paths
+
+
+def test_create_plan_does_not_carry_ephemeral_paths(client: TestClient) -> None:
+    """Ephemeral music-uploads/ paths must NOT be carried to seed_clip_paths."""
+    user = _fake_user()
+    persona = _ready_persona(
+        questionnaire={"onboarding_clip_paths": ["music-uploads/tmp/clip.mp4"]}
+    )
+    db = _async_db(scalar_result=persona)
+
+    added_plans: list = []
+
+    def _capture_add(obj):  # noqa: E301
+        from app.models import ContentPlan  # noqa: PLC0415
+
+        if isinstance(obj, ContentPlan):
+            added_plans.append(obj)
+
+    db.add = MagicMock(side_effect=_capture_add)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.generate_content_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+
+    assert resp.status_code == 201
+    # Plan must exist and seed_clip_paths must NOT have been set to the ephemeral path.
+    assert added_plans, "ContentPlan must have been added to the session"
+    plan = added_plans[0]
+    # seed_clip_paths is either None or [] — never an ephemeral path.
+    assert not plan.seed_clip_paths
+
+
+def test_attach_seed_clips_still_rejects_wrong_prefix(client: TestClient) -> None:
+    """attach_seed_clips (public endpoint) must still 422 a generative-jobs path.
+
+    The refactor extracted _validate_seed_clip_prefix into a helper but must NOT
+    have accidentally loosened the public endpoint's prefix guard.
+    """
+    user = _fake_user()
+    plan_id = uuid.uuid4()
+    plan = MagicMock()
+    plan.id = plan_id
+    plan.user_id = user.id
+    plan.items = []
+    plan.pool = {}
+    plan.activation_status = "none"
+    plan.seed_clip_paths = []
+    plan.plan_status = "generating"
+    plan.horizon_days = 30
+    plan.events = None
+    plan.generation_started_at = None
+    plan.start_date = None
+
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    # A durable generative-jobs path posted via request body must be rejected
+    # (only server-derived carry in create_plan bypasses the validator).
+    resp = client.post(
+        f"/content-plans/{plan_id}/seed-clips",
+        json={"clip_gcs_paths": ["generative-jobs/abc123/sources/clip1.mp4"]},
+    )
+    assert resp.status_code == 422

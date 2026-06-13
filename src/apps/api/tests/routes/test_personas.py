@@ -345,3 +345,108 @@ def test_reset_nulls_job_fk_before_persona_delete(client: TestClient) -> None:
         "before plan_items are cascade-deleted (models.py:383 no-ondelete FK)"
     )
     assert "content_plan_item_id" in first_stmt.lower()
+
+
+# ── POST /personas/onboarding-fork ────────────────────────────────────────────
+
+
+def _fork_row(user_id: uuid.UUID, *, questionnaire: dict | None = None) -> MagicMock:
+    """A persona row suitable for the onboarding-fork tests."""
+    row = MagicMock()
+    row.id = uuid.uuid4()
+    row.user_id = user_id
+    row.persona_status = "chat_pending"
+    row.questionnaire = questionnaire if questionnaire is not None else {}
+    row.persona = None
+    row.error_detail = None
+    row.tiktok_profile = None
+    return row
+
+
+def test_onboarding_fork_creates_persona(client: TestClient) -> None:
+    """POST with content_mode + topic for a user with no existing persona → 200."""
+    user = _fake_user()
+    # No existing row (scalar_one_or_none returns None) → INSERT path.
+    db = _async_db(scalar_result=None)
+
+    # After the INSERT+commit, db.refresh will be called with the new PersonaRow.
+    # We capture the added row via db.add so we can inspect it.
+    added_rows: list = []
+    original_add = db.add
+
+    def capture_add(row):  # noqa: E301
+        added_rows.append(row)
+        # Simulate refresh setting id/status on the row.
+        import uuid as _uuid
+
+        row.id = _uuid.uuid4()
+        row.persona_status = "chat_pending"
+        row.questionnaire = getattr(row, "questionnaire", {}) or {}
+        return original_add(row)
+
+    db.add = capture_add
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        "/personas/onboarding-fork",
+        json={"content_mode": "existing_footage", "topic": "hiking clips"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "persona_id" in data
+    assert data["persona_status"] == "chat_pending"
+
+
+def test_onboarding_fork_after_scrape_preserves_tiktok_handle(client: TestClient) -> None:
+    """Fork after tiktok_scrape must NOT clobber the existing questionnaire."""
+    user = _fake_user()
+    existing_questionnaire = {
+        "tiktok_handle": "@testuser",
+        "interview_turns": [{"role": "agent", "content": "Tell me about yourself"}],
+    }
+    row = _fork_row(user.id, questionnaire=existing_questionnaire)
+    db = _async_db(scalar_result=row)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        "/personas/onboarding-fork",
+        json={
+            "content_mode": "existing_footage",
+            "topic": "food vlogs",
+            "intent": "build community",
+        },
+    )
+    assert resp.status_code == 200
+    # tiktok_handle must be preserved — read-modify-write, not a fresh dict.
+    assert row.questionnaire["tiktok_handle"] == "@testuser"
+    # New keys must be merged in.
+    assert row.questionnaire["content_mode"] == "existing_footage"
+    assert row.questionnaire["onboarding_topic"] == "food vlogs"
+    assert row.questionnaire["onboarding_intent"] == "build community"
+
+
+def test_onboarding_fork_seeds_answered_turn_not_agent_turn(client: TestClient) -> None:
+    """With topic set and no prior turns, the seeded turn must be role='user', not 'agent'.
+
+    An 'agent' turn as the last entry triggers the resume-without-LLM stall
+    in chat_start (~line 668 of personas.py).
+    """
+    user = _fake_user()
+    row = _fork_row(user.id, questionnaire={})
+    db = _async_db(scalar_result=row)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        "/personas/onboarding-fork",
+        json={"content_mode": "existing_footage", "topic": "travel adventures"},
+    )
+    assert resp.status_code == 200
+    turns = row.questionnaire.get("interview_turns", [])
+    assert turns, "Expected at least one seeded turn"
+    assert turns[-1]["role"] == "user", "Last turn must be 'user', not 'agent'"
