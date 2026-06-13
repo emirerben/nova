@@ -247,6 +247,7 @@ export function VariantCard({
             editable={editSession.isEditing}
             onTextChange={editSession.setText}
             layout={variant.intro_layout === "cluster" ? "cluster" : "linear"}
+            playToken={editSession.playToken}
           />
         </div>
 
@@ -255,6 +256,7 @@ export function VariantCard({
             session={editSession}
             styleSets={styleSets}
             fallbackSizePx={variant.intro_text_size_px ?? null}
+            resolvedParams={introParams}
           />
         ) : editSession.isSaving ? (
           <p className="mt-3 text-xs text-[#71717a]">

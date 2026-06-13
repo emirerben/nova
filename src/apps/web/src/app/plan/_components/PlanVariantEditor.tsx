@@ -141,7 +141,7 @@ export default function PlanVariantEditor({
               disabled={rendering || sequenceSynced}
               title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => {
-                setDraft("");
+                setDraft(variant.intro_text ?? "");
                 setEditing(true);
               }}
               className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"

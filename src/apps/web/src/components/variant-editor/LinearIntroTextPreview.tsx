@@ -29,7 +29,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CANVAS_W, resolveCssFont } from "@/lib/overlay-constants";
+import { animationStateAt, type AnimationState } from "@/lib/overlay-animation";
+import { CANVAS_W, MAX_INTRO_S, resolveCssFont } from "@/lib/overlay-constants";
 import {
   MAX_LINE_W_FRAC,
   resolveAnchorFrac,
@@ -44,15 +45,27 @@ export function LinearIntroTextPreview({
   params,
   editable = false,
   onTextChange,
+  playToken,
 }: {
   params: IntroOverlayParams;
   editable?: boolean;
   onTextChange?: (text: string) => void;
+  playToken?: number;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const textRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const [fontTick, setFontTick] = useState(0);
+
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playState, setPlayState] = useState<AnimationState | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const playStartRef = useRef<number>(0);
+
+  const prefersReducedMotion =
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false;
 
   const font = resolveCssFont(params.fontFamily);
 
@@ -81,6 +94,65 @@ export function LinearIntroTextPreview({
       cancelled = true;
     };
   }, [font.family, font.weight]);
+
+  // Cleanup rAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+      }
+    };
+  }, []);
+
+  // Drive entrance animation when playToken increments
+  useEffect(() => {
+    if (playToken === undefined || playToken === 0) return;
+    if (prefersReducedMotion) return; // skip animation; stay at settled hold
+
+    // Cancel any in-flight animation
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    const effect = params.effect ?? "none";
+    // Effects that don't move visually — no need to animate
+    if (effect === "none" || effect === "static") {
+      setIsPlaying(false);
+      setPlayState(null);
+      return;
+    }
+
+    const t0 = performance.now();
+    playStartRef.current = t0;
+    setIsPlaying(true);
+
+    const currentText = (params.text ?? "").trim();
+    const tick = (now: number) => {
+      const tLocal = (now - playStartRef.current) / 1000;
+      const state = animationStateAt(effect, tLocal, MAX_INTRO_S, currentText);
+      setPlayState(state);
+      if (tLocal < MAX_INTRO_S) {
+        rafRef.current = requestAnimationFrame(tick);
+      } else {
+        // Settled — stop animation, restore editable node
+        rafRef.current = null;
+        setIsPlaying(false);
+        setPlayState(null);
+      }
+    };
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      setIsPlaying(false);
+      setPlayState(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playToken]);
 
   const text = (params.text ?? "").trim();
 
@@ -160,55 +232,108 @@ export function LinearIntroTextPreview({
   return (
     <div ref={containerRef} className="pointer-events-none absolute inset-0 overflow-hidden">
       {show && (
-        <div
-          ref={attachTextNode}
-          contentEditable={editable}
-          suppressContentEditableWarning
-          onInput={handleInput}
-          onPaste={handlePaste}
-          data-placeholder="Tap to add text"
-          role={editable ? "textbox" : undefined}
-          aria-label={editable ? "Intro text" : undefined}
-          style={{
-            position: "absolute",
-            left: `${xFrac * 100}%`,
-            top: `${yFrac * 100}%`,
-            // Anchor semantics mirror _anchored_left_x / _vertical_block_top:
-            // left pins the block's top-left at (x, y); center/right center
-            // vertically on y and pin the line box horizontally.
-            transform:
-              anchor === "left"
-                ? "none"
-                : anchor === "right"
-                  ? "translate(-100%, -50%)"
-                  : "translate(-50%, -50%)",
-            maxWidth: `${MAX_LINE_W_FRAC * 100}%`,
-            width: "max-content",
-            textAlign: anchor === "left" ? "left" : anchor === "right" ? "right" : "center",
-            fontFamily: font.family,
-            fontWeight: font.weight,
-            fontSize: `${sizePx * scale}px`,
-            lineHeight: `${lineStepPx * scale}px`,
-            color,
-            // Empty-state hit target: an empty inline box would be ~0×0 px and
-            // untappable (the placeholder ::before rule lives in globals.css).
-            ...(editable ? { minWidth: "6ch", minHeight: "1em" } : {}),
-            // ≈ Skia shadow: black α160, blur σ12 (CSS radius ~2σ), +6px down.
-            textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
-            ...(strokePx > 0
-              ? {
-                  WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
-                  paintOrder: "stroke fill",
-                }
-              : {}),
-            pointerEvents: editable ? "auto" : "none",
-            outline: "none",
-            cursor: editable ? "text" : undefined,
-            whiteSpace: "pre-wrap",
-            overflowWrap: "normal",
-            caretColor: color,
-          }}
-        />
+        <>
+          {/* Editable / static text node — hidden during playback to avoid caret corruption */}
+          <div
+            ref={attachTextNode}
+            contentEditable={editable}
+            suppressContentEditableWarning
+            onInput={handleInput}
+            onPaste={handlePaste}
+            data-placeholder="Tap to add text"
+            role={editable ? "textbox" : undefined}
+            aria-label={editable ? "Intro text" : undefined}
+            style={{
+              position: "absolute",
+              left: `${xFrac * 100}%`,
+              top: `${yFrac * 100}%`,
+              // Anchor semantics mirror _anchored_left_x / _vertical_block_top:
+              // left pins the block's top-left at (x, y); center/right center
+              // vertically on y and pin the line box horizontally.
+              transform:
+                anchor === "left"
+                  ? "none"
+                  : anchor === "right"
+                    ? "translate(-100%, -50%)"
+                    : "translate(-50%, -50%)",
+              maxWidth: `${MAX_LINE_W_FRAC * 100}%`,
+              width: "max-content",
+              textAlign: anchor === "left" ? "left" : anchor === "right" ? "right" : "center",
+              fontFamily: font.family,
+              fontWeight: font.weight,
+              fontSize: `${sizePx * scale}px`,
+              lineHeight: `${lineStepPx * scale}px`,
+              color,
+              // Empty-state hit target: an empty inline box would be ~0×0 px and
+              // untappable (the placeholder ::before rule lives in globals.css).
+              ...(editable ? { minWidth: "6ch", minHeight: "1em" } : {}),
+              // ≈ Skia shadow: black α160, blur σ12 (CSS radius ~2σ), +6px down.
+              textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
+              ...(strokePx > 0
+                ? {
+                    WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
+                    paintOrder: "stroke fill",
+                  }
+                : {}),
+              pointerEvents: editable ? "auto" : "none",
+              outline: "none",
+              cursor: editable ? "text" : undefined,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "normal",
+              caretColor: color,
+              // Hide during animation so caret/IME aren't corrupted by visibility toggling
+              visibility: isPlaying && playState !== null ? "hidden" : "visible",
+            }}
+          />
+          {/* Playback layer — non-editable overlay that runs the entrance animation */}
+          {isPlaying && playState !== null && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                left: `${xFrac * 100}%`,
+                top: `${yFrac * 100}%`,
+                // Compose the anchor base transform with the animation scale + y-translate
+                transform: (() => {
+                  const anchorBase =
+                    anchor === "left"
+                      ? ""
+                      : anchor === "right"
+                        ? "translate(-100%, -50%)"
+                        : "translate(-50%, -50%)";
+                  const animParts: string[] = [];
+                  if (playState.scale !== 1.0) animParts.push(`scale(${playState.scale})`);
+                  if (playState.yTranslate !== 0)
+                    animParts.push(`translateY(${playState.yTranslate * scale}px)`);
+                  const animStr = animParts.join(" ");
+                  return [anchorBase, animStr].filter(Boolean).join(" ");
+                })(),
+                maxWidth: `${MAX_LINE_W_FRAC * 100}%`,
+                width: "max-content",
+                textAlign: anchor === "left" ? "left" : anchor === "right" ? "right" : "center",
+                fontFamily: font.family,
+                fontWeight: font.weight,
+                fontSize: `${sizePx * scale}px`,
+                lineHeight: `${lineStepPx * scale}px`,
+                color,
+                textShadow: `0 ${6 * scale}px ${24 * scale}px rgba(0,0,0,0.63)`,
+                ...(strokePx > 0
+                  ? {
+                      WebkitTextStroke: `${strokePx}px rgba(0,0,0,0.9)`,
+                      paintOrder: "stroke fill",
+                    }
+                  : {}),
+                opacity: playState.alpha,
+                pointerEvents: "none",
+                whiteSpace: "pre-wrap",
+                overflowWrap: "normal",
+                userSelect: "none",
+              }}
+            >
+              {playState.visibleText}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

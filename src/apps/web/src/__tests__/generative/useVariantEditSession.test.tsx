@@ -40,6 +40,10 @@ const baselineDraft: EditDraft = {
   removed: false,
   styleSetId: "travel_editorial",
   sizePx: 56,
+  layout: null,
+  fontFamily: null,
+  animation: null,
+  textColor: null,
 };
 
 describe("buildEditPayload", () => {

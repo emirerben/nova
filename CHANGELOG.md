@@ -2,10 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.103.1] — 2026-06-13
+
+### Added
+- **Animated preview in the instant text editor.** The WYSIWYG overlay preview now plays the entrance animation once on open and on font/animation change — matching what the downloaded video produces. A ↺ Replay button lets users re-trigger it at any time. A pure-TS mirror of `_draw_with_animation` in `text_overlay_skia.py` (`overlay-animation.ts`) drives the browser preview via `requestAnimationFrame`; constants are verbatim from the Python source and parity-guarded by 52 sample-point unit tests. `prefers-reduced-motion` skips rAF entirely and shows the settled hold state.
+- **Independent Font, Animation, and Color pickers in the instant text editor.** The style-preset chip row has been replaced with three independent controls: a scrollable Font grid (rendered in the actual typefaces), a labeled Animation chip row, and a circular Color swatch row. Font and animation changes auto-play the entrance preview; color swaps are instant with no replay. Both the generative editor and the plan flow inherit the controls via the shared `variant-editor` module. The picked values are sent as `font_family`/`effect`/`text_color` overrides on the `/edit` request, persisted in `variants[i]["intro_font_family/effect/text_color"]`, and survive swap-song / retext re-renders (sticky lifecycle mirrors `size_override_px`).
+- **`slide-down` entrance effect added** to `_ALLOWED_EFFECTS` and exposed as a picker option. Previously built into the renderer but not reachable via any API path.
+- **Accent font picker + per-role size controls for editorial cluster.** The editorial editor now exposes all three font roles (Hero / Body / Accent) as independent font pickers and replaces the single text-size slider with three per-role size sliders (Hero / Body / Accent) so each typographic layer can be tuned independently.
+
 ## [0.4.102.1] — 2026-06-13
 
 ### Fixed
-- **Clip-timeline edit locks all controls and doesn't auto-refresh.** After trimming or extending a clip via "Edit clips", every other control on that variant (style, layout, caption, song, text size) became permanently disabled — a manual page refresh was required to recover. Root cause: the optimistic "pending edit" pin used `output_url` string equality to detect completion, but clip re-renders hold the signed URL stable across the render lifecycle, so the pin never cleared. Replaced the URL-equality signal with the `render_finished_at` + `sawRendering` fingerprint already used in `useVariantEditSession` — the pin now clears as soon as the server reports a genuinely-new render (advanced timestamp or observed "rendering" state), so controls re-enable and the hero swaps automatically the moment the re-render finishes.
+- **Clip-timeline edit locks all controls and doesn't auto-refresh.** After trimming or extending a clip via "Edit clips", every other control on that variant (style, layout, caption, song, text size) became permanently disabled — a manual page refresh was required to recover. Root cause: the optimistic "pending edit" pin used `output_url` string equality to detect completion, but clip re-renders hold the signed URL stable across the render lifecycle, so the pin never cleared. Replaced the URL-equality signal with the `render_finished_at` + `sawRendering` fingerprint already used in `useVariantEditSession` — the pin now clears as soon as the server reports a genuinely-new render (advanced timestamp or observed "releasing" state), so controls re-enable and the hero swaps automatically the moment the re-render finishes.
 
 ## [0.4.102.0] — 2026-06-13
 

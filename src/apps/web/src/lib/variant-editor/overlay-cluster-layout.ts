@@ -156,6 +156,24 @@ export type MeasureCluster = (
   px: number,
 ) => { wPx: number; hPx: number };
 
+/** Optional per-role font overrides; unset roles fall back to EDITORIAL_STYLE. */
+export interface ClusterFontOverrides {
+  heroFont?: string;
+  bodyFont?: string;
+  accentFont?: string;
+}
+
+/**
+ * Optional per-role size overrides (absolute px). When set, replaces the
+ * ratio-derived size for that role. Scale (for frame fit) still applies on top.
+ * hero = ROLE_HERO, body = ROLE_CONNECTOR, accent = ROLE_CLOSER.
+ */
+export interface ClusterSizeOverrides {
+  heroSizePx?: number;
+  bodySizePx?: number;
+  accentSizePx?: number;
+}
+
 const bare = (word: string): string =>
   word.toLowerCase().replace(/^[.,!?;:"']+|[.,!?;:"']+$/g, "");
 
@@ -318,15 +336,31 @@ function isAlnum(ch: string): boolean {
   return ch.toLowerCase() !== ch.toUpperCase();
 }
 
-/** Per-role px — exact port of `_styled_role_px`. */
-function styledRolePx(role: ClusterRole, baseSizePx: number, scale: number): number {
-  const ratio =
+/** Per-role px — exact port of `_styled_role_px` (with optional direct overrides). */
+function styledRolePx(
+  role: ClusterRole,
+  baseSizePx: number,
+  scale: number,
+  sizeOverrides?: ClusterSizeOverrides,
+): number {
+  const override =
     role === ROLE_HERO
-      ? EDITORIAL_STYLE.heroRatio
+      ? sizeOverrides?.heroSizePx
       : role === ROLE_CLOSER
-        ? EDITORIAL_STYLE.closerRatio
-        : EDITORIAL_STYLE.connectorRatio;
-  const px = Math.round(baseSizePx * ratio * scale);
+        ? sizeOverrides?.accentSizePx
+        : sizeOverrides?.bodySizePx;
+  const px =
+    override != null
+      ? Math.round(override * scale)
+      : Math.round(
+          baseSizePx *
+            (role === ROLE_HERO
+              ? EDITORIAL_STYLE.heroRatio
+              : role === ROLE_CLOSER
+                ? EDITORIAL_STYLE.closerRatio
+                : EDITORIAL_STYLE.connectorRatio) *
+            scale,
+        );
   if (role === ROLE_HERO) {
     return Math.max(RENDERER_MIN_FONT_PX, EDITORIAL_STYLE.scriptMinPx, px);
   }
@@ -339,15 +373,22 @@ function styledRolePx(role: ClusterRole, baseSizePx: number, scale: number): num
  * block takes the italic accent when `(k + accentParity) % 2 === 1`, else the
  * body serif. Hero never takes the accent.
  */
-export function assignFaces(blocks: RawBlock[], accentParity = 0): string[] {
+export function assignFaces(
+  blocks: RawBlock[],
+  accentParity = 0,
+  overrides?: ClusterFontOverrides,
+): string[] {
+  const heroFont = overrides?.heroFont ?? EDITORIAL_STYLE.heroFont;
+  const bodyFont = overrides?.bodyFont ?? EDITORIAL_STYLE.bodyFont;
+  const accentFont = overrides?.accentFont ?? EDITORIAL_STYLE.accentFont;
   const faces: string[] = [];
   let nonHeroK = 0;
   for (const block of blocks) {
     if (block.role === ROLE_HERO) {
-      faces.push(EDITORIAL_STYLE.heroFont);
+      faces.push(heroFont);
     } else {
       const wantsAccent = (nonHeroK + accentParity) % 2 === 1;
-      faces.push(wantsAccent ? EDITORIAL_STYLE.accentFont : EDITORIAL_STYLE.bodyFont);
+      faces.push(wantsAccent ? accentFont : bodyFont);
       nonHeroK += 1;
     }
   }
@@ -372,6 +413,8 @@ export function computeClusterBlocks(
     revealWindowS?: number;
     wordRoles?: ClusterRole[] | null;
     accentParity?: number;
+    fontOverrides?: ClusterFontOverrides;
+    sizeOverrides?: ClusterSizeOverrides;
   },
 ): ClusterBlock[] | null {
   const baseSizePx = opts.baseSizePx;
@@ -400,7 +443,7 @@ export function computeClusterBlocks(
 
   for (const b of rawBlocks) b.text = normalizeTypography(b.text);
 
-  const faces = assignFaces(rawBlocks, accentParity);
+  const faces = assignFaces(rawBlocks, accentParity, opts.fontOverrides);
 
   const usableW = 1.0 - 2 * EDGE_MARGIN_FRAC;
   const marginY = EDITORIAL_STYLE.sceneShiftMargin;
@@ -409,7 +452,7 @@ export function computeClusterBlocks(
 
   const measureBlocks = (scale: number): ClusterBlockMeasured[] =>
     rawBlocks.map((b, i) => {
-      const px = styledRolePx(b.role, baseSizePx, scale);
+      const px = styledRolePx(b.role, baseSizePx, scale, opts.sizeOverrides);
       const m = measure(faces[i], b.text, px);
       return {
         text: b.text,

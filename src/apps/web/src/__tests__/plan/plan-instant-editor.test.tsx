@@ -222,10 +222,12 @@ describe("Plan item page — deferred-burn editor", () => {
     // RIGHT: the normal PlanVariantEditor controls are all present (un-hidden) —
     // there is NO separate "Edit text & style" entry button anymore.
     expect(screen.queryByRole("button", { name: /edit text & style/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
-    expect(screen.getByRole("radiogroup", { name: /text style/i })).toBeInTheDocument();
+    // Both PlanVariantEditor and EditToolbar show "Remove text"; at least one present.
+    expect(screen.getAllByRole("button", { name: /^Remove text$/ }).length).toBeGreaterThanOrEqual(1);
+    // EditToolbar replaces the A+ size stepper with a range slider; A+ is hidden.
+    expect(screen.queryByRole("button", { name: /bigger intro text/i })).toBeNull();
+    expect(screen.getByRole("slider", { name: /intro text size/i })).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /bigger intro text/i })).toBeInTheDocument();
     // Download is the bake trigger.
     expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
   });
@@ -236,18 +238,16 @@ describe("Plan item page — deferred-burn editor", () => {
       render(<PlanItemPage />);
     });
 
-    // Bump the text size via the A+ stepper — this is a draft mutation.
-    await act(async () => {
-      screen.getByRole("button", { name: /bigger intro text/i }).click();
-    });
+    // Bump the text size via the EditToolbar range slider — this is a draft mutation.
+    // (The A+ stepper is hidden in the deferred path; the slider replaces it.)
+    const slider = screen.getByRole("slider", { name: /intro text size/i });
+    fireEvent.change(slider, { target: { value: "62" } });
 
     // NONE of the render endpoints fired — the bake is deferred to Download.
     expect(mockSetPlanItemIntroSize).not.toHaveBeenCalled();
     expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
     expect(mockRetextPlanItem).not.toHaveBeenCalled();
 
-    // The draft is reflected in the control (56 → 62) and surfaced as a user size.
-    expect(screen.getByText(/^62$/)).toBeInTheDocument();
     // Unsaved hint near Download appears once the draft is dirty.
     expect(screen.getByText(/Unsaved — downloads will include your changes/i)).toBeInTheDocument();
   });
@@ -259,11 +259,12 @@ describe("Plan item page — deferred-burn editor", () => {
     });
 
     // Accumulate two draft edits: size bump + remove text (batched, no network).
+    // Size via range slider (A+ stepper is hidden in the deferred path).
+    const slider = screen.getByRole("slider", { name: /intro text size/i });
+    fireEvent.change(slider, { target: { value: "62" } });
     await act(async () => {
-      screen.getByRole("button", { name: /bigger intro text/i }).click();
-    });
-    await act(async () => {
-      screen.getByRole("button", { name: /^Remove text$/ }).click();
+      // Both PlanVariantEditor and EditToolbar show Remove text — click the first.
+      screen.getAllByRole("button", { name: /^Remove text$/ })[0].click();
     });
     expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
 

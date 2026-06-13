@@ -144,6 +144,17 @@ class GenerativeVariant(BaseModel):
     # the browser can play the base under a client-side text overlay (instant edit).
     base_video_path: str | None = None
     base_video_url: str | None = None
+    # User-pinned independent overrides (decoupled from style_set_id).
+    # null when not pinned; the renderer uses the style-set value.
+    intro_font_family: str | None = None
+    intro_effect: str | None = None
+    intro_text_color: str | None = None
+    intro_cluster_hero_font: str | None = None
+    intro_cluster_body_font: str | None = None
+    intro_cluster_accent_font: str | None = None
+    intro_cluster_hero_size_px: int | None = None
+    intro_cluster_body_size_px: int | None = None
+    intro_cluster_accent_size_px: int | None = None
 
     model_config = {"extra": "allow"}
 
@@ -212,6 +223,20 @@ class EditVariantRequest(BaseModel):
     # word-cluster). User-facing style option after render — applies via the
     # fast-reburn path. Cluster requires a 3-6 word hook (validated below).
     intro_layout: str | None = None
+    # Independent style overrides — decouple font / animation / color from style_set_id.
+    # Each overrides only its aspect; the style set continues to own the rest
+    # (position, anchor, stroke, highlight color). Validated in dispatch_edit_variant.
+    font_family: str | None = None
+    effect: str | None = None
+    text_color: str | None = None
+    # Editorial cluster per-role font overrides.
+    cluster_hero_font: str | None = None
+    cluster_body_font: str | None = None
+    cluster_accent_font: str | None = None
+    # Editorial cluster per-role size overrides (absolute px, clamped server-side).
+    cluster_hero_size_px: int | None = Field(None, gt=0)
+    cluster_body_size_px: int | None = Field(None, gt=0)
+    cluster_accent_size_px: int | None = Field(None, gt=0)
 
 
 # ── Timeline editor schemas ────────────────────────────────────────────────────
@@ -573,6 +598,15 @@ def dispatch_edit_variant(
     style_set_id: str | None,
     text_size_px: int | None,
     intro_layout: str | None = None,
+    font_family: str | None = None,
+    effect: str | None = None,
+    text_color: str | None = None,
+    cluster_hero_font: str | None = None,
+    cluster_body_font: str | None = None,
+    cluster_accent_font: str | None = None,
+    cluster_hero_size_px: int | None = None,
+    cluster_body_size_px: int | None = None,
+    cluster_accent_size_px: int | None = None,
 ) -> None:
     """Validate + enqueue a combined text/style/size/layout edit as ONE re-render.
 
@@ -589,6 +623,15 @@ def dispatch_edit_variant(
         and style_set_id is None
         and text_size_px is None
         and intro_layout is None
+        and font_family is None
+        and effect is None
+        and text_color is None
+        and cluster_hero_font is None
+        and cluster_body_font is None
+        and cluster_accent_font is None
+        and cluster_hero_size_px is None
+        and cluster_body_size_px is None
+        and cluster_accent_size_px is None
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -682,6 +725,60 @@ def dispatch_edit_variant(
                         ),
                     )
 
+    if effect is not None:
+        from app.pipeline.style_sets import _INTRO_ANIMATION_EFFECTS  # noqa: PLC0415
+
+        if effect not in _INTRO_ANIMATION_EFFECTS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown animation effect: '{effect}'. "
+                f"Allowed: {sorted(_INTRO_ANIMATION_EFFECTS)}",
+            )
+
+    if font_family is not None:
+        from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+        if font_family not in _FONT_REGISTRY.get("fonts", {}):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown font '{font_family}'.",
+            )
+
+    for _cf_label, _cf_value in (
+        ("cluster_hero_font", cluster_hero_font),
+        ("cluster_body_font", cluster_body_font),
+        ("cluster_accent_font", cluster_accent_font),
+    ):
+        if _cf_value is not None:
+            from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+            if _cf_value not in _FONT_REGISTRY.get("fonts", {}):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown font '{_cf_value}' for {_cf_label}.",
+                )
+
+    from app.pipeline.overlay_sizing import clamp_intro_px as _clamp  # noqa: PLC0415
+
+    cluster_hero_size_px = (
+        _clamp(cluster_hero_size_px) if cluster_hero_size_px is not None else None
+    )
+    cluster_body_size_px = (
+        _clamp(cluster_body_size_px) if cluster_body_size_px is not None else None
+    )
+    cluster_accent_size_px = (
+        _clamp(cluster_accent_size_px) if cluster_accent_size_px is not None else None
+    )
+
+    if text_color is not None:
+        import re  # noqa: PLC0415
+
+        if not re.match(r"^#[0-9A-Fa-f]{6}$", text_color):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="`text_color` must be a hex color (#RRGGBB).",
+            )
+
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
     regenerate_generative_variant.delay(
@@ -692,6 +789,15 @@ def dispatch_edit_variant(
         style_set_id=style_set_id,
         size_override_px=size_override_px,
         layout_override=intro_layout,
+        font_family_override=font_family,
+        effect_override=effect,
+        text_color_override=text_color,
+        cluster_hero_font_override=cluster_hero_font,
+        cluster_body_font_override=cluster_body_font,
+        cluster_accent_font_override=cluster_accent_font,
+        cluster_hero_size_px_override=cluster_hero_size_px,
+        cluster_body_size_px_override=cluster_body_size_px,
+        cluster_accent_size_px_override=cluster_accent_size_px,
     )
 
 
@@ -1265,6 +1371,15 @@ async def edit_variant(
         style_set_id=req.style_set_id,
         text_size_px=req.text_size_px,
         intro_layout=req.intro_layout,
+        font_family=req.font_family,
+        effect=req.effect,
+        text_color=req.text_color,
+        cluster_hero_font=req.cluster_hero_font,
+        cluster_body_font=req.cluster_body_font,
+        cluster_accent_font=req.cluster_accent_font,
+        cluster_hero_size_px=req.cluster_hero_size_px,
+        cluster_body_size_px=req.cluster_body_size_px,
+        cluster_accent_size_px=req.cluster_accent_size_px,
     )
     log.info(
         "generative_edit_variant",
@@ -1275,6 +1390,12 @@ async def edit_variant(
         style_set_id=req.style_set_id,
         text_size_px=req.text_size_px,
         intro_layout=req.intro_layout,
+        font_family=req.font_family,
+        effect=req.effect,
+        text_color=req.text_color,
+        cluster_hero_font=req.cluster_hero_font,
+        cluster_body_font=req.cluster_body_font,
+        cluster_accent_font=req.cluster_accent_font,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 

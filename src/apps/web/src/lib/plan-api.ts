@@ -439,6 +439,15 @@ export interface PlanItemVariant {
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
+  intro_font_family?: string | null;
+  intro_effect?: string | null;
+  intro_text_color?: string | null;
+  intro_cluster_hero_font?: string | null;
+  intro_cluster_body_font?: string | null;
+  intro_cluster_accent_font?: string | null;
+  intro_cluster_hero_size_px?: number | null;
+  intro_cluster_body_size_px?: number | null;
+  intro_cluster_accent_size_px?: number | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {

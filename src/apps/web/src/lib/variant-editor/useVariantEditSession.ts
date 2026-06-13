@@ -36,6 +36,22 @@ export interface EditDraft {
    * keeps this at the seeded value and buildEditPayload never emits intro_layout
    * for it (no diff). The plan deferred-burn flow drives it via the Layout pill. */
   layout: "linear" | "cluster" | null;
+  /** User-pinned font override — null = inherit from resolved style set. */
+  fontFamily: string | null;
+  /** User-pinned animation override — null = inherit from resolved style set. */
+  animation: string | null;
+  /** User-pinned text color override — null = inherit from resolved style set. */
+  textColor: string | null;
+  /** Cluster editorial: hero-word font override. */
+  clusterHeroFont: string | null;
+  /** Cluster editorial: body/connector font override. */
+  clusterBodyFont: string | null;
+  /** Cluster editorial: accent/closer font override. */
+  clusterAccentFont: string | null;
+  /** Cluster editorial: per-role size overrides (absolute px). */
+  clusterHeroSizePx: number | null;
+  clusterBodySizePx: number | null;
+  clusterAccentSizePx: number | null;
 }
 
 export interface VariantEditSession {
@@ -58,6 +74,19 @@ export interface VariantEditSession {
   setStyle: (styleSetId: string) => void;
   setSize: (sizePx: number) => void;
   setLayout: (layout: "linear" | "cluster") => void;
+  setFont: (fontFamily: string) => void;
+  setAnimation: (animation: string) => void;
+  setColor: (textColor: string) => void;
+  setClusterHeroFont: (fontFamily: string) => void;
+  setClusterBodyFont: (fontFamily: string) => void;
+  setClusterAccentFont: (fontFamily: string) => void;
+  setClusterHeroSizePx: (px: number) => void;
+  setClusterBodySizePx: (px: number) => void;
+  setClusterAccentSizePx: (px: number) => void;
+  /** Increments each time the entrance animation should replay in the preview. */
+  playToken: number;
+  /** Replay the entrance animation in the preview now. */
+  replay: () => void;
   commit: () => Promise<void>;
 }
 
@@ -68,6 +97,15 @@ function draftFromVariant(variant: EditableVariant): EditDraft {
     styleSetId: variant.style_set_id ?? null,
     sizePx: variant.intro_text_size_px ?? null,
     layout: variant.intro_layout ?? null,
+    fontFamily: variant.intro_font_family ?? null,
+    animation: variant.intro_effect ?? null,
+    textColor: variant.intro_text_color ?? null,
+    clusterHeroFont: variant.intro_cluster_hero_font ?? null,
+    clusterBodyFont: variant.intro_cluster_body_font ?? null,
+    clusterAccentFont: variant.intro_cluster_accent_font ?? null,
+    clusterHeroSizePx: variant.intro_cluster_hero_size_px ?? null,
+    clusterBodySizePx: variant.intro_cluster_body_size_px ?? null,
+    clusterAccentSizePx: variant.intro_cluster_accent_size_px ?? null,
   };
 }
 
@@ -77,7 +115,16 @@ function draftsEqual(a: EditDraft, b: EditDraft): boolean {
     a.removed === b.removed &&
     a.styleSetId === b.styleSetId &&
     a.sizePx === b.sizePx &&
-    a.layout === b.layout
+    a.layout === b.layout &&
+    a.fontFamily === b.fontFamily &&
+    a.animation === b.animation &&
+    a.textColor === b.textColor &&
+    a.clusterHeroFont === b.clusterHeroFont &&
+    a.clusterBodyFont === b.clusterBodyFont &&
+    a.clusterAccentFont === b.clusterAccentFont &&
+    a.clusterHeroSizePx === b.clusterHeroSizePx &&
+    a.clusterBodySizePx === b.clusterBodySizePx &&
+    a.clusterAccentSizePx === b.clusterAccentSizePx
   );
 }
 
@@ -109,6 +156,33 @@ export function buildEditPayload(draft: EditDraft, baseline: EditDraft): EditVar
   ) {
     payload.intro_layout = draft.layout;
   }
+  if (draft.fontFamily !== null && draft.fontFamily !== baseline.fontFamily) {
+    payload.font_family = draft.fontFamily;
+  }
+  if (draft.animation !== null && draft.animation !== baseline.animation) {
+    payload.effect = draft.animation;
+  }
+  if (draft.textColor !== null && draft.textColor !== baseline.textColor) {
+    payload.text_color = draft.textColor;
+  }
+  if (draft.clusterHeroFont !== null && draft.clusterHeroFont !== baseline.clusterHeroFont) {
+    payload.cluster_hero_font = draft.clusterHeroFont;
+  }
+  if (draft.clusterBodyFont !== null && draft.clusterBodyFont !== baseline.clusterBodyFont) {
+    payload.cluster_body_font = draft.clusterBodyFont;
+  }
+  if (draft.clusterAccentFont !== null && draft.clusterAccentFont !== baseline.clusterAccentFont) {
+    payload.cluster_accent_font = draft.clusterAccentFont;
+  }
+  if (draft.clusterHeroSizePx !== null && draft.clusterHeroSizePx !== baseline.clusterHeroSizePx) {
+    payload.cluster_hero_size_px = draft.clusterHeroSizePx;
+  }
+  if (draft.clusterBodySizePx !== null && draft.clusterBodySizePx !== baseline.clusterBodySizePx) {
+    payload.cluster_body_size_px = draft.clusterBodySizePx;
+  }
+  if (draft.clusterAccentSizePx !== null && draft.clusterAccentSizePx !== baseline.clusterAccentSizePx) {
+    payload.cluster_accent_size_px = draft.clusterAccentSizePx;
+  }
   return payload;
 }
 
@@ -127,6 +201,7 @@ export function useVariantEditSession(
   // Brief "Saved" affordance after a text-only commit settles — a quiet lime
   // pulse that recedes, never a blocking spinner. Auto-clears after a beat.
   const [justSaved, setJustSaved] = useState(false);
+  const [playToken, setPlayToken] = useState(0);
 
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
@@ -148,6 +223,7 @@ export function useVariantEditSession(
     setCommitError(null);
     setJustSaved(false);
     setIsEditing(true);
+    setPlayToken((t) => t + 1); // auto-play on editor open
   }, [variant]);
 
   const cancel = useCallback(() => {
@@ -175,6 +251,49 @@ export function useVariantEditSession(
     (layout: "linear" | "cluster") => setDraft((d) => ({ ...d, layout })),
     [],
   );
+  const setFont = useCallback(
+    (fontFamily: string) => {
+      setDraft((d) => ({ ...d, fontFamily }));
+      setPlayToken((t) => t + 1);
+    },
+    [],
+  );
+  const setAnimation = useCallback(
+    (animation: string) => {
+      setDraft((d) => ({ ...d, animation }));
+      setPlayToken((t) => t + 1);
+    },
+    [],
+  );
+  const setColor = useCallback(
+    (textColor: string) => setDraft((d) => ({ ...d, textColor })),
+    [],
+  );
+  const setClusterHeroFont = useCallback(
+    (clusterHeroFont: string) => setDraft((d) => ({ ...d, clusterHeroFont })),
+    [],
+  );
+  const setClusterBodyFont = useCallback(
+    (clusterBodyFont: string) => setDraft((d) => ({ ...d, clusterBodyFont })),
+    [],
+  );
+  const setClusterAccentFont = useCallback(
+    (clusterAccentFont: string) => setDraft((d) => ({ ...d, clusterAccentFont })),
+    [],
+  );
+  const setClusterHeroSizePx = useCallback(
+    (clusterHeroSizePx: number) => setDraft((d) => ({ ...d, clusterHeroSizePx })),
+    [],
+  );
+  const setClusterBodySizePx = useCallback(
+    (clusterBodySizePx: number) => setDraft((d) => ({ ...d, clusterBodySizePx })),
+    [],
+  );
+  const setClusterAccentSizePx = useCallback(
+    (clusterAccentSizePx: number) => setDraft((d) => ({ ...d, clusterAccentSizePx })),
+    [],
+  );
+  const replay = useCallback(() => setPlayToken((t) => t + 1), []);
 
   const fireCommit = useCallback(
     async (toCommit: EditDraft, base: EditDraft, preCommitFinishedAt: string | null) => {
@@ -309,6 +428,17 @@ export function useVariantEditSession(
     setStyle,
     setSize,
     setLayout,
+    setFont,
+    setAnimation,
+    setColor,
+    setClusterHeroFont,
+    setClusterBodyFont,
+    setClusterAccentFont,
+    setClusterHeroSizePx,
+    setClusterBodySizePx,
+    setClusterAccentSizePx,
+    playToken,
+    replay,
     commit,
   };
 }

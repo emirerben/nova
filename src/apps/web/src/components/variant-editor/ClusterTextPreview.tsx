@@ -75,21 +75,36 @@ export function ClusterTextPreview({
     return () => observer.disconnect();
   }, []);
 
-  // Re-measure once the editorial faces are ready (Great Vibes + Playfair
-  // Regular/Italic) — layout starts on fallback metrics and snaps when they land.
+  const heroFont = params.clusterHeroFont ?? EDITORIAL_STYLE.heroFont;
+  const bodyFont = params.clusterBodyFont ?? EDITORIAL_STYLE.bodyFont;
+  const accentFont = params.clusterAccentFont ?? EDITORIAL_STYLE.accentFont;
+
+  const sizeOverrides = (
+    params.clusterHeroSizePx != null ||
+    params.clusterBodySizePx != null ||
+    params.clusterAccentSizePx != null
+  )
+    ? {
+        heroSizePx: params.clusterHeroSizePx ?? undefined,
+        bodySizePx: params.clusterBodySizePx ?? undefined,
+        accentSizePx: params.clusterAccentSizePx ?? undefined,
+      }
+    : undefined;
+
+  // Re-measure when editorial faces (including any user-overridden fonts) are ready.
   useEffect(() => {
     let cancelled = false;
     void Promise.all([
-      ensureClusterFontLoaded(EDITORIAL_STYLE.heroFont),
-      ensureClusterFontLoaded(EDITORIAL_STYLE.bodyFont),
-      ensureClusterFontLoaded(EDITORIAL_STYLE.accentFont),
+      ensureClusterFontLoaded(heroFont),
+      ensureClusterFontLoaded(bodyFont),
+      ensureClusterFontLoaded(accentFont),
     ]).then(() => {
       if (!cancelled) setFontTick((t) => t + 1);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [heroFont, bodyFont, accentFont]);
 
   // Compute the settled cluster blocks at 1080×1920 canvas scale. revealWindowS=0
   // → all blocks are at the settled hold (no stagger) — the look for ~95% of the
@@ -97,9 +112,14 @@ export function ClusterTextPreview({
   const blocks = useMemo(() => {
     if (!text) return null;
     const measure = makeCanvasClusterMeasure();
-    return computeClusterBlocks(text, measure, { baseSizePx, revealWindowS: 0 });
+    return computeClusterBlocks(text, measure, {
+      baseSizePx,
+      revealWindowS: 0,
+      fontOverrides: { heroFont, bodyFont, accentFont },
+      sizeOverrides,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, baseSizePx, fontTick]);
+  }, [text, baseSizePx, heroFont, bodyFont, accentFont, sizeOverrides, fontTick]);
 
   // Sync external text into the contentEditable node ONLY when not focused —
   // rewriting children under an active caret would reset it on every keystroke.
