@@ -72,19 +72,20 @@ class TestFontRegistryFile:
             )
 
     def test_expected_font_count(self):
-        """Registry has 40 active + 8 soft-deprecated fonts.
+        """Registry has 44 active + 8 soft-deprecated fonts.
 
         Note: Outfit was previously deprecated (PR pre-gradient); PR #487 activated
         it as the OFL substitute for ZT Bros Oskon 90s, so the deprecated count is
         now 8 (not 9). Active count grew by 6 (Great Vibes, Satisfy, Patrick Hand,
         EB Garamond, Outfit, Plus Jakarta Sans), then by 1 more when
         Playfair Display Italic was added for accent_parity italic alternation
-        in phrase sequences.
+        in phrase sequences, then by 4 more (Rascal, Big Curls, ZT Bros Oskon 90s,
+        Alte Haas Grotesk — all 100% Free dafont fonts).
         """
         fonts = _FONT_REGISTRY.get("fonts", {})
-        assert len(fonts) == 48
+        assert len(fonts) == 52
         assert sum(1 for entry in fonts.values() if entry.get("deprecated") is True) == 8
-        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 40
+        assert sum(1 for entry in fonts.values() if entry.get("deprecated") is not True) == 44
 
     def test_expected_styles(self):
         """All 5 font styles should have defaults."""
@@ -192,6 +193,11 @@ class TestFontRegistryFile:
         fonts = _FONT_REGISTRY.get("fonts", {})
         for font_name, entry in fonts.items():
             if entry.get("deprecated") is True:
+                continue
+            # Fonts flagged limited_charset are decorative/display faces that
+            # intentionally lack some extended Latin glyphs. They should only
+            # be used for ASCII text; Skia will render tofu for missing chars.
+            if entry.get("limited_charset") is True:
                 continue
             path = os.path.join(FONTS_DIR, entry["file"])
             cmap = ttlib.TTFont(path).getBestCmap()
