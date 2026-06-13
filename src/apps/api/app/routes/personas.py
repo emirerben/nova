@@ -45,6 +45,20 @@ class QuestionnaireBody(BaseModel):
     tiktok_handle: str = ""
 
 
+class IdeaSeed(BaseModel):
+    """One user-owned content idea seed.
+
+    id is server-stamped (uuid4 hex) on creation so PlanItem.source_idea_seed_id
+    can reference it without a FK. Status defaults to "pending"; only T5 (provenance
+    population) flips it to "in_plan".
+    """
+
+    id: str = ""  # filled by the server if empty/absent
+    text: str
+    pillar: str | None = None
+    status: str = "pending"  # "pending" | "in_plan"
+
+
 class PersonaEdit(BaseModel):
     """Partial edit — only provided fields are written."""
 
@@ -58,6 +72,11 @@ class PersonaEdit(BaseModel):
     # out-of-range (ge/le). Omit to leave the existing value unchanged.
     posts_per_week: int | None = Field(default=None, ge=1, le=7)
     sample_topics: list[str] | None = None
+    # Bring-Your-Own-Ideas (M1): user intent seeds persisted at persona scope.
+    # When provided, replaces the full list (wholesale, same semantics as
+    # content_pillars). Omit to leave the existing seeds unchanged. Seeds with
+    # no id get server-stamped; text + pillar are sanitized before storage.
+    idea_seeds: list[IdeaSeed] | None = None
 
 
 class PersonaResponse(BaseModel):
@@ -68,6 +87,7 @@ class PersonaResponse(BaseModel):
     error_detail: str | None
     tiktok_profile: dict | None = None
     generation_started_at: datetime | None = None
+    idea_seeds: list[dict] = []
 
     @classmethod
     def of(cls, row: PersonaRow) -> PersonaResponse:
@@ -79,6 +99,7 @@ class PersonaResponse(BaseModel):
             error_detail=row.error_detail,
             tiktok_profile=row.tiktok_profile,
             generation_started_at=row.generation_started_at,
+            idea_seeds=list(row.idea_seeds or []),
         )
 
 
@@ -255,6 +276,28 @@ async def edit_persona(
     # text (it later threads into downstream agent prompts).
     persona = dict(row.persona or {})
     updates = edit.model_dump(exclude_none=True)
+
+    # idea_seeds lives on the top-level row column, not inside the persona JSONB —
+    # handle it before the main merge loop and pop it so it doesn't bleed in.
+    if "idea_seeds" in updates:
+        raw_seeds: list[dict] = updates.pop("idea_seeds")
+        _VALID_STATUSES = {"pending", "in_plan"}
+        stamped: list[dict] = []
+        for s in raw_seeds:
+            seed_id = str(s.get("id") or "").strip() or uuid.uuid4().hex
+            seed_text = _sanitize_text(str(s.get("text") or ""))
+            if not seed_text:
+                continue  # drop blank seeds
+            seed_pillar_raw = s.get("pillar")
+            seed_pillar = _sanitize_text(str(seed_pillar_raw)) if seed_pillar_raw else None
+            seed_status = s.get("status", "pending")
+            if seed_status not in _VALID_STATUSES:
+                seed_status = "pending"
+            stamped.append(
+                {"id": seed_id, "text": seed_text, "pillar": seed_pillar, "status": seed_status}
+            )
+        row.idea_seeds = stamped
+
     for key, value in updates.items():
         if isinstance(value, list):
             persona[key] = [v for v in (_sanitize_text(str(x)) for x in value) if v]
