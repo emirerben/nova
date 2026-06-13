@@ -3,6 +3,7 @@
 Mocks `sync_session` (DB) and `celery_app.control.inspect()` (broker)
 so the suite runs without Postgres/Redis.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -39,6 +40,7 @@ def _patch_sync_session(rowcount: int = 0, reaped_rows: list | None = None):
     """
     if reaped_rows is None:
         import uuid as _uuid
+
         reaped_rows = [(_uuid.uuid4(), None) for _ in range(rowcount)]
 
     session = MagicMock()
@@ -66,19 +68,24 @@ def _patch_sync_session(rowcount: int = 0, reaped_rows: list | None = None):
 class TestLiveJobIds:
     def test_returns_empty_set_when_no_active_or_reserved(self):
         from app.tasks.reaper import _live_job_ids
+
         app = _make_celery_with_inspect(active={}, reserved={})
         assert _live_job_ids(app) == set()
 
     def test_collects_first_arg_of_each_active_task(self):
         from app.tasks.reaper import _live_job_ids
-        app = _make_celery_with_inspect(active={
-            "celery@worker1": [{"args": ["job-aaa"]}, {"args": ["job-bbb"]}],
-            "celery@worker2": [{"args": ["job-ccc"]}],
-        })
+
+        app = _make_celery_with_inspect(
+            active={
+                "celery@worker1": [{"args": ["job-aaa"]}, {"args": ["job-bbb"]}],
+                "celery@worker2": [{"args": ["job-ccc"]}],
+            }
+        )
         assert _live_job_ids(app) == {"job-aaa", "job-bbb", "job-ccc"}
 
     def test_includes_reserved_tasks(self):
         from app.tasks.reaper import _live_job_ids
+
         app = _make_celery_with_inspect(
             active={"w1": [{"args": ["a"]}]},
             reserved={"w1": [{"args": ["b"]}]},
@@ -87,20 +94,25 @@ class TestLiveJobIds:
 
     def test_skips_tasks_with_no_args(self):
         from app.tasks.reaper import _live_job_ids
-        app = _make_celery_with_inspect(active={
-            "w1": [{"args": []}, {"args": ["only-this"]}, {}],
-        })
+
+        app = _make_celery_with_inspect(
+            active={
+                "w1": [{"args": []}, {"args": ["only-this"]}, {}],
+            }
+        )
         assert _live_job_ids(app) == {"only-this"}
 
     def test_returns_none_on_inspect_failure(self):
         """Broker hiccup → None signals 'unknown — don't reap'."""
         from app.tasks.reaper import _live_job_ids
+
         app = _make_celery_with_inspect(raises=ConnectionError("redis down"))
         assert _live_job_ids(app) is None
 
     def test_active_returning_none_treated_as_empty(self):
         """celery_app.control.inspect().active() returns None when no workers report."""
         from app.tasks.reaper import _live_job_ids
+
         app = MagicMock()
         inspector = MagicMock()
         inspector.active.return_value = None
@@ -113,6 +125,7 @@ class TestReapOrphans:
     def test_no_op_when_inspect_fails(self):
         """Inspection failure → no reap (safer to skip than false-positive)."""
         from app.tasks.reaper import reap_orphans
+
         app = _make_celery_with_inspect(raises=ConnectionError("redis down"))
         # sync_session should NOT even be called
         with patch("app.tasks.reaper.sync_session") as mock_session:
@@ -122,6 +135,7 @@ class TestReapOrphans:
     def test_returns_rowcount_from_db(self):
         """Happy path: inspect returns nothing live, DB reaps 5 rows."""
         from app.tasks.reaper import reap_orphans
+
         app = _make_celery_with_inspect(active={}, reserved={})
         patch_ctx, session = _patch_sync_session(rowcount=5)
         with patch_ctx:
@@ -132,6 +146,7 @@ class TestReapOrphans:
 
     def test_zero_rowcount_returns_zero(self):
         from app.tasks.reaper import reap_orphans
+
         app = _make_celery_with_inspect(active={}, reserved={})
         patch_ctx, _ = _patch_sync_session(rowcount=0)
         with patch_ctx:
@@ -142,10 +157,13 @@ class TestReapOrphans:
         import uuid as _uuid
 
         from app.tasks.reaper import reap_orphans
+
         live_uuid = str(_uuid.uuid4())
-        app = _make_celery_with_inspect(active={
-            "w1": [{"args": [live_uuid]}],
-        })
+        app = _make_celery_with_inspect(
+            active={
+                "w1": [{"args": [live_uuid]}],
+            }
+        )
         patch_ctx, session = _patch_sync_session(rowcount=2)
         with patch_ctx:
             reap_orphans(app)
@@ -163,6 +181,7 @@ class TestReapOrphans:
     def test_no_not_in_clause_when_live_set_empty(self):
         """Empty live set → SQL must NOT contain `NOT IN ()` (empty IN is invalid)."""
         from app.tasks.reaper import reap_orphans
+
         app = _make_celery_with_inspect(active={}, reserved={})
         patch_ctx, session = _patch_sync_session(rowcount=3)
         with patch_ctx:
@@ -179,6 +198,7 @@ class TestReapOrphans:
     def test_threshold_min_controls_cutoff(self):
         """Verify threshold_min flows into the updated_at< comparison."""
         from app.tasks.reaper import reap_orphans
+
         app = _make_celery_with_inspect(active={}, reserved={})
         patch_ctx, session = _patch_sync_session(rowcount=0)
         with patch_ctx:
@@ -191,6 +211,7 @@ class TestReapOrphans:
     def test_writes_processing_failed_with_unknown_failure_reason(self):
         """The reaped row gets the right marker fields."""
         from app.tasks.reaper import reap_orphans
+
         app = _make_celery_with_inspect(active={}, reserved={})
         patch_ctx, session = _patch_sync_session(rowcount=1)
         with patch_ctx:
@@ -211,44 +232,49 @@ class TestThresholdConstant:
         """Threshold (min) must be ≥ 2× orchestrate_template_job hard time_limit
         (1800s = 30min) so a legitimately slow finisher always wins the race."""
         from app.tasks.reaper import THRESHOLD_MIN
+
         assert THRESHOLD_MIN >= 60, (
             f"THRESHOLD_MIN={THRESHOLD_MIN} too low — must be 2× the multi-clip "
             f"hard time_limit (1800s/60min) to avoid reaping legit slow jobs."
         )
 
 
-@pytest.mark.parametrize("status,should_reap", [
-    ("processing", True),
-    # Worker-owned mid-pipeline statuses the newer (music/generative)
-    # orchestrators flip to once a task is actively executing. A SIGKILL
-    # mid-flight strands them exactly like `processing` — they must reap.
-    # (prod job 5ae0142f stuck "rendering" forever before this was added.)
-    ("matching", True),
-    ("rendering", True),
-    ("posting", True),
-    # template_ready is the SUCCESS terminal state for template jobs —
-    # set at the finalize step after assemble + audio mix + upload. The
-    # reaper must NOT touch it; doing so would flip every completed job
-    # to processing_failed after the 60-minute threshold (prod regression
-    # observed on job e3804f62).
-    ("template_ready", False),
-    ("music_ready", False),
-    ("variants_ready", False),
-    ("variants_ready_partial", False),
-    ("variants_failed", False),
-    ("clips_ready", False),
-    ("clips_ready_partial", False),
-    ("completed", False),
-    ("cancelled", False),
-    ("processing_failed", False),
-    # queued is deliberately NOT reapable: a job still in the broker queue
-    # (not yet prefetched) is invisible to inspect(), so reaping it would
-    # false-positive legit work waiting behind a deep backlog.
-    ("queued", False),
-])
+@pytest.mark.parametrize(
+    "status,should_reap",
+    [
+        ("processing", True),
+        # Worker-owned mid-pipeline statuses the newer (music/generative)
+        # orchestrators flip to once a task is actively executing. A SIGKILL
+        # mid-flight strands them exactly like `processing` — they must reap.
+        # (prod job 5ae0142f stuck "rendering" forever before this was added.)
+        ("matching", True),
+        ("rendering", True),
+        ("posting", True),
+        # template_ready is the SUCCESS terminal state for template jobs —
+        # set at the finalize step after assemble + audio mix + upload. The
+        # reaper must NOT touch it; doing so would flip every completed job
+        # to processing_failed after the 60-minute threshold (prod regression
+        # observed on job e3804f62).
+        ("template_ready", False),
+        ("music_ready", False),
+        ("variants_ready", False),
+        ("variants_ready_partial", False),
+        ("variants_failed", False),
+        ("clips_ready", False),
+        ("clips_ready_partial", False),
+        ("completed", False),
+        ("cancelled", False),
+        ("processing_failed", False),
+        # queued is deliberately NOT reapable: a job still in the broker queue
+        # (not yet prefetched) is invisible to inspect(), so reaping it would
+        # false-positive legit work waiting behind a deep backlog.
+        ("queued", False),
+    ],
+)
 def test_non_terminal_statuses_constant_includes_correct_set(status, should_reap):
     """Sanity-pin the status filter so a future schema change is caught."""
     from app.tasks.reaper import _NON_TERMINAL_STATUSES
+
     assert (status in _NON_TERMINAL_STATUSES) is should_reap
 
 
@@ -266,6 +292,7 @@ def test_template_ready_jobs_are_not_reaped():
     This test pins the invariant.
     """
     from app.tasks.reaper import _NON_TERMINAL_STATUSES
+
     assert "template_ready" not in _NON_TERMINAL_STATUSES, (
         "template_ready is the success terminal state — reaping it flips "
         "every completed template job to processing_failed after 60 minutes."
@@ -289,6 +316,7 @@ def test_rendering_jobs_are_reaped():
     it. This test pins the fix.
     """
     from app.tasks.reaper import _NON_TERMINAL_STATUSES
+
     for status in ("rendering", "matching", "posting"):
         assert status in _NON_TERMINAL_STATUSES, (
             f"{status} is a worker-owned non-terminal status — a job killed "
@@ -304,6 +332,7 @@ def test_reaper_sweeps_a_stale_rendering_job():
     clause from a different source than `_NON_TERMINAL_STATUSES`).
     """
     from app.tasks.reaper import reap_orphans
+
     app = _make_celery_with_inspect(active={}, reserved={})
     patch_ctx, session = _patch_sync_session(rowcount=1)
     with patch_ctx:
@@ -312,9 +341,9 @@ def test_reaper_sweeps_a_stale_rendering_job():
     # The status IN(...) binds as a single expanding-list param, so look for
     # `rendering` as a member of any bound param value (not a standalone key).
     bound = stmt.compile().params.values()
-    assert any(
-        "rendering" in v for v in bound if isinstance(v, (list, tuple))
-    ), "rendering must appear in the status-IN filter"
+    assert any("rendering" in v for v in bound if isinstance(v, (list, tuple))), (
+        "rendering must appear in the status-IN filter"
+    )
 
 
 def test_reaper_reconciles_frozen_rendering_variants():
@@ -377,6 +406,7 @@ def test_reaper_reconciles_frozen_rendering_variants():
 def test_reaper_no_variant_reconciliation_when_no_rows():
     """When the reaper reaped zero rows, no variant reconciliation runs."""
     from app.tasks.reaper import reap_orphans
+
     app = _make_celery_with_inspect(active={}, reserved={})
     patch_ctx, session = _patch_sync_session(rowcount=0)
     with patch_ctx:
@@ -401,6 +431,107 @@ def test_reaper_no_variant_reconciliation_when_assembly_plan_is_none():
 
     assert count == 1
     # Only the RETURNING UPDATE — no extra variant UPDATE when assembly_plan is None.
-    assert session.execute.call_count == 1, (
-        "No variant UPDATE expected when assembly_plan is None"
-    )
+    assert session.execute.call_count == 1, "No variant UPDATE expected when assembly_plan is None"
+
+
+# ---------------------------------------------------------------------------
+# reconcile_stuck_variants (W6 — frozen-spinner watchdog)
+# ---------------------------------------------------------------------------
+
+
+def _patch_sync_session_for_reconcile(candidate_rows):
+    """sync_session whose first execute() (the SELECT) yields candidate_rows
+    and whose subsequent execute()s (per-job UPDATE) are absorbed."""
+    session = MagicMock()
+    select_result = MagicMock()
+    select_result.fetchall.return_value = candidate_rows
+    session.execute.side_effect = [select_result] + [MagicMock()] * 50
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+    return patch("app.tasks.reaper.sync_session", return_value=ctx), session
+
+
+class TestFinalizeStuckVariant:
+    def test_stuck_with_video_becomes_ready(self):
+        from app.tasks.reaper import _finalize_stuck_variant
+
+        out = _finalize_stuck_variant(
+            {"variant_id": "song_text", "render_status": "rendering", "video_path": "g/x.mp4"}
+        )
+        assert out["render_status"] == "ready"
+        assert out["ok"] is True
+
+    def test_stuck_without_video_becomes_failed(self):
+        from app.tasks.reaper import _finalize_stuck_variant
+
+        out = _finalize_stuck_variant({"variant_id": "song_lyrics", "render_status": "pending"})
+        assert out["render_status"] == "failed"
+        assert out["ok"] is False
+        assert out["error"]
+
+    def test_terminal_variant_unchanged(self):
+        from app.tasks.reaper import _finalize_stuck_variant
+
+        v = {"variant_id": "x", "render_status": "ready"}
+        assert _finalize_stuck_variant(v) is v
+
+
+class TestReconcileStuckVariants:
+    def test_no_op_when_inspect_fails(self):
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        app = _make_celery_with_inspect(raises=ConnectionError("redis down"))
+        with patch("app.tasks.reaper.sync_session") as mock_session:
+            assert reconcile_stuck_variants(app) == 0
+            mock_session.assert_not_called()
+
+    def test_flips_stuck_variant_and_commits(self):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        app = _make_celery_with_inspect(active={}, reserved={})
+        plan = {
+            "variants": [
+                {"variant_id": "song_text", "render_status": "rendering", "video_path": "g/x.mp4"},
+                {"variant_id": "original_text", "render_status": "ready"},
+            ]
+        }
+        patch_ctx, session = _patch_sync_session_for_reconcile([(_uuid.uuid4(), plan)])
+        with patch_ctx:
+            assert reconcile_stuck_variants(app) == 1
+        # one SELECT + one UPDATE
+        assert session.execute.call_count == 2
+        session.commit.assert_called_once()
+
+    def test_skips_live_re_render(self):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        jid = _uuid.uuid4()
+        app = _make_celery_with_inspect(active={"w1": [{"args": [str(jid)]}]})
+        plan = {"variants": [{"variant_id": "x", "render_status": "rendering"}]}
+        patch_ctx, session = _patch_sync_session_for_reconcile([(jid, plan)])
+        with patch_ctx:
+            assert reconcile_stuck_variants(app) == 0
+        # SELECT only — the live job is skipped, no UPDATE
+        assert session.execute.call_count == 1
+
+    def test_no_update_when_all_variants_terminal(self):
+        import uuid as _uuid
+
+        from app.tasks.reaper import reconcile_stuck_variants
+
+        app = _make_celery_with_inspect(active={}, reserved={})
+        plan = {
+            "variants": [
+                {"variant_id": "x", "render_status": "ready"},
+                {"variant_id": "y", "render_status": "failed"},
+            ]
+        }
+        patch_ctx, session = _patch_sync_session_for_reconcile([(_uuid.uuid4(), plan)])
+        with patch_ctx:
+            assert reconcile_stuck_variants(app) == 0
+        assert session.execute.call_count == 1  # SELECT only

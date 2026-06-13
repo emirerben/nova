@@ -262,6 +262,24 @@ class Settings(BaseSettings):
         "nova-video` + `fly machine restart <id>` — no deploy needed.",
     )
 
+    GENERATIVE_PARALLEL_VARIANTS_ENABLED: bool = Field(
+        default=False,
+        description="Render a generative job's variants concurrently (bounded by "
+        "GENERATIVE_PARALLEL_VARIANTS_MAX) instead of one-at-a-time. ONLY safe on "
+        "a dedicated-CPU worker — on shared CPUs concurrent FFmpeg encodes starve "
+        "each other (the concurrency=2 incident, job d018d1c3, ballooned a 14s "
+        "encode to >600s). Default off; flip on after the worker is on a "
+        "performance VM. Kill switch: "
+        "`fly secrets set GENERATIVE_PARALLEL_VARIANTS_ENABLED=false` + restart.",
+    )
+
+    GENERATIVE_PARALLEL_VARIANTS_MAX: int = Field(
+        default=2,
+        description="Max variants rendered concurrently when "
+        "GENERATIVE_PARALLEL_VARIANTS_ENABLED is on. Keep ≤ the worker's "
+        "dedicated vCPU count so each concurrent FFmpeg encode gets a real core.",
+    )
+
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
     # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows

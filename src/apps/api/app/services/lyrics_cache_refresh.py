@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import time
 from datetime import UTC, datetime
 
 import structlog
@@ -28,6 +29,18 @@ from app.models import MusicTrack
 from app.storage import download_to_file
 
 log = structlog.get_logger()
+
+# LRCLIB (the published-lyrics provider) occasionally returns a transient
+# transport error mid-refresh. A short retry almost always recovers, which is
+# what was failing the `song_lyrics` variant in prod after the 2026-06-06
+# prompt bump made the whole library's cache stale at once.
+_LRCLIB_REFRESH_ATTEMPTS = 3
+_LRCLIB_REFRESH_BACKOFF_S = (1.0, 3.0)
+
+
+def _sleep(seconds: float) -> None:
+    """Backoff indirection so tests can patch out the real sleep."""
+    time.sleep(seconds)
 
 
 class LyricsCacheRefreshError(RuntimeError):
@@ -61,6 +74,12 @@ def ensure_fresh_lyrics_cached_for_render(
     lyrics are enabled and the cache is stale, the function synchronously
     re-runs lyric extraction, persists the fresh publishable result, and returns
     it. Failure raises so the caller cannot silently burn stale timings.
+
+    The synchronous refresh is a fallback. The offline `backfill_stale_lyrics`
+    task (run after any LyricsExtractionAgent prompt bump) is what should keep
+    the library fresh so renders never pay this download+ASR+LRCLIB tax. When the
+    refresh does run inline, transient LRCLIB hiccups are retried before the
+    variant is allowed to fail.
     """
 
     cfg = lyrics_config or {}
@@ -68,13 +87,32 @@ def ensure_fresh_lyrics_cached_for_render(
         return lyrics_cached
     if not lyrics_cache_is_stale(lyrics_cached):
         return lyrics_cached
+
+    old_version = lyrics_cached.get("prompt_version") if isinstance(lyrics_cached, dict) else None
+    return refresh_track_lyrics_cache(track_id=track_id, reason=reason, old_version=old_version)
+
+
+def refresh_track_lyrics_cache(
+    *,
+    track_id: str,
+    reason: str,
+    old_version: str | None = None,
+) -> dict:
+    """Regenerate `MusicTrack.lyrics_cached` at the live prompt version, now.
+
+    Unconditional: the caller decides *whether* a refresh is needed (the
+    render-time guard above gates on enabled+stale; the offline backfill gates
+    on staleness). Downloads the track audio, re-runs the LyricsExtractionAgent
+    (retrying transient LRCLIB failures), persists the fresh publishable result,
+    and returns it. Raises `TransientLyricsCacheRefreshError` (retryable) or
+    `LyricsCacheRefreshError` (terminal) on failure.
+    """
     if not settings.openai_api_key:
         raise LyricsCacheRefreshError(
             "lyrics_cached is stale and OPENAI_API_KEY is missing; refusing stale lyric render"
         )
 
     target_version = current_lyrics_prompt_version()
-    old_version = lyrics_cached.get("prompt_version") if isinstance(lyrics_cached, dict) else None
     log.warning(
         "lyrics_cache_stale_refresh_start",
         track_id=track_id,
@@ -99,7 +137,7 @@ def ensure_fresh_lyrics_cached_for_render(
     with tempfile.TemporaryDirectory(prefix="nova_lyrics_render_refresh_") as tmpdir:
         local_audio = os.path.join(tmpdir, "audio.m4a")
         download_to_file(audio_gcs_path, local_audio)
-        output = LyricsExtractionAgent(model_client=None).run(  # type: ignore[arg-type]
+        output = _extract_lyrics_with_lrclib_retry(
             LyricsInput(
                 audio_path=local_audio,
                 track_title=title,
@@ -109,7 +147,8 @@ def ensure_fresh_lyrics_cached_for_render(
                 duration_s=duration_s,
                 forced_lrclib_id=forced_lrclib_id,
             ),
-            ctx=RunContext(job_id=f"track:{track_id}:render-refresh"),
+            track_id=track_id,
+            reason=reason,
         )
 
     if output.is_empty or output.source not in PUBLISHABLE_LYRICS_SOURCES:
@@ -157,6 +196,44 @@ def ensure_fresh_lyrics_cached_for_render(
         lines=len(output.lines),
     )
     return fresh
+
+
+def _extract_lyrics_with_lrclib_retry(
+    lyrics_input: LyricsInput,
+    *,
+    track_id: str,
+    reason: str,
+) -> LyricsOutput:
+    """Run lyric extraction, retrying ONLY transient LRCLIB transport failures.
+
+    A clean "no synced lyrics exist" result is terminal and must NOT be retried;
+    only the LRCLIB-error case (network/timeout) gets another attempt. The audio
+    is already local, so each retry re-hits the network, not GCS.
+    """
+    last: LyricsOutput | None = None
+    for attempt in range(1, _LRCLIB_REFRESH_ATTEMPTS + 1):
+        output = LyricsExtractionAgent(model_client=None).run(  # type: ignore[arg-type]
+            lyrics_input,
+            ctx=RunContext(job_id=f"track:{track_id}:render-refresh"),
+        )
+        last = output
+        publishable = not output.is_empty and output.source in PUBLISHABLE_LYRICS_SOURCES
+        if publishable or not _non_publishable_due_to_lrclib_error(output):
+            return output
+        if attempt < _LRCLIB_REFRESH_ATTEMPTS:
+            idx = min(attempt - 1, len(_LRCLIB_REFRESH_BACKOFF_S) - 1)
+            backoff = _LRCLIB_REFRESH_BACKOFF_S[idx]
+            log.warning(
+                "lyrics_cache_refresh_lrclib_retry",
+                track_id=track_id,
+                reason=reason,
+                attempt=attempt,
+                max_attempts=_LRCLIB_REFRESH_ATTEMPTS,
+                backoff_s=backoff,
+            )
+            _sleep(backoff)
+    assert last is not None  # loop body runs at least once
+    return last
 
 
 def _non_publishable_due_to_lrclib_error(output: LyricsOutput) -> bool:

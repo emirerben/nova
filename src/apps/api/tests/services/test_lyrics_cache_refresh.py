@@ -207,6 +207,8 @@ def test_ensure_fresh_preserves_cache_when_refresh_hits_lrclib_error(
     monkeypatch.setattr(lyrics_cache_refresh, "LyricsExtractionAgent", FakeAgent)
     monkeypatch.setattr(lyrics_cache_refresh, "download_to_file", lambda _gcs, _local: None)
 
+    monkeypatch.setattr(lyrics_cache_refresh, "_sleep", lambda *_a, **_k: None)
+
     with pytest.raises(TransientLyricsCacheRefreshError, match="LRCLIB lookup failed"):
         ensure_fresh_lyrics_cached_for_render(
             track_id="t1",
@@ -300,3 +302,98 @@ def test_ensure_fresh_refuses_to_render_stale_cache_when_refresh_is_not_publisha
     }
     assert track.lyrics_source == "whisper_only"
     assert track.lyrics_error_detail == "LRCLIB lookup failed; paste a row ID to recover"
+
+
+def test_refresh_retries_transient_lrclib_error_then_succeeds(monkeypatch) -> None:
+    """A transient LRCLIB failure on the first attempt must be retried, not fatal."""
+    monkeypatch.setattr(lyrics_cache_refresh.settings, "openai_api_key", "key")
+
+    track = SimpleNamespace(
+        id="t1",
+        audio_gcs_path="music/t1.m4a",
+        track_config={},
+        title="Again",
+        artist="Roger Sanchez",
+        duration_s=240.0,
+        lyrics_cached={"prompt_version": "old"},
+        lyrics_status="ready",
+        lyrics_whisper_draft=None,
+        lyrics_source="lrclib_synced+whisper",
+        lyrics_error_detail=None,
+        lyrics_diagnostic=None,
+        lyrics_extracted_at=None,
+    )
+    commits = 0
+
+    class FakeSession:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return None
+
+        def get(self, _model, _track_id):
+            return track
+
+        def commit(self):
+            nonlocal commits
+            commits += 1
+
+    fresh = {
+        "prompt_version": "live",
+        "source": "lrclib_synced+whisper",
+        "lines": [{"text": "I swear to God", "start_s": 231.28, "end_s": 232.32}],
+    }
+
+    class TransientOutput:
+        is_empty = False
+        source = "whisper_only"
+        lines = [object()]
+        lyrics_diagnostic = {
+            "get_status": "error",
+            "search_status": "error",
+            "lrclib_error": "lrclib network error: The read operation timed out",
+        }
+
+        def model_dump(self):
+            return {"prompt_version": "live", "source": "whisper_only", "lines": []}
+
+    class PublishableOutput:
+        is_empty = False
+        source = "lrclib_synced+whisper"
+        lines = [object()]
+        lyrics_diagnostic = {"fallback_path": "ready_synced"}
+
+        def model_dump(self):
+            return fresh
+
+    calls = {"n": 0}
+
+    class FakeAgent:
+        spec = SimpleNamespace(prompt_version="live")
+
+        def __init__(self, model_client):  # noqa: ARG002
+            pass
+
+        def run(self, input, ctx):  # noqa: ARG002
+            calls["n"] += 1
+            return TransientOutput() if calls["n"] == 1 else PublishableOutput()
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(lyrics_cache_refresh, "_sync_session", lambda: FakeSession())
+    monkeypatch.setattr(lyrics_cache_refresh, "LyricsExtractionAgent", FakeAgent)
+    monkeypatch.setattr(lyrics_cache_refresh, "download_to_file", lambda _gcs, _local: None)
+    monkeypatch.setattr(lyrics_cache_refresh, "_sleep", lambda s: sleeps.append(s))
+
+    out = ensure_fresh_lyrics_cached_for_render(
+        track_id="t1",
+        lyrics_cached={"prompt_version": "old", "source": "lrclib_synced+whisper", "lines": []},
+        lyrics_config={"enabled": True},
+        reason="music_job",
+    )
+
+    assert out == fresh
+    assert calls["n"] == 2  # retried once, then succeeded
+    assert len(sleeps) == 1  # one backoff between the two attempts
+    assert track.lyrics_cached == fresh
+    assert commits == 1

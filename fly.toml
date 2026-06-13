@@ -125,14 +125,18 @@ primary_region = "iad"
 
 [[vm]]
   processes = ["worker"]
-  cpu_kind = "shared"
-  # cpus=4 (not 2): Fly hard-caps shared-cpu-2x at memory_mb=4096. The first
-  # attempt to bump to 6144 (v0.4.24.1, PR #185) was accepted by the schema
-  # but rejected at deploy time with "invalid config.guest.memory_mb, cannot
-  # exceed 4096 MiB" — workers stayed on the old image. Moving to
-  # shared-cpu-4x unlocks the 6144 memory ceiling. The extra 2 vCPUs are
-  # incidental (concurrency=1 means a worker still runs one task at a time),
-  # but ffmpeg will use them for parallel filter/encode threads.
+  # 2026-06-13: shared → performance (dedicated vCPUs). Two reasons:
+  #  1. Single-render speed: shared cores are oversubscribed/throttled, so
+  #     every FFmpeg encode + the Skia per-frame PNG render runs slower than the
+  #     vCPU count suggests. Dedicated cores make each render materially faster.
+  #  2. Safe parallel variants (GENERATIVE_PARALLEL_VARIANTS_ENABLED): rendering
+  #     a job's variants concurrently is ONLY a win when each concurrent encode
+  #     gets a real core. On the old shared-cpu VM, concurrency=2 once ballooned
+  #     a 14s encode to >600s (job d018d1c3, post-#103) — pure CPU starvation.
+  #     performance-4x gives 4 dedicated cores so a bounded 2-way parallel render
+  #     doesn't starve. Concurrency stays 1 (one Celery task at a time); the
+  #     parallelism is INSIDE one task across its variants.
+  cpu_kind = "performance"
   cpus = 4
   # 4096MB instead of 2048: the font-identification pipeline (PR2) holds an
   # open-clip ViT-B/32 image-tower singleton resident (~150MB weights + ~250MB
@@ -149,10 +153,14 @@ primary_region = "iad"
   # mode — single-pass.py's dual-output [base]+[vout] split at line 555
   # holds float-pipeline frames for two simultaneous libx264 encoders, and
   # the reframe chain's format=gbrpf32le step is a 6.4× memory expansion
-  # (reframe.py:438). 6144 gives ~2.2GB FFmpeg headroom above the observed
-  # working set; if this recurs the structural fix is dropping
-  # base_output_path on the preview_mode path.
-  memory_mb = 6144
+  # (reframe.py:438). 6144 gave ~2.2GB FFmpeg headroom above the observed
+  # working set.
+  #
+  # 2026-06-13: 6144 → 8192 (performance-4x ceiling). Headroom for a bounded
+  # 2-way parallel-variant render (2 × ~2GB FFmpeg peak + the ~400MB CLIP
+  # singleton). W2's per-overlay + per-variant scratch cleanup keeps the Skia
+  # PNG sequences from piling up, so this is comfortable, not tight.
+  memory_mb = 8192
   kill_timeout = "30m"
   # SIGTERM (not Fly's SIGINT default) is Celery's clean warm-shutdown signal:
   # the worker stops consuming new tasks and lets the in-flight task finish

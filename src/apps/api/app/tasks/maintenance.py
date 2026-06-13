@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 import structlog
 from sqlalchemy import text
 
-from app.tasks.reaper import reap_orphans
+from app.tasks.reaper import reap_orphans, reconcile_stuck_variants
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -48,6 +48,14 @@ def sweep_stale_jobs(self) -> int:
     """
     try:
         count = reap_orphans(celery_app)
+        # Also reconcile variants frozen on already-terminal jobs (dead
+        # single-variant re-renders) — reap_orphans only covers jobs whose
+        # JOB-level status is still non-terminal. Independent try so one
+        # failing doesn't skip the other.
+        try:
+            reconcile_stuck_variants(celery_app)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reconcile_stuck_variants_failed", error=str(exc))
         return count
     except Exception as exc:  # noqa: BLE001
         log.warning("sweep_stale_jobs_failed", error=str(exc))

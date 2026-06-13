@@ -27,6 +27,7 @@ task owns it), so the API needs no new DB column to distinguish text modes.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import datetime
@@ -423,37 +424,27 @@ def _run_generative_job(job_id: str) -> None:
                 filming_guide=filming_guide_candidates,
             )
 
-        def _render_spec_set(
-            specs: list[dict[str, Any]], spine: str | None
-        ) -> list[dict[str, Any]]:
-            """Render every spec, with resume reuse + immediate persist. Lets a
-            talking_head SpineExtractionError propagate so the caller can degrade the
-            WHOLE job to montage; per-variant non-spine errors become failure records
-            inside the render functions."""
-            out: list[dict[str, Any]] = []
-            for rank, spec in enumerate(specs, start=1):
-                variant_id = spec["variant_id"]
-                spec_track_id = spec["track"].id if spec["track"] else None
-                reusable = prior.get(variant_id)
-                if reusable is not None and reusable.get("music_track_id") == spec_track_id:
-                    record_pipeline_event(
-                        "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
-                    )
-                    out.append({**reusable, "rank": rank})
-                    continue
+        def _render_one_spec(rank: int, spec: dict[str, Any], spine: str | None) -> dict[str, Any]:
+            """Render a single (already non-resumable) spec: mark rendering →
+            render → stamp finished → persist → free scratch. A talking_head
+            SpineExtractionError propagates so the caller degrades the whole job
+            to montage; other per-variant errors become failure records inside the
+            render functions. Persists are row-locked (with_for_update), so this is
+            safe to call concurrently across variants."""
+            variant_id = spec["variant_id"]
+            # Per-variant render_started_at timestamp (D6 tile clock).
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {
+                    "render_status": "rendering",
+                    "render_started_at": datetime.utcnow().isoformat() + "Z",
+                },
+            )
 
-                # Per-variant render_started_at timestamp (D6 tile clock).
-                _update_variant_entry(
-                    job_id,
-                    variant_id,
-                    {
-                        "render_status": "rendering",
-                        "render_started_at": datetime.utcnow().isoformat() + "Z",
-                    },
-                )
-
-                variant_dir = os.path.join(tmpdir, f"variant_{rank}")
-                os.makedirs(variant_dir, exist_ok=True)
+            variant_dir = os.path.join(tmpdir, f"variant_{rank}")
+            os.makedirs(variant_dir, exist_ok=True)
+            try:
                 if spec.get("archetype") == "talking_head":
                     result = _render_talking_head_variant(
                         job_id=job_id,
@@ -496,8 +487,77 @@ def _run_generative_job(job_id: str) -> None:
                 # and so the status endpoint reveals variants as they finish rather
                 # than all-at-once at _finalize_job.
                 _upsert_variant_entry(job_id, result)
-                out.append(result)
-            return out
+                return result
+            finally:
+                # Free this variant's scratch (assembled/audio_mixed/final mp4s +
+                # the large Skia PNG sequences) the moment it's done. The output +
+                # fast-reburn base are already uploaded to GCS by here, so nothing
+                # local is still needed. Without this, all variants' scratch
+                # coexisted under the job tmpdir until job end — a prime cause of
+                # the worker /tmp exhaustion ("No space left on device").
+                shutil.rmtree(variant_dir, ignore_errors=True)
+
+        def _render_spec_set(
+            specs: list[dict[str, Any]], spine: str | None
+        ) -> list[dict[str, Any]]:
+            """Render every spec, with resume reuse + immediate persist. Lets a
+            talking_head SpineExtractionError propagate so the caller can degrade the
+            WHOLE job to montage; per-variant non-spine errors become failure records
+            inside the render functions.
+
+            Renders the to-render specs serially by default, or concurrently when
+            GENERATIVE_PARALLEL_VARIANTS_ENABLED is on (bounded by
+            GENERATIVE_PARALLEL_VARIANTS_MAX). Concurrency is ONLY a win on a
+            dedicated-CPU worker — see the flag docs + the fly.toml worker VM note."""
+            results_by_rank: dict[int, dict[str, Any]] = {}
+            to_render: list[tuple[int, dict[str, Any]]] = []
+            for rank, spec in enumerate(specs, start=1):
+                variant_id = spec["variant_id"]
+                spec_track_id = spec["track"].id if spec["track"] else None
+                reusable = prior.get(variant_id)
+                if reusable is not None and reusable.get("music_track_id") == spec_track_id:
+                    record_pipeline_event(
+                        "assembly", "variant_resumed", {"variant_id": variant_id, "rank": rank}
+                    )
+                    results_by_rank[rank] = {**reusable, "rank": rank}
+                    continue
+                to_render.append((rank, spec))
+
+            max_parallel = max(1, int(settings.GENERATIVE_PARALLEL_VARIANTS_MAX))
+            if (
+                settings.GENERATIVE_PARALLEL_VARIANTS_ENABLED
+                and len(to_render) > 1
+                and max_parallel > 1
+            ):
+                from concurrent.futures import (  # noqa: PLC0415
+                    ThreadPoolExecutor,
+                    as_completed,
+                )
+
+                workers = min(max_parallel, len(to_render))
+                log.info(
+                    "generative_variants_parallel",
+                    job_id=job_id,
+                    variant_count=len(to_render),
+                    workers=workers,
+                )
+                pool = ThreadPoolExecutor(max_workers=workers)
+                try:
+                    futs = {
+                        pool.submit(_render_one_spec, rank, spec, spine): rank
+                        for rank, spec in to_render
+                    }
+                    for fut in as_completed(futs):
+                        # A talking_head SpineExtractionError re-raises here and
+                        # propagates so the caller degrades the whole job to montage.
+                        results_by_rank[futs[fut]] = fut.result()
+                finally:
+                    pool.shutdown(wait=True)
+            else:
+                for rank, spec in to_render:
+                    results_by_rank[rank] = _render_one_spec(rank, spec, spine)
+
+            return [results_by_rank[rank] for rank in sorted(results_by_rank)]
 
         # Upfront pending-variant upsert: announce all variant IDs the moment the spec
         # set is known — before any render starts. The frontend sees a stable N-tile grid
@@ -1067,7 +1127,6 @@ def _reburn_text_on_base(
     transcript/scenes are CLEARED (the variant is no longer synced; the route-side
     cluster word gate applies to it again from then on).
     """
-    import shutil  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
 
     from app.pipeline.generative_overlays import (  # noqa: PLC0415

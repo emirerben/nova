@@ -2415,3 +2415,48 @@ def test_sequence_composite_falls_back_when_fewer_than_two_valid_blocks(tmp_work
         sequences = burn_mock.call_args[0][1]
     assert len(sequences) == 1
     assert "skia_overlay_" in sequences[0]["pattern"]
+
+
+def test_burn_frees_png_work_dir_after_encode(tmp_workdir, monkeypatch):
+    """The large PNG frame sequences must be deleted right after the encode so
+    they don't accumulate on the worker's RAM-backed scratch across overlays and
+    variants (the prod /tmp-exhaustion fix)."""
+    seen = {}
+
+    def fake_render(_overlays, _slot_dur, work_dir):
+        os.makedirs(work_dir, exist_ok=True)
+        with open(os.path.join(work_dir, "frame0000.png"), "wb") as f:
+            f.write(b"png-bytes")
+        seen["work_dir"] = work_dir
+        return [
+            {
+                "is_animated": False,
+                "first_frame": os.path.join(work_dir, "frame0000.png"),
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "n_frames": 1,
+            }
+        ]
+
+    def fake_burn(_inp, _seqs, output_path):
+        with open(output_path, "wb") as f:
+            f.write(b"out")
+
+    monkeypatch.setattr(tos, "_render_overlay_sequences", fake_render)
+    monkeypatch.setattr(tos, "_ffmpeg_burn_pngs", fake_burn)
+
+    in_path = os.path.join(tmp_workdir, "in.mp4")
+    out_path = os.path.join(tmp_workdir, "out.mp4")
+    with open(in_path, "wb") as f:
+        f.write(b"in")
+
+    tos.burn_text_overlays_skia(
+        in_path,
+        [{"text": "hi", "start_s": 0.0, "end_s": 1.0}],
+        out_path,
+        tmp_workdir,
+    )
+
+    assert os.path.exists(out_path)
+    assert "work_dir" in seen
+    assert not os.path.exists(seen["work_dir"])  # PNG scratch freed
