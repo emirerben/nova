@@ -66,6 +66,11 @@ export interface GenerativeVariant {
   // re-render. Absent on lyrics/legacy variants → instant editor hidden.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  // User-pinned independent overrides (decoupled from style_set_id).
+  // Null when the user hasn't pinned them; the renderer uses the style-set value.
+  intro_font_family?: string | null;
+  intro_effect?: string | null;
+  intro_text_color?: string | null;
 }
 
 /** Full intro-role look of a style set — drives the instant-edit client preview.
@@ -291,6 +296,12 @@ export interface EditVariantPayload {
   // Post-render layout pick: "cluster" = editorial word-cluster (3-6 word hooks
   // only — the server 422s otherwise), "linear" = classic centered block.
   intro_layout?: "linear" | "cluster";
+  /** Independent font override — registry font name. */
+  font_family?: string;
+  /** Independent animation/effect override. */
+  effect?: string;
+  /** Independent text color override — hex string (#RRGGBB). */
+  text_color?: string;
 }
 
 export async function editVariant(

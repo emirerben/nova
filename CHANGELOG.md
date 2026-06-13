@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.103.0] — 2026-06-13
+
+### Added
+- **Animated preview in the instant text editor.** The WYSIWYG overlay preview now plays the entrance animation once on open and on font/animation change — matching what the downloaded video produces. A ↺ Replay button lets users re-trigger it at any time. A pure-TS mirror of `_draw_with_animation` in `text_overlay_skia.py` (`overlay-animation.ts`) drives the browser preview via `requestAnimationFrame`; constants are verbatim from the Python source and parity-guarded by 52 sample-point unit tests. `prefers-reduced-motion` skips rAF entirely and shows the settled hold state.
+- **Independent Font, Animation, and Color pickers in the instant text editor.** The style-preset chip row has been replaced with three independent controls: a scrollable Font grid (rendered in the actual typefaces), a labeled Animation chip row, and a circular Color swatch row. Font and animation changes auto-play the entrance preview; color swaps are instant with no replay. Both the generative editor and the plan flow inherit the controls via the shared `variant-editor` module. The picked values are sent as `font_family`/`effect`/`text_color` overrides on the `/edit` request, persisted in `variants[i]["intro_font_family/effect/text_color"]`, and survive swap-song / retext re-renders (sticky lifecycle mirrors `size_override_px`).
+- **`slide-down` entrance effect added** to `_ALLOWED_EFFECTS` and exposed as a picker option. Previously built into the renderer but not reachable via any API path.
+
 ## [0.4.102.0] — 2026-06-13
 
 ### Added

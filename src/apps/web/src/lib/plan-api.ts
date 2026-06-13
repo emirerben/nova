@@ -439,6 +439,9 @@ export interface PlanItemVariant {
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
+  intro_font_family?: string | null;
+  intro_effect?: string | null;
+  intro_text_color?: string | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {

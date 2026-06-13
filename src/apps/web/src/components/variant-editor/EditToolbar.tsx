@@ -1,20 +1,30 @@
 "use client";
 
 /**
- * Instant-edit controls for one variant: style chips (rendered in their REAL
- * typeface over the user's CURRENT draft text), a size slider, remove-text
- * toggle, Done/Cancel. Every control mutates the local draft only — ZERO
- * network until "Done" commits the whole session as one /edit request.
+ * Instant-edit controls for one variant: independent Font, Animation, and Color
+ * pickers, a size slider, remove-text toggle, Replay button, Done/Cancel.
+ * Every control mutates the local draft only — ZERO network until "Done"
+ * commits the whole session as one /edit request.
  *
- * Shared by the generative page and (later lane) the plan flow.
+ * Font + Animation + Color are now independent of `style_set_id`; each picker
+ * writes its own draft field (fontFamily / animation / textColor) with
+ * draft-override > variant-persisted > style-set precedence in resolveIntroParams.
+ *
+ * Shared by the generative page and the plan flow.
  */
 
 import { useRef } from "react";
+import {
+  INTRO_ANIMATIONS,
+  INTRO_COLORS,
+  INTRO_FONTS,
+} from "@/lib/overlay-constants";
 import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
   type GenerativeStyleSet,
 } from "@/lib/generative-api";
+import type { IntroOverlayParams } from "@/lib/overlay-layout";
 import StyleChip from "@/components/ui/StyleChip";
 import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 
@@ -22,11 +32,14 @@ export function EditToolbar({
   session,
   styleSets,
   fallbackSizePx,
+  resolvedParams,
 }: {
   session: VariantEditSession;
   styleSets: GenerativeStyleSet[];
   /** Slider position when the draft has no explicit size yet. */
   fallbackSizePx: number | null;
+  /** The resolved IntroOverlayParams for seeding picker display. Optional for back-compat. */
+  resolvedParams?: IntroOverlayParams;
 }) {
   const { draft } = session;
   const sliderPx = draft.sizePx ?? fallbackSizePx ?? 60;
@@ -87,23 +100,110 @@ export function EditToolbar({
       )}
 
       {!draft.removed && (
-        <div>
-          <div className="mb-1 flex items-center justify-between text-xs text-[#71717a]">
-            <label htmlFor="intro-size-slider">Text size</label>
-            <span className="tabular-nums">{sliderPx}px</span>
+        <>
+          {/* Font picker */}
+          <div>
+            <div className="mb-1 text-xs text-[#71717a]">Font</div>
+            <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+              {INTRO_FONTS.map((f) => {
+                const currentFont =
+                  draft.fontFamily ?? resolvedParams?.fontFamily ?? null;
+                const selected = currentFont === f.name;
+                return (
+                  <button
+                    key={f.name}
+                    onClick={() => session.setFont(f.name)}
+                    aria-pressed={selected}
+                    style={{
+                      fontFamily: f.cssFamily,
+                      fontWeight: f.weight,
+                    }}
+                    className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                      selected
+                        ? "border-lime-500 bg-lime-500/10 text-white"
+                        : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500"
+                    }`}
+                  >
+                    {f.name}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <input
-            id="intro-size-slider"
-            type="range"
-            min={INTRO_SIZE_MIN}
-            max={INTRO_SIZE_MAX}
-            step={1}
-            value={sliderPx}
-            aria-label="Intro text size"
-            onChange={(e) => session.setSize(Number(e.target.value))}
-            className="w-full accent-lime-600"
-          />
-        </div>
+
+          {/* Animation picker — linear layout only */}
+          {session.draft.layout !== "cluster" && (
+            <div>
+              <div className="mb-1 text-xs text-[#71717a]">Animation</div>
+              <div className="flex flex-wrap gap-1.5">
+                {INTRO_ANIMATIONS.map((a) => {
+                  const currentAnim =
+                    draft.animation ?? resolvedParams?.effect ?? null;
+                  const selected = currentAnim === a.value;
+                  return (
+                    <button
+                      key={a.value}
+                      onClick={() => session.setAnimation(a.value)}
+                      aria-pressed={selected}
+                      className={`rounded border px-2 py-0.5 text-xs transition-colors ${
+                        selected
+                          ? "border-lime-500 bg-lime-500/10 text-white"
+                          : "border-zinc-700 bg-zinc-800 text-zinc-300 hover:border-zinc-500"
+                      }`}
+                    >
+                      {a.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Color swatch picker */}
+          <div>
+            <div className="mb-1 text-xs text-[#71717a]">Color</div>
+            <div className="flex flex-wrap gap-1.5">
+              {INTRO_COLORS.map((c) => {
+                const currentColor =
+                  draft.textColor ?? resolvedParams?.textColor ?? null;
+                const selected =
+                  currentColor?.toUpperCase() === c.hex.toUpperCase();
+                return (
+                  <button
+                    key={c.hex}
+                    onClick={() => session.setColor(c.hex)}
+                    aria-label={c.label}
+                    title={c.label}
+                    aria-pressed={selected}
+                    style={{ backgroundColor: c.hex }}
+                    className={`h-6 w-6 rounded-full border-2 transition-all ${
+                      selected ? "border-lime-400 scale-110" : "border-zinc-700 hover:border-zinc-400"
+                    }`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Size slider */}
+          <div>
+            <div className="mb-1 flex items-center justify-between text-xs text-[#71717a]">
+              <label htmlFor="intro-size-slider">Text size</label>
+              <span className="tabular-nums">{sliderPx}px</span>
+            </div>
+            <input
+              id="intro-size-slider"
+              type="range"
+              min={INTRO_SIZE_MIN}
+              max={INTRO_SIZE_MAX}
+              step={1}
+              value={sliderPx}
+              aria-label="Intro text size"
+              onChange={(e) => session.setSize(Number(e.target.value))}
+              className="w-full accent-lime-600"
+            />
+          </div>
+        </>
       )}
 
       {session.commitError && (
@@ -120,6 +220,13 @@ export function EditToolbar({
           {draft.removed ? "Add text back" : "Remove text"}
         </button>
         <div className="flex gap-2">
+          <button
+            onClick={session.replay}
+            title="Replay animation"
+            className="rounded border border-zinc-200 px-2 py-1 text-xs text-[#3f3f46] hover:border-zinc-400"
+          >
+            ↺
+          </button>
           <button
             onClick={session.cancel}
             className="rounded border border-zinc-200 px-3 py-1 text-xs text-[#3f3f46] hover:border-zinc-400"

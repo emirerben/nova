@@ -22,6 +22,7 @@ export function IntroTextPreview({
   editable = false,
   onTextChange,
   layout = "linear",
+  playToken,
 }: {
   params: IntroOverlayParams;
   editable?: boolean;
@@ -29,6 +30,8 @@ export function IntroTextPreview({
   /** "cluster" → editorial word-cluster preview (delegates to ClusterTextPreview);
    * "linear" (default) → the single-block hero intro. */
   layout?: "linear" | "cluster" | null;
+  /** Increments to trigger entrance animation replay in the linear preview. */
+  playToken?: number;
 }) {
   if (layout === "cluster") {
     return (
@@ -36,6 +39,11 @@ export function IntroTextPreview({
     );
   }
   return (
-    <LinearIntroTextPreview params={params} editable={editable} onTextChange={onTextChange} />
+    <LinearIntroTextPreview
+      params={params}
+      editable={editable}
+      onTextChange={onTextChange}
+      playToken={playToken}
+    />
   );
 }
