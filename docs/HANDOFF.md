@@ -336,6 +336,13 @@ Job `63e0cc36-f01f-442c-8b89-977ceac38daa`, `GET /admin/jobs/63e0cc36-f01f-442c-
 3. **Turkish-safe pairing (hard requirement).** Script/handwriting faces (Great Vibes, Pacifico, Satisfy) likely lack Turkish diacritics (ı, ş, ğ, ç, ö, ü) → tofu. When the hook language is `tr` (or the connector face fails glyph coverage for the actual text), the engine MUST fall back to a Turkish-safe pairing (serif+serif, e.g. Playfair Display + Instrument Serif). Verify via the font's `cmap`, not by assumption.
 4. **Rendered-output proof.** No new instrumentation — `font_resolved` already records `resolved_typeface.file` per block. Re-render ≥1 cluster-eligible prod job (reuse scenic `dfb9713d` from Slice 2) through `make local-render`; capture the cluster blocks' events + an intro still + montage into "Slice 3a results".
 
+#### Shared contract freeze (PHASE 1, read-only after this point)
+
+- `cluster_pairing` lives only in `src/apps/api/assets/fonts/font-registry.json`.
+- Schema: top-level `"cluster_pairing": { "<hero family>": { "connector": "<family>", "closer": "<family>" } }`.
+- Every referenced family MUST exist in the registry's `"fonts"` object and MUST NOT set `"deprecated": true`.
+- Turkish-safe fallback: for `language == "tr"` OR any actual connector/closer block text whose selected face lacks full cmap coverage, the engine falls back to a cmap-verified bundled serif+serif pairing.
+
 #### Hard acceptance criteria (frozen before work starts)
 
 1. **Pairing logic test** (new, `tests/pipeline/test_intro_cluster.py`): a hero+connector(+closer) cluster gets **≥2 distinct `font_family`** across blocks, **deterministically** from the curated table (same input → same pairing; not random), for ≥2 different hero families.
@@ -371,4 +378,306 @@ Job `63e0cc36-f01f-442c-8b89-977ceac38daa`, `GET /admin/jobs/63e0cc36-f01f-442c-
 
 ## Slice 3a results (raw)
 
-_Builder fills this in after the work block: tables, numbers, test output, the `font_resolved` events showing ≥2 distinct `resolved_typeface.file` across cluster blocks, intro still + montage paths. No interpretation. Paste the PHASE 0 reply verbatim above it._
+# Phase 0 — Slice 3a Plan And Reality Checks
+
+## Plan
+
+1. Create a fresh worktree from `origin/main` with `bash scripts/new-session.sh slice3a-mixed-typeface`; do all edits/tests/ship work there, not in `/Users/emirerben/Projects/nova`.
+2. Phase 1 docs freeze first: update `docs/HANDOFF.md` to freeze the shared contract:
+   - `cluster_pairing` lives only in `src/apps/api/assets/fonts/font-registry.json`.
+   - Schema: top-level `"cluster_pairing": { "<hero family>": { "connector": "<family>", "closer": "<family>" } }`.
+   - All referenced families must exist in `"fonts"` and must not have `"deprecated": true`.
+   - Turkish-safe fallback rule: for `language == "tr"` or any actual block text whose selected connector/closer font lacks full cmap coverage, fall back to cmap-verified serif+serif bundled faces.
+3. Implement only per-block font assignment:
+   - Extend the existing `_connector_font`/`compute_cluster_blocks` flow into deterministic pairing selection.
+   - Thread `language` through existing intro overlay builders only far enough for Turkish fallback.
+   - Do not touch Slice 2 geometry constants or collision logic.
+   - Do not add burn-dict fields, prompt/agent fields, prompt versions, fonts, frontend, migrations, or CI changes.
+4. Add tests:
+   - Pairing logic: at least two distinct block `font_family` values for at least two hero families, deterministic.
+   - Pairing integrity: every table family exists and is active in the registry.
+   - Turkish/cmap safety: selected connector/closer fonts cover actual rendered text codepoints; fallback is coverage-based.
+   - Linear/non-cluster byte-identical regression remains locked.
+5. Run `/autoship` end to end after docs freeze:
+   - Implement, review diff, run gates, create PR, land, deploy.
+   - Required gates: `cd src/apps/api && ruff check . && ruff format --check .`, `cd src/apps/api && pytest`, `make verify-overlays`, plus any `/autoship` ship/deploy checks.
+   - Render proof: reuse scenic prod job `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` through `make local-render`; capture `font_resolved` events showing at least two distinct `resolved_typeface.file` across cluster blocks, plus intro still and montage paths.
+6. After landing/deploy, append to `docs/HANDOFF.md` under `## Slice 3a results (raw)`:
+   - This Phase 0 reply verbatim.
+   - Raw tables, numbers, test output, font events, still paths, montage paths.
+   - No interpretation or verdict language.
+
+## Disagreements
+
+None.
+
+## Reality Checks
+
+- Verified, frozen spec is present on `origin/main` at `docs/HANDOFF.md:323-370`; the raw results section already exists at `docs/HANDOFF.md:372-374`.
+- Verified, cluster blocks are already separate overlay dicts and each block carries `font_family` at `src/apps/api/app/pipeline/generative_overlays.py:242-311`, especially `font_family: block["font_family"]` at `src/apps/api/app/pipeline/generative_overlays.py:281-291`.
+- Verified, existing `_connector_font` is the current localized connector-family hook at `src/apps/api/app/pipeline/intro_cluster.py:364-377`.
+- Verified, `compute_cluster_blocks` currently resolves registry fonts, connector family, `typeface_cache`, and `_typeface` in the existing flow at `src/apps/api/app/pipeline/intro_cluster.py:461-477`; extend this path rather than forking it.
+- Verified, Slice 2 geometry constants are in `src/apps/api/app/pipeline/intro_cluster.py:81-89`; these are `_HERO_STEP_RATIO`, `_CLOSER_STEP_RATIO`, `_BLOCK_GAP_FRAC`, and neighboring placement constants and must stay unchanged.
+- Verified, actual registry home is `src/apps/api/assets/fonts/font-registry.json`; `text_overlay.py` loads it from `FONTS_DIR/font-registry.json` at `src/apps/api/app/pipeline/text_overlay.py:139-158`.
+- Verified, registry entries include `deprecated` flags and active bundled editorial/script families at `src/apps/api/assets/fonts/font-registry.json:19-35`, `src/apps/api/assets/fonts/font-registry.json:79-105`, and `src/apps/api/assets/fonts/font-registry.json:348-367`.
+- Verified, `style_defaults.serif_italic` maps to non-italic `Instrument Serif` at `src/apps/api/assets/fonts/font-registry.json:409-415`.
+- Verified, `font_resolved` already records `resolved_typeface.file` per overlay block at `src/apps/api/app/pipeline/text_overlay_skia.py:317-336`; no new instrumentation is needed.
+- Verified, Turkish language signal exists at the API/agent layer: `IntroWriterInput.language` at `src/apps/api/app/agents/intro_writer.py:67-70`, Turkish prompt instruction at `src/apps/api/app/agents/intro_writer.py:131-156`, `OverlayFormatMatcherInput.language` at `src/apps/api/app/agents/overlay_format_matcher.py:43-48`, Turkish layout hint at `src/apps/api/app/agents/overlay_format_matcher.py:88-103`, and forwarding through `_run_text_agents` at `src/apps/api/app/tasks/generative_build.py:2100-2175`.
+- Verified, `build_persistent_intro_overlays` has existing linear byte-identical protection in `src/apps/api/tests/pipeline/test_generative_overlays.py:482-494`.
+- Verified, existing intro-cluster tests cover determinism, geometry, no-clip/no-overlap, Turkish text as a layout case, and the current connector-regular behavior at `src/apps/api/tests/pipeline/test_intro_cluster.py:98-101`, `src/apps/api/tests/pipeline/test_intro_cluster.py:147-161`, and `src/apps/api/tests/pipeline/test_intro_cluster.py:321-327`.
+- Verified, `make local-render` supports generative proof renders at `Makefile:59-80`; `make verify-overlays` is the current overlay gate at `Makefile:102-111`.
+- Verified, call-graph check: `code_callers` found `compute_cluster_blocks` is called directly by `_build_cluster_intro_overlays`; `_connector_font` is called directly by `compute_cluster_blocks`; `build_persistent_intro_overlays` has broader render/test callers, so language threading must be optional/defaulted to avoid non-cluster regressions. `code_blast` returned `not_found` for these symbols in the current gbrain index, so `code_callers` is the available structural source.
+
+### Worktree
+
+| Field | Value |
+|---|---|
+| Worktree | `/Users/emirerben/Projects/nova-slice3a-mixed-typeface` |
+| Branch | `feat/slice3a-mixed-typeface-2026-06-13` |
+| Base | `origin/main` @ `03d3bda3` |
+| Restore point | `/Users/emirerben/.gstack/projects/nova/feat-slice3a-mixed-typeface-2026-06-13-autoship-restore-20260613-094253.md` |
+
+### Commands
+
+```text
+git diff --check
+```
+
+```text
+<no output>
+```
+
+```text
+/Users/emirerben/Projects/nova/src/apps/api/.venv/bin/python -m pytest tests/pipeline/test_intro_cluster.py tests/pipeline/test_generative_overlays.py tests/tasks/test_generative_build.py -q
+```
+
+```text
+228 passed, 4 warnings in 5.09s
+```
+
+```text
+RUFF_CACHE_DIR=/private/tmp/ruff-cache-slice3a /Users/emirerben/Projects/nova/src/apps/api/.venv/bin/ruff check app/pipeline/intro_cluster.py app/pipeline/generative_overlays.py app/tasks/generative_build.py tests/pipeline/test_intro_cluster.py tests/tasks/test_generative_build.py
+```
+
+```text
+All checks passed!
+```
+
+```text
+RUFF_CACHE_DIR=/private/tmp/ruff-cache-slice3a /Users/emirerben/Projects/nova/src/apps/api/.venv/bin/ruff format --check app/pipeline/intro_cluster.py app/pipeline/generative_overlays.py app/tasks/generative_build.py tests/pipeline/test_intro_cluster.py tests/tasks/test_generative_build.py
+```
+
+```text
+5 files already formatted
+```
+
+```text
+python3 -m json.tool src/apps/api/assets/fonts/font-registry.json
+```
+
+```text
+exit 0
+```
+
+```text
+cd src/apps/api && pytest
+```
+
+```text
+9 failed, 5011 passed, 61 skipped, 177 warnings in 430.28s
+```
+
+```text
+/Users/emirerben/Projects/nova/src/apps/api/.venv/bin/python -m pytest tests/routes/test_admin_extended.py::TestReanalyzeErrorDetail::test_reanalyze_clears_error_detail tests/routes/test_drive_import.py::TestDriveImportValidation::test_valid_request_returns_202 tests/routes/test_drive_import.py::TestDriveImportValidation::test_accepts_application_octet_stream tests/routes/test_drive_import.py::TestDriveImportBatchValidation::test_file_extension_whitelist tests/tasks/test_template_orchestrate.py::TestAnalyzeTemplateTask::test_happy_path_sets_ready_status tests/tasks/test_template_orchestrate.py::TestAnalyzeTemplateTask::test_failure_sets_failed_status tests/tasks/test_template_orchestrate.py::TestAnalyzeTemplateTask::test_audio_only_template_regenerates_recipe_from_music_track tests/tasks/test_template_orchestrate.py::TestAnalyzeTemplateTask::test_audio_only_with_no_beats_marks_ready_without_crash tests/test_waitlist.py::test_signup_rate_limit -q
+```
+
+```text
+9 passed, 5 warnings in 1.60s
+```
+
+```text
+make verify-overlays
+```
+
+```text
+overlay-verify: PASS  (PASS=19 WARN=0 FAIL=0 SKIPPED=0)
+report: /app/.overlay-verify/report.json
+montage: /app/.overlay-verify/montage.png
+```
+
+### Render Proof
+
+| Field | Value |
+|---|---|
+| Prod job reused | `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` |
+| Input clip | `/private/tmp/nova-slice2-evidence/local-render-inputs/dfb9713d-b867-499b-b7f5-d0dc2eec85f5/000_slot.mov` |
+| Initial local job | `4cd79151-5740-4b97-9389-9ade85a68080` |
+| Initial local status | `variants_ready` |
+| Initial local output | `.local-render/4cd79151-5740-4b97-9389-9ade85a68080-original_text.mp4` |
+| Initial local trace | `/private/tmp/slice3a-4cd79151-pipeline_trace-after-cluster-edit.json` |
+| Cluster edit text | `this bridge sunset` |
+| Cluster edit status JSON | `/private/tmp/slice3a-4cd79151-status-after-cluster-edit.json` |
+| Cluster edit trace | `/private/tmp/slice3a-4cd79151-pipeline_trace-after-cluster-edit.json` |
+| Cluster edit output | `/private/tmp/slice3a-4cd79151-original_text-cluster-edit.mp4` |
+| Intro still | `/private/tmp/slice3a-4cd79151-cluster-edit-still-t1.jpg` |
+| Intro montage | `/private/tmp/slice3a-4cd79151-cluster-edit-montage.jpg` |
+| Overlay verify montage | `/Users/emirerben/Projects/nova-slice3a-mixed-typeface/.overlay-verify/montage.png` |
+| Overlay verify report | `/Users/emirerben/Projects/nova-slice3a-mixed-typeface/.overlay-verify/report.json` |
+
+```text
+make local-render MODE=generative CLIPS="/private/tmp/nova-slice2-evidence/local-render-inputs/dfb9713d-b867-499b-b7f5-d0dc2eec85f5/000_slot.mov"
+```
+
+```text
+job_id: 4cd79151-5740-4b97-9389-9ade85a68080
+status=variants_ready
+downloaded original_text -> .local-render/4cd79151-5740-4b97-9389-9ade85a68080-original_text.mp4
+width=1080
+height=1920
+r_frame_rate=30/1
+duration=5.689002
+bit_rate=11848673
+```
+
+```text
+POST /generative-jobs/4cd79151-5740-4b97-9389-9ade85a68080/variants/original_text/edit
+{"text":"this bridge sunset","intro_layout":"cluster"}
+```
+
+```text
+status=variants_ready variant=ready text=this bridge sunset layout=cluster
+```
+
+### Font Events
+
+```json
+[
+  {
+    "stage": "overlay",
+    "event": "intro_layout_selected",
+    "data": {
+      "text": "this bridge sunset",
+      "reason": "agent_pick",
+      "fallback": false,
+      "word_count": 3,
+      "layout_source": "model",
+      "has_word_roles": false,
+      "selected_layout": "cluster",
+      "requested_layout": "cluster"
+    }
+  },
+  {
+    "stage": "overlay",
+    "event": "font_resolved",
+    "data": {
+      "text": "this",
+      "level": "info",
+      "effect": "fade-in",
+      "fallback": false,
+      "overlay_index": 0,
+      "resolved_typeface": {
+        "file": "GreatVibes-Regular.ttf",
+        "name": "Great Vibes",
+        "source": "font_family"
+      },
+      "requested_font_style": "display",
+      "requested_font_family": "Great Vibes"
+    }
+  },
+  {
+    "stage": "overlay",
+    "event": "font_resolved",
+    "data": {
+      "text": "this",
+      "level": "info",
+      "effect": "static",
+      "fallback": false,
+      "overlay_index": 1,
+      "resolved_typeface": {
+        "file": "GreatVibes-Regular.ttf",
+        "name": "Great Vibes",
+        "source": "font_family"
+      },
+      "requested_font_style": "display",
+      "requested_font_family": "Great Vibes"
+    }
+  },
+  {
+    "stage": "overlay",
+    "event": "font_resolved",
+    "data": {
+      "text": "bridge",
+      "level": "info",
+      "effect": "fade-in",
+      "fallback": false,
+      "overlay_index": 2,
+      "resolved_typeface": {
+        "file": "PlayfairDisplay-Bold.ttf",
+        "name": "Playfair Display",
+        "source": "font_family"
+      },
+      "requested_font_style": "display",
+      "requested_font_family": "Playfair Display"
+    }
+  },
+  {
+    "stage": "overlay",
+    "event": "font_resolved",
+    "data": {
+      "text": "bridge",
+      "level": "info",
+      "effect": "static",
+      "fallback": false,
+      "overlay_index": 3,
+      "resolved_typeface": {
+        "file": "PlayfairDisplay-Bold.ttf",
+        "name": "Playfair Display",
+        "source": "font_family"
+      },
+      "requested_font_style": "display",
+      "requested_font_family": "Playfair Display"
+    }
+  },
+  {
+    "stage": "overlay",
+    "event": "font_resolved",
+    "data": {
+      "text": "sunset",
+      "level": "info",
+      "effect": "fade-in",
+      "fallback": false,
+      "overlay_index": 4,
+      "resolved_typeface": {
+        "file": "PlayfairDisplay-Bold.ttf",
+        "name": "Playfair Display",
+        "source": "font_family"
+      },
+      "requested_font_style": "display",
+      "requested_font_family": "Playfair Display"
+    }
+  },
+  {
+    "stage": "overlay",
+    "event": "font_resolved",
+    "data": {
+      "text": "sunset",
+      "level": "info",
+      "effect": "static",
+      "fallback": false,
+      "overlay_index": 5,
+      "resolved_typeface": {
+        "file": "PlayfairDisplay-Bold.ttf",
+        "name": "Playfair Display",
+        "source": "font_family"
+      },
+      "requested_font_style": "display",
+      "requested_font_family": "Playfair Display"
+    }
+  }
+]
+```
+
+```text
+distinct resolved_typeface.file across cluster blocks: 2
+resolved_typeface.file values: GreatVibes-Regular.ttf, PlayfairDisplay-Bold.ttf
+```

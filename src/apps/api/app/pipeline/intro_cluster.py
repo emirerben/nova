@@ -44,6 +44,9 @@ and the caller renders the proven linear intro instead.
 
 from __future__ import annotations
 
+import os
+from functools import lru_cache
+
 import structlog
 
 log = structlog.get_logger()
@@ -236,6 +239,12 @@ _STOPWORDS = {
     "her",
 }
 
+_DEFAULT_HERO_FAMILY = "Playfair Display"
+_TURKISH_SAFE_PAIRING = {
+    ROLE_CONNECTOR: "Playfair Display Regular",
+    ROLE_CLOSER: "Instrument Serif",
+}
+
 
 def _derive_word_roles_with_guarantees(
     words: list[str], highlight_word: str | None = None
@@ -422,20 +431,123 @@ def _role_px(role: str, base_size_px: int, scale: float) -> int:
     return max(_RENDERER_MIN_FONT_PX, int(round(base_size_px * ratio * scale)))
 
 
-def _connector_font(hero_font: str | None, registry_fonts: dict) -> str | None:
-    """Connectors render in the regular weight of the hero face when the registry
-    has one ("Playfair Display" → "Playfair Display Regular") — the small words in
-    the reference are visibly lighter than the heroes. Falls back to the hero face."""
+def _active_font(name: str | None, registry_fonts: dict) -> str | None:
+    if not name:
+        return None
+    entry = registry_fonts.get(name)
+    if entry and entry.get("deprecated") is not True:
+        return name
+    return None
+
+
+def _regular_sibling(hero_font: str | None, registry_fonts: dict) -> str | None:
     if hero_font:
         candidate = f"{hero_font} Regular"
-        if candidate in registry_fonts:
-            return candidate
-        return hero_font
-    # No explicit hero font → renderer falls back to Playfair Display Bold, so the
-    # lighter sibling is the right connector default when bundled.
-    if "Playfair Display Regular" in registry_fonts:
-        return "Playfair Display Regular"
-    return None
+        return _active_font(candidate, registry_fonts) or _active_font(hero_font, registry_fonts)
+    return _active_font("Playfair Display Regular", registry_fonts)
+
+
+@lru_cache(maxsize=128)
+def _font_cmap_covers_text(font_file: str, text: str) -> bool:
+    from fontTools.ttLib import TTFont  # noqa: PLC0415
+
+    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
+
+    path = os.path.join(FONTS_DIR, font_file)
+    font = TTFont(path, lazy=True)
+    try:
+        cmap = font.getBestCmap() or {}
+        return all(ch.isspace() or ord(ch) in cmap for ch in text)
+    finally:
+        font.close()
+
+
+def _font_covers_text(font_family: str | None, text: str, registry_fonts: dict) -> bool:
+    if not font_family or not text:
+        return True
+    entry = registry_fonts.get(font_family)
+    if not entry:
+        return False
+    try:
+        return _font_cmap_covers_text(str(entry["file"]), text)
+    except Exception as exc:  # noqa: BLE001 - coverage check must fail safe
+        log.warning("cluster_font_cmap_check_failed", font_family=font_family, error=str(exc))
+
+    try:
+        from app.pipeline.text_overlay_skia import (  # noqa: PLC0415
+            _typeface_for_overlay,
+            assert_glyphs_present,
+        )
+
+        assert_glyphs_present(_typeface_for_overlay({"font_family": font_family}), text)
+        return True
+    except Exception:
+        return False
+
+
+def _cluster_pairing(
+    hero_font: str | None,
+    registry: dict,
+    blocks: list[dict],
+    *,
+    language: str = "en",
+) -> dict[str, str | None]:
+    registry_fonts = registry.get("fonts", {})
+    pairings = registry.get("cluster_pairing", {})
+    hero_key = _active_font(hero_font, registry_fonts) or _DEFAULT_HERO_FAMILY
+    raw_pairing = pairings.get(hero_key) or pairings.get(_DEFAULT_HERO_FAMILY) or {}
+
+    connector = _active_font(raw_pairing.get("connector"), registry_fonts)
+    closer = _active_font(raw_pairing.get("closer"), registry_fonts)
+    if connector is None:
+        connector = _regular_sibling(hero_font, registry_fonts)
+    if closer is None:
+        closer = _active_font(hero_font, registry_fonts) or connector
+
+    selected = {ROLE_CONNECTOR: connector, ROLE_CLOSER: closer}
+    fallback = {
+        role: _active_font(family, registry_fonts) for role, family in _TURKISH_SAFE_PAIRING.items()
+    }
+    needs_safe_pairing = language == "tr"
+    for block in blocks:
+        if block["role"] not in selected:
+            continue
+        family = selected[block["role"]]
+        if not _font_covers_text(family, block["text"], registry_fonts):
+            needs_safe_pairing = True
+            break
+    if needs_safe_pairing and all(fallback.values()):
+        for block in blocks:
+            if block["role"] not in fallback:
+                continue
+            family = fallback[block["role"]]
+            if not _font_covers_text(family, block["text"], registry_fonts):
+                log.warning(
+                    "cluster_turkish_safe_pairing_missing_glyphs",
+                    font_family=family,
+                    text=block["text"],
+                )
+                return selected
+        return fallback
+    return selected
+
+
+def _connector_font(hero_font: str | None, registry_fonts: dict) -> str | None:
+    """Compatibility wrapper: the full cluster path uses `_cluster_pairing`."""
+    registry = {
+        "fonts": registry_fonts,
+        "cluster_pairing": {
+            _DEFAULT_HERO_FAMILY: {
+                "connector": _regular_sibling(hero_font, registry_fonts),
+                "closer": _active_font(hero_font, registry_fonts),
+            }
+        },
+    }
+    return _cluster_pairing(
+        hero_font,
+        registry,
+        [{"role": ROLE_CONNECTOR, "text": ""}],
+    )[ROLE_CONNECTOR]
 
 
 def normalize_typography(text: str) -> str:
@@ -781,6 +893,7 @@ def compute_cluster_blocks(
     reveal_window_s: float,
     style: dict | None = None,
     accent_parity: int = 0,
+    language: str = "en",
 ) -> list[dict] | None:
     """Compute the word-cluster layout for an intro hook.
 
@@ -878,8 +991,7 @@ def compute_cluster_blocks(
     from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
     from app.pipeline.text_overlay_skia import _typeface_for_overlay  # noqa: PLC0415
 
-    registry_fonts = _FONT_REGISTRY.get("fonts", {})
-    connector_family = _connector_font(font_family, registry_fonts)
+    role_families = _cluster_pairing(font_family, _FONT_REGISTRY, blocks, language=language)
     typeface_cache: dict[str | None, object] = {}
 
     def _typeface(family: str | None):
@@ -890,7 +1002,7 @@ def compute_cluster_blocks(
         return typeface_cache[family]
 
     def _measure(block: dict, scale: float) -> dict:
-        family = connector_family if block["role"] == ROLE_CONNECTOR else font_family
+        family = role_families.get(block["role"], font_family)
         px = _role_px(block["role"], base_size_px, scale)
         font = skia.Font(_typeface(family), px)
         font.setSubpixel(True)

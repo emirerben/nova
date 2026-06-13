@@ -165,8 +165,11 @@ def _patch_render_helpers(monkeypatch):
         reveal_window_s,
         style=None,
         accent_parity=0,
+        language="en",
     ):
-        engine_calls.append({"text": text, "style": style, "base_size_px": base_size_px})
+        engine_calls.append(
+            {"text": text, "style": style, "base_size_px": base_size_px, "language": language}
+        )
         return [
             {
                 "text": text,

@@ -2214,6 +2214,16 @@ class TestResolveIntroOverlayParamsLayout:
         assert params["layout"] == "cluster"
         assert params["layout_source"] == "model"
         assert params["word_roles"] == ["connector", "hero", "hero", "closer"]
+        assert params["language"] == "en"
+
+    def test_language_threads_to_intro_builder_params(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _cluster_agent_text(),
+            {"effect": "fade-in", "layout": "cluster"},
+            None,
+            language="tr",
+        )
+        assert params["language"] == "tr"
 
     def test_layout_defaults_to_linear(self):
         params, _, _ = gb._resolve_intro_overlay_params(

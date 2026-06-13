@@ -459,6 +459,7 @@ def _run_generative_job(job_id: str) -> None:
                         variant_dir=variant_dir,
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
+                        language=language,
                     )
                 else:
                     result = _render_generative_variant(
@@ -477,6 +478,7 @@ def _run_generative_job(job_id: str) -> None:
                         user_style_knobs=user_style_knobs,
                         narrative_order=narrative_order,
                         author_quote_fn=_author_quote,
+                        language=language,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -1112,6 +1114,7 @@ def _reburn_text_on_base(
     size_override_px: int | None,
     settings,
     sequence_allowed: bool = True,
+    language: str = "en",
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -1189,6 +1192,7 @@ def _reburn_text_on_base(
                 agent_form or {"effect": "karaoke-line"},
                 resolved_style_set_id,
                 size_override_px=final_size_px,
+                language=language,
             )
             # Preserve the original source label — size_override_px always wins
             # inside the resolver, which would label it "user"; restore the real
@@ -1237,9 +1241,12 @@ def _reburn_text_on_base(
                 overlays = build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=[],  # even-split reveal; talking-head precedent
-                    # Static cluster restyle while the sequence kill switch is ON;
-                    # OFF = byte-identical legacy (style=None down the stack).
-                    cluster_style=(EDITORIAL_STYLE if editorial_enabled else None),
+                    # Sequence-eligible fallback keeps PR #508's editorial restyle.
+                    # Explicit opt-outs (layout/text edits) use the legacy static
+                    # cluster path so Slice 3a's registry pairing owns the faces.
+                    cluster_style=(
+                        EDITORIAL_STYLE if editorial_enabled and sequence_allowed else None
+                    ),
                     **params,
                 )
                 # EFFECTIVE layout (cluster = 2 overlays per block; linear = one
@@ -1712,6 +1719,7 @@ def _run_regenerate_variant(
                 text_mode=fast_text_mode,
                 resolved_style_set_id=resolved_style_set_id,
                 size_override_px=resolved_size_override_px,
+                language=language,
                 settings=settings,
                 sequence_allowed=allow_sequence,
             )
@@ -1920,6 +1928,7 @@ def _run_regenerate_variant(
             allow_sequence=allow_sequence,
             author_quote_fn=regen_author_quote_fn,
             existing_sequence_quote=persisted_sequence_quote,
+            language=language,
         )
 
     if result.get("ok"):
@@ -2926,6 +2935,7 @@ def _render_generative_variant(
     allow_sequence: bool = True,
     author_quote_fn: Any | None = None,
     existing_sequence_quote: str | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -3109,6 +3119,7 @@ def _render_generative_variant(
                     hero_density=hero_density,
                     size_override_px=intro_size_override_px,
                     user_style_knobs=user_style_knobs,
+                    language=language,
                 )
             )
             base["intro_text_size_px"] = _agent_text_intro_px
@@ -3320,13 +3331,16 @@ def _render_generative_variant(
                     )
 
             def _static_intro_overlays() -> list[dict]:
-                # Static intro (cluster or linear). `cluster_style` selects the
-                # editorial restyle only while the kill switch is ON; OFF is the
-                # byte-identical legacy contract (style=None all the way down).
+                # Static intro (cluster or linear). Sequence-eligible fallback
+                # keeps PR #508's editorial restyle; explicit opt-outs
+                # (layout/text edits) use the legacy static cluster path so
+                # Slice 3a's registry pairing owns the faces.
                 return build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=beats,
-                    cluster_style=(EDITORIAL_STYLE if editorial_enabled else None),
+                    cluster_style=(
+                        EDITORIAL_STYLE if editorial_enabled and allow_sequence else None
+                    ),
                     **_at_params,
                 )
 
@@ -3434,6 +3448,7 @@ def _render_talking_head_variant(
     style_set_id: str | None = None,
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    language: str = "en",
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -3517,6 +3532,7 @@ def _render_talking_head_variant(
                 hero_density=hero_density,
                 size_override_px=intro_size_override_px,
                 user_style_knobs=user_style_knobs,
+                language=language,
             )
             # No song → no beats; the intro reveals on an even split. Slot-0-relative
             # timestamps (from 0) are already absolute on the composite, which is what
@@ -3694,6 +3710,7 @@ def _inject_agent_intro(
     hero_density: float = 5.0,
     size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    language: str = "en",
 ) -> tuple[dict, int | None, str | None]:
     """Inject the hero intro and return (recipe, intro_text_size_px, size_source).
 
@@ -3726,6 +3743,7 @@ def _inject_agent_intro(
         hero_density=hero_density,
         size_override_px=size_override_px,
         user_style_knobs=user_style_knobs,
+        language=language,
     )
     recipe_dict = inject_persistent_intro(
         recipe_dict,
@@ -3746,6 +3764,7 @@ def _resolve_intro_overlay_params(
     hero_density: float = 5.0,
     size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
+    language: str = "en",
 ) -> tuple[dict, int | None, str | None]:
     """Resolve the hero-intro look + size into kwargs for the overlay builders.
 
@@ -3880,6 +3899,7 @@ def _resolve_intro_overlay_params(
     params["layout_source"] = str(agent_form.get("layout_source") or "model")
     params["layout_reason"] = layout_reason
     params["word_roles"] = getattr(agent_text, "word_roles", None)
+    params["language"] = language
     return params, intro_px, intro_source
 
 
