@@ -63,5 +63,9 @@ export function resolveIntroParams(
     strokeWidth: intro?.stroke_width ?? null,
     clusterHeroFont: draft.clusterHeroFont ?? variant.intro_cluster_hero_font ?? null,
     clusterBodyFont: draft.clusterBodyFont ?? variant.intro_cluster_body_font ?? null,
+    clusterAccentFont: draft.clusterAccentFont ?? variant.intro_cluster_accent_font ?? null,
+    clusterHeroSizePx: draft.clusterHeroSizePx ?? variant.intro_cluster_hero_size_px ?? null,
+    clusterBodySizePx: draft.clusterBodySizePx ?? variant.intro_cluster_body_size_px ?? null,
+    clusterAccentSizePx: draft.clusterAccentSizePx ?? variant.intro_cluster_accent_size_px ?? null,
   };
 }

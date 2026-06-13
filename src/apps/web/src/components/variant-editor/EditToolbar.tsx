@@ -32,18 +32,27 @@ export function EditToolbar({
       {!draft.removed && (
         <>
           {draft.layout === "cluster" ? (
-            /* Editorial cluster: separate Hero + Body font pickers */
+            /* Editorial cluster: Hero + Body + Accent font pickers + per-role sizes */
             <>
-              {(["hero", "body"] as const).map((role) => {
-                const isHero = role === "hero";
-                const current = isHero
-                  ? (draft.clusterHeroFont ?? resolvedParams?.clusterHeroFont ?? null)
-                  : (draft.clusterBodyFont ?? resolvedParams?.clusterBodyFont ?? null);
-                const setter = isHero ? session.setClusterHeroFont : session.setClusterBodyFont;
+              {(["hero", "body", "accent"] as const).map((role) => {
+                const current =
+                  role === "hero"
+                    ? (draft.clusterHeroFont ?? resolvedParams?.clusterHeroFont ?? null)
+                    : role === "body"
+                      ? (draft.clusterBodyFont ?? resolvedParams?.clusterBodyFont ?? null)
+                      : (draft.clusterAccentFont ?? resolvedParams?.clusterAccentFont ?? null);
+                const setter =
+                  role === "hero"
+                    ? session.setClusterHeroFont
+                    : role === "body"
+                      ? session.setClusterBodyFont
+                      : session.setClusterAccentFont;
+                const label =
+                  role === "hero" ? "Hero font" : role === "body" ? "Body font" : "Accent font";
                 return (
                   <div key={role}>
                     <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a]">
-                      {isHero ? "Hero font" : "Body font"}
+                      {label}
                     </div>
                     <div className="flex gap-1.5 overflow-x-auto pb-1">
                       {INTRO_FONTS.map((f) => {
@@ -65,6 +74,36 @@ export function EditToolbar({
                         );
                       })}
                     </div>
+                  </div>
+                );
+              })}
+              {/* Per-role size sliders for cluster */}
+              {(
+                [
+                  { role: "Hero", sizePx: draft.clusterHeroSizePx, fallback: resolvedParams?.clusterHeroSizePx ?? sliderPx, setter: session.setClusterHeroSizePx },
+                  { role: "Body", sizePx: draft.clusterBodySizePx, fallback: resolvedParams?.clusterBodySizePx ?? Math.round(sliderPx * 0.6), setter: session.setClusterBodySizePx },
+                  { role: "Accent", sizePx: draft.clusterAccentSizePx, fallback: resolvedParams?.clusterAccentSizePx ?? Math.round(sliderPx * 0.74), setter: session.setClusterAccentSizePx },
+                ] satisfies { role: string; sizePx: number | null; fallback: number; setter: (px: number) => void }[]
+              ).map(({ role, sizePx, fallback, setter }) => {
+                const val = sizePx ?? fallback;
+                return (
+                  <div key={role}>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a]">
+                        {role} size
+                      </span>
+                      <span className="tabular-nums text-xs text-[#71717a]">{val}px</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={INTRO_SIZE_MIN}
+                      max={INTRO_SIZE_MAX}
+                      step={1}
+                      value={val}
+                      aria-label={`${role} text size`}
+                      onChange={(e) => setter(Number(e.target.value))}
+                      className="w-full accent-lime-600"
+                    />
                   </div>
                 );
               })}
@@ -156,25 +195,27 @@ export function EditToolbar({
             );
           })()}
 
-          {/* Size slider */}
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a]">
-                Text size
-              </span>
-              <span className="tabular-nums text-xs text-[#71717a]">{sliderPx}px</span>
+          {/* Size slider — linear layout only (cluster has per-role sliders above) */}
+          {draft.layout !== "cluster" && (
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a]">
+                  Text size
+                </span>
+                <span className="tabular-nums text-xs text-[#71717a]">{sliderPx}px</span>
+              </div>
+              <input
+                type="range"
+                min={INTRO_SIZE_MIN}
+                max={INTRO_SIZE_MAX}
+                step={1}
+                value={sliderPx}
+                aria-label="Intro text size"
+                onChange={(e) => session.setSize(Number(e.target.value))}
+                className="w-full accent-lime-600"
+              />
             </div>
-            <input
-              type="range"
-              min={INTRO_SIZE_MIN}
-              max={INTRO_SIZE_MAX}
-              step={1}
-              value={sliderPx}
-              aria-label="Intro text size"
-              onChange={(e) => session.setSize(Number(e.target.value))}
-              className="w-full accent-lime-600"
-            />
-          </div>
+          )}
         </>
       )}
 

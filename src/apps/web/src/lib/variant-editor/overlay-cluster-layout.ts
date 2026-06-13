@@ -163,6 +163,17 @@ export interface ClusterFontOverrides {
   accentFont?: string;
 }
 
+/**
+ * Optional per-role size overrides (absolute px). When set, replaces the
+ * ratio-derived size for that role. Scale (for frame fit) still applies on top.
+ * hero = ROLE_HERO, body = ROLE_CONNECTOR, accent = ROLE_CLOSER.
+ */
+export interface ClusterSizeOverrides {
+  heroSizePx?: number;
+  bodySizePx?: number;
+  accentSizePx?: number;
+}
+
 const bare = (word: string): string =>
   word.toLowerCase().replace(/^[.,!?;:"']+|[.,!?;:"']+$/g, "");
 
@@ -325,15 +336,31 @@ function isAlnum(ch: string): boolean {
   return ch.toLowerCase() !== ch.toUpperCase();
 }
 
-/** Per-role px — exact port of `_styled_role_px`. */
-function styledRolePx(role: ClusterRole, baseSizePx: number, scale: number): number {
-  const ratio =
+/** Per-role px — exact port of `_styled_role_px` (with optional direct overrides). */
+function styledRolePx(
+  role: ClusterRole,
+  baseSizePx: number,
+  scale: number,
+  sizeOverrides?: ClusterSizeOverrides,
+): number {
+  const override =
     role === ROLE_HERO
-      ? EDITORIAL_STYLE.heroRatio
+      ? sizeOverrides?.heroSizePx
       : role === ROLE_CLOSER
-        ? EDITORIAL_STYLE.closerRatio
-        : EDITORIAL_STYLE.connectorRatio;
-  const px = Math.round(baseSizePx * ratio * scale);
+        ? sizeOverrides?.accentSizePx
+        : sizeOverrides?.bodySizePx;
+  const px =
+    override != null
+      ? Math.round(override * scale)
+      : Math.round(
+          baseSizePx *
+            (role === ROLE_HERO
+              ? EDITORIAL_STYLE.heroRatio
+              : role === ROLE_CLOSER
+                ? EDITORIAL_STYLE.closerRatio
+                : EDITORIAL_STYLE.connectorRatio) *
+            scale,
+        );
   if (role === ROLE_HERO) {
     return Math.max(RENDERER_MIN_FONT_PX, EDITORIAL_STYLE.scriptMinPx, px);
   }
@@ -387,6 +414,7 @@ export function computeClusterBlocks(
     wordRoles?: ClusterRole[] | null;
     accentParity?: number;
     fontOverrides?: ClusterFontOverrides;
+    sizeOverrides?: ClusterSizeOverrides;
   },
 ): ClusterBlock[] | null {
   const baseSizePx = opts.baseSizePx;
@@ -424,7 +452,7 @@ export function computeClusterBlocks(
 
   const measureBlocks = (scale: number): ClusterBlockMeasured[] =>
     rawBlocks.map((b, i) => {
-      const px = styledRolePx(b.role, baseSizePx, scale);
+      const px = styledRolePx(b.role, baseSizePx, scale, opts.sizeOverrides);
       const m = measure(faces[i], b.text, px);
       return {
         text: b.text,

@@ -402,6 +402,10 @@ def test_edit_intro_layout_happy_path(client: TestClient) -> None:
         text_color_override=None,
         cluster_hero_font_override=None,
         cluster_body_font_override=None,
+        cluster_accent_font_override=None,
+        cluster_hero_size_px_override=None,
+        cluster_body_size_px_override=None,
+        cluster_accent_size_px_override=None,
     )
 
 
@@ -440,6 +444,10 @@ def test_edit_accepts_full_batch_payload(client: TestClient) -> None:
         text_color_override=None,
         cluster_hero_font_override=None,
         cluster_body_font_override=None,
+        cluster_accent_font_override=None,
+        cluster_hero_size_px_override=None,
+        cluster_body_size_px_override=None,
+        cluster_accent_size_px_override=None,
     )
 
 

@@ -46,6 +46,12 @@ export interface EditDraft {
   clusterHeroFont: string | null;
   /** Cluster editorial: body/connector font override. */
   clusterBodyFont: string | null;
+  /** Cluster editorial: accent/closer font override. */
+  clusterAccentFont: string | null;
+  /** Cluster editorial: per-role size overrides (absolute px). */
+  clusterHeroSizePx: number | null;
+  clusterBodySizePx: number | null;
+  clusterAccentSizePx: number | null;
 }
 
 export interface VariantEditSession {
@@ -73,6 +79,10 @@ export interface VariantEditSession {
   setColor: (textColor: string) => void;
   setClusterHeroFont: (fontFamily: string) => void;
   setClusterBodyFont: (fontFamily: string) => void;
+  setClusterAccentFont: (fontFamily: string) => void;
+  setClusterHeroSizePx: (px: number) => void;
+  setClusterBodySizePx: (px: number) => void;
+  setClusterAccentSizePx: (px: number) => void;
   /** Increments each time the entrance animation should replay in the preview. */
   playToken: number;
   /** Replay the entrance animation in the preview now. */
@@ -92,6 +102,10 @@ function draftFromVariant(variant: EditableVariant): EditDraft {
     textColor: variant.intro_text_color ?? null,
     clusterHeroFont: variant.intro_cluster_hero_font ?? null,
     clusterBodyFont: variant.intro_cluster_body_font ?? null,
+    clusterAccentFont: variant.intro_cluster_accent_font ?? null,
+    clusterHeroSizePx: variant.intro_cluster_hero_size_px ?? null,
+    clusterBodySizePx: variant.intro_cluster_body_size_px ?? null,
+    clusterAccentSizePx: variant.intro_cluster_accent_size_px ?? null,
   };
 }
 
@@ -106,7 +120,11 @@ function draftsEqual(a: EditDraft, b: EditDraft): boolean {
     a.animation === b.animation &&
     a.textColor === b.textColor &&
     a.clusterHeroFont === b.clusterHeroFont &&
-    a.clusterBodyFont === b.clusterBodyFont
+    a.clusterBodyFont === b.clusterBodyFont &&
+    a.clusterAccentFont === b.clusterAccentFont &&
+    a.clusterHeroSizePx === b.clusterHeroSizePx &&
+    a.clusterBodySizePx === b.clusterBodySizePx &&
+    a.clusterAccentSizePx === b.clusterAccentSizePx
   );
 }
 
@@ -152,6 +170,18 @@ export function buildEditPayload(draft: EditDraft, baseline: EditDraft): EditVar
   }
   if (draft.clusterBodyFont !== null && draft.clusterBodyFont !== baseline.clusterBodyFont) {
     payload.cluster_body_font = draft.clusterBodyFont;
+  }
+  if (draft.clusterAccentFont !== null && draft.clusterAccentFont !== baseline.clusterAccentFont) {
+    payload.cluster_accent_font = draft.clusterAccentFont;
+  }
+  if (draft.clusterHeroSizePx !== null && draft.clusterHeroSizePx !== baseline.clusterHeroSizePx) {
+    payload.cluster_hero_size_px = draft.clusterHeroSizePx;
+  }
+  if (draft.clusterBodySizePx !== null && draft.clusterBodySizePx !== baseline.clusterBodySizePx) {
+    payload.cluster_body_size_px = draft.clusterBodySizePx;
+  }
+  if (draft.clusterAccentSizePx !== null && draft.clusterAccentSizePx !== baseline.clusterAccentSizePx) {
+    payload.cluster_accent_size_px = draft.clusterAccentSizePx;
   }
   return payload;
 }
@@ -245,6 +275,22 @@ export function useVariantEditSession(
   );
   const setClusterBodyFont = useCallback(
     (clusterBodyFont: string) => setDraft((d) => ({ ...d, clusterBodyFont })),
+    [],
+  );
+  const setClusterAccentFont = useCallback(
+    (clusterAccentFont: string) => setDraft((d) => ({ ...d, clusterAccentFont })),
+    [],
+  );
+  const setClusterHeroSizePx = useCallback(
+    (clusterHeroSizePx: number) => setDraft((d) => ({ ...d, clusterHeroSizePx })),
+    [],
+  );
+  const setClusterBodySizePx = useCallback(
+    (clusterBodySizePx: number) => setDraft((d) => ({ ...d, clusterBodySizePx })),
+    [],
+  );
+  const setClusterAccentSizePx = useCallback(
+    (clusterAccentSizePx: number) => setDraft((d) => ({ ...d, clusterAccentSizePx })),
     [],
   );
   const replay = useCallback(() => setPlayToken((t) => t + 1), []);
@@ -387,6 +433,10 @@ export function useVariantEditSession(
     setColor,
     setClusterHeroFont,
     setClusterBodyFont,
+    setClusterAccentFont,
+    setClusterHeroSizePx,
+    setClusterBodySizePx,
+    setClusterAccentSizePx,
     playToken,
     replay,
     commit,

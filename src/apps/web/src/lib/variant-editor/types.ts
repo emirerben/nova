@@ -29,6 +29,12 @@ export interface EditableVariant {
   intro_cluster_hero_font?: string | null;
   /** Editorial cluster: body/connector font override. */
   intro_cluster_body_font?: string | null;
+  /** Editorial cluster: accent/closer font override. */
+  intro_cluster_accent_font?: string | null;
+  /** Editorial cluster: per-role size overrides (absolute px). */
+  intro_cluster_hero_size_px?: number | null;
+  intro_cluster_body_size_px?: number | null;
+  intro_cluster_accent_size_px?: number | null;
   /** Effective intro layout — "cluster" intros are not locally preview-able. */
   intro_layout?: "linear" | "cluster" | null;
   /** Intro rendering mode. "sequence" → text is server-locked (transcript/rhythm sync). */

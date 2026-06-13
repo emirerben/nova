@@ -77,7 +77,19 @@ export function ClusterTextPreview({
 
   const heroFont = params.clusterHeroFont ?? EDITORIAL_STYLE.heroFont;
   const bodyFont = params.clusterBodyFont ?? EDITORIAL_STYLE.bodyFont;
-  const accentFont = EDITORIAL_STYLE.accentFont;
+  const accentFont = params.clusterAccentFont ?? EDITORIAL_STYLE.accentFont;
+
+  const sizeOverrides = (
+    params.clusterHeroSizePx != null ||
+    params.clusterBodySizePx != null ||
+    params.clusterAccentSizePx != null
+  )
+    ? {
+        heroSizePx: params.clusterHeroSizePx ?? undefined,
+        bodySizePx: params.clusterBodySizePx ?? undefined,
+        accentSizePx: params.clusterAccentSizePx ?? undefined,
+      }
+    : undefined;
 
   // Re-measure when editorial faces (including any user-overridden fonts) are ready.
   useEffect(() => {
@@ -104,9 +116,10 @@ export function ClusterTextPreview({
       baseSizePx,
       revealWindowS: 0,
       fontOverrides: { heroFont, bodyFont, accentFont },
+      sizeOverrides,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text, baseSizePx, heroFont, bodyFont, accentFont, fontTick]);
+  }, [text, baseSizePx, heroFont, bodyFont, accentFont, sizeOverrides, fontTick]);
 
   // Sync external text into the contentEditable node ONLY when not focused —
   // rewriting children under an active caret would reset it on every keystroke.

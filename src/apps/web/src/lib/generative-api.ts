@@ -73,6 +73,10 @@ export interface GenerativeVariant {
   intro_text_color?: string | null;
   intro_cluster_hero_font?: string | null;
   intro_cluster_body_font?: string | null;
+  intro_cluster_accent_font?: string | null;
+  intro_cluster_hero_size_px?: number | null;
+  intro_cluster_body_size_px?: number | null;
+  intro_cluster_accent_size_px?: number | null;
 }
 
 /** Full intro-role look of a style set — drives the instant-edit client preview.
@@ -308,6 +312,12 @@ export interface EditVariantPayload {
   cluster_hero_font?: string;
   /** Editorial cluster: body/connector font override. */
   cluster_body_font?: string;
+  /** Editorial cluster: accent/closer font override. */
+  cluster_accent_font?: string;
+  /** Editorial cluster: per-role size overrides (absolute px). */
+  cluster_hero_size_px?: number;
+  cluster_body_size_px?: number;
+  cluster_accent_size_px?: number;
 }
 
 export async function editVariant(

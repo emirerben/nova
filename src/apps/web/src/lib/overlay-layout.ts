@@ -49,6 +49,11 @@ export interface IntroOverlayParams {
   /** Per-role font overrides for the editorial cluster layout. */
   clusterHeroFont?: string | null;
   clusterBodyFont?: string | null;
+  clusterAccentFont?: string | null;
+  /** Per-role size overrides (absolute px) for the editorial cluster layout. */
+  clusterHeroSizePx?: number | null;
+  clusterBodySizePx?: number | null;
+  clusterAccentSizePx?: number | null;
 }
 
 /** Greedy word-wrap — exact port of `_wrap_text_to_lines`. Explicit newlines wrap

@@ -953,6 +953,10 @@ def regenerate_generative_variant(
     text_color_override: str | None = None,
     cluster_hero_font_override: str | None = None,
     cluster_body_font_override: str | None = None,
+    cluster_accent_font_override: str | None = None,
+    cluster_hero_size_px_override: int | None = None,
+    cluster_body_size_px_override: int | None = None,
+    cluster_accent_size_px_override: int | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -998,6 +1002,10 @@ def regenerate_generative_variant(
                 text_color_override=text_color_override,
                 cluster_hero_font_override=cluster_hero_font_override,
                 cluster_body_font_override=cluster_body_font_override,
+                cluster_accent_font_override=cluster_accent_font_override,
+                cluster_hero_size_px_override=cluster_hero_size_px_override,
+                cluster_body_size_px_override=cluster_body_size_px_override,
+                cluster_accent_size_px_override=cluster_accent_size_px_override,
             )
         except OperationalError:
             raise
@@ -1133,6 +1141,10 @@ def _reburn_text_on_base(
     text_color_override: str | None = None,
     cluster_hero_font_override: str | None = None,
     cluster_body_font_override: str | None = None,
+    cluster_accent_font_override: str | None = None,
+    cluster_hero_size_px_override: int | None = None,
+    cluster_body_size_px_override: int | None = None,
+    cluster_accent_size_px_override: int | None = None,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -1266,6 +1278,14 @@ def _reburn_text_on_base(
                     _reburn_cs["hero_font"] = cluster_hero_font_override
                 if _reburn_cs and cluster_body_font_override:
                     _reburn_cs["body_font"] = cluster_body_font_override
+                if _reburn_cs and cluster_accent_font_override:
+                    _reburn_cs["accent_font"] = cluster_accent_font_override
+                if _reburn_cs and cluster_hero_size_px_override:
+                    _reburn_cs["hero_size_px_override"] = cluster_hero_size_px_override
+                if _reburn_cs and cluster_body_size_px_override:
+                    _reburn_cs["connector_size_px_override"] = cluster_body_size_px_override
+                if _reburn_cs and cluster_accent_size_px_override:
+                    _reburn_cs["closer_size_px_override"] = cluster_accent_size_px_override
                 overlays = build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=[],  # even-split reveal; talking-head precedent
@@ -1346,6 +1366,10 @@ def _reburn_text_on_base(
             "intro_text_color": text_color_override,
             "intro_cluster_hero_font": cluster_hero_font_override,
             "intro_cluster_body_font": cluster_body_font_override,
+            "intro_cluster_accent_font": cluster_accent_font_override,
+            "intro_cluster_hero_size_px": cluster_hero_size_px_override,
+            "intro_cluster_body_size_px": cluster_body_size_px_override,
+            "intro_cluster_accent_size_px": cluster_accent_size_px_override,
             # base_video_path unchanged (still valid for next edit);
             # transcript/scenes only appear here when they must change (merge
             # semantics: absent keys keep the persisted values).
@@ -1588,6 +1612,10 @@ def _run_regenerate_variant(
     text_color_override: str | None = None,
     cluster_hero_font_override: str | None = None,
     cluster_body_font_override: str | None = None,
+    cluster_accent_font_override: str | None = None,
+    cluster_hero_size_px_override: int | None = None,
+    cluster_body_size_px_override: int | None = None,
+    cluster_accent_size_px_override: int | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -1673,8 +1701,24 @@ def _run_regenerate_variant(
     # intro_font_family: explicit request wins; otherwise carry the persisted pin).
     existing_cluster_hero_override: str | None = existing.get("intro_cluster_hero_font") or None
     existing_cluster_body_override: str | None = existing.get("intro_cluster_body_font") or None
+    existing_cluster_accent_override: str | None = existing.get("intro_cluster_accent_font") or None
     resolved_cluster_hero_override = cluster_hero_font_override or existing_cluster_hero_override
     resolved_cluster_body_override = cluster_body_font_override or existing_cluster_body_override
+    resolved_cluster_accent_override = cluster_accent_font_override or existing_cluster_accent_override
+    existing_cluster_hero_size_override: int | None = existing.get("intro_cluster_hero_size_px") or None
+    existing_cluster_body_size_override: int | None = existing.get("intro_cluster_body_size_px") or None
+    existing_cluster_accent_size_override: int | None = (
+        existing.get("intro_cluster_accent_size_px") or None
+    )
+    resolved_cluster_hero_size_override = (
+        cluster_hero_size_px_override or existing_cluster_hero_size_override
+    )
+    resolved_cluster_body_size_override = (
+        cluster_body_size_px_override or existing_cluster_body_size_override
+    )
+    resolved_cluster_accent_size_override = (
+        cluster_accent_size_px_override or existing_cluster_accent_size_override
+    )
 
     # Intro-size precedence on a re-render:
     #   explicit resize request       → new user pin
@@ -1783,6 +1827,10 @@ def _run_regenerate_variant(
                 text_color_override=resolved_color_override,
                 cluster_hero_font_override=resolved_cluster_hero_override,
                 cluster_body_font_override=resolved_cluster_body_override,
+                cluster_accent_font_override=resolved_cluster_accent_override,
+                cluster_hero_size_px_override=resolved_cluster_hero_size_override,
+                cluster_body_size_px_override=resolved_cluster_body_size_override,
+                cluster_accent_size_px_override=resolved_cluster_accent_size_override,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
@@ -1995,6 +2043,10 @@ def _run_regenerate_variant(
             text_color_override=resolved_color_override,
             cluster_hero_font_override=resolved_cluster_hero_override,
             cluster_body_font_override=resolved_cluster_body_override,
+            cluster_accent_font_override=resolved_cluster_accent_override,
+            cluster_hero_size_px_override=resolved_cluster_hero_size_override,
+            cluster_body_size_px_override=resolved_cluster_body_size_override,
+            cluster_accent_size_px_override=resolved_cluster_accent_size_override,
         )
 
     if result.get("ok"):
@@ -3007,6 +3059,10 @@ def _render_generative_variant(
     text_color_override: str | None = None,
     cluster_hero_font_override: str | None = None,
     cluster_body_font_override: str | None = None,
+    cluster_accent_font_override: str | None = None,
+    cluster_hero_size_px_override: int | None = None,
+    cluster_body_size_px_override: int | None = None,
+    cluster_accent_size_px_override: int | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -3128,6 +3184,10 @@ def _render_generative_variant(
         "intro_text_color": text_color_override,
         "intro_cluster_hero_font": cluster_hero_font_override,
         "intro_cluster_body_font": cluster_body_font_override,
+        "intro_cluster_accent_font": cluster_accent_font_override,
+        "intro_cluster_hero_size_px": cluster_hero_size_px_override,
+        "intro_cluster_body_size_px": cluster_body_size_px_override,
+        "intro_cluster_accent_size_px": cluster_accent_size_px_override,
     }
     try:
         beats: list[float] = []
@@ -3424,6 +3484,14 @@ def _render_generative_variant(
                     _sio_cs["hero_font"] = cluster_hero_font_override
                 if _sio_cs and cluster_body_font_override:
                     _sio_cs["body_font"] = cluster_body_font_override
+                if _sio_cs and cluster_accent_font_override:
+                    _sio_cs["accent_font"] = cluster_accent_font_override
+                if _sio_cs and cluster_hero_size_px_override:
+                    _sio_cs["hero_size_px_override"] = cluster_hero_size_px_override
+                if _sio_cs and cluster_body_size_px_override:
+                    _sio_cs["connector_size_px_override"] = cluster_body_size_px_override
+                if _sio_cs and cluster_accent_size_px_override:
+                    _sio_cs["closer_size_px_override"] = cluster_accent_size_px_override
                 return build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=beats,

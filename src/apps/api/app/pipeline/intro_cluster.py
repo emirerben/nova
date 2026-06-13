@@ -588,12 +588,23 @@ def scene_center_y(scene_index: int, style: dict | None = None) -> float:
 
 
 def _styled_role_px(role: str, base_size_px: int, scale: float, style: dict) -> int:
-    ratio = {
-        ROLE_HERO: style["hero_ratio"],
-        ROLE_CLOSER: style["closer_ratio"],
-        ROLE_CONNECTOR: style["connector_ratio"],
+    # Per-role direct overrides take precedence over ratio-derived sizes. The
+    # override is the user's "starting" px — scale still applies for frame fit.
+    override_key = {
+        ROLE_HERO: "hero_size_px_override",
+        ROLE_CONNECTOR: "connector_size_px_override",
+        ROLE_CLOSER: "closer_size_px_override",
     }[role]
-    px = int(round(base_size_px * ratio * scale))
+    override = style.get(override_key)
+    if override is not None:
+        px = int(round(int(override) * scale))
+    else:
+        ratio = {
+            ROLE_HERO: style["hero_ratio"],
+            ROLE_CLOSER: style["closer_ratio"],
+            ROLE_CONNECTOR: style["connector_ratio"],
+        }[role]
+        px = int(round(base_size_px * ratio * scale))
     if role == ROLE_HERO:
         # Script faces stop reading below script_min_px: the hero pins there
         # while the rest of the cluster keeps shrinking atomically (the shrink
