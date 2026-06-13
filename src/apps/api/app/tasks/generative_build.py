@@ -1271,21 +1271,32 @@ def _reburn_text_on_base(
                     # skip it AND dodge copy-through detection — textless ship).
                     overlays = None
             if overlays is None:
-                _reburn_cs: dict | None = (
-                    dict(EDITORIAL_STYLE) if editorial_enabled and sequence_allowed else None
-                )
-                if _reburn_cs and cluster_hero_font_override:
-                    _reburn_cs["hero_font"] = cluster_hero_font_override
-                if _reburn_cs and cluster_body_font_override:
-                    _reburn_cs["body_font"] = cluster_body_font_override
-                if _reburn_cs and cluster_accent_font_override:
-                    _reburn_cs["accent_font"] = cluster_accent_font_override
-                if _reburn_cs and cluster_hero_size_px_override:
-                    _reburn_cs["hero_size_px_override"] = cluster_hero_size_px_override
-                if _reburn_cs and cluster_body_size_px_override:
-                    _reburn_cs["connector_size_px_override"] = cluster_body_size_px_override
-                if _reburn_cs and cluster_accent_size_px_override:
-                    _reburn_cs["closer_size_px_override"] = cluster_accent_size_px_override
+                _has_cluster_overrides = any([
+                    cluster_hero_font_override,
+                    cluster_body_font_override,
+                    cluster_accent_font_override,
+                    cluster_hero_size_px_override,
+                    cluster_body_size_px_override,
+                    cluster_accent_size_px_override,
+                ])
+                if editorial_enabled and sequence_allowed and _has_cluster_overrides:
+                    _reburn_cs: dict | None = dict(EDITORIAL_STYLE)
+                    if cluster_hero_font_override:
+                        _reburn_cs["hero_font"] = cluster_hero_font_override
+                    if cluster_body_font_override:
+                        _reburn_cs["body_font"] = cluster_body_font_override
+                    if cluster_accent_font_override:
+                        _reburn_cs["accent_font"] = cluster_accent_font_override
+                    if cluster_hero_size_px_override:
+                        _reburn_cs["hero_size_px_override"] = cluster_hero_size_px_override
+                    if cluster_body_size_px_override:
+                        _reburn_cs["connector_size_px_override"] = cluster_body_size_px_override
+                    if cluster_accent_size_px_override:
+                        _reburn_cs["closer_size_px_override"] = cluster_accent_size_px_override
+                elif editorial_enabled and sequence_allowed:
+                    _reburn_cs = EDITORIAL_STYLE  # type: ignore[assignment]
+                else:
+                    _reburn_cs = None
                 overlays = build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=[],  # even-split reveal; talking-head precedent
@@ -1704,9 +1715,15 @@ def _run_regenerate_variant(
     existing_cluster_accent_override: str | None = existing.get("intro_cluster_accent_font") or None
     resolved_cluster_hero_override = cluster_hero_font_override or existing_cluster_hero_override
     resolved_cluster_body_override = cluster_body_font_override or existing_cluster_body_override
-    resolved_cluster_accent_override = cluster_accent_font_override or existing_cluster_accent_override
-    existing_cluster_hero_size_override: int | None = existing.get("intro_cluster_hero_size_px") or None
-    existing_cluster_body_size_override: int | None = existing.get("intro_cluster_body_size_px") or None
+    resolved_cluster_accent_override = (
+        cluster_accent_font_override or existing_cluster_accent_override
+    )
+    existing_cluster_hero_size_override: int | None = (
+        existing.get("intro_cluster_hero_size_px") or None
+    )
+    existing_cluster_body_size_override: int | None = (
+        existing.get("intro_cluster_body_size_px") or None
+    )
     existing_cluster_accent_size_override: int | None = (
         existing.get("intro_cluster_accent_size_px") or None
     )
@@ -3477,21 +3494,32 @@ def _render_generative_variant(
                 # keeps PR #508's editorial restyle; explicit opt-outs
                 # (layout/text edits) use the legacy static cluster path so
                 # Slice 3a's registry pairing owns the faces.
-                _sio_cs: dict | None = (
-                    dict(EDITORIAL_STYLE) if editorial_enabled and allow_sequence else None
-                )
-                if _sio_cs and cluster_hero_font_override:
-                    _sio_cs["hero_font"] = cluster_hero_font_override
-                if _sio_cs and cluster_body_font_override:
-                    _sio_cs["body_font"] = cluster_body_font_override
-                if _sio_cs and cluster_accent_font_override:
-                    _sio_cs["accent_font"] = cluster_accent_font_override
-                if _sio_cs and cluster_hero_size_px_override:
-                    _sio_cs["hero_size_px_override"] = cluster_hero_size_px_override
-                if _sio_cs and cluster_body_size_px_override:
-                    _sio_cs["connector_size_px_override"] = cluster_body_size_px_override
-                if _sio_cs and cluster_accent_size_px_override:
-                    _sio_cs["closer_size_px_override"] = cluster_accent_size_px_override
+                _has_sio_overrides = any([
+                    cluster_hero_font_override,
+                    cluster_body_font_override,
+                    cluster_accent_font_override,
+                    cluster_hero_size_px_override,
+                    cluster_body_size_px_override,
+                    cluster_accent_size_px_override,
+                ])
+                if editorial_enabled and allow_sequence and _has_sio_overrides:
+                    _sio_cs: dict | None = dict(EDITORIAL_STYLE)
+                    if cluster_hero_font_override:
+                        _sio_cs["hero_font"] = cluster_hero_font_override
+                    if cluster_body_font_override:
+                        _sio_cs["body_font"] = cluster_body_font_override
+                    if cluster_accent_font_override:
+                        _sio_cs["accent_font"] = cluster_accent_font_override
+                    if cluster_hero_size_px_override:
+                        _sio_cs["hero_size_px_override"] = cluster_hero_size_px_override
+                    if cluster_body_size_px_override:
+                        _sio_cs["connector_size_px_override"] = cluster_body_size_px_override
+                    if cluster_accent_size_px_override:
+                        _sio_cs["closer_size_px_override"] = cluster_accent_size_px_override
+                elif editorial_enabled and allow_sequence:
+                    _sio_cs = EDITORIAL_STYLE  # type: ignore[assignment]
+                else:
+                    _sio_cs = None
                 return build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=beats,

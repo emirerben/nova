@@ -760,8 +760,12 @@ def dispatch_edit_variant(
 
     from app.pipeline.overlay_sizing import clamp_intro_px as _clamp  # noqa: PLC0415
 
-    cluster_hero_size_px = _clamp(cluster_hero_size_px) if cluster_hero_size_px is not None else None
-    cluster_body_size_px = _clamp(cluster_body_size_px) if cluster_body_size_px is not None else None
+    cluster_hero_size_px = (
+        _clamp(cluster_hero_size_px) if cluster_hero_size_px is not None else None
+    )
+    cluster_body_size_px = (
+        _clamp(cluster_body_size_px) if cluster_body_size_px is not None else None
+    )
     cluster_accent_size_px = (
         _clamp(cluster_accent_size_px) if cluster_accent_size_px is not None else None
     )
