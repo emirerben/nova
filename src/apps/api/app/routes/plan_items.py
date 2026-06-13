@@ -456,9 +456,7 @@ async def attach_clips(
                     detail="Clip path outside this plan item's upload prefix",
                 )
         assignments = [
-            ClipAssignment(
-                gcs_path=p, shot_id=None, machine_matched=prior_mm.get((p, None), False)
-            )
+            ClipAssignment(gcs_path=p, shot_id=None, machine_matched=prior_mm.get((p, None), False))
             for p in body.clip_gcs_paths
         ]
 
@@ -803,6 +801,9 @@ async def edit_item_variant(
         style_set_id=req.style_set_id,
         text_size_px=req.text_size_px,
         intro_layout=req.intro_layout,
+        font_family=req.font_family,
+        effect=req.effect,
+        text_color=req.text_color,
     )
     log.info(
         "plan_item_edit_variant",
@@ -810,6 +811,9 @@ async def edit_item_variant(
         variant_id=variant_id,
         has_text=req.text is not None,
         intro_layout=req.intro_layout,
+        font_family=req.font_family,
+        effect=req.effect,
+        text_color=req.text_color,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

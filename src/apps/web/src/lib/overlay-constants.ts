@@ -113,3 +113,65 @@ export function resolveClusterCssFont(fontFamily: string | null | undefined): {
   const { family, weight } = resolveCssFont(fontFamily);
   return { family, weight, style: "normal" };
 }
+
+// ── Instant-editor animation + typography picker constants ───────────────────
+
+/**
+ * Maximum intro reveal window (seconds) — mirrors MAX_INTRO_S in
+ * generative_build.py. Used as `durationS` for the animation preview so the
+ * entrance matches the burn (all entrance effects saturate ≤0.6s regardless).
+ */
+export const MAX_INTRO_S = 4.0;
+
+/**
+ * Core entrance effects exposed in the instant-editor animation picker.
+ * Must be a subset of effects animationStateAt handles non-trivially.
+ * Mirror of _INTRO_ANIMATION_EFFECTS in style_sets.py.
+ */
+export interface IntroAnimation {
+  value: string;
+  label: string;
+}
+export const INTRO_ANIMATIONS: IntroAnimation[] = [
+  { value: "fade-in",    label: "Fade in"    },
+  { value: "pop-in",     label: "Pop in"     },
+  { value: "scale-up",   label: "Scale up"   },
+  { value: "slide-up",   label: "Slide up"   },
+  { value: "slide-down", label: "Slide down" },
+  { value: "bounce",     label: "Bounce"     },
+  { value: "typewriter", label: "Typewriter" },
+  { value: "stream-in",  label: "Stream in"  },
+  { value: "none",       label: "None"       },
+];
+
+/**
+ * Live (non-deprecated) fonts from the registry for the instant-editor Font picker.
+ * Derived from FONT_REGISTRY so every entry is guaranteed to have a bundled
+ * @font-face (font-faces.ts iterates the same registry) AND be a valid backend font.
+ */
+export const INTRO_FONTS: Array<{ name: string; cssFamily: string; weight: number }> =
+  Object.entries(FONT_REGISTRY)
+    .filter(([, entry]) => !entry.deprecated)
+    .map(([name, entry]) => ({
+      name,
+      cssFamily: entry.css_family,
+      weight: entry.weight,
+    }));
+
+/**
+ * Curated text color swatches for the instant-editor Color picker.
+ * High-contrast over dark video footage.
+ */
+export interface IntroColor {
+  hex: string;
+  label: string;
+}
+export const INTRO_COLORS: IntroColor[] = [
+  { hex: "#FFFFFF", label: "White"      },
+  { hex: "#F5F5DC", label: "Cream"      },
+  { hex: "#FFD24A", label: "Gold"       },
+  { hex: "#FF6B6B", label: "Coral"      },
+  { hex: "#7FFFD4", label: "Aqua"       },
+  { hex: "#E0E0E0", label: "Light grey" },
+  { hex: "#000000", label: "Black"      },
+];

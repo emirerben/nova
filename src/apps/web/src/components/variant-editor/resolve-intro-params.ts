@@ -27,12 +27,32 @@ export function resolveIntroParams(
   const setId = draft.styleSetId ?? variant.style_set_id ?? null;
   const intro = styleSets.find((s) => s.id === setId)?.intro ?? null;
 
+  // Precedence (most-specific wins):
+  // draft override > variant persisted override > style set > default
+  const fontFamily =
+    draft.fontFamily ??
+    variant.intro_font_family ??
+    intro?.font_family ??
+    null;
+
+  const effect =
+    draft.animation ??
+    variant.intro_effect ??
+    intro?.effect ??
+    "karaoke-line";
+
+  const textColor =
+    draft.textColor ??
+    variant.intro_text_color ??
+    intro?.text_color ??
+    "#FFFFFF";
+
   return {
     text: draft.removed ? "" : draft.text,
-    effect: intro?.effect ?? "karaoke-line",
-    textColor: intro?.text_color ?? "#FFFFFF",
+    effect,
+    textColor,
     highlightColor: intro?.highlight_color ?? "#FFD24A",
-    fontFamily: intro?.font_family ?? null,
+    fontFamily,
     textSizePx: draft.sizePx ?? variant.intro_text_size_px ?? intro?.text_size_px ?? null,
     position: intro?.position ?? "center",
     positionXFrac: intro?.position_x_frac ?? null,
