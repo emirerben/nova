@@ -15,7 +15,11 @@ import pytest
 from app.agents._schemas.content_plan import PlanItemSpec
 from app.models import ContentPlan, PlanItem
 from app.models import Persona as PersonaRow
-from app.tasks.content_plan_build import generate_plan_item_videos, regenerate_content_plan
+from app.tasks.content_plan_build import (
+    generate_content_plan,
+    generate_plan_item_videos,
+    regenerate_content_plan,
+)
 
 
 def _session_with(item, plan, persona_row) -> MagicMock:
@@ -457,6 +461,81 @@ def test_persona_posts_per_week_reaches_plan_input() -> None:
 
     plan_input = ContentPlanInput(persona=persona, horizon_days=30)
     assert plan_input.persona.posts_per_week == 3
+
+
+# ── M1 idea_seeds plumbing: persona.idea_seeds[].text → ContentPlanInput ─────
+
+
+def _gen_session(plan, persona_row) -> MagicMock:
+    """sync_session context mock for generate_content_plan."""
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+    return ctx
+
+
+def test_idea_seeds_reach_content_plan_input() -> None:
+    """persona_row.idea_seeds[].text must flow into ContentPlanInput.user_idea_seeds.
+
+    Guards the silent-default regression: if the extraction is dropped or the
+    field name drifts, user ideas are silently ignored and every plan falls back
+    to the market IDEA_BANK. Blank seeds must be filtered out.
+    """
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+    plan.events = None
+    plan.horizon_days = 30
+    plan.plan_status = "generating"
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "tech founder sharing behind-the-scenes",
+        "content_pillars": ["building", "founder life"],
+        "tone": "honest and direct",
+        "audience": "indie hackers",
+        "posting_cadence": "3 posts/week",
+    }
+    persona_row.idea_seeds = [
+        {"id": "a1", "text": "behind-the-scenes of my launch week", "status": "pending"},
+        {"id": "a2", "text": "", "status": "pending"},  # blank — must be filtered
+        {"id": "a3", "text": "day-in-the-life: moving apartments", "status": "pending"},
+    ]
+    persona_row.tiktok_profile = None
+    persona_row.style = None
+
+    captured_inputs: list[ContentPlanInput] = []
+    output = MagicMock()
+    output.items = []
+    agent = MagicMock()
+
+    def _run(agent_input, ctx):  # noqa: ANN001, ARG001
+        captured_inputs.append(agent_input)
+        return output
+
+    agent.run = MagicMock(side_effect=_run)
+
+    ctx = _gen_session(plan, persona_row)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.default_client"),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent", return_value=agent),
+        patch("app.tasks.content_plan_build._dedup_and_replace", return_value=output),
+    ):
+        generate_content_plan.run(str(plan.id))
+
+    assert len(captured_inputs) == 1
+    seeds = captured_inputs[0].user_idea_seeds
+    assert "behind-the-scenes of my launch week" in seeds
+    assert "day-in-the-life: moving apartments" in seeds
+    # blank seed must be filtered
+    assert "" not in seeds
+    assert len(seeds) == 2
 
 
 # ── reroll_plan_item task tests ──────────────────────────────────────────────

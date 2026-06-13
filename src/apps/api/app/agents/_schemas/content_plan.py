@@ -61,7 +61,12 @@ from app.agents._schemas.persona import Persona
 #              directives; "" for create_new → near-baseline), and the static
 #              past-trips-are-edit-material rule (the Buenos Aires incident: planner
 #              assumed the creator lives where past-trip footage was shot).
-CONTENT_PLAN_PROMPT_VERSION = "2026-06-11"
+# 2026-06-13 — M1 Bring-Your-Own-Ideas: $user_ideas block added above IDEA_BANK.
+#              The block is rendered ONLY when the user has provided idea seeds via
+#              Persona.idea_seeds → byte-identical to baseline when seeds are absent.
+#              Directive: prefer and deepen the user's own ideas first; use the
+#              market IDEA_BANK only to fill remaining slots.
+CONTENT_PLAN_PROMPT_VERSION = "2026-06-13"
 
 DEFAULT_HORIZON_DAYS = 30
 MAX_HORIZON_DAYS = 60
@@ -111,6 +116,11 @@ class ContentPlanInput(BaseModel):
     # Creator Agent M3: the user's declared edit-format preference weights (e.g.
     # {"montage": 0.6, "talking_head": 0.4}). Empty → byte-identical to baseline.
     preferred_edit_format_mix: dict[str, float] = Field(default_factory=dict)
+    # M1 Bring-Your-Own-Ideas: the user's own content ideas, extracted from
+    # Persona.idea_seeds[].text. Empty list → byte-identical to pre-M1 baseline
+    # (no user-ideas block injected, so plans generated without seeds are
+    # unchanged). Populated from the build path when seeds exist.
+    user_idea_seeds: list[str] = Field(default_factory=list)
 
 
 class PlanItemSpec(BaseModel):

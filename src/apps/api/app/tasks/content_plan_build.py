@@ -75,6 +75,12 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 preferred_edit_format_mix = {
                     str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
                 }
+        # M1 Bring-Your-Own-Ideas: extract seed texts from the persona row.
+        # Empty list → byte-identical baseline (no user-ideas block injected).
+        raw_seeds = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
+        idea_seed_texts = [
+            str(s["text"]) for s in raw_seeds if isinstance(s, dict) and s.get("text")
+        ]
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
@@ -82,6 +88,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             tiktok_analysis=tiktok_summary,
             instruction_level=instruction_level,  # type: ignore[arg-type]
             preferred_edit_format_mix=preferred_edit_format_mix,
+            user_idea_seeds=idea_seed_texts,
         )
 
     try:
@@ -234,6 +241,13 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 preferred_edit_format_mix = {
                     str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
                 }
+        # M1 Bring-Your-Own-Ideas: carry user seeds into the regenerate pass so the
+        # "their say" invariant covers seeds too (regenerate biases toward what the
+        # user explicitly said they want, not just their feedback reactions).
+        raw_seeds_regen = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
+        idea_seed_texts_regen = [
+            str(s["text"]) for s in raw_seeds_regen if isinstance(s, dict) and s.get("text")
+        ]
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
@@ -242,6 +256,7 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             tiktok_analysis=tiktok_summary,
             instruction_level=instruction_level,  # type: ignore[arg-type]
             preferred_edit_format_mix=preferred_edit_format_mix,
+            user_idea_seeds=idea_seed_texts_regen,
         )
 
     try:
@@ -865,11 +880,22 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
                 sample_topics=[],
             )
         )
+        # M1: carry seeds into reroll so the replacement idea still respects the
+        # user's stated intent (best-effort; no seeds = byte-identical to prior).
+        raw_seeds_reroll = (
+            persona_row.idea_seeds
+            if persona_row is not None and isinstance(persona_row.idea_seeds, list)
+            else []
+        )
+        idea_seed_texts_reroll = [
+            str(s["text"]) for s in raw_seeds_reroll if isinstance(s, dict) and s.get("text")
+        ]
         agent_input = ContentPlanInput(
             persona=persona,
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             exclude_ideas=all_ideas,
+            user_idea_seeds=idea_seed_texts_reroll,
         )
         original_day_index = item.day_index
 

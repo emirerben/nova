@@ -239,8 +239,10 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-08: retrospective-footage rule (past-event ideas).
     # 2026-06-11: direction-aware planning — $direction_lines, $content_mode_block,
     #             past-trips-are-edit-material rule (Buenos Aires fix); banks untouched.
+    # 2026-06-13: M1 Bring-Your-Own-Ideas — $user_ideas block added above IDEA_BANK;
+    #             banks untouched (new block is conditional-empty when no seeds).
     assert content_ideas_version() == "2026-06-07"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-13"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -255,7 +257,7 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Intro bumped to 2026-06-12 when overlay_examples added broader cluster exemplars.
     assert success_factors_version() == "2026-06-07"
     assert PERSONA_PROMPT_VERSION == "2026-06-11"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-13"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-12"
 
 
