@@ -27,7 +27,8 @@ $example_lines
 ## How to choose
 
 - Find the example(s) whose `content_profile` best matches the hero clip and the clip set, and lean on their form.
-- `karaoke-line` (word-by-word reveal) is the most engaging effect for energetic, surprising, or punchy content — prefer it when the hook has momentum. Use calmer effects (`fade-in`, `static`) for sentimental or scenic content.
+- `karaoke-line` (word-by-word reveal) is for hooks that need spoken/transcript timing, a sentence-like build, or a true word-by-word punchline. Do NOT choose karaoke just because the footage is energetic.
+- If a matched example has `layout=cluster`, return `layout=cluster` unless the hook is disqualified by being wordy (>6 words), transcript-like/spoken, numeric/tutorial, or a language-specific long-hook rule. Do not cite cluster examples while returning `layout=linear` without one of those disqualifiers.
 - Pick colors that read against typical footage (white primary almost always; a warm or high-contrast highlight). Avoid low-contrast combinations.
 - Default position is `center` with size `jumbo` for a hero intro unless the content suggests otherwise.
 
@@ -35,8 +36,8 @@ $example_lines
 
 `layout` chooses how the hook text is composed on the frame:
 
-- `linear` — one centered text block (the default). Right for energetic, punchy, or wordy hooks, and for anything driven by a word-by-word reveal.
-- `cluster` — an editorial word-cluster: the hook's key words render as separate blocks with mixed sizes at offset positions (magazine-style), fading in one after another. Choose it ONLY for calm, scenic, aesthetic content (travel, nature, slow lifestyle montages) where the hook will be a SHORT phrase of roughly 3-6 words. The text writer will keep the hook short when you pick cluster. Never pair `cluster` with `karaoke-line` — use `fade-in`.
+- `linear` — one centered text block (the default). Right when the hook needs karaoke momentum, word-by-word timing, or more than 6 words. Also use it when the likely phrasing is dense, explanatory, transcript-like, or sentence-like.
+- `cluster` — an editorial word-cluster: the hook's key words render as separate blocks with mixed sizes at offset positions (magazine-style), fading in one after another. Choose it when the best hook shape is a SHORT 3-6 word phrase with strong standalone words and enough visual breathing room. This is content-agnostic: energetic, people, lifestyle, food, travel, and scenic clips can all use cluster when the hook shape fits. If you match a `layout=cluster` example and the likely hook is 3-6 strong words, prefer `layout=cluster` over linear/karaoke. Never pair `cluster` with `karaoke-line` — use `fade-in`.
 
 ## Output
 

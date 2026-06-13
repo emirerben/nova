@@ -132,6 +132,8 @@ class OverlayResult:
     bbox: tuple[int, int, int, int] | None = None
     frame_path: str | None = None
     resolved_typeface: dict[str, Any] = field(default_factory=dict)
+    expected_failure: dict[str, Any] | None = None
+    expectation_matched: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -410,6 +412,7 @@ def verify_overlay(
         clipping="SKIPPED",
         content="SKIPPED",
         resolved_typeface=tos.resolved_typeface_for_overlay(overlay),
+        expected_failure=overlay.get("expected_failure") if isinstance(overlay, dict) else None,
     )
 
     if effect == "player-card":
@@ -467,7 +470,34 @@ def verify_overlay(
         res.reasons.append(f"requested font_family {requested!r} resolved to {resolved!r} fallback")
 
     res.verdict = _worst(res.clipping, res.content)
+    if res.expected_failure:
+        _apply_expected_failure(res)
     return res
+
+
+def _apply_expected_failure(res: OverlayResult) -> None:
+    expected = res.expected_failure or {}
+    expected_verdict = str(expected.get("verdict") or "FAIL")
+    reason_contains = expected.get("reason_contains")
+    if isinstance(reason_contains, str):
+        needles = [reason_contains]
+    elif isinstance(reason_contains, list):
+        needles = [str(n) for n in reason_contains]
+    else:
+        needles = []
+    reasons = " ".join(res.reasons).lower()
+    verdict_matches = res.verdict == expected_verdict
+    reason_matches = all(n.lower() in reasons for n in needles)
+    if verdict_matches and reason_matches:
+        res.expectation_matched = True
+        res.reasons.append(f"expected failure matched: {expected_verdict}")
+        res.verdict = "PASS"
+        return
+    res.verdict = "FAIL"
+    res.reasons.append(
+        f"expected failure did not match: wanted {expected_verdict}"
+        + (f" containing {needles!r}" if needles else "")
+    )
 
 
 def iter_recipe_overlays(recipe: dict) -> list[tuple[int, int, dict]]:
@@ -506,6 +536,8 @@ def ocr_result_from_frame(res: OverlayResult, frames_dir: str) -> OverlayResult:
     res.content, res.similarity, reason = check_content(read, res.text)
     res.reasons.append(reason)
     res.verdict = _worst(res.clipping, res.content)
+    if res.expected_failure:
+        _apply_expected_failure(res)
     return res
 
 

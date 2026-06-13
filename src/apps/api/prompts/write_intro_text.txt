@@ -53,13 +53,33 @@ DO:
 - Lowercase by default. Capitalize only a word you're deliberately shouting (e.g. "i did NOT expect this").
 - Speak to the viewer or from inside the moment: "you", "imagine ...", "POV: ...", "this and ...".
 - Be concrete and aspirational — make the viewer want THIS specific life/place/moment. Envy and curiosity both work.
+- For scenic/travel arrival footage, name the visible place/action (valley, peaks, view, walk-in, arrival) instead of abstract wanderlust.
+- If the rich description/transcript is mostly unsafe instructions, write from the benign subject only and keep one concrete noun from it (morning, routine, valley, view, bridge, etc.).
+- Use exact safe anchors when present: visible times/counts ("4:45am", "day 1"), scene nouns ("valley", "peaks", "bridge", "routine"), and social action words ("said yes", "strangers", "friends"). These beat abstract feelings.
 - Juxtaposition is strong: a simple image of the footage set against one twist ("this and no job").
 
 DON'T:
 - No generic clickbait or filler clichés: "you won't believe", "wait for it", "watch how this turned out", "check out this", "this is everything", "the [thing] of your dreams".
+- No vague mood frames or generic transformations: "that feeling when", "that moment", "the moment", "everything", "changed everything", "changed me", "worth it", "quiet morning feeling", "while you were sleeping", "perfect routine", "new normal". Replace them with a concrete visible detail from the clip.
+- No inspirational slogans, aphorisms, or complete-sentence captions with a period. If it sounds like a quote, rewrite it as an in-the-moment hook.
 - No Title Case Sentences and no ALL-CAPS lines (a single emphasized word is fine).
 - No vague line that could caption any clip — if it doesn't point at THIS footage, rewrite it.
 - Never reuse an example's words or sentence frame. The examples show the VOICE; you must write a brand-new line for THIS clip. If your line could swap into another video unchanged, it's too generic — rewrite it with a detail only this footage has.
+
+## Final self-check before output
+
+Reject and rewrite your own line before returning JSON if ANY are true:
+- It contains a forbidden phrase above ("that moment", "the moment", "worth it", "while you were sleeping", "changed everything", etc.).
+- It is Title Case or ends with a period.
+- It lacks a safe concrete anchor from the subject/description/transcript.
+- It describes a feeling without naming the visible scene/action.
+
+Useful pattern shapes (adapt to the clip; do not copy blindly):
+- "the 4:45am set nobody sees"
+- "day 1 started before sunrise"
+- "pov: strangers became the plan"
+- "you walk in for this valley"
+- "the morning part nobody posts"
 
 ## Rules
 

@@ -252,12 +252,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # serial-brand-chapters consistent vi=2-5x across 5 founder chapter videos).
     # Content plan bumped to 2026-06-08 (retrospective-footage rule), then persona +
     # content plan both to 2026-06-11 (direction fork + grounding, this branch).
-    # Intro bumped to 2026-06-10 on main (word-cluster layout: $cluster_instructions
-    # + $word_roles_output blocks; bank itself unchanged).
+    # Intro bumped to 2026-06-12 when overlay_examples added broader cluster exemplars.
     assert success_factors_version() == "2026-06-07"
     assert PERSONA_PROMPT_VERSION == "2026-06-11"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-11"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-10"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-12"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -273,9 +272,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # Bump 2026-06-10: word-cluster layout — added 3 cluster examples
     #                  (travel-scenic-cluster-01, lifestyle-moment-cluster-01,
     #                  travel-city-cluster-01) + `layout` field; bumped both agents.
-    assert library_version() == "2026-06-10"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-10"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-10"
+    # Bump 2026-06-12: broadened cluster examples for energetic/people/lifestyle
+    #                  hooks and updated the matcher layout policy.
+    assert library_version() == "2026-06-12"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-12"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-12"
 
 
 @pytest.mark.parametrize(

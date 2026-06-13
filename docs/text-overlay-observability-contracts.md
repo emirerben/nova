@@ -1,7 +1,8 @@
 # Text Overlay Observability Contracts
 
-Frozen for Slice 1 on 2026-06-12. These contracts define the trace events and
-`overlay_verify` report fields used to make text-overlay degradation observable.
+Frozen for Slice 1 on 2026-06-12 and amended for Slice 2 on 2026-06-12.
+These contracts define the trace events and `overlay_verify` report fields used
+to make text-overlay degradation observable.
 
 ## Pipeline Trace Events
 
@@ -18,6 +19,7 @@ Payload:
 ```json
 {
   "requested_layout": "cluster",
+  "layout_source": "model",
   "selected_layout": "cluster",
   "reason": "agent_pick",
   "text": "hook text",
@@ -29,6 +31,10 @@ Payload:
 
 Fields:
 - `requested_layout`: layout requested by the caller before renderer fallback.
+- `layout_source`: `model` when the format matcher returned an explicit valid
+  `layout`, or `coerced_default` when the matcher omitted/invalidated `layout`
+  and the parser defaulted to `linear`. This field is instrumentation-only and
+  must not be copied into Skia burn overlay dictionaries.
 - `selected_layout`: effective rendered layout, `cluster` or `linear`.
 - `reason`: one of `agent_pick`, `explicit_linear`, `disabled`, `position_pinned`,
   `empty_text`, `cluster_declined`, or `cluster_error_fallback`.
@@ -129,7 +135,21 @@ Fields:
 - `fallback`: `true` when a requested `font_family` did not resolve to itself.
 - `level`: `warning` for fallback, `info` otherwise.
 
-## `overlay_verify` Report Field
+## Refusal Fallback Contract
+
+`intro_writer.parse()` must raise `RefusalError` when sanitized hook text is
+empty or matches refusal/meta phrasing such as "need more information", "cannot
+write", "unable to", "as an ai", or "write this hook".
+
+Generative orchestration must catch that specific refusal at the text-agent
+boundary and produce a deterministic safe fallback intro hook. The fallback must:
+
+- render as ordinary `agent_text`, not fail the job;
+- avoid every refusal/meta deny pattern;
+- use a safe linear layout form;
+- keep existing hard clamps for intro text length.
+
+## `overlay_verify` Report Fields
 
 Every `report.json.overlays[]` entry must include `resolved_typeface`:
 
@@ -145,4 +165,7 @@ Every `report.json.overlays[]` entry must include `resolved_typeface`:
 ```
 
 `overlay_verify` must fail an overlay when `requested_font_family` is non-empty
-and `fallback` is `true`.
+and `fallback` is `true`, unless the fixture marks that failure as expected.
+Expected-fail overlays must report that the expected failure matched and must
+count as passing for the CLI exit code. If an expected-fail overlay stops failing,
+that is a verifier regression and the CLI must exit non-zero.

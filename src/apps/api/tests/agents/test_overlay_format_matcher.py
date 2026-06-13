@@ -132,17 +132,23 @@ def test_language_defaults_to_en():
 
 def test_layout_defaults_to_linear():
     raw = json.dumps({"effect": "fade-in"})
-    assert _agent().parse(raw, _input()).layout == "linear"
+    out = _agent().parse(raw, _input())
+    assert out.layout == "linear"
+    assert out.layout_source == "coerced_default"
 
 
 def test_layout_cluster_preserved():
     raw = json.dumps({"effect": "fade-in", "layout": "cluster"})
-    assert _agent().parse(raw, _input()).layout == "cluster"
+    out = _agent().parse(raw, _input())
+    assert out.layout == "cluster"
+    assert out.layout_source == "model"
 
 
 def test_unknown_layout_coerced_to_linear():
     raw = json.dumps({"effect": "fade-in", "layout": "diagonal-spiral"})
-    assert _agent().parse(raw, _input()).layout == "linear"
+    out = _agent().parse(raw, _input())
+    assert out.layout == "linear"
+    assert out.layout_source == "coerced_default"
 
 
 def test_cluster_with_karaoke_settles_effect_to_fade_in():

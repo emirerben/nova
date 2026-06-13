@@ -211,6 +211,7 @@ _HOLD_TO_END_S = 3600.0
 def _record_intro_layout_selected(
     *,
     requested_layout: str,
+    layout_source: str | None = None,
     selected_layout: str,
     reason: str,
     text: str,
@@ -225,6 +226,7 @@ def _record_intro_layout_selected(
             "intro_layout_selected",
             {
                 "requested_layout": requested_layout,
+                "layout_source": layout_source or "model",
                 "selected_layout": selected_layout,
                 "reason": reason,
                 "text": text,
@@ -326,6 +328,7 @@ def build_persistent_intro_overlays(
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
     layout: str = "linear",
     requested_layout: str | None = None,
+    layout_source: str | None = None,
     layout_reason: str | None = None,
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
@@ -368,6 +371,7 @@ def build_persistent_intro_overlays(
     if not (text or "").strip():
         _record_intro_layout_selected(
             requested_layout=requested,
+            layout_source=layout_source,
             selected_layout="linear",
             reason="empty_text",
             text=text,
@@ -396,6 +400,7 @@ def build_persistent_intro_overlays(
         if cluster:
             _record_intro_layout_selected(
                 requested_layout=requested,
+                layout_source=layout_source,
                 selected_layout="cluster",
                 reason=layout_reason or "agent_pick",
                 text=text,
@@ -406,6 +411,7 @@ def build_persistent_intro_overlays(
         # Engine declined (word count / fit / no skia) → proven linear intro.
         _record_intro_layout_selected(
             requested_layout=requested,
+            layout_source=layout_source,
             selected_layout="linear",
             reason="cluster_error_fallback" if cluster_error else "cluster_declined",
             text=text,
@@ -415,6 +421,7 @@ def build_persistent_intro_overlays(
     else:
         _record_intro_layout_selected(
             requested_layout=requested,
+            layout_source=layout_source,
             selected_layout="linear",
             reason=layout_reason or "explicit_linear",
             text=text,
@@ -465,6 +472,7 @@ def inject_persistent_intro(
     highlight_color: str = _DEFAULT_HIGHLIGHT_COLOR,
     layout: str = "linear",
     requested_layout: str | None = None,
+    layout_source: str | None = None,
     layout_reason: str | None = None,
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
@@ -501,6 +509,7 @@ def inject_persistent_intro(
         highlight_color=highlight_color,
         layout=layout,
         requested_layout=requested_layout,
+        layout_source=layout_source,
         layout_reason=layout_reason,
         word_roles=word_roles,
         cluster_style=cluster_style,

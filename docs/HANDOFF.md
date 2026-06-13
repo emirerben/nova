@@ -4,12 +4,18 @@ _This file is the shared brain between architect and builder sessions. The build
 
 ## Last completed slice
 
-None — loop bootstrap (first architect session, 2026-06-12). No builder work has run yet.
+**Slice 2 — "Fire the editorial cluster in prod + never render refusal text"** shipped as PR #507 (`951ad5e6`, 2026-06-12). `overlay_format_matcher` now picks `cluster` on hook-shape grounds (broadened `match_overlay_format.txt` + rebalanced `overlay_examples.json`); `layout_source` distinguishes a real model pick from a coerced default; `intro_writer.parse()` raises `RefusalError` on refusal/meta text and the orchestrator (`_run_text_agents` → `_fallback_intro_text`) renders a deterministic clip-metadata fallback hook (`"watch {core} unfold"`); and the `verify-overlays` gate now has expected-fail semantics (exits 0). Judged **PARTIAL** by architect session #3 (2026-06-13) — see "Acceptance criteria for last slice".
+
+**Slice 1 — "Make prod text-overlay degradation observable and loud"** shipped earlier as PR #505 (`6718297b`, 2026-06-12); judged **PASS 5/5** by architect session #2. (Slice 1 raw results below under "Slice 1 results (raw)".)
 
 ## Key decisions made
 
 - **Diagnosis before capability (architect, 2026-06-12).** Goal is editorial-grade text overlays (stacked multi-block text, mixed fonts/sizes, text color-change effect — three TikTok references on file) AND closing the "great locally, basic in prod" gap. Slice order frozen: 1) make degradation observable + convict the mechanism on real prod jobs, 2) fix convicted mechanisms, 3) build the editorial/color-change capabilities. Rationale: PR #498 proved the dominant failure class is input-dependent silent degradation (signal-free Turkish hook flattened the editorial cluster to plain lines, invisibly); building new capability first would flatten in prod the same way.
 - **Ranked divergence mechanisms (evidence in architect session #1):** (1) input-dependent silent degradation — no pipeline events for layout selection / role derivation / shrink; (2) silent font fallback — `_typeface_for_overlay` (`text_overlay_skia.py:187-218`) and Pillow `ImageFont.load_default()` fall back with zero signal; (3) environment divergence per `docs/runbooks/local-render.md` incl. feature-flag drift between Fly secrets and local env; (4) process gap — `make verify-overlays` is manual-only, CI never renders through the prod image. Encoder drift ruled unlikely (locked by `tests/test_encoder_policy.py`).
+- **Slice 1 verdict on those mechanisms (architect session #2, 2026-06-12):** font fallback **exonerated** (0/19 prod overlays fell back); flag drift **exonerated** (parity table consistent across prod / local-render / dev). **Convicted: upstream layout selection** — all evidence jobs showed `requested_layout=linear, reason=explicit_linear, has_word_roles=false`. Root causes in repo: (a) `prompts/match_overlay_format.txt` restricted `cluster` to calm/scenic content; (b) `prompts/overlay_examples.json` was 19 linear vs 3 cluster; (c) `overlay_format_matcher.py` silently coerced a missing/invalid `layout` to `linear`, indistinguishable from an explicit pick. The renderer is faithful — "basic in prod" was a policy/prompt problem, not a render problem. (All three fixed in Slice 2.)
+- **Refusal-text leak convicted (architect session #2):** prod job `22c0bc36` rendered the literal intro "i need more information to write this hook". `intro_writer.parse()` guarded only by sanitization + 12-word/80-char clamp; an 8-word refusal string passed. Fixed in Slice 2 (`_REFUSAL_PATTERNS` → `RefusalError` + orchestrator fallback).
+- **Cluster eligibility broadened content-agnostically (architect taste call, 2026-06-12):** moved from "calm/scenic only" to hook-shape-driven (3–6 strong words, visual fit) for any content class; linear stays right for karaoke-momentum and wordy hooks; Turkish conservatism stays. Shipped in Slice 2.
+- **Slice 3a scope + "engine owns typeface pairing" (architect session #3, 2026-06-13).** Slice 3 (editorial build toward the 3 refs) decomposed; **3a = mixed-typeface cluster lockup** chosen first (Emir, 2026-06-13) as the cheapest/lowest-risk foundation. Grounded in session-#3 exploration: cluster blocks are already **separate Skia draws** each carrying their own `font_family` (`generative_overlays.py:278-309`), and `font_family` is already honored by both renderers — so per-block font pairing needs **no Skia span work and no new burn-dict field**. Decision: the **engine** owns the pairing (extends "agent annotates, engine owns geometry"), so no agent/prompt change, no `prompt_version` bump, no live evals. Color sweep (3b) and scene-adaptive palette (3c) deferred; font additions (italic serifs — none bundled today) are a separate conscious slice due to 6-point registry coupling.
 
 ## Visual targets (reference analysis — architect, 2026-06-12)
 
@@ -25,13 +31,25 @@ The three TikTok references are captured locally at `.sources/tiktok-refs/` (git
 
 ## Open disagreements
 
-None yet. The builder must raise disagreements in PHASE 0; each gets an ACCEPT/REJECT/MODIFY verdict here next architect session.
+- **Slice 2 geometry scope expansion (architect session #3 verdict: ACCEPT, FLAG process).** Slice 2 changed `intro_cluster.py` geometry (`_HERO_STEP_RATIO` 0.95→1.08, `_CLOSER_STEP_RATIO` 0.62→0.92, new `_BLOCK_GAP_FRAC` + collision-resolution block) despite the Slice 2 freeze stating "NO `intro_cluster.py` geometry/role-rule changes." **Accepted** as functionally necessary — once the cluster fired on real 3-word hooks the connector collided with the first hero (`bridge_sunset_overlap_x_frac: 0.40`), so criterion 5 was unshippable without it; it is tested (`test_connector_never_collides_with_first_hero_regression`). **Flagged:** this should have surfaced as a PHASE 0 disagreement, not been silently absorbed. The Slice 2 geometry is now **frozen** — Slice 3a must not re-tune it.
+- **PHASE 0 discipline re-asserted (sessions #2 + #3).** Slice 1 came back with zero PHASE 0 disagreements; Slice 2's PHASE 0 was never recorded in the repo (the HANDOFF divergence below). For Slice 3a: PHASE 0 MUST record EITHER file-cited disagreements OR a per-reality-check "verified, matches repo at `<file:line>`" list, and the result-recording HANDOFF update MUST paste the PHASE 0 reply verbatim. A PHASE 0 with neither is a failed slice.
+
+> **⚠️ HANDOFF divergence (architect session #3, reconciled 2026-06-13).** Architect session #2's judgments (this section + the Slice 1 PASS table + the frozen Slice 2 spec) were never committed — they lived only as uncommitted edits in the shared checkout. PR #507 appended its Slice 2 raw results onto the stale bootstrap version, so this file's framing read "Last completed slice: None" until session #3 reconciled it here. Root cause: builder worked from a stale base (the worktree hazard CLAUDE.md warns about). This file is now the single canonical brain — keep architect verdicts AND builder raw results in it, on `main`.
 
 ## Acceptance criteria for last slice
 
-N/A — no completed slice to judge.
+Slice 2, frozen by architect session #2 (2026-06-12), judged by architect session #3 (2026-06-13): **PARTIAL** (5/6 fully met; criterion 6 partial; one accepted-but-unflagged scope expansion — see Open disagreements). Slice 1 was judged **PASS 5/5** by session #2 (settled; #505 shipped).
 
-## Last slice results (raw)
+| # | Criterion (frozen) | Verdict | Evidence |
+|---|---|---|---|
+| 1 | `-k "overlay_format or intro_writer or overlay_verify"` passes no-skip incl. 3 new tests (refusal raises; coerced_default; orchestrator safe fallback) | PASS | `86 passed, 4989 deselected` exit 0. Tests by name: `test_literal_prod_refusal_text_raises_refusal`, `test_layout_source_threads_from_matcher_output`, `test_run_text_agents_refusal_returns_safe_fallback` (+ wrapped variant). `_fallback_intro_text()` → clip-metadata hook, never meta-text, never hard-fail. |
+| 2 | `make verify-overlays` exits 0; unknown-font as expected-fail | PASS | exit 0, `PASS=19 FAIL=0`; `expectation_matched: true`; locked by `test_unknown_font_family_fixture_is_expected_fail` + `test_expected_fail_fixture_fails_if_expectation_stops_matching`. |
+| 3 | ≥15 replay inputs; cluster after-rate ≥30%; 100% of cluster picks 3–6 words; before-rate reported | PASS | 15 rows; `cluster_after_rate 0.3333`; all 5 cluster picks 3–6 words; `cluster_words_all_3_to_6: true`. Soft note: "before" column mostly `null` (no prior recorded layout) → before-rate weakly evidenced ~0% cluster. |
+| 4 | Live evals pasted; `prompt_version` bumped per edited prompt | PASS | `overlay_format_matcher` 3 passed / `intro_writer` 10 passed, both `--with-judge` live; both `prompt_version` → `2026-06-12`; `layout_source` plumbed. |
+| 5 | 3 jobs re-rendered; ≥1 selects cluster; rendered intro ≥2 distinct sizes at pixel layer | PASS | `dfb9713d` selected `cluster` (`agent_pick`, 3 words, `has_word_roles=true`); `distinct_height_count: 2` via overlay-verify pixel bbox; `collisions: 0`. |
+| 6 | Full suites green; explicit `intro_layout` override honored (cite a test) | PARTIAL | ruff clean. One fully-green `pytest tests/` (`5017 passed` exit 0), but a second run had `11 failed`, only **9** re-verified (redis/celery flakes) → **2 unexplained**; and the **override-test citation is missing** (evidence shows matcher-chosen linear, not the explicit-override path). |
+
+## Slice 1 results (raw)
 
 ### Test output
 
@@ -179,48 +197,178 @@ Job `63e0cc36-f01f-442c-8b89-977ceac38daa`, `GET /admin/jobs/63e0cc36-f01f-442c-
 | authenticated debug JSON | `/private/tmp/local-debug-63e0cc36-f01f-442c-8b89-977ceac38daa.json` |
 | `song_text` still, 1.0s | `/private/tmp/nova-overlay-synthetic/stills/local-song_text-1.0s.png` |
 
+## Slice 2 results (raw)
+
+### Test output
+
+| Command | Exit | Raw result |
+|---|---:|---|
+| `cd src/apps/api && pytest -p no:cacheprovider tests/pipeline/test_intro_cluster.py -q` | 0 | `25 passed in 0.12s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/ -k "overlay_format or intro_writer or overlay_verify"` | 0 | `86 passed, 4989 deselected in 5.66s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/ -k "overlay_format or intro_writer or overlay_verify or intro_cluster" -q` | 0 | `111 passed, 4965 deselected in 5.24s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/` | 0 | `5017 passed, 58 skipped, 168 warnings in 214.53s` |
+| `cd src/apps/api && pytest -p no:cacheprovider tests/` | 1 | `11 failed, 5007 passed, 58 skipped, 166 warnings in 428.56s` |
+| `cd src/apps/api && pytest -p no:cacheprovider <9 redis/celery failed tests> -q` | 0 | `9 passed, 2 warnings in 1.99s` |
+| `cd src/apps/api && ruff check --no-cache .` | 0 | `All checks passed!` |
+| `cd src/apps/api && ruff format --check --no-cache <13 touched Python files>` | 0 | `13 files already formatted` |
+| `cd src/apps/api && ruff check --no-cache app/pipeline/intro_cluster.py tests/pipeline/test_intro_cluster.py` | 0 | `All checks passed!` |
+| `cd src/apps/api && ruff format --check --no-cache app/pipeline/intro_cluster.py tests/pipeline/test_intro_cluster.py` | 0 | `2 files already formatted` |
+| `make verify-overlays` | 0 | `overlay-verify: PASS (PASS=19 WARN=0 FAIL=0 SKIPPED=0)` |
+| `NOVA_EVAL_MODE=live pytest -p no:cacheprovider tests/evals/test_overlay_format_matcher_evals.py -v --eval-mode=live --with-judge --allow-cost` | 0 | `3 passed in 24.79s` |
+| `NOVA_EVAL_MODE=live pytest -p no:cacheprovider tests/evals/test_intro_writer_evals.py -v --eval-mode=live --with-judge --allow-cost` | 0 | `10 passed in 82.37s` |
+
+### Overlay verify expected-fail
+
+| Field | Value |
+|---|---|
+| report | `.overlay-verify/report.json` |
+| overall | `PASS` |
+| counts | `PASS=19 FAIL=0 WARN=0 SKIPPED=0` |
+| expected-fail slot/overlay | `7/0` |
+| text | `font fallback must be loud` |
+| requested font | `Definitely Not A Real Nova Font` |
+| resolved font | `Playfair Display` |
+| fallback | `true` |
+| expected_failure | `{"verdict":"FAIL","reason_contains":"fallback"}` |
+| expectation_matched | `true` |
+
+### Replay measurement
+
+| Field | Value |
+|---|---|
+| rows | `15` |
+| selection | `first 15 eligible 3-6 word prod matcher rows from 20-row run` |
+| source | `/private/tmp/nova-slice2-evidence/replay-results.json` |
+| artifact | `/private/tmp/nova-slice2-evidence/replay-results-eligible15.json` |
+| cluster_after | `5` |
+| cluster_after_rate | `0.3333` |
+| cluster_words_all_3_to_6 | `true` |
+
+| Prod job | Hook words | Before layout | After layout | Layout source | After effect | Matched examples | Cluster word floor |
+|---|---:|---|---|---|---|---|---|
+| `a2a1d3c5-3aee-45ee-b347-2abb6bee39e7` | 3 | `linear` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `fitness-grind-scaleup-01` | `true` |
+| `f891019a-74c0-4886-ae56-1b8308a2b63f` | 3 | `null` | `linear` | `model` | `fade-in` | `milestone-emotional-fadein-01` | `true` |
+| `49249ac1-abfb-4239-941d-c457828c2480` | 6 | `null` | `linear` | `model` | `karaoke-line` | `tutorial-tip-karaoke-01`, `transformation-before-after-karaoke-01` | `true` |
+| `454d0f1d-e640-44a2-b7e6-dba67ce6bf71` | 3 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+| `41a5fcdb-103f-4214-b5e0-76032f243591` | 6 | `null` | `linear` | `model` | `scale-up` | `energetic-payoff-cluster-01`, `fitness-grind-scaleup-01` | `true` |
+| `11432066-5d2b-4c0b-a431-65d1e84dcb7a` | 3 | `null` | `linear` | `model` | `karaoke-line` | `pov-surprise-karaoke-01`, `pov-social-karaoke-01` | `true` |
+| `ed671211-6fb9-46af-be53-796b72620f72` | 3 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01`, `energetic-payoff-cluster-01` | `true` |
+| `73495ae2-f353-4cd2-b978-71ac257653c0` | 6 | `null` | `linear` | `model` | `scale-up` | `adventure-humor-scaleup-02`, `fitness-grind-scaleup-01`, `energetic-payoff-cluster-01` | `true` |
+| `9df59b4c-8ae5-4127-a02c-b0894a8568d3` | 3 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+| `6f8eaa78-e504-447d-aa7f-23463325adcd` | 4 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+| `011ab4d0-6f81-47ec-9549-6dcf9e49f514` | 3 | `null` | `linear` | `model` | `scale-up` | `pov-social-karaoke-01`, `energetic-payoff-cluster-01` | `true` |
+| `fd8a6a0d-9e0b-46ab-b710-16907c7d944a` | 5 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01` | `true` |
+| `f02e2b90-d98b-4f64-8fc5-0851d9b221a2` | 5 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01` | `true` |
+| `901fe271-dc8b-46ae-80dc-c5182298658d` | 6 | `null` | `linear` | `model` | `scale-up` | `fitness-grind-scaleup-01`, `energetic-payoff-cluster-01` | `true` |
+| `448c7e05-6ed9-430e-bd68-84be1434b729` | 3 | `null` | `cluster` | `model` | `fade-in` | `energetic-payoff-cluster-01`, `people-social-cluster-01` | `true` |
+
+### Local-render proof
+
+| Prod job | Local job | Status | Rendered outputs | Log |
+|---|---|---|---|---|
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `1fb75578-bb3e-433e-a61c-d79409a84f39` | `variants_ready` | `.local-render/1fb75578-bb3e-433e-a61c-d79409a84f39-song_lyrics.mp4`, `.local-render/1fb75578-bb3e-433e-a61c-d79409a84f39-song_text.mp4`, `.local-render/1fb75578-bb3e-433e-a61c-d79409a84f39-original_text.mp4` | `/private/tmp/nova-slice2-evidence/local-render-logs/22c0bc36.log` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `b8b365c3-5c29-48c9-aaaf-319234c64bc8` | `variants_ready` | `.local-render/b8b365c3-5c29-48c9-aaaf-319234c64bc8-song_lyrics.mp4`, `.local-render/b8b365c3-5c29-48c9-aaaf-319234c64bc8-song_text.mp4`, `.local-render/b8b365c3-5c29-48c9-aaaf-319234c64bc8-original_text.mp4` | `/private/tmp/nova-slice2-evidence/local-render-logs/568ced7b.log` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `f73dc75a-f678-4152-beb5-3f95285e4b98` | `variants_ready` | `.local-render/f73dc75a-f678-4152-beb5-3f95285e4b98-original_text.mp4` | `/private/tmp/nova-slice2-evidence/local-render-logs/dfb9713d.log` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `7e7ac3bb-5dca-4a87-b58e-797bead1c0bd` | `variants_ready` | `.local-render/7e7ac3bb-5dca-4a87-b58e-797bead1c0bd-original_text.mp4` | `stdout` |
+
+| Prod job | Local debug JSON | Intro stills |
+|---|---|---|
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `/private/tmp/nova-slice2-evidence/local-debug/1fb75578-bb3e-433e-a61c-d79409a84f39-debug.json` | `/private/tmp/nova-slice2-evidence/stills/22c0bc36/song_text_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/22c0bc36/song_lyrics_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/22c0bc36/original_text_t1.jpg` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `/private/tmp/nova-slice2-evidence/local-debug/b8b365c3-5c29-48c9-aaaf-319234c64bc8-debug.json` | `/private/tmp/nova-slice2-evidence/stills/568ced7b/song_text_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/568ced7b/song_lyrics_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/568ced7b/original_text_t1.jpg` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `/private/tmp/nova-slice2-evidence/local-debug/f73dc75a-f678-4152-beb5-3f95285e4b98-debug.json` | `/private/tmp/nova-slice2-evidence/stills/dfb9713d/original_text_t1.jpg` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `/private/tmp/nova-slice2-evidence/local-debug/7e7ac3bb-5dca-4a87-b58e-797bead1c0bd-pipeline_trace.json` | `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/original_text_t1.jpg`, `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/forced_cluster_this_bridge_sunset_clean_t15.jpg` |
+
+### Local-render layout events
+
+| Prod job | Local job | Text | Requested layout | Selected layout | Layout source | Reason | Word count | Has word roles |
+|---|---|---|---|---|---|---|---:|---|
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `1fb75578-bb3e-433e-a61c-d79409a84f39` | `the bell sounds slower than the glyph. why?` | `linear` | `linear` | `model` | `explicit_linear` | 8 | `false` |
+| `22c0bc36-0ef2-447c-b589-388cfabb5c34` | `1fb75578-bb3e-433e-a61c-d79409a84f39` | `the bell sounds slower than the glyph. why?` | `linear` | `linear` | `model` | `explicit_linear` | 8 | `false` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `b8b365c3-5c29-48c9-aaaf-319234c64bc8` | `when he asked 'why put all my thoughts on my heart?'` | `linear` | `linear` | `model` | `explicit_linear` | 11 | `false` |
+| `568ced7b-f0ca-49c5-8360-5387bbbbc493` | `b8b365c3-5c29-48c9-aaaf-319234c64bc8` | `when he asked 'why put all my thoughts on my heart?'` | `linear` | `linear` | `model` | `explicit_linear` | 11 | `false` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `f73dc75a-f678-4152-beb5-3f95285e4b98` | `this bridge sunset` | `cluster` | `cluster` | `model` | `agent_pick` | 3 | `true` |
+| `dfb9713d-b867-499b-b7f5-d0dc2eec85f5` | `7e7ac3bb-5dca-4a87-b58e-797bead1c0bd` | `pov: this sunset over the bridge` | `linear` | `linear` | `model` | `explicit_linear` | 6 | `false` |
+
+### Scenic cluster rendered-size measurement
+
+| Field | Value |
+|---|---|
+| source image | `/private/tmp/nova-slice2-evidence/stills/dfb9713d/original_text_t1.jpg` |
+| measurement artifact | `/private/tmp/nova-slice2-evidence/scenic-cluster-size-measurement.json` |
+| crop_xyxy | `[150, 650, 950, 1180]` |
+| threshold | `gray>230, close kernel 35x18` |
+| boxes | `[{"x":227,"y":680,"w":675,"h":169,"area":56482},{"x":303,"y":902,"w":574,"h":107,"area":44616}]` |
+| distinct_box_sizes | `[[574,107],[675,169]]` |
+| distinct_height_count | `2` |
+
+### Scenic cluster spacing measurement
+
+| Field | Value |
+|---|---|
+| text | `this bridge sunset` |
+| roles | `["connector","hero","hero"]` |
+| measurement artifact | `/private/tmp/nova-slice2-evidence/scenic-cluster-spacing-y-tight-measurement.json` |
+| clean forced-cluster still | `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/forced_cluster_this_bridge_sunset_y_tight_clean_t15.jpg` |
+| live rerender still | `/private/tmp/nova-slice2-evidence/stills/dfb9713d-spacing-fix/original_text_t1.jpg` |
+| live rerender video | `.local-render/7e7ac3bb-5dca-4a87-b58e-797bead1c0bd-original_text.mp4` |
+| collisions | `0` |
+| this_bridge_gap_x_frac | `0.025` |
+| this_bridge_overlap_y_frac | `0.037491` |
+| this_bridge_center_y_delta_frac | `0.012` |
+| bridge_sunset_overlap_x_frac | `0.404994` |
+| bridge_sunset_gap_y_frac | `0.008665` |
+
 ## Next slice spec
 
-### Slice 1 — "Make prod text-overlay degradation observable and loud" (FROZEN 2026-06-12)
+### Slice 3a — "Editorial multi-typeface cluster lockup" (FROZEN 2026-06-13, architect session #3)
 
-#### What to build
+**Outcome:** the editorial word-cluster intro renders with a deliberate, taste-curated **per-block typeface pairing** (≥2 distinct typefaces in one lockup) so prod clusters read like the references' mixed-font lockups instead of one uniform font — using **only existing bundled fonts**, with **no new burn-dict field, no color animation, no font additions.**
 
-One PR. Backend-only instrumentation + verification hardening:
+**Why this is the right first capability (grounded in architect session #3 exploration):**
+- Cluster blocks are **already separate Skia draws** — each is its own overlay dict carrying its own `font_family`/`text_size_px`/`text_color` (`generative_overlays.py:278-309`, `build_intro_overlay`). Per-block font is a localized change, **not** a Skia span rewrite (Skia has no intra-line span support; only Pillow does).
+- `font_family` is **already honored by both renderers**, so a per-block font pairing introduces **no new burn-dict field** and does not trip the renderer-parity invariant.
+- The engine already assigns the connector a "Regular" sibling via `_connector_font` (`intro_cluster.py:362-375`) — this slice generalizes that into a curated pairing.
 
-1. **Pipeline trace events at every text-degradation decision point**, visible in `/admin/jobs/{id}`:
-   - `intro_layout_selected` — chosen layout (editorial cluster vs linear/flat), and why (agent pick, signal-free demotion, fallback).
-   - `cluster_roles_derived` — per-word roles + which contrast guarantees from #498 fired.
-   - `cluster_shrink_applied` — shrink factor when the cluster-atomic shrink runs.
-   - `font_resolved` — per overlay: requested `font_family` vs actually-resolved typeface; emitted at warning level when they differ (fallback fired).
-   - Emit via `record_pipeline_event` (`app/agents/_runtime` / pipeline trace layer); must no-op gracefully when called outside a `pipeline_trace_for` context (overlay_verify CLI, unit tests).
-2. **Loud font fallback in `overlay_verify`:** extend `app/pipeline/overlay_verify.py` + `report.json` to record `resolved_typeface` per overlay and FAIL when a requested font fell back. Add a negative fixture requesting an unknown font that must fail. Add a positive assertion to the editorial fixtures: when an editorial cluster is requested, the rendered cluster has ≥2 distinct text sizes (the #498 invariant, checked at the rendered-output layer — test rendered output, not scheduler integers).
-3. **Prod evidence run (the "understand the source" deliverable):** pick 2–3 recent real prod generative/plan jobs whose output looks "basic text lines" (pull candidates via `python scripts/admin.py --prod GET /admin/generative`). For each: re-render through `make local-render` (prod image), capture the new decision events + first-frame stills of intro text (prod output vs re-render), and write a mechanism-conviction table (job → which mechanism fired: input-driven fallback / font fallback / flag drift / other) into "Last slice results" above — raw data only.
-4. **Flag parity table:** record the values of `TEXT_RENDERER_SKIA_ENABLED`, `text_overlay_v2_enabled`, `SINGLE_PASS_ENCODE_ENABLED`, `ORIENTATION_NORMALIZE_ENABLED` in prod (Fly) vs `.env.local-render` vs dev `.env` into the same results section.
+#### What to build (builder decides PR breakdown — expected: one PR)
+
+1. **Engine-owned per-block typeface pairing.** Generalize `_connector_font` / `compute_cluster_blocks` (`intro_cluster.py`) so the **connector** (and optionally **closer**) block resolves to a deliberately *contrasting* bundled family rather than just the hero's Regular sibling. The **engine owns the pairing** ("agent annotates, engine owns geometry" → now "engine owns typeface pairing"). The agent keeps emitting only the hero `font_family`/`font_style`; **do not** add a per-block-font field to any agent output → no prompt change, no `prompt_version` bump, no live-eval cycle.
+2. **Single-source-of-truth pairing table.** A curated map `hero family → {connector, closer}` family in ONE place (extend `font-registry.json` with a `cluster_pairing` block, or a constant in `intro_cluster.py` — builder's call, exactly one home). Taste-curated per the font memory (editorial serifs; sans reads cheap) and the "Visual targets" notes (warm serif hero + script/lighter connector). Every referenced family MUST exist and be non-deprecated in `font-registry.json`.
+3. **Turkish-safe pairing (hard requirement).** Script/handwriting faces (Great Vibes, Pacifico, Satisfy) likely lack Turkish diacritics (ı, ş, ğ, ç, ö, ü) → tofu. When the hook language is `tr` (or the connector face fails glyph coverage for the actual text), the engine MUST fall back to a Turkish-safe pairing (serif+serif, e.g. Playfair Display + Instrument Serif). Verify via the font's `cmap`, not by assumption.
+4. **Rendered-output proof.** No new instrumentation — `font_resolved` already records `resolved_typeface.file` per block. Re-render ≥1 cluster-eligible prod job (reuse scenic `dfb9713d` from Slice 2) through `make local-render`; capture the cluster blocks' events + an intro still + montage into "Slice 3a results".
 
 #### Hard acceptance criteria (frozen before work starts)
 
-1. `cd src/apps/api && pytest tests/pipeline/test_intro_cluster.py tests/pipeline/test_text_overlay_skia.py tests/pipeline/test_overlay_verify.py` passes with no skips, including NEW tests: (a) unknown `font_family` emits a fallback `font_resolved` event; (b) `intro_layout_selected` + `cluster_shrink_applied` events are emitted with documented payload shapes; (c) event emission outside a trace context does not raise.
-2. `make verify-overlays` exits non-zero on the new unknown-font fixture and `report.json` contains `resolved_typeface` for every overlay in every fixture; all pre-existing fixtures still PASS.
-3. "Last slice results" contains, for ≥2 real prod jobs: job ID, per-variant `intro_layout_selected`/`font_resolved` event dumps, the flag-parity table, frame-still file paths, and a one-line mechanism verdict per job (table form, no narrative).
-4. A locally-run generative job shows the new events in the `/admin/jobs/{id}` debug view (paste the event-list JSON from the debug endpoint into "Last slice results" as evidence).
-5. Full existing suites green: `pytest` (api), `ruff check`, frontend untouched.
+1. **Pairing logic test** (new, `tests/pipeline/test_intro_cluster.py`): a hero+connector(+closer) cluster gets **≥2 distinct `font_family`** across blocks, **deterministically** from the curated table (same input → same pairing; not random), for ≥2 different hero families.
+2. **Pairing-integrity test** (new): every `(connector, closer)` family referenced by the table resolves to an existing, **non-deprecated** `font-registry.json` entry (no pairing points at a missing/deprecated font).
+3. **Turkish-safety test** (new): a `tr`-language cluster (or a connector face lacking coverage for the block text) yields a pairing whose connector/closer faces have full `cmap` coverage of the rendered characters — asserted by loading the resolved `.ttf` and checking codepoints, not by hard-coding a family name.
+4. **Rendered proof in "Slice 3a results":** for ≥1 re-rendered cluster-eligible prod job, the `font_resolved` events for the cluster blocks show **≥2 distinct `resolved_typeface.file`**; intro still + montage paths recorded.
+5. **No new burn-dict field; parity + gate green:** `make verify-overlays` exits 0; renderer-parity tests pass unchanged; `git grep` confirms no new key threaded into the burn dict for this feature.
+6. **Full suites green + no non-cluster regression:** `cd src/apps/api && pytest` exit 0 (re-verify ALL failures if any flake appears — leave none unexplained); `ruff check` + `ruff format --check` clean. A test proves **linear/non-cluster overlays render byte-identically** (pairing applies only to `layout == "cluster"`); cite the existing or a new test.
 
 #### Explicit out-of-scope (builder must NOT touch)
 
-- NO new layout primitives: no per-word multi-color, no time-varying/color-change text, no multi-font-per-overlay. That is Slice 3.
-- NO prompt file edits under `src/apps/api/prompts/` (would trigger prompt_version bumps + live evals).
-- NO changes to `intro_cluster.py` geometry/role rules beyond event emission — #498's logic is freshly verified; do not "improve" it.
-- NO encoder/preset changes; NO CI workflow changes (making verify-overlays a CI gate is a later slice); NO frontend changes; NO DB migrations.
+- **NO color work:** no per-word/per-block color override, no time-varying color/color sweep (Slice 3b), no scene-adaptive palette (Slice 3c).
+- **NO font additions:** no new `.ttf`, no `registry-embeddings.npz` regen, no `sync:fonts` run, no italic-serif additions. Use only the 39 active bundled fonts. (True roman+italic needs italic faces we don't have — a conscious later slice; 6-point coupling: registry JSON + `.npz` + web mirror + 2 count tests.)
+- **NO Skia intra-line span support** — single linear overlays stay single-font; this slice is cluster-blocks-only.
+- **NO `intro_cluster.py` geometry/spacing changes** — the Slice 2 collision geometry (`_HERO_STEP_RATIO`, `_CLOSER_STEP_RATIO`, `_BLOCK_GAP_FRAC`, collision resolution) is **frozen**. Touch only per-block **font** assignment.
+- **NO agent/prompt changes** (engine owns the pairing) → no `prompt_version` bump, no live evals. If the builder believes the agent MUST pick fonts, that is a **PHASE 0 disagreement to raise**, not a silent scope addition.
+- NO frontend changes; NO DB migrations; NO CI workflow changes.
 
 #### Reality checks (verify against the repo before writing code)
 
-- Confirm `record_pipeline_event` call contract and that renderer-level code (`text_overlay_skia.py`, `intro_cluster.py`) executes inside the orchestrator's `pipeline_trace_for(job_id)` context (mandatory contract in CLAUDE.md) — if any render path runs in a subprocess, events from it will silently drop; design around that.
-- Check `.github/workflows/layer2-cache-guard.yml` path triggers — if touched files match, bump `TEXT_OVERLAY_VERSION_V2` in `template_cache.py` or use the documented escape hatch consciously.
-- `overlay_verify` runs via CLI inside the prod image with no job/DB — the `resolved_typeface` reporting must not depend on the trace layer.
-- Renderer-parity invariant: any new burn-dict field must be honored by BOTH renderers (`test_both_renderers_honor_text_anchor_left` pattern) — instrumentation-only fields should bypass the burn dict where possible.
-- Work from a fresh worktree (`nova-fresh` / `scripts/new-session.sh`), never the shared checkout.
+- Cluster blocks are separate overlay dicts each carrying `font_family` (`generative_overlays.py:278-309`, `build_intro_overlay`).
+- `_connector_font` (`intro_cluster.py:362-375`) + the `typeface_cache`/`_typeface` flow (`intro_cluster.py:462-471`) — extend, don't fork.
+- `font-registry.json` `fonts` entries + `deprecated` flags + `style_defaults` — `serif_italic` maps to **non-italic** Instrument Serif; the table must reference only active families.
+- `font_resolved` already records `resolved_typeface.file` per block (Slice 1) → criterion 4 needs no new event.
+- `_LANGUAGE_HINTS` / `tr` handling in `intro_writer.py` + `overlay_format_matcher.py` for where the language signal is available to gate the Turkish-safe pairing.
+- Work from a **fresh worktree** (`nova-fresh slice3a-mixed-typeface`) off `origin/main` — never the shared checkout (the Slice 2 HANDOFF divergence was caused by stale-checkout drift).
 
-#### Slice preview (not frozen — orientation only)
+#### Slice preview (NOT frozen — orientation only)
 
-- **Slice 2:** fix whatever mechanisms the Slice 1 evidence convicts (font registry/image gap, flag drift, further input-robustness), with before/after prod re-renders as proof.
-- **Slice 3:** editorial capability build toward the 3 TikTok references — multi-block layouts beyond the intro, per-word highlight colors in the Skia path (span support exists only in Pillow today), and the text color-change effect (feasible via the Skia per-frame PNG sequence machinery — time-varying paint per frame).
+- **Slice 3b:** progressive color sweep (Ref 3) — time-varying per-frame paint over the existing per-frame PNG sequence; builds on the karaoke per-word-color path that already exists in both renderers. Highest render risk; likely its own multi-PR effort.
+- **Slice 3c:** scene-adaptive text palette — pick text color from scene luminance (navy on bright, cream on dark); pre-render decision, low render risk.
+- **Font additions (separate, conscious slice):** add italic serif + a Turkish-safe script face to unlock true roman+italic lockups (Ref 1), paying the full 6-point font-registry coupling cost.
+
+## Slice 3a results (raw)
+
+_Builder fills this in after the work block: tables, numbers, test output, the `font_resolved` events showing ≥2 distinct `resolved_typeface.file` across cluster blocks, intro still + montage paths. No interpretation. Paste the PHASE 0 reply verbatim above it._

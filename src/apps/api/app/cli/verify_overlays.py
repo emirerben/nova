@@ -193,6 +193,11 @@ def _print_summary(report: ov.VerifyReport, out_dir: str) -> None:
                 f"  [{o.verdict}] slot {o.slot_index}/ov {o.overlay_index} "
                 f"{o.text!r}: {'; '.join(o.reasons)}"
             )
+        elif o.expectation_matched:
+            print(
+                f"  [EXPECTED-FAIL/PASS] slot {o.slot_index}/ov {o.overlay_index} "
+                f"{o.text!r}: {'; '.join(o.reasons)}"
+            )
     print(f"  report:  {os.path.join(out_dir, 'report.json')}")
     print(f"  montage: {os.path.join(out_dir, 'montage.png')}  ← view this for the content check")
 

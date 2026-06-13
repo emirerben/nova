@@ -10,6 +10,7 @@ test_text_overlay_skia.py); pure-logic tests (roles, grouping, fallbacks) don't.
 
 from __future__ import annotations
 
+from itertools import combinations
 from unittest import mock
 
 import skia  # noqa: F401 — layout tests require the real measurement backend
@@ -123,6 +124,30 @@ def _assert_no_clip(blocks):
         assert _Y_MIN - 1e-6 <= blk["position_y_frac"] <= _Y_MAX + 1e-6
 
 
+def _bbox(blk):
+    tf = _typeface_for_overlay({"font_family": blk["font_family"]} if blk["font_family"] else {})
+    font = skia.Font(tf, blk["text_size_px"])
+    font.setSubpixel(True)
+    metrics = font.getMetrics()
+    half_w = font.measureText(blk["text"]) / CANVAS_W / 2
+    half_h = (metrics.fDescent - metrics.fAscent) / 1920 / 2
+    return {
+        "text": blk["text"],
+        "left": blk["position_x_frac"] - half_w,
+        "right": blk["position_x_frac"] + half_w,
+        "top": blk["position_y_frac"] - half_h,
+        "bottom": blk["position_y_frac"] + half_h,
+    }
+
+
+def _assert_no_overlap(blocks):
+    boxes = [_bbox(blk) for blk in blocks]
+    for a, b in combinations(boxes, 2):
+        overlap_x = a["left"] < b["right"] - 1e-6 and b["left"] < a["right"] - 1e-6
+        overlap_y = a["top"] < b["bottom"] - 1e-6 and b["top"] < a["bottom"] - 1e-6
+        assert not (overlap_x and overlap_y), f"collision: {a['text']} vs {b['text']}"
+
+
 def test_no_clip_across_text_shapes():
     cases = [
         (_REFERENCE_TEXT, None),
@@ -137,6 +162,23 @@ def test_no_clip_across_text_shapes():
         blocks = _compute(text, font_family=family, base_size_px=80)
         assert blocks, f"engine declined {text!r}"
         _assert_no_clip(blocks)
+        _assert_no_overlap(blocks)
+
+
+def test_connector_never_collides_with_first_hero_regression():
+    # Prod proof still regression: "this" visually touched "bridge". Connectors
+    # must sit beside their anchor hero with an actual measured gap.
+    blocks = _compute(
+        "this bridge sunset",
+        word_roles=[ROLE_CONNECTOR, ROLE_HERO, ROLE_HERO],
+        font_family="Playfair Display",
+        base_size_px=60,
+    )
+    assert blocks is not None
+    _assert_no_clip(blocks)
+    _assert_no_overlap(blocks)
+    by_text = {b["text"]: b for b in blocks}
+    assert abs(by_text["this"]["position_y_frac"] - by_text["bridge"]["position_y_frac"]) <= 0.015
 
 
 def test_atomic_shrink_preserves_size_hierarchy():
@@ -207,6 +249,7 @@ def test_intro_layout_selected_event_has_documented_payload():
     )
     assert layout_payload == {
         "requested_layout": "cluster",
+        "layout_source": "model",
         "selected_layout": "cluster",
         "reason": "agent_pick",
         "text": "what's your favorite place?",
