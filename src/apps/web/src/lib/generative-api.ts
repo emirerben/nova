@@ -71,6 +71,8 @@ export interface GenerativeVariant {
   intro_font_family?: string | null;
   intro_effect?: string | null;
   intro_text_color?: string | null;
+  intro_cluster_hero_font?: string | null;
+  intro_cluster_body_font?: string | null;
 }
 
 /** Full intro-role look of a style set — drives the instant-edit client preview.
@@ -302,6 +304,10 @@ export interface EditVariantPayload {
   effect?: string;
   /** Independent text color override — hex string (#RRGGBB). */
   text_color?: string;
+  /** Editorial cluster: hero-word font override. */
+  cluster_hero_font?: string;
+  /** Editorial cluster: body/connector font override. */
+  cluster_body_font?: string;
 }
 
 export async function editVariant(

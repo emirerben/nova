@@ -149,6 +149,8 @@ class GenerativeVariant(BaseModel):
     intro_font_family: str | None = None
     intro_effect: str | None = None
     intro_text_color: str | None = None
+    intro_cluster_hero_font: str | None = None
+    intro_cluster_body_font: str | None = None
 
     model_config = {"extra": "allow"}
 
@@ -223,6 +225,9 @@ class EditVariantRequest(BaseModel):
     font_family: str | None = None
     effect: str | None = None
     text_color: str | None = None
+    # Editorial cluster per-role font overrides.
+    cluster_hero_font: str | None = None
+    cluster_body_font: str | None = None
 
 
 # ── Timeline editor schemas ────────────────────────────────────────────────────
@@ -587,6 +592,8 @@ def dispatch_edit_variant(
     font_family: str | None = None,
     effect: str | None = None,
     text_color: str | None = None,
+    cluster_hero_font: str | None = None,
+    cluster_body_font: str | None = None,
 ) -> None:
     """Validate + enqueue a combined text/style/size/layout edit as ONE re-render.
 
@@ -606,6 +613,8 @@ def dispatch_edit_variant(
         and font_family is None
         and effect is None
         and text_color is None
+        and cluster_hero_font is None
+        and cluster_body_font is None
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -718,6 +727,19 @@ def dispatch_edit_variant(
                 detail=f"Unknown font '{font_family}'.",
             )
 
+    for _cf_label, _cf_value in (
+        ("cluster_hero_font", cluster_hero_font),
+        ("cluster_body_font", cluster_body_font),
+    ):
+        if _cf_value is not None:
+            from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+            if _cf_value not in _FONT_REGISTRY.get("fonts", {}):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown font '{_cf_value}' for {_cf_label}.",
+                )
+
     if text_color is not None:
         import re  # noqa: PLC0415
 
@@ -740,6 +762,8 @@ def dispatch_edit_variant(
         font_family_override=font_family,
         effect_override=effect,
         text_color_override=text_color,
+        cluster_hero_font_override=cluster_hero_font,
+        cluster_body_font_override=cluster_body_font,
     )
 
 
@@ -1316,6 +1340,8 @@ async def edit_variant(
         font_family=req.font_family,
         effect=req.effect,
         text_color=req.text_color,
+        cluster_hero_font=req.cluster_hero_font,
+        cluster_body_font=req.cluster_body_font,
     )
     log.info(
         "generative_edit_variant",
@@ -1329,6 +1355,8 @@ async def edit_variant(
         font_family=req.font_family,
         effect=req.effect,
         text_color=req.text_color,
+        cluster_hero_font=req.cluster_hero_font,
+        cluster_body_font=req.cluster_body_font,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 

@@ -804,6 +804,8 @@ async def edit_item_variant(
         font_family=req.font_family,
         effect=req.effect,
         text_color=req.text_color,
+        cluster_hero_font=req.cluster_hero_font,
+        cluster_body_font=req.cluster_body_font,
     )
     log.info(
         "plan_item_edit_variant",
@@ -814,6 +816,8 @@ async def edit_item_variant(
         font_family=req.font_family,
         effect=req.effect,
         text_color=req.text_color,
+        cluster_hero_font=req.cluster_hero_font,
+        cluster_body_font=req.cluster_body_font,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

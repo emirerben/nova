@@ -54,6 +54,7 @@ import {
 import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
+import { EditToolbar } from "@/components/variant-editor/EditToolbar";
 import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 
 // How long a dispatched render may take to register its Job before we admit
@@ -852,7 +853,7 @@ function FocusedResults({
           RIGHT controls change the draft); otherwise the burned-output Hero. */}
       <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
         {instantEligible ? (
-          <LiveEditPreview variant={variant} styleSets={styleSets} session={editSession} />
+          <LiveEditPreview variant={variant} styleSets={styleSets} session={editSession} playToken={editSession.playToken} />
         ) : (
           <Hero variant={variant} generating={isGenerating} />
         )}
@@ -995,18 +996,26 @@ function FocusedVariantControls({
         // overlay below — pass it through so controls disable during the bake.
         variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
         tracks={tracks}
-        styleSets={styleSets}
+        styleSets={instantEligible ? [] : styleSets}
         onSwap={onSwap}
         onRetext={draftHandlers.onRetext}
         onRemoveText={draftHandlers.onRemoveText}
         onChangeStyle={draftHandlers.onChangeStyle}
-        onResize={draftHandlers.onResize}
+        onResize={instantEligible ? undefined : draftHandlers.onResize}
         onChangeLayout={draftHandlers.onChangeLayout}
         onEditClips={timeline.openEditor}
         showClipEditor={timeline.entryVisible}
         clipSlotCount={timeline.slotCount}
         hasClipEdits={timeline.hasUserEdits}
       />
+      {instantEligible && (
+        <EditToolbar
+          session={session}
+          styleSets={[]}
+          fallbackSizePx={variant.intro_text_size_px}
+          resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
+        />
+      )}
       {timeline.isEditorOpen && (
         <TimelineEditor
           ownerId={itemId}
@@ -1057,10 +1066,12 @@ function LiveEditPreview({
   variant,
   styleSets,
   session,
+  playToken,
 }: {
   variant: PlanItemVariant;
   styleSets: GenerativeStyleSet[];
   session: VariantEditSession;
+  playToken?: number;
 }) {
   const introParams = resolveIntroParams(variant, styleSets, session.draft);
 
@@ -1105,7 +1116,7 @@ function LiveEditPreview({
           No preview
         </div>
       )}
-      <IntroTextPreview params={introParams} editable={false} layout={previewLayout} />
+      <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
     </div>
   );
 }

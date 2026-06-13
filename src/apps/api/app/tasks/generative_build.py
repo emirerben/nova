@@ -951,6 +951,8 @@ def regenerate_generative_variant(
     font_family_override: str | None = None,
     effect_override: str | None = None,
     text_color_override: str | None = None,
+    cluster_hero_font_override: str | None = None,
+    cluster_body_font_override: str | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -994,6 +996,8 @@ def regenerate_generative_variant(
                 font_family_override=font_family_override,
                 effect_override=effect_override,
                 text_color_override=text_color_override,
+                cluster_hero_font_override=cluster_hero_font_override,
+                cluster_body_font_override=cluster_body_font_override,
             )
         except OperationalError:
             raise
@@ -1127,6 +1131,8 @@ def _reburn_text_on_base(
     font_family_override: str | None = None,
     effect_override: str | None = None,
     text_color_override: str | None = None,
+    cluster_hero_font_override: str | None = None,
+    cluster_body_font_override: str | None = None,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -1253,15 +1259,20 @@ def _reburn_text_on_base(
                     # skip it AND dodge copy-through detection — textless ship).
                     overlays = None
             if overlays is None:
+                _reburn_cs: dict | None = (
+                    dict(EDITORIAL_STYLE) if editorial_enabled and sequence_allowed else None
+                )
+                if _reburn_cs and cluster_hero_font_override:
+                    _reburn_cs["hero_font"] = cluster_hero_font_override
+                if _reburn_cs and cluster_body_font_override:
+                    _reburn_cs["body_font"] = cluster_body_font_override
                 overlays = build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=[],  # even-split reveal; talking-head precedent
                     # Sequence-eligible fallback keeps PR #508's editorial restyle.
                     # Explicit opt-outs (layout/text edits) use the legacy static
                     # cluster path so Slice 3a's registry pairing owns the faces.
-                    cluster_style=(
-                        EDITORIAL_STYLE if editorial_enabled and sequence_allowed else None
-                    ),
+                    cluster_style=_reburn_cs,
                     **params,
                 )
                 # EFFECTIVE layout (cluster = 2 overlays per block; linear = one
@@ -1333,6 +1344,8 @@ def _reburn_text_on_base(
             "intro_font_family": font_family_override,
             "intro_effect": effect_override,
             "intro_text_color": text_color_override,
+            "intro_cluster_hero_font": cluster_hero_font_override,
+            "intro_cluster_body_font": cluster_body_font_override,
             # base_video_path unchanged (still valid for next edit);
             # transcript/scenes only appear here when they must change (merge
             # semantics: absent keys keep the persisted values).
@@ -1573,6 +1586,8 @@ def _run_regenerate_variant(
     font_family_override: str | None = None,
     effect_override: str | None = None,
     text_color_override: str | None = None,
+    cluster_hero_font_override: str | None = None,
+    cluster_body_font_override: str | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -1654,6 +1669,12 @@ def _run_regenerate_variant(
     resolved_font_override = font_family_override or existing_font_override
     resolved_effect_override = effect_override or existing_effect_override
     resolved_color_override = text_color_override or existing_color_override
+    # Cluster per-role font overrides — sticky across re-renders (same lifecycle as
+    # intro_font_family: explicit request wins; otherwise carry the persisted pin).
+    existing_cluster_hero_override: str | None = existing.get("intro_cluster_hero_font") or None
+    existing_cluster_body_override: str | None = existing.get("intro_cluster_body_font") or None
+    resolved_cluster_hero_override = cluster_hero_font_override or existing_cluster_hero_override
+    resolved_cluster_body_override = cluster_body_font_override or existing_cluster_body_override
 
     # Intro-size precedence on a re-render:
     #   explicit resize request       → new user pin
@@ -1760,6 +1781,8 @@ def _run_regenerate_variant(
                 font_family_override=resolved_font_override,
                 effect_override=resolved_effect_override,
                 text_color_override=resolved_color_override,
+                cluster_hero_font_override=resolved_cluster_hero_override,
+                cluster_body_font_override=resolved_cluster_body_override,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
@@ -1970,6 +1993,8 @@ def _run_regenerate_variant(
             font_family_override=resolved_font_override,
             effect_override=resolved_effect_override,
             text_color_override=resolved_color_override,
+            cluster_hero_font_override=resolved_cluster_hero_override,
+            cluster_body_font_override=resolved_cluster_body_override,
         )
 
     if result.get("ok"):
@@ -2980,6 +3005,8 @@ def _render_generative_variant(
     font_family_override: str | None = None,
     effect_override: str | None = None,
     text_color_override: str | None = None,
+    cluster_hero_font_override: str | None = None,
+    cluster_body_font_override: str | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -3099,6 +3126,8 @@ def _render_generative_variant(
         "intro_font_family": font_family_override,
         "intro_effect": effect_override,
         "intro_text_color": text_color_override,
+        "intro_cluster_hero_font": cluster_hero_font_override,
+        "intro_cluster_body_font": cluster_body_font_override,
     }
     try:
         beats: list[float] = []
@@ -3388,12 +3417,17 @@ def _render_generative_variant(
                 # keeps PR #508's editorial restyle; explicit opt-outs
                 # (layout/text edits) use the legacy static cluster path so
                 # Slice 3a's registry pairing owns the faces.
+                _sio_cs: dict | None = (
+                    dict(EDITORIAL_STYLE) if editorial_enabled and allow_sequence else None
+                )
+                if _sio_cs and cluster_hero_font_override:
+                    _sio_cs["hero_font"] = cluster_hero_font_override
+                if _sio_cs and cluster_body_font_override:
+                    _sio_cs["body_font"] = cluster_body_font_override
                 return build_persistent_intro_overlays(
                     reveal_window_s=reveal_window_s,
                     beats=beats,
-                    cluster_style=(
-                        EDITORIAL_STYLE if editorial_enabled and allow_sequence else None
-                    ),
+                    cluster_style=_sio_cs,
                     **_at_params,
                 )
 

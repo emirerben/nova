@@ -61,5 +61,7 @@ export function resolveIntroParams(
       ? intro.text_anchor
       : "center") as "left" | "right" | "center",
     strokeWidth: intro?.stroke_width ?? null,
+    clusterHeroFont: draft.clusterHeroFont ?? variant.intro_cluster_hero_font ?? null,
+    clusterBodyFont: draft.clusterBodyFont ?? variant.intro_cluster_body_font ?? null,
   };
 }
