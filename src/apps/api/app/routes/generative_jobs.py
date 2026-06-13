@@ -132,6 +132,12 @@ class GenerativeVariant(BaseModel):
     # its TS layout mirror only models the linear single-block layout; cluster
     # edits go through the server reburn path instead.
     intro_layout: str | None = None
+    # Authoritative intro mode (D19): "sequence" (transcript-synced editorial
+    # typography) | "cluster" | "linear". `sequence_synced` is the FE-convenience
+    # boolean (intro_mode == "sequence") — synced variants disable intro-text /
+    # highlight edits (the words come from the voiceover) but keep the size nudge.
+    intro_mode: str | None = None
+    sequence_synced: bool | None = None
     # Fast-reburn base: the text-free, audio-mixed video behind agent_text variants.
     # `base_video_path` is the persisted GCS key; `base_video_url` is a fresh-signed
     # playback URL minted on every status read (mirrors output_url re-signing) so
@@ -416,6 +422,18 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # no base_video_url key → the instant editor simply stays hidden
+        # Intro mode (D19): expose the authoritative mode plus the FE-convenience
+        # `sequence_synced` boolean. Legacy variants (pre-intro_mode) fall back to
+        # the persisted intro_layout — they can never be "sequence".
+        intro_mode = v.get("intro_mode") or v.get("intro_layout") or None
+        v = {**v, "intro_mode": intro_mode, "sequence_synced": intro_mode == "sequence"}
+        # Drop server-only sequence internals from the polled payload: the full
+        # per-word `transcript` and parallel `scenes` are read by the reburn path
+        # from the persisted Job row, never by the FE. Returning them on every
+        # status poll is wasted bandwidth and needless exposure of the footage
+        # transcript to the client. (`v` is already a fresh copy here.)
+        v.pop("transcript", None)
+        v.pop("scenes", None)
         out.append(v)
     return out
 
@@ -474,9 +492,25 @@ async def dispatch_swap_song(
     regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=new_track_id)
 
 
+# Mode-neutral: a sequence variant is either transcript-synced (voiceover) OR
+# rhythm-mode (an authored quote over music, no voiceover) — the copy must not
+# claim a voiceover that rhythm variants don't have.
+_SEQUENCE_TEXT_LOCKED_DETAIL = (
+    "Text is synced for this Editorial variant — switch layout to Classic to edit text."
+)
+
+
 def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool) -> None:
     """Validate + enqueue an intro-text edit/removal for one variant."""
-    require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id)
+    # Sequence-synced variants (D19): the on-screen words come from the spoken
+    # transcript, not intro_text — a text edit would silently desync or no-op.
+    # The size nudge and style/layout edits stay allowed (separate dispatchers).
+    if variant.get("intro_mode") == "sequence":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_SEQUENCE_TEXT_LOCKED_DETAIL,
+        )
     if not remove and not (text and text.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -565,6 +599,14 @@ def dispatch_edit_variant(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="`text` and `remove_text` are mutually exclusive.",
         )
+    # Sequence-synced variants (D19): intro-text/highlight edits are locked (the
+    # words come from the voiceover transcript). Size nudge, style set, and
+    # layout picks (the opt-out path) remain editable.
+    if variant.get("intro_mode") == "sequence" and (text is not None or remove_text):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=_SEQUENCE_TEXT_LOCKED_DETAIL,
+        )
     if text is not None and not text.strip():
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -612,22 +654,33 @@ def dispatch_edit_variant(
                 detail="This edit has no intro text to lay out.",
             )
         if intro_layout == "cluster":
-            from app.pipeline.intro_cluster import MAX_WORDS, MIN_WORDS  # noqa: PLC0415
+            # Sequence-capable variants bypass the hook word-count gate: a synced
+            # variant (or one with a persisted transcript) renders the editorial
+            # treatment from the SPOKEN words, not intro_text, so its hook length
+            # is irrelevant. An explicit layout pick on a synced variant opts it
+            # OUT of the sequence (the worker renders the static cluster from the
+            # persisted intro_text and clears the transcript) — from then on the
+            # variant is a plain cluster variant and this gate applies again.
+            sequence_capable = variant.get("intro_mode") == "sequence" or bool(
+                variant.get("transcript")
+            )
+            if not sequence_capable:
+                from app.pipeline.intro_cluster import MAX_WORDS, MIN_WORDS  # noqa: PLC0415
 
-            # Validate against the text that will actually render: the override
-            # if supplied, else the persisted intro. The layout engine enforces
-            # the same bound at render time (falling back to linear) — rejecting
-            # here turns a silent fallback into actionable feedback.
-            effective_text = (text or variant.get("intro_text") or "").strip()
-            n_words = len(effective_text.split())
-            if not (MIN_WORDS <= n_words <= MAX_WORDS):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"The editorial layout needs a {MIN_WORDS}-{MAX_WORDS} word hook "
-                        f"(this text has {n_words}). Shorten the text first."
-                    ),
-                )
+                # Validate against the text that will actually render: the override
+                # if supplied, else the persisted intro. The layout engine enforces
+                # the same bound at render time (falling back to linear) — rejecting
+                # here turns a silent fallback into actionable feedback.
+                effective_text = (text or variant.get("intro_text") or "").strip()
+                n_words = len(effective_text.split())
+                if not (MIN_WORDS <= n_words <= MAX_WORDS):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"The editorial layout needs a {MIN_WORDS}-{MAX_WORDS} word hook "
+                            f"(this text has {n_words}). Shorten the text first."
+                        ),
+                    )
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 

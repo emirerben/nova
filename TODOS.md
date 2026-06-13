@@ -819,3 +819,11 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Depends on:** cluster-intro PR merged; eval fixtures for the new writer.
 **Effort:** L (CC: ~2h)
 **Priority:** P2
+
+### Auto-scrim for editorial text on busy footage (from 2026-06-12 design review, D7)
+**What:** Luma/variance check behind each editorial text region; composite a subtle dark gradient scrim only when the region is too busy/bright for white text + shadow.
+**Why:** The editorial sequence ships with white text + stronger shadow (reference look). On busy footage (e.g. the restaurant clip on plan item 4a1a7616) thin Playfair Regular and Great Vibes strokes lose contrast in bright/cluttered regions — readability fails even when typography is right.
+**How:** Per-scene region sample in the Skia burn path (mean luma + variance over the block bbox); above threshold, draw a radial/linear scrim (≤20% black) under the text before glyphs. Tune thresholds + scrim aesthetics via `make verify-overlays` montages; needs its own design pass to avoid slapped-on-gradient look.
+**Effort:** M (CC: ~1h)
+**Priority:** P2
+**Depends on:** editorial-sequence PR merged (provides the scene/block structure to measure against).

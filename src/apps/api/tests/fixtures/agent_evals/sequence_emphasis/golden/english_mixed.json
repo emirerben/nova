@@ -1,0 +1,30 @@
+{
+  "agent": "nova.compose.sequence_emphasis",
+  "prompt_version": "1.0.0",
+  "input": {
+    "phrases": [
+      ["it's", "not", "just", "luck"],
+      ["don't", "allow", "anyone", "to", "diminish"],
+      ["this", "is", "it"],
+      ["it", "was", "\"never\"", "enough"],
+      ["the", "grind", "pays", "off"],
+      ["start", "now"]
+    ],
+    "language_hint": "en"
+  },
+  "raw_text": "{\"phrases\": [{\"index\": 0, \"word_roles\": [\"connector\", \"connector\", \"hero\", \"hero\"]}, {\"index\": 1, \"word_roles\": [\"connector\", \"hero\", \"hero\", \"connector\", \"closer\"]}, {\"index\": 2, \"word_roles\": [\"connector\", \"connector\", \"hero\"]}, {\"index\": 3, \"word_roles\": [\"connector\", \"connector\", \"hero\", \"hero\"]}, {\"index\": 4, \"word_roles\": [\"connector\", \"hero\", \"hero\", \"closer\"]}, {\"index\": 5, \"word_roles\": [\"hero\", \"closer\"]}]}",
+  "output": {
+    "phrases": [
+      {"index": 0, "word_roles": ["connector", "connector", "hero", "hero"]},
+      {"index": 1, "word_roles": ["connector", "hero", "hero", "connector", "closer"]},
+      {"index": 2, "word_roles": ["connector", "connector", "hero"]},
+      {"index": 3, "word_roles": ["connector", "connector", "hero", "hero"]},
+      {"index": 4, "word_roles": ["connector", "hero", "hero", "closer"]},
+      {"index": 5, "word_roles": ["hero", "closer"]}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "English mixed set. Phrase 0 is the taste reference ('just luck' = quoted-feel hero group, 'it's not' = glue). Phrase 1 is the second taste reference with a serif-tail closer on 'diminish'. Phrase 2 is all-stopword — the model must still promote a hero ('it'). Phrase 3 carries a quoted span ('\"never\"') that must be hero. Phrase 4 takes a closer on the final word. Phrase 5 is a 2-word phrase: hero + closer."
+  }
+}

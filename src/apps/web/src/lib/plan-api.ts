@@ -413,6 +413,12 @@ export interface PlanItemVariant {
   // (cluster needs a 3-6 word hook, so the chip gates on intro_text length).
   intro_text?: string | null;
   intro_layout?: "linear" | "cluster" | null;
+  // Intro rendering mode (D6/D19). "sequence" = transcript-synced typographic
+  // sequence — text edits are server-rejected (422); size nudge + layout
+  // opt-out stay allowed. Absent on legacy variants.
+  intro_mode?: "sequence" | "cluster" | "linear" | null;
+  // Convenience flag from the backend: true iff intro_mode === "sequence".
+  sequence_synced?: boolean | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;

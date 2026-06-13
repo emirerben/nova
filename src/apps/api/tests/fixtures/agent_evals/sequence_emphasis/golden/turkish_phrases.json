@@ -1,0 +1,22 @@
+{
+  "agent": "nova.compose.sequence_emphasis",
+  "prompt_version": "1.0.0",
+  "input": {
+    "phrases": [
+      ["bu", "sadece", "şans", "değil"],
+      ["kendine", "güven"]
+    ],
+    "language_hint": "tr"
+  },
+  "raw_text": "{\"phrases\": [{\"index\": 0, \"word_roles\": [\"connector\", \"hero\", \"hero\", \"closer\"]}, {\"index\": 1, \"word_roles\": [\"hero\", \"closer\"]}]}",
+  "output": {
+    "phrases": [
+      {"index": 0, "word_roles": ["connector", "hero", "hero", "closer"]},
+      {"index": 1, "word_roles": ["hero", "closer"]}
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Turkish set — the Turkish mirror of 'it's not just luck': 'bu' is a stopword connector, 'sadece şans' is the contiguous hero group, 'değil' lands the thought as the closer. Second phrase exercises the 2-word hero+closer shape with Turkish diacritics intact."
+  }
+}

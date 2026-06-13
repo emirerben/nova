@@ -409,6 +409,20 @@ def _run_generative_job(job_id: str) -> None:
             if v.get("ok") and v.get("output_url")
         }
 
+        # Rhythm-mode quote authoring (editorial sequence without eligible
+        # speech). Same grounding _run_text_agents feeds intro_writer; called
+        # lazily per variant because the target sentence count tracks THAT
+        # variant's rendered duration.
+        def _author_quote(video_duration_s: float) -> str | None:
+            return _author_sequence_quote(
+                hero,
+                job_id=job_id,
+                video_duration_s=video_duration_s,
+                language=language,
+                persona=persona,
+                filming_guide=filming_guide_candidates,
+            )
+
         def _render_spec_set(
             specs: list[dict[str, Any]], spine: str | None
         ) -> list[dict[str, Any]]:
@@ -471,6 +485,7 @@ def _run_generative_job(job_id: str) -> None:
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
                         narrative_order=narrative_order,
+                        author_quote_fn=_author_quote,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -1036,18 +1051,33 @@ def _reburn_text_on_base(
     resolved_style_set_id: str | None,
     size_override_px: int | None,
     settings,
+    sequence_allowed: bool = True,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
     Returns a partial variant patch dict (same keys as _update_variant_entry expects).
     Raises on unrecoverable failure (base download error handled by caller via fallback).
+
+    Sequence variants (`intro_mode == "sequence"`): when `sequence_allowed` (the
+    edit is a pure font/size/style change), the sequence is rebuilt
+    DETERMINISTICALLY from the persisted scenes — no transcription, no LLM; a size
+    nudge re-scales `sequence_base_size_px` and rebuilds (D19). When the edit opts
+    out (`sequence_allowed=False` — an explicit layout pick or text change), the
+    variant renders the static intro from the persisted text and the persisted
+    transcript/scenes are CLEARED (the variant is no longer synced; the route-side
+    cluster word gate applies to it again from then on).
     """
     import shutil  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
 
-    from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
+    from app.pipeline.generative_overlays import (  # noqa: PLC0415
+        build_persistent_intro_overlays,
+        build_sequence_overlays,
+    )
+    from app.pipeline.intro_cluster import EDITORIAL_STYLE  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
     from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
     base_gcs_path = existing["base_video_path"]
@@ -1085,6 +1115,10 @@ def _reburn_text_on_base(
         intro_source = existing_size_source
         reburn_layout = existing.get("intro_layout")
         reburn_word_roles = existing.get("intro_word_roles")
+        reburn_mode = existing.get("intro_mode") or reburn_layout  # legacy inference (D19)
+        editorial_enabled = bool(getattr(settings, "editorial_sequence_enabled", True))
+        was_sequence = existing.get("intro_mode") == "sequence"
+        sequence_patch: dict = {}
 
         if agent_text is not None and text_mode == "agent_text":
             # Always pass final_size_px as size_override_px so we never try to
@@ -1102,13 +1136,69 @@ def _reburn_text_on_base(
             # source so pixel-stability logic downstream remains correct.
             intro_source = final_size_source
             reburn_word_roles = params.get("word_roles")
-            overlays = build_persistent_intro_overlays(
-                reveal_window_s=reveal_window_s,
-                beats=[],  # even-split reveal; talking-head precedent
-                **params,
-            )
-            # EFFECTIVE layout (cluster = 2 overlays per block; linear = one pair).
-            reburn_layout = "cluster" if len(overlays) > 2 else "linear"
+
+            overlays: list[dict] | None = None
+            persisted_scenes = existing.get("scenes") or None
+            if sequence_allowed and editorial_enabled and was_sequence and persisted_scenes:
+                # Deterministic sequence rebuild (D15/D19): the persisted scenes
+                # already carry word timings + roles — no transcribe, no LLM. A
+                # size nudge re-scales the sequence base px and rebuilds.
+                seq_px = int(
+                    final_size_px or existing.get("sequence_base_size_px") or intro_px or 60
+                )
+                overlays = build_sequence_overlays(
+                    persisted_scenes,
+                    base_size_px=seq_px,
+                    text_color=str(params.get("text_color") or "#FFFFFF"),
+                )
+                if overlays:
+                    reburn_mode = "sequence"
+                    reburn_layout = "cluster"
+                    intro_px = seq_px
+                    sequence_patch = {"sequence_base_size_px": seq_px}
+                else:
+                    record_pipeline_event(
+                        "overlay",
+                        "sequence_fallback",
+                        {
+                            "variant_id": variant_id,
+                            "reason": "reburn_rebuild_failed",
+                            "mode": existing.get("sequence_mode"),
+                        },
+                    )
+                    log.warning(
+                        "generative_sequence_reburn_rebuild_failed",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                    )
+                    # Force the static-intro rebuild below (an empty list would
+                    # skip it AND dodge copy-through detection — textless ship).
+                    overlays = None
+            if overlays is None:
+                overlays = build_persistent_intro_overlays(
+                    reveal_window_s=reveal_window_s,
+                    beats=[],  # even-split reveal; talking-head precedent
+                    # Static cluster restyle while the sequence kill switch is ON;
+                    # OFF = byte-identical legacy (style=None down the stack).
+                    cluster_style=(EDITORIAL_STYLE if editorial_enabled else None),
+                    **params,
+                )
+                # EFFECTIVE layout (cluster = 2 overlays per block; linear = one
+                # pair). Legacy inference (D19) — sets intro_mode for this render.
+                reburn_layout = "cluster" if len(overlays) > 2 else "linear"
+                reburn_mode = reburn_layout
+                if was_sequence and not sequence_allowed:
+                    # Explicit opt-out (layout pick / text change): the variant is
+                    # no longer synced — clear the sequence persistence (rhythm
+                    # quote included) so the route-side cluster word gate applies
+                    # to it again.
+                    sequence_patch = {
+                        "transcript": None,
+                        "scenes": None,
+                        "sequence_base_size_px": None,
+                        "sequence_mode": None,
+                        "sequence_quote": None,
+                    }
             burn_text_overlays_skia(local_base, overlays, final_path, tmpdir)
 
             # Detect silent copy-through (burn failed with non-empty overlays)
@@ -1124,6 +1214,15 @@ def _reburn_text_on_base(
         else:
             # remove_text or none mode
             shutil.copy2(local_base, final_path)
+            reburn_mode = None
+            if was_sequence:
+                sequence_patch = {
+                    "transcript": None,
+                    "scenes": None,
+                    "sequence_base_size_px": None,
+                    "sequence_mode": None,
+                    "sequence_quote": None,
+                }
 
         # Upload final to same variant key
         variant_gcs_key = (existing.get("video_path") or "").lstrip("/")
@@ -1136,6 +1235,7 @@ def _reburn_text_on_base(
             ),
             "intro_layout": (reburn_layout if agent_text else None),
             "intro_word_roles": (reburn_word_roles if agent_text else None),
+            "intro_mode": (reburn_mode if agent_text else None),
             "intro_text_size_px": intro_px if agent_text else existing_size_px,
             "intro_size_source": intro_source if agent_text else existing_size_source,
             "style_set_id": resolved_style_set_id,
@@ -1145,7 +1245,10 @@ def _reburn_text_on_base(
             "render_finished_at": datetime.utcnow().isoformat() + "Z",
             "video_path": variant_gcs_key,
             "output_url": output_url,
-            # base_video_path unchanged (still valid for next edit)
+            # base_video_path unchanged (still valid for next edit);
+            # transcript/scenes only appear here when they must change (merge
+            # semantics: absent keys keep the persisted values).
+            **sequence_patch,
         }
 
 
@@ -1438,6 +1541,10 @@ def _run_regenerate_variant(
         if layout_override in ("linear", "cluster"):
             persisted_layout = layout_override
         persisted_word_roles: list[str] | None = existing.get("intro_word_roles") or None
+        # Rhythm-mode quote (sequence_mode == "rhythm"). A re-assembling
+        # re-render re-times the SAME quote on the new duration — deterministic
+        # synthesis, zero LLM calls. Nulled below on opt-out edits.
+        persisted_sequence_quote: str | None = existing.get("sequence_quote") or None
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -1463,6 +1570,17 @@ def _run_regenerate_variant(
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")
+
+    # Sequence opt-out (D19): an explicit layout pick or text change on a synced
+    # variant means "stop syncing — render the static intro from intro_text".
+    # Everything else (size nudge, style set, swap-song, mix, timeline edits)
+    # keeps the sequence auto-pick: fast-reburns rebuild deterministically from
+    # the persisted scenes; re-assembling renders re-transcribe (D15).
+    allow_sequence = layout_override is None and override_text is None and not remove_text
+    if not allow_sequence:
+        # Opt-out edits stop syncing: don't carry the rhythm quote forward —
+        # the merge clears it alongside transcript/scenes (D19 opt-out).
+        persisted_sequence_quote = None
 
     # ── Timeline resolution (clip timeline editor) ────────────────────────────
     # Precedence: explicit timeline_override kwarg → the variant's persisted
@@ -1536,6 +1654,7 @@ def _run_regenerate_variant(
                 resolved_style_set_id=resolved_style_set_id,
                 size_override_px=resolved_size_override_px,
                 settings=settings,
+                sequence_allowed=allow_sequence,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
@@ -1604,6 +1723,9 @@ def _run_regenerate_variant(
             render_probe_map = timeline_assembly["probe_map"]
             available_footage_s = _available_footage_s(render_probe_map)
             narrative_order_regen = None
+            # No clip analysis on this path → a fresh rhythm quote can't be
+            # grounded; rhythm only re-times the persisted quote (if any).
+            regen_author_quote_fn = None
             # Persisted intro_text is reused verbatim — the timeline path never
             # runs intro_writer (no clip_metas to ground a fresh hook in).
             agent_text, agent_form, text_mode = _resolve_regen_text(
@@ -1683,6 +1805,18 @@ def _run_regenerate_variant(
                 persisted_word_roles=persisted_word_roles,
             )
 
+            # Rhythm-mode quote authoring on a full re-render (same grounding
+            # as the first render; only reached when no quote is persisted).
+            def regen_author_quote_fn(video_duration_s: float) -> str | None:
+                return _author_sequence_quote(
+                    regen_hero,
+                    job_id=job_id,
+                    video_duration_s=video_duration_s,
+                    language=language,
+                    persona=persona,
+                    filming_guide=filming_guide_regen,
+                )
+
         spec: dict[str, Any] = {
             "variant_id": variant_id,
             "rank": rank,
@@ -1724,6 +1858,9 @@ def _run_regenerate_variant(
             user_style_knobs=existing_user_style_knobs,
             narrative_order=narrative_order_regen,
             assembly_steps_override=assembly_steps_override,
+            allow_sequence=allow_sequence,
+            author_quote_fn=regen_author_quote_fn,
+            existing_sequence_quote=persisted_sequence_quote,
         )
 
     if result.get("ok"):
@@ -2194,6 +2331,55 @@ def _run_text_agents(
         return None, {}
 
 
+def _author_sequence_quote(
+    hero,
+    *,
+    job_id: str,
+    video_duration_s: float,
+    language: str = "en",
+    persona: dict | None = None,
+    filming_guide: list[dict] | None = None,
+) -> str | None:
+    """Run SequenceQuoteWriterAgent for a rhythm-mode sequence. Returns the
+    sanitized quote, or None on ANY failure.
+
+    Grounding mirrors `_run_text_agents`' IntroWriterInput (same hero summary,
+    persona, language, filming guide — minus the intro-only form/exemplars)
+    plus the rendered duration, which drives the target sentence count. NO
+    heuristic fallback BY DESIGN: a failed/terminal agent run means the caller
+    falls back to the static styled cluster — never a made-up quote.
+    """
+    persona = persona or {}
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.sequence_quote_writer import (  # noqa: PLC0415
+            SequenceQuoteInput,
+            SequenceQuoteWriterAgent,
+        )
+
+        out = SequenceQuoteWriterAgent(default_client()).run(
+            SequenceQuoteInput(
+                hero_clip=_meta_to_summary(hero),
+                hero_transcript=str(getattr(hero, "transcript", "") or ""),
+                tone=str(persona.get("tone", "") or ""),
+                language=language,
+                content_pillars=list(persona.get("content_pillars", []) or []),
+                theme=str(persona.get("theme", "") or ""),
+                idea=str(persona.get("idea", "") or ""),
+                preference_summary=str(persona.get("preference_summary", "") or ""),
+                tiktok_analysis=str(persona.get("tiktok_summary", "") or ""),
+                filming_guide=filming_guide or [],
+                video_duration_s=max(float(video_duration_s), 0.1),
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        return out.quote
+    except Exception as exc:  # noqa: BLE001 — quote authoring can never fail a render
+        log.warning("generative_sequence_quote_failed", job_id=job_id, error=str(exc))
+        return None
+
+
 def _fallback_intro_text(hero_summary):
     import types as _types  # noqa: PLC0415
 
@@ -2317,6 +2503,321 @@ def _fit_section_to_footage(track_config: dict, available_footage_s: float) -> d
     return cfg
 
 
+# ── Transcript-synced typographic sequence (editorial auto-upgrade, D6/D16) ─────
+
+# Hard wall-clock guard on the in-task Whisper call (D18 "API-or-static"): the
+# render task runs at soft_time_limit=1740 and the sequence is an enhancement —
+# it must never eat the render budget. The OpenAI client has its own timeouts,
+# but a wedged connection must not stall the burn step, so the call runs on a
+# helper thread and is abandoned past this deadline (the thread's ffmpeg audio
+# extract holds its own 300s timeout, so the orphan is bounded).
+_SEQUENCE_TRANSCRIBE_TIMEOUT_S = 90.0
+
+
+def _sequence_gate(
+    *,
+    layout: str | None,
+    track: MusicTrack | None,
+    voiceover_gcs_path: str | None,
+) -> tuple[bool, str]:
+    """Sequence eligibility predicate (D16), evaluated BEFORE transcription.
+
+    The sequence syncs on-screen text to the words in `assembled_path`'s ORIGINAL
+    montage audio (that is what D11 transcribes), so it is only eligible when that
+    audio is what the viewer actually hears in the variant's FINAL mix:
+
+    - `original_text` (no track, no voiceover): `_render_generative_variant` skips
+      the mix entirely (`audio_mixed_path = assembled_path`) → the assembled audio
+      IS the final audio → eligible.
+    - song variants (track set, no voiceover): `_mix_template_audio` REPLACES the
+      source audio (`-map 1:a` — the song is the only audio stream) → the original
+      speech is never audible → ineligible.
+    - voiceover variants (voiceover_gcs_path set): the audible speech is the
+      user's VOICEOVER, not the assembled montage audio. `_mix_user_voiceover`
+      with a music bed drops `[0:a]` (footage audio) from the filter graph
+      entirely; voice-only mode ducks it by `1 - mix` under the always-full voice.
+      Either way, syncing typography to the assembled-path transcript would fight
+      the narration the viewer hears → ineligible (sequence-over-voiceover would
+      need to transcribe the voice bed instead — a follow-up, not v1).
+
+    Also requires the variant's intro layout to RESOLVE to "cluster" (the
+    Editorial pick — post kill-switch / position-pin forcing in
+    `_resolve_intro_overlay_params`); the sequence is the auto-upgraded editorial
+    mode (D6), never a linear-intro upgrade.
+    """
+    if layout != "cluster":
+        return False, "layout_not_cluster"
+    if voiceover_gcs_path:
+        return False, "voiceover_bed"
+    if track is not None:
+        return False, "song_replaced_audio"
+    return True, "ok"
+
+
+def _transcribe_for_sequence(assembled_path: str):
+    """Whisper transcription of the pre-mix montage (D11) with a hard wall-clock
+    guard (D18). Returns a `Transcript`; raises on failure/timeout — the caller
+    maps ANY exception to the static styled-cluster fallback."""
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    from app.pipeline import transcribe as transcribe_mod  # noqa: PLC0415
+
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(transcribe_mod.transcribe_whisper, assembled_path)
+        return future.result(timeout=_SEQUENCE_TRANSCRIBE_TIMEOUT_S)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _compact_transcript_words(words: list) -> list[dict]:
+    """Compact word records for `variants[i]["transcript"]` persistence
+    (`{"word","start_s","end_s"}` — the shape `phrase_sequence` accepts back on
+    deterministic re-renders). Reuses the phrase engine's normalizer so accessor
+    quirks (dataclass vs dict, `start` vs `start_s`) stay single-sourced."""
+    from app.pipeline.phrase_sequence import _normalize_words  # noqa: PLC0415
+
+    return [
+        {"word": w.text, "start_s": round(w.start, 3), "end_s": round(w.end, 3)}
+        for w in _normalize_words(words)
+    ]
+
+
+def _record_sequence_fallback(reason: str, *, job_id: str, variant_id: str, mode: str) -> None:
+    """Trace + log one sequence fallback (`mode` = "transcript" | "rhythm")."""
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    record_pipeline_event(
+        "overlay",
+        "sequence_fallback",
+        {"variant_id": variant_id, "reason": reason, "mode": mode},
+    )
+    log.info(
+        "generative_sequence_fallback",
+        job_id=job_id,
+        variant_id=variant_id,
+        reason=reason,
+        mode=mode,
+    )
+
+
+def _annotate_scene_roles(scenes: list[dict], *, job_id: str, variant_id: str, mode: str) -> None:
+    """Fill `scene["word_roles"]` in place via the emphasis agent.
+
+    ONE agent call annotating every phrase; terminal failure falls back per
+    phrase to the deterministic heuristic (the agent contract). Shared by the
+    transcript-synced and rhythm sequence paths so the two can never drift on
+    role semantics. Never raises.
+    """
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    emphasis_source = "heuristic"
+    try:
+        from app.agents._model_client import default_client  # noqa: PLC0415
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.sequence_emphasis import (  # noqa: PLC0415
+            SequenceEmphasisAgent,
+            SequenceEmphasisInput,
+        )
+
+        annotated = SequenceEmphasisAgent(default_client()).run(
+            SequenceEmphasisInput(phrases=[list(s["words"]) for s in scenes]),
+            ctx=RunContext(job_id=job_id),
+        )
+        for scene, phrase in zip(scenes, annotated.phrases, strict=True):
+            scene["word_roles"] = list(phrase.word_roles)
+        emphasis_source = "agent"
+    except Exception as exc:  # noqa: BLE001 — emphasis is taste, never a blocker
+        log.warning("generative_sequence_emphasis_failed", job_id=job_id, error=str(exc))
+        from app.pipeline.intro_cluster import derive_word_roles  # noqa: PLC0415
+
+        for scene in scenes:
+            scene["word_roles"] = derive_word_roles(list(scene["words"]))
+    record_pipeline_event(
+        "overlay",
+        "emphasis_source",
+        {"variant_id": variant_id, "source": emphasis_source, "mode": mode},
+    )
+
+
+def _attempt_sequence_overlays(
+    *,
+    job_id: str,
+    variant_id: str,
+    assembled_path: str,
+    video_duration_s: float,
+    base_size_px: int,
+    text_color: str,
+) -> tuple[list[dict], dict[str, Any]] | None:
+    """Build the transcript-synced sequence for one eligible variant.
+
+    transcribe(assembled_path) → speech_eligibility → split_phrases → emphasis
+    agent (per-phrase heuristic fallback) → build_sequence_overlays. Returns
+    `(overlays, persist_patch)` on success; None on ANY failure/ineligibility —
+    every fallback is traced (`sequence_fallback` + reason, mode="transcript")
+    and the caller attempts the rhythm sequence / static cluster instead.
+    Never raises.
+    """
+    from app.pipeline.phrase_sequence import speech_eligibility, split_phrases  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    def _fallback(reason: str) -> None:
+        _record_sequence_fallback(reason, job_id=job_id, variant_id=variant_id, mode="transcript")
+        return None
+
+    try:
+        transcript = _transcribe_for_sequence(assembled_path)
+    except Exception as exc:  # noqa: BLE001 — D18: ASR can never fail a render
+        log.warning("generative_sequence_transcribe_failed", job_id=job_id, error=str(exc))
+        return _fallback("transcribe_failed")
+
+    words = list(getattr(transcript, "words", None) or [])
+    eligibility = speech_eligibility(words, video_duration_s=video_duration_s)
+    record_pipeline_event(
+        "overlay",
+        "sequence_transcribed",
+        {
+            "variant_id": variant_id,
+            "word_count": eligibility["word_count"],
+            "coverage_frac": eligibility["coverage_frac"],
+        },
+    )
+    if getattr(transcript, "low_confidence", False):
+        return _fallback("low_confidence_transcript")
+    if not eligibility["eligible"]:
+        return _fallback(eligibility["reason"])
+
+    scenes = split_phrases(words, video_duration_s=video_duration_s)
+    if not scenes:
+        return _fallback("no_scenes")
+    record_pipeline_event(
+        "overlay",
+        "sequence_scenes",
+        {"variant_id": variant_id, "count": len(scenes), "mode": "transcript"},
+    )
+
+    _annotate_scene_roles(scenes, job_id=job_id, variant_id=variant_id, mode="transcript")
+
+    from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
+
+    overlays = build_sequence_overlays(scenes, base_size_px=base_size_px, text_color=text_color)
+    if not overlays:
+        return _fallback("no_renderable_scenes")
+
+    persist: dict[str, Any] = {
+        # Compact transcript + annotated scenes: a fast-reburn edit rebuilds the
+        # sequence DETERMINISTICALLY from these (no ASR, no LLM — D15/D19); a
+        # re-assembling re-render overwrites them (transcript invalidation).
+        "transcript": _compact_transcript_words(words),
+        "scenes": scenes,
+        "sequence_base_size_px": int(base_size_px),
+        # Observability + FE-future field: which engine synced this sequence.
+        # Real speech is authoritative — any persisted rhythm quote is cleared.
+        "sequence_mode": "transcript",
+        "sequence_quote": None,
+    }
+    return overlays, persist
+
+
+def _attempt_rhythm_overlays(
+    *,
+    job_id: str,
+    variant_id: str,
+    video_duration_s: float,
+    base_size_px: int,
+    text_color: str,
+    author_quote_fn: Any | None = None,
+    persisted_quote: str | None = None,
+) -> tuple[list[dict], dict[str, Any]] | None:
+    """Build the rhythm-mode sequence (authored quote, synthesized timings).
+
+    Editorial variants WITHOUT eligible speech (no/too-little speech, low
+    coverage, ASR failure, song-replaced audio, voiceover bed) still get the
+    sequence treatment: an authored multi-phrase quote is paced rhythmically
+    across the video by `rhythm_scenes` (deterministic — no ASR), then flows
+    through the SAME emphasis + overlay machinery as the transcript path.
+
+    Quote precedence: `persisted_quote` (cut-edit re-assembly re-times the SAME
+    quote on the new duration — zero LLM calls) → `author_quote_fn(duration)`
+    (SequenceQuoteWriterAgent, first render). There is NO heuristic quote
+    fallback BY DESIGN — no agent quote means the static styled cluster, never
+    a made-up quote. Returns `(overlays, persist_patch)` on success; None on
+    ANY failure (traced `sequence_fallback`, mode="rhythm"). Never raises.
+    """
+    from app.agents.sequence_quote_writer import split_quote_sentences  # noqa: PLC0415
+    from app.pipeline.phrase_sequence import rhythm_scenes  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    def _fallback(reason: str) -> None:
+        _record_sequence_fallback(reason, job_id=job_id, variant_id=variant_id, mode="rhythm")
+        return None
+
+    quote = (persisted_quote or "").strip() or None
+    if quote is not None:
+        record_pipeline_event("overlay", "sequence_quote_reused", {"variant_id": variant_id})
+    else:
+        if author_quote_fn is None:
+            return _fallback("no_quote_author")
+        try:
+            quote = author_quote_fn(video_duration_s)
+        except Exception as exc:  # noqa: BLE001 — authoring can never fail a render
+            log.warning("generative_sequence_quote_error", job_id=job_id, error=str(exc))
+            quote = None
+        quote = (quote or "").strip() or None
+        if quote is None:
+            return _fallback("quote_agent_failed")
+        sentences = split_quote_sentences(quote)
+        record_pipeline_event(
+            "overlay",
+            "sequence_quote_authored",
+            {
+                "variant_id": variant_id,
+                "sentence_count": len(sentences),
+                "word_count": sum(len(s.split()) for s in sentences),
+            },
+        )
+
+    scenes = rhythm_scenes(quote, video_duration_s=video_duration_s)
+    if not scenes:
+        return _fallback("no_rhythm_scenes")
+    record_pipeline_event(
+        "overlay",
+        "sequence_scenes",
+        {"variant_id": variant_id, "count": len(scenes), "mode": "rhythm"},
+    )
+
+    _annotate_scene_roles(scenes, job_id=job_id, variant_id=variant_id, mode="rhythm")
+
+    from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
+
+    overlays = build_sequence_overlays(scenes, base_size_px=base_size_px, text_color=text_color)
+    if not overlays:
+        return _fallback("no_renderable_scenes")
+
+    persist: dict[str, Any] = {
+        # No ASR transcript in rhythm mode — explicit None clears any stale one.
+        # The quote survives re-assembly (D15 clears scenes, NOT the quote) so a
+        # cut-edit re-render re-times the same words deterministically, LLM-free.
+        "transcript": None,
+        "scenes": scenes,
+        "sequence_base_size_px": int(base_size_px),
+        "sequence_mode": "rhythm",
+        "sequence_quote": quote,
+    }
+    return overlays, persist
+
+
+def _burn_copy_through(final_path: str, source_path: str) -> bool:
+    """Heuristic ported from the fast-reburn path (D20): a burn whose output is
+    byte-size-identical to its input almost certainly copied input → output (the
+    renderer's internal failure fallback) — i.e. a silent textless video."""
+    return (
+        os.path.exists(final_path)
+        and os.path.exists(source_path)
+        and os.path.getsize(final_path) == os.path.getsize(source_path)
+    )
+
+
 # ── Variant render ──────────────────────────────────────────────────────────────
 
 
@@ -2363,8 +2864,29 @@ def _render_generative_variant(
     user_style_knobs: dict | None = None,
     narrative_order: list[str] | None = None,
     assembly_steps_override: list | None = None,
+    allow_sequence: bool = True,
+    author_quote_fn: Any | None = None,
+    existing_sequence_quote: str | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
+
+    `allow_sequence` gates the editorial sequence — transcript-synced AND
+    rhythm (D16/D19): True on first renders and pure re-assembly re-renders
+    (the auto-pick re-runs, re-transcribing per D15); False when the edit
+    explicitly opts out — a layout pick or a text change
+    (`_run_regenerate_variant` computes this) — so the variant renders the
+    static cluster/linear intro instead.
+
+    `author_quote_fn` (rhythm mode): `(video_duration_s) -> str | None`, runs
+    SequenceQuoteWriterAgent with the orchestrator's grounding. None means this
+    render cannot author a fresh quote (e.g. the timeline-override path has no
+    clip analysis) — rhythm then only runs off `existing_sequence_quote`.
+
+    `existing_sequence_quote` is the variant's persisted rhythm quote: a
+    re-assembling re-render (cut edit) re-times the SAME quote on the new
+    duration deterministically — zero LLM calls — and carries it forward even
+    when the sequence falls back to static (so a later eligible render can
+    still reuse it).
 
     `narrative_order` (filming-guide alignment) is the guide clips' ids in
     shot order; forwarded to template_matcher.match so the edit's sequence
@@ -2429,6 +2951,23 @@ def _render_generative_variant(
         # that rebuilds a cluster deterministically on re-render (no LLM).
         "intro_layout": None,
         "intro_word_roles": None,
+        # Authoritative intro mode (D19): "sequence" | "cluster" | "linear" | None.
+        # Replaces the len(overlays)>2 layout inference for readers; the inference
+        # survives below ONLY to derive the value for non-sequence renders.
+        "intro_mode": None,
+        # Transcript-synced sequence persistence (D11/D15). None whenever this
+        # render did NOT produce a sequence — a re-assembling re-render thereby
+        # CLEARS stale words/scenes on success (merge semantics set them to None),
+        # so the next editorial render re-transcribes against the new montage.
+        "transcript": None,
+        "scenes": None,
+        "sequence_base_size_px": None,
+        # Which engine synced the sequence: "transcript" | "rhythm" | None.
+        "sequence_mode": None,
+        # Rhythm-mode quote. Unlike transcript/scenes, the persisted quote
+        # SURVIVES re-assembly (carried via existing_sequence_quote) so a cut
+        # edit re-times the same words deterministically without an LLM call.
+        "sequence_quote": existing_sequence_quote or None,
         # Voice-prominence slider for voiceover variants; None otherwise.
         "mix": mix if voiceover_gcs_path else None,
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted so
@@ -2524,6 +3063,9 @@ def _render_generative_variant(
             # EFFECTIVE layout (post kill-switch / position-pin forcing), not the
             # agent's raw choice — the FE gates instant text preview on this.
             base["intro_layout"] = _at_params.get("layout", "linear")
+            # Provisional mode (refined in the burn step: "sequence" when the
+            # editorial auto-upgrade lands, else the effective static layout).
+            base["intro_mode"] = base["intro_layout"]
             base["intro_word_roles"] = _at_params.get("word_roles")
 
         recipe = build_recipe(recipe_dict)
@@ -2646,8 +3188,10 @@ def _render_generative_variant(
             from app.pipeline.generative_overlays import (  # noqa: PLC0415
                 build_persistent_intro_overlays,
             )
+            from app.pipeline.intro_cluster import EDITORIAL_STYLE  # noqa: PLC0415
             from app.pipeline.probe import probe_video  # noqa: PLC0415
             from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
             # Upload the text-free base first.
             base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
@@ -2666,16 +3210,121 @@ def _render_generative_variant(
             except Exception:  # noqa: BLE001
                 base_dur = MAX_INTRO_S
             reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
-            overlays = build_persistent_intro_overlays(
-                reveal_window_s=reveal_window_s,
-                beats=beats,
-                **_at_params,
-            )
-            # EFFECTIVE layout: the engine can decline at build time (word count,
-            # fit) and fall back to linear — a linear pair is exactly 2 overlays,
-            # a cluster is 2 per block. The FE gates instant editing on this.
-            base["intro_layout"] = "cluster" if len(overlays) > 2 else "linear"
+
+            # Editorial sequence auto-upgrade (D6/D16): when the kill switch is
+            # ON and the layout resolved to "cluster", the variant gets the
+            # typographic sequence. Source precedence:
+            #   1. TRANSCRIPT sync — only when the final mix keeps the montage's
+            #      original speech audible (_sequence_gate) AND the speech is
+            #      eligible: transcribe the PRE-mix montage (assembled_path —
+            #      D11) and sync the typography to the spoken words.
+            #   2. RHYTHM — speech ineligible for ANY reason (no/too-little
+            #      speech, low coverage, ASR failure, song-replaced audio,
+            #      voiceover bed): pace an authored quote across the video
+            #      (rhythm mode works on ANY audio — it needs no audible
+            #      speech).
+            # Any rhythm failure falls through to the static styled cluster
+            # (the `cluster_style` arg below) — never a failed variant. A
+            # linear layout stays static (the sequence is the editorial
+            # auto-upgrade, never a linear-intro upgrade — D6).
+            editorial_enabled = bool(getattr(settings, "editorial_sequence_enabled", True))
+            sequence_result = None
+            if editorial_enabled and allow_sequence:
+                sequence_ok, gate_reason = _sequence_gate(
+                    layout=_at_params.get("layout"),
+                    track=track,
+                    voiceover_gcs_path=voiceover_gcs_path,
+                )
+                record_pipeline_event(
+                    "overlay",
+                    "sequence_eligibility",
+                    {"variant_id": variant_id, "eligible": sequence_ok, "reason": gate_reason},
+                )
+                if sequence_ok:
+                    sequence_result = _attempt_sequence_overlays(
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        assembled_path=assembled_path,  # PRE-mix montage audio (D11)
+                        video_duration_s=base_dur,
+                        base_size_px=int(_agent_text_intro_px or 60),
+                        text_color=str(_at_params.get("text_color") or "#FFFFFF"),
+                    )
+                if sequence_result is None and gate_reason != "layout_not_cluster":
+                    sequence_result = _attempt_rhythm_overlays(
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        video_duration_s=base_dur,
+                        base_size_px=int(_agent_text_intro_px or 60),
+                        text_color=str(_at_params.get("text_color") or "#FFFFFF"),
+                        author_quote_fn=author_quote_fn,
+                        persisted_quote=existing_sequence_quote,
+                    )
+
+            def _static_intro_overlays() -> list[dict]:
+                # Static intro (cluster or linear). `cluster_style` selects the
+                # editorial restyle only while the kill switch is ON; OFF is the
+                # byte-identical legacy contract (style=None all the way down).
+                return build_persistent_intro_overlays(
+                    reveal_window_s=reveal_window_s,
+                    beats=beats,
+                    cluster_style=(EDITORIAL_STYLE if editorial_enabled else None),
+                    **_at_params,
+                )
+
+            def _apply_static_layout(static_overlays: list[dict]) -> None:
+                # EFFECTIVE layout: the engine can decline at build time (word
+                # count, fit) and fall back to linear — a linear pair is exactly
+                # 2 overlays, a cluster is 2 per block. Legacy inference (D19) —
+                # kept ONLY to derive intro_mode/intro_layout for static renders.
+                effective = "cluster" if len(static_overlays) > 2 else "linear"
+                base["intro_layout"] = effective
+                base["intro_mode"] = effective
+                base["transcript"] = None
+                base["scenes"] = None
+                base["sequence_base_size_px"] = None
+                base["sequence_mode"] = None
+                # base["sequence_quote"] is deliberately NOT cleared: a known
+                # quote (persisted carry or just authored) survives a static
+                # fallback so a later eligible render re-times it LLM-free.
+
+            if sequence_result is not None:
+                overlays, sequence_persist = sequence_result
+                base.update(sequence_persist)
+                base["intro_layout"] = "cluster"
+                base["intro_mode"] = "sequence"
+            else:
+                overlays = _static_intro_overlays()
+                _apply_static_layout(overlays)
             burn_text_overlays_skia(audio_mixed_path, overlays, final_path, variant_dir)
+
+            # D20: copy-through detection ported from the fast-reburn path. A
+            # silent textless output must never ship as a "ready" variant.
+            if overlays and _burn_copy_through(final_path, audio_mixed_path):
+                if base["intro_mode"] == "sequence":
+                    # Loud static fallback: re-burn the static styled cluster.
+                    record_pipeline_event(
+                        "overlay",
+                        "sequence_fallback",
+                        {
+                            "variant_id": variant_id,
+                            "reason": "burn_copy_through",
+                            "mode": base.get("sequence_mode"),
+                        },
+                    )
+                    log.warning(
+                        "generative_sequence_burn_copy_through",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                    )
+                    overlays = _static_intro_overlays()
+                    _apply_static_layout(overlays)
+                    burn_text_overlays_skia(audio_mixed_path, overlays, final_path, variant_dir)
+                if overlays and _burn_copy_through(final_path, audio_mixed_path):
+                    raise RuntimeError(
+                        f"burn_text_overlays_skia copy-through detected on variant "
+                        f"{variant_id}; failing the render instead of shipping a "
+                        "textless video"
+                    )
         else:
             # lyrics / none / voiceover: no text burn; base caching not supported in v1.
             final_path = audio_mixed_path
@@ -2764,6 +3413,9 @@ def _render_talking_head_variant(
         # that rebuilds a cluster deterministically on re-render (no LLM).
         "intro_layout": None,
         "intro_word_roles": None,
+        # Authoritative intro mode (D19). talking_head never renders the
+        # transcript-synced sequence in v1, so this is always the static layout.
+        "intro_mode": None,
         "resolved_archetype": "talking_head",
         # Per-user parity-safe knob overrides (Creator Agent M1). Persisted for
         # re-renders (same as _render_generative_variant).
@@ -2810,6 +3462,11 @@ def _render_talking_head_variant(
             # No song → no beats; the intro reveals on an even split. Slot-0-relative
             # timestamps (from 0) are already absolute on the composite, which is what
             # burn_text_overlays_skia expects.
+            # DELIBERATE (PR #508 review): no cluster_style here — the editorial
+            # cascade restyle + transcript/rhythm sequence are scoped to montage
+            # variants this release. Talking-head intros stay the legacy stacked
+            # cluster on purpose; unifying the look is a separate aesthetic change
+            # that should be judged on a talking-head render first, not slipped in.
             overlays = build_persistent_intro_overlays(
                 reveal_window_s=reveal_window_s, beats=[], **params
             )
@@ -2827,6 +3484,7 @@ def _render_talking_head_variant(
             )
             # EFFECTIVE layout (cluster = 2 overlays per block; linear = one pair).
             base["intro_layout"] = "cluster" if len(overlays) > 2 else "linear"
+            base["intro_mode"] = base["intro_layout"]
             base["intro_word_roles"] = params.get("word_roles")
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
@@ -3276,6 +3934,23 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_text": r.get("intro_text"),
                     "intro_highlight_word": r.get("intro_highlight_word"),
                     "base_video_path": r.get("base_video_path"),
+                    # sequence + cluster persistence (D15/D19) — MUST survive
+                    # finalization or every re-render loses the synced typography:
+                    # intro_mode gates route behavior (sequence_synced, retext
+                    # block), scenes/transcript drive the deterministic reburn
+                    # rebuild, sequence_quote drives LLM-free rhythm re-timing,
+                    # intro_layout/intro_word_roles keep clusters clusters.
+                    "intro_layout": r.get("intro_layout"),
+                    "intro_word_roles": r.get("intro_word_roles"),
+                    "intro_mode": r.get("intro_mode"),
+                    "transcript": r.get("transcript"),
+                    "scenes": r.get("scenes"),
+                    "sequence_base_size_px": r.get("sequence_base_size_px"),
+                    "sequence_mode": r.get("sequence_mode"),
+                    "sequence_quote": r.get("sequence_quote"),
+                    # per-user style knobs (M1) — re-renders re-apply them from the
+                    # variant entry, never the persona row (same strip class).
+                    "user_style_knobs": r.get("user_style_knobs"),
                     # clip-editor timeline — MUST survive finalization or every
                     # variant reports `no_timeline` and the editor never appears.
                     # This whitelist silently strips anything the render persisted

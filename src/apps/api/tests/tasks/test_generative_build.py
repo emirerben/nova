@@ -315,6 +315,18 @@ def _patch_render_helpers(monkeypatch, mix_calls: list):
         storage, "upload_public_read", lambda local, gcs: f"https://signed/{gcs}", raising=False
     )
 
+    # Stub the text burn too: the real Skia burn would fail on the fake 16-byte
+    # mp4 and copy input → output, which the (D20) copy-through detection now
+    # correctly fails the variant for. Writes a DIFFERENT byte count than the
+    # 16-byte base so detection passes for these routing-focused tests.
+    import app.pipeline.text_overlay_skia as skia_mod
+
+    def _fake_burn(base_path, overlays, out_path, tmpdir):
+        with open(out_path, "wb") as f:
+            f.write(b"\x01" * 24)
+
+    monkeypatch.setattr(skia_mod, "burn_text_overlays_skia", _fake_burn, raising=False)
+
 
 def test_original_audio_variant_skips_mix(monkeypatch, tmp_path):
     mix_calls: list = []

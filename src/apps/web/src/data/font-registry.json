@@ -33,6 +33,14 @@
       "css_family": "'Playfair Display', serif",
       "vibe": "editorial"
     },
+    "Playfair Display Italic": {
+      "file": "PlayfairDisplay-Italic-VF.ttf",
+      "ass_name": "Playfair Display",
+      "weight": 400,
+      "category": "serif",
+      "css_family": "'Playfair Display', serif",
+      "vibe": "editorial"
+    },
     "Montserrat": {
       "file": "Montserrat-ExtraBold.ttf",
       "ass_name": "Montserrat",

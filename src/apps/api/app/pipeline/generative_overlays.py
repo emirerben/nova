@@ -246,6 +246,7 @@ def _build_cluster_intro_overlays(
     word_roles: list[str] | None,
     text_color: str,
     highlight_color: str,
+    cluster_style: dict | None = None,
     **style_kwargs,
 ) -> list[dict] | None:
     """Build the editorial word-cluster intro: one [reveal, hold] pair PER block.
@@ -256,6 +257,11 @@ def _build_cluster_intro_overlays(
     renderer change: reveal is a bounded `fade-in` (well under the animated frame
     cap), hold is one looped static PNG to EOF — the same persistence mechanics as
     the linear intro, multiplied per block.
+
+    `cluster_style` is forwarded verbatim to `compute_cluster_blocks(style=...)`:
+    None (default) is the kill-switch contract — byte-identical legacy cluster —
+    while `EDITORIAL_STYLE` selects the editorial cascade (the static fallback of
+    the transcript-synced sequence, decision D6/D13).
 
     Returns None when the engine declines the text (word count, fit) or skia is
     unavailable — the caller falls back to the linear intro. Never raises.
@@ -269,6 +275,7 @@ def _build_cluster_intro_overlays(
         base_size_px=int(base_px) if base_px else 60,
         font_family=style_kwargs.get("font_family"),
         reveal_window_s=reveal_window_s,
+        style=cluster_style,
     )
     if not blocks:
         return None
@@ -324,6 +331,7 @@ def build_persistent_intro_overlays(
     layout_source: str | None = None,
     layout_reason: str | None = None,
     word_roles: list[str] | None = None,
+    cluster_style: dict | None = None,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -333,7 +341,9 @@ def build_persistent_intro_overlays(
     blocks, staggered reveal — see `_build_cluster_intro_overlays`); any cluster
     failure falls back to the linear path below, so the cluster can never lose an
     intro that would have rendered. `layout="linear"` (default) is byte-identical
-    to the pre-cluster behavior.
+    to the pre-cluster behavior. `cluster_style` (None = legacy, the kill-switch
+    contract) selects the cluster engine's style profile — see
+    `_build_cluster_intro_overlays`; it never affects the linear path.
 
     A persistent intro keeps the hero text on screen for the WHOLE video: animate it in
     over the opening, then hold the settled text statically until the video ends. The
@@ -380,6 +390,7 @@ def build_persistent_intro_overlays(
                 word_roles=word_roles,
                 text_color=text_color,
                 highlight_color=highlight_color,
+                cluster_style=cluster_style,
                 **style_kwargs,
             )
         except Exception as exc:
@@ -464,6 +475,7 @@ def inject_persistent_intro(
     layout_source: str | None = None,
     layout_reason: str | None = None,
     word_roles: list[str] | None = None,
+    cluster_style: dict | None = None,
     **style_kwargs,
 ) -> dict:
     """Inject the persistent hero intro (reveal + static hold) into the hero slot.
@@ -500,8 +512,169 @@ def inject_persistent_intro(
         layout_source=layout_source,
         layout_reason=layout_reason,
         word_roles=word_roles,
+        cluster_style=cluster_style,
         **style_kwargs,
     )
     for overlay in overlays:
         inject_intro_overlay(recipe, hero_slot_index, overlay)
     return recipe
+
+
+# ── Transcript-synced typographic sequence (the "Editorial · synced" mode) ──────
+
+# Reference-verified emission (frame-by-frame analysis of the target edit):
+# blocks POP instantly one at a time on an even beat, the completed phrase
+# holds, then the scene HARD-CUTS away — never a crossfade into the successor.
+# Only a scene flagged `fade_out` (hold-cap / final scene, see
+# `phrase_sequence.split_phrases`) gets an alpha tail.
+SEQUENCE_FADE_OUT_MS = 350
+
+# Beat spread: block i reveals at `i * beat` into the scene, where the beat
+# divides the scene's life minus a hold tail (the completed phrase must sit
+# fully assembled ~0.6s before the cut) and is clamped to the reference's
+# observed 0.35–0.8s reveal cadence.
+_SEQUENCE_HOLD_TAIL_S = 0.6
+_SEQUENCE_BEAT_MIN_S = 0.35
+_SEQUENCE_BEAT_MAX_S = 0.8
+
+# Minimum on-screen life per block: a late block whose beat offset would leave
+# it visible for less gets its offset pulled in to `scene_len - 0.45`.
+_SEQUENCE_MIN_VISIBLE_S = 0.45
+
+# Oldest-first dismantle (reference t=7.0: 'luck' drops 0.2s before 'is just
+# a'): on fade_out scenes with >= 3 blocks the FIRST block ends 0.2s early.
+_SEQUENCE_DISMANTLE_LEAD_S = 0.2
+
+
+def _record_sequence_event(event: str, payload: dict) -> None:
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event("overlay", event, payload)
+    except Exception as exc:  # noqa: BLE001 - instrumentation must never break render
+        log.warning("sequence_event_emit_failed", event=event, error=str(exc))
+
+
+def build_sequence_overlays(
+    scenes: list[dict],
+    *,
+    base_size_px: int,
+    text_color: str = _DEFAULT_TEXT_COLOR,
+) -> list[dict] | None:
+    """Turn phrase scenes (`phrase_sequence.split_phrases`, `word_roles` already
+    filled by the caller) into renderable sequence overlays.
+
+    Per scene: the editorial cluster engine (`compute_cluster_blocks` with
+    `style=EDITORIAL_STYLE`) owns the geometry; each block becomes ONE static
+    overlay carrying `role="generative_sequence"` — an instant pop-in at its
+    beat-spread offset that holds until the scene's end (the reference edit
+    shows no per-block fade-in at 0.2s frame sampling). A static overlay
+    starting mid-video without `fade_out_ms` stays on the renderer's cheap
+    single-PNG loop path. All timestamps are ABSOLUTE from t=0 (the hero-slot
+    convention — the talking-head/burn paths consume them directly).
+
+    Timing: the engine's `start_offset_s`/`reveal_s` are IGNORED — block i pops
+    at `i * beat` with the beat spread evenly across the scene's life minus the
+    hold tail (clamped to the reference cadence; see the constants above), and
+    every offset is clamped so the block stays visible >= 0.45s. Scenes end as
+    HARD CUTS at `end_s`; only a `fade_out` scene (hold-cap / final) carries
+    `fade_out_ms=350`, and when it has >= 3 blocks its first block ends 0.2s
+    early (the oldest-word-first dismantle from the reference).
+
+    The whole scene is shifted vertically by `scene_center_y(i) - _CLUSTER_CENTER_Y`
+    so consecutive scenes don't sit at the identical y; the styled engine tightens
+    its band by `scene_shift_margin`, so the shift preserves the no-clip guarantee.
+    `accent_parity=i` alternates the engine's accent assignment per scene.
+
+    A scene the engine declines (fit, glyphs) is skipped — logged + traced — and
+    the rest of the sequence still renders. Returns None when NO scene produced an
+    overlay, so the caller can fall back to the static styled cluster.
+    """
+    from app.pipeline.intro_cluster import (  # noqa: PLC0415
+        _CLUSTER_CENTER_Y,
+        EDITORIAL_STYLE,
+        compute_cluster_blocks,
+        scene_center_y,
+    )
+
+    try:
+        from app.pipeline.text_overlay_skia import SEQUENCE_OVERLAY_ROLE  # noqa: PLC0415
+
+        sequence_role = SEQUENCE_OVERLAY_ROLE
+    except Exception:  # pragma: no cover — keep this module importable without skia
+        sequence_role = "generative_sequence"
+
+    overlays: list[dict] = []
+    for i, scene in enumerate(scenes or []):
+        words = [str(w) for w in (scene.get("words") or [])]
+        text = " ".join(words).strip()
+        roles = scene.get("word_roles") or None
+        start_s = float(scene.get("start_s") or 0.0)
+        end_s = float(scene.get("end_s") or 0.0)
+        scene_len = end_s - start_s
+
+        blocks = compute_cluster_blocks(
+            text,
+            word_roles=list(roles) if roles else None,
+            base_size_px=int(base_size_px),
+            reveal_window_s=scene_len,
+            style=EDITORIAL_STYLE,
+            accent_parity=i,
+        )
+        if not blocks:
+            log.info(
+                "generative_sequence_scene_skipped",
+                scene_index=i,
+                text=text,
+                word_count=len(words),
+            )
+            _record_sequence_event(
+                "sequence_scene_skipped",
+                {"scene_index": i, "text": text, "word_count": len(words)},
+            )
+            continue
+
+        # Beat-spread reveals: even cadence across the scene's life minus the
+        # assembled-phrase hold tail, clamped to the reference's 0.35–0.8s.
+        beat = (scene_len - _SEQUENCE_HOLD_TAIL_S) / max(len(blocks) - 1, 1)
+        beat = min(_SEQUENCE_BEAT_MAX_S, max(_SEQUENCE_BEAT_MIN_S, beat))
+        max_offset = max(scene_len - _SEQUENCE_MIN_VISIBLE_S, 0.0)
+
+        y_shift = scene_center_y(i) - _CLUSTER_CENTER_Y
+        fade_out_scene = bool(scene.get("fade_out"))
+        for j, block in enumerate(blocks):
+            common = {
+                "position": "center",  # overridden by the explicit fracs below
+                "text_anchor": "center",
+                "text_color": text_color,
+                "font_family": block["font_family"],
+                "text_size_px": block["text_size_px"],
+                "position_x_frac": block["position_x_frac"],
+                "position_y_frac": block["position_y_frac"] + y_shift,
+            }
+            block_start = start_s + min(j * beat, max_offset)
+            block_end = end_s
+            if fade_out_scene and len(blocks) >= 3 and j == 0:
+                # Oldest-first dismantle: the first block drops slightly before
+                # the rest of the (fading) scene — only when it stays renderable.
+                early_end = end_s - _SEQUENCE_DISMANTLE_LEAD_S
+                if early_end > block_start:
+                    block_end = early_end
+            overlay = build_intro_overlay(
+                block["text"],
+                effect="static",
+                start_s=block_start,
+                end_s=block_end,
+                **common,
+            )
+            if overlay is None:
+                continue
+            overlay["role"] = sequence_role
+            if fade_out_scene:
+                overlay["fade_out_ms"] = SEQUENCE_FADE_OUT_MS
+            overlays.append(overlay)
+
+    if not overlays:
+        log.info("generative_sequence_no_renderable_scenes", scene_count=len(scenes or []))
+        return None
+    return overlays

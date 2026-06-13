@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.100.0] — 2026-06-13
+
+### Added
+- **Editorial typographic sequence (transcript-synced + rhythm mode).** The Editorial layout on generative/plan variants now renders the reference-style kinetic typography: the full quote unfolds as 1–6-word phrase scenes (~1.3s each) that pop in word-by-word, hold, and clear completely before the next (never-overlap is a tested splitter invariant; 0.1s all-clear gaps). Three faces per scene: Great Vibes script for the emphasis group, Playfair Display Regular body, and a new Playfair Display Italic accent voice alternating deterministically per scene. Talking videos sync scenes to Whisper word timestamps (`phrase_sequence.split_phrases`, pre-mix `assembled_path` audio, API-or-static posture); music-only videos use **rhythm mode** — `SequenceQuoteWriterAgent` authors a 4–9-sentence micro-quote and `synthesize_phrase_timings` paces it deterministically (golden test pins the approved demo's exact scene windows). `SequenceEmphasisAgent` annotates per-phrase word roles with a heuristic fallback. Failure ladder: transcript → rhythm → restyled static cluster; a sequence failure can never kill a render. Kill switch `EDITORIAL_SEQUENCE_ENABLED` (default true) reverts byte-identically to the legacy cluster.
+- **Sequence composite stream (renderer).** All `generative_sequence` overlays burn as ONE full-canvas PNG stream (unique frames only at pops/fades, holds hard-linked): the 60s/30-scene worst case dropped from 525s → 11.3s (81 → 2 FFmpeg inputs), 10.4s case 15.2s → 2.2s; scratch ≤7MB. Per-frame visibility lives in the PNGs; non-sequence overlays keep their existing path byte-identically.
+- **Variant edit semantics for synced variants.** Persisted `intro_mode` ("sequence"|"cluster"|"linear") + `sequence_mode` ("transcript"|"rhythm") + `sequence_quote` replace the `len(overlays) > 2` layout inference; re-renders rebuild from persisted scenes with zero ASR/LLM calls; cut edits keep the quote and re-time it deterministically; text/highlight edits 422 on synced variants ("switch to Classic"), size nudge still works. FE: "Editorial · synced" badge, gating updates.
+
+### Fixed
+- **Editorial cluster reading order.** A trailing connector no longer anchors to the first hero ("to don't allow anyone diminish" scramble); styled cascades lay blocks strictly in reading order.
+- **Job finalization stripped variant persistence.** `_finalize_job`'s whitelist dropped `intro_layout`, `intro_word_roles`, `user_style_knobs` (and all new sequence fields) from completed jobs, breaking post-completion re-renders; now preserved.
+- **Silent textless renders.** Burn copy-through detection now also covers first renders and the empty-rebuild reburn path (previously a failed burn could ship a textless video marked ready).
+- **Typographic punctuation.** Editorial text renders curly ’ and “ ” (context-aware quote direction), … ellipsis.
+
 ## [0.4.99.2] — 2026-06-12
 
 ### Added

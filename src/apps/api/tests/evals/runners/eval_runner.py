@@ -244,6 +244,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.intro_writer import IntroTextWriterAgent
 
         return IntroTextWriterAgent
+    if agent_name == "nova.compose.sequence_emphasis":
+        from app.agents.sequence_emphasis import SequenceEmphasisAgent
+
+        return SequenceEmphasisAgent
+    if agent_name == "nova.compose.sequence_quote":
+        from app.agents.sequence_quote_writer import SequenceQuoteWriterAgent
+
+        return SequenceQuoteWriterAgent
     if agent_name == "nova.plan.persona_generator":
         from app.agents.persona_generator import PersonaGeneratorAgent
 

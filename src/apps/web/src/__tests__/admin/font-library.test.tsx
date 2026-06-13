@@ -123,9 +123,10 @@ describe("FontLibraryBrowser", () => {
     //            +EB Garamond VF → editorial=11
     //            +Patrick Hand → handwritten=2
     //            +Great Vibes, +Satisfy → script=3
+    // v0.4.100.0: +Playfair Display Italic (rhythm-mode accent voice) → editorial=12
     expect(grouped.viral_headlines).toHaveLength(13);
     expect(grouped.clean_captions).toHaveLength(10);
-    expect(grouped.editorial).toHaveLength(11);
+    expect(grouped.editorial).toHaveLength(12);
     expect(grouped.handwritten).toHaveLength(2);
     expect(grouped.script).toHaveLength(3);
     // Deprecated fonts must be excluded; Caveat Brush is deprecated.

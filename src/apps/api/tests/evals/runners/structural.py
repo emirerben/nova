@@ -46,6 +46,8 @@ from app.agents.overlay_format_matcher import (
     OverlayFormatMatcherOutput,
 )
 from app.agents.platform_copy import PlatformCopyOutput
+from app.agents.sequence_emphasis import SequenceEmphasisInput, SequenceEmphasisOutput
+from app.agents.sequence_quote_writer import SequenceQuoteOutput, quote_structural_failures
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
 from app.agents.song_classifier import SongClassifierOutput
 from app.agents.song_sections import (
@@ -90,6 +92,7 @@ from app.pipeline.agents.copy_writer import (
     YOUTUBE_DESCRIPTION_MAX,
     YOUTUBE_TITLE_MAX,
 )
+from app.pipeline.intro_cluster import ROLE_CLOSER, ROLE_HERO, VALID_ROLES
 
 # ── template_recipe ──────────────────────────────────────────────────────────
 
@@ -1233,6 +1236,61 @@ def check_intro_writer(output: IntroWriterOutput, input: IntroWriterInput) -> li
     return failures
 
 
+def check_sequence_emphasis(
+    output: SequenceEmphasisOutput,
+    input: SequenceEmphasisInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.compose.sequence_emphasis.
+
+    parse() enforces every one of these with a SchemaError naming the phrase
+    index; the structural check is the canary that those guarantees held
+    end-to-end: one annotation per input phrase in input order, word_roles
+    aligned 1:1 to the phrase's words, vocabulary exactly intro_cluster's
+    VALID_ROLES, "closer" only as the final word's role, and at least one
+    "hero" per phrase (the script-face emphasis group must always exist).
+    """
+    failures: list[str] = []
+
+    if len(output.phrases) != len(input.phrases):
+        failures.append(f"{len(output.phrases)} annotations for {len(input.phrases)} input phrases")
+
+    for pos, p in enumerate(output.phrases):
+        if p.index < 0 or p.index >= len(input.phrases):
+            failures.append(f"phrases[{pos}]: index={p.index} out of range")
+            continue
+        if p.index != pos:
+            failures.append(f"phrases[{pos}]: index={p.index} not in input order")
+        words = input.phrases[p.index]
+        if len(p.word_roles) != len(words):
+            failures.append(
+                f"phrase {p.index}: {len(p.word_roles)} roles for {len(words)} words "
+                "(must align 1:1)"
+            )
+        unknown = [r for r in p.word_roles if r not in VALID_ROLES]
+        if unknown:
+            failures.append(
+                f"phrase {p.index}: unknown role(s) {unknown!r} (vocabulary: {list(VALID_ROLES)})"
+            )
+        if ROLE_CLOSER in p.word_roles[:-1]:
+            failures.append(f"phrase {p.index}: 'closer' before the final word")
+        if ROLE_HERO not in p.word_roles:
+            failures.append(f"phrase {p.index}: no 'hero' role")
+
+    return failures
+
+
+def check_sequence_quote(output: SequenceQuoteOutput) -> list[str]:
+    """Structural floor for nova.compose.sequence_quote.
+
+    parse() enforces every rule via `quote_structural_failures` (sentence count
+    in the 4-9 band, each sentence 1-6 words, 15-40 total words, terminal
+    punctuation at the end, at most one double-quoted span). The structural
+    check imports THAT function so the eval can never drift from the runtime's
+    own validation.
+    """
+    return quote_structural_failures(output.quote)
+
+
 def check_persona_generator(output: Persona) -> list[str]:
     """Structural floor for nova.plan.persona_generator.
 
@@ -1504,6 +1562,10 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_overlay_format_matcher(output)
     if agent_name == "nova.compose.intro_writer":
         return check_intro_writer(output, input)
+    if agent_name == "nova.compose.sequence_emphasis":
+        return check_sequence_emphasis(output, input)
+    if agent_name == "nova.compose.sequence_quote":
+        return check_sequence_quote(output)
     if agent_name == "nova.compose.template_recipe":
         return check_template_recipe(output)
     if agent_name == "nova.compose.template_text":

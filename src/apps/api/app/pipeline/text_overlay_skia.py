@@ -83,6 +83,14 @@ FPS = 30
 MAX_OVERLAY_FRAMES = max(120, MAX_FONT_CYCLE_FRAMES)
 LONG_RUNNING_TEXT_FRAME_CEILING = int(FPS * 30)
 
+# The sequence COMPOSITE stream (see _render_sequence_composite) spans the
+# union window of every generative_sequence overlay — for a full editorial
+# edit that is the whole output video, so the per-overlay 30s ceiling would
+# truncate it. 120s = 2x the platform's sub-60s output target. Disk stays
+# bounded regardless: held/blank frames are hard links, so unique-PNG count —
+# not this ceiling — drives scratch usage.
+SEQUENCE_COMPOSITE_FRAME_CEILING = int(FPS * 120)
+
 # Encoder thread pool: Pillow PNG encode releases the GIL during compression,
 # so threading actually helps. 4 workers matches the production Celery worker
 # CPU count (shared-cpu-4x). Skia rendering is also GIL-released inside the
@@ -109,6 +117,36 @@ _POP_SUFFIX_MAX_LINES = 2
 
 _TYPEFACE_BY_PATH: dict[str, skia.Typeface] = {}
 
+# Overlay role for editorial transcript-synced typographic sequences ("role" is
+# an existing burn-dict field — "generative_intro" is the precedent value; this
+# adds a sibling VALUE, not a new field name, per decision D17). Sequence
+# overlays hold a scene on screen for its whole transcript window and carry the
+# lyric-path fade field names (fade_out_ms / fade_out_curve) for their tail.
+SEQUENCE_OVERLAY_ROLE = "generative_sequence"
+
+# Effects a sequence overlay may carry: the fade-in head reuses the existing
+# "fade-in" effect; "static"/"none" scenes appear settled and only need the
+# fade-out tail.
+_SEQUENCE_FADE_EFFECTS = ("fade-in", "static", "none")
+
+# The fade-in effect's alpha ramp settles at this t_local (mirrors the
+# `effect == "fade-in"` branch in _draw_with_animation: progress = t / 0.4).
+_FADE_IN_SETTLE_S = 0.4
+
+
+def _link_or_copy(src_path: str, dst_path: str) -> None:
+    """Hard-link src→dst for frame economy, falling back to a byte copy.
+
+    Single source for the hold-frame de-dup used by both the per-overlay
+    sequence renderer and the composite stream: a hard link costs ~nothing and
+    keeps PNG-sequence scratch flat, but cross-device temp dirs (or a FS without
+    hard links) raise OSError — there a copy keeps correctness.
+    """
+    try:
+        os.link(src_path, dst_path)
+    except OSError:
+        shutil.copy2(src_path, dst_path)
+
 
 def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     """True for text effects that must hold through their full lyric window.
@@ -117,11 +155,57 @@ def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     Lyric-timed effects settle visually but remain semantically visible until
     the next lyric boundary, so capping them at ~4s makes the text disappear
     before late words can highlight or before the next cumulative stage starts.
+    Sequence overlays (role="generative_sequence") hold an editorial scene
+    through its full transcript window — often well past the 120-frame cap —
+    so they use the same generous sanity ceiling.
     """
+    if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
+        return True
     effect = overlay.get("effect", "none")
     return effect in {"lyric-line", "karaoke-line"} or (
         effect == "pop-in" and bool(overlay.get("pop_animated_suffix"))
     )
+
+
+def _sequence_fade_out_ms(overlay: dict) -> int:
+    try:
+        return max(0, int(overlay.get("fade_out_ms") or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _is_sequence_overlay(overlay: dict) -> bool:
+    return (
+        overlay.get("role") == SEQUENCE_OVERLAY_ROLE
+        and overlay.get("effect", "none") in _SEQUENCE_FADE_EFFECTS
+    )
+
+
+def _sequence_fade_out_alpha(overlay: dict, t_local: float, duration_s: float) -> float:
+    """Fade-out multiplier for role="generative_sequence" overlays.
+
+    REUSES the lyric-line field names and curve semantics (`fade_out_ms`,
+    `fade_out_curve` — see `_lyric_line_alpha`): full opacity until the last
+    `fade_out_ms` of the window, then the libass accel=2.0 lingering curve
+    (1 - progress²), or the sqrt mirror (1 - √progress) when
+    `fade_out_curve == "sqrt"`. Unlike the lyric path there is NO default —
+    only an overlay that carries `fade_out_ms` gets a tail ramp, so sequence
+    overlays without the field render exactly like before.
+    """
+    if duration_s <= 0:
+        return 1.0
+    duration_ms = max(0, int(round(duration_s * 1000.0)))
+    fade_out = min(_sequence_fade_out_ms(overlay), duration_ms)
+    if fade_out == 0:
+        return 1.0
+    t_ms = max(0.0, min(t_local, duration_s)) * 1000.0
+    fade_out_start_ms = duration_ms - fade_out
+    if t_ms < fade_out_start_ms:
+        return 1.0
+    progress = (t_ms - fade_out_start_ms) / float(fade_out)
+    if overlay.get("fade_out_curve") == "sqrt":
+        return max(0.0, 1.0 - progress**0.5)
+    return max(0.0, 1.0 - progress**2)
 
 
 def _preload_typefaces() -> None:
@@ -1245,6 +1329,12 @@ def _draw_with_animation(
         # visibility into schema drift.
         log.warning("skia_unknown_effect_static_fallback", effect=effect)
 
+    # Sequence overlays (role="generative_sequence") multiply a fade-out tail
+    # on top of the effect's own alpha: fade-in head → full-opacity hold →
+    # fade-out over the final fade_out_ms (lyric-path field names + curves).
+    if _is_sequence_overlay(overlay):
+        alpha *= _sequence_fade_out_alpha(overlay, t_local, duration_s)
+
     _draw_centered_text(
         canvas,
         visible_text,
@@ -1284,16 +1374,25 @@ def _is_animated(overlay: dict) -> bool:
     effect = overlay.get("effect", "none")
     # pop-in with pop_animated_suffix is animated even if base effect is "pop-in";
     # plain pop-in without suffix is also animated.
-    return effect in _ANIMATED_EFFECTS_SKIA
+    if effect in _ANIMATED_EFFECTS_SKIA:
+        return True
+    # Static sequence overlays that carry a fade-out tail need per-frame alpha
+    # (the single-PNG `-loop 1` static path renders at full opacity throughout).
+    # Without fade_out_ms they stay on the static path, which already holds the
+    # full window.
+    return _is_sequence_overlay(overlay) and _sequence_fade_out_ms(overlay) > 0
 
 
-def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
-    """Render one frame of `overlay` at time `t_local`. Returns a Skia Image
-    that the caller writes to disk via Pillow."""
-    surface = skia.Surfaces.MakeRasterN32Premul(CANVAS_W, CANVAS_H)
-    canvas = surface.getCanvas()
-    canvas.clear(skia.ColorTRANSPARENT)
+def _draw_overlay_on_canvas(
+    canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
+) -> None:
+    """Draw one overlay's frame-at-time-t onto an existing canvas.
 
+    Shared by `_draw_frame` (one overlay per surface — the per-overlay PNG
+    sequence path) and `_render_sequence_composite` (every visible sequence
+    overlay stacked onto ONE surface). This is the single dispatch point for
+    effect drawing — the composite path must never reimplement glyph logic.
+    """
     effect = overlay.get("effect", "none")
 
     if effect == "player-card":
@@ -1323,6 +1422,14 @@ def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
         # Static effects render at full opacity throughout [start_s, end_s].
         _draw_centered_text(canvas, _overlay_text(overlay), overlay)
 
+
+def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
+    """Render one frame of `overlay` at time `t_local`. Returns a Skia Image
+    that the caller writes to disk via Pillow."""
+    surface = skia.Surfaces.MakeRasterN32Premul(CANVAS_W, CANVAS_H)
+    canvas = surface.getCanvas()
+    canvas.clear(skia.ColorTRANSPARENT)
+    _draw_overlay_on_canvas(canvas, overlay, t_local, duration_s)
     return surface.makeImageSnapshot()
 
 
@@ -1362,6 +1469,57 @@ def _write_png_pillow(img: skia.Image, out_path: str) -> None:
 
 
 # -- Public API: render overlays to FFmpeg-ready PNG sequences ---------------
+
+
+def _sequence_hold_plan(
+    overlay: dict, n_render: int, frame_dur: float, duration_s: float
+) -> tuple[list[int], int, list[int]] | None:
+    """Frame-economy plan for role="generative_sequence" overlays.
+
+    A sequence scene holds on screen for its whole transcript window (often
+    5-15s). Rendering a unique PNG per frame would mean hundreds of identical
+    "settled" frames between the fade-in head and the fade-out tail. This
+    generalizes the existing +1-hold-frame trick (the seam fix below in
+    `_generate_overlay_sequence`, which renders one settled extra frame past
+    the logical end) to the middle of the window: Skia renders real frames
+    ONLY where pixels change, and the first settled frame is hard-linked into
+    every hold slot so FFmpeg's image2 demuxer still sees a dense,
+    uniformly-timed sequence:
+
+        frame idx: 0 .. s-1 | s | s+1 ........ t-1 | t ........ n-1
+                   fade-in    ^   hold (hard links   fade-out tail
+                   head       |   to frame s, no     (fade_out_ms,
+                   (0.4s      |   Skia render, no    alpha 1 → 0)
+                   ease)      settled frame          PNG encode)
+
+    Returns (render_indices, settled_idx, hold_indices), or None when the
+    overlay is not a sequence overlay / has no holdable middle — in which case
+    every frame renders, the pre-existing behavior. Hold slots are hard links
+    (copy fallback): same bytes on disk once, microseconds per extra frame.
+    """
+    if not _is_sequence_overlay(overlay):
+        return None
+    effect = overlay.get("effect", "none")
+    settle_s = min(_FADE_IN_SETTLE_S, duration_s) if effect == "fade-in" else 0.0
+    fade_out_s = min(_sequence_fade_out_ms(overlay) / 1000.0, duration_s)
+    fade_out_start_s = duration_s - fade_out_s
+
+    render_indices: list[int] = []
+    hold_indices: list[int] = []
+    settled_idx = -1
+    for i in range(n_render):
+        t = i * frame_dur
+        if t < settle_s or t >= fade_out_start_s:
+            render_indices.append(i)
+        elif settled_idx < 0:
+            settled_idx = i
+            render_indices.append(i)
+        else:
+            hold_indices.append(i)
+    if settled_idx < 0 or not hold_indices:
+        # Window too short for a holdable middle — render everything.
+        return None
+    return render_indices, settled_idx, hold_indices
 
 
 def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[str, Any] | None:
@@ -1436,8 +1594,31 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
         img = _draw_frame(overlay, t_local, duration_s)
         _write_png_pillow(img, os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png"))
 
+    # Sequence overlays render only their fade-in head + fade-out tail; the
+    # settled middle is hard-linked from one frame (see _sequence_hold_plan).
+    hold_plan = _sequence_hold_plan(overlay, n_render, frame_dur, duration_s)
+    if hold_plan is None:
+        render_indices: list[int] = list(range(n_render))
+        settled_idx = -1
+        hold_indices: list[int] = []
+    else:
+        render_indices, settled_idx, hold_indices = hold_plan
+
     with ThreadPoolExecutor(max_workers=_ENCODE_WORKERS) as pool:
-        list(pool.map(_render_one, range(n_render)))
+        list(pool.map(_render_one, render_indices))
+
+    if hold_indices:
+        settled_path = os.path.join(work_dir, f"{pattern_prefix}{settled_idx:04d}.png")
+        for i in hold_indices:
+            frame_path = os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png")
+            _link_or_copy(settled_path, frame_path)
+        log.info(
+            "skia_sequence_hold_frames_linked",
+            effect=effect,
+            n_render=n_render,
+            rendered=len(render_indices),
+            linked=len(hold_indices),
+        )
 
     return {
         "pattern": os.path.join(work_dir, f"{pattern_prefix}%04d.png"),
@@ -1450,6 +1631,27 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
     }
 
 
+def _validate_and_clamp(overlay: dict, slot_duration_s: float) -> dict | None:
+    """Run `_validate_overlay` and fold the result back into a copied dict.
+
+    Returns None when the overlay should be skipped (empty text without
+    spans). Spans-only overlays keep their original timing fields —
+    `_validate_overlay` returns (None, 0, 0, "") for them, and the Skia path
+    validates just timing downstream.
+    """
+    validated_text, start_s, end_s, _position = _validate_overlay(overlay, slot_duration_s)
+    if validated_text is None and not overlay.get("spans"):
+        return None
+    # Apply the validated timing back to the overlay (start clamp etc.)
+    # but only if we got a non-None result.
+    clamped = dict(overlay)
+    if validated_text is not None:
+        clamped["text"] = validated_text
+        clamped["start_s"] = start_s
+        clamped["end_s"] = end_s
+    return clamped
+
+
 def _render_overlay_sequences(
     overlays: list[dict], slot_duration_s: float, work_dir: str
 ) -> list[dict[str, Any]]:
@@ -1457,24 +1659,183 @@ def _render_overlay_sequences(
     sequences. Returns list of overlay-sequence configs ready for FFmpeg."""
     out: list[dict[str, Any]] = []
     for i, overlay in enumerate(overlays):
-        validated_text, start_s, end_s, _position = _validate_overlay(overlay, slot_duration_s)
-        # `_validate_overlay` returns None when the text is empty AND spans
-        # are absent. Spans-only overlays are not yet supported by the Skia
-        # path — fall back to validating just timing.
-        if validated_text is None and not overlay.get("spans"):
+        clamped = _validate_and_clamp(overlay, slot_duration_s)
+        if clamped is None:
             continue
-        # Apply the validated timing back to the overlay (start clamp etc.)
-        # but only if we got a non-None result.
-        clamped = dict(overlay)
-        if validated_text is not None:
-            clamped["text"] = validated_text
-            clamped["start_s"] = start_s
-            clamped["end_s"] = end_s
-
         seq = _generate_overlay_sequence(clamped, work_dir, i)
         if seq is not None:
             out.append(seq)
     return out
+
+
+# -- Sequence composite stream ------------------------------------------------
+#
+# Editorial sequences (role="generative_sequence") arrive as MANY small blocks
+# — a 60s edit can carry 80+. The per-overlay path turns each into its own
+# FFmpeg image2 input + overlay filter stage, and the chained filtergraph
+# pushes every output frame through every stage: burn cost scales ~linearly
+# with input count (~6.5s/input on a 60s canvas), so 80 blocks ≈ 520s — past
+# the 300s budget and flirting with the subprocess timeout in
+# `_ffmpeg_burn_pngs`. Skia rendering is the cheap part (~1s), so the fix is
+# to pre-composite ALL sequence blocks into ONE full-canvas RGBA PNG sequence
+# spanning their union window: one input, one overlay stage, per-frame
+# visibility carried by the PNGs themselves. Frame economy still holds — a
+# composite frame only changes when a block pops in, a fade ramp is active,
+# or a block ends; everything between is a hard link to the previous unique
+# frame (same mechanics as `_sequence_hold_plan`).
+
+
+def _sequence_head_settle_s(overlay: dict) -> float | None:
+    """Seconds after `start_s` until the block's entrance animation settles.
+
+    Mirrors `_sequence_hold_plan`'s head boundary: fade-in settles at
+    `_FADE_IN_SETTLE_S`; static/none blocks pop fully settled. Returns None
+    for any other effect — the caller must treat every in-window frame as
+    changing (correct, just not frame-economical) because we don't model that
+    effect's animation envelope here.
+    """
+    effect = overlay.get("effect", "none")
+    if effect == "fade-in":
+        return _FADE_IN_SETTLE_S
+    if effect in ("static", "none"):
+        return 0.0
+    return None
+
+
+def _sequence_block_changing_at(overlay: dict, t_local: float, duration_s: float) -> bool:
+    """True when the block's pixels can differ from the adjacent frame's:
+    inside the fade-in head, inside the fade-out tail, or (unknown effect)
+    anywhere in the window. Boundary semantics mirror `_sequence_hold_plan`
+    (`t < settle_s or t >= fade_out_start_s` renders)."""
+    settle_s = _sequence_head_settle_s(overlay)
+    if settle_s is None:
+        return True
+    if t_local < min(settle_s, duration_s):
+        return True
+    fade_out_s = min(_sequence_fade_out_ms(overlay) / 1000.0, duration_s)
+    return fade_out_s > 0 and t_local >= duration_s - fade_out_s
+
+
+def _render_sequence_composite(
+    overlays: list[dict], slot_duration_s: float, work_dir: str
+) -> dict[str, Any] | None:
+    """Render every sequence overlay into ONE full-canvas PNG sequence.
+
+    The stream spans [min(start_s), max(end_s)] of the validated blocks at
+    `FPS`; each frame draws EVERY block visible at that timestamp (inclusive
+    bounds — matching the per-overlay `between(t,start,end)` enable) via
+    `_draw_overlay_on_canvas`, in input order (later blocks on top). Frames
+    where no block is visible are fully transparent but still exist as hard
+    links to one blank frame, keeping the image2 sequence contiguous. The
+    final +1 frame past `end_s` is the same seam fix as the per-overlay path
+    (image2 EOFs at its last frame's PTS).
+
+    Returns a sequence config consumable by `_ffmpeg_burn_pngs` as a single
+    animated input, or None when fewer than 2 blocks survive validation —
+    the caller falls back to the per-overlay path (no regression for the
+    trivial cases).
+    """
+    blocks: list[tuple[dict, float, float]] = []
+    for i, overlay in enumerate(overlays):
+        clamped = _validate_and_clamp(overlay, slot_duration_s)
+        if clamped is None:
+            continue
+        start_s = float(clamped.get("start_s", 0.0))
+        end_s = float(clamped.get("end_s", 0.0))
+        if end_s - start_s <= 0:
+            continue
+        _record_font_resolved_event(clamped, i)
+        blocks.append((clamped, start_s, end_s))
+    if len(blocks) < 2:
+        return None
+
+    t0 = min(s for _, s, _ in blocks)
+    t1 = max(e for _, _, e in blocks)
+    duration_s = t1 - t0
+    frame_dur = 1.0 / FPS
+    wanted = max(1, int(round(duration_s * FPS)))
+    if wanted > SEQUENCE_COMPOSITE_FRAME_CEILING:
+        log.warning(
+            "skia_sequence_composite_duration_clamped",
+            duration_s=duration_s,
+            wanted_frames=wanted,
+            clamped_to=SEQUENCE_COMPOSITE_FRAME_CEILING,
+        )
+    n_frames = min(SEQUENCE_COMPOSITE_FRAME_CEILING, wanted)
+    # +1 seam hold frame, same reasoning as `_generate_overlay_sequence`.
+    n_render = min(SEQUENCE_COMPOSITE_FRAME_CEILING, n_frames + 1)
+
+    pattern_prefix = "skia_seq_composite_f"
+
+    # Frame plan: a frame renders uniquely when any visible block is mid-
+    # animation (pop/fade window); otherwise frames with the same visible-set
+    # key hard-link to the first rendered frame with that key. The empty set
+    # keys one shared blank frame for clear gaps.
+    render_jobs: list[tuple[int, list[tuple[dict, float, float]]]] = []
+    links: list[tuple[int, int]] = []
+    first_for_key: dict[tuple, int] = {}
+    for i in range(n_render):
+        t = t0 + i * frame_dur
+        draw_list: list[tuple[dict, float, float]] = []
+        key_parts: list[int] = []
+        changing = False
+        for j, (block, start_s, end_s) in enumerate(blocks):
+            if not (start_s <= t <= end_s):
+                continue
+            t_local = t - start_s
+            block_dur = end_s - start_s
+            draw_list.append((block, t_local, block_dur))
+            key_parts.append(j)
+            changing = changing or _sequence_block_changing_at(block, t_local, block_dur)
+        if changing:
+            render_jobs.append((i, draw_list))
+            continue
+        key = ("blank",) if not key_parts else ("hold", tuple(key_parts))
+        src = first_for_key.get(key)
+        if src is None:
+            first_for_key[key] = i
+            render_jobs.append((i, draw_list))
+        else:
+            links.append((src, i))
+
+    def _render_one(job: tuple[int, list[tuple[dict, float, float]]]) -> None:
+        i, draw_list = job
+        surface = skia.Surfaces.MakeRasterN32Premul(CANVAS_W, CANVAS_H)
+        canvas = surface.getCanvas()
+        canvas.clear(skia.ColorTRANSPARENT)
+        for block, t_local, block_dur in draw_list:
+            _draw_overlay_on_canvas(canvas, block, t_local, block_dur)
+        _write_png_pillow(
+            surface.makeImageSnapshot(),
+            os.path.join(work_dir, f"{pattern_prefix}{i:05d}.png"),
+        )
+
+    with ThreadPoolExecutor(max_workers=_ENCODE_WORKERS) as pool:
+        list(pool.map(_render_one, render_jobs))
+
+    for src, dst in links:
+        src_path = os.path.join(work_dir, f"{pattern_prefix}{src:05d}.png")
+        dst_path = os.path.join(work_dir, f"{pattern_prefix}{dst:05d}.png")
+        _link_or_copy(src_path, dst_path)
+
+    log.info(
+        "skia_sequence_composite_frames_linked",
+        blocks=len(blocks),
+        n_frames=n_render,
+        unique_frames=len(render_jobs),
+        linked_frames=len(links),
+        inputs_saved=len(blocks) - 1,
+    )
+
+    return {
+        "pattern": os.path.join(work_dir, f"{pattern_prefix}%05d.png"),
+        "first_frame": os.path.join(work_dir, f"{pattern_prefix}00000.png"),
+        "n_frames": n_render,
+        "fps": FPS,
+        "start_s": t0,
+        "end_s": t1,
+        "is_animated": True,
+    }
 
 
 # -- FFmpeg compositing: build the burn command and execute ------------------
@@ -1485,10 +1846,11 @@ def _ffmpeg_burn_pngs(
     sequences: list[dict[str, Any]],
     output_path: str,
 ) -> None:
-    """Build and run the FFmpeg command that overlays per-overlay PNG
-    sequences onto `input_video`. Uses image2 demuxer for animated sequences
-    (one input per overlay) + setpts shift to align each sequence with its
-    absolute start_s.
+    """Build and run the FFmpeg command that overlays PNG sequences onto
+    `input_video`. Uses image2 demuxer for animated sequences (one input per
+    sequence config — usually one overlay, but the generative_sequence
+    composite packs every sequence block into a single config) + setpts shift
+    to align each sequence with its absolute start_s.
     """
     from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
 
@@ -1591,11 +1953,29 @@ def burn_text_overlays_skia(
     # The overlays carry absolute timestamps already; we only need a permissive
     # validation window, so pass the max end_s.
     max_end = max((float(o.get("end_s", 0.0)) for o in overlays), default=0.0)
+    slot_duration_s = max_end + 1.0
     work_dir = os.path.join(tmpdir, "skia_text_burn")
     os.makedirs(work_dir, exist_ok=True)
 
     render_t0 = time.monotonic()
-    sequences = _render_overlay_sequences(overlays, max_end + 1.0, work_dir)
+    # Editorial sequence blocks (role="generative_sequence") composite into
+    # ONE full-canvas PNG stream when there are >= 2 of them — FFmpeg burn
+    # cost scales with input count, and a sequence edit can carry 80+ blocks.
+    # Everything else (lyric, intro, legacy) keeps the per-overlay path
+    # untouched. 0/1 sequence overlays also stay per-overlay (no regression
+    # for the trivial cases).
+    sequence_overlays = [o for o in overlays if o.get("role") == SEQUENCE_OVERLAY_ROLE]
+    composite: dict[str, Any] | None = None
+    if len(sequence_overlays) >= 2:
+        composite = _render_sequence_composite(sequence_overlays, slot_duration_s, work_dir)
+    if composite is None:
+        sequences = _render_overlay_sequences(overlays, slot_duration_s, work_dir)
+    else:
+        non_sequence = [o for o in overlays if o.get("role") != SEQUENCE_OVERLAY_ROLE]
+        sequences = _render_overlay_sequences(non_sequence, slot_duration_s, work_dir)
+        # Appended last → the composite draws on top of non-sequence overlays
+        # in the filtergraph chain (sequence text wins any window overlap).
+        sequences.append(composite)
     render_ms = int((time.monotonic() - render_t0) * 1000)
 
     if not sequences:
@@ -1606,6 +1986,7 @@ def burn_text_overlays_skia(
         "skia_burn_text_overlays",
         overlay_count=len(overlays),
         sequence_count=len(sequences),
+        composited_sequence_blocks=len(sequence_overlays) if composite is not None else 0,
         total_frames=sum(s["n_frames"] for s in sequences),
         render_ms=render_ms,
     )

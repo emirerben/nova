@@ -225,3 +225,22 @@ taxonomy had no `describe` intent; the prompt steered "what is it set to?" to `u
 **Design rule going forward:** whenever two Pydantic validators cover the same field with
 different strictness (one clamps, one raises), always use the lenient validator's OUTPUT
 to construct the strict model — never the raw input.
+
+## Editorial sequence: never-overlap + composite stream (2026-06-13, PR pending)
+
+The editorial "sequence" feature (transcript-synced + rhythm-mode kinetic typography) carries
+three invariants worth knowing before touching `phrase_sequence.py` / `text_overlay_skia.py`:
+
+- **Scenes never overlap.** The original design crossfaded scenes (0.25s overlap); frame-by-frame
+  analysis of the user's reference video proved phrases must exit cleanly before the next enters
+  (verified empty frames between phrases). `split_phrases` ends every scene 0.1s before the next
+  (`SCENE_CLEAR_GAP_S`); a 7-case property test pins no-overlap. Do not reintroduce crossfade.
+- **Demo==production golden.** `test_golden_demo_quote_reproduces_approved_scene_windows` pins the
+  user-approved render's exact 9 scene windows (3-decimal equality) through
+  `synthesize_phrase_timings`. If rhythm pacing math changes, that approval is void — re-render and
+  re-approve before merging.
+- **Sequence overlays burn as ONE composite PNG stream** (`_render_sequence_composite`): FFmpeg burn
+  cost scales with INPUT COUNT (~6.5s/input on a 60s canvas), not frames or bytes — 80 per-block
+  inputs took 525s and flirted with the 600s subprocess timeout; the composite is 11.3s. Unique
+  frames render only at pops/fade ramps; holds are hard-linked. Never emit sequence blocks as
+  separate FFmpeg inputs.
