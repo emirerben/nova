@@ -156,6 +156,13 @@ export type MeasureCluster = (
   px: number,
 ) => { wPx: number; hPx: number };
 
+/** Optional per-role font overrides; unset roles fall back to EDITORIAL_STYLE. */
+export interface ClusterFontOverrides {
+  heroFont?: string;
+  bodyFont?: string;
+  accentFont?: string;
+}
+
 const bare = (word: string): string =>
   word.toLowerCase().replace(/^[.,!?;:"']+|[.,!?;:"']+$/g, "");
 
@@ -339,15 +346,22 @@ function styledRolePx(role: ClusterRole, baseSizePx: number, scale: number): num
  * block takes the italic accent when `(k + accentParity) % 2 === 1`, else the
  * body serif. Hero never takes the accent.
  */
-export function assignFaces(blocks: RawBlock[], accentParity = 0): string[] {
+export function assignFaces(
+  blocks: RawBlock[],
+  accentParity = 0,
+  overrides?: ClusterFontOverrides,
+): string[] {
+  const heroFont = overrides?.heroFont ?? EDITORIAL_STYLE.heroFont;
+  const bodyFont = overrides?.bodyFont ?? EDITORIAL_STYLE.bodyFont;
+  const accentFont = overrides?.accentFont ?? EDITORIAL_STYLE.accentFont;
   const faces: string[] = [];
   let nonHeroK = 0;
   for (const block of blocks) {
     if (block.role === ROLE_HERO) {
-      faces.push(EDITORIAL_STYLE.heroFont);
+      faces.push(heroFont);
     } else {
       const wantsAccent = (nonHeroK + accentParity) % 2 === 1;
-      faces.push(wantsAccent ? EDITORIAL_STYLE.accentFont : EDITORIAL_STYLE.bodyFont);
+      faces.push(wantsAccent ? accentFont : bodyFont);
       nonHeroK += 1;
     }
   }
@@ -372,6 +386,7 @@ export function computeClusterBlocks(
     revealWindowS?: number;
     wordRoles?: ClusterRole[] | null;
     accentParity?: number;
+    fontOverrides?: ClusterFontOverrides;
   },
 ): ClusterBlock[] | null {
   const baseSizePx = opts.baseSizePx;
@@ -400,7 +415,7 @@ export function computeClusterBlocks(
 
   for (const b of rawBlocks) b.text = normalizeTypography(b.text);
 
-  const faces = assignFaces(rawBlocks, accentParity);
+  const faces = assignFaces(rawBlocks, accentParity, opts.fontOverrides);
 
   const usableW = 1.0 - 2 * EDGE_MARGIN_FRAC;
   const marginY = EDITORIAL_STYLE.sceneShiftMargin;

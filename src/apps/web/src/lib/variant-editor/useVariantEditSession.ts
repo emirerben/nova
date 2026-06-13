@@ -42,6 +42,10 @@ export interface EditDraft {
   animation: string | null;
   /** User-pinned text color override — null = inherit from resolved style set. */
   textColor: string | null;
+  /** Cluster editorial: hero-word font override. */
+  clusterHeroFont: string | null;
+  /** Cluster editorial: body/connector font override. */
+  clusterBodyFont: string | null;
 }
 
 export interface VariantEditSession {
@@ -67,6 +71,8 @@ export interface VariantEditSession {
   setFont: (fontFamily: string) => void;
   setAnimation: (animation: string) => void;
   setColor: (textColor: string) => void;
+  setClusterHeroFont: (fontFamily: string) => void;
+  setClusterBodyFont: (fontFamily: string) => void;
   /** Increments each time the entrance animation should replay in the preview. */
   playToken: number;
   /** Replay the entrance animation in the preview now. */
@@ -84,6 +90,8 @@ function draftFromVariant(variant: EditableVariant): EditDraft {
     fontFamily: variant.intro_font_family ?? null,
     animation: variant.intro_effect ?? null,
     textColor: variant.intro_text_color ?? null,
+    clusterHeroFont: variant.intro_cluster_hero_font ?? null,
+    clusterBodyFont: variant.intro_cluster_body_font ?? null,
   };
 }
 
@@ -96,7 +104,9 @@ function draftsEqual(a: EditDraft, b: EditDraft): boolean {
     a.layout === b.layout &&
     a.fontFamily === b.fontFamily &&
     a.animation === b.animation &&
-    a.textColor === b.textColor
+    a.textColor === b.textColor &&
+    a.clusterHeroFont === b.clusterHeroFont &&
+    a.clusterBodyFont === b.clusterBodyFont
   );
 }
 
@@ -136,6 +146,12 @@ export function buildEditPayload(draft: EditDraft, baseline: EditDraft): EditVar
   }
   if (draft.textColor !== null && draft.textColor !== baseline.textColor) {
     payload.text_color = draft.textColor;
+  }
+  if (draft.clusterHeroFont !== null && draft.clusterHeroFont !== baseline.clusterHeroFont) {
+    payload.cluster_hero_font = draft.clusterHeroFont;
+  }
+  if (draft.clusterBodyFont !== null && draft.clusterBodyFont !== baseline.clusterBodyFont) {
+    payload.cluster_body_font = draft.clusterBodyFont;
   }
   return payload;
 }
@@ -221,6 +237,14 @@ export function useVariantEditSession(
   );
   const setColor = useCallback(
     (textColor: string) => setDraft((d) => ({ ...d, textColor })),
+    [],
+  );
+  const setClusterHeroFont = useCallback(
+    (clusterHeroFont: string) => setDraft((d) => ({ ...d, clusterHeroFont })),
+    [],
+  );
+  const setClusterBodyFont = useCallback(
+    (clusterBodyFont: string) => setDraft((d) => ({ ...d, clusterBodyFont })),
     [],
   );
   const replay = useCallback(() => setPlayToken((t) => t + 1), []);
@@ -361,6 +385,8 @@ export function useVariantEditSession(
     setFont,
     setAnimation,
     setColor,
+    setClusterHeroFont,
+    setClusterBodyFont,
     playToken,
     replay,
     commit,

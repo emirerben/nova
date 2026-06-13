@@ -442,6 +442,8 @@ export interface PlanItemVariant {
   intro_font_family?: string | null;
   intro_effect?: string | null;
   intro_text_color?: string | null;
+  intro_cluster_hero_font?: string | null;
+  intro_cluster_body_font?: string | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {

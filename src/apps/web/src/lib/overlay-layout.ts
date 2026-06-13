@@ -46,6 +46,9 @@ export interface IntroOverlayParams {
   positionYFrac: number | null;
   textAnchor: "left" | "right" | "center";
   strokeWidth: number | null;
+  /** Per-role font overrides for the editorial cluster layout. */
+  clusterHeroFont?: string | null;
+  clusterBodyFont?: string | null;
 }
 
 /** Greedy word-wrap — exact port of `_wrap_text_to_lines`. Explicit newlines wrap
