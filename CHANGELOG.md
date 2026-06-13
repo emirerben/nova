@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.99.2] — 2026-06-12
+
+### Added
+- **Editorial cluster picks now fire on compact hook shape, not calm-only content.** `overlay_format_matcher` now treats cluster as a 3-6 strong-word layout across energetic, people, lifestyle, food, and scenic hooks; added calibrated cluster examples, updated the eval rubric, and records `layout_source` on `intro_layout_selected` so prod traces distinguish explicit model picks from coerced defaults without leaking the field into burn dictionaries.
+
+### Fixed
+- **Intro refusal/meta text can no longer render on screen.** `intro_writer.parse()` now rejects refusal/meta phrases including the prod string "i need more information to write this hook"; the generative build path catches that refusal and renders a deterministic safe fallback hook instead of hard-failing or dropping raw meta text. `verify-overlays` now treats the unknown-font fixture as an expected failure, so the gate exits 0 only when the fallback failure is observed.
+
 ## [0.4.99.1] — 2026-06-12
 
 ### Added

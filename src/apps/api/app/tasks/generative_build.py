@@ -2130,7 +2130,7 @@ def _run_text_agents(
     filming_guide = filming_guide or []
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
-        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents._runtime import RefusalError, RunContext, TerminalError  # noqa: PLC0415
         from app.agents.intro_writer import IntroTextWriterAgent, IntroWriterInput  # noqa: PLC0415
         from app.agents.overlay_examples import examples_by_id  # noqa: PLC0415
         from app.agents.overlay_format_matcher import (  # noqa: PLC0415
@@ -2154,32 +2154,59 @@ def _run_text_agents(
         by_id = examples_by_id()
         exemplars = [by_id[i] for i in form.matched_example_ids if i in by_id]
 
-        text = IntroTextWriterAgent(client).run(
-            IntroWriterInput(
-                hero_clip=hero_summary,
-                hero_transcript=str(getattr(hero, "transcript", "") or ""),
-                tone=str(persona.get("tone", "") or ""),
-                content_pillars=list(persona.get("content_pillars", []) or []),
-                theme=str(persona.get("theme", "") or ""),
-                idea=str(persona.get("idea", "") or ""),
-                preference_summary=str(persona.get("preference_summary", "") or ""),
-                # Deep TikTok analysis — the creator's proven style informs the hook
-                # voice. Empty for public jobs and when analysis hasn't landed yet
-                # → prompt byte-identical to baseline (_persona_context handles this).
-                tiktok_analysis=str(persona.get("tiktok_summary", "") or ""),
-                # Filming guide (Creator Agent M3 / B2). Shot-list context for the
-                # hook writer — DATA only, never a command. Empty → byte-identical.
-                filming_guide=filming_guide,
-                form=form.model_dump(),
-                exemplars=exemplars,
-                language=language,
-            ),
-            ctx=ctx,
+        writer_input = IntroWriterInput(
+            hero_clip=hero_summary,
+            hero_transcript=str(getattr(hero, "transcript", "") or ""),
+            tone=str(persona.get("tone", "") or ""),
+            content_pillars=list(persona.get("content_pillars", []) or []),
+            theme=str(persona.get("theme", "") or ""),
+            idea=str(persona.get("idea", "") or ""),
+            preference_summary=str(persona.get("preference_summary", "") or ""),
+            # Deep TikTok analysis — the creator's proven style informs the hook
+            # voice. Empty for public jobs and when analysis hasn't landed yet
+            # → prompt byte-identical to baseline (_persona_context handles this).
+            tiktok_analysis=str(persona.get("tiktok_summary", "") or ""),
+            # Filming guide (Creator Agent M3 / B2). Shot-list context for the
+            # hook writer — DATA only, never a command. Empty → byte-identical.
+            filming_guide=filming_guide,
+            form=form.model_dump(),
+            exemplars=exemplars,
+            language=language,
         )
+        try:
+            text = IntroTextWriterAgent(client).run(writer_input, ctx=ctx)
+        except (RefusalError, TerminalError) as exc:
+            if isinstance(exc, TerminalError) and not isinstance(exc.__cause__, RefusalError):
+                raise
+            text = _fallback_intro_text(hero_summary)
+            form_dict = form.model_dump()
+            form_dict.update({"effect": "fade-in", "layout": "linear"})
+            log.warning(
+                "generative_intro_writer_refusal_fallback",
+                job_id=job_id,
+                error=str(exc),
+                fallback_text=text.text,
+            )
+            return text, form_dict
         return text, form.model_dump()
     except Exception as exc:
         log.warning("generative_text_agents_failed", job_id=job_id, error=str(exc))
         return None, {}
+
+
+def _fallback_intro_text(hero_summary):
+    import types as _types  # noqa: PLC0415
+
+    subject = str(getattr(hero_summary, "subject", "") or "").strip()
+    description = str(getattr(hero_summary, "description", "") or "").strip()
+    base = subject or description or "the moment"
+    words = [w.strip(".,!?;:\"'()[]{}").lower() for w in base.split() if w.strip(".,!?;:\"'()[]{}")]
+    core = " ".join(words[:3]) or "the moment"
+    return _types.SimpleNamespace(
+        text=f"watch {core} unfold",
+        highlight_word=None,
+        word_roles=None,
+    )
 
 
 def _select_generative_style_set(clip_metas: list, agent_text, *, job_id: str) -> str:
@@ -3133,6 +3160,7 @@ def _resolve_intro_overlay_params(
         layout_reason = "position_pinned"
     params["layout"] = layout
     params["requested_layout"] = requested_layout
+    params["layout_source"] = str(agent_form.get("layout_source") or "model")
     params["layout_reason"] = layout_reason
     params["word_roles"] = getattr(agent_text, "word_roles", None)
     return params, intro_px, intro_source

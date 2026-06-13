@@ -73,18 +73,20 @@ _MAX_BLOCKS = 5
 _MAX_HERO_LINES = 3
 
 # Geometry constants (canvas fractions), eyeballed from the reference frames:
-# hero lines hug just right of center and alternate slightly; the connector tucks
-# against the first hero's left edge a touch lower; the closer sits below,
-# offset right. Vertical step between hero line CENTERS is 0.95x the line height
-# — the slight descender overlap that makes the cluster read as one unit.
+# hero lines hug just right of center and alternate slightly; the connector sits
+# to the first hero's left with a real gap; the closer sits below,
+# offset right. Vertical step between block CENTERS is based on measured glyph
+# height plus a small gap: blocks should read as one editorial unit, but never
+# collide.
 _CLUSTER_CENTER_Y = 0.44
 _HERO_X_BASE = 0.575
 _HERO_X_JITTER = 0.03
-_HERO_STEP_RATIO = 0.95
-_CONNECTOR_Y_NUDGE_FRAC = 0.012  # connector center sits slightly below hero0's
-_CONNECTOR_OVERLAP_FRAC = 0.008  # tuck into the hero's left edge, not flush
+_HERO_STEP_RATIO = 1.08
+_BLOCK_GAP_FRAC = 0.01
+_CONNECTOR_BESIDE_Y_NUDGE_FRAC = 0.012  # short connectors sit beside hero0, not above it
+_CONNECTOR_GAP_FRAC = 0.025  # visible gap; connectors must never collide with heroes
 _CLOSER_X = 0.62
-_CLOSER_STEP_RATIO = 0.62  # closer line center sits tighter under the last hero
+_CLOSER_STEP_RATIO = 0.92  # closer line center sits under the last hero with a gap
 
 # Uniform-shrink floor: scaling the whole cluster below this fraction of the
 # requested base means the text would read as noise — fall back to linear.
@@ -514,18 +516,16 @@ def compute_cluster_blocks(
         _HERO_STEP_RATIO
     )
 
-    # Vertical: hero line centers stack downward; connector rides beside hero 0;
-    # the closer tucks under the last hero. Laid out relative to hero0 at y=0,
-    # then the whole cluster is re-centered on _CLUSTER_CENTER_Y and clamped.
+    # Vertical: hero line centers stack downward; the closer sits under the
+    # last hero. Connectors are placed after horizontal clamping below: short
+    # connectors stay beside their anchor hero, long/edge-clamped connectors
+    # ride above it so measured boxes still never collide.
     ys: list[float] = [0.0] * len(blocks)
     for line_no, i in enumerate(hero_idx):
         ys[i] = line_no * hero_step
     last_hero_y = ys[hero_idx[-1]]
     for i, b in enumerate(blocks):
-        if b["role"] == ROLE_CONNECTOR:
-            anchor_hero = next((h for h in hero_idx if h > i), hero_idx[0])
-            ys[i] = ys[anchor_hero] + _CONNECTOR_Y_NUDGE_FRAC
-        elif b["role"] == ROLE_CLOSER:
+        if b["role"] == ROLE_CLOSER:
             ys[i] = last_hero_y + hero_step * _CLOSER_STEP_RATIO
 
     # Horizontal: heroes alternate around the off-center axis; closer offset
@@ -541,7 +541,31 @@ def compute_cluster_blocks(
         elif b["role"] == ROLE_CONNECTOR:
             anchor_hero = next((h for h in hero_idx if h > i), hero_idx[0])
             hero_left = xs[anchor_hero] - measures[anchor_hero]["w_frac"] / 2
-            xs[i] = hero_left - measures[i]["w_frac"] / 2 + _CONNECTOR_OVERLAP_FRAC
+            xs[i] = hero_left - measures[i]["w_frac"] / 2 - _CONNECTOR_GAP_FRAC
+    for i in range(len(blocks)):
+        half_w = measures[i]["w_frac"] / 2
+        xs[i] = min(max(xs[i], _EDGE_MARGIN_FRAC + half_w), 1.0 - _EDGE_MARGIN_FRAC - half_w)
+
+    def _overlaps_x(a: int, b: int) -> bool:
+        a_left = xs[a] - measures[a]["w_frac"] / 2
+        a_right = xs[a] + measures[a]["w_frac"] / 2
+        b_left = xs[b] - measures[b]["w_frac"] / 2
+        b_right = xs[b] + measures[b]["w_frac"] / 2
+        return a_left < b_right - 1e-6 and b_left < a_right - 1e-6
+
+    for i, b in enumerate(blocks):
+        if b["role"] != ROLE_CONNECTOR:
+            continue
+        anchor_hero = next((h for h in hero_idx if h > i), hero_idx[0])
+        if _overlaps_x(i, anchor_hero):
+            ys[i] = (
+                ys[anchor_hero]
+                - measures[anchor_hero]["h_frac"] / 2
+                - measures[i]["h_frac"] / 2
+                - _BLOCK_GAP_FRAC
+            )
+        else:
+            ys[i] = ys[anchor_hero] + _CONNECTOR_BESIDE_Y_NUDGE_FRAC
 
     # Re-center the cluster vertically on the canvas sweet spot, then clamp
     # every block inside the safe area (clamping is rare — sizes already fit).
@@ -552,8 +576,6 @@ def compute_cluster_blocks(
         ys[i] += shift
         half_h = measures[i]["h_frac"] / 2
         ys[i] = min(max(ys[i], _Y_MIN + half_h), _Y_MAX - half_h)
-        half_w = measures[i]["w_frac"] / 2
-        xs[i] = min(max(xs[i], _EDGE_MARGIN_FRAC + half_w), 1.0 - _EDGE_MARGIN_FRAC - half_w)
 
     # Reveal stagger in BLOCK order (connector→heroes→closer follows the text's
     # natural reading order, which is the reference behavior).

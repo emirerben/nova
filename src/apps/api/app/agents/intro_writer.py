@@ -42,6 +42,15 @@ _MAX_CHARS = 80
 _URL_RE = re.compile(r"\b(?:https?://|www\.)\S+", re.IGNORECASE)
 _BARE_DOMAIN_RE = re.compile(r"\b[\w-]+\.(?:com|net|org|io|co|gg|xyz|app|link)\b", re.IGNORECASE)
 _HANDLE_RE = re.compile(r"[@#]\w+")
+_REFUSAL_PATTERNS = (
+    re.compile(r"\bi\s+need\s+more\s+information\s+to\s+write\s+this\s+hook\b"),
+    re.compile(r"\bneed\s+more\s+information\b"),
+    re.compile(r"\bcannot\s+write\b"),
+    re.compile(r"\bcan't\s+write\b"),
+    re.compile(r"\bunable\s+to\b"),
+    re.compile(r"\bas\s+an\s+ai\b"),
+    re.compile(r"\bwrite\s+this\s+hook\b"),
+)
 
 
 class IntroWriterInput(BaseModel):
@@ -112,6 +121,11 @@ def _clamp(s: str) -> str:
     if len(s) > _MAX_CHARS:
         s = s[:_MAX_CHARS].rstrip()
     return s
+
+
+def _is_refusal_text(s: str) -> bool:
+    normalized = re.sub(r"\s+", " ", s.lower()).strip()
+    return any(pattern.search(normalized) for pattern in _REFUSAL_PATTERNS)
 
 
 _LANGUAGE_INSTRUCTIONS: dict[str, str] = {
@@ -293,6 +307,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.intro_writer",
         prompt_id="write_intro_text",
+        # 2026-06-12 — refusal/meta text hardening + grounded hook self-check.
         # 2026-06-10 — cluster layouts: added $cluster_instructions +
         #              $word_roles_output blocks (both "" for linear → baseline
         #              byte-identical) and 3 cluster entries in overlay_examples.json.
@@ -310,7 +325,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-06-10",
+        prompt_version="2026-06-12",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -381,8 +396,10 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         text = _clamp(text)
         if not text:
             # Empty after sanitization → treat as a refusal/garbage output. The
-            # orchestrator catches this and renders footage without an intro overlay.
+            # orchestrator catches this and renders a deterministic safe fallback hook.
             raise RefusalError("intro_writer: empty text after sanitization")
+        if _is_refusal_text(text):
+            raise RefusalError("intro_writer: refusal/meta text after sanitization")
 
         highlight = data.get("highlight_word")
         if isinstance(highlight, str):

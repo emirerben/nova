@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-10",
+  "version": "2026-06-12",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -26,7 +26,7 @@
     {
       "id": "travel-aspirational-popin-01",
       "content_profile": "scenic travel or landscape b-roll, calm and aspirational, golden-hour or wide vistas",
-      "effect": "pop-in",
+      "effect": "fade-in",
       "text": "the view nobody told you about",
       "highlight_word": "nobody",
       "position": "center",
@@ -260,6 +260,54 @@
       "size_class": "large",
       "text_color": "#FFFFFF",
       "highlight_color": "#FFD24A",
+      "layout": "cluster"
+    },
+    {
+      "id": "energetic-payoff-cluster-01",
+      "content_profile": "high-energy reveal, party, sport, or chaotic payoff where the hook can land as a compact editorial phrase",
+      "effect": "fade-in",
+      "text": "the chaos paid off",
+      "highlight_word": "chaos",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "layout": "cluster"
+    },
+    {
+      "id": "people-social-cluster-01",
+      "content_profile": "friends, group travel, candid people moments, social proof, warm shared energy with a short feeling-led hook",
+      "effect": "fade-in",
+      "text": "everyone said yes",
+      "highlight_word": "yes",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "layout": "cluster"
+    },
+    {
+      "id": "lifestyle-glow-cluster-01",
+      "content_profile": "beauty, outfit, wellness, GRWM, or lifestyle transformation with a concise editorial payoff",
+      "effect": "fade-in",
+      "text": "the glow up worked",
+      "highlight_word": "glow",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "layout": "cluster"
+    },
+    {
+      "id": "food-night-cluster-01",
+      "content_profile": "food, nightlife, or city lifestyle moment where one short hook sells the sensory payoff",
+      "effect": "fade-in",
+      "text": "this bite changed plans",
+      "highlight_word": "bite",
+      "position": "center",
+      "size_class": "large",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
       "layout": "cluster"
     }
   ]

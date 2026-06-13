@@ -2200,6 +2200,7 @@ class TestResolveIntroOverlayParamsLayout:
             _cluster_agent_text(), {"effect": "fade-in", "layout": "cluster"}, None
         )
         assert params["layout"] == "cluster"
+        assert params["layout_source"] == "model"
         assert params["word_roles"] == ["connector", "hero", "hero", "closer"]
 
     def test_layout_defaults_to_linear(self):
@@ -2207,7 +2208,16 @@ class TestResolveIntroOverlayParamsLayout:
             _agent_text(), {"effect": "karaoke-line"}, None
         )
         assert params["layout"] == "linear"
+        assert params["layout_source"] == "model"
         assert params["word_roles"] is None  # SimpleNamespace without the attr
+
+    def test_layout_source_threads_from_matcher_output(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(),
+            {"effect": "fade-in", "layout": "linear", "layout_source": "coerced_default"},
+            None,
+        )
+        assert params["layout_source"] == "coerced_default"
 
     def test_kill_switch_forces_linear(self, monkeypatch):
         monkeypatch.setattr(gb.settings, "GENERATIVE_CLUSTER_INTRO_ENABLED", False, raising=False)
@@ -2297,6 +2307,87 @@ class TestResolveRegenTextClusterPersistence:
             run_text_agents_fn=lambda: (None, None),
         )
         assert agent_form["layout"] == "linear"
+
+
+def test_run_text_agents_refusal_returns_safe_fallback(monkeypatch):
+    from app.agents._runtime import RefusalError
+    from app.agents.intro_writer import _is_refusal_text
+
+    class _Form:
+        matched_example_ids: list[str] = []
+
+        def model_dump(self):
+            return {
+                "effect": "karaoke-line",
+                "layout": "cluster",
+                "layout_source": "model",
+                "matched_example_ids": [],
+            }
+
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.overlay_format_matcher.OverlayFormatMatcherAgent.run",
+        lambda self, input, ctx=None: _Form(),  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "app.agents.intro_writer.IntroTextWriterAgent.run",
+        lambda self, input, ctx=None: (_ for _ in ()).throw(  # noqa: ARG005
+            RefusalError("intro_writer: refusal/meta text after sanitization")
+        ),
+    )
+
+    text, form = gb._run_text_agents(
+        [_Meta("c1", 8.0, detected_subject="Golden canyon")],
+        _Meta("c1", 8.0, detected_subject="Golden canyon"),
+        job_id="job-refusal",
+    )
+
+    assert text is not None
+    assert text.text == "watch golden canyon unfold"
+    assert not _is_refusal_text(text.text)
+    assert form["layout"] == "linear"
+    assert form["effect"] == "fade-in"
+
+
+def test_run_text_agents_wrapped_refusal_returns_safe_fallback(monkeypatch):
+    from app.agents._runtime import RefusalError, TerminalError
+
+    class _Form:
+        matched_example_ids: list[str] = []
+
+        def model_dump(self):
+            return {
+                "effect": "karaoke-line",
+                "layout": "cluster",
+                "layout_source": "model",
+                "matched_example_ids": [],
+            }
+
+    def _raise_wrapped_refusal():
+        try:
+            raise RefusalError("intro_writer: refusal/meta text after sanitization")
+        except RefusalError as exc:
+            raise TerminalError("nova.compose.intro_writer: refusal") from exc
+
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.overlay_format_matcher.OverlayFormatMatcherAgent.run",
+        lambda self, input, ctx=None: _Form(),  # noqa: ARG005
+    )
+    monkeypatch.setattr(
+        "app.agents.intro_writer.IntroTextWriterAgent.run",
+        lambda self, input, ctx=None: _raise_wrapped_refusal(),  # noqa: ARG005
+    )
+
+    text, form = gb._run_text_agents(
+        [_Meta("c1", 8.0, detected_subject="Golden canyon")],
+        _Meta("c1", 8.0, detected_subject="Golden canyon"),
+        job_id="job-wrapped-refusal",
+    )
+
+    assert text.text == "watch golden canyon unfold"
+    assert form["layout"] == "linear"
+    assert form["effect"] == "fade-in"
 
 
 # ---------------------------------------------------------------------------

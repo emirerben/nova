@@ -170,18 +170,35 @@ def test_fixtures_render_unclipped(fixture):
         assert "fallback" in o.resolved_typeface
 
 
-def test_unknown_font_family_fixture_fails_loudly():
+def test_unknown_font_family_fixture_is_expected_fail():
     report = ov.verify_recipe(
         {"overlays": _fixture_overlays(UNKNOWN_FONT_FIXTURE)},
         render_mode=ov.RENDER_DRAW_FRAME,
         run_ocr=False,
     )
-    assert report.overall == "FAIL"
+    assert report.overall == "PASS"
     assert report.overlays[0].resolved_typeface["requested_font_family"] == (
         "Definitely Not A Real Nova Font"
     )
     assert report.overlays[0].resolved_typeface["fallback"] is True
+    assert report.overlays[0].clipping == "FAIL"
+    assert report.overlays[0].expectation_matched is True
     assert any("fallback" in r for r in report.overlays[0].reasons)
+
+
+def test_expected_fail_fixture_fails_if_expectation_stops_matching():
+    overlay = {
+        **_fixture_overlays("karaoke_line.json")[0],
+        "expected_failure": {"verdict": "FAIL", "reason_contains": "fallback"},
+    }
+    report = ov.verify_recipe(
+        {"overlays": [overlay]},
+        render_mode=ov.RENDER_DRAW_FRAME,
+        run_ocr=False,
+    )
+    assert report.overall == "FAIL"
+    assert report.overlays[0].expectation_matched is False
+    assert any("expected failure did not match" in r for r in report.overlays[0].reasons)
 
 
 @pytest.mark.parametrize("fixture", ["cluster_intro.json", "cluster_intro_signal_free.json"])

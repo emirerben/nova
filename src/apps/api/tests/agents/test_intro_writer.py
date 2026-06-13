@@ -71,6 +71,12 @@ def test_empty_text_after_sanitization_raises_refusal():
         _agent().parse(raw, _input())
 
 
+def test_literal_prod_refusal_text_raises_refusal():
+    raw = json.dumps({"text": "i need more information to write this hook"})
+    with pytest.raises(RefusalError):
+        _agent().parse(raw, _input())
+
+
 def test_invalid_json_raises_schema_error():
     with pytest.raises(SchemaError):
         _agent().parse("not json", _input())

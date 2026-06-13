@@ -56,6 +56,7 @@ class OverlayFormatMatcherOutput(BaseModel):
     highlight_color: str = "#FFD24A"
     text_anchor: str = "center"
     layout: str = "linear"
+    layout_source: str = "coerced_default"
     matched_example_ids: list[str] = Field(default_factory=list)
 
 
@@ -106,11 +107,13 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.overlay_format_matcher",
         prompt_id="match_overlay_format",
+        # 2026-06-12 — broadened cluster selection to hook-shape-driven and added
+        #              energetic/people/lifestyle cluster examples.
         # 2026-06-10 — added `layout` (linear|cluster) + 3 cluster examples in
         #              overlay_examples.json (editorial word-cluster intro).
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_hint block (en|tr).
-        prompt_version="2026-06-10",
+        prompt_version="2026-06-12",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -167,7 +170,9 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
         ]
 
         effect = _coerce_choice(data.get("effect"), _SKIA_EFFECTS, _DEFAULT_EFFECT)
-        layout = _coerce_choice(data.get("layout"), _LAYOUTS, "linear")
+        raw_layout = str(data.get("layout") or "").strip()
+        layout_source = "model" if raw_layout in _LAYOUTS else "coerced_default"
+        layout = raw_layout if layout_source == "model" else "linear"
         # A cluster owns its reveal (per-block staggered fade-in); karaoke's
         # word-by-word sweep is incompatible with multi-block geometry. Keep the
         # layout choice and settle the effect.
@@ -183,6 +188,7 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
                 highlight_color=_coerce_hex(data.get("highlight_color"), "#FFD24A"),
                 text_anchor=_coerce_choice(data.get("text_anchor"), _ANCHORS, "center"),
                 layout=layout,
+                layout_source=layout_source,
                 matched_example_ids=matched,
             )
         except ValidationError as exc:
