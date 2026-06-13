@@ -19,7 +19,16 @@ function makeSession(over: Partial<VariantEditSession> = {}): VariantEditSession
     isSaving: false,
     justSaved: false,
     isActive: true,
-    draft: { text: "wish you were here", removed: false, styleSetId: "a", sizePx: 56 },
+    draft: {
+      text: "wish you were here",
+      removed: false,
+      styleSetId: "a",
+      sizePx: 56,
+      layout: null,
+      fontFamily: null,
+      animation: null,
+      textColor: null,
+    },
     isDirty: false,
     commitError: null,
     enterEdit: jest.fn(),
@@ -28,6 +37,12 @@ function makeSession(over: Partial<VariantEditSession> = {}): VariantEditSession
     setRemoved: jest.fn(),
     setStyle: jest.fn(),
     setSize: jest.fn(),
+    setLayout: jest.fn(),
+    setFont: jest.fn(),
+    setAnimation: jest.fn(),
+    setColor: jest.fn(),
+    playToken: 0,
+    replay: jest.fn(),
     commit: jest.fn(async () => {}),
     ...over,
   };
@@ -64,7 +79,7 @@ describe("EditToolbar style row", () => {
   it("marks the draft's style set as checked", () => {
     render(
       <EditToolbar
-        session={makeSession({ draft: { text: "x", removed: false, styleSetId: "c", sizePx: 56 } })}
+        session={makeSession({ draft: { text: "x", removed: false, styleSetId: "c", sizePx: 56, layout: null, fontFamily: null, animation: null, textColor: null } })}
         styleSets={STYLE_SETS}
         fallbackSizePx={56}
       />,
@@ -87,7 +102,7 @@ describe("EditToolbar style row", () => {
 
   it("arrow keys move the selection across chips", () => {
     const session = makeSession({
-      draft: { text: "x", removed: false, styleSetId: "a", sizePx: 56 },
+      draft: { text: "x", removed: false, styleSetId: "a", sizePx: 56, layout: null, fontFamily: null, animation: null, textColor: null },
     });
     render(<EditToolbar session={session} styleSets={STYLE_SETS} fallbackSizePx={56} />);
     const first = screen.getByRole("radio", { name: "Text style: Editorial" });
@@ -102,7 +117,7 @@ describe("EditToolbar style row", () => {
     render(
       <EditToolbar
         session={makeSession({
-          draft: { text: "", removed: true, styleSetId: "a", sizePx: 56 },
+          draft: { text: "", removed: true, styleSetId: "a", sizePx: 56, layout: null, fontFamily: null, animation: null, textColor: null },
         })}
         styleSets={STYLE_SETS}
         fallbackSizePx={56}

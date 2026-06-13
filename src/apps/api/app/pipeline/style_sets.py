@@ -69,11 +69,30 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "bounce",
         "slide-in",
         "slide-up",
+        "slide-down",
         "static",
         "none",
         "karaoke-line",
         "lyric-line",
         "stream-in",
+    }
+)
+
+# Effects exposed in the instant-editor animation picker (the frontend INTRO_ANIMATIONS list).
+# Strict subset of _ALLOWED_EFFECTS — does NOT include glitch, font-cycle, karaoke-line, lyric-line.
+# Used to validate the `effect` field on EditVariantRequest.
+_INTRO_ANIMATION_EFFECTS: frozenset[str] = frozenset(
+    {
+        "fade-in",
+        "pop-in",
+        "scale-up",
+        "slide-up",
+        "slide-down",
+        "bounce",
+        "typewriter",
+        "stream-in",
+        "none",
+        "static",
     }
 )
 

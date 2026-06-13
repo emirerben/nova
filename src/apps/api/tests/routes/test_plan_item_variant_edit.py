@@ -397,6 +397,9 @@ def test_edit_intro_layout_happy_path(client: TestClient) -> None:
         style_set_id=None,
         size_override_px=None,
         layout_override="cluster",
+        font_family_override=None,
+        effect_override=None,
+        text_color_override=None,
     )
 
 
@@ -430,6 +433,9 @@ def test_edit_accepts_full_batch_payload(client: TestClient) -> None:
         style_set_id=valid_style,
         size_override_px=64,
         layout_override=None,
+        font_family_override=None,
+        effect_override=None,
+        text_color_override=None,
     )
 
 
