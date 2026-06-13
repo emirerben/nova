@@ -247,6 +247,7 @@ def _build_cluster_intro_overlays(
     text_color: str,
     highlight_color: str,
     cluster_style: dict | None = None,
+    language: str = "en",
     **style_kwargs,
 ) -> list[dict] | None:
     """Build the editorial word-cluster intro: one [reveal, hold] pair PER block.
@@ -276,6 +277,7 @@ def _build_cluster_intro_overlays(
         font_family=style_kwargs.get("font_family"),
         reveal_window_s=reveal_window_s,
         style=cluster_style,
+        language=language,
     )
     if not blocks:
         return None
@@ -332,6 +334,7 @@ def build_persistent_intro_overlays(
     layout_reason: str | None = None,
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
+    language: str = "en",
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -391,6 +394,7 @@ def build_persistent_intro_overlays(
                 text_color=text_color,
                 highlight_color=highlight_color,
                 cluster_style=cluster_style,
+                language=language,
                 **style_kwargs,
             )
         except Exception as exc:
@@ -476,6 +480,7 @@ def inject_persistent_intro(
     layout_reason: str | None = None,
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
+    language: str = "en",
     **style_kwargs,
 ) -> dict:
     """Inject the persistent hero intro (reveal + static hold) into the hero slot.
@@ -513,6 +518,7 @@ def inject_persistent_intro(
         layout_reason=layout_reason,
         word_roles=word_roles,
         cluster_style=cluster_style,
+        language=language,
         **style_kwargs,
     )
     for overlay in overlays:

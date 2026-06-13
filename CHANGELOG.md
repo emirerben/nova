@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.101.1] — 2026-06-13
+
+### Added
+- **Editorial clusters now use engine-owned mixed typeface pairings.** Cluster connector and closer blocks resolve from a curated `cluster_pairing` table in the bundled font registry, with deterministic per-hero pairings and no new burn-dict fields, prompts, fonts, or geometry changes. Turkish hooks and cmap coverage failures fall back to a cmap-verified serif+serif bundled pairing, and the Slice 3a HANDOFF records the raw prod-image render proof with distinct `font_resolved.resolved_typeface.file` values across cluster blocks.
+
 ## [0.4.101.0] — 2026-06-13
 
 ### Fixed

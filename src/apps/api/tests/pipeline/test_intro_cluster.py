@@ -10,6 +10,7 @@ test_text_overlay_skia.py); pure-logic tests (roles, grouping, fallbacks) don't.
 
 from __future__ import annotations
 
+import os
 from itertools import combinations
 from unittest import mock
 
@@ -31,6 +32,7 @@ from app.pipeline.intro_cluster import (
     normalize_typography,
     scene_center_y,
 )
+from app.pipeline.text_overlay import _FONT_REGISTRY, FONTS_DIR
 from app.pipeline.text_overlay_skia import CANVAS_W, _typeface_for_overlay
 
 _REFERENCE_TEXT = "what's your favorite place?"
@@ -40,6 +42,18 @@ def _compute(text: str, **kw):
     defaults = dict(word_roles=None, base_size_px=60, font_family=None, reveal_window_s=3.0)
     defaults.update(kw)
     return compute_cluster_blocks(text, **defaults)
+
+
+def _assert_font_covers_text(font_family: str, text: str):
+    ttlib = __import__("fontTools.ttLib", fromlist=["TTFont"])
+    entry = _FONT_REGISTRY["fonts"][font_family]
+    font = ttlib.TTFont(os.path.join(FONTS_DIR, entry["file"]))
+    try:
+        cmap = font.getBestCmap()
+    finally:
+        font.close()
+    missing = [ch for ch in text if not ch.isspace() and ord(ch) not in cmap]
+    assert missing == []
 
 
 # -- derive_word_roles ---------------------------------------------------------
@@ -322,12 +336,68 @@ def test_hero_lines_stack_downward_with_distinct_positions():
     assert len(xs) >= 2  # alternating jitter — not a straight centered column
 
 
-def test_connector_uses_regular_weight_of_hero_face():
+def test_cluster_uses_curated_pairing_for_connector_and_closer():
+    blocks = _compute(_REFERENCE_TEXT, font_family="Playfair Display")
+    connector = next(b for b in blocks if b["role"] == ROLE_CONNECTOR)
+    assert connector["font_family"] == "Great Vibes"
+    hero = next(b for b in blocks if b["role"] == ROLE_HERO)
+    assert hero["font_family"] == "Playfair Display"
+    closer = next(b for b in blocks if b["role"] == ROLE_CLOSER)
+    assert closer["font_family"] == "Instrument Serif"
+
+
+def test_cluster_pairing_is_deterministic_for_multiple_hero_faces():
+    cases = [
+        ("Playfair Display", ("Great Vibes", "Instrument Serif")),
+        ("Bodoni Moda", ("Satisfy", "DM Serif Display")),
+    ]
+    for hero_family, expected_pair in cases:
+        a = _compute(_REFERENCE_TEXT, font_family=hero_family)
+        b = _compute(_REFERENCE_TEXT, font_family=hero_family)
+        assert a == b
+        by_role = {block["role"]: block["font_family"] for block in a}
+        assert by_role[ROLE_CONNECTOR] == expected_pair[0]
+        assert by_role[ROLE_CLOSER] == expected_pair[1]
+        assert len({block["font_family"] for block in a}) >= 2
+
+
+def test_cluster_pairing_table_references_active_fonts():
+    fonts = _FONT_REGISTRY["fonts"]
+    for hero_family, pairing in _FONT_REGISTRY["cluster_pairing"].items():
+        assert hero_family in fonts
+        assert fonts[hero_family].get("deprecated") is not True
+        assert set(pairing) == {ROLE_CONNECTOR, ROLE_CLOSER}
+        for paired_family in pairing.values():
+            assert paired_family in fonts
+            assert fonts[paired_family].get("deprecated") is not True
+
+
+def test_turkish_cluster_pairing_uses_cmap_safe_faces():
+    blocks = _compute(
+        "en sevdiğin yer neresi?",
+        font_family="Playfair Display",
+        language="tr",
+        base_size_px=80,
+    )
+    assert blocks is not None
+    for block in blocks:
+        if block["role"] in {ROLE_CONNECTOR, ROLE_CLOSER}:
+            _assert_font_covers_text(block["font_family"], block["text"])
+            assert _FONT_REGISTRY["fonts"][block["font_family"]]["category"] == "serif"
+
+
+def test_cluster_pairing_falls_back_when_selected_face_lacks_cmap_coverage(monkeypatch):
+    def fake_covers(font_file: str, text: str) -> bool:
+        if font_file == "GreatVibes-Regular.ttf":
+            return False
+        return True
+
+    import app.pipeline.intro_cluster as ic
+
+    monkeypatch.setattr(ic, "_font_cmap_covers_text", fake_covers)
     blocks = _compute(_REFERENCE_TEXT, font_family="Playfair Display")
     connector = next(b for b in blocks if b["role"] == ROLE_CONNECTOR)
     assert connector["font_family"] == "Playfair Display Regular"
-    hero = next(b for b in blocks if b["role"] == ROLE_HERO)
-    assert hero["font_family"] == "Playfair Display"
 
 
 def test_repeated_hero_words_keep_screen_order():

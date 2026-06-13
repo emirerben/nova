@@ -453,5 +453,39 @@
     "serif": "Playfair Display Regular",
     "serif_italic": "Instrument Serif",
     "script": "Pacifico"
+  },
+  "cluster_pairing": {
+    "Playfair Display": {
+      "connector": "Great Vibes",
+      "closer": "Instrument Serif"
+    },
+    "Bodoni Moda": {
+      "connector": "Satisfy",
+      "closer": "DM Serif Display"
+    },
+    "Fraunces": {
+      "connector": "Pacifico",
+      "closer": "Instrument Serif"
+    },
+    "Gloock": {
+      "connector": "Great Vibes",
+      "closer": "Instrument Serif"
+    },
+    "Cormorant Garamond": {
+      "connector": "Satisfy",
+      "closer": "Playfair Display Regular"
+    },
+    "EB Garamond": {
+      "connector": "Pacifico",
+      "closer": "Instrument Serif"
+    },
+    "Instrument Serif": {
+      "connector": "Playfair Display Regular",
+      "closer": "DM Serif Display"
+    },
+    "DM Serif Display": {
+      "connector": "Great Vibes",
+      "closer": "Instrument Serif"
+    }
   }
 }
