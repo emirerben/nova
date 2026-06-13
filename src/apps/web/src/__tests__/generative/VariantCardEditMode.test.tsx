@@ -15,11 +15,11 @@ class ResizeObserverMock {
 (global as unknown as { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver =
   ResizeObserverMock;
 
-import { render, screen, fireEvent } from "@testing-library/react";
+import { act, render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { VariantCard, isInstantEditEligible } from "@/app/generative/VariantCard";
 import type { VariantEditSession } from "@/app/generative/useVariantEditSession";
-import type { GenerativeVariant } from "@/lib/generative-api";
+import { SEQUENCE_TEXT_LOCKED_HINT, type GenerativeVariant } from "@/lib/generative-api";
 
 function makeVariant(over: Partial<GenerativeVariant> = {}): GenerativeVariant {
   return {
@@ -84,6 +84,11 @@ describe("isInstantEditEligible", () => {
     expect(isInstantEditEligible(makeVariant({ intro_layout: "linear" }))).toBe(true);
     expect(isInstantEditEligible(makeVariant({ intro_layout: null }))).toBe(true);
   });
+
+  it("excludes voiceover-synced sequence intros — text edits are server-rejected", () => {
+    expect(isInstantEditEligible(makeVariant({ intro_mode: "sequence" }))).toBe(false);
+    expect(isInstantEditEligible(makeVariant({ intro_mode: "linear" }))).toBe(true);
+  });
 });
 
 describe("VariantCard instant-edit entry", () => {
@@ -120,6 +125,84 @@ describe("VariantCard instant-edit entry", () => {
     expect(
       screen.queryByRole("button", { name: /edit text & style/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("VariantCard sequence-synced gating (intro_mode === 'sequence', D6/D19)", () => {
+  const sequenceVariant = makeVariant({
+    intro_mode: "sequence",
+    sequence_synced: true,
+    intro_layout: "cluster",
+    // 8 words — would word-count-block Editorial on a non-synced variant.
+    intro_text: "when they don't even listen to your feelings",
+  });
+
+  it("shows the Editorial · synced badge only on sequence variants", () => {
+    const { rerender } = render(<VariantCard {...baseProps} variant={sequenceVariant} />);
+    expect(screen.getByText("Editorial · synced")).toBeInTheDocument();
+    rerender(<VariantCard {...baseProps} variant={makeVariant()} />);
+    expect(screen.queryByText("Editorial · synced")).toBeNull();
+  });
+
+  it("locks text edits with the synced tooltip; size nudge stays enabled", () => {
+    render(
+      <VariantCard
+        {...baseProps}
+        variant={sequenceVariant}
+        onResize={async () => {}}
+      />,
+    );
+    const edit = screen.getByRole("button", { name: /^edit text$/i });
+    expect(edit).toBeDisabled();
+    expect(edit).toHaveAttribute("title", SEQUENCE_TEXT_LOCKED_HINT);
+    expect(screen.getByRole("button", { name: /remove text/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Bigger intro text" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Smaller intro text" })).toBeEnabled();
+  });
+
+  it("keeps legacy controls (no instant editor) even with a session", () => {
+    render(
+      <VariantCard {...baseProps} variant={sequenceVariant} editSession={makeSession()} />,
+    );
+    expect(screen.queryByRole("button", { name: /edit text & style/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^edit text$/i })).toBeDisabled();
+  });
+
+  it("renders Editorial active without the word-count gate; Classic opts out", async () => {
+    const onChangeLayout = jest.fn(async () => {});
+    render(
+      <VariantCard {...baseProps} variant={sequenceVariant} onChangeLayout={onChangeLayout} />,
+    );
+    const editorial = screen.getByRole("button", { name: "Editorial" });
+    expect(editorial).toBeDisabled(); // active = current layout, same as cluster
+    expect(editorial).toHaveAttribute("title", "Editorial — synced to your voiceover");
+    const classic = screen.getByRole("button", { name: "Classic" });
+    expect(classic).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(classic);
+    });
+    expect(onChangeLayout).toHaveBeenCalledWith("linear");
+  });
+
+  it("legacy variants without intro_mode keep the word-count gate and free text edits", () => {
+    const onChangeLayout = jest.fn(async () => {});
+    render(
+      <VariantCard
+        {...baseProps}
+        variant={makeVariant({
+          intro_text: "when they don't even listen to your feelings",
+        })}
+        onChangeLayout={onChangeLayout}
+      />,
+    );
+    expect(screen.queryByText("Editorial · synced")).toBeNull();
+    expect(screen.getByRole("button", { name: /^edit text$/i })).toBeEnabled();
+    const editorial = screen.getByRole("button", { name: "Editorial" });
+    expect(editorial).toBeDisabled(); // 8-word hook → gate intact
+    expect(editorial).toHaveAttribute(
+      "title",
+      "Editorial layout needs a 3-6 word hook — shorten the text first",
+    );
   });
 });
 

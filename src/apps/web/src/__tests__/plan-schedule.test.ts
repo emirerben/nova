@@ -28,16 +28,20 @@ function item(
 }
 
 describe("calendarToday", () => {
+  // NOTE: calendarToday derives "today" from the browser's LOCAL date components
+  // (see plan-schedule.ts), so exact-value tests must build start_date from local
+  // getters too. Using getUTC* here made these tests fail in the window between
+  // local midnight and UTC midnight (e.g. 00:00-02:00 CEST).
   it("returns day 1 when start_date is today", () => {
     const now = new Date();
-    const startDate = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+    const startDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     expect(calendarToday(startDate, 30)).toBe(1);
   });
 
   it("returns day 6 when start_date is 5 days ago", () => {
     const now = new Date();
-    const fiveDaysAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 5));
-    const startDate = `${fiveDaysAgo.getUTCFullYear()}-${String(fiveDaysAgo.getUTCMonth() + 1).padStart(2, "0")}-${String(fiveDaysAgo.getUTCDate()).padStart(2, "0")}`;
+    const fiveDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 5);
+    const startDate = `${fiveDaysAgo.getFullYear()}-${String(fiveDaysAgo.getMonth() + 1).padStart(2, "0")}-${String(fiveDaysAgo.getDate()).padStart(2, "0")}`;
     expect(calendarToday(startDate, 30)).toBe(6);
   });
 

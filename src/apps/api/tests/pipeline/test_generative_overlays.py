@@ -523,3 +523,301 @@ def test_cluster_reveal_windows_are_frame_budget_bounded():
         assert window <= 0.71, f"unbounded reveal window on {o['text']!r}"
         total_animated_s += window
     assert total_animated_s * 30 <= 150  # ≤ ~150 animated frames per cluster
+
+
+# ── Transcript-synced typographic sequence (build_sequence_overlays) ─────────────
+# The cluster engine is stubbed (geometry has its own tests in
+# test_intro_cluster.py); these tests pin the reference-verified emission:
+# ONE static overlay per block (instant pop-in, no reveal/hold pair),
+# beat-spread offsets that IGNORE the engine's timing, hard cuts on normal
+# scenes, the 350ms tail + oldest-first dismantle on fade_out scenes, scene
+# y-alternation, and the skip/None fallback semantics.
+
+
+def _seq_scenes() -> list[dict]:
+    return [
+        {
+            "words": ["when", "the", "days"],
+            "word_roles": ["connector", "connector", "hero"],
+            "speech_start_s": 0.4,
+            "speech_end_s": 1.9,
+            "start_s": 0.0,
+            "end_s": 2.25,
+            "fade_out": False,
+        },
+        {
+            "words": ["found", "us."],
+            "word_roles": ["hero", "closer"],
+            "speech_start_s": 2.0,
+            "speech_end_s": 2.9,
+            "start_s": 2.0,
+            "end_s": 6.0,
+            "fade_out": True,
+        },
+    ]
+
+
+def _patch_seq_engine(monkeypatch, *, decline_indices=(), blocks_per_scene=1):
+    """Stub compute_cluster_blocks with `blocks_per_scene` deterministic blocks.
+    The blocks carry NONSENSE engine timing (start_offset_s/reveal_s) to prove
+    the emitter ignores it. Returns the capture list of calls."""
+    import app.pipeline.intro_cluster as ic
+
+    calls: list[dict] = []
+    counter = {"i": 0}
+
+    def _fake_blocks(
+        text,
+        *,
+        word_roles,
+        base_size_px,
+        font_family=None,
+        reveal_window_s,
+        style,
+        accent_parity=0,
+    ):
+        idx = counter["i"]
+        counter["i"] += 1
+        calls.append(
+            {
+                "index": idx,
+                "text": text,
+                "word_roles": word_roles,
+                "base_size_px": base_size_px,
+                "reveal_window_s": reveal_window_s,
+                "style": style,
+                "accent_parity": accent_parity,
+            }
+        )
+        if idx in decline_indices:
+            return None
+        return [
+            {
+                "text": f"{text}#{b}",
+                "role": "hero",
+                "text_size_px": base_size_px,
+                "font_family": "Great Vibes",
+                "position_x_frac": 0.4,
+                "position_y_frac": 0.44,
+                "start_offset_s": 9.9,  # must be ignored by the emitter
+                "reveal_s": 9.9,  # must be ignored by the emitter
+            }
+            for b in range(blocks_per_scene)
+        ]
+
+    monkeypatch.setattr(ic, "compute_cluster_blocks", _fake_blocks)
+    return calls
+
+
+def test_sequence_emits_one_static_overlay_per_block(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+    from app.pipeline.intro_cluster import EDITORIAL_STYLE
+
+    calls = _patch_seq_engine(monkeypatch)
+    overlays = build_sequence_overlays(_seq_scenes(), base_size_px=78)
+    assert overlays is not None
+    assert len(overlays) == 2  # ONE overlay per scene's single block — no pairs
+
+    # Engine called with the styled profile + the caller-filled roles + the
+    # scene length as the (timing-irrelevant) reveal window + the scene index
+    # as accent parity.
+    assert [c["style"] for c in calls] == [EDITORIAL_STYLE, EDITORIAL_STYLE]
+    assert calls[0]["word_roles"] == ["connector", "connector", "hero"]
+    assert calls[0]["base_size_px"] == 78
+    assert calls[0]["reveal_window_s"] == 2.25  # scene_len, not the speech span
+    assert calls[1]["reveal_window_s"] == 4.0
+    assert [c["accent_parity"] for c in calls] == [0, 1]
+
+    s0, s1 = overlays
+    # Every overlay carries the sequence role (renderer fade machinery keys off it).
+    assert all(o["role"] == "generative_sequence" for o in overlays)
+    assert all(o["effect"] == "static" for o in overlays)
+    # Scene 0 (normal): instant pop at the ABSOLUTE scene start, HARD CUT at
+    # end_s — no fade tail.
+    assert (s0["start_s"], s0["end_s"]) == (0.0, 2.25)
+    assert "fade_out_ms" not in s0
+    # Scene 1 (fade_out): pops at its own absolute start, 350ms alpha tail.
+    assert (s1["start_s"], s1["end_s"]) == (2.0, 6.0)
+    assert s1["fade_out_ms"] == 350
+
+
+def test_sequence_beat_spread_offsets_ignore_engine_timing(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    # One scene, 3 blocks: beat = clamp((2.25 - 0.6) / 2, 0.35, 0.8) = 0.8.
+    _patch_seq_engine(monkeypatch, blocks_per_scene=3)
+    overlays = build_sequence_overlays([_seq_scenes()[0]], base_size_px=78)
+    assert len(overlays) == 3
+    starts = [o["start_s"] for o in overlays]
+    # Monotonically increasing, spaced by the clamped beat — NOT the engine's
+    # nonsense start_offset_s (9.9).
+    assert starts == [0.0, 0.8, 1.6]
+    # All blocks hold to the scene end (hard cut), instant static pops.
+    assert all(o["end_s"] == 2.25 for o in overlays)
+    assert all(o["effect"] == "static" for o in overlays)
+    assert all("fade_out_ms" not in o for o in overlays)
+
+
+def test_sequence_beat_clamped_to_floor_and_min_visibility(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    # scene_len = 1.0, 3 blocks: raw beat (1.0 - 0.6) / 2 = 0.2 → floor 0.35.
+    # Offsets 0 / 0.35 / 0.7, but every block must show >= 0.45s, so the last
+    # offset clamps to scene_len - 0.45 = 0.55.
+    _patch_seq_engine(monkeypatch, blocks_per_scene=3)
+    scene = {
+        "words": ["so", "much", "fun"],
+        "word_roles": None,
+        "start_s": 2.0,
+        "end_s": 3.0,
+        "fade_out": False,
+    }
+    overlays = build_sequence_overlays([scene], base_size_px=78)
+    starts = [o["start_s"] for o in overlays]
+    assert starts == [2.0, 2.35, 2.55]
+    assert all(o["end_s"] - o["start_s"] >= 0.45 for o in overlays)
+
+
+def test_sequence_beat_clamped_to_ceiling_on_slow_scene(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    # scene_len = 6.0, 2 blocks: raw beat (6.0 - 0.6) / 1 = 5.4 → ceiling 0.8.
+    _patch_seq_engine(monkeypatch, blocks_per_scene=2)
+    scene = {
+        "words": ["pure", "magic"],
+        "word_roles": None,
+        "start_s": 0.0,
+        "end_s": 6.0,
+        "fade_out": False,
+    }
+    overlays = build_sequence_overlays([scene], base_size_px=78)
+    assert [o["start_s"] for o in overlays] == [0.0, 0.8]
+
+
+def test_sequence_fade_out_scene_dismantles_oldest_block_first(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    # fade_out scene with 3 blocks: ALL carry the 350ms tail and the FIRST
+    # block ends 0.2s before the scene (oldest-word-first dismantle).
+    _patch_seq_engine(monkeypatch, blocks_per_scene=3)
+    scene = dict(_seq_scenes()[1], words=["luck", "is", "timing"], word_roles=None)
+    overlays = build_sequence_overlays([scene], base_size_px=78)
+    assert len(overlays) == 3
+    assert all(o["fade_out_ms"] == 350 for o in overlays)
+    first, second, third = overlays
+    assert first["end_s"] == 5.8  # 6.0 - 0.2, still > its start
+    assert first["end_s"] > first["start_s"]
+    assert second["end_s"] == 6.0
+    assert third["end_s"] == 6.0
+
+
+def test_sequence_fade_out_scene_with_two_blocks_keeps_full_window(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    # < 3 blocks → no dismantle: both blocks hold to the scene end.
+    _patch_seq_engine(monkeypatch, blocks_per_scene=2)
+    overlays = build_sequence_overlays([_seq_scenes()[1]], base_size_px=78)
+    assert len(overlays) == 2
+    assert all(o["end_s"] == 6.0 for o in overlays)
+    assert all(o["fade_out_ms"] == 350 for o in overlays)
+
+
+def test_sequence_overlays_apply_scene_y_alternation(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+    from app.pipeline.intro_cluster import _CLUSTER_CENTER_Y, scene_center_y
+
+    _patch_seq_engine(monkeypatch)
+    overlays = build_sequence_overlays(_seq_scenes(), base_size_px=78)
+    s0, s1 = overlays
+    # Blocks were emitted at y=0.44; the whole scene shifts by the deterministic
+    # scene-center cycle so consecutive scenes never sit at the identical y.
+    assert s0["position_y_frac"] == round(0.44 + scene_center_y(0) - _CLUSTER_CENTER_Y, 6)
+    assert s1["position_y_frac"] == round(0.44 + scene_center_y(1) - _CLUSTER_CENTER_Y, 6)
+    assert s0["position_y_frac"] != s1["position_y_frac"]
+
+
+def test_sequence_overlays_carry_block_typography_and_skia_schema(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    _patch_seq_engine(monkeypatch)
+    overlays = build_sequence_overlays(_seq_scenes(), base_size_px=78, text_color="#FFEEDD")
+    for o in overlays:
+        assert o["font_family"] == "Great Vibes"
+        assert o["text_size_px"] == 78
+        assert o["position_x_frac"] == 0.4
+        assert o["text_anchor"] == "center"
+        assert o["text_color"] == "#FFEEDD"
+        assert o["subject_substitute"] is False
+        # px is authoritative — the size bucket must not survive alongside it.
+        assert "text_size" not in o
+
+
+def test_sequence_overlays_skip_declined_scene(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    _patch_seq_engine(monkeypatch, decline_indices={0})
+    overlays = build_sequence_overlays(_seq_scenes(), base_size_px=78)
+    assert overlays is not None
+    assert len(overlays) == 1  # scene 0 skipped, scene 1 renders
+    assert all(o["start_s"] >= 2.0 for o in overlays)
+
+
+def test_sequence_overlays_all_scenes_declined_returns_none(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    _patch_seq_engine(monkeypatch, decline_indices={0, 1})
+    assert build_sequence_overlays(_seq_scenes(), base_size_px=78) is None
+
+
+def test_sequence_overlays_empty_scenes_returns_none(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    _patch_seq_engine(monkeypatch)
+    assert build_sequence_overlays([], base_size_px=78) is None
+
+
+# ── Static-cluster style threading (the kill-switch contract, D13) ───────────────
+
+
+def test_cluster_intro_threads_style_to_engine(monkeypatch):
+    import app.pipeline.intro_cluster as ic
+
+    sentinel = {"hero_font": "X"}
+    seen: list[dict | None] = []
+
+    def _fake_blocks(text, *, style=None, **kwargs):
+        seen.append(style)
+        return None  # decline → linear fallback; we only assert the pass-through
+
+    monkeypatch.setattr(ic, "compute_cluster_blocks", _fake_blocks)
+    build_persistent_intro_overlays(
+        text="what a day this was",
+        effect="fade-in",
+        reveal_window_s=2.0,
+        layout="cluster",
+        cluster_style=sentinel,
+        text_size_px=60,
+    )
+    assert seen == [sentinel]
+
+
+def test_cluster_intro_default_style_is_none_legacy(monkeypatch):
+    # Kill-switch regression contract: no cluster_style kwarg → the engine gets
+    # style=None (byte-identical legacy cluster geometry).
+    import app.pipeline.intro_cluster as ic
+
+    seen: list[dict | None] = []
+
+    def _fake_blocks(text, *, style=None, **kwargs):
+        seen.append(style)
+        return None
+
+    monkeypatch.setattr(ic, "compute_cluster_blocks", _fake_blocks)
+    build_persistent_intro_overlays(
+        text="what a day this was",
+        effect="fade-in",
+        reveal_window_s=2.0,
+        layout="cluster",
+        text_size_px=60,
+    )
+    assert seen == [None]

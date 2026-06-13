@@ -6,6 +6,7 @@ import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
   INTRO_SIZE_STEP,
+  SEQUENCE_TEXT_LOCKED_HINT,
   type GenerativeStyleSet,
 } from "@/lib/generative-api";
 import type { MusicTrackSummary } from "@/lib/music-api";
@@ -69,6 +70,10 @@ export default function PlanVariantEditor({
   // and only once a size exists to nudge from (set on first render).
   const curPx =
     variant.text_mode === "agent_text" ? variant.intro_text_size_px ?? null : null;
+  // Voiceover-synced typographic sequence (D6/D19): text is derived from the
+  // transcript, so caption edits are locked (the server 422s them). Size nudge
+  // stays enabled; Classic remains the opt-out of sync.
+  const sequenceSynced = variant.intro_mode === "sequence";
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -81,6 +86,16 @@ export default function PlanVariantEditor({
 
   return (
     <div className="space-y-6">
+      {/* ── Synced-sequence chip (D6/D19) ───────────────────────── */}
+      {sequenceSynced && (
+        <span
+          title={SEQUENCE_TEXT_LOCKED_HINT}
+          className="inline-flex w-fit rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800"
+        >
+          Editorial · synced
+        </span>
+      )}
+
       {/* ── Caption ─────────────────────────────────────────────── */}
       <section>
         <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Caption</h3>
@@ -123,7 +138,8 @@ export default function PlanVariantEditor({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={rendering}
+              disabled={rendering || sequenceSynced}
+              title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => {
                 setDraft("");
                 setEditing(true);
@@ -134,7 +150,8 @@ export default function PlanVariantEditor({
             </button>
             <button
               type="button"
-              disabled={rendering}
+              disabled={rendering || sequenceSynced}
+              title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => run(onRemoveText)}
               className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -189,9 +206,13 @@ export default function PlanVariantEditor({
       {onChangeLayout &&
         variant.text_mode === "agent_text" &&
         (() => {
-          const layout = variant.intro_layout === "cluster" ? "cluster" : "linear";
+          // Sequence-synced variants render Editorial as the active state and
+          // bypass the 3-6-word gate (the server does too); Classic stays
+          // clickable as the opt-out of sync.
+          const layout =
+            sequenceSynced || variant.intro_layout === "cluster" ? "cluster" : "linear";
           const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
-          const clusterBlocked = words < 3 || words > 6;
+          const clusterBlocked = !sequenceSynced && (words < 3 || words > 6);
           const pill = (selected: boolean) =>
             `rounded-full border px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
               selected
@@ -214,9 +235,11 @@ export default function PlanVariantEditor({
                   type="button"
                   disabled={rendering || layout === "cluster" || clusterBlocked}
                   title={
-                    clusterBlocked
-                      ? "Editorial layout needs a 3-6 word hook — shorten the text first"
-                      : "Editorial word-cluster — mixed sizes, magazine-style"
+                    sequenceSynced
+                      ? "Editorial — synced to your voiceover"
+                      : clusterBlocked
+                        ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                        : "Editorial word-cluster — mixed sizes, magazine-style"
                   }
                   onClick={() => run(() => onChangeLayout("cluster"))}
                   className={pill(layout === "cluster")}

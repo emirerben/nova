@@ -194,3 +194,88 @@ test("layout section hidden for lyrics variants", () => {
   renderEditor({ ...songVariant, text_mode: "lyrics", intro_text: "three word hook" });
   expect(screen.queryByRole("radiogroup", { name: "Intro text layout" })).toBeNull();
 });
+
+
+// ── Voiceover-synced sequence variants (intro_mode === "sequence", D6/D19) ───
+
+const SYNCED_TOOLTIP =
+  "Text is synced to your voiceover — switch to Classic to edit text";
+
+const sequenceVariant: PlanItemVariant = {
+  ...songVariant,
+  // 8 words — would word-count-block Editorial on a non-synced variant.
+  intro_text: "when they don't even listen to your feelings",
+  intro_layout: "cluster",
+  intro_mode: "sequence",
+  sequence_synced: true,
+};
+
+test("synced badge renders for sequence variants", () => {
+  renderEditor(sequenceVariant);
+  expect(screen.getByText("Editorial · synced")).toBeInTheDocument();
+});
+
+test("no synced badge on non-sequence variants (static cluster included)", () => {
+  renderEditor({ ...songVariant, intro_text: "what a view today", intro_layout: "cluster" });
+  expect(screen.queryByText("Editorial · synced")).toBeNull();
+});
+
+test("Editorial is active and not word-count-gated on synced variants", () => {
+  renderEditor(sequenceVariant);
+  const editorial = screen.getByRole("button", { name: "Editorial" });
+  expect(editorial).toBeDisabled(); // active = current layout, same as cluster
+  expect(editorial).toHaveAttribute("title", "Editorial — synced to your voiceover");
+  // The 3-6-word hint must NOT appear despite the 8-word caption.
+  expect(screen.queryByText(/shorten the caption/i)).toBeNull();
+});
+
+test("Editorial renders active even when the backend omits intro_layout", () => {
+  renderEditor({ ...sequenceVariant, intro_layout: undefined });
+  expect(screen.getByRole("button", { name: "Editorial" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Classic" })).toBeEnabled();
+});
+
+test("text editing is locked with the synced tooltip on sequence variants", () => {
+  renderEditor(sequenceVariant);
+  const edit = screen.getByText("Edit text");
+  expect(edit).toBeDisabled();
+  expect(edit).toHaveAttribute("title", SYNCED_TOOLTIP);
+  const remove = screen.getByText("Remove text");
+  expect(remove).toBeDisabled();
+  expect(remove).toHaveAttribute("title", SYNCED_TOOLTIP);
+});
+
+test("size nudge stays enabled on sequence variants", async () => {
+  const { onResize } = renderEditor({
+    ...sequenceVariant,
+    intro_text_size_px: 72,
+    intro_size_source: "computed",
+  });
+  const bigger = screen.getByRole("button", { name: "Bigger intro text" });
+  expect(bigger).toBeEnabled();
+  await act(async () => {
+    fireEvent.click(bigger);
+  });
+  expect(onResize).toHaveBeenCalledWith(78);
+});
+
+test("Classic remains the opt-out of sync on sequence variants", async () => {
+  const { onChangeLayout } = renderEditor(sequenceVariant);
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Classic" }));
+  });
+  expect(onChangeLayout).toHaveBeenCalledWith("linear");
+});
+
+test("legacy variants without intro_mode keep pre-sequence behavior", () => {
+  renderEditor({
+    ...songVariant,
+    intro_text: "when they don't even listen to your feelings",
+  });
+  expect(screen.queryByText("Editorial · synced")).toBeNull();
+  expect(screen.getByText("Edit text")).toBeEnabled();
+  expect(screen.getByText("Remove text")).toBeEnabled();
+  // Word-count gate stays intact on non-synced variants.
+  expect(screen.getByRole("button", { name: "Editorial" })).toBeDisabled();
+  expect(screen.getByText(/shorten the caption/i)).toBeInTheDocument();
+});

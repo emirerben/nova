@@ -1,0 +1,31 @@
+{
+  "agent": "nova.compose.sequence_quote",
+  "prompt_version": "1.0.0",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 4.2,
+      "subject": "person training alone in a dim gym at night",
+      "hook_text": "",
+      "hook_score": 6.5,
+      "energy": 6.0,
+      "description": "moody handheld footage, chalk dust, heavy lifts, empty gym, late-night grind"
+    },
+    "hero_transcript": "",
+    "tone": "gritty, no-excuses, quietly proud",
+    "language": "en",
+    "content_pillars": ["discipline over motivation", "training alone"],
+    "theme": "the work nobody sees",
+    "idea": "late-night solo session montage",
+    "video_duration_s": 10.4
+  },
+  "raw_text": "{\"quote\": \"It's not \\\"just luck\\\". If you put in the work. To get there. Luck is just. A combination of hard work. And good timing. So… don't allow anyone. To diminish your hard work.\"}",
+  "output": {
+    "quote": "It's not \"just luck\". If you put in the work. To get there. Luck is just. A combination of hard work. And good timing. So… don't allow anyone. To diminish your hard work."
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "The approved rhythm-mode demo quote, pinned verbatim. 10.4s video → target 8 sentences; the quote splits into 9 on [.!?…] ('So…' ends its own 1-word sentence), inside the 4-9 band. 33 total words, every sentence 1-6 words, exactly one quoted span ('just luck'), ends with terminal punctuation. First-person no-excuses voice coheres with the discipline persona while staying grounded in the solo-gym footage."
+  }
+}

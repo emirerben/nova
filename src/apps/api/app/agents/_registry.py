@@ -48,6 +48,12 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "OverlayFormatMatcherAgent",
     ),
     ("nova.compose.intro_writer", "app.agents.intro_writer", "IntroTextWriterAgent"),
+    ("nova.compose.sequence_emphasis", "app.agents.sequence_emphasis", "SequenceEmphasisAgent"),
+    (
+        "nova.compose.sequence_quote",
+        "app.agents.sequence_quote_writer",
+        "SequenceQuoteWriterAgent",
+    ),
     ("nova.compose.platform_copy", "app.agents.platform_copy", "PlatformCopyAgent"),
     ("nova.compose.creative_direction", "app.agents.creative_direction", "CreativeDirectionAgent"),
     # New agents (built on the runtime; no platform plumbing)

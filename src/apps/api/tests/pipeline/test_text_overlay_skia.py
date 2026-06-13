@@ -2004,3 +2004,414 @@ def test_lyric_glyph_check_scopes_to_letters():
     tf = tos._typeface_for_overlay({"font_family": "Inter"})
     tos.assert_lyric_glyphs(tf, "don’t stop — believin’…")
     tos.assert_lyric_glyphs(tf, "")  # empty text is a no-op, never raises
+
+
+# -- generative_sequence role (editorial transcript-synced sequences) ----------
+#
+# Sequence overlays carry role="generative_sequence" (an existing FIELD with a
+# new VALUE — "generative_intro" is the precedent) and reuse the lyric-path
+# fade field names: fade_out_ms + fade_out_curve. The renderer must (a) hold
+# the scene through its full window (long-running frame ceiling), (b) ramp the
+# final fade_out_ms to transparent, and (c) not render unique frames for the
+# settled middle (hard-linked hold frames).
+
+
+def _sequence_overlay(**kw) -> dict:
+    base = {
+        "text": "the days we lost",
+        "role": "generative_sequence",
+        "effect": "fade-in",
+        "fade_out_ms": 500,
+        "start_s": 0.0,
+        "end_s": 6.0,
+        "font_family": "Playfair Display Regular",
+        "text_size_px": 80,
+        "text_color": "#FFFFFF",
+        "position_x_frac": 0.45,
+        "position_y_frac": 0.40,
+    }
+    base.update(kw)
+    return base
+
+
+def test_generative_sequence_role_uses_long_running_frame_ceiling():
+    assert tos._uses_long_running_frame_ceiling(_sequence_overlay())
+    assert tos._uses_long_running_frame_ceiling(_sequence_overlay(effect="static"))
+    # Legacy overlays without the role keep the short cap.
+    assert not tos._uses_long_running_frame_ceiling({"effect": "fade-in"})
+    assert not tos._uses_long_running_frame_ceiling({"effect": "pop-in"})
+    assert not tos._uses_long_running_frame_ceiling({"effect": "static"})
+
+
+def test_long_generative_sequence_does_not_vanish_at_frame_120(tmp_workdir):
+    """A >4s sequence scene must render frames for its FULL window — the
+    120-frame MAX_OVERLAY_FRAMES cap would make the scene vanish at ~4s
+    (image2 EOF + eof_action=pass) while its transcript window keeps going."""
+    overlay = _sequence_overlay(end_s=6.0)
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    # 6.0s * 30fps = 180 logical frames + 1 hold frame, well past the cap.
+    assert seq["n_frames"] == int(round(6.0 * tos.FPS)) + 1
+    assert seq["n_frames"] > tos.MAX_OVERLAY_FRAMES
+    frames = sorted(f for f in os.listdir(tmp_workdir) if f.endswith(".png"))
+    assert len(frames) == seq["n_frames"]
+
+
+def test_generative_sequence_fade_out_ms_consumed_for_fade_in_effect():
+    """fade-in head → hold → fade_out_ms tail. Sampled via rendered frames."""
+    overlay = _sequence_overlay()
+    a_hold = _frame_max_alpha(overlay, t_local=3.0, duration_s=6.0)
+    a_out = _frame_max_alpha(overlay, t_local=5.75, duration_s=6.0)  # mid fade-out
+    a_end = _frame_max_alpha(overlay, t_local=6.0, duration_s=6.0)
+    assert a_hold == 255, f"mid-hold must be fully opaque; got {a_hold}"
+    assert a_out < a_hold, f"fade-out sample must dim below hold; got {a_out}"
+    assert a_out < 240, "fade_out_ms not consumed — still full opacity near end"
+    assert a_end == 0, f"end of window must be fully transparent; got {a_end}"
+
+
+def test_generative_sequence_fade_out_curve_sqrt_honored():
+    """fade_out_curve="sqrt" must drop FASTER mid-fade than the default
+    lingering curve (1-√p < 1-p² for 0<p<1) — same semantics as lyric-line."""
+    default_curve = _sequence_overlay()
+    sqrt_curve = _sequence_overlay(fade_out_curve="sqrt")
+    t_mid_fade = 5.75  # 50% through the 500ms tail
+    a_default = _frame_max_alpha(default_curve, t_local=t_mid_fade, duration_s=6.0)
+    a_sqrt = _frame_max_alpha(sqrt_curve, t_local=t_mid_fade, duration_s=6.0)
+    assert a_sqrt < a_default
+
+
+def test_generative_sequence_static_with_fade_out_is_animated_and_ramps():
+    """effect="static" + fade_out_ms must route through the animated path —
+    the single-PNG static loop renders full opacity through the whole window
+    and would never fade."""
+    overlay = _sequence_overlay(effect="static")
+    assert tos._is_animated(overlay) is True
+    a_hold = _frame_max_alpha(overlay, t_local=3.0, duration_s=6.0)
+    a_end = _frame_max_alpha(overlay, t_local=6.0, duration_s=6.0)
+    assert a_hold == 255
+    assert a_end == 0
+
+
+def test_generative_sequence_static_without_fade_out_stays_static():
+    """No fade_out_ms → the static single-PNG path (`-loop 1`) is the most
+    frame-economical hold and already spans the full window."""
+    overlay = _sequence_overlay(effect="static", fade_out_ms=None)
+    assert tos._is_animated(overlay) is False
+
+
+def test_generative_sequence_hold_frames_are_linked_not_rendered(tmp_workdir):
+    """Frame economy: the settled middle must NOT render unique frames — only
+    the fade-in head and fade-out tail are real renders; the hold is one
+    settled frame hard-linked into every middle slot."""
+    overlay = _sequence_overlay(end_s=6.0, fade_out_ms=500)
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    frames = sorted(
+        os.path.join(tmp_workdir, f) for f in os.listdir(tmp_workdir) if f.endswith(".png")
+    )
+    assert len(frames) == seq["n_frames"]
+    # The hold region (well inside head=0.4s .. tail-start=5.5s) shares one
+    # inode — hard links, not re-rendered frames.
+    f_1s = os.path.join(tmp_workdir, "skia_overlay_000_f0030.png")
+    f_3s = os.path.join(tmp_workdir, "skia_overlay_000_f0090.png")
+    f_5s = os.path.join(tmp_workdir, "skia_overlay_000_f0150.png")
+    assert os.path.samefile(f_1s, f_3s)
+    assert os.path.samefile(f_3s, f_5s)
+    # Unique renders are bounded by head + tail (~0.4s + 0.5s ≈ 30 frames),
+    # nowhere near the 181-frame window.
+    unique_inodes = {os.stat(f).st_ino for f in frames}
+    assert len(unique_inodes) < 40, (
+        f"{len(unique_inodes)} unique frames rendered for a 6s sequence "
+        "overlay — the settled hold must be linked, not re-rendered"
+    )
+    # Head (fade-in) and tail (fade-out) frames are NOT the settled frame.
+    f_head = os.path.join(tmp_workdir, "skia_overlay_000_f0003.png")
+    f_tail = os.path.join(tmp_workdir, "skia_overlay_000_f0172.png")
+    assert not os.path.samefile(f_head, f_3s)
+    assert not os.path.samefile(f_tail, f_3s)
+
+
+def test_generative_sequence_two_block_scene_fades_in_rendered_pngs(tmp_workdir):
+    """End-to-end pixel check on a tiny 2-block editorial scene: each block's
+    PNG sequence is opaque mid-hold and transparent on its final frame."""
+
+    def _png_max_alpha(path: str) -> int:
+        return Image.open(path).split()[-1].getextrema()[1]
+
+    scene = [
+        _sequence_overlay(
+            text="when the",
+            font_family="Playfair Display Regular",
+            position_x_frac=0.40,
+            position_y_frac=0.40,
+        ),
+        _sequence_overlay(
+            text="days we lost",
+            font_family="Great Vibes",
+            text_size_px=102,
+            position_x_frac=0.49,
+            position_y_frac=0.46,
+        ),
+    ]
+    seqs = tos._render_overlay_sequences(scene, 7.0, tmp_workdir)
+    assert len(seqs) == 2
+    for seq in seqs:
+        prefix = seq["pattern"].replace("%04d.png", "")
+        mid = f"{prefix}{seq['n_frames'] // 2:04d}.png"
+        last = f"{prefix}{seq['n_frames'] - 1:04d}.png"
+        assert _png_max_alpha(mid) == 255, "mid-hold frame must be fully opaque"
+        assert _png_max_alpha(last) < 30, "final frame must have faded out"
+
+
+def test_legacy_fade_in_overlay_ignores_fade_out_ms(tmp_workdir):
+    """Renderer-conservatism guard: WITHOUT role="generative_sequence",
+    fade_out_ms on a fade-in overlay stays inert (pre-existing behavior) and
+    the short frame cap still applies."""
+    overlay = _sequence_overlay()
+    del overlay["role"]
+    # Alpha at the very end of the window stays fully opaque — no tail ramp.
+    assert _frame_max_alpha(overlay, t_local=5.9, duration_s=6.0) == 255
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    assert seq["n_frames"] == tos.MAX_OVERLAY_FRAMES  # legacy cap untouched
+
+
+def test_generative_sequence_short_window_renders_every_frame(tmp_workdir):
+    """A window too short to have a holdable middle (fade-in head + fade-out
+    tail covering everything) falls back to rendering every frame."""
+    overlay = _sequence_overlay(end_s=0.8, fade_out_ms=400)
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0)
+    assert seq is not None
+    frames = [os.path.join(tmp_workdir, f) for f in os.listdir(tmp_workdir) if f.endswith(".png")]
+    assert len(frames) == seq["n_frames"]
+    assert len({os.stat(f).st_ino for f in frames}) == len(frames)
+
+
+def test_pillow_path_never_dispatched_for_generative_sequence(tmp_workdir):
+    """Generative is Skia-only: `generative_build` calls
+    `burn_text_overlays_skia` directly, and the `_burn_text_overlays`
+    dispatch (use_skia=True) must route sequence overlays to Skia without
+    touching the Pillow generators. There is no Pillow implementation of the
+    sequence fade/hold mechanics, so a Pillow dispatch would silently drop
+    them — this is the generative analogue of the renderer-parity guard."""
+    from app.tasks.template_orchestrate import _burn_text_overlays
+
+    overlays = [_sequence_overlay()]
+    with (
+        mock.patch("app.pipeline.text_overlay_skia.burn_text_overlays_skia") as skia_fn,
+        mock.patch("app.pipeline.text_overlay.generate_text_overlay_png") as pil_png,
+        mock.patch("app.pipeline.text_overlay.generate_animated_overlay_ass") as pil_ass,
+        mock.patch("app.config.settings") as fake_settings,
+    ):
+        fake_settings.text_renderer_skia_enabled = True
+        in_path = os.path.join(tmp_workdir, "in.mp4")
+        out_path = os.path.join(tmp_workdir, "out.mp4")
+        with open(in_path, "wb") as f:
+            f.write(b"\x00")
+        _burn_text_overlays(in_path, overlays, out_path, tmp_workdir, use_skia=True)
+        skia_fn.assert_called_once()
+        pil_png.assert_not_called()
+        pil_ass.assert_not_called()
+
+
+def test_sequence_fade_out_alpha_helper_semantics():
+    """Locks the helper contract the orchestration agent emits against:
+    no fade_out_ms → no ramp; ramp occupies exactly the final fade_out_ms;
+    curves mirror _lyric_line_alpha's fade-out branch."""
+    no_fade = {"role": "generative_sequence", "effect": "fade-in"}
+    assert tos._sequence_fade_out_alpha(no_fade, 5.9, 6.0) == 1.0
+    ov = _sequence_overlay()  # fade_out_ms=500 on a 6s window
+    assert tos._sequence_fade_out_alpha(ov, 0.0, 6.0) == 1.0
+    assert tos._sequence_fade_out_alpha(ov, 5.49, 6.0) == 1.0  # just before tail
+    # Mid-tail, default lingering curve: 1 - 0.5**2 = 0.75
+    assert abs(tos._sequence_fade_out_alpha(ov, 5.75, 6.0) - 0.75) < 0.01
+    assert tos._sequence_fade_out_alpha(ov, 6.0, 6.0) == 0.0
+    # sqrt curve mirrors the crossfade fade-out: 1 - sqrt(0.5) ≈ 0.293
+    sqrt_ov = _sequence_overlay(fade_out_curve="sqrt")
+    assert abs(tos._sequence_fade_out_alpha(sqrt_ov, 5.75, 6.0) - (1 - 0.5**0.5)) < 0.01
+    # fade_out_ms longer than the window clamps to the window.
+    long_tail = _sequence_overlay(fade_out_ms=10_000, end_s=1.0)
+    assert tos._sequence_fade_out_alpha(long_tail, 0.5, 1.0) < 1.0
+
+
+# -- Sequence composite stream (one FFmpeg input for the whole sequence) -------
+#
+# FFmpeg burn cost scales ~linearly with input count (every output frame flows
+# through every chained overlay stage), so an 80-block editorial sequence as 80
+# image2 inputs blows the burn budget. >= 2 sequence overlays must composite
+# into ONE full-canvas PNG stream: one input, one overlay stage, per-frame
+# visibility carried by the PNGs (transparent frames during clear gaps).
+
+
+def _seq_block(text: str, start: float, end: float, **kw) -> dict:
+    """A production-shaped sequence block: static pop (instant, settled),
+    optional fade_out_ms tail — what build_sequence_overlays emits."""
+    kw.setdefault("effect", "static")
+    kw.setdefault("fade_out_ms", None)
+    return _sequence_overlay(text=text, start_s=start, end_s=end, **kw)
+
+
+def test_sequence_composite_single_ffmpeg_input_for_many_blocks(tmp_workdir):
+    """N>=2 sequence overlays must become exactly ONE image2 input + ONE
+    overlay filter stage, enabled across the union [min start, max end]."""
+    overlays = [
+        _seq_block("when the", 0.5, 4.0),
+        _seq_block("days we lost", 1.2, 4.0, position_y_frac=0.48),
+        _seq_block("come back", 4.0, 9.0, fade_out_ms=350),
+    ]
+    in_path = os.path.join(tmp_workdir, "in.mp4")
+    out_path = os.path.join(tmp_workdir, "out.mp4")
+    with open(in_path, "wb") as f:
+        f.write(b"\x00")
+    with mock.patch("app.pipeline.text_overlay_skia.subprocess.run") as run_mock:
+        run_mock.return_value.returncode = 0
+        tos.burn_text_overlays_skia(in_path, overlays, out_path, tmp_workdir)
+    cmd = run_mock.call_args[0][0]
+    assert cmd.count("-i") == 2, f"expected video + 1 composite input, got cmd {cmd}"
+    assert any("skia_seq_composite_f%05d.png" in str(a) for a in cmd)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert fc.count("overlay=") == 1, f"expected ONE overlay stage, got: {fc}"
+    assert "between(t,0.5000,9.0000)" in fc, f"composite must span the union window: {fc}"
+    assert "setpts=PTS+0.5000/TB" in fc
+
+
+def test_sequence_composite_keeps_non_sequence_overlays_on_their_own_inputs(tmp_workdir):
+    """Lyric/intro/legacy overlays keep the per-overlay path untouched; the
+    composite is appended LAST so sequence text composites on top."""
+    intro = {
+        "text": "hello",
+        "role": "generative_intro",
+        "effect": "static",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "position": "center",
+    }
+    overlays = [
+        intro,
+        _seq_block("first", 1.0, 3.5),
+        _seq_block("second", 2.0, 6.0, position_y_frac=0.52),
+    ]
+    in_path = os.path.join(tmp_workdir, "in.mp4")
+    out_path = os.path.join(tmp_workdir, "out.mp4")
+    with open(in_path, "wb") as f:
+        f.write(b"\x00")
+    with mock.patch("app.pipeline.text_overlay_skia.subprocess.run") as run_mock:
+        run_mock.return_value.returncode = 0
+        tos.burn_text_overlays_skia(in_path, overlays, out_path, tmp_workdir)
+    cmd = run_mock.call_args[0][0]
+    # video + 1 static intro PNG + 1 composite = 3 inputs, 2 overlay stages.
+    assert cmd.count("-i") == 3, f"got cmd {cmd}"
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert fc.count("overlay=") == 2
+    # The LAST overlay stage is the composite (union window of the 2 blocks).
+    assert "between(t,1.0000,6.0000)" in fc.split(";")[-1]
+
+
+def test_sequence_composite_frame_economy_links_settled_frames(tmp_workdir):
+    """A 3-block scene renders unique frames only at pops + the fade ramp;
+    the settled holds and the seam frame hard-link to existing frames."""
+    blocks = [
+        _seq_block("one", 0.0, 4.0, fade_out_ms=350, position_y_frac=0.30),
+        _seq_block("two", 1.0, 4.0, fade_out_ms=350, position_y_frac=0.42),
+        _seq_block("three", 2.0, 4.0, fade_out_ms=350, position_y_frac=0.54),
+    ]
+    seq = tos._render_sequence_composite(blocks, 10.0, tmp_workdir)
+    assert seq is not None
+    assert seq["is_animated"] is True
+    assert seq["start_s"] == 0.0
+    assert seq["end_s"] == 4.0
+    # 4s * 30fps logical frames + 1 seam hold frame, all present on disk.
+    assert seq["n_frames"] == int(round(4.0 * tos.FPS)) + 1
+    frames = sorted(
+        os.path.join(tmp_workdir, f)
+        for f in os.listdir(tmp_workdir)
+        if f.startswith("skia_seq_composite_f")
+    )
+    assert len(frames) == seq["n_frames"]
+    # Unique renders: 3 pop states ({one}, {one,two}, {one,two,three}) + the
+    # ~11-frame fade ramp. Everything else links.
+    unique_inodes = {os.stat(f).st_ino for f in frames}
+    assert len(unique_inodes) <= 20, (
+        f"{len(unique_inodes)} unique frames for a 3-block scene — settled "
+        "holds must be hard links, not re-renders"
+    )
+    # Settled holds inside the same pop state share one inode.
+    f_25 = os.path.join(tmp_workdir, "skia_seq_composite_f00075.png")  # t=2.5
+    f_30 = os.path.join(tmp_workdir, "skia_seq_composite_f00090.png")  # t=3.0
+    assert os.path.samefile(f_25, f_30)
+    # Frames in different pop states must NOT share content.
+    f_05 = os.path.join(tmp_workdir, "skia_seq_composite_f00015.png")  # t=0.5
+    assert not os.path.samefile(f_05, f_25)
+
+
+def test_sequence_composite_per_frame_visibility_and_fade(tmp_workdir):
+    """Pixel-level contract on a tiny 2-scene sequence: scene-0 frames carry
+    only scene-0 pixels, the clear gap is fully transparent (but the frames
+    exist — contiguous image2 numbering), scene-1 frames carry only scene-1
+    pixels, and the fade tail's alpha decreases."""
+
+    def _region_max_alpha(i: int, *, top: bool) -> int:
+        path = os.path.join(tmp_workdir, f"skia_seq_composite_f{i:05d}.png")
+        im = Image.open(path).convert("RGBA")
+        half = im.height // 2
+        box = (0, 0, im.width, half) if top else (0, half, im.width, im.height)
+        return im.crop(box).split()[-1].getextrema()[1]
+
+    blocks = [
+        # Scene 0: two blocks in the TOP half, fading out over 300ms.
+        _seq_block("when the", 0.0, 2.0, fade_out_ms=300, position_y_frac=0.22),
+        _seq_block("days we lost", 0.4, 2.0, fade_out_ms=300, position_y_frac=0.32),
+        # Clear gap [2.0, 3.0], then scene 1 in the BOTTOM half.
+        _seq_block("come back", 3.0, 5.0, position_y_frac=0.75),
+    ]
+    seq = tos._render_sequence_composite(blocks, 10.0, tmp_workdir)
+    assert seq is not None
+    # t=1.0 — scene-0 hold: pixels in the top half only, fully opaque.
+    assert _region_max_alpha(30, top=True) == 255
+    assert _region_max_alpha(30, top=False) == 0
+    # t=2.5 — clear gap: the frame exists and is fully transparent.
+    assert _region_max_alpha(75, top=True) == 0
+    assert _region_max_alpha(75, top=False) == 0
+    # t=4.0 — scene-1 hold: pixels in the bottom half only.
+    assert _region_max_alpha(120, top=True) == 0
+    assert _region_max_alpha(120, top=False) == 255
+    # Fade tail (starts t=1.7): alpha decreases monotonically toward the end.
+    a_mid_fade = _region_max_alpha(55, top=True)  # t≈1.833
+    a_late_fade = _region_max_alpha(59, top=True)  # t≈1.967
+    assert 150 < a_mid_fade < 250, f"mid-fade must be dimmed, got {a_mid_fade}"
+    assert 0 < a_late_fade < 120, f"late fade must be near-transparent, got {a_late_fade}"
+    assert a_late_fade < a_mid_fade
+
+
+def test_single_sequence_overlay_keeps_per_overlay_path(tmp_workdir):
+    """0/1 sequence overlays stay on the pre-existing per-overlay path —
+    no composite, identical pattern naming."""
+    solo = [_seq_block("solo", 0.0, 3.0)]
+    assert tos._render_sequence_composite(solo, 10.0, tmp_workdir) is None
+    with mock.patch.object(tos, "_ffmpeg_burn_pngs") as burn_mock:
+        in_path = os.path.join(tmp_workdir, "in.mp4")
+        out_path = os.path.join(tmp_workdir, "out.mp4")
+        with open(in_path, "wb") as f:
+            f.write(b"\x00")
+        tos.burn_text_overlays_skia(in_path, [_seq_block("solo", 0.0, 3.0)], out_path, tmp_workdir)
+        sequences = burn_mock.call_args[0][1]
+    assert len(sequences) == 1
+    assert "skia_overlay_000" in sequences[0]["pattern"], (
+        "single sequence overlay must keep the per-overlay path/naming"
+    )
+
+
+def test_sequence_composite_falls_back_when_fewer_than_two_valid_blocks(tmp_workdir):
+    """Two sequence overlays where one fails validation (empty text) → the
+    composite declines and the surviving block renders per-overlay."""
+    overlays = [_seq_block("", 0.0, 3.0), _seq_block("valid", 0.0, 3.0)]
+    with mock.patch.object(tos, "_ffmpeg_burn_pngs") as burn_mock:
+        in_path = os.path.join(tmp_workdir, "in.mp4")
+        out_path = os.path.join(tmp_workdir, "out.mp4")
+        with open(in_path, "wb") as f:
+            f.write(b"\x00")
+        tos.burn_text_overlays_skia(in_path, overlays, out_path, tmp_workdir)
+        sequences = burn_mock.call_args[0][1]
+    assert len(sequences) == 1
+    assert "skia_overlay_" in sequences[0]["pattern"]

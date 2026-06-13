@@ -15,9 +15,11 @@ from unittest import mock
 import skia  # noqa: F401 — layout tests require the real measurement backend
 
 from app.pipeline.intro_cluster import (
+    _CLUSTER_CENTER_Y,
     _EDGE_MARGIN_FRAC,
     _Y_MAX,
     _Y_MIN,
+    EDITORIAL_STYLE,
     MAX_WORDS,
     MIN_WORDS,
     ROLE_CLOSER,
@@ -25,6 +27,8 @@ from app.pipeline.intro_cluster import (
     ROLE_HERO,
     compute_cluster_blocks,
     derive_word_roles,
+    normalize_typography,
+    scene_center_y,
 )
 from app.pipeline.text_overlay_skia import CANVAS_W, _typeface_for_overlay
 
@@ -342,3 +346,384 @@ def test_emitted_px_never_below_renderer_floor():
     blocks = _compute("the quiet side of tokyo", base_size_px=40)
     assert blocks is not None
     assert all(b["text_size_px"] >= 24 for b in blocks)
+
+
+# -- editorial style (style=EDITORIAL_STYLE) ------------------------------------
+
+
+def _compute_styled(text: str, **kw):
+    defaults = dict(
+        word_roles=None,
+        base_size_px=60,
+        font_family=None,
+        reveal_window_s=3.0,
+        style=EDITORIAL_STYLE,
+    )
+    defaults.update(kw)
+    return compute_cluster_blocks(text, **defaults)
+
+
+def test_editorial_style_documents_its_contract_keys():
+    # EDITORIAL_STYLE is the single source of truth (decision D13) — the
+    # sequence emitter and renderer tuning read these keys; renaming one is an
+    # API break for them.
+    assert {
+        "hero_font",
+        "body_font",
+        "accent_font",
+        "hero_ratio",
+        "connector_ratio",
+        "closer_ratio",
+        "script_min_px",
+        "shadow",
+        "cascade_x_start",
+        "cascade_x_step",
+        "cascade_x_jitter",
+        "cascade_y_step_ratio",
+        "scene_center_ys",
+        "scene_shift_margin",
+        "min_words",
+        "max_blocks",
+    } <= set(EDITORIAL_STYLE)
+    assert EDITORIAL_STYLE["hero_font"] == "Great Vibes"
+    assert EDITORIAL_STYLE["body_font"] == "Playfair Display Regular"
+    assert EDITORIAL_STYLE["accent_font"] == "Playfair Display Italic"
+    assert {"alpha", "blur", "dy"} <= set(EDITORIAL_STYLE["shadow"])
+
+
+def test_style_none_is_byte_identical_legacy():
+    # The kill-switch contract: omitting style and passing style=None are the
+    # SAME code path, and legacy numerology (hero 2.6x) is untouched.
+    a = _compute(_REFERENCE_TEXT, font_family="Playfair Display")
+    b = compute_cluster_blocks(
+        _REFERENCE_TEXT,
+        word_roles=None,
+        base_size_px=60,
+        font_family="Playfair Display",
+        reveal_window_s=3.0,
+        style=None,
+    )
+    assert a == b
+    hero = next(blk for blk in a if blk["role"] == ROLE_HERO)
+    assert hero["text_size_px"] == round(60 * 2.6)
+
+
+def test_editorial_faces_come_from_style_not_font_family_arg():
+    # style owns the faces: hero → script, others → body/accent alternation,
+    # even when the caller passes a font_family (legacy behavior would have
+    # heroes use it).
+    blocks = _compute_styled(_REFERENCE_TEXT, font_family="Montserrat")
+    assert blocks is not None
+    for blk in blocks:
+        if blk["role"] == ROLE_HERO:
+            assert blk["font_family"] == "Great Vibes"
+        else:
+            assert blk["font_family"] in (
+                "Playfair Display Regular",
+                "Playfair Display Italic",
+            )
+    assert not any(blk["font_family"] == "Montserrat" for blk in blocks)
+
+
+def test_editorial_size_ratios_restrained():
+    blocks = _compute_styled(_REFERENCE_TEXT, base_size_px=80)
+    assert blocks is not None
+    by_role = {blk["role"]: blk["text_size_px"] for blk in blocks}
+    assert by_role[ROLE_HERO] == round(80 * 1.7)
+    assert by_role[ROLE_CONNECTOR] == 80
+    assert by_role[ROLE_CLOSER] == round(80 * 1.25)
+
+
+def test_editorial_script_blocks_floor_at_script_min_px():
+    blocks = _compute_styled("the quiet side", base_size_px=30)
+    assert blocks is not None
+    hero = next(blk for blk in blocks if blk["role"] == ROLE_HERO)
+    assert hero["text_size_px"] >= EDITORIAL_STYLE["script_min_px"]
+
+
+def test_editorial_cascade_reading_order_is_spatial_order():
+    # Diagonal cascade: y strictly increases block-to-block IN TEXT ORDER and
+    # x staggers left → right from ~0.40.
+    blocks = _compute_styled(_REFERENCE_TEXT)
+    assert blocks is not None
+    assert " ".join(b["text"] for b in blocks) == normalize_typography(_REFERENCE_TEXT)
+    ys = [b["position_y_frac"] for b in blocks]
+    assert all(y2 > y1 for y1, y2 in zip(ys, ys[1:])), f"y not strictly increasing: {ys}"
+    xs = [b["position_x_frac"] for b in blocks]
+    assert all(x2 > x1 for x1, x2 in zip(xs, xs[1:])), f"x not staggering right: {xs}"
+    assert abs(xs[0] - EDITORIAL_STYLE["cascade_x_start"]) < 0.02
+
+
+def test_editorial_trailing_connector_anchors_after_preceding_block():
+    # The legacy connector-anchor bug: a connector with no FOLLOWING hero
+    # snaps back up beside hero 0 (`next(..., hero_idx[0])`). In styled mode
+    # reading order is sacred — the trailing connector sits BELOW the hero.
+    blocks = _compute_styled("chase it now", word_roles=["hero", "connector", "connector"])
+    assert blocks is not None
+    assert [b["role"] for b in blocks] == [ROLE_HERO, ROLE_CONNECTOR]
+    assert blocks[1]["position_y_frac"] > blocks[0]["position_y_frac"]
+
+
+def test_editorial_one_emphasis_group_only():
+    # Two separated hero runs: only the FIRST renders in script; the later
+    # hero demotes (reading order preserved, no second script block).
+    blocks = _compute_styled("dream big tonight", word_roles=["hero", "connector", "hero"])
+    assert blocks is not None
+    script_blocks = [b for b in blocks if b["font_family"] == "Great Vibes"]
+    assert len(script_blocks) == 1
+    assert script_blocks[0]["text"] == "dream"
+    assert " ".join(b["text"] for b in blocks) == "dream big tonight"
+
+
+def test_editorial_adjacent_hero_words_merge_into_one_script_block():
+    # Unlike legacy (one stacked line per hero word), the emphasis group is
+    # ONE block.
+    blocks = _compute_styled("the days we lost", word_roles=["connector", "hero", "hero", "hero"])
+    assert blocks is not None
+    heroes = [b for b in blocks if b["role"] == ROLE_HERO]
+    assert len(heroes) == 1
+    assert heroes[0]["text"] == "days we lost"
+    assert heroes[0]["font_family"] == "Great Vibes"
+
+
+def test_editorial_scene_caps_at_three_blocks():
+    blocks = _compute_styled(
+        "one two three four five six",
+        word_roles=["connector", "hero", "connector", "closer", "connector", "closer"],
+    )
+    assert blocks is not None
+    assert len(blocks) <= EDITORIAL_STYLE["max_blocks"]
+    assert " ".join(b["text"] for b in blocks) == "one two three four five six"
+
+
+def test_editorial_min_words_allows_single_word_scene():
+    blocks = _compute_styled("Rome.")
+    assert blocks is not None
+    assert len(blocks) == 1
+    assert blocks[0]["role"] == ROLE_HERO
+    assert blocks[0]["font_family"] == "Great Vibes"
+    # Legacy keeps its 3-word floor — the constant is untouched.
+    assert _compute("Rome.") is None
+
+
+def test_editorial_curly_punctuation_applied_per_block():
+    blocks = _compute_styled('it\'s "gold" here...', word_roles=None)
+    assert blocks is not None
+    joined = " ".join(b["text"] for b in blocks)
+    assert "’" in joined and "“" in joined and "”" in joined and "…" in joined
+    assert "'" not in joined and '"' not in joined
+    # Legacy text is NEVER normalized.
+    legacy = _compute("it's your favorite place?")
+    assert "'" in " ".join(b["text"] for b in legacy)
+
+
+def test_normalize_typography_mappings():
+    assert normalize_typography("it's") == "it’s"
+    assert normalize_typography('she said "go" and "stay"') == "she said “go” and “stay”"
+    assert normalize_typography("wait...") == "wait…"
+    # Idempotent — already-curly text passes through.
+    assert normalize_typography("it’s “gold” …") == "it’s “gold” …"
+
+
+def test_scene_center_y_cycles_deterministically():
+    assert scene_center_y(0) == 0.42
+    assert scene_center_y(1) == 0.46
+    assert scene_center_y(2) == 0.44
+    assert scene_center_y(3) == 0.42  # cycle wraps
+    # Every center stays within the shift margin of the layout's default
+    # center — the contract that makes caller-side scene shifting clip-safe.
+    margin = EDITORIAL_STYLE["scene_shift_margin"]
+    for i in range(6):
+        assert abs(scene_center_y(i) - _CLUSTER_CENTER_Y) <= margin + 1e-9
+
+
+def test_editorial_glyph_gate_falls_back_hero_block_to_body_font():
+    # 'Δ' has a glyph in Playfair Display Regular but NOT in Great Vibes — the
+    # hero block must fall back to the body face instead of rendering tofu.
+    blocks = _compute_styled("the Δ sign")
+    assert blocks is not None
+    hero = next(b for b in blocks if b["role"] == ROLE_HERO)
+    assert "Δ" in hero["text"]
+    assert hero["font_family"] == "Playfair Display Regular"
+
+
+def test_editorial_glyph_gate_declines_when_body_font_also_missing():
+    # CJK is missing from BOTH faces → the scene declines (caller falls back
+    # to the static/linear treatment) instead of rendering tofu.
+    assert _compute_styled("the 你好 moment") is None
+
+
+def test_editorial_no_clip_invariant_holds():
+    cases = [
+        _REFERENCE_TEXT,
+        "the days we never planned",
+        "wandering around old istanbul",
+        "en sevdiğin yer neresi?",
+        "one two three four five six",
+        "Rome.",
+    ]
+    for text in cases:
+        blocks = _compute_styled(text, base_size_px=80)
+        assert blocks, f"styled engine declined {text!r}"
+        _assert_no_clip(blocks)
+        # Tightened band: block EDGES clear the scene-shift margin so callers
+        # can shift the whole scene by scene_center_y deltas without clipping.
+        margin = EDITORIAL_STYLE["scene_shift_margin"]
+        for blk in blocks:
+            tf = _typeface_for_overlay({"font_family": blk["font_family"]})
+            font = skia.Font(tf, blk["text_size_px"])
+            font.setSubpixel(True)
+            metrics = font.getMetrics()
+            half_h = (metrics.fDescent - metrics.fAscent) / 1920 / 2
+            assert blk["position_y_frac"] - half_h >= _Y_MIN + margin - 1e-6
+            assert blk["position_y_frac"] + half_h <= _Y_MAX - margin + 1e-6
+
+
+def test_editorial_unfittable_text_declines_same_contract_as_legacy():
+    assert (
+        _compute_styled(
+            "muvaffakiyetsizlestiricilestiriveremeyebileceklerimizdenmissinizcesine kal orada"
+        )
+        is None
+    )
+
+
+def test_editorial_blocks_keep_exact_legacy_keys():
+    # Downstream emission depends on this exact key set — adding or renaming
+    # keys silently breaks the overlay emitter.
+    blocks = _compute_styled(_REFERENCE_TEXT)
+    assert blocks is not None
+    for blk in blocks:
+        assert set(blk) == {
+            "text",
+            "role",
+            "text_size_px",
+            "font_family",
+            "position_x_frac",
+            "position_y_frac",
+            "start_offset_s",
+            "reveal_s",
+        }
+
+
+def test_editorial_layout_is_deterministic():
+    a = _compute_styled(_REFERENCE_TEXT)
+    b = _compute_styled(_REFERENCE_TEXT)
+    assert a == b
+
+
+def test_editorial_stagger_monotonic_inside_reveal_window():
+    blocks = _compute_styled(_REFERENCE_TEXT, reveal_window_s=3.0)
+    starts = [b["start_offset_s"] for b in blocks]
+    assert starts == sorted(starts)
+    assert starts[0] == 0.0
+    for b in blocks:
+        assert b["start_offset_s"] < 3.0
+
+
+# -- third voice: italic serif accent (styled path only) -------------------------
+
+
+def test_registry_resolves_playfair_italic_face():
+    # The accent face must resolve from the registry to the real italic VF —
+    # `_typeface_for_overlay` silently falls back to Playfair Bold (NOT italic)
+    # for unknown names, so isItalic doubles as a registry-resolution check.
+    tf = _typeface_for_overlay({"font_family": "Playfair Display Italic"})
+    assert tf.getFamilyName() == "Playfair Display"
+    assert tf.isItalic()
+
+
+def test_editorial_non_hero_blocks_alternate_body_then_accent():
+    # _REFERENCE_TEXT groups as connector("what’s your") / hero / closer.
+    # Non-hero block k=0 → body, k=1 → italic accent (default accent_parity=0).
+    blocks = _compute_styled(_REFERENCE_TEXT)
+    assert blocks is not None
+    assert [b["font_family"] for b in blocks] == [
+        "Playfair Display Regular",
+        "Great Vibes",
+        "Playfair Display Italic",
+    ]
+    # Deterministic: identical call → identical faces and geometry.
+    assert blocks == _compute_styled(_REFERENCE_TEXT)
+
+
+def test_editorial_accent_parity_shifts_which_block_is_italic():
+    # Reference behavior: consecutive scenes alternate which block opens
+    # italic ('if'(italic) 'you'(serif) / 'and'(serif) 'good timing'(italic))
+    # — callers pass scene_index as accent_parity.
+    even = _compute_styled(_REFERENCE_TEXT, accent_parity=0)
+    odd = _compute_styled(_REFERENCE_TEXT, accent_parity=1)
+    assert [b["font_family"] for b in even if b["role"] != ROLE_HERO] == [
+        "Playfair Display Regular",
+        "Playfair Display Italic",
+    ]
+    assert [b["font_family"] for b in odd if b["role"] != ROLE_HERO] == [
+        "Playfair Display Italic",
+        "Playfair Display Regular",
+    ]
+    # Parity is mod-2: scene 2 is byte-identical to scene 0.
+    assert _compute_styled(_REFERENCE_TEXT, accent_parity=2) == even
+
+
+def test_editorial_hero_never_takes_accent_face():
+    cases = [
+        (_REFERENCE_TEXT, None),
+        ("dream big tonight", ["hero", "connector", "hero"]),
+        ("the days we lost", ["connector", "hero", "hero", "hero"]),
+        ("Rome.", None),  # promoted single-block hero
+    ]
+    for parity in (0, 1):
+        for text, roles in cases:
+            blocks = _compute_styled(text, word_roles=roles, accent_parity=parity)
+            assert blocks, f"styled engine declined {text!r}"
+            for b in blocks:
+                if b["role"] == ROLE_HERO:
+                    assert b["font_family"] != "Playfair Display Italic", (text, parity)
+
+
+def test_editorial_accent_glyph_gate_falls_back_to_body_font():
+    # Real code path, no mocks: point the accent at Great Vibes (missing 'Δ')
+    # and pin 'Δ' into the odd-k non-hero slot. The block must fall back to
+    # the body face — and measurement must use that FINAL face (no-clip).
+    style = {**EDITORIAL_STYLE, "accent_font": "Great Vibes"}
+    blocks = _compute_styled("dream big Δ", word_roles=["hero", "connector", "closer"], style=style)
+    assert blocks is not None
+    assert [b["role"] for b in blocks] == [ROLE_HERO, ROLE_CONNECTOR, ROLE_CLOSER]
+    closer = blocks[2]
+    assert "Δ" in closer["text"]
+    assert closer["font_family"] == "Playfair Display Regular"
+    _assert_no_clip(blocks)
+    # Control: with full glyph coverage the same slot takes the accent face.
+    control = _compute_styled(
+        "dream big now", word_roles=["hero", "connector", "closer"], style=style
+    )
+    assert control is not None
+    assert control[2]["font_family"] == "Great Vibes"
+
+
+def test_editorial_accent_face_missing_from_registry_falls_back_to_body():
+    # A registry-missing accent counts as missing glyphs — the resolver would
+    # silently hand back Playfair Bold and the gate would test the wrong face.
+    style = {**EDITORIAL_STYLE, "accent_font": "No Such Face 42"}
+    blocks = _compute_styled(_REFERENCE_TEXT, style=style)
+    assert blocks is not None
+    for b in blocks:
+        if b["role"] != ROLE_HERO:
+            assert b["font_family"] == "Playfair Display Regular"
+
+
+def test_legacy_path_ignores_accent_parity_and_never_uses_italic():
+    # style=None is the kill-switch contract — accent_parity must be inert.
+    base = _compute(_REFERENCE_TEXT, font_family="Playfair Display")
+    for parity in (0, 1, 5):
+        blocks = compute_cluster_blocks(
+            _REFERENCE_TEXT,
+            word_roles=None,
+            base_size_px=60,
+            font_family="Playfair Display",
+            reveal_window_s=3.0,
+            style=None,
+            accent_parity=parity,
+        )
+        assert blocks == base
+    assert all(b["font_family"] != "Playfair Display Italic" for b in base)

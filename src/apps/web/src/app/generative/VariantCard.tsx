@@ -5,6 +5,7 @@ import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
   INTRO_SIZE_STEP,
+  SEQUENCE_TEXT_LOCKED_HINT,
   type GenerativeStyleSet,
   type GenerativeVariant,
 } from "@/lib/generative-api";
@@ -32,12 +33,16 @@ export const TEXT_MODE_LABEL: Record<string, string> = {
  * lyrics variants have neither (no cached base; lyric typography is set-driven).
  * Cluster intros (intro_layout === "cluster") are also excluded: the local DOM
  * preview only models the linear single-block layout, so cluster text edits go
- * through the legacy server-reburn controls (still fast — reuses the base). */
+ * through the legacy server-reburn controls (still fast — reuses the base).
+ * Sequence intros (intro_mode === "sequence") are excluded too: the text is
+ * synced to the voiceover transcript (server 422s text edits) and the phrase
+ * sequence has no local preview. */
 export function isInstantEditEligible(variant: GenerativeVariant): boolean {
   return (
     !!variant.base_video_url &&
     (variant.text_mode === "agent_text" || variant.text_mode === "none") &&
-    variant.intro_layout !== "cluster"
+    variant.intro_layout !== "cluster" &&
+    variant.intro_mode !== "sequence"
   );
 }
 
@@ -91,6 +96,11 @@ export function VariantCard({
 
   const instantEligible = !!editSession && isInstantEditEligible(variant);
   const editActive = !!editSession && editSession.isActive;
+
+  // Voiceover-synced typographic sequence (D6/D19): text is derived from the
+  // transcript, so intro-text / highlight-word edits are locked (server 422s
+  // them). Size nudge stays enabled; Classic remains the opt-out.
+  const sequenceSynced = variant.intro_mode === "sequence";
 
   // Pin the base-video src for the whole session: every poll re-signs the URL
   // (new query string), and swapping <video src> restarts playback. On a media
@@ -147,6 +157,11 @@ export function VariantCard({
   const badgeClass = tone === "light"
     ? "rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#3f3f46]"
     : "rounded bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300";
+  // Synced-sequence chip: light tone mirrors the "Edited cut" lime pill
+  // (DESIGN.md §2 soft-pill role); dark/admin stays on the zinc badge scale.
+  const syncedBadgeClass = tone === "light"
+    ? "rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800"
+    : "rounded-full border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300";
   const videoWellClass = tone === "light"
     ? "aspect-[9/16] w-full overflow-hidden rounded bg-zinc-100"
     : "aspect-[9/16] w-full overflow-hidden rounded bg-black";
@@ -250,10 +265,17 @@ export function VariantCard({
   return (
     <div className={cardClass}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <span className={badgeClass}>
-          {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
-          {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={badgeClass}>
+            {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
+            {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
+          </span>
+          {sequenceSynced && (
+            <span className={syncedBadgeClass} title={SEQUENCE_TEXT_LOCKED_HINT}>
+              Editorial · synced
+            </span>
+          )}
+        </div>
         {timelineSession?.hasUserEdits && !rendering && !failed && (
           <span className="rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
             Edited cut
@@ -358,7 +380,8 @@ export function VariantCard({
         ) : (
           <>
             <button
-              disabled={rendering}
+              disabled={rendering || sequenceSynced}
+              title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => {
                 const next = prompt("New intro text:", variant.intro_text ?? "");
                 if (next && next.trim()) run(() => onRetext(next.trim()));
@@ -368,7 +391,8 @@ export function VariantCard({
               Edit text
             </button>
             <button
-              disabled={rendering}
+              disabled={rendering || sequenceSynced}
+              title={sequenceSynced ? SEQUENCE_TEXT_LOCKED_HINT : undefined}
               onClick={() => run(onRemoveText)}
               className={btnClass}
             >
@@ -434,10 +458,14 @@ export function VariantCard({
         {onChangeLayout && variant.text_mode === "agent_text" && (() => {
           // Post-render layout pick. The editorial word-cluster only works on
           // short hooks (server enforces 3-6 words; the chip pre-disables with
-          // a hint so the user isn't bounced by a 422).
-          const layout = variant.intro_layout === "cluster" ? "cluster" : "linear";
+          // a hint so the user isn't bounced by a 422). Sequence-synced
+          // variants render Editorial as the active state and bypass the
+          // word-count gate (the server does too) — Classic stays clickable
+          // as the opt-out of sync.
+          const layout =
+            sequenceSynced || variant.intro_layout === "cluster" ? "cluster" : "linear";
           const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
-          const clusterBlocked = words < 3 || words > 6;
+          const clusterBlocked = !sequenceSynced && (words < 3 || words > 6);
           return (
             <div className={sizeControlClass} role="group" aria-label="Intro text layout">
               <button
@@ -452,9 +480,11 @@ export function VariantCard({
                 disabled={rendering || layout === "cluster" || clusterBlocked}
                 onClick={() => run(() => onChangeLayout("cluster"))}
                 title={
-                  clusterBlocked
-                    ? "Editorial layout needs a 3-6 word hook — shorten the text first"
-                    : "Editorial word-cluster — mixed sizes, magazine-style"
+                  sequenceSynced
+                    ? "Editorial — synced to your voiceover"
+                    : clusterBlocked
+                      ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                      : "Editorial word-cluster — mixed sizes, magazine-style"
                 }
                 className={`${sizeBtnClass} ${layout === "cluster" ? "font-semibold underline" : ""}`}
               >

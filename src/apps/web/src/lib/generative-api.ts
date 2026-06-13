@@ -12,6 +12,11 @@ export const INTRO_SIZE_MIN = 40;
 export const INTRO_SIZE_MAX = 80;
 export const INTRO_SIZE_STEP = 6;
 
+// Tooltip for text controls locked by a voiceover-synced sequence intro
+// (intro_mode === "sequence") — shared by VariantCard and PlanVariantEditor.
+export const SEQUENCE_TEXT_LOCKED_HINT =
+  "Text is synced to your voiceover — switch to Classic to edit text";
+
 export type GenerativeTextMode = "lyrics" | "agent_text" | "none";
 
 export interface GenerativeVariant {
@@ -35,6 +40,14 @@ export interface GenerativeVariant {
   // engine-positioned) — the instant editor must NOT local-preview it (the TS
   // mirror only models the linear layout); edits use the server-reburn controls.
   intro_layout?: "linear" | "cluster" | null;
+  // Intro rendering mode (D6/D19). "sequence" = transcript-synced typographic
+  // sequence (Editorial auto-upgrade on audible+coherent voiceovers): the text
+  // is derived from the voiceover, so intro-text / highlight-word edits are
+  // server-rejected with 422 — the size nudge and a layout opt-out (Classic or
+  // static-cluster Editorial) remain allowed. Absent on legacy variants.
+  intro_mode?: "sequence" | "cluster" | "linear" | null;
+  // Convenience flag from the backend: true iff intro_mode === "sequence".
+  sequence_synced?: boolean | null;
   // Voice/bed mix for voiceover variants (0..1; 1.0 = voice only / bed ducked,
   // 0.0 = bed full). null on non-voiceover variants.
   mix?: number | null;

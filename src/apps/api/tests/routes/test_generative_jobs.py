@@ -1080,3 +1080,214 @@ def test_dispatch_edit_layout_rejected_with_remove_text(monkeypatch):
             intro_layout="cluster",
         )
     assert exc.value.status_code == 422
+
+
+# ── Transcript-synced sequence variants (intro_mode="sequence", D19/T4) ──────────
+
+
+def _sequence_job(intro_mode="sequence", transcript=None, intro_text=None):
+    import types
+    import uuid
+
+    variant = {
+        "variant_id": "original_text",
+        "render_status": "ready",
+        "text_mode": "agent_text",
+        "intro_mode": intro_mode,
+        # 8 words — would FAIL the 3-6 cluster gate if it applied.
+        "intro_text": intro_text or "what a magic day this truly was indeed",
+    }
+    if transcript is not None:
+        variant["transcript"] = transcript
+    return types.SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [variant]})
+
+
+def test_dispatch_edit_layout_cluster_bypasses_word_gate_on_sequence_variant(monkeypatch):
+    """A synced variant renders the editorial treatment from the SPOKEN words —
+    the intro_text word-count gate must not block the layout pick."""
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _sequence_job(),
+        "original_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        intro_layout="cluster",
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["layout_override"] == "cluster"
+
+
+def test_dispatch_edit_layout_cluster_bypasses_word_gate_with_persisted_transcript(monkeypatch):
+    """A variant that still carries a persisted transcript (e.g. rendered synced
+    before) bypasses the gate even when its current intro_mode isn't sequence."""
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    job = _sequence_job(
+        intro_mode="cluster",
+        transcript=[{"word": "we", "start_s": 0.5, "end_s": 0.7}],
+    )
+    dispatch_edit_variant(
+        job,
+        "original_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        intro_layout="cluster",
+    )
+    assert len(calls) == 1
+
+
+def test_dispatch_edit_layout_cluster_gate_still_applies_without_sequence(monkeypatch):
+    """Non-synced, no-transcript variant keeps the actionable 3-6-word 422."""
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _sequence_job(intro_mode="cluster"),  # 8-word hook, no transcript
+            "original_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            intro_layout="cluster",
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_text_rejected_on_sequence_variant(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _sequence_job(),
+            "original_text",
+            text="new hook",
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert "synced" in str(exc.value.detail)
+    assert "Classic" in str(exc.value.detail)
+    assert calls == []
+
+
+def test_dispatch_edit_remove_text_rejected_on_sequence_variant(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _sequence_job(),
+            "original_text",
+            text=None,
+            remove_text=True,
+            style_set_id=None,
+            text_size_px=None,
+        )
+    assert exc.value.status_code == 422
+    assert "synced" in str(exc.value.detail)
+    assert calls == []
+
+
+def test_dispatch_retext_rejected_on_sequence_variant(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_retext
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_retext(_sequence_job(), "original_text", text="new hook", remove=False)
+    assert exc.value.status_code == 422
+    assert "synced" in str(exc.value.detail)
+    assert calls == []
+
+
+def test_dispatch_edit_size_nudge_allowed_on_sequence_variant(monkeypatch):
+    """The size nudge scales the whole sequence (D19) — must stay editable."""
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _sequence_job(),
+        "original_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=72,
+    )
+    assert len(calls) == 1
+    _, kwargs = calls[0]
+    assert kwargs["size_override_px"] == 72
+    assert kwargs["override_text"] is None
+
+
+def test_dispatch_edit_text_still_allowed_on_non_sequence_variant(monkeypatch):
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _sequence_job(intro_mode="cluster"),
+        "original_text",
+        text="fresh hook",
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+    )
+    assert len(calls) == 1
+
+
+def test_variants_for_response_exposes_intro_mode_and_sequence_synced(monkeypatch):
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {"variant_id": "a", "render_status": "ready", "intro_mode": "sequence"},
+                {"variant_id": "b", "render_status": "ready", "intro_layout": "cluster"},
+                {"variant_id": "c", "render_status": "ready"},
+            ]
+        },
+    )
+    out = gj._variants_for_response(job)
+    by_id = {v["variant_id"]: v for v in out}
+    assert by_id["a"]["intro_mode"] == "sequence"
+    assert by_id["a"]["sequence_synced"] is True
+    # Legacy fallback (D19): no intro_mode → derive from intro_layout.
+    assert by_id["b"]["intro_mode"] == "cluster"
+    assert by_id["b"]["sequence_synced"] is False
+    assert by_id["c"]["intro_mode"] is None
+    assert by_id["c"]["sequence_synced"] is False
+
+
+def test_variants_for_response_intro_mode_does_not_mutate_stored_dicts(monkeypatch):
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    stored = {"variant_id": "b", "render_status": "ready", "intro_layout": "cluster"}
+    job = types.SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": [stored]})
+    gj._variants_for_response(job)
+    assert "intro_mode" not in stored
+    assert "sequence_synced" not in stored

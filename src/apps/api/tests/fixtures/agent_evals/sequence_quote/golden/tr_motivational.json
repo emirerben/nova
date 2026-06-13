@@ -1,0 +1,31 @@
+{
+  "agent": "nova.compose.sequence_quote",
+  "prompt_version": "1.0.0",
+  "input": {
+    "hero_clip": {
+      "clip_id": "clip_001",
+      "media_type": "video",
+      "duration_s": 3.8,
+      "subject": "person running up empty city stairs before sunrise",
+      "hook_text": "",
+      "hook_score": 6.0,
+      "energy": 7.0,
+      "description": "dawn light over an empty street, handheld follow shot up long stone stairs, breath visible, nobody else around"
+    },
+    "hero_transcript": "",
+    "tone": "kararlı, samimi, motive edici",
+    "language": "tr",
+    "content_pillars": ["sabah rutinleri", "disiplin"],
+    "theme": "kimse izlemiyorken yapılan iş",
+    "idea": "gün doğumu koşu montajı",
+    "video_duration_s": 7.8
+  },
+  "raw_text": "{\"quote\": \"Bu \\\"sadece şans\\\" değil. Her sabah erken kalktım. Kimse görmeden çalıştım. Vazgeçmek kolaydı. Ama ben durmadım. Şimdi sıra bende.\"}",
+  "output": {
+    "quote": "Bu \"sadece şans\" değil. Her sabah erken kalktım. Kimse görmeden çalıştım. Vazgeçmek kolaydı. Ama ben durmadım. Şimdi sıra bende."
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Turkish persona — 7.8s video → target 6 sentences; the quote has exactly 6, 19 total words, every sentence 1-6 words, one quoted span ('sadece şans'), informal first-person voice with Turkish diacritics intact (ş ç ı ö). Grounded in the dawn solo-run footage and the 'work nobody watches' theme."
+  }
+}

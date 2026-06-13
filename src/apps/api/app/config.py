@@ -218,6 +218,21 @@ class Settings(BaseSettings):
         "Layer-1 text persistence stays active regardless.",
     )
 
+    # Transcript-synced editorial typographic sequence for generative edits
+    # (the "Editorial" layout auto-upgrade, D6/D16). When True (default), an
+    # agent_text variant whose intro layout resolves to "cluster" AND whose
+    # final audio keeps the montage's original speech audible is transcribed
+    # (Whisper, pre-mix `assembled_path` — D11) and rendered as phrase-by-phrase
+    # styled scenes (`app/pipeline/phrase_sequence.py` + intro_cluster
+    # EDITORIAL_STYLE); ineligible/failed variants fall back to a STYLED static
+    # cluster. When False, behavior is byte-identical legacy: no transcription,
+    # no styled cluster (compute_cluster_blocks gets style=None), no sequence
+    # overlays. Read at render time inside the burn step, so flipping it
+    # affects queued jobs and re-renders after a worker restart. Kill switch:
+    # `fly secrets set EDITORIAL_SEQUENCE_ENABLED=false --app nova-video`
+    # + `fly machine restart <id>` — no deploy needed.
+    editorial_sequence_enabled: bool = True
+
     GENERATIVE_CLUSTER_INTRO_ENABLED: bool = Field(
         default=True,
         description="Allow the editorial word-cluster intro layout for generative edits "
