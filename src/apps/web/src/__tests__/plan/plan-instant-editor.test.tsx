@@ -1,0 +1,314 @@
+/**
+ * Deferred-burn editor on the /plan content-plan item page.
+ *
+ * An ELIGIBLE focused variant shows the live base-video + IntroTextPreview
+ * overlay on the LEFT, and the NORMAL PlanVariantEditor controls (Caption /
+ * Text size / Layout / Style / Song / Clips) on the RIGHT. Changing a control
+ * mutates the local edit-session draft with ZERO network — nothing re-renders
+ * while editing. The single FFmpeg bake fires ONLY when the user clicks
+ * Download: one batched /edit with the accumulated draft, then the download.
+ *
+ * An INELIGIBLE variant (sequence-synced / lyrics / cluster-without-base / no
+ * base_video_url) keeps the legacy per-field server-render controls.
+ *
+ * This suite does NOT mock PlanVariantEditor — it exercises the real
+ * eligibility branch + the real controls in FocusedResults.
+ */
+
+// @ts-nocheck
+
+// jsdom lacks ResizeObserver (used by IntroTextPreview) and matchMedia.
+class ResizeObserverMock {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+(global as unknown as { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver =
+  ResizeObserverMock;
+
+import React from "react";
+
+Object.defineProperty(window, "matchMedia", {
+  writable: true,
+  value: jest.fn().mockImplementation((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: jest.fn(),
+    removeListener: jest.fn(),
+    addEventListener: jest.fn(),
+    removeEventListener: jest.fn(),
+    dispatchEvent: jest.fn(),
+  })),
+});
+
+import { act, fireEvent, render, screen } from "@testing-library/react";
+import "@testing-library/jest-dom";
+
+jest.mock("next/navigation", () => ({
+  useParams: jest.fn(() => ({ id: "test-item-id" })),
+}));
+
+const mockRefetch = jest.fn();
+jest.mock("@/hooks/usePolledJobStatus", () => ({
+  usePolledJobStatus: jest.fn(),
+}));
+import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
+const mockUsePolledJobStatus = usePolledJobStatus as jest.MockedFunction<typeof usePolledJobStatus>;
+
+// Real editPlanItemVariant is spied so we can assert the batched bake payload.
+// The legacy per-field endpoints are spied too so we can assert they are NOT
+// called while editing an eligible variant (the draft path replaces them).
+const mockEditPlanItemVariant = jest.fn().mockResolvedValue({});
+const mockRetextPlanItem = jest.fn().mockResolvedValue({});
+const mockChangePlanItemStyle = jest.fn().mockResolvedValue({});
+const mockSetPlanItemIntroSize = jest.fn().mockResolvedValue({});
+jest.mock("@/lib/plan-api", () => ({
+  ...jest.requireActual("@/lib/plan-api"),
+  getPlanItem: jest.fn(),
+  getPlanItemJobStatus: jest.fn(),
+  requestUploadUrls: jest.fn(),
+  attachClips: jest.fn(),
+  generatePlanItem: jest.fn(),
+  swapPlanItemSong: jest.fn(),
+  retextPlanItem: (...args: unknown[]) => mockRetextPlanItem(...args),
+  changePlanItemStyle: (...args: unknown[]) => mockChangePlanItemStyle(...args),
+  setPlanItemIntroSize: (...args: unknown[]) => mockSetPlanItemIntroSize(...args),
+  editPlanItemVariant: (...args: unknown[]) => mockEditPlanItemVariant(...args),
+  uploadToGcs: jest.fn(),
+  NotAuthenticatedError: class NotAuthenticatedError extends Error {},
+}));
+
+jest.mock("@/lib/generative-api", () => ({
+  ...jest.requireActual("@/lib/generative-api"),
+  getGenerativeStyleSets: jest.fn().mockResolvedValue([
+    {
+      id: "travel_editorial",
+      label: "Travel",
+      tags: [],
+      intro: { effect: "karaoke-line", text_color: "#fff", highlight_color: "#FFD24A" },
+    },
+  ]),
+  getTimeline: jest.fn(() => new Promise(() => {})),
+  TimelineApiError: class TimelineApiError extends Error {
+    status = 0;
+    code: string | null = null;
+  },
+  GENERATIVE_TERMINAL_STATUSES: [
+    "variants_ready",
+    "variants_ready_partial",
+    "variants_failed",
+    "processing_failed",
+  ],
+}));
+
+jest.mock("@/lib/music-api", () => ({
+  getMusicTracks: jest.fn().mockResolvedValue({ tracks: [] }),
+}));
+
+jest.mock("@/lib/font-faces", () => ({ FONT_FACES: "" }));
+const mockDownloadVideo = jest.fn();
+jest.mock("@/lib/download-video", () => ({ downloadVideo: (...a: unknown[]) => mockDownloadVideo(...a) }));
+jest.mock("@/lib/plan-text", () => ({ stripRationalePrefix: (s: string) => s }));
+jest.mock("@/components/ui/LightShell", () => ({
+  LightShell: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="light-shell">{children}</div>
+  ),
+}));
+jest.mock("@/app/plan/_components/PlanFilmstrip", () => ({
+  __esModule: true,
+  default: () => <div data-testid="plan-filmstrip" />,
+}));
+jest.mock("@/app/plan/_components/SignInPrompt", () => ({
+  __esModule: true,
+  default: () => <div data-testid="sign-in-prompt" />,
+}));
+jest.mock("@/app/library/_components/FeedbackButtons", () => ({
+  __esModule: true,
+  default: () => <div data-testid="feedback-buttons" />,
+}));
+// IntroTextPreview measures fonts via canvas — stub to a marker so we can assert
+// the live overlay mounted without pulling in canvas/measureText in jsdom.
+jest.mock("@/components/variant-editor/IntroTextPreview", () => ({
+  IntroTextPreview: () => <div data-testid="intro-text-preview" />,
+}));
+
+import PlanItemPage from "@/app/plan/items/[id]/page";
+
+function makeItem(overrides = {}) {
+  return {
+    id: "test-item-id",
+    day_index: 3,
+    theme: "Morning Routine",
+    idea: "Film your morning",
+    filming_suggestion: null,
+    rationale: null,
+    filming_guide: [],
+    clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+    status: "ready",
+    current_job_id: "job-1",
+    user_edited: false,
+    instruction_level: "full",
+    conformance: null,
+    ...overrides,
+  };
+}
+
+function makeJob(variants) {
+  return {
+    status: "variants_ready",
+    variants,
+    current_phase: null,
+    phase_log: null,
+    started_at: "2026-06-06T10:00:00Z",
+    finished_at: "2026-06-06T10:02:00Z",
+    expected_phase_durations: null,
+    created_at: "2026-06-06T10:00:00Z",
+  };
+}
+
+const eligibleVariant = {
+  variant_id: "song_text",
+  output_url: "https://cdn/out.mp4",
+  render_status: "ready",
+  text_mode: "agent_text",
+  music_track_id: "t1",
+  track_title: "Track",
+  style_set_id: "travel_editorial",
+  intro_text_size_px: 56,
+  intro_size_source: "computed",
+  intro_text: "hello world",
+  intro_layout: "linear",
+  base_video_url: "https://cdn/base.mp4?sig=1",
+  base_video_path: "generative-jobs/j/base.mp4",
+};
+
+const sequenceVariant = {
+  ...eligibleVariant,
+  variant_id: "original_text",
+  intro_mode: "sequence",
+  intro_layout: "cluster",
+  sequence_synced: true,
+};
+
+function setData(item, variants) {
+  mockUsePolledJobStatus.mockReturnValue({
+    data: { item, job: makeJob(variants) },
+    error: null,
+    refetch: mockRefetch,
+  });
+}
+
+beforeEach(() => {
+  mockEditPlanItemVariant.mockClear();
+  mockRetextPlanItem.mockClear();
+  mockChangePlanItemStyle.mockClear();
+  mockSetPlanItemIntroSize.mockClear();
+  mockDownloadVideo.mockClear();
+  mockRefetch.mockClear();
+});
+
+describe("Plan item page — deferred-burn editor", () => {
+  it("eligible variant shows the live overlay + the normal Caption/Layout/Style controls", async () => {
+    setData(makeItem(), [eligibleVariant]);
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // LEFT: the live base-video + overlay preview is on screen (no burned hero
+    // entry; the deferred preview IS the hero now).
+    expect(screen.getByTestId("intro-text-preview")).toBeInTheDocument();
+
+    // RIGHT: the normal PlanVariantEditor controls are all present (un-hidden) —
+    // there is NO separate "Edit text & style" entry button anymore.
+    expect(screen.queryByRole("button", { name: /edit text & style/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /text style/i })).toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /bigger intro text/i })).toBeInTheDocument();
+    // Download is the bake trigger.
+    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
+  });
+
+  it("changing a control updates the draft and does NOT call the server render endpoint", async () => {
+    setData(makeItem(), [eligibleVariant]);
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // Bump the text size via the A+ stepper — this is a draft mutation.
+    await act(async () => {
+      screen.getByRole("button", { name: /bigger intro text/i }).click();
+    });
+
+    // NONE of the render endpoints fired — the bake is deferred to Download.
+    expect(mockSetPlanItemIntroSize).not.toHaveBeenCalled();
+    expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
+    expect(mockRetextPlanItem).not.toHaveBeenCalled();
+
+    // The draft is reflected in the control (56 → 62) and surfaced as a user size.
+    expect(screen.getByText(/^62$/)).toBeInTheDocument();
+    // Unsaved hint near Download appears once the draft is dirty.
+    expect(screen.getByText(/Unsaved — downloads will include your changes/i)).toBeInTheDocument();
+  });
+
+  it("clicking Download triggers exactly one batched editPlanItemVariant bake", async () => {
+    setData(makeItem(), [eligibleVariant]);
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // Accumulate two draft edits: size bump + remove text (batched, no network).
+    await act(async () => {
+      screen.getByRole("button", { name: /bigger intro text/i }).click();
+    });
+    await act(async () => {
+      screen.getByRole("button", { name: /^Remove text$/ }).click();
+    });
+    expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
+
+    // Download = the bake: ONE editPlanItemVariant call with the batched payload.
+    await act(async () => {
+      screen.getByRole("button", { name: /preparing your video|^Download$/i }).click();
+    });
+
+    expect(mockEditPlanItemVariant).toHaveBeenCalledTimes(1);
+    const [itemId, variantId, payload] = mockEditPlanItemVariant.mock.calls[0];
+    expect(itemId).toBe("test-item-id");
+    expect(variantId).toBe("song_text");
+    // Removing the text wins over the size bump in the batched payload.
+    expect(payload).toMatchObject({ remove_text: true });
+    // The legacy per-field endpoints were never used.
+    expect(mockSetPlanItemIntroSize).not.toHaveBeenCalled();
+    expect(mockRetextPlanItem).not.toHaveBeenCalled();
+  });
+
+  it("ineligible (sequence-synced) variant keeps the legacy server-render controls", async () => {
+    setData(makeItem(), [sequenceVariant]);
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    // No live overlay preview — the burned hero is shown instead.
+    expect(screen.queryByTestId("intro-text-preview")).toBeNull();
+    // Legacy PlanVariantEditor renders the synced badge + Remove text control.
+    expect(screen.getByText(/Editorial · synced/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
+
+    // A legacy size nudge re-renders SERVER-side (not the deferred draft path).
+    await act(async () => {
+      screen.getByRole("button", { name: /bigger intro text/i }).click();
+    });
+    expect(mockSetPlanItemIntroSize).toHaveBeenCalledTimes(1);
+    expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
+  });
+
+  it("ineligible (no base_video_url) variant keeps the legacy controls", async () => {
+    const noBase = { ...eligibleVariant, base_video_url: null, base_video_path: null };
+    setData(makeItem(), [noBase]);
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    expect(screen.queryByTestId("intro-text-preview")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
+  });
+});

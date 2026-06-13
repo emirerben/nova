@@ -1,12 +1,17 @@
 "use client";
 
 /**
- * Instant-edit session state for one generative variant.
+ * Instant-edit session state for one editable variant.
  *
  * The Instagram-style editor: every text/style/size change lands in a local
  * `draft` (0 network), previewed live over the base video. "Done" commits the
  * WHOLE session as ONE `POST .../edit` → one re-render, instead of the legacy
  * one-render-per-field endpoints.
+ *
+ * Surface-agnostic: the hook takes `(variant, onCommit)` and depends only on the
+ * shared `EditableVariant` shape, so the generative page and the plan flow share
+ * one copy. `onCommit` is the only network call (the caller wires the right
+ * endpoint).
  *
  * Designed to live in a component that stays mounted across status polls
  * (VariantTile keys by variant_id), so:
@@ -18,13 +23,19 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { EditVariantPayload, GenerativeVariant } from "@/lib/generative-api";
+import type { EditVariantPayload } from "@/lib/generative-api";
+import type { EditableVariant } from "@/lib/variant-editor/types";
 
 export interface EditDraft {
   text: string;
   removed: boolean;
   styleSetId: string | null;
   sizePx: number | null;
+  /** Intro layout pick — "linear" classic block vs "cluster" editorial word-
+   * cluster. Additive: the generative flow never calls setLayout, so its draft
+   * keeps this at the seeded value and buildEditPayload never emits intro_layout
+   * for it (no diff). The plan deferred-burn flow drives it via the Layout pill. */
+  layout: "linear" | "cluster" | null;
 }
 
 export interface VariantEditSession {
@@ -32,6 +43,8 @@ export interface VariantEditSession {
   isEditing: boolean;
   /** A commit is in flight or its render is still running — show "Saving…". */
   isSaving: boolean;
+  /** Just settled a text-only commit — drives a brief "Saved" pulse. */
+  justSaved: boolean;
   /** Editor or saving preview should be on screen (drives VariantTile layout). */
   isActive: boolean;
   draft: EditDraft;
@@ -44,15 +57,17 @@ export interface VariantEditSession {
   setRemoved: (removed: boolean) => void;
   setStyle: (styleSetId: string) => void;
   setSize: (sizePx: number) => void;
+  setLayout: (layout: "linear" | "cluster") => void;
   commit: () => Promise<void>;
 }
 
-function draftFromVariant(variant: GenerativeVariant): EditDraft {
+function draftFromVariant(variant: EditableVariant): EditDraft {
   return {
     text: variant.intro_text ?? "",
     removed: variant.text_mode === "none",
     styleSetId: variant.style_set_id ?? null,
     sizePx: variant.intro_text_size_px ?? null,
+    layout: variant.intro_layout ?? null,
   };
 }
 
@@ -61,7 +76,8 @@ function draftsEqual(a: EditDraft, b: EditDraft): boolean {
     a.text.trim() === b.text.trim() &&
     a.removed === b.removed &&
     a.styleSetId === b.styleSetId &&
-    a.sizePx === b.sizePx
+    a.sizePx === b.sizePx &&
+    a.layout === b.layout
   );
 }
 
@@ -84,11 +100,20 @@ export function buildEditPayload(draft: EditDraft, baseline: EditDraft): EditVar
   if (draft.styleSetId && draft.styleSetId !== baseline.styleSetId) {
     payload.style_set_id = draft.styleSetId;
   }
+  // Layout pick rides the same batched /edit. Only emit when it actually moved
+  // from the baseline (so the generative draft — which never calls setLayout —
+  // contributes nothing here).
+  if (
+    (draft.layout === "linear" || draft.layout === "cluster") &&
+    draft.layout !== baseline.layout
+  ) {
+    payload.intro_layout = draft.layout;
+  }
   return payload;
 }
 
 export function useVariantEditSession(
-  variant: GenerativeVariant,
+  variant: EditableVariant,
   onCommit: (payload: EditVariantPayload) => Promise<void>,
 ): VariantEditSession {
   const [isEditing, setIsEditing] = useState(false);
@@ -99,6 +124,9 @@ export function useVariantEditSession(
   const [pendingDraft, setPendingDraft] = useState<EditDraft | null>(null);
   const [sawRendering, setSawRendering] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
+  // Brief "Saved" affordance after a text-only commit settles — a quiet lime
+  // pulse that recedes, never a blocking spinner. Auto-clears after a beat.
+  const [justSaved, setJustSaved] = useState(false);
 
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
@@ -118,6 +146,7 @@ export function useVariantEditSession(
     setBaseline(seed);
     setDraft(seed);
     setCommitError(null);
+    setJustSaved(false);
     setIsEditing(true);
   }, [variant]);
 
@@ -140,6 +169,10 @@ export function useVariantEditSession(
   );
   const setSize = useCallback(
     (sizePx: number) => setDraft((d) => ({ ...d, sizePx, removed: false })),
+    [],
+  );
+  const setLayout = useCallback(
+    (layout: "linear" | "cluster") => setDraft((d) => ({ ...d, layout })),
     [],
   );
 
@@ -165,6 +198,7 @@ export function useVariantEditSession(
 
   const commit = useCallback(async () => {
     setCommitError(null);
+    setJustSaved(false);
     setIsEditing(false);
     if (variant.render_status === "rendering" || committing || awaitingRender) {
       // A render is already in flight (ours, or one started from another tab /
@@ -220,6 +254,10 @@ export function useVariantEditSession(
       } else {
         setPendingDraft(null);
         setAwaitingRender(false);
+        // Quiet "Saved" pulse: the live WYSIWYG preview is already on screen
+        // (the caller keeps it up rather than flashing to output_url), so the
+        // only affordance is this brief lime pulse that then recedes.
+        setJustSaved(true);
       }
     } else if (variant.render_status === "failed") {
       // The committed render failed — drop out of the preview so the standard
@@ -239,6 +277,13 @@ export function useVariantEditSession(
     fireCommit,
   ]);
 
+  // Recede the "Saved" pulse after a short beat (no blocking state).
+  useEffect(() => {
+    if (!justSaved) return;
+    const t = setTimeout(() => setJustSaved(false), 1600);
+    return () => clearTimeout(t);
+  }, [justSaved]);
+
   // Unsaved-edits guard: warn before the tab closes mid-edit.
   useEffect(() => {
     if (!isEditing || !isDirty) return;
@@ -252,6 +297,7 @@ export function useVariantEditSession(
   return {
     isEditing,
     isSaving,
+    justSaved,
     isActive,
     draft,
     isDirty,
@@ -262,6 +308,7 @@ export function useVariantEditSession(
     setRemoved,
     setStyle,
     setSize,
+    setLayout,
     commit,
   };
 }

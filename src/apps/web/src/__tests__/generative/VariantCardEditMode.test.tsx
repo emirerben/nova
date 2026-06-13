@@ -18,7 +18,7 @@ class ResizeObserverMock {
 import { act, render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { VariantCard, isInstantEditEligible } from "@/app/generative/VariantCard";
-import type { VariantEditSession } from "@/app/generative/useVariantEditSession";
+import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 import { SEQUENCE_TEXT_LOCKED_HINT, type GenerativeVariant } from "@/lib/generative-api";
 
 function makeVariant(over: Partial<GenerativeVariant> = {}): GenerativeVariant {
@@ -46,6 +46,7 @@ function makeSession(over: Partial<VariantEditSession> = {}): VariantEditSession
   return {
     isEditing: false,
     isSaving: false,
+    justSaved: false,
     isActive: false,
     draft: { text: "hello world", removed: false, styleSetId: "travel_editorial", sizePx: 56 },
     isDirty: false,
@@ -79,14 +80,19 @@ describe("isInstantEditEligible", () => {
     expect(isInstantEditEligible(makeVariant({ base_video_url: null }))).toBe(false);
   });
 
-  it("excludes cluster intros — the TS mirror only models the linear layout", () => {
-    expect(isInstantEditEligible(makeVariant({ intro_layout: "cluster" }))).toBe(false);
+  it("includes cluster intros — the editorial geometry is now ported to TS", () => {
+    expect(isInstantEditEligible(makeVariant({ intro_layout: "cluster" }))).toBe(true);
     expect(isInstantEditEligible(makeVariant({ intro_layout: "linear" }))).toBe(true);
     expect(isInstantEditEligible(makeVariant({ intro_layout: null }))).toBe(true);
   });
 
-  it("excludes voiceover-synced sequence intros — text edits are server-rejected", () => {
+  it("excludes voiceover-synced sequence intros even when layout is cluster", () => {
+    // A cluster can be sequence-synced — the sequence guard must run regardless
+    // of intro_layout (text is transcript/rhythm-locked; the server 422s edits).
     expect(isInstantEditEligible(makeVariant({ intro_mode: "sequence" }))).toBe(false);
+    expect(
+      isInstantEditEligible(makeVariant({ intro_layout: "cluster", intro_mode: "sequence" })),
+    ).toBe(false);
     expect(isInstantEditEligible(makeVariant({ intro_mode: "linear" }))).toBe(true);
   });
 });
@@ -173,10 +179,11 @@ describe("VariantCard sequence-synced gating (intro_mode === 'sequence', D6/D19)
     render(
       <VariantCard {...baseProps} variant={sequenceVariant} onChangeLayout={onChangeLayout} />,
     );
-    const editorial = screen.getByRole("button", { name: "Editorial" });
+    const editorial = screen.getByRole("radio", { name: "Editorial layout" });
     expect(editorial).toBeDisabled(); // active = current layout, same as cluster
     expect(editorial).toHaveAttribute("title", "Editorial — text synced to this edit");
-    const classic = screen.getByRole("button", { name: "Classic" });
+    expect(editorial).toHaveAttribute("aria-checked", "true");
+    const classic = screen.getByRole("radio", { name: "Classic layout" });
     expect(classic).toBeEnabled();
     await act(async () => {
       fireEvent.click(classic);
@@ -197,7 +204,7 @@ describe("VariantCard sequence-synced gating (intro_mode === 'sequence', D6/D19)
     );
     expect(screen.queryByText("Editorial · synced")).toBeNull();
     expect(screen.getByRole("button", { name: /^edit text$/i })).toBeEnabled();
-    const editorial = screen.getByRole("button", { name: "Editorial" });
+    const editorial = screen.getByRole("radio", { name: "Editorial layout" });
     expect(editorial).toBeDisabled(); // 8-word hook → gate intact
     expect(editorial).toHaveAttribute(
       "title",
@@ -253,5 +260,79 @@ describe("VariantCard edit mode", () => {
     expect(screen.queryByRole("button", { name: /done/i })).not.toBeInTheDocument();
     // The legacy "Rendering…" placeholder must NOT appear — the preview is up.
     expect(screen.queryByText(/^rendering…$/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the live preview + a quiet 'Saved' pulse after a text edit settles (W5)", () => {
+    // justSaved keeps the editor card mounted past the commit so the card never
+    // flashes to the burned output_url; the affordance is a brief "Saved" pulse,
+    // not a blocking spinner.
+    const session = makeSession({
+      isEditing: false,
+      isSaving: false,
+      justSaved: true,
+      isActive: false,
+    });
+    const { container } = render(
+      <VariantCard
+        {...baseProps}
+        variant={makeVariant({ render_status: "ready" })}
+        editSession={session}
+      />,
+    );
+
+    // The live WYSIWYG preview (base video) is still on screen.
+    expect(container.querySelector("video")!.getAttribute("src")).toBe(
+      "https://x/base.mp4?sig=1",
+    );
+    expect(screen.getByText(/^saved$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/saving…/i)).not.toBeInTheDocument();
+    // No blocking download/edit controls (still the editor surface, not the
+    // settled card), and no "Rendering…" placeholder.
+    expect(screen.queryByRole("button", { name: /download/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/^rendering…$/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("VariantCard layout preview cards (W3)", () => {
+  it("renders Classic + Editorial preview cards in a radiogroup", () => {
+    render(
+      <VariantCard
+        {...baseProps}
+        variant={makeVariant({ intro_text: "what a view today" })}
+        onChangeLayout={async () => {}}
+      />,
+    );
+    expect(screen.getByRole("radiogroup", { name: "Intro text layout" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Classic layout" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Editorial layout" })).toBeInTheDocument();
+  });
+
+  it("gates Editorial + shows the hint for a hook outside 3-6 words", () => {
+    render(
+      <VariantCard
+        {...baseProps}
+        variant={makeVariant({ intro_text: "when they don't even listen to your feelings" })}
+        onChangeLayout={async () => {}}
+      />,
+    );
+    expect(screen.getByRole("radio", { name: "Editorial layout" })).toBeDisabled();
+    expect(screen.getByText(/shorten the text to unlock it/i)).toBeInTheDocument();
+  });
+
+  it("fires onChangeLayout('cluster') when Editorial is picked for a short hook", async () => {
+    const onChangeLayout = jest.fn(async () => {});
+    render(
+      <VariantCard
+        {...baseProps}
+        variant={makeVariant({ intro_text: "what a view today" })}
+        onChangeLayout={onChangeLayout}
+      />,
+    );
+    const editorial = screen.getByRole("radio", { name: "Editorial layout" });
+    expect(editorial).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(editorial);
+    });
+    expect(onChangeLayout).toHaveBeenCalledWith("cluster");
   });
 });

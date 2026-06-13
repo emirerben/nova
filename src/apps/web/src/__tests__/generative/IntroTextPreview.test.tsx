@@ -11,7 +11,7 @@
 
 import { act, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import { IntroTextPreview } from "@/app/generative/IntroTextPreview";
+import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import type { IntroOverlayParams } from "@/lib/overlay-layout";
 
 // ResizeObserver mock that immediately reports a 270px-wide box.
@@ -86,5 +86,29 @@ describe("IntroTextPreview", () => {
     rerender(<IntroTextPreview params={{ ...params, text: "second draft" }} editable />);
     const box = screen.getByRole("textbox", { name: /intro text/i });
     expect(box.textContent).toBe("second draft");
+  });
+
+  // Cluster decline → linear fallback. The editorial cluster engine returns null
+  // when the hook is outside the 3-6 word range (or empty), and the server
+  // renders the LINEAR intro in exactly that case. The preview must follow, or
+  // it goes blank while the burn comes back with visible linear text.
+  it("falls back to the linear preview when a cluster hook exceeds 6 words", () => {
+    render(
+      <IntroTextPreview
+        layout="cluster"
+        params={{ ...params, text: "one two three four five six seven" }}
+        editable
+        onTextChange={jest.fn()}
+      />,
+    );
+    const box = screen.getByRole("textbox", { name: /intro text/i });
+    expect(box.textContent).toBe("one two three four five six seven");
+  });
+
+  it("falls back to the linear preview for an empty cluster hook (no blank overlay)", () => {
+    render(<IntroTextPreview layout="cluster" params={{ ...params, text: "" }} editable />);
+    const box = screen.getByRole("textbox", { name: /intro text/i });
+    expect(box).toBeInTheDocument();
+    expect(box.textContent).toBe("");
   });
 });

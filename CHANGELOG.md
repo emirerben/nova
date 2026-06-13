@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.102.0] — 2026-06-13
+
+### Added
+- **Live, no-render text editing on `/plan` videos.** On a plan-item video, the normal Caption / Text size / Layout / Style controls now drive a live overlay over the text-free base video: changing any of them updates the on-video text **instantly, with zero render** — no more paying a ~20–120s re-render per field. The video re-renders (bakes) **only when you Download/Share** — one render with your current selection, shown as a brief "Preparing your video…". The backend was already ready (plan items produce a `base_video_path`; the `/edit` route already accepts the batch payload); the frontend just stopped discarding `base_video_url` (`PlanItemVariant`). The live preview occupies the main player so edits show on the video you're looking at, not a second one. Sequence-synced and lyrics variants keep the legacy server-render controls (text locked / no text-free base). Tradeoff: unsaved overlay edits live client-side until you Download (guarded by an unsaved-changes warning).
+- **WYSIWYG style + layout selection (`/generative`) + live Editorial preview (both flows).** The generative editor's style chips now render your actual hook in each typeface + color on a contrast-safe dark tile, and the Classic/Editorial toggle becomes two preview cards. The editorial word-cluster ("Editorial") previews **live** on both flows via a pure-TS port of `intro_cluster.py`'s `EDITORIAL_STYLE` geometry (`overlay-cluster-layout.ts`), parity-guarded against Python-dumped fixtures. Cluster decline (hook outside 3–6 words) falls back to the linear preview, mirroring the server, so the overlay never goes blank.
+- **Shared `variant-editor` module.** The instant-editor machinery (`IntroTextPreview`, `EditToolbar`, `useVariantEditSession`, `LayoutPreviewCard`, `resolve-intro-params`, eligibility) moved to `components/variant-editor/` + `lib/variant-editor/` and is now used by both flows — removing the duplicated plan-editor controls. Generative behavior is unchanged (refactor guarded by the existing generative tests). Style chips/layout cards are keyboard-navigable radiogroups with ≥44px targets.
+
 ## [0.4.101.1] — 2026-06-13
 
 ### Added

@@ -1,10 +1,10 @@
 "use client";
 
 /**
- * Client-side WYSIWYG render of the generative hero-intro overlay — the
- * 0-latency half of the instant editor. Draws the SETTLED (hold) state of the
- * intro over the text-free base video, in the exact registry typeface the
- * server burns with.
+ * Client-side WYSIWYG render of the LINEAR generative hero-intro overlay — the
+ * single-block half of the instant editor (the editorial word-cluster lives in
+ * ClusterTextPreview). Draws the SETTLED (hold) state of the intro over the
+ * text-free base video, in the exact registry typeface the server burns with.
  *
  * Fidelity strategy (committed render stays authoritative):
  * - font: identical TTF via @font-face (byte-identical registry mirror)
@@ -22,6 +22,10 @@
  * Editable mode keeps the node contentEditable (real caret/IME); React never
  * rewrites its children while focused, so typing is uninterrupted — external
  * text changes are synced into the DOM only when not focused.
+ *
+ * Lives in its own file (not inside IntroTextPreview) so ClusterTextPreview can
+ * fall back to it when the cluster engine declines a hook — the server renders
+ * the linear intro in exactly that case, so the preview must too.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -36,7 +40,7 @@ import {
 } from "@/lib/overlay-layout";
 import { ensureFontLoaded, fontLineHeight, makeCanvasMeasureAt } from "@/lib/canvas-measure";
 
-export function IntroTextPreview({
+export function LinearIntroTextPreview({
   params,
   editable = false,
   onTextChange,

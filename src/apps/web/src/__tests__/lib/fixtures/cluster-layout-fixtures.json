@@ -1,0 +1,743 @@
+{
+ "cases": [
+  {
+   "hook": "what is your favorite place",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "what is your",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.389212,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "favorite",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.435183,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "place",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485581,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "the days we lost found us",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "the",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.394028,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "days",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.44,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "we lost found us",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485972,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "I never wanted to leave",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "I",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.394028,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "never wanted",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.44,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "to leave",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485972,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "before the sun comes up",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "before",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.400708,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "the",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.446679,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "sun comes up",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.486513,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "she said goodbye",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "she said goodbye",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.44,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "we drove all night long",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "we",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.389212,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "drove all night",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.435183,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "long",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485581,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "good morning beautiful world",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "good morning beautiful",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.418412,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "world",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.468809,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "this is how it ends",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "this is how it",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.4108,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "ends",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.456772,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "lost in the city lights",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "lost",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.400708,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "in the",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.446679,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "city lights",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.486513,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "you are my home",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "you are my",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.4108,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "home",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.456772,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "running through golden fields",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "running through golden",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.418412,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "fields",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.468809,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "the place where dreams begin",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "the",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.394028,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "place",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.44,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "where dreams begin",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485972,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "where did the summer go?",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "where did the",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.389212,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "summer",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.435183,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "go?",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485581,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "stop. breathe. you made it",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "stop. breathe.",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.400708,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "you",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.446679,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "made it",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.486513,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "incomprehensibly extraordinary serendipitous discoveries",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "incomprehensibly extraordinary serendipitous",
+     "role": "hero",
+     "text_size_px": 73,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.485766,
+     "position_y_frac": 0.424446,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "discoveries",
+     "role": "closer",
+     "text_size_px": 54,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.46061,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "go go go go go go",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "go",
+     "role": "connector",
+     "text_size_px": 60,
+     "font_family": "Playfair Display Regular",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.389212,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "go go go go",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.49,
+     "position_y_frac": 0.435183,
+     "start_offset_s": 0.39,
+     "reveal_s": 0.7
+    },
+    {
+     "text": "go",
+     "role": "closer",
+     "text_size_px": 75,
+     "font_family": "Playfair Display Italic",
+     "position_x_frac": 0.52,
+     "position_y_frac": 0.485581,
+     "start_offset_s": 0.51,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "tiny",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": [
+    {
+     "text": "tiny",
+     "role": "hero",
+     "text_size_px": 102,
+     "font_family": "Great Vibes",
+     "position_x_frac": 0.4,
+     "position_y_frac": 0.44,
+     "start_offset_s": 0.0,
+     "reveal_s": 0.7
+    }
+   ]
+  },
+  {
+   "hook": "this hook is way too long for an editorial cluster intro layout",
+   "base_size_px": 60,
+   "reveal_window_s": 3.0,
+   "blocks": null
+  }
+ ],
+ "measure_table": {
+  "Playfair Display Regular|||what is your|||60": {
+   "wPx": 331.55999755859375,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||favorite|||102": {
+   "wPx": 213.28199768066406,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||place|||75": {
+   "wPx": 165.90000915527344,
+   "hPx": 99.9755859375
+  },
+  "Playfair Display Regular|||the|||60": {
+   "wPx": 86.87999725341797,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||days|||102": {
+   "wPx": 140.55599975585938,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||we lost found us|||60": {
+   "wPx": 408.0599365234375,
+   "hPx": 79.98046875
+  },
+  "Playfair Display Regular|||I|||60": {
+   "wPx": 20.34000015258789,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||never wanted|||102": {
+   "wPx": 368.1180419921875,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||to leave|||60": {
+   "wPx": 196.0800018310547,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||before|||102": {
+   "wPx": 166.25999450683594,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||sun comes up|||75": {
+   "wPx": 426.82501220703125,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||she said goodbye|||102": {
+   "wPx": 487.7640075683594,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Regular|||we|||60": {
+   "wPx": 76.55999755859375,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||drove all night|||102": {
+   "wPx": 418.91400146484375,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||long|||75": {
+   "wPx": 134.5500030517578,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||good morning beautiful|||102": {
+   "wPx": 670.8541259765625,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Regular|||world|||75": {
+   "wPx": 197.25,
+   "hPx": 99.9755859375
+  },
+  "Playfair Display Regular|||this is how it|||60": {
+   "wPx": 343.32000732421875,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||ends|||102": {
+   "wPx": 125.76599884033203,
+   "hPx": 127.70388793945312
+  },
+  "Great Vibes|||lost|||102": {
+   "wPx": 103.93800354003906,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Regular|||in the|||60": {
+   "wPx": 155.22000122070312,
+   "hPx": 79.98046875
+  },
+  "Playfair Display Italic|||city lights|||75": {
+   "wPx": 306.375,
+   "hPx": 99.9755859375
+  },
+  "Playfair Display Regular|||you are my|||60": {
+   "wPx": 298.32000732421875,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||home|||102": {
+   "wPx": 146.7779998779297,
+   "hPx": 127.70388793945312
+  },
+  "Great Vibes|||running through golden|||102": {
+   "wPx": 681.156005859375,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Regular|||fields|||75": {
+   "wPx": 183.375,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||place|||102": {
+   "wPx": 145.45199584960938,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||where dreams begin|||60": {
+   "wPx": 503.0999755859375,
+   "hPx": 79.98046875
+  },
+  "Playfair Display Regular|||where did the|||60": {
+   "wPx": 372.96002197265625,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||summer|||102": {
+   "wPx": 219.9119873046875,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||go?|||75": {
+   "wPx": 103.12499237060547,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||stop. breathe.|||102": {
+   "wPx": 379.03204345703125,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Regular|||you|||60": {
+   "wPx": 97.9800033569336,
+   "hPx": 79.98046875
+  },
+  "Playfair Display Italic|||made it|||75": {
+   "wPx": 239.54998779296875,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||incomprehensibly extraordinary serendipitous|||102": {
+   "wPx": 1284.9959716796875,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Regular|||discoveries|||75": {
+   "wPx": 378.07501220703125,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||incomprehensibly extraordinary serendipitous|||94": {
+   "wPx": 1184.2119140625,
+   "hPx": 117.68789672851562
+  },
+  "Playfair Display Regular|||discoveries|||69": {
+   "wPx": 347.8289794921875,
+   "hPx": 91.9775390625
+  },
+  "Great Vibes|||incomprehensibly extraordinary serendipitous|||86": {
+   "wPx": 1083.4278564453125,
+   "hPx": 107.67190551757812
+  },
+  "Playfair Display Regular|||discoveries|||63": {
+   "wPx": 317.5830078125,
+   "hPx": 83.9794921875
+  },
+  "Great Vibes|||incomprehensibly extraordinary serendipitous|||79": {
+   "wPx": 995.2420654296875,
+   "hPx": 98.90791320800781
+  },
+  "Playfair Display Regular|||discoveries|||58": {
+   "wPx": 292.37799072265625,
+   "hPx": 77.314453125
+  },
+  "Great Vibes|||incomprehensibly extraordinary serendipitous|||73": {
+   "wPx": 919.6539916992188,
+   "hPx": 91.39591979980469
+  },
+  "Playfair Display Regular|||discoveries|||54": {
+   "wPx": 272.2140197753906,
+   "hPx": 71.982421875
+  },
+  "Playfair Display Regular|||go|||60": {
+   "wPx": 64.55999755859375,
+   "hPx": 79.98046875
+  },
+  "Great Vibes|||go go go go|||102": {
+   "wPx": 351.7980041503906,
+   "hPx": 127.70388793945312
+  },
+  "Playfair Display Italic|||go|||75": {
+   "wPx": 70.27499389648438,
+   "hPx": 99.9755859375
+  },
+  "Great Vibes|||tiny|||102": {
+   "wPx": 111.79200744628906,
+   "hPx": 127.70388793945312
+  }
+ }
+}

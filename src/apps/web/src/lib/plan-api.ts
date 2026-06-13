@@ -11,6 +11,8 @@
  * /api/auth/signin (NextAuth's default Google sign-in page).
  */
 
+import type { EditVariantPayload } from "@/lib/generative-api";
+
 const PLAN_BASE = "/api/plan";
 
 export class NotAuthenticatedError extends Error {
@@ -396,18 +398,27 @@ export function generateFirstWeek(
  * Mirrors the subset of generative `GenerativeVariant` the plan editor needs: the
  * status endpoint already returns these fields, this type just surfaces them.
  */
+// NOTE: `PlanItemVariant` is kept structurally assignable to the shared
+// `EditableVariant` (lib/variant-editor/types.ts) so the 0-latency instant
+// editor (IntroTextPreview + EditToolbar + useVariantEditSession) drives plan-item
+// variants exactly as it does generative ones. The fields the shared machinery
+// reads (text_mode, style_set_id, intro_text_size_px, render_status,
+// base_video_url, intro_layout, intro_mode) must mirror EditableVariant's types
+// — keep them in lockstep.
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
-  render_status: string | null;
+  // Literal union (not bare string) to match EditableVariant — every plan
+  // consumer compares against these literals, so this is non-breaking.
+  render_status: "ready" | "rendering" | "failed" | null;
   // Edit controls: swap-song is hidden when music_track_id is null (the
   // original-audio variant has no song), and the style picker reflects style_set_id.
-  text_mode?: "lyrics" | "agent_text" | "none";
+  text_mode: "lyrics" | "agent_text" | "none";
   music_track_id?: string | null;
   track_title?: string | null;
-  style_set_id?: string | null;
+  style_set_id: string | null;
   // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
-  intro_text_size_px?: number | null;
+  intro_text_size_px: number | null;
   intro_size_source?: "computed" | "user" | null;
   // Persisted intro text + effective layout — drive the Classic/Editorial pick
   // (cluster needs a 3-6 word hook, so the chip gates on intro_text length).
@@ -419,6 +430,12 @@ export interface PlanItemVariant {
   intro_mode?: "sequence" | "cluster" | "linear" | null;
   // Convenience flag from the backend: true iff intro_mode === "sequence".
   sequence_synced?: boolean | null;
+  // Instant editor: fresh-signed playback URL + GCS key of the text-free
+  // fast-reburn base. The API's `_variants_for_response` already signs these for
+  // plan-item renders (the plan flow just discarded them before); their presence
+  // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
+  base_video_url?: string | null;
+  base_video_path?: string | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
@@ -459,13 +476,21 @@ export function retextPlanItem(
 export function editPlanItemVariant(
   itemId: string,
   variantId: string,
-  payload: { intro_layout?: "linear" | "cluster"; text?: string; text_size_px?: number },
+  payload: EditVariantPayload,
 ): Promise<PlanItem> {
-  // Combined-edit endpoint (mirrors the public generative /edit) — currently
-  // used by the plan page for the intro layout pick (Classic / Editorial).
+  // Combined batch-edit endpoint — mirrors the public generative /edit byte-for-byte
+  // (the backend route reuses the SAME `EditVariantRequest` model + `dispatch_edit_variant`
+  // render path, see src/apps/api/app/routes/plan_items.py edit_item_variant). Drives
+  // the plan page's instant editor (one /edit per "Done" commit) AND the legacy
+  // Classic/Editorial layout pick. text/remove_text are mutually exclusive; size is
+  // rounded to match the server's int field.
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/edit`, {
     method: "POST",
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...payload,
+      text_size_px:
+        payload.text_size_px !== undefined ? Math.round(payload.text_size_px) : undefined,
+    }),
   });
 }
 
