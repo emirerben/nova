@@ -9,6 +9,8 @@
  */
 
 import type { MeasureAtSize } from "@/lib/overlay-layout";
+import { resolveClusterCssFont } from "@/lib/overlay-constants";
+import type { MeasureCluster } from "@/lib/variant-editor/overlay-cluster-layout";
 
 let _ctx: CanvasRenderingContext2D | null = null;
 
@@ -55,6 +57,50 @@ export function fontLineHeight(cssFamily: string, weight: number, sizePx: number
     return ascent + descent;
   }
   return sizePx * 1.2;
+}
+
+/**
+ * Cluster measurement — backs the `MeasureCluster` the editorial-cluster layout
+ * (overlay-cluster-layout.ts) injects. `family` is a REGISTRY name (e.g.
+ * "Great Vibes", "Playfair Display Italic"); it resolves to the css family +
+ * weight + style so the canvas measures the SAME face the server burns (the
+ * italic accent face in particular — see resolveClusterCssFont). Width comes
+ * from `measureText().width`; height (ascent+descent) from `fontBoundingBox*`,
+ * the browser analogue of Skia's `fDescent - fAscent`. SSR/jsdom (no real
+ * metrics) falls back to length-based widths so layout never crashes.
+ */
+export function makeCanvasClusterMeasure(): MeasureCluster {
+  return (family: string, text: string, px: number) => {
+    const { family: cssFamily, weight, style } = resolveClusterCssFont(family);
+    const ctx = context();
+    if (!ctx) {
+      // jsdom/SSR: a coarse stub keeps the pure layout running; the real
+      // preview always has a canvas context.
+      return { wPx: text.length * px * 0.5, hPx: px * 1.2 };
+    }
+    ctx.font = `${style} ${weight} ${px}px ${cssFamily}`;
+    const m = ctx.measureText(text);
+    const ascent = m.fontBoundingBoxAscent;
+    const descent = m.fontBoundingBoxDescent;
+    const hPx =
+      typeof ascent === "number" && typeof descent === "number" && ascent + descent > 0
+        ? ascent + descent
+        : px * 1.2;
+    return { wPx: m.width, hPx };
+  };
+}
+
+/** Ensure an editorial cluster face (resolved by registry name) is loaded for
+ * measurement/display — resolves the css family + weight + style so the italic
+ * accent face actually lands before re-measure. Never rejects. */
+export async function ensureClusterFontLoaded(family: string, sizePx = 64): Promise<void> {
+  if (typeof document === "undefined" || !("fonts" in document)) return;
+  const { family: cssFamily, weight, style } = resolveClusterCssFont(family);
+  try {
+    await document.fonts.load(`${style} ${weight} ${sizePx}px ${cssFamily}`);
+  } catch {
+    // font stays on fallback metrics — preview degrades, never crashes
+  }
 }
 
 /**

@@ -87,3 +87,29 @@ export function resolveCssFont(fontFamily: string | null | undefined): {
     ? { family: fallback.css_family, weight: fallback.weight }
     : { family: "'Playfair Display', serif", weight: 700 };
 }
+
+/**
+ * Resolve a registry font name to CSS family + weight + STYLE — the editorial
+ * cluster preview needs the italic flag (`Playfair Display Italic` shares its
+ * family + weight with the Regular sibling and is addressable only via
+ * `font-style: italic`; the matching @font-face is emitted by font-faces.ts,
+ * which detects italic from the TTF file name). The italic signal comes from the
+ * registry entry's `file` for the same reason. Unknown families fall back to
+ * Playfair Display Bold (upright), matching the server.
+ */
+export function resolveClusterCssFont(fontFamily: string | null | undefined): {
+  family: string;
+  weight: number;
+  style: "normal" | "italic";
+} {
+  const entry = fontFamily ? FONT_REGISTRY[fontFamily] : undefined;
+  if (entry) {
+    return {
+      family: entry.css_family,
+      weight: entry.weight,
+      style: /italic/i.test(entry.file) ? "italic" : "normal",
+    };
+  }
+  const { family, weight } = resolveCssFont(fontFamily);
+  return { family, weight, style: "normal" };
+}

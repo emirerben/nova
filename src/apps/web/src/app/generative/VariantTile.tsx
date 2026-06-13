@@ -28,7 +28,7 @@ import { VariantRenderCard } from "@/components/progress";
 import { VariantCard } from "./VariantCard";
 import { TimelineEditor } from "./TimelineEditor";
 import { useTimelineSession } from "./useTimelineSession";
-import { useVariantEditSession } from "./useVariantEditSession";
+import { useVariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 
 export function VariantTile({
   variant,
@@ -77,7 +77,7 @@ export function VariantTile({
           edit card is the single focus until the session settles. The same
           applies to a timeline re-render: the VariantCard well owns that wait
           (ETA band / failed tile), so the generic card hides. */}
-      {!session.isActive && !timelineSession.isWaiting && (
+      {!session.isActive && !session.justSaved && !timelineSession.isWaiting && (
         <VariantRenderCard
           variant={variant}
           isNewlyReady={isNewlyReady}
@@ -88,6 +88,7 @@ export function VariantTile({
 
       {(variant.render_status === "ready" ||
         session.isActive ||
+        session.justSaved ||
         timelineSession.isWaiting) && (
         <VariantCard
           variant={variant}

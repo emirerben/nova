@@ -400,6 +400,58 @@ def test_edit_intro_layout_happy_path(client: TestClient) -> None:
     )
 
 
+def test_edit_accepts_full_batch_payload(client: TestClient) -> None:
+    """W6: the plan /edit route accepts the SAME batch fields as the generative
+    /edit (text + style_set_id + text_size_px in one request) so the instant
+    editor commits the whole session as one re-render. Asserts every field
+    threads through to regenerate_generative_variant.delay(...)."""
+    user = _user()
+    job = _job([dict(TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    valid_style = style_set_ids(applies_to="generative")[0]
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/edit",
+            json={
+                "text": "  brand new hook  ",
+                "style_set_id": valid_style,
+                "text_size_px": 64,
+            },
+        )
+    assert resp.status_code == 200
+    regen.delay.assert_called_once_with(
+        str(job.id),
+        "song_text",
+        override_text="brand new hook",
+        remove_text=False,
+        style_set_id=valid_style,
+        size_override_px=64,
+        layout_override=None,
+    )
+
+
+def test_edit_accepts_remove_text_batch(client: TestClient) -> None:
+    """W6: remove_text is honored on the plan /edit route (mutually exclusive
+    with text — the instant editor sends one or the other)."""
+    user = _user()
+    job = _job([dict(TEXT_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/song_text/edit",
+            json={"remove_text": True},
+        )
+    assert resp.status_code == 200
+    assert regen.delay.call_args.kwargs["remove_text"] is True
+    assert regen.delay.call_args.kwargs["override_text"] is None
+
+
 def test_edit_intro_layout_rejects_wordy_hook(client: TestClient) -> None:
     user = _user()
     variant = dict(TEXT_VARIANT, intro_text="when they don't even listen to your feelings")

@@ -23,6 +23,7 @@ const songVariant: PlanItemVariant = {
   music_track_id: "t1",
   track_title: "Track One",
   style_set_id: "default",
+  intro_text_size_px: null,
 };
 
 const originalVariant: PlanItemVariant = {
@@ -33,6 +34,7 @@ const originalVariant: PlanItemVariant = {
   music_track_id: null,
   track_title: null,
   style_set_id: "default",
+  intro_text_size_px: null,
 };
 
 function renderEditor(variant: PlanItemVariant, overrides = {}) {

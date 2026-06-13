@@ -9,14 +9,18 @@
  *
  * Defaults mirror generative_overlays.py: effect "karaoke-line" (agent_form
  * default), position "center", #FFFFFF text, #FFD24A highlight, center anchor.
+ *
+ * Surface-agnostic: takes the shared `EditableVariant`, so both the generative
+ * page and the plan flow resolve previews through one copy.
  */
 
-import type { GenerativeStyleSet, GenerativeVariant } from "@/lib/generative-api";
+import type { GenerativeStyleSet } from "@/lib/generative-api";
 import type { IntroOverlayParams } from "@/lib/overlay-layout";
-import type { EditDraft } from "./useVariantEditSession";
+import type { EditableVariant } from "@/lib/variant-editor/types";
+import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 
 export function resolveIntroParams(
-  variant: GenerativeVariant,
+  variant: EditableVariant,
   styleSets: GenerativeStyleSet[],
   draft: EditDraft,
 ): IntroOverlayParams {

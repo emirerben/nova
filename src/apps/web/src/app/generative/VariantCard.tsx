@@ -14,38 +14,28 @@ import { downloadVideo } from "@/lib/download-video";
 import { variantFailureCopy } from "@/lib/variant-failure-copy";
 import { etaLadder, formatElapsed } from "@/components/progress/logic";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { IntroTextPreview } from "./IntroTextPreview";
-import { EditToolbar } from "./EditToolbar";
-import { resolveIntroParams } from "./resolve-intro-params";
-import type { VariantEditSession } from "./useVariantEditSession";
+import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
+import { EditToolbar } from "@/components/variant-editor/EditToolbar";
+import { LayoutPreviewCard } from "@/components/variant-editor/LayoutPreviewCard";
+import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
+import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
+import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import {
   RERENDER_BASELINE_MS,
   type TimelineSession,
 } from "./useTimelineSession";
+
+// Re-exported from the shared module so existing `@/app/generative/VariantCard`
+// importers (and the eligibility test) keep working after the lift to
+// lib/variant-editor/eligibility.ts. Both the generative page and the plan flow
+// import the canonical copy.
+export { isInstantEditEligible };
 
 export const TEXT_MODE_LABEL: Record<string, string> = {
   lyrics: "Lyrics",
   agent_text: "AI text",
   none: "No text",
 };
-
-/** Instant edit needs the text-free base video AND an editable text mode —
- * lyrics variants have neither (no cached base; lyric typography is set-driven).
- * Cluster intros (intro_layout === "cluster") are also excluded: the local DOM
- * preview only models the linear single-block layout, so cluster text edits go
- * through the legacy server-reburn controls (still fast — reuses the base).
- * Sequence intros (intro_mode === "sequence") are excluded too: the text is
- * synced to the edit's audio (a voiceover transcript or an authored rhythm
- * quote — server 422s text edits) and the phrase sequence has no local
- * preview. */
-export function isInstantEditEligible(variant: GenerativeVariant): boolean {
-  return (
-    !!variant.base_video_url &&
-    (variant.text_mode === "agent_text" || variant.text_mode === "none") &&
-    variant.intro_layout !== "cluster" &&
-    variant.intro_mode !== "sequence"
-  );
-}
 
 /**
  * One generative-edit variant: video preview + the re-render controls (edit text,
@@ -96,7 +86,11 @@ export function VariantCard({
   const failed = variant.render_status === "failed";
 
   const instantEligible = !!editSession && isInstantEditEligible(variant);
-  const editActive = !!editSession && editSession.isActive;
+  // Keep the live WYSIWYG preview mounted through the brief post-commit "Saved"
+  // pulse (justSaved) too — without it the card would flash to the burned
+  // output_url for a frame, defeating the instant feel (W5).
+  const editActive =
+    !!editSession && (editSession.isActive || editSession.justSaved);
 
   // Voiceover-synced typographic sequence (D6/D19): text is derived from the
   // transcript, so intro-text / highlight-word edits are locked (server 422s
@@ -205,10 +199,19 @@ export function VariantCard({
             {TEXT_MODE_LABEL[variant.text_mode] ?? variant.text_mode}
             {variant.track_title ? ` · ${variant.track_title}` : " · Original audio"}
           </span>
-          {editSession.isSaving && (
-            <span className="rounded bg-lime-100 px-2 py-0.5 text-xs text-lime-700">
-              Saving…
+          {/* Quiet "Saved" pulse takes precedence over the saving badge: a
+              text edit settles to a brief lime pulse that recedes, never a
+              blocking spinner. The live preview already shows the final look. */}
+          {editSession.justSaved ? (
+            <span className="motion-safe:animate-fade-up rounded bg-lime-50 px-2 py-0.5 text-xs font-medium text-lime-700">
+              Saved
             </span>
+          ) : (
+            editSession.isSaving && (
+              <span className="rounded bg-lime-100 px-2 py-0.5 text-xs text-lime-700">
+                Saving…
+              </span>
+            )
           )}
         </div>
 
@@ -243,6 +246,7 @@ export function VariantCard({
             params={introParams}
             editable={editSession.isEditing}
             onTextChange={editSession.setText}
+            layout={variant.intro_layout === "cluster" ? "cluster" : "linear"}
           />
         </div>
 
@@ -252,11 +256,11 @@ export function VariantCard({
             styleSets={styleSets}
             fallbackSizePx={variant.intro_text_size_px ?? null}
           />
-        ) : (
+        ) : editSession.isSaving ? (
           <p className="mt-3 text-xs text-[#71717a]">
-            Saving your edits — this preview already shows the final look.
+            Applying your edits — this preview already shows the final look.
           </p>
-        )}
+        ) : null}
       </div>
     );
   }
@@ -457,40 +461,52 @@ export function VariantCard({
           </select>
         )}
         {onChangeLayout && variant.text_mode === "agent_text" && (() => {
-          // Post-render layout pick. The editorial word-cluster only works on
-          // short hooks (server enforces 3-6 words; the chip pre-disables with
-          // a hint so the user isn't bounced by a 422). Sequence-synced
-          // variants render Editorial as the active state and bypass the
-          // word-count gate (the server does too) — Classic stays clickable
-          // as the opt-out of sync.
+          // Post-render layout pick, shown as two visual preview cards on a dark
+          // inner tile. The editorial word-cluster only works on short hooks
+          // (server enforces 3-6 words; the card pre-disables with a hint so the
+          // user isn't bounced by a 422). Sequence-synced variants render
+          // Editorial as the active state and bypass the word-count gate (the
+          // server does too) — Classic stays clickable as the opt-out of sync.
           const layout =
             sequenceSynced || variant.intro_layout === "cluster" ? "cluster" : "linear";
           const words = (variant.intro_text ?? "").trim().split(/\s+/).filter(Boolean).length;
           const clusterBlocked = !sequenceSynced && (words < 3 || words > 6);
+          const hookText = variant.intro_text ?? "";
           return (
-            <div className={sizeControlClass} role="group" aria-label="Intro text layout">
-              <button
-                disabled={rendering || layout === "linear"}
-                onClick={() => run(() => onChangeLayout("linear"))}
-                title="Classic centered text"
-                className={`${sizeBtnClass} ${layout === "linear" ? "font-semibold underline" : ""}`}
+            <div className="w-full">
+              <div
+                role="radiogroup"
+                aria-label="Intro text layout"
+                className="flex gap-2"
               >
-                Classic
-              </button>
-              <button
-                disabled={rendering || layout === "cluster" || clusterBlocked}
-                onClick={() => run(() => onChangeLayout("cluster"))}
-                title={
-                  sequenceSynced
-                    ? "Editorial — text synced to this edit"
-                    : clusterBlocked
-                      ? "Editorial layout needs a 3-6 word hook — shorten the text first"
-                      : "Editorial word-cluster — mixed sizes, magazine-style"
-                }
-                className={`${sizeBtnClass} ${layout === "cluster" ? "font-semibold underline" : ""}`}
-              >
-                Editorial
-              </button>
+                <LayoutPreviewCard
+                  kind="classic"
+                  text={hookText}
+                  selected={layout === "linear"}
+                  disabled={rendering || layout === "linear"}
+                  title="Classic centered text"
+                  onSelect={() => run(() => onChangeLayout("linear"))}
+                />
+                <LayoutPreviewCard
+                  kind="editorial"
+                  text={hookText}
+                  selected={layout === "cluster"}
+                  disabled={rendering || layout === "cluster" || clusterBlocked}
+                  title={
+                    sequenceSynced
+                      ? "Editorial — text synced to this edit"
+                      : clusterBlocked
+                        ? "Editorial layout needs a 3-6 word hook — shorten the text first"
+                        : "Editorial word-cluster — mixed sizes, magazine-style"
+                  }
+                  onSelect={() => run(() => onChangeLayout("cluster"))}
+                />
+              </div>
+              {clusterBlocked && layout === "linear" && (
+                <p className="mt-1.5 text-xs text-[#a1a1aa]">
+                  Editorial needs a 3-6 word hook — shorten the text to unlock it.
+                </p>
+              )}
             </div>
           );
         })()}

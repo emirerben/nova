@@ -2,17 +2,21 @@
 
 /**
  * Instant-edit controls for one variant: style chips (rendered in their REAL
- * typeface), a size slider, remove-text toggle, Done/Cancel. Every control
- * mutates the local draft only — ZERO network until "Done" commits the whole
- * session as one /edit request.
+ * typeface over the user's CURRENT draft text), a size slider, remove-text
+ * toggle, Done/Cancel. Every control mutates the local draft only — ZERO
+ * network until "Done" commits the whole session as one /edit request.
+ *
+ * Shared by the generative page and (later lane) the plan flow.
  */
 
+import { useRef } from "react";
 import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
   type GenerativeStyleSet,
 } from "@/lib/generative-api";
-import type { VariantEditSession } from "./useVariantEditSession";
+import StyleChip from "@/components/ui/StyleChip";
+import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 
 export function EditToolbar({
   session,
@@ -26,30 +30,57 @@ export function EditToolbar({
 }) {
   const { draft } = session;
   const sliderPx = draft.sizePx ?? fallbackSizePx ?? 60;
+  // The chip sample is the user's live hook text (so they preview their OWN
+  // copy in each typeface), trimmed; StyleChip falls back to the style label
+  // when empty. Removed-text drafts have nothing to preview → label fallback.
+  const sample = draft.removed ? "" : draft.text;
+
+  const chipRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  // Arrow-key roving focus across the radiogroup (W7 a11y).
+  const onChipKeyDown = (e: React.KeyboardEvent, index: number) => {
+    if (styleSets.length === 0) return;
+    let next: number | null = null;
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (index + 1) % styleSets.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
+      next = (index - 1 + styleSets.length) % styleSets.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = styleSets.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    const target = chipRefs.current[next];
+    target?.focus();
+    session.setStyle(styleSets[next].id);
+  };
 
   return (
     <div className="mt-3 space-y-3">
       {styleSets.length > 0 && (
-        <div className="flex flex-wrap gap-1.5" role="listbox" aria-label="Text style">
-          {styleSets.map((s) => {
+        <div
+          role="radiogroup"
+          aria-label="Text style"
+          className="flex flex-wrap gap-2"
+        >
+          {styleSets.map((s, i) => {
             const selected = (draft.styleSetId ?? "") === s.id;
-            const chipFamily = s.intro?.css_family ?? s.css_family ?? undefined;
-            const chipWeight = s.intro?.font_weight ?? s.font_weight ?? undefined;
             return (
-              <button
+              <div
                 key={s.id}
-                role="option"
-                aria-selected={selected}
-                onClick={() => session.setStyle(s.id)}
-                className={
-                  selected
-                    ? "rounded-full border border-[#0c0c0e] bg-[#0c0c0e] px-3 py-1 text-xs text-white"
-                    : "rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs text-[#3f3f46] hover:border-zinc-400"
-                }
-                style={{ fontFamily: chipFamily, fontWeight: chipWeight }}
+                ref={(el) => {
+                  // StyleChip is the focusable radio; reach it through the wrapper.
+                  chipRefs.current[i] =
+                    (el?.querySelector("button") as HTMLButtonElement | null) ?? null;
+                }}
+                onKeyDown={(e) => onChipKeyDown(e, i)}
               >
-                {s.label}
-              </button>
+                <StyleChip
+                  styleSet={s}
+                  selected={selected}
+                  sampleText={sample}
+                  darkTile
+                  onSelect={() => session.setStyle(s.id)}
+                />
+              </div>
             );
           })}
         </div>

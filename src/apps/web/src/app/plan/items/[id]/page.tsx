@@ -47,6 +47,14 @@ import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
 import { useTimelineSession } from "../../../generative/useTimelineSession";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
+import {
+  useVariantEditSession,
+  type VariantEditSession,
+} from "@/lib/variant-editor/useVariantEditSession";
+import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
+import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
+import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
+import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 
 // How long a dispatched render may take to register its Job before we admit
 // failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
@@ -631,117 +639,302 @@ export default function PlanItemPage() {
         </div>
 
         {/* ── Results: focused player + filmstrip + editor ── */}
-        {showResults && (
-          <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
-            {/* Hero */}
-            <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
-              <Hero variant={focused} generating={isGenerating} />
-              {focused?.output_url && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    downloadVideo(
-                      focused.output_url!,
-                      `nova-${slugify(item.theme) || itemId.slice(0, 8)}.mp4`,
-                    )
-                  }
-                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-200 px-5 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400"
-                >
-                  Download
-                </button>
-              )}
-            </div>
-            {/* Filmstrip + editor */}
-            <div className="min-w-0 flex-1 space-y-5">
-              {variants.length > 0 && (
-                <PlanFilmstrip
-                  variants={variants}
-                  focusedId={focusedVariantId}
-                  onFocus={setFocusedVariantId}
-                />
-              )}
-              {focused && focusedEditable ? (
-                <FocusedVariantEditor
-                  key={focused.variant_id}
-                  itemId={itemId}
-                  variant={focused}
-                  tracks={tracks}
-                  styleSets={styleSets}
-                  refetch={refetch}
-                  markVariantRendering={markVariantRendering}
-                  onSwap={(trackId) =>
-                    runEdit(focused.variant_id, focused.output_url, () =>
-                      swapPlanItemSong(itemId, focused.variant_id, trackId),
-                    )
-                  }
-                  onRetext={(text) =>
-                    runEdit(focused.variant_id, focused.output_url, () =>
-                      retextPlanItem(itemId, focused.variant_id, { text }),
-                    )
-                  }
-                  onRemoveText={() =>
-                    runEdit(focused.variant_id, focused.output_url, () =>
-                      retextPlanItem(itemId, focused.variant_id, { remove: true }),
-                    )
-                  }
-                  onChangeStyle={(styleSetId) =>
-                    runEdit(focused.variant_id, focused.output_url, () =>
-                      changePlanItemStyle(itemId, focused.variant_id, styleSetId),
-                    )
-                  }
-                  onResize={(px) =>
-                    runEdit(focused.variant_id, focused.output_url, () =>
-                      setPlanItemIntroSize(itemId, focused.variant_id, px),
-                    )
-                  }
-                  onChangeLayout={(layout) =>
-                    runEdit(focused.variant_id, focused.output_url, () =>
-                      editPlanItemVariant(itemId, focused.variant_id, {
-                        intro_layout: layout,
-                      }),
-                    )
-                  }
-                />
-              ) : (
-                isGenerating && (
+        {/* FocusedResults owns the edit session and renders BOTH columns so an
+            active instant edit replaces the LEFT hero with the live base-video +
+            overlay preview (one video the user looks at) and the RIGHT column
+            shows only the toolbar. Keyed by variant_id so switching the focused
+            variant remounts → fresh session (no stale draft over the new video). */}
+        {showResults &&
+          (focused && focusedEditable ? (
+            <FocusedResults
+              key={focused.variant_id}
+              itemId={itemId}
+              item={item}
+              variant={focused}
+              variants={variants}
+              focusedVariantId={focusedVariantId}
+              onFocus={setFocusedVariantId}
+              tracks={tracks}
+              styleSets={styleSets}
+              isGenerating={isGenerating}
+              refetch={refetch}
+              markVariantRendering={markVariantRendering}
+              onSwap={(trackId) =>
+                runEdit(focused.variant_id, focused.output_url, () =>
+                  swapPlanItemSong(itemId, focused.variant_id, trackId),
+                )
+              }
+              onRetext={(text) =>
+                runEdit(focused.variant_id, focused.output_url, () =>
+                  retextPlanItem(itemId, focused.variant_id, { text }),
+                )
+              }
+              onRemoveText={() =>
+                runEdit(focused.variant_id, focused.output_url, () =>
+                  retextPlanItem(itemId, focused.variant_id, { remove: true }),
+                )
+              }
+              onChangeStyle={(styleSetId) =>
+                runEdit(focused.variant_id, focused.output_url, () =>
+                  changePlanItemStyle(itemId, focused.variant_id, styleSetId),
+                )
+              }
+              onResize={(px) =>
+                runEdit(focused.variant_id, focused.output_url, () =>
+                  setPlanItemIntroSize(itemId, focused.variant_id, px),
+                )
+              }
+              onChangeLayout={(layout) =>
+                runEdit(focused.variant_id, focused.output_url, () =>
+                  editPlanItemVariant(itemId, focused.variant_id, {
+                    intro_layout: layout,
+                  }),
+                )
+              }
+            />
+          ) : (
+            <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
+              <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
+                <Hero variant={focused} generating={isGenerating} />
+              </div>
+              <div className="min-w-0 flex-1 space-y-5">
+                {variants.length > 0 && (
+                  <PlanFilmstrip
+                    variants={variants}
+                    focusedId={focusedVariantId}
+                    onFocus={setFocusedVariantId}
+                  />
+                )}
+                {isGenerating && (
                   <p className="text-sm text-[#71717a]">
                     Edit controls unlock as soon as a variant finishes rendering.
                   </p>
-                )
-              )}
-              {item.current_job_id && !isGenerating && (
-                <div className="border-t border-zinc-200 pt-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
-                    How&apos;s this one?
-                  </p>
-                  <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
-                </div>
-              )}
+                )}
+                {item.current_job_id && !isGenerating && (
+                  <div className="border-t border-zinc-200 pt-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
+                      How&apos;s this one?
+                    </p>
+                    <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        )}
+          ))}
       </div>
     </LightShell>
   );
 }
 
 /**
- * The focused variant's edit panel + clip-timeline editor sheet.
+ * Owns the focused variant's edit session and lays out BOTH results columns.
+ *
+ * DEFERRED-BURN model: for an instant-edit-eligible variant the session is the
+ * draft store. Caption / Text size / Layout / Style controls (the normal
+ * PlanVariantEditor sections, un-hidden) mutate that draft with ZERO network;
+ * the LEFT hero is the text-free base video + a live IntroTextPreview overlay
+ * that re-renders from the draft. Nothing re-renders while editing. The single
+ * FFmpeg bake fires only when the user clicks Download/Share — one batched
+ * /edit, a brief "Preparing your video…", then the file downloads.
+ *
+ * INELIGIBLE variants (sequence-synced / lyrics / cluster-without-base / no
+ * base_video_url) keep the legacy behavior: the burned output_url in the hero +
+ * PlanVariantEditor controls that re-render server-side per field.
+ *
+ * Keyed by variant_id in the parent so the `useVariantEditSession` here (plus
+ * its cached timeline GET) resets when the user focuses a different variant —
+ * never showing variant A's draft text over variant B's video. Do NOT lift the
+ * session above this key boundary.
+ */
+function FocusedResults({
+  itemId,
+  item,
+  variant,
+  variants,
+  focusedVariantId,
+  onFocus,
+  tracks,
+  styleSets,
+  isGenerating,
+  refetch,
+  markVariantRendering,
+  onSwap,
+  onRetext,
+  onRemoveText,
+  onChangeStyle,
+  onResize,
+  onChangeLayout,
+}: {
+  itemId: string;
+  item: PlanItem;
+  variant: PlanItemVariant;
+  variants: PlanItemVariant[];
+  focusedVariantId: string | null;
+  onFocus: (id: string) => void;
+  tracks: MusicTrackSummary[];
+  styleSets: GenerativeStyleSet[];
+  isGenerating: boolean;
+  refetch: () => void;
+  markVariantRendering: (variantId: string, priorOutputUrl: string | null) => void;
+  onSwap: (trackId: string) => Promise<void>;
+  onRetext: (text: string) => Promise<void>;
+  onRemoveText: () => Promise<void>;
+  onChangeStyle: (styleSetId: string) => Promise<void>;
+  onResize: (textSizePx: number) => Promise<void>;
+  onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
+}) {
+  // ── Deferred-burn session — eligible variants only ──────────────────────────
+  // The session holds the draft. Its onCommit IS the bake: one batched /edit per
+  // Download (the same endpoint + render path the legacy controls used per
+  // field). Ineligible variants ignore the session and re-render server-side.
+  const editSession = useVariantEditSession(variant, async (payload) => {
+    await editPlanItemVariant(itemId, variant.variant_id, payload);
+    refetch();
+  });
+  const instantEligible = isInstantEditEligible(variant);
+
+  // The session is always "open" for eligible variants (no enter/exit gate):
+  // controls edit the draft live. Seed the baseline + editing flag once so the
+  // beforeunload guard arms and the live overlay shows the draft.
+  useEffect(() => {
+    if (instantEligible && !editSession.isEditing) editSession.enterEdit();
+    // enterEdit is stable per-variant (keyed remount); run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instantEligible]);
+
+  // The page's job poller stops at terminal status; the Download bake flips the
+  // variant to "rendering" on the NEXT poll. Keep refetching while the session
+  // is saving so the fresh output settles without a tab refocus.
+  useEffect(() => {
+    if (!editSession.isSaving) return;
+    const t = setInterval(refetch, 2000);
+    return () => clearInterval(t);
+  }, [editSession.isSaving, refetch]);
+
+  // While baking, swap to the just-landed output: when isSaving clears and the
+  // variant carries a fresh output_url, fire the download. A ref so the effect
+  // only triggers the download once per bake.
+  const pendingDownloadRef = useRef(false);
+  const downloadName = `nova-${slugify(item.theme) || itemId.slice(0, 8)}.mp4`;
+
+  useEffect(() => {
+    if (!pendingDownloadRef.current) return;
+    // The bake is done once the session settles (isSaving false) and a ready
+    // output is present. justSaved fires on settle for a text-only render too.
+    if (editSession.isSaving) return;
+    if (variant.render_status === "ready" && variant.output_url) {
+      pendingDownloadRef.current = false;
+      downloadVideo(variant.output_url, downloadName);
+    } else if (variant.render_status === "failed") {
+      pendingDownloadRef.current = false;
+    }
+  }, [editSession.isSaving, variant.render_status, variant.output_url, downloadName]);
+
+  const baking = instantEligible && (editSession.isSaving || pendingDownloadRef.current);
+
+  // Download = the bake. Unsaved overlay edits → commit (one batched render),
+  // poll until ready, then download the fresh output. No edits → download the
+  // current output immediately.
+  const handleDownload = useCallback(() => {
+    if (!variant.output_url && !editSession.isDirty) return;
+    if (instantEligible && editSession.isDirty) {
+      pendingDownloadRef.current = true;
+      void editSession.commit();
+      return;
+    }
+    if (variant.output_url) downloadVideo(variant.output_url, downloadName);
+  }, [variant.output_url, editSession, instantEligible, downloadName]);
+
+  return (
+    <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
+      {/* LEFT: the single hero the user looks at. For an eligible variant this is
+          the text-free base video + the live overlay (updates instantly as the
+          RIGHT controls change the draft); otherwise the burned-output Hero. */}
+      <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
+        {instantEligible ? (
+          <LiveEditPreview variant={variant} styleSets={styleSets} session={editSession} />
+        ) : (
+          <Hero variant={variant} generating={isGenerating} />
+        )}
+        {(instantEligible ? variant.base_video_url : variant.output_url) && (
+          <>
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={baking}
+              className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-200 px-5 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {baking ? "Preparing your video…" : "Download"}
+            </button>
+            {instantEligible && editSession.isDirty && !baking && (
+              <p className="mt-2 text-center text-xs text-[#a1a1aa]">
+                Unsaved — downloads will include your changes
+              </p>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* RIGHT: filmstrip + the normal full controls. For an eligible variant the
+          Caption/Size/Layout/Style controls drive the SESSION DRAFT (no render);
+          Song + Clips still re-render server-side. */}
+      <div className="min-w-0 flex-1 space-y-5">
+        {variants.length > 0 && (
+          <PlanFilmstrip variants={variants} focusedId={focusedVariantId} onFocus={onFocus} />
+        )}
+        <FocusedVariantControls
+          itemId={itemId}
+          variant={variant}
+          tracks={tracks}
+          styleSets={styleSets}
+          session={editSession}
+          instantEligible={instantEligible}
+          baking={baking}
+          refetch={refetch}
+          markVariantRendering={markVariantRendering}
+          onSwap={onSwap}
+          onRetext={onRetext}
+          onRemoveText={onRemoveText}
+          onChangeStyle={onChangeStyle}
+          onResize={onResize}
+          onChangeLayout={onChangeLayout}
+        />
+        {item.current_job_id && !isGenerating && (
+          <div className="border-t border-zinc-200 pt-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
+              How&apos;s this one?
+            </p>
+            <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Controls-only column for the focused variant. Receives the edit session as a
+ * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
+ *
+ * For an ELIGIBLE variant the Caption / Text size / Layout / Style controls are
+ * re-pointed at the session draft (no render); the variant the editor reads is
+ * overlaid with the draft so the controls reflect the live selection. Song +
+ * Clips keep their server paths (a real re-render). An INELIGIBLE variant gets
+ * the original server handlers verbatim (per-field re-render, today's behavior).
  *
  * Wraps PlanVariantEditor with a timeline session against the plan-item mirror
  * endpoints (`/plan-items/{itemId}/variants/{vid}/timeline`, via the /api/plan
- * proxy). Keyed by variant_id in the parent so the session's cached GET resets
- * when the user focuses a different variant.
- *
- * A committed timeline edit re-renders server-side; we flip the variant to
- * "rendering" through the same markVariantRendering path retext uses, so the
- * page keeps polling until the new output_url lands.
+ * proxy). A committed timeline edit re-renders server-side; we flip the variant
+ * to "rendering" through markVariantRendering so the page keeps polling.
  */
-function FocusedVariantEditor({
+function FocusedVariantControls({
   itemId,
   variant,
   tracks,
   styleSets,
+  session,
+  instantEligible,
+  baking,
   refetch,
   markVariantRendering,
   onSwap,
@@ -755,6 +948,9 @@ function FocusedVariantEditor({
   variant: PlanItemVariant;
   tracks: MusicTrackSummary[];
   styleSets: GenerativeStyleSet[];
+  session: VariantEditSession;
+  instantEligible: boolean;
+  baking: boolean;
   refetch: () => void;
   markVariantRendering: (variantId: string, priorOutputUrl: string | null) => void;
   onSwap: (trackId: string) => Promise<void>;
@@ -765,18 +961,47 @@ function FocusedVariantEditor({
   onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
+
+  // For an eligible variant, re-point the text/size/layout/style handlers at the
+  // session draft (synchronous → resolved promise so PlanVariantEditor's `run()`
+  // busy-wrapper completes immediately). Song + Clips stay on the server paths.
+  const editorVariant =
+    instantEligible && session.isEditing ? variantWithDraft(variant, session.draft) : variant;
+  const draftHandlers = instantEligible
+    ? {
+        onRetext: async (text: string) => {
+          session.setText(text);
+        },
+        onRemoveText: async () => {
+          session.setRemoved(true);
+        },
+        onChangeStyle: async (styleSetId: string) => {
+          session.setStyle(styleSetId);
+        },
+        onResize: async (px: number) => {
+          session.setSize(px);
+        },
+        onChangeLayout: async (layout: "linear" | "cluster") => {
+          session.setLayout(layout);
+        },
+      }
+    : { onRetext, onRemoveText, onChangeStyle, onResize, onChangeLayout };
+
   return (
     <>
       <PlanVariantEditor
-        variant={variant}
+        // Eligible: the controls reflect the live draft; ineligible: the server
+        // truth. While baking, render_status flips to "rendering" via the saving
+        // overlay below — pass it through so controls disable during the bake.
+        variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
         tracks={tracks}
         styleSets={styleSets}
         onSwap={onSwap}
-        onRetext={onRetext}
-        onRemoveText={onRemoveText}
-        onChangeStyle={onChangeStyle}
-        onResize={onResize}
-        onChangeLayout={onChangeLayout}
+        onRetext={draftHandlers.onRetext}
+        onRemoveText={draftHandlers.onRemoveText}
+        onChangeStyle={draftHandlers.onChangeStyle}
+        onResize={draftHandlers.onResize}
+        onChangeLayout={draftHandlers.onChangeLayout}
         onEditClips={timeline.openEditor}
         showClipEditor={timeline.entryVisible}
         clipSlotCount={timeline.slotCount}
@@ -797,6 +1022,91 @@ function FocusedVariantEditor({
         />
       )}
     </>
+  );
+}
+
+/**
+ * Overlay the live edit draft onto the variant so PlanVariantEditor's controls
+ * reflect the in-progress selection (the user's chosen caption / size / layout /
+ * style) rather than the last-baked server values. Only the fields the editor
+ * reads are touched; everything else (song, clips, render_status) passes through.
+ */
+function variantWithDraft(variant: PlanItemVariant, draft: EditDraft): PlanItemVariant {
+  return {
+    ...variant,
+    intro_text: draft.removed ? "" : draft.text,
+    text_mode: draft.removed ? "none" : variant.text_mode === "none" ? "agent_text" : variant.text_mode,
+    style_set_id: draft.styleSetId ?? variant.style_set_id,
+    intro_text_size_px: draft.sizePx ?? variant.intro_text_size_px,
+    // A user-driven size shows as the explicit value (no "· auto" suffix).
+    intro_size_source: draft.sizePx != null ? "user" : variant.intro_size_source,
+    intro_layout: draft.layout ?? variant.intro_layout,
+  };
+}
+
+/**
+ * The LEFT-hero live preview for an eligible plan-item variant: the text-free
+ * base video plays under a live DOM intro overlay; every control change (from
+ * the RIGHT column) updates this preview at 0 network via the session draft.
+ * Occupies the exact hero frame the burned-output Hero does. Light editorial
+ * canvas (lime accent, cream/white tiles — never amber). The overlay is
+ * non-editable: the user edits the caption via the RIGHT Caption control, not by
+ * typing on the video.
+ */
+function LiveEditPreview({
+  variant,
+  styleSets,
+  session,
+}: {
+  variant: PlanItemVariant;
+  styleSets: GenerativeStyleSet[];
+  session: VariantEditSession;
+}) {
+  const introParams = resolveIntroParams(variant, styleSets, session.draft);
+
+  // Pin the base-video src for the session: every poll re-signs the URL (new
+  // query string), and swapping <video src> restarts playback. Fall forward to
+  // the freshest signed URL only on a media error (expired sig mid-session).
+  const baseSrcRef = useRef<string | null>(null);
+  const [baseSrcNonce, setBaseSrcNonce] = useState(0);
+  if (baseSrcRef.current === null && variant.base_video_url) {
+    baseSrcRef.current = variant.base_video_url;
+  }
+  void baseSrcNonce; // re-render trigger only
+
+  // Live layout follows the draft (so toggling Classic/Editorial re-lays the
+  // overlay instantly), falling back to the variant's persisted layout.
+  const previewLayout =
+    (session.draft.layout ?? variant.intro_layout) === "cluster" ? "cluster" : "linear";
+
+  return (
+    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
+      {baseSrcRef.current ? (
+        <video
+          src={baseSrcRef.current}
+          controls
+          loop
+          autoPlay
+          muted
+          playsInline
+          className="h-full w-full object-contain"
+          onError={() => {
+            if (
+              variant.base_video_url &&
+              baseSrcRef.current !== variant.base_video_url
+            ) {
+              baseSrcRef.current = variant.base_video_url;
+              setBaseSrcNonce((n) => n + 1);
+            }
+          }}
+        />
+      ) : (
+        <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
+          No preview
+        </div>
+      )}
+      <IntroTextPreview params={introParams} editable={false} layout={previewLayout} />
+    </div>
   );
 }
 

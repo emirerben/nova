@@ -11,7 +11,7 @@ import {
   buildEditPayload,
   useVariantEditSession,
   type EditDraft,
-} from "@/app/generative/useVariantEditSession";
+} from "@/lib/variant-editor/useVariantEditSession";
 import type { EditVariantPayload, GenerativeVariant } from "@/lib/generative-api";
 
 function makeVariant(over: Partial<GenerativeVariant> = {}): GenerativeVariant {
@@ -159,6 +159,56 @@ describe("useVariantEditSession", () => {
     expect(result.current.isSaving).toBe(false);
     expect(result.current.isActive).toBe(false);
     expect(onCommit).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a brief 'Saved' state (not a blocking spinner) when a text edit settles, then recedes", async () => {
+    jest.useFakeTimers();
+    try {
+      const onCommit = jest.fn(async () => {});
+      const { result, rerender } = renderHook(
+        ({ v }) => useVariantEditSession(v, onCommit),
+        { initialProps: { v: makeVariant() } },
+      );
+
+      act(() => result.current.enterEdit());
+      act(() => result.current.setText("new text"));
+      await act(async () => result.current.commit());
+
+      // The preview stays up while the reburn runs — no blocking spinner state
+      // beyond the lightweight isSaving flag.
+      rerender({ v: makeVariant({ render_status: "rendering" }) });
+      expect(result.current.justSaved).toBe(false);
+
+      // On settle: isSaving drops to false (non-blocking) and the quiet "Saved"
+      // pulse engages — the live WYSIWYG preview is the result, not a flash to output.
+      rerender({ v: makeVariant({ render_status: "ready", intro_text: "new text" }) });
+      expect(result.current.isSaving).toBe(false);
+      expect(result.current.justSaved).toBe(true);
+
+      // The pulse recedes after a short beat (no lingering blocking state).
+      act(() => {
+        jest.advanceTimersByTime(2000);
+      });
+      expect(result.current.justSaved).toBe(false);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does NOT pulse 'Saved' when a render fails (failure path is preserved)", async () => {
+    const onCommit = jest.fn(async () => {});
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("doomed"));
+    await act(async () => result.current.commit());
+    rerender({ v: makeVariant({ render_status: "failed", error_class: "render_error" }) });
+
+    expect(result.current.justSaved).toBe(false);
+    expect(result.current.isActive).toBe(false);
   });
 
   it("coalesces edits made while a render is in flight into ONE follow-up", async () => {
