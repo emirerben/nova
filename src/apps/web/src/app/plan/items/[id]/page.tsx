@@ -89,7 +89,7 @@ export default function PlanItemPage() {
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
   // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
-  const pendingEdits = useRef<Map<string, { priorOutputUrl: string | null }>>(new Map());
+  const pendingEdits = useRef<Map<string, { priorFinishedAt: string | null; sawRendering: boolean }>>(new Map());
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -188,10 +188,29 @@ export default function PlanItemPage() {
       return rawVariants.map((v) => {
         const pending = pendingEdits.current.get(v.variant_id);
         if (!pending) return v;
-        if (v.output_url !== pending.priorOutputUrl) {
+        // Server confirms the re-render is running — record that we witnessed it.
+        if (v.render_status === "rendering") {
+          pending.sawRendering = true;
+          return v;
+        }
+        // Decide whether this "ready" / "failed" is the result of OUR edit.
+        // A fresh render is detected when:
+        //   (a) we already saw the variant pass through "rendering", OR
+        //   (b) the server's render_finished_at timestamp advanced past what we
+        //       captured at edit-submission time.
+        // Without this guard, the first poll after submission can still return
+        // the PRE-edit "ready" (the Celery task hasn't fired yet) and clear the
+        // pin too early — leaving controls re-enabled while the render hasn't
+        // actually run.  Mirrors the commitMarkerRef pattern in useVariantEditSession.
+        const isFreshRender =
+          pending.sawRendering ||
+          (v.render_finished_at ?? null) !== pending.priorFinishedAt;
+        if ((v.render_status === "ready" || v.render_status === "failed") && isFreshRender) {
           pendingEdits.current.delete(v.variant_id);
           return v;
         }
+        // Pre-edit ready race window: keep forcing "rendering" so the poll
+        // continues and controls stay disabled until the real render completes.
         return { ...v, render_status: "rendering" as const };
       });
     },
@@ -210,19 +229,19 @@ export default function PlanItemPage() {
   }, [variants, focusedVariantId]);
 
   const markVariantRendering = useCallback(
-    (variantId: string, priorOutputUrl: string | null) => {
-      pendingEdits.current.set(variantId, { priorOutputUrl });
+    (variantId: string, priorFinishedAt: string | null) => {
+      pendingEdits.current.set(variantId, { priorFinishedAt, sawRendering: false });
       refetch();
     },
     [refetch],
   );
 
   const runEdit = useCallback(
-    async (variantId: string, prevUrl: string | null, action: () => Promise<unknown>) => {
+    async (variantId: string, prevFinishedAt: string | null, action: () => Promise<unknown>) => {
       setError(null);
       try {
         await action();
-        markVariantRendering(variantId, prevUrl);
+        markVariantRendering(variantId, prevFinishedAt);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to update variant");
         refetch();
@@ -660,32 +679,32 @@ export default function PlanItemPage() {
               refetch={refetch}
               markVariantRendering={markVariantRendering}
               onSwap={(trackId) =>
-                runEdit(focused.variant_id, focused.output_url, () =>
+                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
                   swapPlanItemSong(itemId, focused.variant_id, trackId),
                 )
               }
               onRetext={(text) =>
-                runEdit(focused.variant_id, focused.output_url, () =>
+                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
                   retextPlanItem(itemId, focused.variant_id, { text }),
                 )
               }
               onRemoveText={() =>
-                runEdit(focused.variant_id, focused.output_url, () =>
+                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
                   retextPlanItem(itemId, focused.variant_id, { remove: true }),
                 )
               }
               onChangeStyle={(styleSetId) =>
-                runEdit(focused.variant_id, focused.output_url, () =>
+                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
                   changePlanItemStyle(itemId, focused.variant_id, styleSetId),
                 )
               }
               onResize={(px) =>
-                runEdit(focused.variant_id, focused.output_url, () =>
+                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
                   setPlanItemIntroSize(itemId, focused.variant_id, px),
                 )
               }
               onChangeLayout={(layout) =>
-                runEdit(focused.variant_id, focused.output_url, () =>
+                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
                   editPlanItemVariant(itemId, focused.variant_id, {
                     intro_layout: layout,
                   }),
@@ -775,7 +794,7 @@ function FocusedResults({
   styleSets: GenerativeStyleSet[];
   isGenerating: boolean;
   refetch: () => void;
-  markVariantRendering: (variantId: string, priorOutputUrl: string | null) => void;
+  markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
   onSwap: (trackId: string) => Promise<void>;
   onRetext: (text: string) => Promise<void>;
   onRemoveText: () => Promise<void>;
@@ -952,7 +971,7 @@ function FocusedVariantControls({
   instantEligible: boolean;
   baking: boolean;
   refetch: () => void;
-  markVariantRendering: (variantId: string, priorOutputUrl: string | null) => void;
+  markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
   onSwap: (trackId: string) => Promise<void>;
   onRetext: (text: string) => Promise<void>;
   onRemoveText: () => Promise<void>;
@@ -1016,8 +1035,11 @@ function FocusedVariantControls({
           onRenderEnqueued={() => {
             // Close the sheet + refetch (session bookkeeping), then flip the
             // variant to "rendering" exactly like a retext edit does.
+            // Key off render_finished_at (not output_url) so the pin clears
+            // reliably when the re-render completes — the clip re-render holds
+            // the stored output_url stable, which used to strand the pin forever.
             timeline.onRenderEnqueued();
-            markVariantRendering(variant.variant_id, variant.output_url);
+            markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
           }}
         />
       )}
