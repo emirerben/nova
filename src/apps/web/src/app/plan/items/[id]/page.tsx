@@ -189,6 +189,10 @@ export default function PlanItemPage() {
         const pending = pendingEdits.current.get(v.variant_id);
         if (!pending) return v;
         // Server confirms the re-render is running — record that we witnessed it.
+        // NOTE: mutating the ref object inside useMemo is intentional. The Map
+        // lives in a useRef (not reactive state) so this doesn't trigger a new
+        // render, and the mutation is idempotent (false → true only), making it
+        // safe even if React replays the memo under Concurrent Mode.
         if (v.render_status === "rendering") {
           pending.sawRendering = true;
           return v;
@@ -211,6 +215,9 @@ export default function PlanItemPage() {
         }
         // Pre-edit ready race window: keep forcing "rendering" so the poll
         // continues and controls stay disabled until the real render completes.
+        // Safety valve: usePolledJobStatus has a 30-minute hard ceiling after
+        // which the interval stops regardless of terminal state, so a stuck
+        // pending entry is bounded and cannot spin the poll indefinitely.
         return { ...v, render_status: "rendering" as const };
       });
     },
@@ -230,7 +237,17 @@ export default function PlanItemPage() {
 
   const markVariantRendering = useCallback(
     (variantId: string, priorFinishedAt: string | null) => {
-      pendingEdits.current.set(variantId, { priorFinishedAt, sawRendering: false });
+      // Preserve sawRendering from a prior in-flight edit: if the user opens
+      // the clip editor a second time while the first render is still running,
+      // resetting sawRendering to false could trap the pin if the first render
+      // already set it (the second edit hasn't fired yet so its "rendering"
+      // poll hasn't been seen). Keep the existing flag and only update the
+      // timestamp anchor.
+      const existing = pendingEdits.current.get(variantId);
+      pendingEdits.current.set(variantId, {
+        priorFinishedAt,
+        sawRendering: existing?.sawRendering ?? false,
+      });
       refetch();
     },
     [refetch],
