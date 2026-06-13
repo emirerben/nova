@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.102.1] — 2026-06-13
+
+### Fixed
+- **Clip-timeline edit locks all controls and doesn't auto-refresh.** After trimming or extending a clip via "Edit clips", every other control on that variant (style, layout, caption, song, text size) became permanently disabled — a manual page refresh was required to recover. Root cause: the optimistic "pending edit" pin used `output_url` string equality to detect completion, but clip re-renders hold the signed URL stable across the render lifecycle, so the pin never cleared. Replaced the URL-equality signal with the `render_finished_at` + `sawRendering` fingerprint already used in `useVariantEditSession` — the pin now clears as soon as the server reports a genuinely-new render (advanced timestamp or observed "rendering" state), so controls re-enable and the hero swaps automatically the moment the re-render finishes.
+
 ## [0.4.102.0] — 2026-06-13
 
 ### Added
