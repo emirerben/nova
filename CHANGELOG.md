@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.105.0] — 2026-06-13
+
+### Added
+- **Edits-first onboarding — make your first edit in ~90 seconds.** New users now see an explicit "Got footage?" fork at the front door of Nova instead of landing immediately in a persona interview. Choosing the footage path prompts for a brief topic + intent (both skippable), then a camera-roll clip picker (≤10 clips, mobile-first `accept="video/*"`), and kicks off a generative edit using the existing engine — first variant ready in ~90 s. A pick-your-take gallery (3-up on desktop, swipe carousel on mobile <640 px) frames the output, with per-variant Download / Web Share API and a re-roll / swap-clips loop for weak first takes. Once a variant is chosen the onboarding clips are automatically carried as the new plan's seed pool (no re-upload) and the light context prefills the persona interview — the 30-day content plan becomes a clearly separate second act, not the mandatory first step.
+  - **New onboarding state machine.** `resolvePlanMode` in `plan/_lib/route.ts` now emits five new mode values (`setup:fork`, `setup:edit-context`, `setup:edit-upload`, `setup:edit-generating`, `setup:edit-payoff`) driven by new keys on `Persona.questionnaire` JSONB (`content_mode`, `onboarding_topic`, `onboarding_intent`, `onboarding_edit_job_id`, `onboarding_clip_paths`, `onboarding_payoff_done`). No Alembic migration — new keys inside the existing column.
+  - **`ForkScreen`, `EditContextStep`, `EditUploadStep`, `EditPayoff` components.** Four new onboarding screens under `app/plan/_components/onboarding/`. All four reuse the light editorial surface (cream/ink/lime/Playfair) and pass `tone="light"` to the four dark-defaulting progress components (`ProgressTheater`, `PayoffField`, `VariantCard`, `VariantRenderCard`). `EditUploadStep` drives uploads via `uploadGenerativeClip` (FormData → `music-jobs/upload-slot`), not the plan signed-URL flow.
+  - **Context-injection exposed on `POST /generative-jobs`.** Added optional `topic` + `intent` fields to `CreateGenerativeJobRequest`; passed as `item_theme`/`item_idea` into the pre-existing `build_generative_job` context-injection channel so the intro writer receives the user's stated theme.
+  - **`POST /personas/onboarding-fork` endpoint.** Race-safe get-or-create persona row (reuses the `IntegrityError` re-fetch pattern), read-modify-write merge into `questionnaire` (never clobbers existing `tiktok_handle`/`interview_turns`), seeds a synthetic answered first turn so the plan-act chat resumes at the next question without stalling.
+  - **Server-side seed-pool carry in `create_plan`.** When a plan is created post-onboarding, `create_plan` reads `onboarding_clip_paths` off the persona questionnaire, filters to `generative-jobs/*/sources/` (durable, lifecycle-exempt), and assigns `ContentPlan.seed_clip_paths` directly — bypassing the public `attach_seed_clips` endpoint whose prefix validator would 422-reject the durable path.
+  - **Fresh path unchanged.** Users who pick "starting fresh" remain on the existing persona interview → plan flow; every pre-existing `resolvePlanMode` branch is unchanged, and the new branches only fire when `content_mode` is set by the fork endpoint.
+
+HEAD
 ## [0.4.104.0] — 2026-06-13
 
 ### Added
@@ -20,6 +32,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Clip-timeline edit locks all controls and doesn't auto-refresh.** After trimming or extending a clip via "Edit clips", every other control on that variant (style, layout, caption, song, text size) became permanently disabled — a manual page refresh was required to recover. Root cause: the optimistic "pending edit" pin used `output_url` string equality to detect completion, but clip re-renders hold the signed URL stable across the render lifecycle, so the pin never cleared. Replaced the URL-equality signal with the `render_finished_at` + `sawRendering` fingerprint already used in `useVariantEditSession` — the pin now clears as soon as the server reports a genuinely-new render (advanced timestamp or observed "releasing" state), so controls re-enable and the hero swaps automatically the moment the re-render finishes.
+
 
 ## [0.4.102.0] — 2026-06-13
 
