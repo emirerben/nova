@@ -16,6 +16,7 @@ celery_app = Celery(
         "app.tasks.drive_import",
         "app.tasks.music_orchestrate",
         "app.tasks.lyrics_preview_task",
+        "app.tasks.lyrics_backfill",
         "app.tasks.auto_music_orchestrate",
         "app.tasks.generative_build",
         "app.tasks.persona_build",
@@ -95,7 +96,7 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
     import threading  # noqa: PLC0415
 
     from app.tasks.build_task_reaper import reap_stale_build_tasks  # noqa: PLC0415
-    from app.tasks.reaper import reap_orphans  # noqa: PLC0415
+    from app.tasks.reaper import reap_orphans, reconcile_stuck_variants  # noqa: PLC0415
 
     def _run():
         try:
@@ -106,6 +107,16 @@ def _reap_orphans_on_startup(sender, **kwargs):  # pragma: no cover (signal wiri
                 print(f"[worker_ready] reaped {count} orphan job(s) at startup")
         except Exception as exc:  # noqa: BLE001
             print(f"[worker_ready] orphan reap failed (non-fatal): {exc!r}")
+
+        # Variants frozen "rendering" on already-terminal jobs (dead re-renders)
+        # are invisible to reap_orphans — sweep them too so the frontend stops
+        # polling a tile whose video is actually ready.
+        try:
+            stuck = reconcile_stuck_variants(celery_app)
+            if stuck:
+                print(f"[worker_ready] reconciled {stuck} job(s) with stuck variants")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[worker_ready] stuck-variant reconcile failed (non-fatal): {exc!r}")
 
         # Sweep zombie build_tasks the same way: a builder run (GH Actions) that
         # died mid-task leaves a row stuck `in_progress`. Best-effort, never

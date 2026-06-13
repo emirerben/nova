@@ -1990,7 +1990,14 @@ def burn_text_overlays_skia(
         total_frames=sum(s["n_frames"] for s in sequences),
         render_ms=render_ms,
     )
-    _ffmpeg_burn_pngs(input_path, sequences, output_path)
+    try:
+        _ffmpeg_burn_pngs(input_path, sequences, output_path)
+    finally:
+        # The full-frame 1080x1920 PNG sequences are only needed for the single
+        # encode above. Free them the instant it returns so they don't pile up on
+        # the worker's RAM-backed scratch across overlays and (serial) variants —
+        # this is what was filling /tmp and OOM/timeout-killing renders in prod.
+        shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def pre_burn_curtain_slot_text_skia(
@@ -2026,4 +2033,9 @@ def pre_burn_curtain_slot_text_skia(
         total_frames=sum(s["n_frames"] for s in sequences),
         render_ms=render_ms,
     )
-    _ffmpeg_burn_pngs(input_path, sequences, output_path)
+    try:
+        _ffmpeg_burn_pngs(input_path, sequences, output_path)
+    finally:
+        # Free the per-slot PNG sequence immediately after the encode (see the
+        # note in burn_text_overlays_skia — bounds peak scratch to one burn).
+        shutil.rmtree(work_dir, ignore_errors=True)

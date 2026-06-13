@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.101.0] — 2026-06-13
+
+### Fixed
+- **Render-time lyrics re-extraction storm.** After a `LyricsExtractionAgent` prompt-version bump invalidates the whole track library's cached lyrics, every `song_lyrics` render was synchronously downloading audio + re-running Whisper + calling LRCLIB inline — and hard-failing the variant on any LRCLIB hiccup (prod jobs 06-11 both showed `song_lyrics: failed`). Added an offline `tasks.backfill_stale_lyrics` task that pre-warms the library cache after a prompt bump so renders read fresh rows and never pay the inline tax, plus LRCLIB retry/backoff in the inline fallback so a transient provider blip no longer fails the variant.
+- **Worker scratch exhaustion ("No space left on device").** The Skia text renderer's full-frame 1080×1920 PNG sequences now free immediately after each encode, and each generative variant's scratch is removed the moment it's persisted — instead of all variants' scratch coexisting under the job tmpdir until job end (a prime cause of the `/tmp` OOM/timeout that killed prod job 08532ba3).
+- **"Stuck in rendering even though it's ready."** A new reaper sweep (`reconcile_stuck_variants`, wired into the 5-min Beat sweep + worker boot) reconciles variants frozen at "rendering"/"pending" on already-terminal jobs — the common case being a single-variant re-render whose worker died, which the existing orphan reaper (job-level statuses only) missed. The frontend's `anyRendering` poll-stop predicate no longer polls a frozen tile forever.
+
+### Changed
+- **Worker on dedicated CPUs (performance-4x / 8 GB).** Moved the Fly worker VM from shared to performance vCPUs so every FFmpeg encode + Skia per-frame render runs at full speed (shared cores were oversubscribed/throttled) and a bounded parallel-variant render won't starve.
+- **Parallel-variant render scaffold (default OFF).** `GENERATIVE_PARALLEL_VARIANTS_ENABLED` (+ `GENERATIVE_PARALLEL_VARIANTS_MAX`) renders a generative job's variants concurrently instead of one-at-a-time. Off by default and only safe on the dedicated-CPU worker — shared-CPU concurrency once ballooned a 14s encode to >600s (job d018d1c3) — so it ships dark to be A/B-tested in prod before flipping on.
+
 ## [0.4.100.0] — 2026-06-13
 
 ### Added
