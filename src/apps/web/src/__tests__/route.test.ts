@@ -3,12 +3,27 @@ import type { ContentPlan, PersonaResponse, PlanItem } from "@/lib/plan-api";
 
 function persona(
   status: PersonaResponse["persona_status"],
-  opts: { hasPersona?: boolean } = {},
+  opts: {
+    hasPersona?: boolean;
+    questionnaire?: Partial<PersonaResponse["questionnaire"]> & Record<string, unknown>;
+  } = {},
 ): PersonaResponse {
   return {
     id: "p1",
     persona_status: status,
-    questionnaire: null,
+    questionnaire: opts.questionnaire
+      ? ({
+          work: "",
+          school: "",
+          social: "",
+          location: "",
+          hobbies: "",
+          travels: "",
+          passions: "",
+          tiktok_handle: "",
+          ...opts.questionnaire,
+        } as PersonaResponse["questionnaire"])
+      : null,
     persona: opts.hasPersona !== false && status !== "chat_pending" && status !== "generating"
       ? { summary: "s", content_pillars: [], tone: "", audience: "", posting_cadence: "", sample_topics: [] }
       : null,
@@ -58,8 +73,16 @@ describe("resolvePlanMode", () => {
   });
 
   // ── Persona in-progress ─────────────────────────────────────────────────
-  it("returns setup:chat when persona_status is chat_pending", () => {
-    expect(resolvePlanMode(persona("chat_pending"), null)).toBe("setup:chat");
+  // chat_pending with no questionnaire → fork screen first (edits-first onboarding).
+  // The old "returns setup:chat" path is now reached only after a content_mode is chosen.
+  it("returns setup:fork when persona_status is chat_pending with no questionnaire", () => {
+    expect(resolvePlanMode(persona("chat_pending"), null)).toBe("setup:fork");
+  });
+
+  it("returns setup:chat when persona_status is chat_pending and content_mode is create_new", () => {
+    expect(
+      resolvePlanMode(persona("chat_pending", { questionnaire: { content_mode: "create_new" } }), null),
+    ).toBe("setup:chat");
   });
 
   it("returns setup:persona-generating when persona_status is generating", () => {
@@ -136,5 +159,85 @@ describe("resolvePlanMode", () => {
     };
     // persona.persona is truthy → skips persona-failed → checks plan
     expect(resolvePlanMode(p, null)).toBe("setup:plan-intro");
+  });
+
+  // ── Edits-first onboarding fork ─────────────────────────────────────────
+
+  it("returns setup:fork when persona chat_pending with no questionnaire", () => {
+    expect(resolvePlanMode(persona("chat_pending"), null)).toBe("setup:fork");
+  });
+
+  it("returns setup:fork when persona chat_pending with null questionnaire", () => {
+    const p: PersonaResponse = {
+      id: "p1",
+      persona_status: "chat_pending",
+      questionnaire: null,
+      persona: null,
+      error_detail: null,
+    };
+    expect(resolvePlanMode(p, null)).toBe("setup:fork");
+  });
+
+  it("returns setup:edit-context when footage path chosen but no topic/intent", () => {
+    const p = persona("chat_pending", {
+      questionnaire: { content_mode: "existing_footage" },
+    });
+    expect(resolvePlanMode(p, null)).toBe("setup:edit-context");
+  });
+
+  it("returns setup:edit-upload when footage path + topic but no job id", () => {
+    const p = persona("chat_pending", {
+      questionnaire: { content_mode: "existing_footage", onboarding_topic: "hiking trip" },
+    });
+    expect(resolvePlanMode(p, null)).toBe("setup:edit-upload");
+  });
+
+  it("returns setup:edit-upload when footage path + intent only, no job id", () => {
+    const p = persona("chat_pending", {
+      questionnaire: { content_mode: "existing_footage", onboarding_intent: "inspired" },
+    });
+    expect(resolvePlanMode(p, null)).toBe("setup:edit-upload");
+  });
+
+  it("returns setup:edit-generating when footage path + job id but not payoff done", () => {
+    const p = persona("chat_pending", {
+      questionnaire: {
+        content_mode: "existing_footage",
+        onboarding_topic: "hiking trip",
+        onboarding_edit_job_id: "j1",
+        onboarding_clip_paths: ["a.mp4"],
+      },
+    });
+    expect(resolvePlanMode(p, null)).toBe("setup:edit-generating");
+  });
+
+  it("returns setup:edit-payoff when persona ready + footage path + job id but not payoff done", () => {
+    const p = persona("ready", {
+      questionnaire: {
+        content_mode: "existing_footage",
+        onboarding_topic: "hiking trip",
+        onboarding_edit_job_id: "j1",
+        onboarding_clip_paths: ["a.mp4"],
+      },
+    });
+    expect(resolvePlanMode(p, null)).toBe("setup:edit-payoff");
+  });
+
+  it("returns setup:chat when content_mode is create_new", () => {
+    const p = persona("chat_pending", {
+      questionnaire: { content_mode: "create_new" },
+    });
+    expect(resolvePlanMode(p, null)).toBe("setup:chat");
+  });
+
+  it("falls through to workspace when footage path + payoff done + plan ready", () => {
+    const p = persona("ready", {
+      questionnaire: {
+        content_mode: "existing_footage",
+        onboarding_edit_job_id: "j1",
+        onboarding_payoff_done: true,
+      },
+    });
+    expect(resolvePlanMode(p, plan("ready", [item(1)]))).toBe("workspace");
   });
 });

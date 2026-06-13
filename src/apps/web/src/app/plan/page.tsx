@@ -18,7 +18,9 @@ import {
   retunePersonaFromFeedback,
   tiktokScrape,
   updatePersona,
+  recordOnboardingFork,
 } from "@/lib/plan-api";
+import { createGenerativeJob } from "@/lib/generative-api";
 import { resolvePlanMode } from "./_lib/route";
 import ChatInterview from "./_components/ChatInterview";
 import { GeneratingStateLight } from "./_components/GeneratingStateLight";
@@ -28,6 +30,10 @@ import { LightShell } from "./_components/ui/LightShell";
 import SignInPrompt from "./_components/SignInPrompt";
 import TikTokPreScreen from "./_components/TikTokPreScreen";
 import { WorkspaceHome } from "./_components/workspace/WorkspaceHome";
+import { ForkScreen } from "./_components/onboarding/ForkScreen";
+import { EditContextStep } from "./_components/onboarding/EditContextStep";
+import { EditUploadStep } from "./_components/onboarding/EditUploadStep";
+import { EditPayoff } from "./_components/onboarding/EditPayoff";
 
 // Sub-steps within the "you" wizard step.
 type YouSubStep = "tiktok-pre-screen" | "chat" | "form";
@@ -79,6 +85,12 @@ function PlanPageInner() {
 
   // Track when the plan flips from generating → ready in-session (for banner).
   const [planJustReady, setPlanJustReady] = useState(false);
+
+  // Edits-first onboarding funnel state (in-session; also persisted via recordOnboardingFork).
+  const [pendingTopic, setPendingTopic] = useState("");
+  const [pendingIntent, setPendingIntent] = useState("");
+  const [pendingClipPaths, setPendingClipPaths] = useState<string[]>([]);
+  const [editJobId, setEditJobId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -310,6 +322,143 @@ function PlanPageInner() {
           busy={busy}
           onCreatePlan={handleCreatePlan}
           isFailed
+        />
+      )}
+
+      {mode === "setup:fork" && (
+        <ForkScreen
+          onFootage={async () => {
+            try {
+              await recordOnboardingFork({ content_mode: "existing_footage" });
+            } catch {
+              // best-effort; persona row persists on the server
+            }
+            void load();
+          }}
+          onFresh={async () => {
+            try {
+              await recordOnboardingFork({ content_mode: "create_new" });
+            } catch {
+              // best-effort
+            }
+            void load();
+          }}
+          onSkip={async () => {
+            // Skip = go straight to footage upload (no context step)
+            try {
+              await recordOnboardingFork({ content_mode: "existing_footage" });
+            } catch {
+              // best-effort
+            }
+            void load();
+          }}
+        />
+      )}
+
+      {mode === "setup:edit-context" && (
+        <EditContextStep
+          onSubmit={async (topic, intent) => {
+            setPendingTopic(topic);
+            setPendingIntent(intent);
+            try {
+              await recordOnboardingFork({
+                content_mode: "existing_footage",
+                topic,
+                intent,
+              });
+            } catch {
+              // best-effort
+            }
+            void load();
+          }}
+          onSkip={async () => {
+            try {
+              await recordOnboardingFork({ content_mode: "existing_footage" });
+            } catch {
+              // best-effort
+            }
+            void load();
+          }}
+        />
+      )}
+
+      {mode === "setup:edit-upload" && (
+        <EditUploadStep
+          onSubmit={async (clipPaths) => {
+            setPendingClipPaths(clipPaths);
+            try {
+              const result = await createGenerativeJob(
+                clipPaths,
+                null,
+                {
+                  topic: pendingTopic || undefined,
+                  intent: pendingIntent || undefined,
+                },
+              );
+              setEditJobId(result.job_id);
+              await recordOnboardingFork({
+                content_mode: "existing_footage",
+                onboarding_edit_job_id: result.job_id,
+                onboarding_clip_paths: clipPaths,
+              });
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "Couldn't start your edit");
+            }
+            void load();
+          }}
+          onBack={() => {
+            // Go back to context step by clearing the content_mode so we re-derive
+            // In practice the server still has content_mode set, so just re-load
+            // and the funnel state machine will send them to edit-context.
+            // If they had no topic/intent recorded, we'll be at edit-upload again —
+            // that's acceptable; the back button is a best-effort UX.
+            void load();
+          }}
+        />
+      )}
+
+      {(mode === "setup:edit-generating" || mode === "setup:edit-payoff") && (
+        <EditPayoff
+          jobId={editJobId ?? persona?.questionnaire?.onboarding_edit_job_id ?? ""}
+          onMakePlan={async () => {
+            try {
+              const clips =
+                pendingClipPaths.length > 0
+                  ? pendingClipPaths
+                  : (persona?.questionnaire?.onboarding_clip_paths ?? []);
+              await recordOnboardingFork({
+                content_mode: "existing_footage",
+                onboarding_clip_paths: clips.length > 0 ? clips : undefined,
+                onboarding_payoff_done: true,
+              });
+            } catch {
+              // best-effort
+            }
+            void load();
+          }}
+          onReRoll={async () => {
+            const clips =
+              pendingClipPaths.length > 0
+                ? pendingClipPaths
+                : (persona?.questionnaire?.onboarding_clip_paths ?? []);
+            if (clips.length > 0) {
+              try {
+                const result = await createGenerativeJob(clips, null, {
+                  topic: pendingTopic || undefined,
+                  intent: pendingIntent || undefined,
+                });
+                setEditJobId(result.job_id);
+                await recordOnboardingFork({
+                  content_mode: "existing_footage",
+                  onboarding_edit_job_id: result.job_id,
+                  onboarding_clip_paths: clips,
+                });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Couldn't start a new edit");
+              }
+              void load();
+            }
+          }}
         />
       )}
     </LightShell>
