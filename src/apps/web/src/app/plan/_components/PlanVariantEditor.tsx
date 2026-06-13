@@ -236,7 +236,7 @@ export default function PlanVariantEditor({
                   disabled={rendering || layout === "cluster" || clusterBlocked}
                   title={
                     sequenceSynced
-                      ? "Editorial — synced to your voiceover"
+                      ? "Editorial — text synced to this edit"
                       : clusterBlocked
                         ? "Editorial layout needs a 3-6 word hook — shorten the text first"
                         : "Editorial word-cluster — mixed sizes, magazine-style"

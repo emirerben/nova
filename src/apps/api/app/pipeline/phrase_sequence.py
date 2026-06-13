@@ -28,12 +28,11 @@ the video duration, it decides:
    duration. ``fade_out=True`` ONLY for hold-cap-ended and final scenes.
 
    D5 revision note: the original design crossfaded scenes — the previous
-   scene extended ``CROSSFADE_S`` into the next so the renderer could overlap
-   the alpha ramps. Frame-by-frame verification of the reference edit showed
-   the opposite: phrases replace each other with HARD CUTS, never two phrases
-   on screen at once, with occasional ~0.1-0.2s fully-empty frames between
-   scenes. ``CROSSFADE_S`` is no longer used in display windows and is
-   retained only as a back-compat export.
+   scene extended into the next so the renderer could overlap the alpha ramps.
+   Frame-by-frame verification of the reference edit showed the opposite:
+   phrases replace each other with HARD CUTS, never two phrases on screen at
+   once, with occasional ~0.1-0.2s fully-empty frames between scenes. Scenes
+   now end ``SCENE_CLEAR_GAP_S`` before the next begins.
 
 Karaoke learning baked in (D16): every display anchor keys off word START
 times — a scene appears when its first word starts, and is replaced when the
@@ -73,9 +72,6 @@ MIN_SPEECH_WORDS = 4  # fewer total usable words → not eligible for the sequen
 HOLD_CAP_S = 4.0  # a scene holds at most this long past its last word before fading
 SCENE_CLEAR_GAP_S = 0.1  # all-clear gap between a scene's cut-end and the next scene
 MIN_SCENE_GAP_S = 0.034  # degenerate-scene floor: keep at least one frame (~30fps) clear
-# DEPRECATED back-compat export — display windows no longer overlap (D5 revision:
-# the reference edit hard-cuts between phrases). Not used in this module anymore.
-CROSSFADE_S = 0.25
 FADE_OUT_S = 0.4  # fade-out duration when a scene ends by hold-cap or video end
 COVERAGE_MIN_FRAC = 0.5  # speech must span at least this fraction of the timeline
 LEAD_IN_CLAMP_S = 0.3  # scene 0 snaps to t=0 when speech starts within this window
@@ -90,7 +86,20 @@ _TERMINAL_PUNCT = ".!?…"
 # Closing wrappers that may trail the terminal punctuation ("word.")  etc.
 _TRAILING_WRAPPERS = "\"'»”’)]}"
 # Rhythm-mode sentence boundary: whitespace right after terminal punctuation.
+# Whitespace is REQUIRED so a decimal/abbreviation ("3.5", "U.S.") stays in one
+# sentence and a no-space typo ("hard.No") does not silently split mid-word.
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split text into rhythm-mode sentences on whitespace-after-terminal-punct.
+
+    This is the SINGLE source of truth for sentence boundaries: both
+    `synthesize_phrase_timings` (the engine) and the sequence-quote agent's
+    structural validator import this, so the agent can never green-light a quote
+    the engine would split differently (the regex-divergence corruption class).
+    """
+    return [s for s in _SENTENCE_SPLIT_RE.split(str(text).strip()) if s.strip()]
 
 
 class _TimedWord(NamedTuple):
@@ -342,7 +351,7 @@ def synthesize_phrase_timings(text: str, *, video_duration_s: float) -> list[dic
         )
         return []
 
-    sentences = [s for s in _SENTENCE_SPLIT_RE.split(str(text).strip()) if s.strip()]
+    sentences = split_sentences(text)
     if not sentences:
         return []
 

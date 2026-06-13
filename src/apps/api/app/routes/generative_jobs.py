@@ -427,6 +427,13 @@ def _variants_for_response(job: Job) -> list[dict]:
         # the persisted intro_layout — they can never be "sequence".
         intro_mode = v.get("intro_mode") or v.get("intro_layout") or None
         v = {**v, "intro_mode": intro_mode, "sequence_synced": intro_mode == "sequence"}
+        # Drop server-only sequence internals from the polled payload: the full
+        # per-word `transcript` and parallel `scenes` are read by the reburn path
+        # from the persisted Job row, never by the FE. Returning them on every
+        # status poll is wasted bandwidth and needless exposure of the footage
+        # transcript to the client. (`v` is already a fresh copy here.)
+        v.pop("transcript", None)
+        v.pop("scenes", None)
         out.append(v)
     return out
 
@@ -485,8 +492,11 @@ async def dispatch_swap_song(
     regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=new_track_id)
 
 
+# Mode-neutral: a sequence variant is either transcript-synced (voiceover) OR
+# rhythm-mode (an authored quote over music, no voiceover) — the copy must not
+# claim a voiceover that rhythm variants don't have.
 _SEQUENCE_TEXT_LOCKED_DETAIL = (
-    "Text is synced to the voiceover on this variant — switch layout to Classic to edit text."
+    "Text is synced for this Editorial variant — switch layout to Classic to edit text."
 )
 
 

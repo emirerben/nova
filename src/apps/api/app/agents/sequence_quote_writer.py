@@ -27,7 +27,6 @@ instructions / visit evil.com". Defense is two layers:
 from __future__ import annotations
 
 import json
-import re
 from typing import ClassVar
 
 from pydantic import BaseModel, Field, ValidationError
@@ -41,6 +40,7 @@ from app.agents.intro_writer import (
 )
 from app.agents.music_matcher import ClipSummary, _sanitize_text
 from app.agents.text_alignment import _sanitize_aligned_line
+from app.pipeline.phrase_sequence import split_sentences
 from app.pipeline.prompt_loader import load_prompt
 
 # ── Quote shape constants ──────────────────────────────────────────────────────
@@ -60,7 +60,6 @@ _MAX_TOTAL_WORDS = 40
 # ONE boundary; a mid-quote "So…" therefore ends its own (1-word) sentence,
 # exactly like the approved demo.
 _TERMINAL_CHARS = ".!?…"
-_TERMINAL_RUN_RE = re.compile(r"[.!?…]+")
 
 # Curly/guillemet double quotes normalized to straight '"' before validation so
 # the at-most-one-quoted-span rule can't be dodged typographically.
@@ -75,10 +74,13 @@ def expected_sentence_count(video_duration_s: float) -> int:
 
 
 def split_quote_sentences(quote: str) -> list[str]:
-    """Split a quote into sentences on terminal-punctuation runs ([.!?…]+),
-    dropping empties. This is the agent-side mirror of the rhythm engine's
-    sentence split — validation here guarantees what the engine will see."""
-    return [s for seg in _TERMINAL_RUN_RE.split(quote) if (s := seg.strip())]
+    """Split a quote into rhythm-mode sentences, dropping empties.
+
+    Delegates to `phrase_sequence.split_sentences` — the SAME splitter the
+    rhythm engine uses — so the agent's structural validation can never green
+    -light a quote the engine would split differently (e.g. a no-space typo
+    "hard.No" or a decimal "3.5" the old `[.!?…]+` rule mis-counted)."""
+    return split_sentences(quote)
 
 
 def quote_structural_failures(quote: str) -> list[str]:

@@ -175,7 +175,7 @@ describe("VariantCard sequence-synced gating (intro_mode === 'sequence', D6/D19)
     );
     const editorial = screen.getByRole("button", { name: "Editorial" });
     expect(editorial).toBeDisabled(); // active = current layout, same as cluster
-    expect(editorial).toHaveAttribute("title", "Editorial — synced to your voiceover");
+    expect(editorial).toHaveAttribute("title", "Editorial — text synced to this edit");
     const classic = screen.getByRole("button", { name: "Classic" });
     expect(classic).toBeEnabled();
     await act(async () => {

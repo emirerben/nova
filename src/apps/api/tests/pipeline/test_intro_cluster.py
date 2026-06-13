@@ -391,6 +391,21 @@ def test_editorial_style_documents_its_contract_keys():
     assert {"alpha", "blur", "dy"} <= set(EDITORIAL_STYLE["shadow"])
 
 
+def test_scene_center_shift_stays_within_no_clip_margin():
+    """No-clip coupling guard (RT4): build_sequence_overlays shifts each scene's
+    blocks by scene_center_y(i) - _CLUSTER_CENTER_Y, and _compute_styled_blocks
+    tightens the layout band by scene_shift_margin to absorb exactly that shift.
+    The two live in different modules and are tied only by comment — so pin the
+    invariant: no configured scene center may exceed the margin, or a future
+    scene_center_ys tweak silently pushes text off-frame in prod renders."""
+    margin = EDITORIAL_STYLE["scene_shift_margin"]
+    max_shift = max(abs(c - _CLUSTER_CENTER_Y) for c in EDITORIAL_STYLE["scene_center_ys"])
+    assert max_shift <= margin + 1e-9, (
+        f"scene_center_ys shift {max_shift} exceeds scene_shift_margin {margin} — "
+        "the no-clip guarantee for sequence scenes would break"
+    )
+
+
 def test_style_none_is_byte_identical_legacy():
     # The kill-switch contract: omitting style and passing style=None are the
     # SAME code path, and legacy numerology (hero 2.6x) is untouched.

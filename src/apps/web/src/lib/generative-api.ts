@@ -12,10 +12,12 @@ export const INTRO_SIZE_MIN = 40;
 export const INTRO_SIZE_MAX = 80;
 export const INTRO_SIZE_STEP = 6;
 
-// Tooltip for text controls locked by a voiceover-synced sequence intro
+// Tooltip for text controls locked by a synced sequence intro
 // (intro_mode === "sequence") — shared by VariantCard and PlanVariantEditor.
+// Mode-neutral: a sequence variant is either transcript-synced (voiceover) or
+// rhythm-mode (an authored quote over music), so the copy must not claim a voiceover.
 export const SEQUENCE_TEXT_LOCKED_HINT =
-  "Text is synced to your voiceover — switch to Classic to edit text";
+  "Text is synced for this Editorial variant — switch to Classic to edit text";
 
 export type GenerativeTextMode = "lyrics" | "agent_text" | "none";
 

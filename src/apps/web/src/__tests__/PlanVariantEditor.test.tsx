@@ -199,7 +199,7 @@ test("layout section hidden for lyrics variants", () => {
 // ── Voiceover-synced sequence variants (intro_mode === "sequence", D6/D19) ───
 
 const SYNCED_TOOLTIP =
-  "Text is synced to your voiceover — switch to Classic to edit text";
+  "Text is synced for this Editorial variant — switch to Classic to edit text";
 
 const sequenceVariant: PlanItemVariant = {
   ...songVariant,
@@ -224,7 +224,7 @@ test("Editorial is active and not word-count-gated on synced variants", () => {
   renderEditor(sequenceVariant);
   const editorial = screen.getByRole("button", { name: "Editorial" });
   expect(editorial).toBeDisabled(); // active = current layout, same as cluster
-  expect(editorial).toHaveAttribute("title", "Editorial — synced to your voiceover");
+  expect(editorial).toHaveAttribute("title", "Editorial — text synced to this edit");
   // The 3-6-word hint must NOT appear despite the 8-word caption.
   expect(screen.queryByText(/shorten the caption/i)).toBeNull();
 });

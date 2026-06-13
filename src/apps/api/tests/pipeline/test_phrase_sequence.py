@@ -13,7 +13,6 @@ import pytest
 
 from app.pipeline.phrase_sequence import (
     COVERAGE_MIN_FRAC,
-    CROSSFADE_S,
     FADE_OUT_S,
     HOLD_CAP_S,
     MAX_PHRASE_WORDS,
@@ -29,6 +28,7 @@ from app.pipeline.phrase_sequence import (
     scenes_total_window,
     speech_eligibility,
     split_phrases,
+    split_sentences,
     synthesize_phrase_timings,
 )
 from app.pipeline.transcribe import Word
@@ -67,7 +67,6 @@ def test_module_constants_are_locked():
     assert HOLD_CAP_S == 4.0
     assert SCENE_CLEAR_GAP_S == 0.1
     assert MIN_SCENE_GAP_S == 0.034
-    assert CROSSFADE_S == 0.25  # deprecated back-compat export; unused in windows
     assert FADE_OUT_S == 0.4
     assert COVERAGE_MIN_FRAC == 0.5
 
@@ -618,3 +617,35 @@ def test_scenes_total_window():
     first, last = scenes_total_window(scenes)
     assert first == scenes[0]["start_s"] == 0.0  # scene-0 clamp included
     assert last == scenes[-1]["end_s"]
+
+
+# -- splitter single-source (the agent validator must see what the engine sees) --
+
+
+@pytest.mark.parametrize(
+    "quote",
+    [
+        "Work hard.No breaks.Stay sharp.Win big now.",  # no space after period
+        "Save 3.5 hours. Every single day. That is real.",  # decimal mid-sentence
+        'It\'s not "just luck". The work. Hard work pays.',  # quoted span
+        "So… don't stop. Keep going. You got this.",  # ellipsis run
+    ],
+)
+def test_split_sentences_is_the_single_source_for_engine_and_agent(quote):
+    """`split_sentences` is the one splitter both the rhythm engine and the
+    sequence-quote agent's validator use, so a quote's agent-side sentence count
+    is exactly the sentence basis the engine builds scenes from — they can never
+    diverge (the regex-divergence corruption class where the agent over-counts a
+    decimal/no-space quote and the engine silently glues it on screen)."""
+    from app.agents.sequence_quote_writer import split_quote_sentences
+
+    assert split_quote_sentences(quote) == split_sentences(quote)
+    # A well-formed quote (4 spaced sentences) yields one scene per sentence
+    # before the 6-word cap can split further; a malformed one collapses to <4
+    # for BOTH, so the agent's >=4 gate rejects it rather than gluing on screen.
+    sentences = split_sentences(quote)
+    scenes = rhythm_scenes(quote, video_duration_s=10.4)
+    if len(sentences) >= MIN_SPEECH_WORDS // 1 and all(
+        len(s.split()) <= MAX_PHRASE_WORDS for s in sentences
+    ):
+        assert len(scenes) == len(sentences)

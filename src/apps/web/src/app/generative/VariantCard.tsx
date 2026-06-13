@@ -35,8 +35,9 @@ export const TEXT_MODE_LABEL: Record<string, string> = {
  * preview only models the linear single-block layout, so cluster text edits go
  * through the legacy server-reburn controls (still fast — reuses the base).
  * Sequence intros (intro_mode === "sequence") are excluded too: the text is
- * synced to the voiceover transcript (server 422s text edits) and the phrase
- * sequence has no local preview. */
+ * synced to the edit's audio (a voiceover transcript or an authored rhythm
+ * quote — server 422s text edits) and the phrase sequence has no local
+ * preview. */
 export function isInstantEditEligible(variant: GenerativeVariant): boolean {
   return (
     !!variant.base_video_url &&
@@ -481,7 +482,7 @@ export function VariantCard({
                 onClick={() => run(() => onChangeLayout("cluster"))}
                 title={
                   sequenceSynced
-                    ? "Editorial — synced to your voiceover"
+                    ? "Editorial — text synced to this edit"
                     : clusterBlocked
                       ? "Editorial layout needs a 3-6 word hook — shorten the text first"
                       : "Editorial word-cluster — mixed sizes, magazine-style"

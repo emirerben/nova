@@ -75,16 +75,30 @@ def test_expected_sentence_count_tracks_duration():
 
 def test_split_quote_sentences_matches_demo_split():
     # The approved demo split the quote into 9 sentences — "So…" ends its own
-    # 1-word sentence because "…" is terminal punctuation.
+    # 1-word sentence because "…" is terminal punctuation. Sentences retain their
+    # trailing punctuation (the engine's splitter consumes only the whitespace).
     sentences = split_quote_sentences(GOOD_QUOTE)
     assert len(sentences) == 9
-    assert sentences[6] == "So"
-    assert sentences[7] == "don't allow anyone"
-    assert sentences[-1] == "To diminish your hard work"
+    assert sentences[6] == "So…"
+    assert sentences[7] == "don't allow anyone."
+    assert sentences[-1] == "To diminish your hard work."
 
 
 def test_split_quote_sentences_punctuation_runs_are_one_boundary():
-    assert split_quote_sentences("what?! no way. really…") == ["what", "no way", "really"]
+    assert split_quote_sentences("what?! no way. really…") == ["what?!", "no way.", "really…"]
+
+
+def test_split_quote_sentences_is_the_engine_splitter():
+    # Single-source guarantee: the agent validator and the rhythm engine split
+    # sentences with the SAME function, so the agent can never green-light a
+    # quote the engine would split differently (regex-divergence corruption).
+    from app.pipeline.phrase_sequence import split_sentences
+
+    for q in (GOOD_QUOTE, "Work hard.No breaks.Stay on.", "Save 3.5 hours. Daily. Always."):
+        assert split_quote_sentences(q) == split_sentences(q)
+    # A no-space typo collapses to ONE sentence for BOTH — the agent's >=4 gate
+    # then rejects it (fallback to static), instead of shipping glued on screen.
+    assert len(split_quote_sentences("Work hard.No breaks.Stay on.")) == 1
 
 
 # -- render_prompt ----------------------------------------------------------------

@@ -134,6 +134,20 @@ _SEQUENCE_FADE_EFFECTS = ("fade-in", "static", "none")
 _FADE_IN_SETTLE_S = 0.4
 
 
+def _link_or_copy(src_path: str, dst_path: str) -> None:
+    """Hard-link src→dst for frame economy, falling back to a byte copy.
+
+    Single source for the hold-frame de-dup used by both the per-overlay
+    sequence renderer and the composite stream: a hard link costs ~nothing and
+    keeps PNG-sequence scratch flat, but cross-device temp dirs (or a FS without
+    hard links) raise OSError — there a copy keeps correctness.
+    """
+    try:
+        os.link(src_path, dst_path)
+    except OSError:
+        shutil.copy2(src_path, dst_path)
+
+
 def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     """True for text effects that must hold through their full lyric window.
 
@@ -1597,11 +1611,7 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
         settled_path = os.path.join(work_dir, f"{pattern_prefix}{settled_idx:04d}.png")
         for i in hold_indices:
             frame_path = os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png")
-            try:
-                os.link(settled_path, frame_path)
-            except OSError:
-                # Cross-device / FS without hard links — copy keeps correctness.
-                shutil.copy2(settled_path, frame_path)
+            _link_or_copy(settled_path, frame_path)
         log.info(
             "skia_sequence_hold_frames_linked",
             effect=effect,
@@ -1806,11 +1816,7 @@ def _render_sequence_composite(
     for src, dst in links:
         src_path = os.path.join(work_dir, f"{pattern_prefix}{src:05d}.png")
         dst_path = os.path.join(work_dir, f"{pattern_prefix}{dst:05d}.png")
-        try:
-            os.link(src_path, dst_path)
-        except OSError:
-            # Cross-device / FS without hard links — copy keeps correctness.
-            shutil.copy2(src_path, dst_path)
+        _link_or_copy(src_path, dst_path)
 
     log.info(
         "skia_sequence_composite_frames_linked",

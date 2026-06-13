@@ -3435,6 +3435,11 @@ def _render_talking_head_variant(
             # No song → no beats; the intro reveals on an even split. Slot-0-relative
             # timestamps (from 0) are already absolute on the composite, which is what
             # burn_text_overlays_skia expects.
+            # DELIBERATE (PR #508 review): no cluster_style here — the editorial
+            # cascade restyle + transcript/rhythm sequence are scoped to montage
+            # variants this release. Talking-head intros stay the legacy stacked
+            # cluster on purpose; unifying the look is a separate aesthetic change
+            # that should be judged on a talking-head render first, not slipped in.
             overlays = build_persistent_intro_overlays(
                 reveal_window_s=reveal_window_s, beats=[], **params
             )
