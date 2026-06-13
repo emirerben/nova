@@ -360,8 +360,7 @@
       "category": "script",
       "css_family": "'Great Vibes', cursive",
       "cycle_role": "settle",
-      "vibe": "script",
-      "_substitutes": "Big Curls (Dafont, personal use only — OFL replacement)"
+      "vibe": "script"
     },
     "Satisfy": {
       "file": "Satisfy-Regular.ttf",
@@ -370,8 +369,7 @@
       "category": "script",
       "css_family": "'Satisfy', cursive",
       "cycle_role": "settle",
-      "vibe": "script",
-      "_substitutes": "Swirls and Curls (Dafont, personal use only — Apache 2.0 replacement)"
+      "vibe": "script"
     },
     "Patrick Hand": {
       "file": "PatrickHand-Regular.ttf",
@@ -380,8 +378,7 @@
       "category": "handwriting",
       "css_family": "'Patrick Hand', cursive",
       "cycle_role": "settle",
-      "vibe": "handwritten",
-      "_substitutes": "Rascal (Dafont, personal use only — OFL replacement)"
+      "vibe": "handwritten"
     },
     "EB Garamond": {
       "file": "EBGaramond-VF.ttf",
@@ -390,8 +387,7 @@
       "category": "serif",
       "css_family": "'EB Garamond', serif",
       "cycle_role": "settle",
-      "vibe": "editorial",
-      "_substitutes": "Apple Garamond (Apple-proprietary — OFL replacement)"
+      "vibe": "editorial"
     },
     "Outfit": {
       "file": "Outfit-VF.ttf",
@@ -400,8 +396,7 @@
       "category": "sans",
       "css_family": "'Outfit', sans-serif",
       "cycle_role": "contrast",
-      "vibe": "viral_headlines",
-      "_substitutes": "ZT Bros Oskon 90s (paid Zetafonts — OFL replacement)"
+      "vibe": "viral_headlines"
     },
     "Plus Jakarta Sans": {
       "file": "PlusJakartaSans-VF.ttf",
@@ -410,8 +405,46 @@
       "category": "sans",
       "css_family": "'Plus Jakarta Sans', sans-serif",
       "cycle_role": "contrast",
+      "vibe": "viral_headlines"
+    },
+    "Rascal": {
+      "file": "Rascal-Regular.ttf",
+      "ass_name": "Rascal",
+      "weight": 400,
+      "category": "handwriting",
+      "css_family": "'Rascal', cursive",
+      "vibe": "handwritten",
+      "limited_charset": true,
+      "note": "Display handwriting face; lacks extended Latin (áéíóúñãçüô). Use only for ASCII text. 100% Free (dafont) by Marianfudge."
+    },
+    "Big Curls": {
+      "file": "BigCurls-Regular.ttf",
+      "ass_name": "Bigcurls",
+      "weight": 500,
+      "category": "script",
+      "css_family": "'Bigcurls', cursive",
+      "vibe": "script",
+      "limited_charset": true,
+      "note": "Decorative script face; missing í, ñ, ã from extended Latin. Use for ASCII text. 100% Free (dafont) by James Wills."
+    },
+    "ZT Bros Oskon 90s": {
+      "file": "ZTBrosOskon90s-Regular.otf",
+      "ass_name": "ZT Bros Oskon 90s",
+      "weight": 400,
+      "category": "sans",
+      "css_family": "'ZT Bros Oskon 90s', sans-serif",
+      "cycle_role": "contrast",
       "vibe": "viral_headlines",
-      "_substitutes": "Alter Haas Grotesk (Dafont, personal use only — OFL replacement)"
+      "note": "90s-era display sans. Ships as OTF; all extended Latin covered. 100% Free for commercial use by Zelow Type."
+    },
+    "Alte Haas Grotesk": {
+      "file": "AlteHaasGrotesk-Bold.ttf",
+      "ass_name": "Alte Haas Grotesk",
+      "weight": 700,
+      "category": "sans",
+      "css_family": "'Alte Haas Grotesk', sans-serif",
+      "vibe": "clean_captions",
+      "note": "Helvetica-inspired grotesque. All extended Latin covered. 100% Free by Yann le Coroller."
     }
   },
   "style_defaults": {

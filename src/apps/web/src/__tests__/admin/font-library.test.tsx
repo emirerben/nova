@@ -124,11 +124,15 @@ describe("FontLibraryBrowser", () => {
     //            +Patrick Hand → handwritten=2
     //            +Great Vibes, +Satisfy → script=3
     // v0.4.100.0: +Playfair Display Italic (rhythm-mode accent voice) → editorial=12
-    expect(grouped.viral_headlines).toHaveLength(13);
-    expect(grouped.clean_captions).toHaveLength(10);
+    // Added 4 100%-Free dafont fonts: +ZT Bros Oskon 90s → viral_headlines=14
+    //            +Alte Haas Grotesk → clean_captions=11
+    //            +Rascal → handwritten=3
+    //            +Big Curls → script=4
+    expect(grouped.viral_headlines).toHaveLength(14);
+    expect(grouped.clean_captions).toHaveLength(11);
     expect(grouped.editorial).toHaveLength(12);
-    expect(grouped.handwritten).toHaveLength(2);
-    expect(grouped.script).toHaveLength(3);
+    expect(grouped.handwritten).toHaveLength(3);
+    expect(grouped.script).toHaveLength(4);
     // Deprecated fonts must be excluded; Caveat Brush is deprecated.
     expect(Object.values(grouped).flat()).not.toContain("Caveat Brush");
 

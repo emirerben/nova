@@ -193,6 +193,15 @@ _TR_UNSAFE_FONTS: set[str] = {
     # Great Vibes and Patrick Hand DO cover the TR diacritic set and are NOT listed here.
     # Same TODO(tr-cycle-filter) applies.
     "Satisfy-Regular.ttf",
+    # Rascal is a decorative handwriting face (limited_charset: true) — lacks all
+    # 12 Turkish diacritics. EN-only use; never rendered for TR jobs.
+    "Rascal-Regular.ttf",
+    # Big Curls is a decorative script face (limited_charset: true) — lacks ş Ş ğ Ğ ı İ.
+    # EN-only use; never rendered for TR jobs.
+    "BigCurls-Regular.ttf",
+    # Alte Haas Grotesk Bold is missing ş Ş ğ Ğ İ from the Turkish diacritic set.
+    # EN-only use; never rendered for TR jobs.
+    "AlteHaasGrotesk-Bold.ttf",
 }
 
 
