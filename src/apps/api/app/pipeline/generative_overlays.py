@@ -207,6 +207,11 @@ def inject_intro_overlay(recipe: dict, hero_slot_index: int, overlay: dict | Non
 # drop the tail, over-shooting is free.
 _HOLD_TO_END_S = 3600.0
 
+# How long the hook text shows on screen. The intro animates in over reveal_window_s
+# (≤ MAX_INTRO_S = 3.0s) then holds as a static block until this cutoff. Callers
+# that want the old "hold to EOF" behaviour pass hook_window_s=_HOLD_TO_END_S explicitly.
+HOOK_WINDOW_S: float = 3.0
+
 
 def _record_intro_layout_selected(
     *,
@@ -248,6 +253,7 @@ def _build_cluster_intro_overlays(
     highlight_color: str,
     cluster_style: dict | None = None,
     language: str = "en",
+    hook_window_s: float = _HOLD_TO_END_S,
     **style_kwargs,
 ) -> list[dict] | None:
     """Build the editorial word-cluster intro: one [reveal, hold] pair PER block.
@@ -312,7 +318,7 @@ def _build_cluster_intro_overlays(
             block["text"],
             effect="static",
             start_s=reveal_end,
-            end_s=_HOLD_TO_END_S,
+            end_s=min(hook_window_s, _HOLD_TO_END_S),
             **common,
         )
         if hold is not None:
@@ -335,6 +341,7 @@ def build_persistent_intro_overlays(
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
     language: str = "en",
+    hook_window_s: float = HOOK_WINDOW_S,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -395,6 +402,7 @@ def build_persistent_intro_overlays(
                 highlight_color=highlight_color,
                 cluster_style=cluster_style,
                 language=language,
+                hook_window_s=hook_window_s,
                 **style_kwargs,
             )
         except Exception as exc:
@@ -454,7 +462,7 @@ def build_persistent_intro_overlays(
         text,
         effect="static",
         start_s=reveal_end,
-        end_s=_HOLD_TO_END_S,
+        end_s=min(hook_window_s, _HOLD_TO_END_S),
         text_color=settled_color,
         highlight_color=highlight_color,
         **style_kwargs,
@@ -481,6 +489,7 @@ def inject_persistent_intro(
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
     language: str = "en",
+    hook_window_s: float = HOOK_WINDOW_S,
     **style_kwargs,
 ) -> dict:
     """Inject the persistent hero intro (reveal + static hold) into the hero slot.
@@ -519,6 +528,7 @@ def inject_persistent_intro(
         word_roles=word_roles,
         cluster_style=cluster_style,
         language=language,
+        hook_window_s=hook_window_s,
         **style_kwargs,
     )
     for overlay in overlays:

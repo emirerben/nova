@@ -1271,14 +1271,16 @@ def _reburn_text_on_base(
                     # skip it AND dodge copy-through detection — textless ship).
                     overlays = None
             if overlays is None:
-                _has_cluster_overrides = any([
-                    cluster_hero_font_override,
-                    cluster_body_font_override,
-                    cluster_accent_font_override,
-                    cluster_hero_size_px_override,
-                    cluster_body_size_px_override,
-                    cluster_accent_size_px_override,
-                ])
+                _has_cluster_overrides = any(
+                    [
+                        cluster_hero_font_override,
+                        cluster_body_font_override,
+                        cluster_accent_font_override,
+                        cluster_hero_size_px_override,
+                        cluster_body_size_px_override,
+                        cluster_accent_size_px_override,
+                    ]
+                )
                 if editorial_enabled and sequence_allowed and _has_cluster_overrides:
                     _reburn_cs: dict | None = dict(EDITORIAL_STYLE)
                     if cluster_hero_font_override:
@@ -3494,14 +3496,16 @@ def _render_generative_variant(
                 # keeps PR #508's editorial restyle; explicit opt-outs
                 # (layout/text edits) use the legacy static cluster path so
                 # Slice 3a's registry pairing owns the faces.
-                _has_sio_overrides = any([
-                    cluster_hero_font_override,
-                    cluster_body_font_override,
-                    cluster_accent_font_override,
-                    cluster_hero_size_px_override,
-                    cluster_body_size_px_override,
-                    cluster_accent_size_px_override,
-                ])
+                _has_sio_overrides = any(
+                    [
+                        cluster_hero_font_override,
+                        cluster_body_font_override,
+                        cluster_accent_font_override,
+                        cluster_hero_size_px_override,
+                        cluster_body_size_px_override,
+                        cluster_accent_size_px_override,
+                    ]
+                )
                 if editorial_enabled and allow_sequence and _has_sio_overrides:
                     _sio_cs: dict | None = dict(EDITORIAL_STYLE)
                     if cluster_hero_font_override:

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.107.0] — 2026-06-14
+
+### Changed
+- **Hook text is now time-boxed to the opening 3 seconds.** Previously the agent-authored intro overlay burned as a static watermark for the full video duration — the top blocker between "correct edit" and "influencer-quality edit" (judge score: influencer_readiness 5/10). Now the hold overlay is capped at `HOOK_WINDOW_S = 3.0s`: the text reveals over the first ~2-3s, holds until the cap, then disappears so the viewer's attention follows the footage. Callers that need the old "hold to EOF" behaviour can pass `hook_window_s=_HOLD_TO_END_S` explicitly. The cap is threaded through `build_persistent_intro_overlays`, `_build_cluster_intro_overlays`, and `inject_persistent_intro`; all three render paths (montage, talking-head, fast-reburn) use the new default automatically. Renderer-parity invariant unchanged — `start_s`/`end_s` are already honored by both Skia and Pillow via the FFmpeg `enable=` expression.
+
 ## [0.4.104.0] — 2026-06-13
 
 ### Added
