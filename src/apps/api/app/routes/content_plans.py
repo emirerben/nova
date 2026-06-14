@@ -179,6 +179,34 @@ async def regenerate_plan(
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
+@router.post("/{plan_id}/add-ideas", response_model=ContentPlanResponse)
+async def add_ideas_to_plan(
+    plan_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ContentPlanResponse:
+    """Generate one plan item per pending idea seed and append to the plan.
+
+    Lightweight alternative to full regeneration: only generates items for
+    seeds that haven't been turned into plan items yet. 409 if generation
+    is already in flight.
+    """
+    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    if plan.plan_status == "generating":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A plan generation is already in progress",
+        )
+    plan.plan_status = "generating"
+    plan.generation_started_at = datetime.now(UTC)
+    await db.commit()
+
+    from app.tasks.content_plan_build import add_ideas_to_plan as _add_ideas_task  # noqa: PLC0415
+
+    _add_ideas_task.delay(str(plan.id))
+    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
+
+
 class GenerateFirstWeekResponse(BaseModel):
     enqueued: int
     skipped_no_clips: int
@@ -401,7 +429,7 @@ async def rematch_pool_clips(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> ContentPlanResponse:
-    """"Match again" — re-run pool matching (e.g. after new items free up)."""
+    """ "Match again" — re-run pool matching (e.g. after new items free up)."""
     plan = await _load_owned_plan(plan_id, user.id, db)
     pool = dict(plan.pool or {})
     if not pool.get("clips"):

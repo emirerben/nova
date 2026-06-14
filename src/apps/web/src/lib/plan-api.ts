@@ -309,6 +309,10 @@ export function regenerateContentPlan(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/regenerate`, { method: "POST" });
 }
 
+export function addIdeasToPlan(planId: string): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/add-ideas`, { method: "POST" });
+}
+
 export function updatePlanItem(
   id: string,
   edit: { theme?: string; idea?: string; filming_suggestion?: string },

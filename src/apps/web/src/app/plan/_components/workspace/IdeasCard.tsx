@@ -15,24 +15,29 @@ import { useState, useRef, useCallback, useId } from "react";
 import { LightCard } from "../ui/LightCard";
 import { Eyebrow } from "../ui/Eyebrow";
 import type { IdeaSeed, PersonaResponse } from "@/lib/plan-api";
-import { patchPersonaIdeas } from "@/lib/plan-api";
+import { patchPersonaIdeas, addIdeasToPlan } from "@/lib/plan-api";
 
 interface IdeasCardProps {
   persona: PersonaResponse;
   /** Called with the updated persona after a successful save so the parent
    *  can propagate the new idea_seeds without a full page refresh. */
   onSaved?: (updated: PersonaResponse) => void;
+  /** When provided, shows a "Weave into plan" CTA that regenerates the plan. */
+  planId?: string;
+  /** Called after plan regeneration is enqueued so the parent can start polling. */
+  onRegenerate?: () => void;
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-export function IdeasCard({ persona, onSaved }: IdeasCardProps) {
+export function IdeasCard({ persona, onSaved, planId, onRegenerate }: IdeasCardProps) {
   const seeds: IdeaSeed[] = persona.idea_seeds ?? [];
 
   // Local shadow of the seeds list — synced to persona prop on save.
   const [localSeeds, setLocalSeeds] = useState<IdeaSeed[]>(seeds);
   const [buffer, setBuffer] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [weaving, setWeaving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const statusId = useId();
 
@@ -77,6 +82,19 @@ export function IdeasCard({ persona, onSaved }: IdeasCardProps) {
     const next = localSeeds.filter((_, i) => i !== idx);
     setLocalSeeds(next);
     void save(next);
+  }
+
+  async function weaveIntoPlan() {
+    if (!planId || weaving) return;
+    setWeaving(true);
+    try {
+      await addIdeasToPlan(planId);
+      onRegenerate?.();
+    } catch {
+      // non-fatal: the regen endpoint returns 409 if already generating; ignore
+    } finally {
+      setWeaving(false);
+    }
   }
 
   const isEmpty = localSeeds.length === 0;
@@ -156,6 +174,18 @@ export function IdeasCard({ persona, onSaved }: IdeasCardProps) {
             );
           })}
         </ul>
+      )}
+
+      {/* "Weave into plan" CTA — shown when seeds exist and a plan is active */}
+      {!isEmpty && planId && (
+        <button
+          type="button"
+          onClick={() => void weaveIntoPlan()}
+          disabled={weaving || saveState === "saving"}
+          className="mt-3 w-full rounded-xl bg-[#0c0c0e] px-4 py-2.5 text-[13px] font-medium text-white transition-opacity hover:opacity-80 disabled:opacity-40"
+        >
+          {weaving ? "Weaving in…" : "Update plan with these ideas →"}
+        </button>
       )}
 
       {/* Add-idea input — always visible; dashed ghost row style from mockup board */}

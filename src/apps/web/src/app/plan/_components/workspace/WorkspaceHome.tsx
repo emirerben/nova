@@ -101,7 +101,12 @@ export function WorkspaceHome({
             />
             <MomentumCard plan={plan} />
             {/* M1: "Your ideas" — persistent idea seeds that survive across plans */}
-            <IdeasCard persona={persona} onSaved={setPersona} />
+            <IdeasCard
+              persona={persona}
+              onSaved={setPersona}
+              planId={plan.id}
+              onRegenerate={onRefresh}
+            />
             <PersonaCard persona={persona} />
             {/* Creator Agent M1: StyleCard — absent when USER_STYLE_ENABLED=false */}
             {styleResponse && (
