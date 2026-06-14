@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.108.0] — 2026-06-14
+
+### Changed
+- **Onboarding — Split rail layout (Build Goal #1).** The `/plan` setup flow now renders as a two-pane desktop layout: a fixed left rail (white, border-right) shows a 4-step progress indicator (TikTok → What you make → Style → First plan) with lime dots for done, ink for active, zinc for upcoming/skipped. The right pane (flex-1, max-w-lg) shows one question at a time. Clicking a completed step goes back to it; upcoming steps are non-interactive.
+- **New "What you make" step.** A new Step 2 asks "What do you make?" with four large toggle cards: Talking to camera (`talking_head`), B-roll & nature (`montage`), Vlogs & daily life (`day_vlog`), Mixed. The selection is persisted as `footage_type_bias` on the user's persona (PATCH /personas/:id, no flag gate) and used by planners + archetype dispatch.
+- **TikTok branch.** Handle submitted with a result → Step 1 marked done; skipped or failed → Step 1 shown as "Skipped" (zinc dot). Both paths advance to Step 2.
+- **Deleted legacy files:** `OnboardingStep.tsx`, `QuestionCard.tsx`, `plan/onboarding/page.tsx`, `plan/setup/page.tsx` (simple redirect shims, no other logic). Tests updated to cover `OnboardingShell` instead.
+- **Backend: `footage_type_bias` added to `PersonaEdit`.** `PATCH /personas/:id` now accepts `footage_type_bias: list[str] | None`, storing it in the persona JSONB alongside other persona fields. No migration needed (JSONB). No `USER_STYLE_ENABLED` gate.
+
 ## [0.4.107.0] — 2026-06-14
 
 ### Changed
