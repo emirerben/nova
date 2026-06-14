@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.105.0] — 2026-06-14
+
+### Added
+- **"From your idea" provenance badge.** Plan items that originated from one of your idea seeds now show a lime badge — "From your idea: <seed text>" — on the TodayCard, the plan item detail page, and every PlanItemCard. When you tap "Weave into plan", the AI matches each generated item back to the seed whose content it preserves (token-set similarity, no agent call) and links them durably.
+- **Idea seeds now flip to "✓ in your plan" automatically.** The moment a seed becomes a plan item the IdeasCard activates its in-plan badge. Seeds stay in-plan after re-generation; the status only advances, never regresses. This also closes a latent duplicate-generation bug: previously, pending seeds were re-processed on every "add ideas" call.
+- **`source_idea_seed_id` + `source_idea_seed_text` on plan-item API responses.** The plan list and single-item endpoints now include both fields. `source_idea_seed_text` is resolved server-side from the persona's idea seeds, so frontends need no extra fetch.
+
 ## [0.4.104.0] — 2026-06-13
 
 ### Added
