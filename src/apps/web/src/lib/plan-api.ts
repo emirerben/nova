@@ -259,6 +259,8 @@ export interface PlanItem {
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
+  /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
+  edit_format?: string | null;
 }
 
 /** Activation seed (T8) lifecycle: none→seeding→activating→activated|activated_empty|failed. */
