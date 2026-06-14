@@ -1,4 +1,5 @@
 "use client";
+import { useState, useEffect } from "react";
 import type { ContentPlan, PersonaResponse, StyleResponse } from "@/lib/plan-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { calendarToday, behindBy } from "@/app/plan/_lib/plan-schedule";
@@ -6,6 +7,7 @@ import { TodayCard } from "./TodayCard";
 import { MomentumCard } from "./MomentumCard";
 import { PersonaCard } from "./PersonaCard";
 import { StyleCard } from "./StyleCard";
+import { IdeasCard } from "./IdeasCard";
 import { ThisWeekStrip } from "./ThisWeekStrip";
 import { MonthCalendarGrid } from "./MonthCalendarGrid";
 import { PlanReadyBanner } from "./PlanReadyBanner";
@@ -29,7 +31,7 @@ interface WorkspaceHomeProps {
 
 export function WorkspaceHome({
   plan,
-  persona,
+  persona: personaProp,
   planJustReady,
   regenerating,
   onRefresh,
@@ -37,6 +39,26 @@ export function WorkspaceHome({
   onBannerDismiss,
   styleResponse,
 }: WorkspaceHomeProps) {
+  // Local copy of persona so IdeasCard can optimistically update idea_seeds
+  // without triggering a full plan refresh (saves avoid a round-trip to the parent).
+  const [persona, setPersona] = useState<PersonaResponse>(personaProp);
+
+  // When the parent refreshes (e.g. plan regeneration, poll cycle), propagate
+  // changes from outside while keeping any in-flight local saves stable.
+  // Keyed on the parent's generation_started_at so a new plan generation always
+  // wins; idea_seeds changes from IdeasCard's own saves are the one authoritative
+  // local mutation path and do NOT come through personaProp until the next poll.
+  useEffect(
+    () => {
+      setPersona(personaProp);
+    },
+    // Intentional partial deps: re-sync only when the server signals a new
+    // generation (generation_started_at / persona_status change). We do NOT
+    // include personaProp itself to avoid clobbering in-flight idea_seeds
+    // saves that haven't yet round-tripped through the parent's poll cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [personaProp.generation_started_at, personaProp.persona_status],
+  );
   const items = plan.items ?? [];
   const todayDay = calendarToday(plan.start_date, plan.horizon_days);
 
@@ -78,6 +100,13 @@ export function WorkspaceHome({
               onRefresh={onRefresh}
             />
             <MomentumCard plan={plan} />
+            {/* M1: "Your ideas" — persistent idea seeds that survive across plans */}
+            <IdeasCard
+              persona={persona}
+              onSaved={setPersona}
+              planId={plan.id}
+              onRegenerate={onRefresh}
+            />
             <PersonaCard persona={persona} />
             {/* Creator Agent M1: StyleCard — absent when USER_STYLE_ENABLED=false */}
             {styleResponse && (

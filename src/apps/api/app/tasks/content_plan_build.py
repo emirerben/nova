@@ -75,6 +75,12 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 preferred_edit_format_mix = {
                     str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
                 }
+        # M1 Bring-Your-Own-Ideas: extract seed texts from the persona row.
+        # Empty list → byte-identical baseline (no user-ideas block injected).
+        raw_seeds = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
+        idea_seed_texts = [
+            str(s["text"]) for s in raw_seeds if isinstance(s, dict) and s.get("text")
+        ]
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
@@ -82,6 +88,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             tiktok_analysis=tiktok_summary,
             instruction_level=instruction_level,  # type: ignore[arg-type]
             preferred_edit_format_mix=preferred_edit_format_mix,
+            user_idea_seeds=idea_seed_texts,
         )
 
     try:
@@ -234,6 +241,13 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 preferred_edit_format_mix = {
                     str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
                 }
+        # M1 Bring-Your-Own-Ideas: carry user seeds into the regenerate pass so the
+        # "their say" invariant covers seeds too (regenerate biases toward what the
+        # user explicitly said they want, not just their feedback reactions).
+        raw_seeds_regen = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
+        idea_seed_texts_regen = [
+            str(s["text"]) for s in raw_seeds_regen if isinstance(s, dict) and s.get("text")
+        ]
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
@@ -242,6 +256,7 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             tiktok_analysis=tiktok_summary,
             instruction_level=instruction_level,  # type: ignore[arg-type]
             preferred_edit_format_mix=preferred_edit_format_mix,
+            user_idea_seeds=idea_seed_texts_regen,
         )
 
     try:
@@ -865,11 +880,22 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
                 sample_topics=[],
             )
         )
+        # M1: carry seeds into reroll so the replacement idea still respects the
+        # user's stated intent (best-effort; no seeds = byte-identical to prior).
+        raw_seeds_reroll = (
+            persona_row.idea_seeds
+            if persona_row is not None and isinstance(persona_row.idea_seeds, list)
+            else []
+        )
+        idea_seed_texts_reroll = [
+            str(s["text"]) for s in raw_seeds_reroll if isinstance(s, dict) and s.get("text")
+        ]
         agent_input = ContentPlanInput(
             persona=persona,
             events=str((plan.events or {}).get("text", "") or ""),
             horizon_days=plan.horizon_days or 30,
             exclude_ideas=all_ideas,
+            user_idea_seeds=idea_seed_texts_reroll,
         )
         original_day_index = item.day_index
 
@@ -941,4 +967,122 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
         item_id=item_id,
         day_index=original_day_index,
         new_idea=replacements[0].idea if replacements else None,
+    )
+
+
+@celery_app.task(
+    name="app.tasks.content_plan_build.add_ideas_to_plan",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=10,
+    soft_time_limit=120,
+    time_limit=180,
+)
+def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
+    """Generate one plan item per pending idea seed and append to the plan.
+
+    Lightweight alternative to full regeneration — N pending seeds → one small
+    LLM call (horizon_days=N) → N new PlanItems appended after the last existing
+    item. Protected/existing items are never touched.
+    """
+    with sync_session() as session:
+        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+        if plan is None:
+            return
+
+        persona_row = session.get(PersonaRow, plan.persona_id)
+        if persona_row is None:
+            plan.plan_status = "ready"
+            session.commit()
+            return
+
+        raw_seeds = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
+        pending_seeds = [
+            s
+            for s in raw_seeds
+            if isinstance(s, dict) and s.get("text") and s.get("status") != "in_plan"
+        ]
+
+        if not pending_seeds:
+            plan.plan_status = "ready"
+            session.commit()
+            return
+
+        seed_texts = [str(s["text"]) for s in pending_seeds]
+        existing_items = list(plan.items or [])
+        all_ideas = [it.idea for it in existing_items if it.idea]
+        horizon = plan.horizon_days or 30
+        used_days = {it.day_index for it in existing_items}
+        # Prefer empty slots within the horizon; fall back to extending beyond it.
+        free_slots = [d for d in range(1, horizon + 1) if d not in used_days]
+        max_day = max(used_days, default=0)
+
+        persona = (
+            Persona(**persona_row.persona)
+            if persona_row.persona
+            else Persona(
+                summary="",
+                content_pillars=[],
+                tone="",
+                audience="",
+                posting_cadence="",
+                sample_topics=[],
+            )
+        )
+        agent_input = ContentPlanInput(
+            persona=persona,
+            events=str((plan.events or {}).get("text", "") or ""),
+            # horizon_days = N seeds → target_item_count = N (one item per seed).
+            horizon_days=len(seed_texts),
+            exclude_ideas=all_ideas,
+            user_idea_seeds=seed_texts,
+        )
+
+    try:
+        agent = ContentPlanGeneratorAgent(default_client())
+        output = agent.run(agent_input, ctx=RunContext(job_id=None))
+        new_specs = list(output.items)[: len(seed_texts)]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("add_ideas_to_plan.failed", plan_id=plan_id, error=str(exc))
+        with sync_session() as session:
+            plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+            if plan is not None:
+                plan.plan_status = "ready"
+                session.commit()
+        raise self.retry(exc=exc) from exc
+
+    with sync_session() as session:
+        plan = session.get(ContentPlan, uuid.UUID(str(plan_id)))
+        if plan is None:
+            return
+
+        for i, spec in enumerate(new_specs):
+            if i < len(free_slots):
+                slot = free_slots[i]
+            else:
+                slot = max_day + 1 + (i - len(free_slots))
+            item = PlanItem(
+                content_plan_id=plan.id,
+                day_index=slot,
+                theme=spec.theme,
+                idea=spec.idea,
+                filming_suggestion=spec.filming_suggestion or None,
+                rationale=spec.rationale or None,
+                edit_format=spec.edit_format or "montage",
+                filming_guide=[
+                    {**s.model_dump(), "shot_id": uuid.uuid4().hex}
+                    for s in (spec.filming_guide or [])
+                ],
+                item_status="idea",
+            )
+            session.add(item)
+
+        plan.plan_status = "ready"
+        session.commit()
+
+    log.info(
+        "add_ideas_to_plan.done",
+        plan_id=plan_id,
+        added=len(new_specs),
+        seeds=len(seed_texts),
     )

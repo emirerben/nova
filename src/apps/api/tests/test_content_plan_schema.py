@@ -41,6 +41,8 @@ _EXPECTED_CHAIN = {
     "0050": "0049",
     "0051": "0050",
     "0052": "0051",
+    "0053": "0052",
+    "0054": "0053",
 }
 
 
@@ -52,7 +54,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0053"], f"expected a single head 0053, got {heads}"
+    assert heads == ["0054"], f"expected a single head 0054, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -81,6 +83,7 @@ def test_new_tables_registered() -> None:
         "tiktok_profile",
         "generation_started_at",
         "style",
+        "idea_seeds",
     } <= persona_cols
 
     plan_cols = set(tables["content_plans"].columns.keys())
@@ -107,6 +110,7 @@ def test_new_tables_registered() -> None:
         "current_job_id",
         "edit_format",
         "filming_guide",
+        "source_idea_seed_id",
     } <= item_cols
 
 

@@ -555,6 +555,12 @@ class Persona(Base):
     # style derived yet → byte-identical render behavior. status="edited" means the
     # user hand-edited; derivation never auto-overwrites it without explicit /rederive.
     style: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Bring-Your-Own-Ideas (M1): user-owned intent seeds that persist across plans.
+    # Each seed: {id: str, text: str, pillar: str|null, status: "pending"|"in_plan"}.
+    # The id is server-stamped (uuid4 hex) so PlanItem.source_idea_seed_id can
+    # reference it without a second migration (T5 populates that link). Empty [] =
+    # no seeds yet → byte-identical plan generation (no prompt block injected).
+    idea_seeds: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # generating | ready | failed | edited
     persona_status: Mapped[str] = mapped_column(Text, nullable=False, server_default="generating")
     generation_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
@@ -676,6 +682,12 @@ class PlanItem(Base):
     current_job_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=True
     )
+    # Bring-Your-Own-Ideas provenance link (M1 T5 populates this). References the
+    # id field of the Persona.idea_seeds entry that seeded this item. NULL means
+    # the item was generated from the market idea-bank (no user seed) OR T5 hasn't
+    # run yet. Stored as TEXT (the uuid4 hex from the seed's id field) rather than
+    # a FK so it survives seed deletion without a cascade constraint.
+    source_idea_seed_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     user_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

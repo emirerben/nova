@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.104.0] — 2026-06-13
+
+### Added
+- **Bring your own ideas — Nova deepens your content seeds instead of inventing generic ones.** You can now add your own content ideas (a sentence-length concept or topic) to the new "Your ideas" card in the `/plan` workspace left rail. Ideas persist across plans at persona scope. When you generate a plan, the AI prioritises and deepens each of your stated ideas into filmable plan items first, then fills any remaining slots from the market idea bank. Empty-state card shows a Playfair serif invitation ("What do you want to post about?") with a quiet "Add an idea" CTA; each row shows a ✓/○ in-plan status badge (glyph + text, not color alone) and a keyboard-friendly delete button.
+- **Idea seeds API.** `PATCH /personas/{id}` now accepts `idea_seeds: [{text, pillar?, status}]` (wholesale replace, same semantics as `content_pillars`). Server stamps missing ids with uuid4 hex so future plan-item provenance links (`source_idea_seed_id`) can reference stable seeds. Blank-text and invalid-status seeds are filtered/coerced server-side.
+
 ## [0.4.103.1] — 2026-06-13
 
 ### Added

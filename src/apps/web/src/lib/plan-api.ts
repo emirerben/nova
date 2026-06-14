@@ -64,6 +64,17 @@ export interface TikTokProfile {
   analyzed_at?: string;
 }
 
+// ── Idea seeds (M1 Bring-Your-Own-Ideas) ────────────────────────────────────
+
+export type IdeaSeedStatus = "pending" | "in_plan";
+
+export interface IdeaSeed {
+  id: string;
+  text: string;
+  pillar?: string | null;
+  status: IdeaSeedStatus;
+}
+
 export interface PersonaResponse {
   id: string;
   persona_status: PersonaStatus;
@@ -72,6 +83,8 @@ export interface PersonaResponse {
   error_detail: string | null;
   tiktok_profile?: TikTokProfile | null;
   generation_started_at?: string | null;
+  /** M1: user-owned idea seeds, persisted at persona scope. */
+  idea_seeds?: IdeaSeed[];
 }
 
 // ── Chat interview ────────────────────────────────────────────────────────────
@@ -169,6 +182,24 @@ export function updatePersona(
   return request<PersonaResponse>(`/personas/${id}`, {
     method: "PATCH",
     body: JSON.stringify(edit),
+  });
+}
+
+/**
+ * Replace the user's idea seeds list (M1 Bring-Your-Own-Ideas).
+ * The server stamps missing ids and sanitizes text/pillar. Returns the updated
+ * PersonaResponse with the server-stamped seeds (idempotent: call on every edit).
+ */
+export function patchPersonaIdeas(
+  personaId: string,
+  seeds: IdeaSeed[],
+): Promise<PersonaResponse> {
+  // Existing seeds carry their server-stamped ids so they are stable across saves
+  // (add/remove, no id churn). New seeds sent with id:"" get a fresh uuid from the
+  // server. The server uses s.get("id") or "" → new uuid if empty/absent.
+  return request<PersonaResponse>(`/personas/${personaId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ idea_seeds: seeds }),
   });
 }
 
@@ -276,6 +307,10 @@ export async function getContentPlan(): Promise<ContentPlan | null> {
  */
 export function regenerateContentPlan(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/regenerate`, { method: "POST" });
+}
+
+export function addIdeasToPlan(planId: string): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/add-ideas`, { method: "POST" });
 }
 
 export function updatePlanItem(

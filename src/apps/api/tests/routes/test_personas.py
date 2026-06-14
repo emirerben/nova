@@ -217,6 +217,104 @@ def test_patch_persona_rejects_zero_posts_per_week(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+# ── PATCH idea_seeds (M1 Bring-Your-Own-Ideas) ───────────────────────────────
+
+
+def test_patch_persona_stamps_missing_idea_seed_ids(client: TestClient) -> None:
+    """Seed submitted without an id must receive a server-stamped hex id."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    row.idea_seeds = []  # start empty, explicit list so or-fallback is predictable
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{row.id}",
+        json={"idea_seeds": [{"text": "morning coffee walk", "status": "pending"}]},
+    )
+
+    assert resp.status_code == 200
+    # The handler mutates row.idea_seeds in-place.
+    assert isinstance(row.idea_seeds, list)
+    assert len(row.idea_seeds) == 1
+    seed = row.idea_seeds[0]
+    assert seed["text"] == "morning coffee walk"
+    assert seed["status"] == "pending"
+    # Server must have stamped a non-empty id (uuid4 hex, 32 chars).
+    assert isinstance(seed["id"], str)
+    assert len(seed["id"]) == 32
+
+
+def test_patch_persona_drops_blank_idea_seeds(client: TestClient) -> None:
+    """Seeds with blank text must be filtered out — never persisted."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    row.idea_seeds = []
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{row.id}",
+        json={
+            "idea_seeds": [
+                {"text": "a real idea", "status": "pending"},
+                {"text": "   ", "status": "pending"},  # blank — must be dropped
+                {"text": "", "status": "pending"},  # empty — must be dropped
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    assert len(row.idea_seeds) == 1
+    assert row.idea_seeds[0]["text"] == "a real idea"
+
+
+def test_patch_persona_invalid_status_coerced_to_pending(client: TestClient) -> None:
+    """Unknown seed status must fall back to 'pending' — never stored verbatim."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    row.idea_seeds = []
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{row.id}",
+        json={"idea_seeds": [{"text": "my idea", "status": "hacked_status"}]},
+    )
+
+    assert resp.status_code == 200
+    assert row.idea_seeds[0]["status"] == "pending"
+
+
+def test_patch_idea_seeds_leaves_persona_dict_untouched(client: TestClient) -> None:
+    """Patching idea_seeds must NOT modify the persona JSONB (separate column)."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    row.idea_seeds = []
+    original_persona = dict(row.persona)
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{row.id}",
+        json={"idea_seeds": [{"text": "great idea", "status": "pending"}]},
+    )
+
+    assert resp.status_code == 200
+    # persona JSONB must not have an 'idea_seeds' key injected into it
+    assert "idea_seeds" not in row.persona
+    # original persona fields must be preserved
+    assert row.persona["tone"] == original_persona["tone"]
+
+
 # ── POST /personas/reset ─────────────────────────────────────────────────────
 
 
