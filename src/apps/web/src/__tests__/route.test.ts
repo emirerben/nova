@@ -178,11 +178,11 @@ describe("resolvePlanMode", () => {
     expect(resolvePlanMode(p, null)).toBe("setup:fork");
   });
 
-  it("returns setup:edit-context when footage path chosen but no topic/intent", () => {
+  it("returns setup:edit-upload when footage path chosen but no job id", () => {
     const p = persona("chat_pending", {
       questionnaire: { content_mode: "existing_footage" },
     });
-    expect(resolvePlanMode(p, null)).toBe("setup:edit-context");
+    expect(resolvePlanMode(p, null)).toBe("setup:edit-upload");
   });
 
   it("returns setup:edit-upload when footage path + topic but no job id", () => {

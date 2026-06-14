@@ -36,7 +36,7 @@ import { ClipGroupStep, type ClipItem } from "./_components/onboarding/ClipGroup
 import { EditPayoff } from "./_components/onboarding/EditPayoff";
 
 // Sub-steps within the "you" wizard step.
-type YouSubStep = "tiktok-pre-screen" | "chat" | "form";
+type YouSubStep = "tiktok-pre-screen" | "chat" | "upload-offer" | "uploading" | "form";
 
 const POLL_MS = 2000;
 
@@ -95,6 +95,8 @@ function PlanPageInner() {
   // editJobs: one entry per group (or ungrouped clip). Purely local — on refresh
   // the user returns to the upload step, which is acceptable.
   const [editJobs, setEditJobs] = useState<{ jobId: string; topic: string; clipPaths: string[] }[]>([]);
+  // onboardingTopic: fallback topic for createGenerativeJob when no per-group topic is set.
+  const [onboardingTopic] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -163,24 +165,25 @@ function PlanPageInner() {
   // ── Handlers ────────────────────────────────────────────────────────────
 
   async function handleTikTokPreScreen(handle: string) {
-    if (handle) {
-      setBusy(true);
-      try {
-        const p = await tiktokScrape(handle);
-        setPersona(p);
-      } catch {
-        // Best-effort — scrape failure is non-blocking; proceed to chat regardless.
-      } finally {
-        setBusy(false);
+    setBusy(true);
+    try {
+      if (handle) {
+        try {
+          const p = await tiktokScrape(handle);
+          setPersona(p);
+        } catch {
+          // scrape failure is non-blocking
+        }
       }
+    } finally {
+      setBusy(false);
     }
     setSubStep("chat");
   }
 
   function handleChatComplete() {
-    // ChatInterview fires generate_persona on the backend; navigate to the
-    // persona step and let the polling loop surface the result.
-    void load();
+    // Interview done — offer the footage upload path before advancing to the plan.
+    setSubStep("upload-offer");
   }
 
   async function handleOnboardingSubmit(answers: PersonaQuestionnaire) {
@@ -279,11 +282,48 @@ function PlanPageInner() {
         </div>
       )}
 
+      {/* Step 1 (new user): TikTok handle */}
       {mode === "setup:prescreen" && subStep === "tiktok-pre-screen" && (
         <TikTokPreScreen onContinue={handleTikTokPreScreen} submitting={busy} />
       )}
 
-      {(mode === "setup:chat" || (mode === "setup:prescreen" && subStep === "chat")) && (
+      {/* Fallback fork screen for returning users with no content_mode */}
+      {mode === "setup:fork" && (
+        <ForkScreen
+          onFootage={async () => {
+            try {
+              await recordOnboardingFork({ content_mode: "existing_footage" });
+            } catch { }
+            void load();
+          }}
+          onFresh={async () => {
+            try {
+              await recordOnboardingFork({ content_mode: "create_new" });
+            } catch { }
+            setSubStep("chat");
+          }}
+          onSkip={async () => {
+            try {
+              await recordOnboardingFork({ content_mode: "existing_footage" });
+            } catch { }
+            void load();
+          }}
+        />
+      )}
+
+      {/* After interview: offer footage upload before advancing to the plan */}
+      {subStep === "upload-offer" && (
+        <ForkScreen
+          onFootage={async () => {
+            setSubStep("uploading");
+            try { await recordOnboardingFork({ content_mode: "existing_footage" }); } catch {}
+          }}
+          onFresh={() => void load()}
+          onSkip={() => void load()}
+        />
+      )}
+
+      {(mode === "setup:chat" || (mode === "setup:prescreen" && subStep === "chat")) && subStep !== "upload-offer" && (
         <ChatInterview onComplete={handleChatComplete} />
       )}
 
@@ -336,41 +376,10 @@ function PlanPageInner() {
         />
       )}
 
-      {mode === "setup:fork" && (
-        <ForkScreen
-          onFootage={async () => {
-            try {
-              await recordOnboardingFork({ content_mode: "existing_footage" });
-            } catch {
-              // best-effort; persona row persists on the server
-            }
-            void load();
-          }}
-          onFresh={async () => {
-            try {
-              await recordOnboardingFork({ content_mode: "create_new" });
-            } catch {
-              // best-effort
-            }
-            void load();
-          }}
-          onSkip={async () => {
-            // Skip = go straight to footage upload (no context step)
-            try {
-              await recordOnboardingFork({ content_mode: "existing_footage" });
-            } catch {
-              // best-effort
-            }
-            void load();
-          }}
-        />
-      )}
+      {/* FOOTAGE PATH: upload → group (with per-group context) → generate */}
 
-      {/* FOOTAGE PATH: upload first, then group, then generate */}
-
-      {/* Step 1 — upload: shown when server says edit-context OR edit-upload (no topic needed
-          in the new flow), but NOT when we've advanced to the group step. */}
-      {(mode === "setup:edit-context" || mode === "setup:edit-upload") && localStep !== "group" && editJobs.length === 0 && (
+      {/* Upload: shown after interview upload-offer ("yes"), or when server says edit-upload */}
+      {(mode === "setup:edit-upload" || subStep === "uploading") && localStep !== "group" && editJobs.length === 0 && (
         <EditUploadStep
           onSubmit={(clips) => {
             setUploadedClips(clips);
@@ -379,7 +388,7 @@ function PlanPageInner() {
         />
       )}
 
-      {/* Step 2 — group: client-only step, back returns to upload */}
+      {/* Group: client-only step, back returns to upload */}
       {localStep === "group" && (
         <ClipGroupStep
           clips={uploadedClips}
@@ -390,7 +399,7 @@ function PlanPageInner() {
             for (const group of groups) {
               try {
                 const result = await createGenerativeJob(group.clips, null, {
-                  topic: group.topic || undefined,
+                  topic: group.topic || onboardingTopic || undefined,
                 });
                 jobs.push({ jobId: result.job_id, topic: group.topic, clipPaths: group.clips });
               } catch {

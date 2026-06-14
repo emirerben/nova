@@ -15,7 +15,6 @@ export type PlanMode =
   | "setup:plan-intro"
   | "setup:plan-generating"
   | "setup:plan-failed"
-  | "setup:edit-context"
   | "setup:edit-upload"
   | "setup:edit-generating"
   | "setup:edit-payoff"
@@ -41,10 +40,7 @@ export function resolvePlanMode(
   if (persona.persona_status === "chat_pending") {
     // If they chose the footage path, route into that funnel
     if (isFootagePath) {
-      // Check payoff_done first — topic/intent are not required in the new flow
-      // where context is collected inline in the clip-group step.
       if (!q?.onboarding_payoff_done) {
-        if (!q?.onboarding_topic && !q?.onboarding_intent) return "setup:edit-context";
         if (!q?.onboarding_edit_job_id) return "setup:edit-upload";
         return "setup:edit-generating";
       }
