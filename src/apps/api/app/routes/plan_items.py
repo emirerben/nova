@@ -194,7 +194,9 @@ def plan_item_response(
         content_mode=content_mode
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
-        source_idea_seed_id=item.source_idea_seed_id or None,
+        source_idea_seed_id=item.source_idea_seed_id
+        if isinstance(item.source_idea_seed_id, str)
+        else None,
     )
 
 
