@@ -104,6 +104,11 @@ export default function PlanItemCard({
               {stripRationalePrefix(item.rationale)}
             </p>
           )}
+          {(item.filming_guide?.length ?? 0) > 0 && (
+            <p className="mt-1.5 text-xs text-zinc-500">
+              {item.filming_guide.length} shots
+            </p>
+          )}
           <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1">
             <Link
               href={`/plan/items/${item.id}`}
