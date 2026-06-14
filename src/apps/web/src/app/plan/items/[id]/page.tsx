@@ -640,6 +640,13 @@ export default function PlanItemPage() {
               <p className="text-sm text-[#3f3f46]">{stripRationalePrefix(item.rationale)}</p>
             </div>
           )}
+          {item.edit_format && (
+            <div className="mb-2">
+              <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+                {item.edit_format}
+              </span>
+            </div>
+          )}
 
           {/* ProgressTheater — light tone */}
           {data?.job && (
