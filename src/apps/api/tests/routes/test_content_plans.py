@@ -342,3 +342,128 @@ def test_regenerate_preserves_start_date() -> None:
 
     # The original anchor date must not be overwritten.
     assert plan.start_date == original_date
+
+
+# ── pool matched_item_id reconciliation ─────────────────────────────────────
+
+
+def _pool_plan(user_id: uuid.UUID, pool: dict, items: list) -> MagicMock:
+    """Build a plan mock with a pool and a list of item mocks."""
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.user_id = user_id
+    plan.plan_status = "ready"
+    plan.horizon_days = 30
+    plan.events = None
+    plan.activation_status = "none"
+    plan.seed_clip_paths = []
+    plan.start_date = None
+    plan.generation_started_at = None
+    plan.pool = pool
+    plan.items = items
+    return plan
+
+
+def _item_mock(item_id: uuid.UUID, clip_gcs_paths: list[str]) -> MagicMock:
+    it = MagicMock()
+    it.id = item_id
+    it.clip_gcs_paths = clip_gcs_paths
+    it.clip_assignments = [{"gcs_path": p, "shot_id": None} for p in clip_gcs_paths]
+    it.item_status = "idea"
+    it.current_job = None
+    it.content_plan_id = uuid.uuid4()
+    it.day_index = 1
+    it.theme = "Test"
+    it.idea = "Test idea"
+    it.filming_suggestion = None
+    it.rationale = None
+    it.edit_format = "montage"
+    it.user_edited = False
+    it.current_job_id = None
+    it.filming_guide = []
+    it.conformance = None
+    it.sequence_quote = None
+    it.sequence_mode = None
+    return it
+
+
+def test_pool_matched_count_resets_stale_match() -> None:
+    """Pool clip whose matched_item_id no longer exists in the item's clips
+    must be treated as unmatched in the response (matched_item_id -> null).
+
+    Scenario: user uploaded clip A to the pool; the matcher assigned it to
+    item #1. User later replaced clip A on item #1 with a different clip.
+    Now pool clip A's matched_item_id still points at item #1, but clip A
+    is no longer in item #1's clip_gcs_paths. The reconciler must reset it.
+    """
+    from app.routes.content_plans import _plan_response  # noqa: PLC0415
+
+    item_id = uuid.uuid4()
+    stale_clip_path = "users/u/plan-pool/p/clip_a.mp4"
+    live_clip_path = "users/u/plan-pool/p/clip_b.mp4"  # replacement clip
+
+    # Item now has only the replacement clip -- the pool clip was removed.
+    item = _item_mock(item_id, [live_clip_path])
+
+    pool = {
+        "status": "matched",
+        "clips": [
+            # clip_a is stale: still in pool but no longer on the item
+            {"gcs_path": stale_clip_path, "matched_item_id": str(item_id)},
+            # clip_b is genuinely matched (it IS on the item now)
+            {"gcs_path": live_clip_path, "matched_item_id": str(item_id)},
+        ],
+    }
+    plan = _pool_plan(uuid.uuid4(), pool, [item])
+
+    resp = _plan_response(plan)
+
+    # The stale match must not count.
+    assert resp.pool_matched_count == 1
+    # The live match is preserved.
+    assert resp.pool_clip_count == 2
+
+
+def test_pool_matched_count_resets_deleted_item() -> None:
+    """Pool clip whose matched_item_id points at a non-existent item is reset."""
+    from app.routes.content_plans import _plan_response  # noqa: PLC0415
+
+    deleted_item_id = uuid.uuid4()
+    clip_path = "users/u/plan-pool/p/clip_gone.mp4"
+
+    pool = {
+        "status": "matched",
+        "clips": [
+            {"gcs_path": clip_path, "matched_item_id": str(deleted_item_id)},
+        ],
+    }
+    # Plan has no items -- the item was deleted.
+    plan = _pool_plan(uuid.uuid4(), pool, [])
+
+    resp = _plan_response(plan)
+
+    assert resp.pool_matched_count == 0
+    assert resp.pool_clip_count == 1
+
+
+def test_pool_matched_count_preserves_valid_match() -> None:
+    """Pool clips whose matched item still holds the clip are not reset."""
+    from app.routes.content_plans import _plan_response  # noqa: PLC0415
+
+    item_id = uuid.uuid4()
+    clip_path = "users/u/plan-pool/p/clip_keep.mp4"
+
+    item = _item_mock(item_id, [clip_path])
+
+    pool = {
+        "status": "matched",
+        "clips": [
+            {"gcs_path": clip_path, "matched_item_id": str(item_id)},
+        ],
+    }
+    plan = _pool_plan(uuid.uuid4(), pool, [item])
+
+    resp = _plan_response(plan)
+
+    assert resp.pool_matched_count == 1
+    assert resp.pool_clip_count == 1
