@@ -6,11 +6,10 @@ export function EditContextStep({
   onSubmit,
   onSkip,
 }: {
-  onSubmit: (topic: string, intent: string) => void;
+  onSubmit: (topic: string) => void;
   onSkip: () => void;
 }) {
   const [topic, setTopic] = useState("");
-  const [intent, setIntent] = useState("");
 
   return (
     <div className="flex flex-col gap-6 px-4 py-8 max-w-lg mx-auto animate-fade-up">
@@ -29,23 +28,9 @@ export function EditContextStep({
         rows={3}
       />
 
-      <div className="border-l-4 border-lime-600/50 pl-4">
-        <p className="font-display text-lg text-[#3f3f46]">
-          What should people feel?{" "}
-          <span className="text-[#a1a1aa] font-sans text-sm">(optional)</span>
-        </p>
-      </div>
-
-      <input
-        value={intent}
-        onChange={(e) => setIntent(e.target.value)}
-        placeholder="e.g. inspired to get outside"
-        className="w-full rounded-xl border border-[#e4e4e7] bg-[#fafaf8] px-4 py-3 text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:outline-none focus:ring-2 focus:ring-lime-600"
-      />
-
       <div className="flex gap-3">
         <button
-          onClick={() => onSubmit(topic, intent)}
+          onClick={() => onSubmit(topic)}
           disabled={!topic.trim()}
           className="flex-1 rounded-xl bg-lime-700 text-white py-3 font-medium hover:bg-lime-800 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
         >

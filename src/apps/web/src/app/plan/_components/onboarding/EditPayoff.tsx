@@ -1,21 +1,30 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  changeVariantStyle,
+  editVariant,
   getGenerativeJobStatus,
+  getGenerativeStyleSets,
   GENERATIVE_TERMINAL_STATUSES,
+  retextVariant,
+  setVariantIntroSize,
+  swapVariantSong,
   type GenerativeJobStatus,
-  type GenerativeVariant,
   type GenerativeStyleSet,
+  type GenerativeVariant,
 } from "@/lib/generative-api";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
-import { ProgressTheater, PayoffField } from "@/components/progress";
+import { ProgressTheater } from "@/components/progress";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
-import { VariantTile } from "@/app/generative/VariantTile";
+import { TEXT_MODE_LABEL } from "@/app/generative/VariantCard";
+import { TimelineEditor } from "@/app/generative/TimelineEditor";
+import { useTimelineSession } from "@/app/generative/useTimelineSession";
+import { downloadVideo } from "@/lib/download-video";
 import { formatElapsed } from "@/components/progress/logic";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
-import { getGenerativeStyleSets } from "@/lib/generative-api";
-import { useEffect } from "react";
+import PlanVariantEditor from "@/app/plan/_components/PlanVariantEditor";
+import type { PlanItemVariant } from "@/lib/plan-api";
 
 function isTerminalStatus(data: GenerativeJobStatus): boolean {
   return GENERATIVE_TERMINAL_STATUSES.includes(data.status);
@@ -34,17 +43,150 @@ function deriveReceiptText(status: GenerativeJobStatus): string {
   return `Ready in ${formatElapsed(elapsedMs)}`;
 }
 
+/**
+ * Two-column panel for ONE focused variant.
+ * LEFT: hero video.
+ * RIGHT: PlanVariantEditor — same rich controls as the plan-item page.
+ * Keyed by variant_id so session hooks reset on variant switch.
+ */
+function FocusedVariantPanel({
+  variant,
+  jobId,
+  tracks,
+  styleSets,
+  refresh,
+}: {
+  variant: GenerativeVariant;
+  jobId: string;
+  tracks: MusicTrackSummary[];
+  styleSets: GenerativeStyleSet[];
+  refresh: () => void;
+}) {
+  const timelineSession = useTimelineSession(jobId, variant, refresh);
+
+  const awaitingTimelineRender = timelineSession.wait.phase === "rendering";
+  useEffect(() => {
+    if (!awaitingTimelineRender) return;
+    const t = setInterval(refresh, 2000);
+    return () => clearInterval(t);
+  }, [awaitingTimelineRender, refresh]);
+
+  // Pin the first output URL so a subsequent poll doesn't clear the video.
+  const outputSrcRef = useRef<string | null>(null);
+  if (variant.output_url && outputSrcRef.current === null) {
+    outputSrcRef.current = variant.output_url;
+  }
+  const pinnedOutputSrc = outputSrcRef.current ?? variant.output_url;
+
+  const rendering = variant.render_status === "rendering";
+  const failed = variant.render_status === "failed";
+  const timelineWait = timelineSession.wait.phase;
+
+  return (
+    <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+      {/* LEFT: hero video — fixed narrow column so the editor gets the room */}
+      <div className="w-full shrink-0 sm:max-w-[260px] lg:w-[260px]">
+        <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
+          {timelineWait === "rendering" ? (
+            <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
+              Applying your edit…
+            </div>
+          ) : rendering ? (
+            <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
+              Rendering…
+            </div>
+          ) : failed ? (
+            <div className="flex h-full items-center justify-center px-3 text-center text-sm text-[#3f3f46]">
+              This variant didn&apos;t render
+            </div>
+          ) : pinnedOutputSrc ? (
+            <video
+              src={pinnedOutputSrc}
+              controls
+              className="h-full w-full object-contain"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
+              No preview
+            </div>
+          )}
+        </div>
+        {!rendering && !failed && variant.output_url && (
+          <button
+            onClick={() =>
+              downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
+            }
+            className="mt-2 w-full rounded-lg border border-zinc-200 py-2 text-xs text-[#3f3f46] hover:border-zinc-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          >
+            Download
+          </button>
+        )}
+      </div>
+
+      {/* RIGHT: rich editing controls — same component as the plan-item page */}
+      <div className="min-w-0 flex-1">
+        <PlanVariantEditor
+          variant={variant as unknown as PlanItemVariant}
+          tracks={tracks}
+          styleSets={styleSets}
+          onSwap={async (trackId) => {
+            await swapVariantSong(jobId, variant.variant_id, trackId);
+            refresh();
+          }}
+          onRetext={async (text) => {
+            await retextVariant(jobId, variant.variant_id, { text });
+            refresh();
+          }}
+          onRemoveText={async () => {
+            await retextVariant(jobId, variant.variant_id, { remove: true });
+            refresh();
+          }}
+          onChangeStyle={async (styleSetId) => {
+            await changeVariantStyle(jobId, variant.variant_id, styleSetId);
+            refresh();
+          }}
+          onResize={async (px) => {
+            await setVariantIntroSize(jobId, variant.variant_id, px);
+            refresh();
+          }}
+          onChangeLayout={async (layout) => {
+            await editVariant(jobId, variant.variant_id, { intro_layout: layout });
+            refresh();
+          }}
+          onEditClips={timelineSession.openEditor}
+          showClipEditor={timelineSession.entryVisible}
+          clipSlotCount={timelineSession.slotCount}
+          hasClipEdits={timelineSession.hasUserEdits}
+        />
+        {timelineSession.isEditorOpen && (
+          <div className="mt-4">
+            <TimelineEditor
+              ownerId={jobId}
+              variantId={variant.variant_id}
+              onClose={timelineSession.closeEditor}
+              onRenderEnqueued={timelineSession.onRenderEnqueued}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function EditPayoff({
   jobId,
   onMakePlan,
   onReRoll,
+  hidePlanCta = false,
 }: {
   jobId: string;
   onMakePlan: () => void;
   onReRoll: () => void;
+  hidePlanCta?: boolean;
 }) {
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
+  const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
 
   useEffect(() => {
     getMusicTracks()
@@ -64,12 +206,15 @@ export function EditPayoff({
     [],
   );
 
-  const {
-    data: status,
-    refetch,
-  } = usePolledJobStatus<GenerativeJobStatus>(fetcher, undefined, isTerminalAndDone);
+  const { data: status, refetch } = usePolledJobStatus<GenerativeJobStatus>(
+    fetcher,
+    undefined,
+    isTerminalAndDone,
+  );
 
-  const refresh = useCallback(() => { refetch(); }, [refetch]);
+  const refresh = useCallback(() => {
+    refetch();
+  }, [refetch]);
 
   const theaterIsTerminal = status != null && isTerminalAndDone(status);
   const theaterIsSuccess = status != null && isSuccessStatus(status.status);
@@ -81,6 +226,23 @@ export function EditPayoff({
     if (!status.started_at) return "queued";
     return null;
   })();
+
+  const allVariants = (status?.variants ?? []) as GenerativeVariant[];
+
+  // Stable string dep so the auto-focus effect doesn't re-run on every poll.
+  const firstReadyVariantId =
+    allVariants.find((v) => v.render_status === "ready")?.variant_id ?? null;
+
+  // Auto-focus first ready variant when it arrives.
+  useEffect(() => {
+    if (focusedVariantId || !firstReadyVariantId) return;
+    setFocusedVariantId(firstReadyVariantId);
+  }, [focusedVariantId, firstReadyVariantId]);
+
+  const focusedVariant =
+    allVariants.find((v) => v.variant_id === focusedVariantId) ??
+    allVariants.find((v) => v.render_status === "ready") ??
+    null;
 
   // Total failure state
   if (status?.status === "processing_failed") {
@@ -106,18 +268,15 @@ export function EditPayoff({
   }
 
   return (
-    <div className="flex flex-col gap-6 px-4 py-8 max-w-2xl mx-auto animate-fade-up">
-      {/* About 90 seconds expectation-setter */}
+    <div className="flex flex-col gap-6 py-4 animate-fade-up">
+      {/* Loading state expectation-setter */}
       {!theaterIsTerminal && (
         <p className="text-center text-xs text-[#a1a1aa]">
           About 90 seconds to render
         </p>
       )}
 
-      {/*
-       * ProgressTheater with tone="light" for cream canvas.
-       * PayoffField inside renders VariantTile for each variant.
-       */}
+      {/* Progress theater — shows phases while rendering, receipt when done */}
       <ProgressTheater
         phases={GENERATIVE_PHASE_ORDER}
         phaseLabels={GENERATIVE_PHASE_LABEL}
@@ -133,26 +292,84 @@ export function EditPayoff({
         size="full"
         tone="light"
       >
-        <PayoffField
-          variants={status?.variants ?? null}
-          tone="light"
-          renderCard={(variant, isNewlyReady) => {
-            const gv = variant as GenerativeVariant;
-            return (
-              <VariantTile
-                key={gv.variant_id}
-                variant={gv}
-                jobId={jobId}
-                tracks={tracks}
-                styleSets={styleSets}
-                isNewlyReady={isNewlyReady}
-                onRetry={() => {}}
-                refresh={refresh}
-              />
-            );
-          }}
-        />
+        {null}
       </ProgressTheater>
+
+      {/* Two-column edit layout — shown once terminal+success */}
+      {theaterIsTerminal && theaterIsSuccess && (
+        <div className="flex flex-col gap-6">
+          {/* Variant filmstrip — only shown when 2+ variants */}
+          {allVariants.length > 1 && (
+            <div
+              className="flex gap-3 overflow-x-auto pb-1"
+              role="radiogroup"
+              aria-label="Edit variants"
+            >
+              {allVariants.map((v) => {
+                const isSelected = v.variant_id === (focusedVariant?.variant_id ?? "");
+                const isReady = v.render_status === "ready";
+                const isFailed = v.render_status === "failed";
+                return (
+                  <button
+                    key={v.variant_id}
+                    role="radio"
+                    aria-checked={isSelected}
+                    aria-label={TEXT_MODE_LABEL[v.text_mode] ?? v.text_mode}
+                    disabled={!isReady}
+                    onClick={() => setFocusedVariantId(v.variant_id)}
+                    className="flex shrink-0 flex-col items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600"
+                  >
+                    <div
+                      className={[
+                        "w-16 aspect-[9/16] shrink-0 overflow-hidden rounded-md border bg-zinc-100",
+                        isSelected
+                          ? "border-lime-600 ring-1 ring-lime-600"
+                          : isReady
+                          ? "border-zinc-200 hover:border-zinc-400"
+                          : "border-zinc-200 opacity-50",
+                      ]
+                        .filter(Boolean)
+                        .join(" ")}
+                    >
+                      {isReady && v.output_url ? (
+                        <video
+                          src={v.output_url}
+                          className="h-full w-full object-cover"
+                          muted
+                          playsInline
+                        />
+                      ) : isFailed ? (
+                        <div className="flex h-full items-center justify-center text-[10px] text-[#71717a]">
+                          —
+                        </div>
+                      ) : (
+                        <div className="flex h-full items-center justify-center">
+                          <div className="w-3 h-3 border border-zinc-400 border-t-transparent rounded-full animate-spin motion-reduce:animate-none" />
+                        </div>
+                      )}
+                    </div>
+                    <span className="w-16 truncate text-center text-[10px] text-[#71717a]">
+                      {TEXT_MODE_LABEL[v.text_mode] ?? v.text_mode}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Focused variant two-column panel */}
+          {focusedVariant && (
+            <FocusedVariantPanel
+              key={focusedVariant.variant_id}
+              variant={focusedVariant}
+              jobId={jobId}
+              tracks={tracks}
+              styleSets={styleSets}
+              refresh={refresh}
+            />
+          )}
+        </div>
+      )}
 
       {/* Re-roll */}
       <button
@@ -162,18 +379,20 @@ export function EditPayoff({
         try different clips or style
       </button>
 
-      {/* Divider — second act */}
-      <div className="border-t border-[#e4e4e7] pt-6">
-        <p className="text-center text-sm text-[#71717a] mb-3">
-          Want a 30-day content plan using this footage?
-        </p>
-        <button
-          onClick={onMakePlan}
-          className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
-        >
-          Make my plan →
-        </button>
-      </div>
+      {/* Second-act plan CTA (suppressed when stacked with other jobs) */}
+      {!hidePlanCta && (
+        <div className="border-t border-[#e4e4e7] pt-6">
+          <p className="text-center text-sm text-[#71717a] mb-3">
+            Want a 30-day content plan using this footage?
+          </p>
+          <button
+            onClick={onMakePlan}
+            className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+          >
+            Make my plan →
+          </button>
+        </div>
+      )}
     </div>
   );
 }

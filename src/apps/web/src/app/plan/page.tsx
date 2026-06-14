@@ -31,8 +31,8 @@ import SignInPrompt from "./_components/SignInPrompt";
 import TikTokPreScreen from "./_components/TikTokPreScreen";
 import { WorkspaceHome } from "./_components/workspace/WorkspaceHome";
 import { ForkScreen } from "./_components/onboarding/ForkScreen";
-import { EditContextStep } from "./_components/onboarding/EditContextStep";
 import { EditUploadStep } from "./_components/onboarding/EditUploadStep";
+import { ClipGroupStep, type ClipItem } from "./_components/onboarding/ClipGroupStep";
 import { EditPayoff } from "./_components/onboarding/EditPayoff";
 
 // Sub-steps within the "you" wizard step.
@@ -86,11 +86,15 @@ function PlanPageInner() {
   // Track when the plan flips from generating → ready in-session (for banner).
   const [planJustReady, setPlanJustReady] = useState(false);
 
-  // Edits-first onboarding funnel state (in-session; also persisted via recordOnboardingFork).
-  const [pendingTopic, setPendingTopic] = useState("");
-  const [pendingIntent, setPendingIntent] = useState("");
-  const [pendingClipPaths, setPendingClipPaths] = useState<string[]>([]);
-  const [editJobId, setEditJobId] = useState<string | null>(null);
+  // Edits-first onboarding funnel state.
+  // uploadedClips: full clip objects (gcsPath + objectUrl) from the upload step.
+  const [uploadedClips, setUploadedClips] = useState<ClipItem[]>([]);
+  // localStep: client-only override so back button from group → upload works
+  // without a server roundtrip. null = let resolvePlanMode drive the UI.
+  const [localStep, setLocalStep] = useState<"group" | null>(null);
+  // editJobs: one entry per group (or ungrouped clip). Purely local — on refresh
+  // the user returns to the upload step, which is acceptable.
+  const [editJobs, setEditJobs] = useState<{ jobId: string; topic: string; clipPaths: string[] }[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -260,8 +264,15 @@ function PlanPageInner() {
   }
 
   // ── Setup modes ──────────────────────────────────────────────────────────
+  // Payoff needs the wide shell so the video+editor two-column layout has
+  // room; other setup steps self-constrain to max-w-lg inside the shell.
+  const isPayoffStep =
+    editJobs.length > 0 ||
+    mode === "setup:edit-generating" ||
+    mode === "setup:edit-payoff";
+
   return (
-    <LightShell>
+    <LightShell size={isPayoffStep ? "wide" : "narrow"}>
       {error && (
         <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
           {error}
@@ -355,111 +366,158 @@ function PlanPageInner() {
         />
       )}
 
-      {mode === "setup:edit-context" && (
-        <EditContextStep
-          onSubmit={async (topic, intent) => {
-            setPendingTopic(topic);
-            setPendingIntent(intent);
-            try {
-              await recordOnboardingFork({
-                content_mode: "existing_footage",
-                topic,
-                intent,
-              });
-            } catch {
-              // best-effort
-            }
-            void load();
-          }}
-          onSkip={async () => {
-            try {
-              await recordOnboardingFork({ content_mode: "existing_footage" });
-            } catch {
-              // best-effort
-            }
-            void load();
-          }}
-        />
-      )}
+      {/* FOOTAGE PATH: upload first, then group, then generate */}
 
-      {mode === "setup:edit-upload" && (
+      {/* Step 1 — upload: shown when server says edit-context OR edit-upload (no topic needed
+          in the new flow), but NOT when we've advanced to the group step. */}
+      {(mode === "setup:edit-context" || mode === "setup:edit-upload") && localStep !== "group" && editJobs.length === 0 && (
         <EditUploadStep
-          onSubmit={async (clipPaths) => {
-            setPendingClipPaths(clipPaths);
-            try {
-              const result = await createGenerativeJob(
-                clipPaths,
-                null,
-                {
-                  topic: pendingTopic || undefined,
-                  intent: pendingIntent || undefined,
-                },
-              );
-              setEditJobId(result.job_id);
-              await recordOnboardingFork({
-                content_mode: "existing_footage",
-                onboarding_edit_job_id: result.job_id,
-                onboarding_clip_paths: clipPaths,
-              });
-            } catch (err) {
-              setError(err instanceof Error ? err.message : "Couldn't start your edit");
-            }
-            void load();
-          }}
-          onBack={() => {
-            // Go back to context step by clearing the content_mode so we re-derive
-            // In practice the server still has content_mode set, so just re-load
-            // and the funnel state machine will send them to edit-context.
-            // If they had no topic/intent recorded, we'll be at edit-upload again —
-            // that's acceptable; the back button is a best-effort UX.
-            void load();
+          onSubmit={(clips) => {
+            setUploadedClips(clips);
+            setLocalStep("group");
           }}
         />
       )}
 
-      {(mode === "setup:edit-generating" || mode === "setup:edit-payoff") && (
-        <EditPayoff
-          jobId={editJobId ?? persona?.questionnaire?.onboarding_edit_job_id ?? ""}
-          onMakePlan={async () => {
-            try {
-              const clips =
-                pendingClipPaths.length > 0
-                  ? pendingClipPaths
-                  : (persona?.questionnaire?.onboarding_clip_paths ?? []);
-              await recordOnboardingFork({
-                content_mode: "existing_footage",
-                onboarding_clip_paths: clips.length > 0 ? clips : undefined,
-                onboarding_payoff_done: true,
-              });
-            } catch {
-              // best-effort
-            }
-            void load();
-          }}
-          onReRoll={async () => {
-            const clips =
-              pendingClipPaths.length > 0
-                ? pendingClipPaths
-                : (persona?.questionnaire?.onboarding_clip_paths ?? []);
-            if (clips.length > 0) {
+      {/* Step 2 — group: client-only step, back returns to upload */}
+      {localStep === "group" && (
+        <ClipGroupStep
+          clips={uploadedClips}
+          onBack={() => setLocalStep(null)}
+          onSubmit={async (groups) => {
+            setLocalStep(null);
+            const jobs: { jobId: string; topic: string; clipPaths: string[] }[] = [];
+            for (const group of groups) {
               try {
-                const result = await createGenerativeJob(clips, null, {
-                  topic: pendingTopic || undefined,
-                  intent: pendingIntent || undefined,
+                const result = await createGenerativeJob(group.clips, null, {
+                  topic: group.topic || undefined,
                 });
-                setEditJobId(result.job_id);
+                jobs.push({ jobId: result.job_id, topic: group.topic, clipPaths: group.clips });
+              } catch {
+                // skip failed submissions silently
+              }
+            }
+            if (jobs.length > 0) {
+              setEditJobs(jobs);
+              // Persist first job id so resolvePlanMode advances past edit-upload.
+              const allClipPaths = groups.flatMap((g) => g.clips);
+              try {
                 await recordOnboardingFork({
                   content_mode: "existing_footage",
-                  onboarding_edit_job_id: result.job_id,
-                  onboarding_clip_paths: clips,
+                  onboarding_edit_job_id: jobs[0].jobId,
+                  onboarding_clip_paths: allClipPaths,
                 });
-              } catch (err) {
-                setError(err instanceof Error ? err.message : "Couldn't start a new edit");
+              } catch {
+                // best-effort
               }
               void load();
             }
           }}
         />
+      )}
+
+      {/* Step 3 — multiple job payoffs, one section per group/clip */}
+      {editJobs.length > 0 && localStep !== "group" && (
+        <div className="flex flex-col gap-16 pb-4">
+          {editJobs.map((job) => (
+            <div key={job.jobId}>
+              {job.topic && (
+                <p className="px-4 mb-2 text-xs text-[#71717a] font-medium uppercase tracking-wide">
+                  {job.topic}
+                </p>
+              )}
+              <EditPayoff
+                jobId={job.jobId}
+                hidePlanCta={true}
+                onMakePlan={() => {}}
+                onReRoll={async () => {
+                  if (job.clipPaths.length === 0) return;
+                  try {
+                    const result = await createGenerativeJob(job.clipPaths, null, {
+                      topic: job.topic || undefined,
+                    });
+                    setEditJobs((prev) =>
+                      prev.map((j) =>
+                        j.jobId === job.jobId
+                          ? { ...j, jobId: result.job_id }
+                          : j,
+                      ),
+                    );
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Couldn't re-roll");
+                  }
+                }}
+              />
+            </div>
+          ))}
+          <div className="px-4 max-w-2xl mx-auto w-full">
+            <div className="border-t border-[#e4e4e7] pt-6">
+              <button
+                onClick={async () => {
+                  try {
+                    await recordOnboardingFork({
+                      content_mode: "existing_footage",
+                      onboarding_payoff_done: true,
+                    });
+                  } catch {
+                    // best-effort
+                  }
+                  router.push("/plan");
+                }}
+                className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+              >
+                Continue creating with Nova →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fallback single-job payoff — when resuming from server state (e.g. after refresh) */}
+      {editJobs.length === 0 && localStep !== "group" &&
+        (mode === "setup:edit-generating" || mode === "setup:edit-payoff") && (
+        <div className="flex flex-col gap-0 pb-4">
+          <EditPayoff
+            jobId={persona?.questionnaire?.onboarding_edit_job_id ?? ""}
+            hidePlanCta={true}
+            onMakePlan={() => {}}
+            onReRoll={async () => {
+              const clips = persona?.questionnaire?.onboarding_clip_paths ?? [];
+              if (clips.length > 0) {
+                try {
+                  const result = await createGenerativeJob(clips, null);
+                  await recordOnboardingFork({
+                    content_mode: "existing_footage",
+                    onboarding_edit_job_id: result.job_id,
+                  });
+                  void load();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Couldn't re-roll");
+                }
+              }
+            }}
+          />
+          <div className="px-4 max-w-2xl mx-auto w-full">
+            <div className="border-t border-[#e4e4e7] pt-6 pb-8">
+              <button
+                onClick={async () => {
+                  try {
+                    await recordOnboardingFork({
+                      content_mode: "existing_footage",
+                      onboarding_payoff_done: true,
+                    });
+                  } catch {
+                    // best-effort
+                  }
+                  router.push("/plan");
+                }}
+                className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+              >
+                Continue creating with Nova →
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </LightShell>
   );

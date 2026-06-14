@@ -16,8 +16,8 @@ export function EditUploadStep({
   onSubmit,
   onBack,
 }: {
-  onSubmit: (clipPaths: string[]) => void;
-  onBack: () => void;
+  onSubmit: (clips: { gcsPath: string; objectUrl: string }[]) => void;
+  onBack?: () => void;
 }) {
   const [clips, setClips] = useState<UploadedClip[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -57,9 +57,10 @@ export function EditUploadStep({
     [clips.length],
   );
 
-  const readyPaths = clips
+  const readyClips = clips
     .filter((c) => c.status === "done")
-    .map((c) => c.gcsPath);
+    .map((c) => ({ gcsPath: c.gcsPath, objectUrl: c.objectUrl ?? "" }));
+  const readyPaths = readyClips.map((c) => c.gcsPath);
   const atMax = clips.length >= MAX_CLIPS;
 
   return (
@@ -146,14 +147,16 @@ export function EditUploadStep({
       )}
 
       <div className="flex gap-3">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="px-4 text-sm text-[#71717a] hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded min-h-[44px]"
+          >
+            ← back
+          </button>
+        )}
         <button
-          onClick={onBack}
-          className="px-4 text-sm text-[#71717a] hover:text-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 rounded min-h-[44px]"
-        >
-          ← back
-        </button>
-        <button
-          onClick={() => onSubmit(readyPaths)}
+          onClick={() => onSubmit(readyClips)}
           disabled={readyPaths.length === 0}
           className="flex-1 rounded-xl bg-lime-700 text-white py-3 font-medium hover:bg-lime-800 disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
         >
