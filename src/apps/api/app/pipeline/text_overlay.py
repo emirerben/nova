@@ -597,6 +597,7 @@ def generate_animated_overlay_ass(
                 # the helper starts from the Style's Fontsize=90 and never
                 # honours the injector's narrower default.
                 text_size_px=overlay.get("text_size_px"),
+                instant_on=bool(overlay.get("instant_on", False)),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -1128,6 +1129,7 @@ def _write_animated_ass(
     # text would overflow the 90%-canvas safe width. None means "use the
     # Style's Fontsize as-is, and only shrink if needed."
     text_size_px: int | None = None,
+    instant_on: bool = False,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -1167,7 +1169,8 @@ def _write_animated_ass(
         outline_tag = f"\\bord{outline_px}\\3c&H000000&"
 
     if effect == "fade-in":
-        dialogue_text = f"{{{pos_or_align}{outline_tag}\\fad(500,0)}}{text}"
+        fade_tag = "\\fad(0,0)" if instant_on else "\\fad(500,0)"
+        dialogue_text = f"{{{pos_or_align}{outline_tag}{fade_tag}}}{text}"
 
     elif effect == "typewriter":
         total_dur_cs = int((end_s - start_s) * 100)
@@ -1181,12 +1184,17 @@ def _write_animated_ass(
     elif effect == "slide-up":
         y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
-        start_y = CANVAS_H + 100
-        dialogue_text = (
-            f"{{\\an{explicit_alignment}"
-            f"\\move({target_x},{start_y},{target_x},{target_y},0,500)"
-            f"{outline_tag}}}{text}"
-        )
+        if instant_on:
+            dialogue_text = (
+                f"{{\\an{explicit_alignment}\\pos({target_x},{target_y}){outline_tag}}}{text}"
+            )
+        else:
+            start_y = CANVAS_H + 100
+            dialogue_text = (
+                f"{{\\an{explicit_alignment}"
+                f"\\move({target_x},{start_y},{target_x},{target_y},0,500)"
+                f"{outline_tag}}}{text}"
+            )
 
     elif effect == "slide-down":
         # Mirror of slide-up: text falls in from above the visible canvas down
@@ -1194,12 +1202,17 @@ def _write_animated_ass(
         # the user described it as "yukarıdan aşağı gelen" (coming top-to-bottom).
         y_frac = position_y_frac if position_y_frac is not None else _POSITION_Y.get(position, 0.5)
         target_y = int(CANVAS_H * y_frac)
-        start_y = -200  # 200 px above the top edge of the 1920 canvas
-        dialogue_text = (
-            f"{{\\an{explicit_alignment}"
-            f"\\move({target_x},{start_y},{target_x},{target_y},0,500)"
-            f"{outline_tag}}}{text}"
-        )
+        if instant_on:
+            dialogue_text = (
+                f"{{\\an{explicit_alignment}\\pos({target_x},{target_y}){outline_tag}}}{text}"
+            )
+        else:
+            start_y = -200  # 200 px above the top edge of the 1920 canvas
+            dialogue_text = (
+                f"{{\\an{explicit_alignment}"
+                f"\\move({target_x},{start_y},{target_x},{target_y},0,500)"
+                f"{outline_tag}}}{text}"
+            )
 
     elif effect == "pop-in":
         # Snap-scale from 30% to 115% (overshoot) then settle to 100%. The libass

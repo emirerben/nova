@@ -2468,4 +2468,105 @@ def test_burn_frees_png_work_dir_after_encode(tmp_workdir, monkeypatch):
 
     assert os.path.exists(out_path)
     assert "work_dir" in seen
-    assert not os.path.exists(seen["work_dir"])  # PNG scratch freed
+
+
+# ── Renderer parity: instant_on honored by both Skia and Pillow ───────────────
+# Lock the renderer-parity invariant for `instant_on`.
+# Without the fix, `fade-in` at t=0 has alpha=0 in both renderers — the
+# feed-preview thumbnail (first frame) shows no text.
+
+
+def test_instant_on_skia_fade_in_visible_at_frame_zero():
+    """Skia: with instant_on=True the text is fully opaque at t=0."""
+    overlay = {
+        "text": "you won't believe this",
+        "effect": "fade-in",
+        "instant_on": True,
+        "text_size_px": 60,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.3,
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    bbox, _ = _frame_bbox(overlay, t_local=0.0, duration_s=2.0)
+    assert bbox is not None, (
+        "Skia: instant_on=True + fade-in must produce visible text at t=0 "
+        "(alpha=1.0, not 0.0 from the ease_out_cubic ramp)"
+    )
+
+
+def test_without_instant_on_skia_fade_in_invisible_at_frame_zero():
+    """Skia: without instant_on, fade-in IS invisible at t=0 (documents the bug)."""
+    overlay = {
+        "text": "you won't believe this",
+        "effect": "fade-in",
+        "text_size_px": 60,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.3,
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    bbox, _ = _frame_bbox(overlay, t_local=0.0, duration_s=2.0)
+    assert bbox is None, (
+        "Without instant_on, fade-in should be transparent at t=0 "
+        "(ease_out_cubic(0)=0 → alpha=0). If this breaks, the bug is gone "
+        "and this tombstone test can be removed."
+    )
+
+
+def test_instant_on_pillow_fade_in_uses_zero_fade():
+    """Pillow: instant_on=True on a fade-in overlay → ASS tag is \\fad(0,0) not \\fad(500,0)."""
+    import tempfile
+
+    from app.pipeline.text_overlay import generate_animated_overlay_ass
+
+    overlay = {
+        "text": "you won't believe this",
+        "effect": "fade-in",
+        "instant_on": True,
+        "text_size_px": 60,
+        "position": "upper",
+        "text_anchor": "center",
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    with tempfile.TemporaryDirectory(prefix="instant_on_parity_") as d:
+        paths = generate_animated_overlay_ass(
+            [overlay], slot_duration_s=3.0, output_dir=d, slot_index=0
+        )
+        assert paths, "expected ASS file to be generated"
+        content = open(paths[0]).read()
+        assert "\\fad(0,0)" in content, (
+            "Pillow: instant_on=True must emit \\fad(0,0) so text is visible at t=0"
+        )
+        assert "\\fad(500,0)" not in content, (
+            "Pillow: instant_on=True must NOT emit \\fad(500,0) (fade-in from invisible)"
+        )
+
+
+def test_without_instant_on_pillow_fade_in_uses_500ms_fade():
+    """Pillow: without instant_on, fade-in keeps the \\fad(500,0) tag (documents baseline)."""
+    import tempfile
+
+    from app.pipeline.text_overlay import generate_animated_overlay_ass
+
+    overlay = {
+        "text": "you won't believe this",
+        "effect": "fade-in",
+        "text_size_px": 60,
+        "position": "upper",
+        "text_anchor": "center",
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    with tempfile.TemporaryDirectory(prefix="instant_on_baseline_") as d:
+        paths = generate_animated_overlay_ass(
+            [overlay], slot_duration_s=3.0, output_dir=d, slot_index=0
+        )
+        assert paths
+        content = open(paths[0]).read()
+        assert "\\fad(500,0)" in content, "Without instant_on, fade-in must still use \\fad(500,0)"

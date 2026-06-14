@@ -821,3 +821,75 @@ def test_cluster_intro_default_style_is_none_legacy(monkeypatch):
         text_size_px=60,
     )
     assert seen == [None]
+
+
+# -- instant_on flag: hook text visible on literal first frame -----------------
+
+
+def test_instant_on_flag_set_on_reveal_overlay():
+    # The reveal overlay emitted by build_persistent_intro_overlays must carry
+    # instant_on=True so both renderers start the text at full opacity at t=0.
+    # The hold overlay (static effect) does not need the flag.
+    overlays = build_persistent_intro_overlays(
+        text="you won't believe this",
+        effect="fade-in",
+        reveal_window_s=2.0,
+    )
+    reveal, hold = overlays
+    assert reveal.get("instant_on") is True
+    assert hold.get("instant_on") is None  # hold is static, no flag needed
+
+
+def test_instant_on_not_set_on_standalone_build_intro_overlay():
+    # build_intro_overlay default does NOT set instant_on — callers opt in.
+    ov = build_intro_overlay(
+        "testing",
+        effect="fade-in",
+        start_s=0.0,
+        end_s=2.0,
+    )
+    assert ov is not None
+    assert "instant_on" not in ov
+
+
+def test_instant_on_explicit_true_on_build_intro_overlay():
+    ov = build_intro_overlay(
+        "first frame visible",
+        effect="fade-in",
+        start_s=0.0,
+        end_s=2.0,
+        instant_on=True,
+    )
+    assert ov is not None
+    assert ov.get("instant_on") is True
+
+
+def test_instant_on_cluster_reveal_carries_flag(monkeypatch):
+    # Cluster path: each block's reveal overlay must also carry instant_on=True.
+    import app.pipeline.intro_cluster as ic
+
+    def _fake_blocks(text, **kwargs):
+        return [
+            {
+                "text": "first",
+                "font_family": "PlayfairDisplay-Bold",
+                "text_size_px": 60,
+                "position_x_frac": 0.5,
+                "position_y_frac": 0.3,
+                "start_offset_s": 0.0,
+                "reveal_s": 1.0,
+            }
+        ]
+
+    monkeypatch.setattr(ic, "compute_cluster_blocks", _fake_blocks)
+    overlays = build_persistent_intro_overlays(
+        text="first",
+        effect="fade-in",
+        reveal_window_s=2.0,
+        layout="cluster",
+        text_size_px=60,
+    )
+    reveals = [o for o in overlays if o.get("effect") == "fade-in"]
+    assert all(o.get("instant_on") is True for o in reveals), (
+        "all cluster reveal overlays must carry instant_on=True"
+    )

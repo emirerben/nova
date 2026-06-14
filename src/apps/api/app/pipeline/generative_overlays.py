@@ -92,6 +92,7 @@ def build_intro_overlay(
     text_size_px: int | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
+    instant_on: bool = False,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -148,6 +149,8 @@ def build_intro_overlay(
         overlay["position_x_frac"] = float(position_x_frac)
     if position_y_frac is not None:
         overlay["position_y_frac"] = float(position_y_frac)
+    if instant_on:
+        overlay["instant_on"] = True
 
     # Only the karaoke-line effect consumes per-word timings. Synthesize them from the
     # overlay window (even split, beat-snapped when a song is present).
@@ -304,6 +307,7 @@ def _build_cluster_intro_overlays(
             effect="fade-in",
             start_s=block["start_offset_s"],
             end_s=reveal_end,
+            instant_on=True,
             **common,
         )
         if reveal is not None:
@@ -442,6 +446,7 @@ def build_persistent_intro_overlays(
         beats=beats,
         text_color=text_color,
         highlight_color=highlight_color,
+        instant_on=True,
         **style_kwargs,
     )
     if reveal is not None:

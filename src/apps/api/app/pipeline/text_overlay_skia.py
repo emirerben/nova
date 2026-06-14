@@ -1274,6 +1274,7 @@ def _draw_with_animation(
     y_translate = 0.0
     visible_text = text
 
+    instant_on = overlay.get("instant_on", False)
     if effect == "scale-up":
         if duration_s > 0.6:
             progress = min(1.0, t_local / 0.6)
@@ -1281,11 +1282,14 @@ def _draw_with_animation(
             progress = min(1.0, t_local / max(duration_s, 0.01))
         scale = 0.6 + 0.4 * _ease_out_cubic(progress)
     elif effect == "fade-in":
-        if duration_s > 0.4:
+        if instant_on:
+            alpha = 1.0
+        elif duration_s > 0.4:
             progress = min(1.0, t_local / 0.4)
+            alpha = _ease_out_cubic(progress)
         else:
             progress = min(1.0, t_local / max(duration_s, 0.01))
-        alpha = _ease_out_cubic(progress)
+            alpha = _ease_out_cubic(progress)
     elif effect == "typewriter":
         chars_per_s = 12.0
         visible_chars = max(1, int(t_local * chars_per_s) + 1)
@@ -1301,11 +1305,12 @@ def _draw_with_animation(
         if n < len(words) and int(t_local * 2) % 2 == 0:
             visible_text = f"{visible_text} |"  # blink cursor at ~2 Hz
     elif effect in ("slide-up", "slide-down"):
-        animate_for = min(0.35, duration_s * 0.5)
-        progress = min(1.0, t_local / animate_for) if animate_for > 0 else 1.0
-        eased = _ease_out_cubic(progress)
-        direction = -1.0 if effect == "slide-up" else 1.0
-        y_translate = direction * 220.0 * (1.0 - eased)
+        if not instant_on:
+            animate_for = min(0.35, duration_s * 0.5)
+            progress = min(1.0, t_local / animate_for) if animate_for > 0 else 1.0
+            eased = _ease_out_cubic(progress)
+            direction = -1.0 if effect == "slide-up" else 1.0
+            y_translate = direction * 220.0 * (1.0 - eased)
     elif effect == "pop-in":
         scale = _pop_in_scale_at(t_local, duration_s)
     elif effect == "bounce":
