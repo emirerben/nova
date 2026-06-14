@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.4.105.0] — 2026-06-14
 
 ### Fixed
-- **Hook text visible on literal first frame.** Generative intro overlays now start fully opaque at t=0 instead of fading in from invisible. Social platforms capture the first frame as the feed-preview thumbnail — previously the hook text was absent from it because the `fade-in` effect produced alpha=0.0 at t=0 (Skia: `ease_out_cubic(0)=0`; ASS: `\fad(500,0)` 500ms fade). The reveal overlay now carries `instant_on=True`, which both renderers honor: Skia sets alpha=1.0 and zeroes any slide y-offset; the Pillow/libass path switches from `\fad(500,0)` to `\fad(0,0)`. The hold overlay (static effect) is unchanged. Parity-guarded by `test_instant_on_skia_fade_in_visible_at_frame_zero` and `test_instant_on_pillow_fade_in_uses_zero_fade`.
+- **Hook text visible on literal first frame + contrast scrim.** Generative intro overlays now start fully opaque at t=0 and render with a legibility halo against bright backgrounds. (1) `instant_on=True` on the reveal overlay: Skia sets alpha=1.0 at t=0 (`ease_out_cubic(0)=0` → invisible was the bug); libass switches from `\fad(500,0)` to `\fad(0,0)`. (2) `scrim=True` adds a large-sigma centered blurred dark layer in Skia before the fill, creating a soft dark halo around the text; the Pillow/libass path uses a 3px dark outline as a parity proxy. Both the linear and cluster intro paths are updated. Hold overlays (static) are unchanged. Parity-guarded by `test_instant_on_*` and `test_scrim_*` tests.
 
 ## [0.4.104.0] — 2026-06-13
 

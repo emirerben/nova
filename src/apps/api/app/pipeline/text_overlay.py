@@ -598,6 +598,7 @@ def generate_animated_overlay_ass(
                 # honours the injector's narrower default.
                 text_size_px=overlay.get("text_size_px"),
                 instant_on=bool(overlay.get("instant_on", False)),
+                scrim=bool(overlay.get("scrim", False)),
             )
             if _validate_ass_file(ass_path):
                 ass_paths.append(ass_path)
@@ -1130,6 +1131,7 @@ def _write_animated_ass(
     # Style's Fontsize as-is, and only shrink if needed."
     text_size_px: int | None = None,
     instant_on: bool = False,
+    scrim: bool = False,
 ) -> None:
     """Write an ASS file with animation tags for the given effect.
 
@@ -1163,10 +1165,15 @@ def _write_animated_ass(
     pos_or_align = f"\\an{explicit_alignment}{pos_tag}" if pos_tag else f"\\an{alignment}"
     dialogue_events: list[tuple[float, float, str]] | None = None
 
-    # Optional black outline override via \bord + \3c (outline colour) tags
+    # Optional black outline override via \bord + \3c (outline colour) tags.
+    # When scrim=True, a heavier border approximates the Skia scrim halo,
+    # ensuring readable text on bright backgrounds (parity proxy — Skia uses
+    # a blurred centered draw; libass uses a thick dark outline instead).
     outline_tag = ""
     if outline_px and outline_px > 0:
         outline_tag = f"\\bord{outline_px}\\3c&H000000&"
+    elif instant_on and scrim:
+        outline_tag = "\\bord3\\3c&H000000&"
 
     if effect == "fade-in":
         fade_tag = "\\fad(0,0)" if instant_on else "\\fad(500,0)"

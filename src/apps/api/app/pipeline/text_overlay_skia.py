@@ -795,6 +795,7 @@ def _draw_centered_text(
     fill_color = color_override if color_override is not None else base_color
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
     shadow_alpha = int(160 * alpha)
+    scrim = bool(overlay.get("scrim", False))
 
     # Build gradient shader when text_gradient is set and no explicit
     # color_override (karaoke highlight keeps solid colour).
@@ -837,6 +838,7 @@ def _draw_centered_text(
             stroke_px,
             shadow_alpha,
             shader=gradient_shader,
+            scrim=scrim,
         )
 
     # Emoji compositing onto the canvas at the resolved combined-block x
@@ -851,6 +853,10 @@ def _draw_centered_text(
     canvas.restore()
 
 
+_SCRIM_BLUR_SIGMA = 20.0
+_SCRIM_ALPHA = 190
+
+
 def _draw_line_with_layers(
     canvas: skia.Canvas,
     line: str,
@@ -862,6 +868,7 @@ def _draw_line_with_layers(
     shadow_alpha: int,
     *,
     shader: Any = None,
+    scrim: bool = False,
 ) -> None:
     """Shadow → stroke → fill, in that order, matching Pillow's compositing.
 
@@ -869,7 +876,22 @@ def _draw_line_with_layers(
     ``_skia_gradient_shader``), the fill paint uses it instead of the solid
     ``fill_color``.  Shadow and stroke remain solid black so the gradient
     glyphs keep depth and legibility.
+
+    When ``scrim`` is True, a large-sigma centered dark blur is drawn first,
+    creating a soft halo that ensures white text is readable against bright
+    or busy backgrounds (the intro overlay contrast fix).
     """
+    # Scrim: centered blurred dark halo drawn behind everything else.
+    # A large-sigma blur at offset (0,0) creates a soft dark "background"
+    # whose shape follows the glyphs, ensuring readability on bright frames.
+    if scrim:
+        scrim_paint = skia.Paint(
+            AntiAlias=True,
+            Color=skia.ColorSetARGB(_SCRIM_ALPHA, 0, 0, 0),
+            MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, _SCRIM_BLUR_SIGMA),
+        )
+        canvas.drawString(line, x, baseline_y, font, scrim_paint)
+
     # Shadow: soft black blur, offset 6px down (Pillow uses y+6, alpha 160).
     if shadow_alpha > 0:
         shadow_paint = skia.Paint(

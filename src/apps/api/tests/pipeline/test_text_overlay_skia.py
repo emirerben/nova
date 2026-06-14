@@ -2570,3 +2570,98 @@ def test_without_instant_on_pillow_fade_in_uses_500ms_fade():
         assert paths
         content = open(paths[0]).read()
         assert "\\fad(500,0)" in content, "Without instant_on, fade-in must still use \\fad(500,0)"
+
+
+# ── Renderer parity: scrim honored by both Skia and Pillow ───────────────────
+# Lock the renderer-parity invariant for `scrim`.
+# The scrim is a contrast halo drawn behind intro text so white text is
+# readable against bright / busy backgrounds (beach, sky, snow scenes).
+
+
+def test_scrim_flag_set_on_reveal_overlay():
+    """build_persistent_intro_overlays emits scrim=True on the reveal overlay."""
+    from app.pipeline.generative_overlays import build_persistent_intro_overlays
+
+    overlays = build_persistent_intro_overlays(
+        text="you won't believe this",
+        effect="fade-in",
+        reveal_window_s=2.0,
+    )
+    reveal, hold = overlays
+    assert reveal.get("scrim") is True, "reveal overlay must carry scrim=True"
+    assert hold.get("scrim") is None, "hold overlay (static) does not need scrim"
+
+
+def test_scrim_skia_produces_dark_halo_above_text():
+    """Skia: scrim=True creates a blurred dark halo ABOVE the text baseline.
+
+    The scrim is a centered blur (no y-offset). The existing shadow sits +6px
+    below the baseline. Sampling a strip ABOVE the text center: scrim spreads
+    upward creating dark pixels there; shadow does not. We count dark opaque
+    pixels (alpha>10, brightness<80) in a 60px band above the text center.
+    Scrim must produce more dark pixels than no-scrim in that region.
+    """
+    import io
+
+    base = {
+        "text": "bright background test",
+        "effect": "static",  # static so alpha=1.0 without needing instant_on
+        "text_size_px": 80,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+
+    def count_dark_above(overlay_dict):
+        img = tos._draw_frame(overlay_dict, 0.5, 2.0)
+        im = Image.open(io.BytesIO(bytes(img.encodeToData()))).convert("RGBA")
+        w, h = im.size
+        cy = int(h * 0.5)
+        # 60px band above the vertical center, centered horizontally
+        dark = 0
+        for y in range(max(0, cy - 90), max(0, cy - 30)):
+            for x in range(w // 4, 3 * w // 4):
+                r, g, b, a = im.getpixel((x, y))
+                if a > 10 and (r + g + b) / 3 < 80:
+                    dark += 1
+        return dark
+
+    dark_no_scrim = count_dark_above({**base, "scrim": False})
+    dark_scrim = count_dark_above({**base, "scrim": True})
+    assert dark_scrim > dark_no_scrim, (
+        f"Skia scrim must produce more dark pixels above the text baseline "
+        f"(scrim={dark_scrim}, no-scrim={dark_no_scrim}). "
+        "The blurred centered halo should spread upward; the shadow is downward-only."
+    )
+
+
+def test_scrim_pillow_adds_border_tag():
+    """Pillow: scrim=True + instant_on=True → ASS output includes \\bord3."""
+    import tempfile
+
+    from app.pipeline.text_overlay import generate_animated_overlay_ass
+
+    overlay = {
+        "text": "you won't believe this",
+        "effect": "fade-in",
+        "instant_on": True,
+        "scrim": True,
+        "text_size_px": 60,
+        "position": "upper",
+        "text_anchor": "center",
+        "text_color": "#FFFFFF",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    with tempfile.TemporaryDirectory(prefix="scrim_parity_") as d:
+        paths = generate_animated_overlay_ass(
+            [overlay], slot_duration_s=3.0, output_dir=d, slot_index=0
+        )
+        assert paths
+        content = open(paths[0]).read()
+        assert "\\bord3" in content, (
+            "Pillow: scrim=True must emit \\bord3 as a contrast-outline proxy "
+            "for the Skia blurred-halo scrim"
+        )
