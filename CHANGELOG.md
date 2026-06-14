@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.109.0] — 2026-06-14
+
+### Changed
+- **Edit result — Hero + rail layout (Build Goal #4).** Redesigned the post-generation results section on `/plan/items/[id]` from a filmstrip-over-editor layout to a Hero + rail design.
+  - **Hero**: the active variant plays in a large 9/16 video player (full-width on mobile, fixed 300px column on desktop). A lime "Nova's pick" badge appears on the first variant if it has an output URL. A text-mode pill ("Original audio" / "With lyrics") shows below the video.
+  - **Rationale blurb**: a 1-2 sentence description derived client-side from `text_mode` + `track_title` (no LLM call). E.g. "Beat-synced to [track]." / "Your original audio, kept."
+  - **Alternates row**: up to 3 small 9/16 thumbnails for non-focused ready variants. Clicking swaps the hero and updates the rationale.
+  - **Editor row**: 4 icon+label tab buttons (T Text · Aa Font · ♫ Song · ✂ Clips) that reveal `PlanVariantEditor` or `EditToolbar` inline when clicked. Hidden when no tab is active (saves vertical space). Song tab hidden when no song is swappable; Font tab hidden for lyrics variants.
+  - **Download**: always visible below the editor row (no longer buried in the LEFT column).
+  - **All editing functionality preserved**: retext, font/style, song swap, clip timeline — just gated behind tabs instead of always visible.
+- **`PlanVariantEditor`**: added `hideSections` prop (`"caption" | "size" | "layout" | "style" | "song" | "clips"`) so the editor row can surface only the active tab's section without modifying component internals.
+- **Tests updated**: `plan-instant-editor`, `plan-item-page`, and `plan-item-pending-edits` tests updated to reflect the new tab-driven UI (click tab to expose controls before asserting).
+
 ## [0.4.108.0] — 2026-06-14
 
 ### Changed

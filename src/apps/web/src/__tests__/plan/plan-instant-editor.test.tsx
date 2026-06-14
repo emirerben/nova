@@ -215,20 +215,30 @@ describe("Plan item page — deferred-burn editor", () => {
       render(<PlanItemPage />);
     });
 
-    // LEFT: the live base-video + overlay preview is on screen (no burned hero
-    // entry; the deferred preview IS the hero now).
+    // HERO: the live base-video + overlay preview is on screen.
     expect(screen.getByTestId("intro-text-preview")).toBeInTheDocument();
 
-    // RIGHT: the normal PlanVariantEditor controls are all present (un-hidden) —
-    // there is NO separate "Edit text & style" entry button anymore.
+    // Editor row is visible with tab buttons.
+    // There is NO separate "Edit text & style" entry button anymore.
     expect(screen.queryByRole("button", { name: /edit text & style/i })).toBeNull();
-    // Both PlanVariantEditor and EditToolbar show "Remove text"; at least one present.
+
+    // Click the "Text" tab to reveal caption/layout controls.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
+    });
+    // PlanVariantEditor shows "Remove text" in the text tab.
     expect(screen.getAllByRole("button", { name: /^Remove text$/ }).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
+
+    // Click the "Font" tab to reveal EditToolbar (size slider).
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Aa Font/i }));
+    });
     // EditToolbar replaces the A+ size stepper with a range slider; A+ is hidden.
     expect(screen.queryByRole("button", { name: /bigger intro text/i })).toBeNull();
     expect(screen.getByRole("slider", { name: /intro text size/i })).toBeInTheDocument();
-    expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
-    // Download is the bake trigger.
+
+    // Download is always visible (not behind a tab).
     expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
   });
 
@@ -236,6 +246,11 @@ describe("Plan item page — deferred-burn editor", () => {
     setData(makeItem(), [eligibleVariant]);
     await act(async () => {
       render(<PlanItemPage />);
+    });
+
+    // Click the Font tab to reveal EditToolbar (size slider).
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Aa Font/i }));
     });
 
     // Bump the text size via the EditToolbar range slider — this is a draft mutation.
@@ -258,10 +273,21 @@ describe("Plan item page — deferred-burn editor", () => {
       render(<PlanItemPage />);
     });
 
+    // Click Font tab to reveal size slider.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Aa Font/i }));
+    });
+
     // Accumulate two draft edits: size bump + remove text (batched, no network).
     // Size via range slider (A+ stepper is hidden in the deferred path).
     const slider = screen.getByRole("slider", { name: /intro text size/i });
     fireEvent.change(slider, { target: { value: "62" } });
+
+    // Switch to Text tab to access Remove text.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
+    });
+
     await act(async () => {
       // Both PlanVariantEditor and EditToolbar show Remove text — click the first.
       screen.getAllByRole("button", { name: /^Remove text$/ })[0].click();
@@ -291,6 +317,12 @@ describe("Plan item page — deferred-burn editor", () => {
     });
     // No live overlay preview — the burned hero is shown instead.
     expect(screen.queryByTestId("intro-text-preview")).toBeNull();
+
+    // Click the Text tab to expose PlanVariantEditor controls.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
+    });
+
     // Legacy PlanVariantEditor renders the synced badge + Remove text control.
     expect(screen.getByText(/Editorial · synced/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
@@ -310,6 +342,11 @@ describe("Plan item page — deferred-burn editor", () => {
       render(<PlanItemPage />);
     });
     expect(screen.queryByTestId("intro-text-preview")).toBeNull();
+
+    // Click the Text tab to expose PlanVariantEditor controls.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
+    });
     expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
   });
 });
