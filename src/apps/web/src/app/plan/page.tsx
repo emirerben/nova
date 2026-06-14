@@ -6,13 +6,11 @@ import { useCallback, useEffect, useState, Suspense } from "react";
 import {
   type ContentPlan,
   createContentPlan,
-  createPersona,
   getContentPlan,
   getPersona,
   getStyle,
   NotAuthenticatedError,
   type PersonaContent,
-  type PersonaQuestionnaire,
   type PersonaResponse,
   type StyleResponse,
   retunePersonaFromFeedback,
@@ -20,17 +18,11 @@ import {
   updatePersona,
 } from "@/lib/plan-api";
 import { resolvePlanMode } from "./_lib/route";
-import ChatInterview from "./_components/ChatInterview";
 import { GeneratingStateLight } from "./_components/GeneratingStateLight";
-import OnboardingStep from "./_components/OnboardingStep";
-import PersonaEditor from "./_components/PersonaEditor";
+import OnboardingShell from "./_components/OnboardingShell";
 import { LightShell } from "./_components/ui/LightShell";
 import SignInPrompt from "./_components/SignInPrompt";
-import TikTokPreScreen from "./_components/TikTokPreScreen";
 import { WorkspaceHome } from "./_components/workspace/WorkspaceHome";
-
-// Sub-steps within the "you" wizard step.
-type YouSubStep = "tiktok-pre-screen" | "chat" | "form";
 
 const POLL_MS = 2000;
 
@@ -51,20 +43,12 @@ function PlanPageInner() {
   // both are correct. "/plan" is the mode router; "/plan?step=*" falls through
   // the shim below. No callbackUrl changes needed.
 
-  // Legacy ?step= shim — redirect old deeplinks to their canonical routes.
+  // Legacy ?step= shim — redirect old deeplinks to the unified /plan route.
+  // /plan/setup and /plan/onboarding are also deleted; /plan handles everything.
   const stepParam = searchParams.get("step");
   useEffect(() => {
-    if (stepParam === "persona") {
-      router.replace("/plan/persona");
-      return;
-    }
-    if (stepParam === "you") {
-      router.replace("/plan/setup");
-      return;
-    }
-    if (stepParam === "plan") {
+    if (stepParam === "persona" || stepParam === "you" || stepParam === "plan") {
       router.replace("/plan");
-      return;
     }
   }, [stepParam, router]);
 
@@ -74,7 +58,6 @@ function PlanPageInner() {
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [subStep, setSubStep] = useState<YouSubStep>("tiktok-pre-screen");
   const [busy, setBusy] = useState(false);
 
   // Track when the plan flips from generating → ready in-session (for banner).
@@ -146,39 +129,24 @@ function PlanPageInner() {
 
   // ── Handlers ────────────────────────────────────────────────────────────
 
-  async function handleTikTokPreScreen(handle: string) {
+  /** OnboardingShell Step 1 — TikTok handle submit (may be empty = skip). */
+  async function handleTikTokContinue(handle: string) {
     if (handle) {
       setBusy(true);
       try {
         const p = await tiktokScrape(handle);
         setPersona(p);
       } catch {
-        // Best-effort — scrape failure is non-blocking; proceed to chat regardless.
+        // Best-effort — scrape failure is non-blocking; proceed regardless.
       } finally {
         setBusy(false);
       }
     }
-    setSubStep("chat");
   }
 
+  /** OnboardingShell Step 3 — ChatInterview completed (persona generation fires). */
   function handleChatComplete() {
-    // ChatInterview fires generate_persona on the backend; navigate to the
-    // persona step and let the polling loop surface the result.
     void load();
-  }
-
-  async function handleOnboardingSubmit(answers: PersonaQuestionnaire) {
-    setBusy(true);
-    setError(null);
-    try {
-      const p = await createPersona(answers);
-      setPersona(p);
-    } catch (err) {
-      if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
-      else setError(err instanceof Error ? err.message : "Couldn't build your persona");
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function handleSavePersona(draft: PersonaContent) {
@@ -194,11 +162,11 @@ function PlanPageInner() {
     setPersona(updated);
   }
 
-  async function handleCreatePlan(events: string) {
+  async function handleCreatePlan() {
     setBusy(true);
     setError(null);
     try {
-      const p = await createContentPlan(events);
+      const p = await createContentPlan("");
       setPlan(p);
     } catch (err) {
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
@@ -247,226 +215,32 @@ function PlanPageInner() {
     );
   }
 
-  // ── Setup modes ──────────────────────────────────────────────────────────
-  return (
-    <LightShell>
-      {error && (
-        <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
-          {error}
-        </div>
-      )}
-
-      {mode === "setup:prescreen" && subStep === "tiktok-pre-screen" && (
-        <TikTokPreScreen onContinue={handleTikTokPreScreen} submitting={busy} />
-      )}
-
-      {(mode === "setup:chat" || (mode === "setup:prescreen" && subStep === "chat")) && (
-        <ChatInterview onComplete={handleChatComplete} />
-      )}
-
-      {mode === "setup:prescreen" && subStep === "form" && (
-        <OnboardingStep
-          onSubmit={handleOnboardingSubmit}
-          submitting={busy}
-          initialAnswers={persona?.questionnaire ?? null}
-        />
-      )}
-
-      {mode === "setup:persona-generating" && (
-        <GeneratingStateLight label="Setting up your persona" />
-      )}
-
-      {mode === "setup:persona-failed" && (
-        <PersonaFailedView
-          persona={persona}
-          busy={busy}
-          onSave={handleSavePersona}
-          onStartOver={() => setSubStep("tiktok-pre-screen")}
-          onContinue={() => void handleCreatePlan("")}
-        />
-      )}
-
-      {mode === "setup:plan-intro" && (
-        <PersonaReadyView
-          persona={persona}
-          busy={busy}
-          onSave={handleSavePersona}
-          onContinue={() => void handleCreatePlan("")}
-          onRetune={handleRetunePersona}
-          onUpdateAnswers={() => setSubStep("tiktok-pre-screen")}
-        />
-      )}
-
-      {mode === "setup:plan-generating" && (
+  // ── Plan-generating state (after OnboardingShell Step 4 fires) ──────────────
+  if (mode === "setup:plan-generating") {
+    return (
+      <LightShell>
         <GeneratingStateLight
           horizonDays={plan?.horizon_days}
           label={`Building your ${plan?.horizon_days ?? 30} days`}
         />
-      )}
-
-      {mode === "setup:plan-failed" && (
-        <PlanIntroView
-          plan={null}
-          busy={busy}
-          onCreatePlan={handleCreatePlan}
-          isFailed
-        />
-      )}
-    </LightShell>
-  );
-}
-
-// ── Persona failed view ──────────────────────────────────────────────────────
-function PersonaFailedView({
-  persona,
-  busy,
-  onSave,
-  onStartOver,
-  onContinue,
-}: {
-  persona: PersonaResponse | null;
-  busy: boolean;
-  onSave: (draft: PersonaContent) => Promise<void>;
-  onStartOver: () => void;
-  onContinue: () => void;
-}) {
-  function blankPersona(): PersonaContent {
-    return {
-      summary: "",
-      content_pillars: [],
-      tone: "",
-      audience: "",
-      posting_cadence: "",
-      posts_per_week: null,
-      sample_topics: [],
-    };
-  }
-
-  return (
-    <div className="animate-fade-up py-16">
-      <h1 className="mb-3 font-display text-3xl text-[#0c0c0e]">
-        Generation didn&apos;t finish
-      </h1>
-      <p className="mb-2 text-[#71717a]">
-        {persona?.error_detail ?? "The persona generator hit an error."}
-      </p>
-      <p className="mb-4 text-[#71717a]">
-        Your answers are saved.{" "}
-        <button
-          onClick={onStartOver}
-          className="text-lime-700 underline transition-colors hover:text-lime-600"
-        >
-          Edit your answers and try again
-        </button>
-        , or write the persona by hand below — either unblocks the rest of the flow.
-      </p>
-      <PersonaEditor
-        persona={blankPersona()}
-        status="failed"
-        onSave={onSave}
-        onContinue={onContinue}
-        continueLabel="Plan my 30 days →"
-        continuing={busy}
-        startInEdit
-      />
-    </div>
-  );
-}
-
-// ── Persona ready view (plan intro) ──────────────────────────────────────────
-function PersonaReadyView({
-  persona,
-  busy,
-  onSave,
-  onContinue,
-  onRetune,
-  onUpdateAnswers,
-}: {
-  persona: PersonaResponse | null;
-  busy: boolean;
-  onSave: (draft: PersonaContent) => Promise<void>;
-  onContinue: () => void;
-  onRetune: () => Promise<void>;
-  onUpdateAnswers: () => void;
-}) {
-  if (!persona) {
-    return (
-      <div className="animate-fade-up py-20 text-center">
-        <h1 className="mb-3 font-display text-3xl text-[#0c0c0e]">No persona yet</h1>
-        <p className="mb-8 text-[#71717a]">Answer a few questions to get started.</p>
-        <button
-          onClick={onUpdateAnswers}
-          className="inline-flex items-center justify-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
-        >
-          Start
-        </button>
-      </div>
+      </LightShell>
     );
   }
 
-  const personaData = persona.persona;
-  if (!personaData) return null;
-
+  // ── Setup modes → OnboardingShell (split-rail) ────────────────────────────
+  // All setup modes (prescreen / chat / persona-generating / persona-failed /
+  // plan-intro / plan-failed) are handled inside the split-rail shell.
   return (
-    <PersonaEditor
-      persona={personaData}
-      status={persona.persona_status}
-      onSave={onSave}
-      onContinue={onContinue}
-      continueLabel="Plan my 30 days →"
-      continuing={busy}
-      onRetuneFromFeedback={onRetune}
-      tiktokProfile={persona.tiktok_profile}
-      onUpdateAnswers={onUpdateAnswers}
+    <OnboardingShell
+      onTikTokContinue={handleTikTokContinue}
+      tiktokBusy={busy}
+      persona={persona}
+      planBusy={busy}
+      onSavePersona={handleSavePersona}
+      onChatComplete={handleChatComplete}
+      onContinueToPlan={() => void handleCreatePlan()}
+      onRetune={handleRetunePersona}
+      error={error}
     />
-  );
-}
-
-// ── Plan intro view (create plan) ─────────────────────────────────────────────
-function PlanIntroView({
-  plan,
-  busy,
-  onCreatePlan,
-  isFailed = false,
-}: {
-  plan: null;
-  busy: boolean;
-  onCreatePlan: (events: string) => void;
-  isFailed?: boolean;
-}) {
-  const [events, setEvents] = useState("");
-
-  return (
-    <div className="animate-fade-up py-2">
-      <h1 className="mb-2 font-display text-3xl text-[#0c0c0e]">Plan your next 30 days</h1>
-      <p className="mb-6 text-[#71717a]">
-        Anything coming up we should lean into? Trips, launches, exams, events — optional, but it
-        makes the plan feel like yours.
-      </p>
-      {isFailed && (
-        <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
-          Last generation didn&apos;t finish. Try again.
-        </div>
-      )}
-      <label className="block">
-        <span className="sr-only">Upcoming events to weave into your plan (optional)</span>
-        <textarea
-          value={events}
-          onChange={(e) => setEvents(e.target.value)}
-          rows={4}
-          placeholder="e.g. moving apartments in week 2, gym comp at the end of the month"
-          className="w-full resize-y rounded-lg border border-zinc-200 bg-white px-4 py-3 text-[#0c0c0e] placeholder-zinc-400 transition-colors focus:border-lime-600/60 focus:outline-none"
-        />
-      </label>
-      <div className="mt-4 flex items-center gap-4">
-        <button
-          onClick={() => onCreatePlan(events)}
-          disabled={busy}
-          className="inline-flex items-center justify-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:opacity-40"
-        >
-          {busy ? "Starting…" : "Generate my 30-day plan"}
-        </button>
-      </div>
-    </div>
   );
 }

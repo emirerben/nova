@@ -51,6 +51,9 @@ export interface PersonaContent {
   // shown verbatim as "You said: '...'" on the persona reveal. Empty for
   // personas generated from the old flat-field questionnaire.
   signature_quote?: string;
+  // "What kind of videos do you make?" onboarding signal.
+  // talking_head | montage | day_vlog | mixed
+  footage_type_bias?: string[];
 }
 
 export type PersonaStatus = "generating" | "ready" | "failed" | "edited" | "chat_pending";
@@ -182,6 +185,21 @@ export function updatePersona(
   return request<PersonaResponse>(`/personas/${id}`, {
     method: "PATCH",
     body: JSON.stringify(edit),
+  });
+}
+
+/**
+ * Persist the "what kind of videos do you make" onboarding answer.
+ * Stored in persona.footage_type_bias — no USER_STYLE_ENABLED gate.
+ * Values: ["talking_head"] | ["montage"] | ["day_vlog"] | ["mixed"]
+ */
+export function patchPersonaFootageType(
+  personaId: string,
+  footage_type_bias: string[],
+): Promise<PersonaResponse> {
+  return request<PersonaResponse>(`/personas/${personaId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ footage_type_bias }),
   });
 }
 
