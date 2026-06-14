@@ -462,7 +462,7 @@ function PlanPageInner() {
                   } catch {
                     // best-effort
                   }
-                  router.push("/plan");
+                  void load();
                 }}
                 className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
               >
@@ -509,7 +509,7 @@ function PlanPageInner() {
                   } catch {
                     // best-effort
                   }
-                  router.push("/plan");
+                  void load();
                 }}
                 className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
               >
