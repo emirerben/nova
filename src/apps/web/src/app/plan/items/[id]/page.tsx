@@ -436,6 +436,11 @@ export default function PlanItemPage() {
     focused && (!!focused.output_url || focused.render_status === "failed");
   const showResults = isGenerating || variants.length > 0;
 
+  // "N shots left" caption under the Generate button.
+  const totalShots = item.filming_guide?.length ?? 0;
+  const filledShots = item.clip_assignments?.filter((a) => a.shot_id !== null).length ?? 0;
+  const shotsLeft = Math.max(0, totalShots - filledShots);
+
   const currentPhase =
     data?.job?.current_phase ??
     (!data?.job?.started_at ? "queued" : null);
@@ -447,232 +452,148 @@ export default function PlanItemPage() {
       {/* @font-face for style-preview chips */}
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
       <div className="motion-safe:animate-fade-up">
-        {/* ── Editorial header + controls ── */}
-        <div className="max-w-2xl">
-          <Link
-            href="/plan"
-            className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
-          >
-            ← back to plan
-          </Link>
-          <div className="mb-1 mt-4 flex items-center gap-3">
-            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
-              Day {item.day_index}
-            </span>
-          </div>
-          <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
-          <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
 
-          {/* ── FILM CARD (D5: primary action, above "Why this works") ── */}
-          {isInstructed ? (
-            <ShotSlotUploader
-              item={item}
-              onAttached={(updated) => {
-                conformancePolls.current = 0;
-                // Merge updated item into polling data without waiting for a refetch.
-                refetch();
-              }}
-              onBusyChange={setUploaderBusy}
-            />
-          ) : (
-            <>
-              {/* Uninstructed: legacy pool upload section (unchanged) */}
-              {item.filming_suggestion ? (
-                <p className="mb-4 text-sm text-[#71717a]">📋 {item.filming_suggestion}</p>
-              ) : null}
-              <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
-                <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
-                <p className="mb-4 text-sm text-[#71717a]">
-                  {clipCount > 0
-                    ? "The editor will use the best parts."
-                    : "Upload footage for this idea. None yet."}
-                </p>
-                {(item.clip_assignments?.length ?? 0) > 0 && (
-                  <ul className="mb-4 space-y-3">
-                    {item.clip_assignments!.map((a) => {
-                      const raw = a.gcs_path.split("/").pop() ?? a.gcs_path;
-                      const name = raw.includes("-") ? raw.slice(raw.indexOf("-") + 1) : raw;
-                      return (
-                        <li key={a.gcs_path} className="border-b border-zinc-100 pb-3 last:border-0 last:pb-0">
-                          <div className="flex items-center gap-3">
-                            {a.machine_matched ? (
-                              <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
-                                <span className="max-w-[180px] truncate">{name}</span>
-                                <span className="shrink-0 text-lime-700">· Matched — keep?</span>
-                              </span>
-                            ) : (
-                              <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
-                                <span>✓</span>
-                                <span className="max-w-[220px] truncate">{name}</span>
-                              </span>
-                            )}
-                            {a.machine_matched && (
-                              <button
-                                type="button"
-                                onClick={() => keepUninstructedMatch(a)}
-                                className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800"
-                              >
-                                Keep
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeUninstructedClip(a)}
-                              className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                          <ClipNoteControl
-                            note={a.user_note ?? ""}
-                            onSave={(note) => saveUninstructedNote(a, note)}
-                          />
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                <label className="block">
-                  <span className="sr-only">Upload video clips for this idea</span>
-                  <input
-                    type="file"
-                    accept="video/mp4,video/quicktime"
-                    multiple
-                    disabled={uploading}
-                    onChange={(e) => handleFiles(e.target.files)}
-                    className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
-                  />
-                </label>
-                {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
-              </section>
-            </>
-          )}
+        {/* ── Two-pane grid: LEFT = shot checklist | RIGHT = sticky action panel ── */}
+        <div className="lg:grid lg:grid-cols-[1fr_400px] lg:gap-10 lg:items-start">
 
-          {/* Error banner — outside the instructed/uninstructed fork so the
-              render-register error (and any other) shows on BOTH item types
-              (dogfood: it was trapped in the uninstructed branch, so the
-              first-click fix never surfaced on filming-guide items). */}
-          {error && (
-            <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
-              {error}
-            </div>
-          )}
-
-          {/* Conformance read — ABOVE Generate so the read informs the action,
-              with the explicit generate-anyway line so proximity never reads as
-              a gate. State machine: checking shimmer → tile / one-liner / nothing. */}
-          {conformanceChecking ? (
-            <p
-              className="mb-4 text-sm text-[#71717a] motion-safe:animate-pulse"
-              role="status"
-              aria-live="polite"
+          {/* LEFT: back link + editorial header + uploader + progress */}
+          <div>
+            <Link
+              href="/plan"
+              className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
             >
-              Reading your clips against the brief…
-            </p>
-          ) : (
-            item.conformance?.verdict && (
-              <ConformanceVerdictPanel
-                conformance={item.conformance}
-                onTellNova={() => setAskNova("contest")}
-                onDismiss={async () => {
-                  try {
-                    await dismissConformance(itemId);
-                  } finally {
-                    refetch();
-                  }
-                }}
-              />
-            )
-          )}
+              ← back to plan
+            </Link>
+            <div className="mb-1 mt-4 flex items-center gap-3">
+              <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
+                Day {item.day_index}
+              </span>
+            </div>
+            <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
+            <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
 
-          {/* Generate button (D6: also disabled while ShotSlotUploader has in-flight uploads) */}
-          <InkButton
-            onClick={handleGenerate}
-            disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
-          >
-            {isGenerating
-              ? "Generating…"
-              : generating
-                ? "Starting…"
-                : uploaderBusy
-                  ? `Finishing upload…`
-                  : "Generate videos"}
-          </InkButton>
-          {clipCount === 0 && !uploaderBusy && (
-            <p className="mt-2 text-sm text-[#a1a1aa]">
-              {isInstructed
-                ? "You can generate with any shots filled — more footage means better edits."
-                : "Upload at least one clip first."}
-            </p>
-          )}
-          {uploaderBusy && (
-            <p className="mt-2 text-sm text-[#a1a1aa]">Finishing upload…</p>
-          )}
-
-          {/* Ask Nova — collapsed trigger + bounded panel BELOW Generate (the
-              page's primary action keeps its page). */}
-          <div className="mt-4">
-            {askNova === null ? (
-              <button
-                type="button"
-                onClick={() => setAskNova("default")}
-                className="text-sm font-medium text-lime-700 underline-offset-2 hover:underline"
-              >
-                Not sure which clip fits? Ask Nova
-              </button>
-            ) : (
-              <AskNovaPanel
+            {/* Uploader — instructed: shot-slot guide; uninstructed: pool card */}
+            {isInstructed ? (
+              <ShotSlotUploader
                 item={item}
-                mode={askNova}
-                onClose={() => setAskNova(null)}
-                onItemChanged={() => {
+                onAttached={(updated) => {
                   conformancePolls.current = 0;
+                  // Merge updated item into polling data without waiting for a refetch.
                   refetch();
                 }}
+                onBusyChange={setUploaderBusy}
               />
+            ) : (
+              <>
+                {item.filming_suggestion ? (
+                  <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
+                ) : null}
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
+                />
+              </>
+            )}
+
+            {/* Error banner — outside the fork so it shows on both item types */}
+            {error && (
+              <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
+                {error}
+              </div>
+            )}
+
+            {/* ProgressTheater — light tone */}
+            {data?.job && (
+              <div className="mt-8">
+                <ProgressTheater
+                  phases={GENERATIVE_PHASE_ORDER}
+                  phaseLabels={GENERATIVE_PHASE_LABEL}
+                  currentPhase={currentPhase}
+                  expectedPhaseMs={data.job.expected_phase_durations ?? null}
+                  phaseLog={data.job.phase_log ?? null}
+                  startedAt={data.job.started_at ?? null}
+                  jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
+                  isTerminal={theaterIsTerminal}
+                  isSuccess={theaterIsSuccess}
+                  receiptText={deriveReceiptText(data.job)}
+                  variants={variants}
+                  size="full"
+                  tone="light"
+                >
+                  {null}
+                </ProgressTheater>
+              </div>
+            )}
+            {isGenerating && (
+              <p className="mt-1 text-xs text-[#a1a1aa]">
+                Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
+              </p>
+            )}
+            {item.status === "failed" && variants.length === 0 && (
+              <p className="mt-2 text-sm text-[#71717a]">
+                Generation failed before any variant rendered. Try generating again.
+              </p>
             )}
           </div>
 
-          {/* "Why this works" — D5: moved below the film card + Generate */}
-          {item.rationale && (
-            <div className="mb-4 mt-6 rounded-lg border border-zinc-200 bg-white p-4">
-              <p className="mb-1 text-xs font-medium text-lime-700">Why this works</p>
-              <p className="text-sm text-[#3f3f46]">{stripRationalePrefix(item.rationale)}</p>
+          {/* RIGHT: sticky action panel — preview + Nova helper + Generate */}
+          <div className="mt-8 space-y-4 lg:sticky lg:top-6 lg:mt-0">
+            {/* Small preview — shows the latest result or skeleton before generation */}
+            <div className="mx-auto max-w-[200px]">
+              <Hero variant={focused} generating={isGenerating} />
             </div>
-          )}
 
-          {/* ProgressTheater — light tone */}
-          {data?.job && (
-            <div className="mt-8">
-              <ProgressTheater
-                phases={GENERATIVE_PHASE_ORDER}
-                phaseLabels={GENERATIVE_PHASE_LABEL}
-                currentPhase={currentPhase}
-                expectedPhaseMs={data.job.expected_phase_durations ?? null}
-                phaseLog={data.job.phase_log ?? null}
-                startedAt={data.job.started_at ?? null}
-                jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
-                isTerminal={theaterIsTerminal}
-                isSuccess={theaterIsSuccess}
-                receiptText={deriveReceiptText(data.job)}
-                variants={variants}
-                size="full"
-                tone="light"
+            {/* Nova helper — one quiet line; expands to AskNovaPanel on request.
+                Collapses conformance critic + Ask Nova into a single surface. */}
+            <NovaHelper
+              item={item}
+              conformanceChecking={conformanceChecking}
+              askNova={askNova}
+              onOpen={() => setAskNova("default")}
+              onContest={() => setAskNova("contest")}
+              onClose={() => setAskNova(null)}
+              onDismissConformance={async () => {
+                try {
+                  await dismissConformance(itemId);
+                } finally {
+                  refetch();
+                }
+              }}
+              onItemChanged={() => {
+                conformancePolls.current = 0;
+                refetch();
+              }}
+            />
+
+            {/* Generate + "N shots left" caption */}
+            <div className="space-y-2">
+              <InkButton
+                onClick={handleGenerate}
+                disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
               >
-                {null}
-              </ProgressTheater>
+                {isGenerating
+                  ? "Generating…"
+                  : generating
+                    ? "Starting…"
+                    : uploaderBusy
+                      ? "Finishing upload…"
+                      : "Generate videos"}
+              </InkButton>
+              <p className="text-center text-sm text-[#a1a1aa]">
+                {uploaderBusy
+                  ? "Finishing upload…"
+                  : clipCount === 0
+                    ? "Add clips to generate"
+                    : isInstructed && shotsLeft > 0
+                      ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
+                      : null}
+              </p>
             </div>
-          )}
-          {isGenerating && (
-            <p className="mt-1 text-xs text-[#a1a1aa]">
-              Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
-            </p>
-          )}
-          {item.status === "failed" && variants.length === 0 && (
-            <p className="mt-2 text-sm text-[#71717a]">
-              Generation failed before any variant rendered. Try generating again.
-            </p>
-          )}
+          </div>
         </div>
 
         {/* ── Results: focused player + filmstrip + editor ── */}
@@ -1322,6 +1243,216 @@ function ConformanceVerdictPanel({
       <p className="mt-2 text-xs text-[#71717a]">
         You can generate anyway — this is just a read on the brief.
       </p>
+    </div>
+  );
+}
+
+// ── Nova helper ─────────────────────────────────────────────────────────────────
+// One quiet line in the right action panel. Collapses the two pre-generate AI
+// surfaces (conformance critic + Ask Nova) into a single lime-dot row.
+// States: checking (pulse) → on-track → off-brief one-liner → default prompt.
+// Expanding → AskNovaPanel (full advisor chat) replaces this row entirely.
+
+function NovaHelper({
+  item,
+  conformanceChecking,
+  askNova,
+  onOpen,
+  onContest,
+  onClose,
+  onDismissConformance,
+  onItemChanged,
+}: {
+  item: PlanItem;
+  conformanceChecking: boolean;
+  askNova: null | "default" | "contest";
+  onOpen: () => void;
+  onContest: () => void;
+  onClose: () => void;
+  onDismissConformance: () => void;
+  onItemChanged: () => void;
+}) {
+  // AskNovaPanel is the full-expanded state — it takes over the row entirely.
+  if (askNova !== null) {
+    return (
+      <AskNovaPanel
+        item={item}
+        mode={askNova}
+        onClose={onClose}
+        onItemChanged={onItemChanged}
+      />
+    );
+  }
+
+  const c = item.conformance;
+  // Reuse the same render gates as ConformanceVerdictPanel: dismissed,
+  // suppressed, and low-confidence reads are silent.
+  const hasVerdict =
+    !!c?.verdict &&
+    !c.dismissed &&
+    !c.suppressed &&
+    (c.confidence ?? 0) >= 0.6;
+
+  return (
+    <div role="status" aria-live="polite" className="space-y-1.5" data-testid="nova-helper">
+      {conformanceChecking ? (
+        <p className="flex items-start gap-2 text-sm text-[#71717a] motion-safe:animate-pulse">
+          <span
+            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+            aria-hidden="true"
+          />
+          Reading your clips against the brief…
+        </p>
+      ) : hasVerdict && c!.verdict === "on_track" ? (
+        <p className="flex items-start gap-2 text-sm text-[#3f3f46]">
+          <span
+            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+            aria-hidden="true"
+          />
+          Looks on-brief.{" "}
+          <button
+            type="button"
+            onClick={onOpen}
+            className="font-medium text-lime-700 underline-offset-2 hover:underline"
+          >
+            Ask Nova ↗
+          </button>
+        </p>
+      ) : hasVerdict ? (
+        <div className="space-y-1">
+          <p className="flex items-start gap-2 text-sm text-[#3f3f46]">
+            <span
+              className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+              aria-hidden="true"
+            />
+            <span>{c!.summary}</span>
+          </p>
+          <div className="flex gap-3 pl-3.5">
+            <button
+              type="button"
+              onClick={onContest}
+              className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
+            >
+              Tell Nova
+            </button>
+            <button
+              type="button"
+              onClick={onDismissConformance}
+              className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+            >
+              Hide
+            </button>
+            <button
+              type="button"
+              onClick={onOpen}
+              className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+            >
+              Ask Nova ↗
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="flex items-start gap-2 text-sm text-[#71717a]">
+          <span
+            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+            aria-hidden="true"
+          />
+          Not sure which clip fits?{" "}
+          <button
+            type="button"
+            onClick={onOpen}
+            className="font-medium text-lime-700 underline-offset-2 hover:underline"
+          >
+            Ask Nova ↗
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Pool upload card (uninstructed items) ────────────────────────────────────────
+// Replaces the legacy inline <section> for items without a filming guide.
+// Visually matches the shot-slot card: rounded-2xl, border-zinc-200, bg-white.
+// Logic is identical to the old section — only the markup has been trimmed.
+
+function PoolUploadCard({
+  clips,
+  uploading,
+  onFiles,
+  onKeep,
+  onRemove,
+  onNoteChange,
+}: {
+  clips: ClipAssignment[];
+  uploading: boolean;
+  onFiles: (files: FileList | null) => void;
+  onKeep: (a: ClipAssignment) => void;
+  onRemove: (a: ClipAssignment) => void;
+  onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
+}) {
+  return (
+    <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-5">
+      {clips.length > 0 && (
+        <ul className="mb-4 space-y-3">
+          {clips.map((a) => {
+            const raw = a.gcs_path.split("/").pop() ?? a.gcs_path;
+            const name = raw.includes("-") ? raw.slice(raw.indexOf("-") + 1) : raw;
+            return (
+              <li
+                key={a.gcs_path}
+                className="border-b border-zinc-100 pb-3 last:border-0 last:pb-0"
+              >
+                <div className="flex items-center gap-3">
+                  {a.machine_matched ? (
+                    <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
+                      <span className="max-w-[180px] truncate">{name}</span>
+                      <span className="shrink-0 text-lime-700">· Matched — keep?</span>
+                    </span>
+                  ) : (
+                    <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
+                      <span>✓</span>
+                      <span className="max-w-[220px] truncate">{name}</span>
+                    </span>
+                  )}
+                  {a.machine_matched && (
+                    <button
+                      type="button"
+                      onClick={() => onKeep(a)}
+                      className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800"
+                    >
+                      Keep
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemove(a)}
+                    className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <ClipNoteControl
+                  note={a.user_note ?? ""}
+                  onSave={(note) => onNoteChange(a, note)}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <label className="block">
+        <span className="sr-only">Upload video clips for this idea</span>
+        <input
+          type="file"
+          accept="video/mp4,video/quicktime"
+          multiple
+          disabled={uploading}
+          onChange={(e) => onFiles(e.target.files)}
+          className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+        />
+      </label>
+      {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
     </div>
   );
 }

@@ -313,11 +313,13 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
+    // Two-pane redesign: NovaHelper replaces the full ConformanceVerdictPanel tile.
+    // on_track shows a one-liner (lime dot + "Looks on-brief.") inside nova-helper.
+    expect(screen.getByTestId("nova-helper")).toBeInTheDocument();
     expect(screen.getByText(/Looks on-brief/)).toBeInTheDocument();
   });
 
-  it("test_conformance_off_brief_tile: calm label, evidence line, advice voice, recourse", async () => {
+  it("test_conformance_off_brief_tile: one-liner summary + Tell Nova + Hide", async () => {
     const item = makeItem({
       status: "awaiting_clips",
       clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
@@ -342,19 +344,19 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
-    // Evidence line: the user can SEE which brief was judged (wrong-brief incident fix).
-    expect(screen.getByText(/Read against:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Quick Weeknight Dinner/)).toBeInTheDocument();
-    expect(screen.getByText(/Different from the brief/i)).toBeInTheDocument();
+    // Two-pane redesign: NovaHelper shows the conformance summary as a one-liner
+    // (no label, no evidence line, no full-tile chrome) — calmer and less opinionated.
+    expect(screen.getByTestId("nova-helper")).toBeInTheDocument();
     expect(screen.getByText(/This reads as a guitar session/)).toBeInTheDocument();
-    expect(screen.getByText(/steady overhead of the cutting board/)).toBeInTheDocument();
-    // Mismatch bullets are data, not display — the tile stays calm.
+    // Recourse buttons — condensed labels in the one-liner.
+    expect(screen.getByText(/Tell Nova/)).toBeInTheDocument();
+    expect(screen.getByText(/Hide/)).toBeInTheDocument();
+    // Mismatch bullets and suggestions are data, not display.
     expect(screen.queryByText(/Expected kitchen footage/)).toBeNull();
-    // Recourse + never-a-gate line.
-    expect(screen.getByText(/Looks wrong\? Tell Nova/)).toBeInTheDocument();
-    expect(screen.getByText(/Hide this read/)).toBeInTheDocument();
-    expect(screen.getByText(/You can generate anyway/)).toBeInTheDocument();
+    expect(screen.queryByText(/steady overhead of the cutting board/)).toBeNull();
+    // Full tile chrome is gone (label, evidence line, "generate anyway" copy).
+    expect(screen.queryByText(/Different from the brief/i)).toBeNull();
+    expect(screen.queryByText(/Read against:/i)).toBeNull();
   });
 
   it("test_conformance_suppressed_or_dismissed_renders_nothing", async () => {
