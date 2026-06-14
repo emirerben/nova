@@ -31,7 +31,25 @@ def count_slots(beats: list[float], start_s: float, end_s: float, n: int) -> int
     return len(range(0, len(window_beats) - n, n))
 
 
-def generate_music_recipe(track_data: dict) -> dict:
+def _extract_guide_durations(filming_guide: list[dict], n: int) -> list[float] | None:
+    """Extract per-shot duration hints from the filming guide.
+
+    Returns a list of n floats (each ≥1.0s) if the guide has enough valid entries,
+    or None if the guide is absent/too short/all-zero (caller keeps uniform behavior).
+    """
+    if not filming_guide or len(filming_guide) < n:
+        return None
+    durs = []
+    for entry in filming_guide[:n]:
+        try:
+            d = float(entry.get("duration_s") or 0)
+        except (TypeError, ValueError):
+            d = 0.0
+        durs.append(max(1.0, d))  # floor prevents 0-length slots
+    return durs if sum(durs) > 0 else None
+
+
+def generate_music_recipe(track_data: dict, *, filming_guide: list[dict] | None = None) -> dict:
     """Build a recipe dict from a MusicTrack's stored config and beat timestamps.
 
     Args:
@@ -39,6 +57,13 @@ def generate_music_recipe(track_data: dict) -> dict:
             - beat_timestamps_s: list[float]
             - track_config: dict with best_start_s, best_end_s, slot_every_n_beats, etc.
             - duration_s: float | None
+        filming_guide: optional shot-list from the filming guide
+            (``[{what, how, duration_s}, ...]``). When present and the guide has at
+            least as many entries as the generated slot count, ``target_duration_s``
+            on each slot is rescaled to the guide's stated proportions. The beat
+            boundaries are unchanged; only the matching hint shifts so the template
+            matcher routes longer clips to payoff slots. Absent or too-short → uniform
+            beat-split (backward-compatible).
 
     Returns:
         A recipe dict shaped like TemplateRecipe (JSON-serialisable).
@@ -86,6 +111,19 @@ def generate_music_recipe(track_data: dict) -> dict:
             f"[{start_s:.1f}s–{end_s:.1f}s] with slot_every_n_beats={n}. "
             "Increase the window or decrease slot_every_n_beats."
         )
+
+    # Narrative payoff weighting: when a filming guide is present, redistribute
+    # target_duration_s by the guide's stated proportions. The beat boundaries stay
+    # fixed (actual cut timing is beat-snapped by the assembler); only the matching
+    # hint changes so the template_matcher routes longer clips to payoff slots.
+    guide_durs = _extract_guide_durations(filming_guide or [], len(slots))
+    if guide_durs is not None:
+        total_guide = sum(guide_durs)
+        total_target = sum(s["target_duration_s"] for s in slots)
+        for i, slot in enumerate(slots):
+            slot["target_duration_s"] = round(
+                max(0.5, (guide_durs[i] / total_guide) * total_target), 3
+            )
 
     # Adjust required_clips from config or derive
     n_slots = len(slots)
