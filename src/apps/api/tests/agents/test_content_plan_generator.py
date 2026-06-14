@@ -150,9 +150,7 @@ def test_render_prompt_skips_blank_user_ideas() -> None:
     with_blanks = _agent().render_prompt(
         _input().model_copy(update={"user_idea_seeds": ["", "  ", ""]})
     )
-    assert base == with_blanks, (
-        "render_prompt with only blank seeds should equal the baseline"
-    )
+    assert base == with_blanks, "render_prompt with only blank seeds should equal the baseline"
 
 
 # ── posts_per_week + edit_format tests ───────────────────────────────────────
