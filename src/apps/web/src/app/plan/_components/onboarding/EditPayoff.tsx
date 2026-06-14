@@ -25,6 +25,11 @@ import { formatElapsed } from "@/components/progress/logic";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import PlanVariantEditor from "@/app/plan/_components/PlanVariantEditor";
 import type { PlanItemVariant } from "@/lib/plan-api";
+import { useVariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
+import { EditToolbar } from "@/components/variant-editor/EditToolbar";
+import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
+import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
+import type { EditableVariant } from "@/lib/variant-editor/types";
 
 function isTerminalStatus(data: GenerativeJobStatus): boolean {
   return GENERATIVE_TERMINAL_STATUSES.includes(data.status);
@@ -62,14 +67,23 @@ function FocusedVariantPanel({
   styleSets: GenerativeStyleSet[];
   refresh: () => void;
 }) {
+  const session = useVariantEditSession(
+    variant as unknown as EditableVariant,
+    async (payload) => {
+      await editVariant(jobId, variant.variant_id, payload);
+      refresh();
+    },
+  );
+
+  const instantEligible = isInstantEditEligible(variant as unknown as EditableVariant);
   const timelineSession = useTimelineSession(jobId, variant, refresh);
 
   const awaitingTimelineRender = timelineSession.wait.phase === "rendering";
   useEffect(() => {
-    if (!awaitingTimelineRender) return;
+    if (!awaitingTimelineRender && !session.isSaving) return;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [awaitingTimelineRender, refresh]);
+  }, [awaitingTimelineRender, session.isSaving, refresh]);
 
   // Pin the first output URL so a subsequent poll doesn't clear the video.
   const outputSrcRef = useRef<string | null>(null);
@@ -82,6 +96,12 @@ function FocusedVariantPanel({
   const failed = variant.render_status === "failed";
   const timelineWait = timelineSession.wait.phase;
 
+  const introParams = resolveIntroParams(
+    variant as unknown as EditableVariant,
+    styleSets,
+    session.draft,
+  );
+
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
       {/* LEFT: hero video — fixed narrow column so the editor gets the room */}
@@ -91,7 +111,7 @@ function FocusedVariantPanel({
             <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
               Applying your edit…
             </div>
-          ) : rendering ? (
+          ) : rendering || session.isSaving ? (
             <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
               Rendering…
             </div>
@@ -111,7 +131,7 @@ function FocusedVariantPanel({
             </div>
           )}
         </div>
-        {!rendering && !failed && variant.output_url && (
+        {!rendering && !session.isSaving && !failed && variant.output_url && (
           <button
             onClick={() =>
               downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
@@ -123,41 +143,75 @@ function FocusedVariantPanel({
         )}
       </div>
 
-      {/* RIGHT: rich editing controls — same component as the plan-item page */}
+      {/* RIGHT: Font/Animation/Color/TextSize via EditToolbar (same as plan-item page) */}
       <div className="min-w-0 flex-1">
         <PlanVariantEditor
           variant={variant as unknown as PlanItemVariant}
           tracks={tracks}
-          styleSets={styleSets}
+          styleSets={instantEligible ? [] : styleSets}
           onSwap={async (trackId) => {
             await swapVariantSong(jobId, variant.variant_id, trackId);
             refresh();
           }}
-          onRetext={async (text) => {
-            await retextVariant(jobId, variant.variant_id, { text });
-            refresh();
-          }}
-          onRemoveText={async () => {
-            await retextVariant(jobId, variant.variant_id, { remove: true });
-            refresh();
-          }}
+          onRetext={
+            instantEligible
+              ? async (text) => {
+                  session.setText(text);
+                }
+              : async (text) => {
+                  await retextVariant(jobId, variant.variant_id, { text });
+                  refresh();
+                }
+          }
+          onRemoveText={
+            instantEligible
+              ? async () => {
+                  session.setRemoved(true);
+                }
+              : async () => {
+                  await retextVariant(jobId, variant.variant_id, { remove: true });
+                  refresh();
+                }
+          }
           onChangeStyle={async (styleSetId) => {
-            await changeVariantStyle(jobId, variant.variant_id, styleSetId);
-            refresh();
+            if (instantEligible) {
+              session.setStyle(styleSetId);
+            } else {
+              await changeVariantStyle(jobId, variant.variant_id, styleSetId);
+              refresh();
+            }
           }}
-          onResize={async (px) => {
-            await setVariantIntroSize(jobId, variant.variant_id, px);
-            refresh();
-          }}
+          onResize={
+            instantEligible
+              ? undefined
+              : async (px) => {
+                  await setVariantIntroSize(jobId, variant.variant_id, px);
+                  refresh();
+                }
+          }
           onChangeLayout={async (layout) => {
-            await editVariant(jobId, variant.variant_id, { intro_layout: layout });
-            refresh();
+            if (instantEligible) {
+              session.setLayout(layout);
+            } else {
+              await editVariant(jobId, variant.variant_id, { intro_layout: layout });
+              refresh();
+            }
           }}
           onEditClips={timelineSession.openEditor}
           showClipEditor={timelineSession.entryVisible}
           clipSlotCount={timelineSession.slotCount}
           hasClipEdits={timelineSession.hasUserEdits}
         />
+        {instantEligible && (
+          <div className="mt-6">
+            <EditToolbar
+              session={session}
+              styleSets={[]}
+              fallbackSizePx={variant.intro_text_size_px ?? null}
+              resolvedParams={introParams}
+            />
+          </div>
+        )}
         {timelineSession.isEditorOpen && (
           <div className="mt-4">
             <TimelineEditor
