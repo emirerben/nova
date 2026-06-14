@@ -411,7 +411,7 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mr,
         "generate_music_recipe",
-        lambda td: {
+        lambda td, **_kw: {
             "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
             "beat_timestamps_s": [0.5, 1.0],
         },
@@ -2044,7 +2044,7 @@ def test_full_rerender_overwrites_base_video_path(monkeypatch, tmp_path):
     monkeypatch.setattr(
         mr,
         "generate_music_recipe",
-        lambda td: {
+        lambda td, **_kw: {
             "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
             "beat_timestamps_s": [0.5, 1.0],
         },
