@@ -223,8 +223,11 @@ describe("PlanItemPage — variant count from job not a constant", () => {
       render(<PlanItemPage />);
     });
 
-    // Should render the filmstrip (has 2 variants, not 3).
-    expect(screen.getByTestId("plan-filmstrip")).toBeInTheDocument();
+    // Hero + rail: the page renders the results section without crashing.
+    // With 2 ready variants the light-shell is present and the results area renders.
+    expect(screen.getByTestId("light-shell")).toBeInTheDocument();
+    // The "Other takes" label appears when there are alternates to show.
+    expect(screen.getByText(/Other takes/i)).toBeInTheDocument();
     // No EXPECTED_VARIANTS=3 in sight — the page uses job.variants.length.
   });
 });
@@ -281,8 +284,8 @@ describe("PlanItemPage — pendingEdits overlay", () => {
       render(<PlanItemPage />);
     });
 
-    // The filmstrip is present and no crash.
-    expect(screen.getByTestId("plan-filmstrip")).toBeInTheDocument();
+    // Hero + rail: the results section renders without crash.
+    expect(screen.getByTestId("light-shell")).toBeInTheDocument();
   });
 });
 

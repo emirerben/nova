@@ -36,7 +36,7 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
@@ -134,6 +134,16 @@ import type { PlanItemJobStatus } from "@/lib/plan-api";
 import { swapPlanItemSong } from "@/lib/plan-api";
 const mockSwap = swapPlanItemSong as jest.MockedFunction<typeof swapPlanItemSong>;
 
+/** Click the Song tab to expose PlanVariantEditor and capture spyOnSwap. */
+async function openSongTab() {
+  // The makeServerVariant uses text_mode "original_text" (no music_track_id),
+  // so the Song tab is hidden. Use the Text tab to surface PlanVariantEditor.
+  const textTab = screen.queryByRole("button", { name: /T Text/i });
+  if (textTab) {
+    await act(async () => { fireEvent.click(textTab); });
+  }
+}
+
 // ─── Factory helpers ──────────────────────────────────────────────────────────
 
 function makeItem(overrides = {}) {
@@ -222,6 +232,9 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
 
     const { rerender } = await act(async () => render(<PlanItemPage />));
 
+    // Open the Song tab to expose PlanVariantEditor and capture spyOnSwap.
+    await openSongTab();
+
     // Variant is ready; editor shows it as ready.
     expect(spyVariant?.render_status).toBe("ready");
     expect(spyOnSwap).not.toBeNull();
@@ -265,6 +278,7 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
     });
 
     const { rerender } = await act(async () => render(<PlanItemPage />));
+    await openSongTab();
     expect(spyVariant?.render_status).toBe("ready");
 
     mockSwap.mockResolvedValueOnce(undefined);
@@ -300,6 +314,7 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
     });
 
     const { rerender } = await act(async () => render(<PlanItemPage />));
+    await openSongTab();
     expect(spyVariant?.render_status).toBe("ready");
 
     mockSwap.mockResolvedValueOnce(undefined);
@@ -351,6 +366,7 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
     });
 
     const { rerender } = await act(async () => render(<PlanItemPage />));
+    await openSongTab();
 
     mockSwap.mockResolvedValueOnce(undefined);
     await act(async () => { await spyOnSwap!("track-99"); });
