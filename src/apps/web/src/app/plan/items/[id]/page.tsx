@@ -41,6 +41,7 @@ import { ProgressTheater } from "@/components/progress";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
+import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
 import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
@@ -461,7 +462,10 @@ export default function PlanItemPage() {
             </span>
           </div>
           <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
-          <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
+          <p className="mt-2 text-[#3f3f46]">{item.idea}</p>
+          <div className="mb-4 mt-2">
+            <SeedProvenanceBadge item={item} />
+          </div>
 
           {/* ── FILM CARD (D5: primary action, above "Why this works") ── */}
           {isInstructed ? (

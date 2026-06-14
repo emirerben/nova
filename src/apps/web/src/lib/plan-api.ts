@@ -259,6 +259,9 @@ export interface PlanItem {
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
+  /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
+  source_idea_seed_id?: string | null;
+  source_idea_seed_text?: string | null;
 }
 
 /** Activation seed (T8) lifecycle: none→seeding→activating→activated|activated_empty|failed. */

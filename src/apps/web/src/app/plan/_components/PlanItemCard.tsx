@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { type PlanItem, type PlanItemStatus, updatePlanItem } from "@/lib/plan-api";
 import { stripRationalePrefix } from "@/lib/plan-text";
+import { SeedProvenanceBadge } from "./ui/SeedProvenanceBadge";
 
 // Glyph + text so status reads without relying on color alone (a11y).
 const STATUS_META: Record<PlanItemStatus, { glyph: string; label: string; cls: string }> = {
@@ -94,6 +95,7 @@ export default function PlanItemCard({
         </h3>
         <ItemStatusBadge status={item.status} />
       </div>
+      <SeedProvenanceBadge item={item} />
 
       {!editing ? (
         <>
