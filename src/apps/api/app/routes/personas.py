@@ -1184,6 +1184,7 @@ class OnboardingForkRequest(BaseModel):
     # so create_plan can carry them as seed_clip_paths without the 422 prefix guard.
     onboarding_clip_paths: list[str] | None = None
     onboarding_edit_job_id: str | None = None
+    onboarding_payoff_done: bool | None = None  # set to True when user clicks "Continue"
 
 
 class OnboardingForkResponse(BaseModel):
@@ -1246,6 +1247,8 @@ async def onboarding_fork(
         q["onboarding_clip_paths"] = body.onboarding_clip_paths
     if body.onboarding_edit_job_id is not None:
         q["onboarding_edit_job_id"] = body.onboarding_edit_job_id
+    if body.onboarding_payoff_done is True:
+        q["onboarding_payoff_done"] = True
 
     # Seed a synthetic answered-user turn so chat_start asks the NEXT question.
     # Only seed if no prior interview_turns exist (respect any previous chat progress).
