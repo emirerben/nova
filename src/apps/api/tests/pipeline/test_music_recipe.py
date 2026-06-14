@@ -338,6 +338,72 @@ def test_generate_music_recipe_sync_style() -> None:
     assert recipe["sync_style"] == "cut-on-beat"
 
 
+# ── Narrative payoff duration weighting ───────────────────────────────────────
+
+
+def test_generate_music_recipe_guide_weights_target_durations() -> None:
+    # 4 slots from uniform beats; guide says [2s, 2s, 2s, 8s] → payoff last.
+    beats = [float(i) for i in range(0, 36)]  # 35 beats, n=8 → 4 slots
+    data = _make_track_data(beats, best_start=0.0, best_end=35.0, slot_every_n=8)
+    guide = [
+        {"what": "intro", "duration_s": 2},
+        {"what": "setup", "duration_s": 2},
+        {"what": "rising", "duration_s": 2},
+        {"what": "payoff", "duration_s": 8},
+    ]
+    recipe = generate_music_recipe(data, filming_guide=guide)
+
+    slots = recipe["slots"]
+    assert len(slots) == 4
+    # Payoff slot (last) should have the largest target_duration_s
+    target_durs = [s["target_duration_s"] for s in slots]
+    assert target_durs[3] > target_durs[0]
+    assert target_durs[3] > target_durs[1]
+    # Roughly 4:1 ratio (8/(2+2+2+8) vs 2/(14) → 4× larger)
+    assert target_durs[3] / target_durs[0] > 3.0
+
+
+def test_generate_music_recipe_guide_total_duration_preserved() -> None:
+    # The guide weighting must not change the recipe's total_duration_s.
+    beats = [float(i) for i in range(0, 36)]
+    data = _make_track_data(beats, best_start=0.0, best_end=35.0, slot_every_n=8)
+    guide = [
+        {"what": "a", "duration_s": 3},
+        {"what": "b", "duration_s": 5},
+        {"what": "c", "duration_s": 1},
+        {"what": "d", "duration_s": 6},
+    ]
+    recipe_with = generate_music_recipe(data, filming_guide=guide)
+    recipe_without = generate_music_recipe(data)
+
+    # Total target sum may differ slightly due to per-slot rounding, but
+    # the recipe-level total_duration_s must stay the same (beat-derived).
+    assert recipe_with["total_duration_s"] == recipe_without["total_duration_s"]
+
+
+def test_generate_music_recipe_guide_too_short_falls_back_to_uniform() -> None:
+    # Guide has fewer entries than slots → uniform beat split preserved.
+    beats = [float(i) for i in range(0, 36)]  # 4 slots
+    data = _make_track_data(beats, best_start=0.0, best_end=35.0, slot_every_n=8)
+    guide = [{"what": "hook", "duration_s": 10}]  # only 1 entry, need 4
+    recipe_with = generate_music_recipe(data, filming_guide=guide)
+    recipe_without = generate_music_recipe(data)
+
+    for s_with, s_without in zip(recipe_with["slots"], recipe_without["slots"]):
+        assert s_with["target_duration_s"] == s_without["target_duration_s"]
+
+
+def test_generate_music_recipe_no_guide_is_backward_compatible() -> None:
+    # Omitting filming_guide must produce identical output to pre-feature behavior.
+    beats = [float(i) for i in range(0, 36)]
+    data = _make_track_data(beats, best_start=0.0, best_end=35.0, slot_every_n=8)
+    recipe_explicit = generate_music_recipe(data, filming_guide=None)
+    recipe_omitted = generate_music_recipe(data)
+
+    assert recipe_explicit["slots"] == recipe_omitted["slots"]
+    assert recipe_explicit["total_duration_s"] == recipe_omitted["total_duration_s"]
+
+
 # ── merge_template_with_track ────────────────────────────────────────────────
 
 

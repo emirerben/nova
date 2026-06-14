@@ -152,6 +152,52 @@ def test_build_no_music_recipe_total_never_exceeds_footage():
     assert recipe["total_duration_s"] <= 6.0 + 1e-6
 
 
+def test_build_no_music_recipe_guide_weights_slot_durations():
+    # 3 clips; guide says setup:setup:payoff = 2s:2s:6s → payoff gets 3× the slot time.
+    metas = [_Meta(f"c{i}", 5.0) for i in range(3)]
+    guide = [
+        {"what": "setup", "duration_s": 2},
+        {"what": "setup", "duration_s": 2},
+        {"what": "payoff", "duration_s": 6},
+    ]
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=12.0, filming_guide=guide)
+    durations = [s["target_duration_s"] for s in recipe["slots"]]
+    # Payoff slot (index 2) must be the longest
+    assert durations[2] > durations[0]
+    assert durations[2] > durations[1]
+    # Proportions: 2+2+6=10 → [2.4, 2.4, 7.2] with total=12
+    assert abs(durations[2] / durations[0] - 3.0) < 0.1
+
+
+def test_build_no_music_recipe_guide_proportions_sum_to_footage():
+    metas = [_Meta(f"c{i}", 5.0) for i in range(3)]
+    guide = [
+        {"what": "a", "duration_s": 3},
+        {"what": "b", "duration_s": 5},
+        {"what": "c", "duration_s": 2},
+    ]
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=15.0, filming_guide=guide)
+    total = sum(s["target_duration_s"] for s in recipe["slots"])
+    # Total should approximate available footage (small rounding tolerance)
+    assert abs(total - 15.0) < 0.05
+
+
+def test_build_no_music_recipe_guide_too_short_falls_back_to_uniform():
+    # Guide has only 1 entry but 3 clips → fall back to equal split.
+    metas = [_Meta(f"c{i}", 5.0) for i in range(3)]
+    guide = [{"what": "hook", "duration_s": 8}]
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=9.0, filming_guide=guide)
+    durations = [s["target_duration_s"] for s in recipe["slots"]]
+    assert durations[0] == durations[1] == durations[2]
+
+
+def test_build_no_music_recipe_no_guide_is_uniform():
+    metas = [_Meta(f"c{i}", 4.0) for i in range(3)]
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=9.0)
+    durations = [s["target_duration_s"] for s in recipe["slots"]]
+    assert durations[0] == durations[1] == durations[2]
+
+
 # ── Footage-derived sizing ─────────────────────────────────────────────────────
 
 
