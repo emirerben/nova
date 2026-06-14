@@ -28,6 +28,7 @@ from app.database import sync_session
 from app.models import ContentPlan, PlanItem, User
 from app.models import Persona as PersonaRow
 from app.services.content_plan_dedup import choose_replacements, flag_replacement_indices
+from app.services.seed_provenance import match_specs_to_seeds
 from app.worker import celery_app
 
 log = structlog.get_logger()
@@ -76,11 +77,15 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     str(k): float(v) for k, v in raw_mix.items() if isinstance(v, (int, float))
                 }
         # M1 Bring-Your-Own-Ideas: extract seed texts from the persona row.
-        # Empty list → byte-identical baseline (no user-ideas block injected).
+        # Keep full dicts (id + text) so T5 provenance matching can write
+        # source_idea_seed_id at persist time. Empty list → byte-identical
+        # baseline (no user-ideas block injected).
         raw_seeds = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
-        idea_seed_texts = [
-            str(s["text"]) for s in raw_seeds if isinstance(s, dict) and s.get("text")
+        seeds_with_ids = [
+            s for s in raw_seeds if isinstance(s, dict) and s.get("text") and s.get("id")
         ]
+        idea_seed_texts = [str(s["text"]) for s in seeds_with_ids]
+        persona_id_for_seeds = plan.persona_id
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
@@ -111,7 +116,11 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         for existing in list(plan.items):
             session.delete(existing)
         session.flush()
-        for spec in output.items:
+        # T5 provenance: match each generated spec back to the seed it
+        # honours, then write source_idea_seed_id on the PlanItem.
+        spec_list = list(output.items)
+        seed_by_index = match_specs_to_seeds(spec_list, seeds_with_ids)
+        for i, spec in enumerate(spec_list):
             session.add(
                 PlanItem(
                     content_plan_id=plan.id,
@@ -127,8 +136,23 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                         {**s.model_dump(), "shot_id": uuid.uuid4().hex} for s in spec.filming_guide
                     ],
                     item_status="idea",
+                    source_idea_seed_id=seed_by_index.get(i),
                 )
             )
+        # Flip matched seeds → in_plan (monotonic: never demote).
+        matched_seed_ids = set(seed_by_index.values())
+        if matched_seed_ids:
+            persona_row_p = session.get(PersonaRow, persona_id_for_seeds)
+            if persona_row_p is not None:
+                raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
+                persona_row_p.idea_seeds = [
+                    {**s, "status": "in_plan"}
+                    if isinstance(s, dict)
+                    and s.get("id") in matched_seed_ids
+                    and s.get("status") != "in_plan"
+                    else s
+                    for s in raw
+                ]
         plan.plan_status = "ready"
         if plan.start_date is None:
             plan.start_date = date.today()
@@ -244,10 +268,13 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         # M1 Bring-Your-Own-Ideas: carry user seeds into the regenerate pass so the
         # "their say" invariant covers seeds too (regenerate biases toward what the
         # user explicitly said they want, not just their feedback reactions).
+        # Keep full dicts (id + text) for T5 provenance matching at persist time.
         raw_seeds_regen = persona_row.idea_seeds if isinstance(persona_row.idea_seeds, list) else []
-        idea_seed_texts_regen = [
-            str(s["text"]) for s in raw_seeds_regen if isinstance(s, dict) and s.get("text")
+        seeds_with_ids_regen = [
+            s for s in raw_seeds_regen if isinstance(s, dict) and s.get("text") and s.get("id")
         ]
+        idea_seed_texts_regen = [str(s["text"]) for s in seeds_with_ids_regen]
+        persona_id_for_seeds_regen = plan.persona_id
         agent_input = ContentPlanInput(
             persona=Persona(**persona_row.persona),
             events=str((plan.events or {}).get("text", "") or ""),
@@ -284,9 +311,16 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
             if existing.day_index not in protected_days:
                 session.delete(existing)
         session.flush()
-        for spec in output.items:
+        # T5 provenance: match specs to seeds and write source_idea_seed_id.
+        # Only count a seed as used when its spec is actually persisted (not on a
+        # protected day) so we never flip a seed in_plan for a skipped spec.
+        spec_list_regen = list(output.items)
+        seed_by_index_regen = match_specs_to_seeds(spec_list_regen, seeds_with_ids_regen)
+        matched_seed_ids_regen: set[str] = set()
+        for i, spec in enumerate(spec_list_regen):
             if spec.day_index in protected_days:
                 continue  # never collide with a protected day
+            seed_id = seed_by_index_regen.get(i)
             session.add(
                 PlanItem(
                     content_plan_id=plan.id,
@@ -301,8 +335,24 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                         {**s.model_dump(), "shot_id": uuid.uuid4().hex} for s in spec.filming_guide
                     ],
                     item_status="idea",
+                    source_idea_seed_id=seed_id,
                 )
             )
+            if seed_id:
+                matched_seed_ids_regen.add(seed_id)
+        # Flip matched seeds → in_plan (monotonic: never demote).
+        if matched_seed_ids_regen:
+            persona_row_p = session.get(PersonaRow, persona_id_for_seeds_regen)
+            if persona_row_p is not None:
+                raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
+                persona_row_p.idea_seeds = [
+                    {**s, "status": "in_plan"}
+                    if isinstance(s, dict)
+                    and s.get("id") in matched_seed_ids_regen
+                    and s.get("status") != "in_plan"
+                    else s
+                    for s in raw
+                ]
         plan.plan_status = "ready"
         if plan.start_date is None:
             plan.start_date = date.today()
@@ -1009,6 +1059,9 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
             return
 
         seed_texts = [str(s["text"]) for s in pending_seeds]
+        # T5 provenance: subset with stable id for matching at persist time.
+        seeds_for_matching_add = [s for s in pending_seeds if s.get("id")]
+        persona_id_for_seeds_add = plan.persona_id
         existing_items = list(plan.items or [])
         all_ideas = [it.idea for it in existing_items if it.idea]
         horizon = plan.horizon_days or 30
@@ -1056,11 +1109,15 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
         if plan is None:
             return
 
+        # T5 provenance: match new specs → seeds before the persist loop.
+        seed_by_index_add = match_specs_to_seeds(new_specs, seeds_for_matching_add)
+        matched_seed_ids_add: set[str] = set()
         for i, spec in enumerate(new_specs):
             if i < len(free_slots):
                 slot = free_slots[i]
             else:
                 slot = max_day + 1 + (i - len(free_slots))
+            seed_id = seed_by_index_add.get(i)
             item = PlanItem(
                 content_plan_id=plan.id,
                 day_index=slot,
@@ -1074,8 +1131,30 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     for s in (spec.filming_guide or [])
                 ],
                 item_status="idea",
+                source_idea_seed_id=seed_id,
             )
             session.add(item)
+            if seed_id:
+                matched_seed_ids_add.add(seed_id)
+
+        # Flip matched seeds → in_plan so IdeasCard shows "✓ in your plan"
+        # and re-submission doesn't double-generate items for the same seed.
+        if matched_seed_ids_add:
+            persona_row_add = session.get(PersonaRow, persona_id_for_seeds_add)
+            if persona_row_add is not None:
+                raw_add = (
+                    persona_row_add.idea_seeds
+                    if isinstance(persona_row_add.idea_seeds, list)
+                    else []
+                )
+                persona_row_add.idea_seeds = [
+                    {**s, "status": "in_plan"}
+                    if isinstance(s, dict)
+                    and s.get("id") in matched_seed_ids_add
+                    and s.get("status") != "in_plan"
+                    else s
+                    for s in raw_add
+                ]
 
         plan.plan_status = "ready"
         session.commit()

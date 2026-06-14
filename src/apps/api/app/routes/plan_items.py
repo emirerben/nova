@@ -135,6 +135,11 @@ class PlanItemResponse(BaseModel):
     # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Populated on the item
     # GET (the page's poll path); other responses default to create_new.
     content_mode: str = "create_new"
+    # BYO-Ideas provenance (M1 T5): the seed whose subject this item honours.
+    # NULL = market-bank origin or the item predates T5. Both fields are resolved
+    # server-side so the badge is a pure function of the item on the client.
+    source_idea_seed_id: str | None = None
+    source_idea_seed_text: str | None = None
 
 
 def plan_item_response(
@@ -142,6 +147,7 @@ def plan_item_response(
     *,
     instruction_level: str = "full",
     content_mode: str = "create_new",
+    seed_text_by_id: dict[str, str] | None = None,
 ) -> PlanItemResponse:
     # Tolerate missing keys in individual JSONB shots — each shot is constructed
     # via .get() so a hand-corrupted row or a migration-era partial row never raises.
@@ -191,6 +197,10 @@ def plan_item_response(
         content_mode=content_mode
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
+        source_idea_seed_id=item.source_idea_seed_id,
+        source_idea_seed_text=(seed_text_by_id or {}).get(item.source_idea_seed_id)
+        if item.source_idea_seed_id
+        else None,
     )
 
 
@@ -228,6 +238,29 @@ async def _get_instruction_level(item: PlanItem, db: AsyncSession) -> str:
         return "full"
 
 
+async def _get_seed_text_by_id(item: PlanItem, db: AsyncSession) -> dict[str, str]:
+    """Build {seed_id: seed_text} map from the owning persona's idea_seeds.
+
+    Used to resolve source_idea_seed_text at read time for the provenance badge.
+    Any missing link returns {} — the badge gracefully shows nothing.
+    """
+    try:
+        plan = await db.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            return {}
+        persona = await db.get(Persona, plan.persona_id)
+        if persona is None:
+            return {}
+        seeds = persona.idea_seeds if isinstance(persona.idea_seeds, list) else []
+        return {
+            str(s["id"]): str(s["text"])
+            for s in seeds
+            if isinstance(s, dict) and s.get("id") and s.get("text")
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 @router.get("/{item_id}", response_model=PlanItemResponse)
 async def get_plan_item(
     item_id: str,
@@ -237,7 +270,13 @@ async def get_plan_item(
     item = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(item, db)
     content_mode = await _get_content_mode(item, db)
-    return plan_item_response(item, instruction_level=instruction_level, content_mode=content_mode)
+    seed_text_by_id = await _get_seed_text_by_id(item, db)
+    return plan_item_response(
+        item,
+        instruction_level=instruction_level,
+        content_mode=content_mode,
+        seed_text_by_id=seed_text_by_id,
+    )
 
 
 class PlanItemEdit(BaseModel):

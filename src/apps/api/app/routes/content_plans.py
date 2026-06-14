@@ -69,15 +69,19 @@ class ContentPlanResponse(BaseModel):
     pool_matched_count: int = 0
 
 
-def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
+def _plan_response(
+    plan: ContentPlan,
+    seed_text_by_id: dict[str, str] | None = None,
+) -> ContentPlanResponse:
     pool = plan.pool or {}
     pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
+    _seed_map = seed_text_by_id or {}
     return ContentPlanResponse(
         id=str(plan.id),
         plan_status=plan.plan_status,
         horizon_days=plan.horizon_days,
         events=plan.events,
-        items=[plan_item_response(it) for it in plan.items],
+        items=[plan_item_response(it, seed_text_by_id=_seed_map) for it in plan.items],
         activation_status=plan.activation_status,
         seed_clip_count=len(plan.seed_clip_paths or []),
         generation_started_at=plan.generation_started_at,
@@ -147,7 +151,17 @@ async def get_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
-    return _plan_response(plan)
+    # Build seed id→text map for T5 provenance badge (single extra lookup).
+    persona = await db.get(PersonaRow, plan.persona_id)
+    seeds = (
+        persona.idea_seeds if persona is not None and isinstance(persona.idea_seeds, list) else []
+    )
+    seed_text_by_id = {
+        str(s["id"]): str(s["text"])
+        for s in seeds
+        if isinstance(s, dict) and s.get("id") and s.get("text")
+    }
+    return _plan_response(plan, seed_text_by_id=seed_text_by_id)
 
 
 @router.post("/{plan_id}/regenerate", response_model=ContentPlanResponse)
