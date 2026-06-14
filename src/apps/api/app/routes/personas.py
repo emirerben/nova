@@ -1175,16 +1175,19 @@ async def style_agent_turn(
 # ── Onboarding fork ───────────────────────────────────────────────────────────
 
 
+_VALID_CONTENT_MODES = frozenset({"existing_footage", "create_new", "mixed"})
+
+
 class OnboardingForkRequest(BaseModel):
-    content_mode: str  # "existing_footage" | "create_new" | "mixed"
-    topic: str | None = None  # what their footage is about
-    intent: str | None = None  # what they want viewers to feel/do
+    content_mode: str
+    topic: str | None = None
+    intent: str | None = None
     # Optional: durable clip paths from the onboarding edit job (server-derived,
     # lifecycle-exempt under generative-jobs/*/sources/). Stored in questionnaire
     # so create_plan can carry them as seed_clip_paths without the 422 prefix guard.
     onboarding_clip_paths: list[str] | None = None
     onboarding_edit_job_id: str | None = None
-    onboarding_payoff_done: bool | None = None  # set to True when user clicks "Continue"
+    onboarding_payoff_done: bool | None = None
 
 
 class OnboardingForkResponse(BaseModel):
@@ -1210,6 +1213,12 @@ async def onboarding_fork(
     the resume-without-LLM stall in chat_start (~line 668).
     """
     from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    if body.content_mode not in _VALID_CONTENT_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"content_mode must be one of {sorted(_VALID_CONTENT_MODES)}, got {body.content_mode!r}",
+        )
 
     existing = (
         await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))

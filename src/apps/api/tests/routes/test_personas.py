@@ -548,3 +548,41 @@ def test_onboarding_fork_seeds_answered_turn_not_agent_turn(client: TestClient) 
     turns = row.questionnaire.get("interview_turns", [])
     assert turns, "Expected at least one seeded turn"
     assert turns[-1]["role"] == "user", "Last turn must be 'user', not 'agent'"
+
+
+def test_onboarding_fork_second_call_merges_not_clobbers(client: TestClient) -> None:
+    """Calling onboarding-fork twice must accumulate fields, not reset them.
+
+    First call sets content_mode + topic.
+    Second call sets onboarding_clip_paths.
+    After the second call, content_mode + onboarding_topic must still be present.
+    """
+    user = _fake_user()
+    # Row already has fields from the first fork call.
+    initial_questionnaire = {
+        "content_mode": "existing_footage",
+        "onboarding_topic": "hiking trip",
+        "interview_turns": [{"role": "user", "content": "hiking trip"}],
+    }
+    row = _fork_row(user.id, questionnaire=initial_questionnaire)
+    db = _async_db(scalar_result=row)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    # Second call: record clip paths after the generative job completes.
+    resp = client.post(
+        "/personas/onboarding-fork",
+        json={
+            "content_mode": "existing_footage",
+            "onboarding_clip_paths": ["generative-jobs/abc/sources/clip.mp4"],
+            "onboarding_edit_job_id": "job-123",
+        },
+    )
+    assert resp.status_code == 200
+    # Fields from the first call must still be present.
+    assert row.questionnaire["content_mode"] == "existing_footage"
+    assert row.questionnaire["onboarding_topic"] == "hiking trip"
+    # Fields from the second call must be added.
+    assert row.questionnaire["onboarding_clip_paths"] == ["generative-jobs/abc/sources/clip.mp4"]
+    assert row.questionnaire["onboarding_edit_job_id"] == "job-123"
