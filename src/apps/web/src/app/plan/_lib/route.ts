@@ -41,9 +41,14 @@ export function resolvePlanMode(
   if (persona.persona_status === "chat_pending") {
     // If they chose the footage path, route into that funnel
     if (isFootagePath) {
-      if (!q?.onboarding_topic && !q?.onboarding_intent) return "setup:edit-context";
-      if (!q?.onboarding_edit_job_id) return "setup:edit-upload";
-      if (!q?.onboarding_payoff_done) return "setup:edit-generating";
+      // Check payoff_done first — topic/intent are not required in the new flow
+      // where context is collected inline in the clip-group step.
+      if (!q?.onboarding_payoff_done) {
+        if (!q?.onboarding_topic && !q?.onboarding_intent) return "setup:edit-context";
+        if (!q?.onboarding_edit_job_id) return "setup:edit-upload";
+        return "setup:edit-generating";
+      }
+      // payoff_done → fall through to chat
     }
     // No content_mode yet → show fork screen
     if (!q?.content_mode) return "setup:fork";
