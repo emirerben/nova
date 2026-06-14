@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.105.0] — 2026-06-14
+
+### Changed
+- **Narrative payoff duration weighting.** When a filming guide is active (`narrative_shot_count > 0`), recipe slot durations are now weighted by the guide's stated `duration_s` hints instead of equal-splitting the footage. For the no-music path (`original_text` variant), payoff slots declared longer in the guide receive a proportionally larger share of the total footage — a 6s payoff hint vs 2s setup hints yields a 3× longer slot rather than equal time. For music variants, `target_duration_s` is rescaled by the same proportions so the clip matcher routes longer/better clips to the payoff slot. Beat boundaries are unchanged. Addresses the pacing judge finding: setup:payoff at 2.5:1 (guide-intended climax renders as the shortest slot).
+
 ## [0.4.104.0] — 2026-06-13
 
 ### Added
