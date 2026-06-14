@@ -220,8 +220,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  (izzsiomoi humor+extreme pattern, vi=124x).
     # Bump 2026-06-11: direction fork — added goal / content_mode / current_situation
     #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
-    assert archetypes_version() == "2026-06-07"
-    assert PERSONA_PROMPT_VERSION == "2026-06-11"
+    # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
+    #                  (allexmarielle 9to5 professional aesthetic lane).
+    assert archetypes_version() == "2026-06-14"
+    assert PERSONA_PROMPT_VERSION == "2026-06-14"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -241,8 +243,10 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             past-trips-are-edit-material rule (Buenos Aires fix); banks untouched.
     # 2026-06-13: M1 Bring-Your-Own-Ideas — $user_ideas block added above IDEA_BANK;
     #             banks untouched (new block is conditional-empty when no seeds).
-    assert content_ideas_version() == "2026-06-07"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-13"
+    # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
+    #             parallel-life-aspiration-01 ideas.
+    assert content_ideas_version() == "2026-06-14"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -255,10 +259,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Content plan bumped to 2026-06-08 (retrospective-footage rule), then persona +
     # content plan both to 2026-06-11 (direction fork + grounding, this branch).
     # Intro bumped to 2026-06-12 when overlay_examples added broader cluster exemplars.
-    assert success_factors_version() == "2026-06-07"
-    assert PERSONA_PROMPT_VERSION == "2026-06-11"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-13"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-12"
+    # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
+    # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
+    assert success_factors_version() == "2026-06-14"
+    assert PERSONA_PROMPT_VERSION == "2026-06-14"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-14"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -276,9 +282,11 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  travel-city-cluster-01) + `layout` field; bumped both agents.
     # Bump 2026-06-12: broadened cluster examples for energetic/people/lifestyle
     #                  hooks and updated the matcher layout policy.
-    assert library_version() == "2026-06-12"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-12"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-12"
+    # Bump 2026-06-14: weekly research refresh — added professional-ootd-static-01
+    #                  (office fashion / professional aesthetic lane).
+    assert library_version() == "2026-06-14"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-14"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-14"
 
 
 @pytest.mark.parametrize(

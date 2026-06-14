@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-07",
+  "version": "2026-06-14",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -65,6 +65,17 @@
       "audience": "aspiring founders and niche enthusiasts who connect with the 'I made this because nothing else existed' origin story",
       "sample_hooks": ["i couldn't find what i was looking for — so i made it", "nobody told me this step would be this hard", "months in the making, finally starting"],
       "source": "tiktok:@nermozdemir (2026-05)"
+    },
+    {
+      "id": "professional-visual-diary-01",
+      "niche": "professional lifestyle & city aesthetics",
+      "summary": "You document the quiet aesthetic of working life in a beautiful city — minimalist office outfits, before-work coffee, museum detours between meetings. No voiceover, no hustle rhetoric, just the visual texture of a thoughtful professional life.",
+      "tone": "understated, tasteful, quietly aspirational",
+      "content_pillars": ["work outfits (#9to5)", "morning rituals before the office", "cultural detours (galleries, museums)", "city seasonal moments"],
+      "audience": "people who romanticize working somewhere beautiful or aspire to a more aesthetically intentional professional life",
+      "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
+      "source": "tiktok:@allexmarielle (2026-06)",
+      "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
     }
   ]
 }

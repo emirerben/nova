@@ -113,7 +113,8 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
         #              overlay_examples.json (editorial word-cluster intro).
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_hint block (en|tr).
-        prompt_version="2026-06-12",
+        # 2026-06-14 — weekly research refresh: added professional-ootd-static-01 overlay example.
+        prompt_version="2026-06-14",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

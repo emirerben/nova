@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-12",
+  "version": "2026-06-14",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -309,6 +309,19 @@
       "text_color": "#FFFFFF",
       "highlight_color": "#FFE08A",
       "layout": "cluster"
+    },
+    {
+      "id": "professional-ootd-static-01",
+      "content_profile": "office fashion or professional outfit of the day, aesthetic working life in a city, minimal and tasteful — a quick glimpse of the look before the workday starts",
+      "effect": "static",
+      "text": "felt cute this week",
+      "highlight_word": "cute",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFE08A",
+      "niche": "professional lifestyle & city aesthetics",
+      "source": "tiktok market research 2026-06"
     }
   ]
 }
