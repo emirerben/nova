@@ -27,6 +27,7 @@ import PlanVariantEditor from "@/app/plan/_components/PlanVariantEditor";
 import type { PlanItemVariant } from "@/lib/plan-api";
 import { useVariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
+import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import type { EditableVariant } from "@/lib/variant-editor/types";
@@ -102,6 +103,11 @@ function FocusedVariantPanel({
     session.draft,
   );
 
+  // For instant-eligible variants: always show the text-free base video +
+  // IntroTextPreview overlay so font/animation/color/text changes are visible
+  // live (0-latency, no re-render). Matches the plan-item page WYSIWYG pattern.
+  const showWysiwyg = instantEligible && !!variant.base_video_url;
+
   return (
     <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
       {/* LEFT: hero video — fixed narrow column so the editor gets the room */}
@@ -111,6 +117,38 @@ function FocusedVariantPanel({
             <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
               Applying your edit…
             </div>
+          ) : showWysiwyg ? (
+            <>
+              <video
+                key={variant.base_video_url!}
+                src={variant.base_video_url!}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+              {!session.draft.removed && (
+                <div className="absolute inset-0">
+                  <IntroTextPreview
+                    params={introParams}
+                    layout={
+                      session.draft.layout ??
+                      (variant.intro_layout as "linear" | "cluster" | null) ??
+                      "linear"
+                    }
+                    playToken={session.playToken}
+                  />
+                </div>
+              )}
+              {session.isSaving && (
+                <div className="absolute inset-0 flex items-end justify-center pb-4">
+                  <span className="rounded-full bg-black/60 px-3 py-1 text-xs text-white">
+                    Saving…
+                  </span>
+                </div>
+              )}
+            </>
           ) : rendering || session.isSaving ? (
             <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
               Rendering…
@@ -131,14 +169,21 @@ function FocusedVariantPanel({
             </div>
           )}
         </div>
-        {!rendering && !session.isSaving && !failed && variant.output_url && (
+        {!failed && variant.output_url && (
           <button
-            onClick={() =>
-              downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
+            disabled={session.isSaving}
+            onClick={
+              session.isSaving
+                ? undefined
+                : () => downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
             }
-            className="mt-2 w-full rounded-lg border border-zinc-200 py-2 text-xs text-[#3f3f46] hover:border-zinc-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+            className={`mt-2 w-full rounded-lg border py-2 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px] ${
+              session.isSaving
+                ? "border-zinc-200 text-[#a1a1aa] cursor-not-allowed"
+                : "border-zinc-200 text-[#3f3f46] hover:border-zinc-400"
+            }`}
           >
-            Download
+            {session.isSaving ? "Saving…" : "Download"}
           </button>
         )}
       </div>
