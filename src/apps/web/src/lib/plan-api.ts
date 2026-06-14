@@ -259,6 +259,8 @@ export interface PlanItem {
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
+  /** BYO-Ideas provenance: the seed that generated this item, if any. */
+  source_idea_seed_id?: string | null;
 }
 
 /** Activation seed (T8) lifecycle: none→seeding→activating→activated|activated_empty|failed. */
@@ -280,6 +282,9 @@ export interface ContentPlan {
   seed_clip_count: number;
   generation_started_at?: string | null;
   start_date?: string | null;
+  /** BYO-Ideas (M1): idea seeds from the linked persona, included in the plan GET
+   *  so the workspace sidebar can show them without a separate persona call. */
+  idea_seeds?: IdeaSeed[];
 }
 
 /** Create a plan from the user's ready persona + optional events; generation runs async. */

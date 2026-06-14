@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.107.0] — 2026-06-14
+
+### Changed
+- **Plan home — Ideas sidebar + Today layout.** The workspace home page (`/plan`) now uses a two-column desktop layout: a sticky left rail ("Your ideas", w-64) lists the user's BYO idea seeds with a lime "Day N" badge when linked to a plan item and a hover "→" that navigates to that item; the center column leads with a large "Today" card (Fraunces heading, status pill, glanceable shot-chip list, one ink "Film this →" CTA) followed by the This Week strip. Mobile: Ideas sidebar stacks above Today card. Empty-state: "Nothing planned for today — pick an idea from your list." Secondary cards (Momentum, Persona, Style) move to a horizontal row below the calendar.
+- **BYO-Ideas provenance wired (T5 finish).** `add_ideas_to_plan` now writes `PlanItem.source_idea_seed_id` and flips seed `status` to `"in_plan"` for each seed that generates an item. The plan's linked persona's `idea_seeds` list is also included in `GET /content-plans` so the sidebar can show live `in_plan` status without a separate persona fetch.
+- **`source_idea_seed_id` exposed on `PlanItemResponse`** (additive field; null for items with no seed link). `ContentPlanResponse` now carries `idea_seeds: list[dict]` from the linked persona (populated in the workspace GET; empty in all other responses).
+
 ## [0.4.106.0] — 2026-06-14
 
 ### Changed
