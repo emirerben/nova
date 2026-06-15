@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.110.0] — 2026-06-15
+
+### Added
+- **Edits-first onboarding — make your first edit in ~90 seconds.** New users now experience a resequenced onboarding: TikTok prescreen → ~6 AI interview questions → footage upload offer → upload → group clips (with per-group context) → generative edit (~90 s) → pick-your-take gallery → plan. The 30-day content plan becomes a clearly separate second act after the aha moment.
+  - **New onboarding state machine.** `resolvePlanMode` in `plan/_lib/route.ts` emits four new mode values (`setup:fork`, `setup:edit-upload`, `setup:edit-generating`, `setup:edit-payoff`) driven by new keys on `Persona.questionnaire` JSONB (`content_mode`, `onboarding_edit_job_id`, `onboarding_clip_paths`, `onboarding_payoff_done`). No Alembic migration — new keys inside the existing column.
+  - **`ForkScreen`, `EditUploadStep`, `ClipGroupStep`, `EditPayoff` components.** New onboarding screens under `app/plan/_components/onboarding/`. All reuse the light editorial surface (cream/ink/lime/Playfair) and pass `tone="light"` to the four dark-defaulting progress components. `EditUploadStep` drives uploads via `uploadGenerativeClip` (FormData → `music-jobs/upload-slot`). Context is collected per-group in `ClipGroupStep`, not as a standalone step.
+  - **Context-injection exposed on `POST /generative-jobs`.** Added optional `topic` + `intent` fields to `CreateGenerativeJobRequest`; passed as `item_theme`/`item_idea` into the pre-existing `build_generative_job` context-injection channel so the intro writer receives the user's stated theme.
+  - **`POST /personas/onboarding-fork` endpoint.** Race-safe get-or-create persona row (reuses the `IntegrityError` re-fetch pattern), read-modify-write merge into `questionnaire` (never clobbers existing `tiktok_handle`/`interview_turns`), seeds a synthetic answered first turn so the plan-act chat resumes at the next question without stalling.
+  - **Server-side seed-pool carry in `create_plan`.** When a plan is created post-onboarding, `create_plan` reads `onboarding_clip_paths` off the persona questionnaire, filters to `generative-jobs/*/sources/` (durable, lifecycle-exempt), and assigns `ContentPlan.seed_clip_paths` directly — bypassing the public `attach_seed_clips` endpoint whose prefix validator would 422-reject the durable path.
+  - **Fresh path unchanged.** Users who complete the AI interview and skip the footage upload offer go directly to persona generating → plan flow; every pre-existing `resolvePlanMode` branch is unchanged.
+
 ## [0.4.109.0] — 2026-06-14
 
 ### Changed
@@ -46,7 +57,6 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Narrative payoff duration weighting.** When a filming guide is active (`narrative_shot_count > 0`), recipe slot durations are now weighted by the guide's stated `duration_s` hints instead of equal-splitting the footage. For the no-music path (`original_text` variant), payoff slots declared longer in the guide receive a proportionally larger share of the total footage — a 6s payoff hint vs 2s setup hints yields a 3× longer slot rather than equal time. For music variants, `target_duration_s` is rescaled by the same proportions so the clip matcher routes longer/better clips to the payoff slot. Beat boundaries are unchanged. Addresses the pacing judge finding: setup:payoff at 2.5:1 (guide-intended climax renders as the shortest slot).
-
 ## [0.4.104.0] — 2026-06-13
 
 ### Added
@@ -65,6 +75,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Clip-timeline edit locks all controls and doesn't auto-refresh.** After trimming or extending a clip via "Edit clips", every other control on that variant (style, layout, caption, song, text size) became permanently disabled — a manual page refresh was required to recover. Root cause: the optimistic "pending edit" pin used `output_url` string equality to detect completion, but clip re-renders hold the signed URL stable across the render lifecycle, so the pin never cleared. Replaced the URL-equality signal with the `render_finished_at` + `sawRendering` fingerprint already used in `useVariantEditSession` — the pin now clears as soon as the server reports a genuinely-new render (advanced timestamp or observed "releasing" state), so controls re-enable and the hero swaps automatically the moment the re-render finishes.
+
 
 ## [0.4.102.0] — 2026-06-13
 

@@ -16,13 +16,19 @@ import {
   retunePersonaFromFeedback,
   tiktokScrape,
   updatePersona,
+  recordOnboardingFork,
 } from "@/lib/plan-api";
+import { createGenerativeJob } from "@/lib/generative-api";
 import { resolvePlanMode } from "./_lib/route";
 import { GeneratingStateLight } from "./_components/GeneratingStateLight";
 import OnboardingShell from "./_components/OnboardingShell";
 import { LightShell } from "./_components/ui/LightShell";
 import SignInPrompt from "./_components/SignInPrompt";
 import { WorkspaceHome } from "./_components/workspace/WorkspaceHome";
+import { ForkScreen } from "./_components/onboarding/ForkScreen";
+import { EditUploadStep } from "./_components/onboarding/EditUploadStep";
+import { ClipGroupStep, type ClipItem } from "./_components/onboarding/ClipGroupStep";
+import { EditPayoff } from "./_components/onboarding/EditPayoff";
 
 const POLL_MS = 2000;
 
@@ -62,6 +68,21 @@ function PlanPageInner() {
 
   // Track when the plan flips from generating → ready in-session (for banner).
   const [planJustReady, setPlanJustReady] = useState(false);
+
+  // Edits-first onboarding funnel state.
+  // uploadedClips: full clip objects (gcsPath + objectUrl) from the upload step.
+  const [uploadedClips, setUploadedClips] = useState<ClipItem[]>([]);
+  // localStep: client-only override so back button from group → upload works
+  // without a server roundtrip. null = let resolvePlanMode drive the UI.
+  const [localStep, setLocalStep] = useState<"group" | null>(null);
+  // editJobs: one entry per group (or ungrouped clip). Purely local — on refresh
+  // the user returns to the upload step, which is acceptable.
+  const [editJobs, setEditJobs] = useState<{ jobId: string; topic: string; clipPaths: string[] }[]>([]);
+  // onboardingTopic: fallback topic for createGenerativeJob when no per-group topic is set.
+  const [onboardingTopic] = useState("");
+  // subStep: null = normal OnboardingShell flow; "upload-offer" = show footage fork
+  // after ChatInterview; "uploading" = user chose footage, upload step is active.
+  const [subStep, setSubStep] = useState<"upload-offer" | "uploading" | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -144,9 +165,10 @@ function PlanPageInner() {
     }
   }
 
-  /** OnboardingShell Step 3 — ChatInterview completed (persona generation fires). */
+  /** OnboardingShell Step 3 — ChatInterview completed (persona generation fires).
+   *  Instead of advancing immediately to the plan, we pause to offer footage upload. */
   function handleChatComplete() {
-    void load();
+    setSubStep("upload-offer");
   }
 
   async function handleSavePersona(draft: PersonaContent) {
@@ -215,6 +237,227 @@ function PlanPageInner() {
     );
   }
 
+  // ── Edit funnel: post-interview upload offer ─────────────────────────────
+  // After ChatInterview completes, we show ForkScreen as an upload offer.
+  if (subStep === "upload-offer") {
+    return (
+      <LightShell>
+        <ForkScreen
+          onFootage={async () => {
+            setSubStep("uploading");
+            try {
+              await recordOnboardingFork({ content_mode: "existing_footage" });
+            } catch {}
+          }}
+          onFresh={() => {
+            setSubStep(null);
+            void load();
+          }}
+          onSkip={() => {
+            setSubStep(null);
+            void load();
+          }}
+        />
+      </LightShell>
+    );
+  }
+
+  // ── Edit funnel: footage path (upload / group / generate / payoff) ───────
+  const inEditFunnel =
+    subStep === "uploading" ||
+    mode === "setup:edit-upload" ||
+    mode === "setup:edit-generating" ||
+    mode === "setup:edit-payoff" ||
+    mode === "setup:fork" ||
+    editJobs.length > 0;
+
+  if (inEditFunnel) {
+    const isPayoffStep =
+      editJobs.length > 0 ||
+      mode === "setup:edit-generating" ||
+      mode === "setup:edit-payoff";
+
+    return (
+      <LightShell size={isPayoffStep ? "wide" : "narrow"}>
+        {error && (
+          <div className="mb-6 rounded border border-zinc-200 bg-[#fafaf8] px-4 py-3 text-[#3f3f46]">
+            {error}
+          </div>
+        )}
+
+        {/* Fallback fork screen for returning users with no content_mode */}
+        {mode === "setup:fork" && (
+          <ForkScreen
+            onFootage={async () => {
+              try {
+                await recordOnboardingFork({ content_mode: "existing_footage" });
+              } catch {}
+              void load();
+            }}
+            onFresh={async () => {
+              try {
+                await recordOnboardingFork({ content_mode: "create_new" });
+              } catch {}
+              void load();
+            }}
+            onSkip={async () => {
+              try {
+                await recordOnboardingFork({ content_mode: "existing_footage" });
+              } catch {}
+              void load();
+            }}
+          />
+        )}
+
+        {/* Upload: shown after upload-offer ("yes"), or when server says edit-upload */}
+        {(mode === "setup:edit-upload" || subStep === "uploading") &&
+          localStep !== "group" &&
+          editJobs.length === 0 && (
+            <EditUploadStep
+              onSubmit={(clips) => {
+                setUploadedClips(clips);
+                setLocalStep("group");
+              }}
+            />
+          )}
+
+        {/* Group: client-only step, back returns to upload */}
+        {localStep === "group" && (
+          <ClipGroupStep
+            clips={uploadedClips}
+            onBack={() => setLocalStep(null)}
+            onSubmit={async (groups) => {
+              setLocalStep(null);
+              const jobs: { jobId: string; topic: string; clipPaths: string[] }[] = [];
+              for (const group of groups) {
+                try {
+                  const result = await createGenerativeJob(group.clips, null, {
+                    topic: group.topic || onboardingTopic || undefined,
+                  });
+                  jobs.push({ jobId: result.job_id, topic: group.topic, clipPaths: group.clips });
+                } catch {
+                  // skip failed submissions silently
+                }
+              }
+              if (jobs.length > 0) {
+                setEditJobs(jobs);
+                const allClipPaths = groups.flatMap((g) => g.clips);
+                try {
+                  await recordOnboardingFork({
+                    content_mode: "existing_footage",
+                    onboarding_edit_job_id: jobs[0].jobId,
+                    onboarding_clip_paths: allClipPaths,
+                  });
+                } catch {}
+                void load();
+              }
+            }}
+          />
+        )}
+
+        {/* Multiple job payoffs — one section per group/clip */}
+        {editJobs.length > 0 && localStep !== "group" && (
+          <div className="flex flex-col gap-16 pb-4">
+            {editJobs.map((job) => (
+              <div key={job.jobId}>
+                {job.topic && (
+                  <p className="px-4 mb-2 text-xs text-[#71717a] font-medium uppercase tracking-wide">
+                    {job.topic}
+                  </p>
+                )}
+                <EditPayoff
+                  jobId={job.jobId}
+                  hidePlanCta={true}
+                  onMakePlan={() => {}}
+                  onReRoll={async () => {
+                    if (job.clipPaths.length === 0) return;
+                    try {
+                      const result = await createGenerativeJob(job.clipPaths, null, {
+                        topic: job.topic || undefined,
+                      });
+                      setEditJobs((prev) =>
+                        prev.map((j) =>
+                          j.jobId === job.jobId ? { ...j, jobId: result.job_id } : j,
+                        ),
+                      );
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Couldn't re-roll");
+                    }
+                  }}
+                />
+              </div>
+            ))}
+            <div className="px-4 max-w-2xl mx-auto w-full">
+              <div className="border-t border-[#e4e4e7] pt-6">
+                <button
+                  onClick={async () => {
+                    try {
+                      await recordOnboardingFork({
+                        content_mode: "existing_footage",
+                        onboarding_payoff_done: true,
+                      });
+                    } catch {}
+                    setEditJobs([]);
+                    void load();
+                  }}
+                  className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+                >
+                  Continue creating with Nova →
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Fallback single-job payoff — when resuming from server state (e.g. after refresh) */}
+        {editJobs.length === 0 &&
+          localStep !== "group" &&
+          (mode === "setup:edit-generating" || mode === "setup:edit-payoff") && (
+            <div className="flex flex-col gap-0 pb-4">
+              <EditPayoff
+                jobId={persona?.questionnaire?.onboarding_edit_job_id ?? ""}
+                hidePlanCta={true}
+                onMakePlan={() => {}}
+                onReRoll={async () => {
+                  const clips = persona?.questionnaire?.onboarding_clip_paths ?? [];
+                  if (clips.length > 0) {
+                    try {
+                      const result = await createGenerativeJob(clips, null);
+                      await recordOnboardingFork({
+                        content_mode: "existing_footage",
+                        onboarding_edit_job_id: result.job_id,
+                      });
+                      void load();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Couldn't re-roll");
+                    }
+                  }
+                }}
+              />
+              <div className="px-4 max-w-2xl mx-auto w-full">
+                <div className="border-t border-[#e4e4e7] pt-6 pb-8">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await recordOnboardingFork({
+                          content_mode: "existing_footage",
+                          onboarding_payoff_done: true,
+                        });
+                      } catch {}
+                      void load();
+                    }}
+                    className="w-full rounded-xl bg-[#0c0c0e] text-white py-3 font-medium hover:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 min-h-[44px]"
+                  >
+                    Continue creating with Nova →
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+      </LightShell>
+    );
+  }
+
   // ── Plan-generating state (after OnboardingShell Step 4 fires) ──────────────
   if (mode === "setup:plan-generating") {
     return (
@@ -230,6 +473,7 @@ function PlanPageInner() {
   // ── Setup modes → OnboardingShell (split-rail) ────────────────────────────
   // All setup modes (prescreen / chat / persona-generating / persona-failed /
   // plan-intro / plan-failed) are handled inside the split-rail shell.
+  // onChatComplete is intercepted to show the footage upload offer.
   return (
     <OnboardingShell
       onTikTokContinue={handleTikTokContinue}

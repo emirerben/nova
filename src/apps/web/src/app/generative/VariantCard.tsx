@@ -64,6 +64,7 @@ export function VariantCard({
   tone = "dark",
   editSession,
   timelineSession,
+  hideVideoWell = false,
 }: {
   variant: GenerativeVariant;
   tracks: MusicTrackSummary[];
@@ -79,6 +80,11 @@ export function VariantCard({
   editSession?: VariantEditSession;
   /** Clip-timeline editor session (public generative page only — admin omits). */
   timelineSession?: TimelineSession;
+  /**
+   * When true, skip the video well in both render paths. Used by the two-column
+   * onboarding payoff, which renders the hero video separately on the LEFT.
+   */
+  hideVideoWell?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [pendingSwapTrackId, setPendingSwapTrackId] = useState<string | null>(null);
@@ -215,41 +221,43 @@ export function VariantCard({
           )}
         </div>
 
-        <div className={`relative ${videoWellClass}`}>
-          {baseSrcRef.current ? (
-            <video
-              src={baseSrcRef.current}
-              controls
-              loop
-              autoPlay
-              muted
-              playsInline
-              className="h-full w-full object-contain"
-              onError={() => {
-                // Expired signature mid-session → fall forward to the freshest
-                // signed URL the poll delivered.
-                if (
-                  variant.base_video_url &&
-                  baseSrcRef.current !== variant.base_video_url
-                ) {
-                  baseSrcRef.current = variant.base_video_url;
-                  setBaseSrcNonce((n) => n + 1);
-                }
-              }}
+        {!hideVideoWell && (
+          <div className={`relative ${videoWellClass}`}>
+            {baseSrcRef.current ? (
+              <video
+                src={baseSrcRef.current}
+                controls
+                loop
+                autoPlay
+                muted
+                playsInline
+                className="h-full w-full object-contain"
+                onError={() => {
+                  // Expired signature mid-session → fall forward to the freshest
+                  // signed URL the poll delivered.
+                  if (
+                    variant.base_video_url &&
+                    baseSrcRef.current !== variant.base_video_url
+                  ) {
+                    baseSrcRef.current = variant.base_video_url;
+                    setBaseSrcNonce((n) => n + 1);
+                  }
+                }}
+              />
+            ) : (
+              <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
+                No preview
+              </div>
+            )}
+            <IntroTextPreview
+              params={introParams}
+              editable={editSession.isEditing}
+              onTextChange={editSession.setText}
+              layout={variant.intro_layout === "cluster" ? "cluster" : "linear"}
+              playToken={editSession.playToken}
             />
-          ) : (
-            <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
-              No preview
-            </div>
-          )}
-          <IntroTextPreview
-            params={introParams}
-            editable={editSession.isEditing}
-            onTextChange={editSession.setText}
-            layout={variant.intro_layout === "cluster" ? "cluster" : "linear"}
-            playToken={editSession.playToken}
-          />
-        </div>
+          </div>
+        )}
 
         {editSession.isEditing ? (
           <EditToolbar
@@ -298,56 +306,58 @@ export function VariantCard({
         </p>
       )}
 
-      <div
-        className={[
-          videoWellClass,
-          timelineWait === "receipt"
-            ? "motion-safe:animate-fade-up ring-2 ring-lime-600/60"
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" ")}
-      >
-        {timelineWait === "rendering" ? (
-          <TimelineRenderWell startedAtMs={timelineSession?.wait.startedAtMs ?? null} />
-        ) : timelineWait === "failed" ? (
-          <div className="flex h-full flex-col items-center justify-center gap-4 rounded border border-dashed border-zinc-300 px-4 text-center">
-            <p className="text-sm text-zinc-600">
-              That edit didn&apos;t render — your previous video is untouched.
-            </p>
-            <button
-              onClick={timelineSession?.openEditor}
-              className="rounded-full border border-zinc-200 px-4 py-2 text-xs text-[#3f3f46] hover:border-zinc-400"
-            >
-              Try again
-            </button>
-          </div>
-        ) : rendering ? (
-          <div className={`flex h-full items-center justify-center text-sm ${renderingTextClass}`}>
-            Rendering…
-          </div>
-        ) : failed ? (
-          <div className={`flex h-full items-center justify-center px-3 text-center text-sm ${failedTextClass}`}>
-            {variantFailureCopy(variant.error_class)}
-          </div>
-        ) : pinnedOutputSrc ? (
-          <video
-            src={pinnedOutputSrc}
-            controls
-            className="h-full w-full object-contain"
-            onError={() => {
-              // Expired signature — fall forward to the freshest signed URL.
-              if (variant.output_url && variant.output_url !== outputSrcRef.current) {
-                outputSrcRef.current = variant.output_url;
-              }
-            }}
-          />
-        ) : (
-          <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
-            No preview
-          </div>
-        )}
-      </div>
+      {!hideVideoWell && (
+        <div
+          className={[
+            videoWellClass,
+            timelineWait === "receipt"
+              ? "motion-safe:animate-fade-up ring-2 ring-lime-600/60"
+              : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        >
+          {timelineWait === "rendering" ? (
+            <TimelineRenderWell startedAtMs={timelineSession?.wait.startedAtMs ?? null} />
+          ) : timelineWait === "failed" ? (
+            <div className="flex h-full flex-col items-center justify-center gap-4 rounded border border-dashed border-zinc-300 px-4 text-center">
+              <p className="text-sm text-zinc-600">
+                That edit didn&apos;t render — your previous video is untouched.
+              </p>
+              <button
+                onClick={timelineSession?.openEditor}
+                className="rounded-full border border-zinc-200 px-4 py-2 text-xs text-[#3f3f46] hover:border-zinc-400"
+              >
+                Try again
+              </button>
+            </div>
+          ) : rendering ? (
+            <div className={`flex h-full items-center justify-center text-sm ${renderingTextClass}`}>
+              Rendering…
+            </div>
+          ) : failed ? (
+            <div className={`flex h-full items-center justify-center px-3 text-center text-sm ${failedTextClass}`}>
+              {variantFailureCopy(variant.error_class)}
+            </div>
+          ) : pinnedOutputSrc ? (
+            <video
+              src={pinnedOutputSrc}
+              controls
+              className="h-full w-full object-contain"
+              onError={() => {
+                // Expired signature — fall forward to the freshest signed URL.
+                if (variant.output_url && variant.output_url !== outputSrcRef.current) {
+                  outputSrcRef.current = variant.output_url;
+                }
+              }}
+            />
+          ) : (
+            <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
+              No preview
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="mt-3 flex flex-wrap gap-2">
         {timelineSession?.entryVisible && (

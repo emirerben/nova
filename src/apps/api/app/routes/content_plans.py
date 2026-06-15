@@ -122,6 +122,25 @@ async def create_plan(
     await db.commit()
     await db.refresh(plan)
 
+    # Server-side seed-pool carry from onboarding edit job.
+    # The persona's questionnaire may contain "onboarding_clip_paths" (set by
+    # POST /personas/onboarding-fork after the user's first generative edit).
+    # These are server-derived, permanently lifecycle-exempt paths under
+    # generative-jobs/*/sources/ — they bypass the request-body prefix validator
+    # in attach_seed_clips which only accepts users/{uid}/plan/{plan_id}/seed/.
+    onboarding_paths = list((persona.questionnaire or {}).get("onboarding_clip_paths", []))
+    if onboarding_paths:
+        # Only persist durable paths (generative-jobs/*/sources/ prefix).
+        # If GENERATIVE_TIMELINE_EDITOR_ENABLED is off, _persist_durable_sources
+        # no-ops and paths remain under music-uploads/ (ephemeral, 24h).
+        # Persisting ephemeral paths as the seed pool would cause broken re-renders.
+        durable = [
+            p for p in onboarding_paths if p.startswith("generative-jobs/") and "/sources/" in p
+        ]
+        if durable:
+            plan.seed_clip_paths = durable
+            await db.commit()
+
     from app.tasks.content_plan_build import generate_content_plan  # noqa: PLC0415
 
     generate_content_plan.delay(str(plan.id))
@@ -323,6 +342,22 @@ class AttachSeedClipsBody(BaseModel):
     clip_gcs_paths: list[str]
 
 
+def _validate_seed_clip_prefix(paths: list[str], user_id: uuid.UUID, plan_id: uuid.UUID) -> None:
+    """Raise 422 if any path is outside the plan's seed upload prefix.
+
+    This validator applies ONLY to request-body paths (untrusted input from the
+    public attach_seed_clips endpoint). Server-derived paths — e.g. the durable
+    generative-jobs/*/sources/ carry in create_plan — intentionally bypass it.
+    """
+    expected = f"users/{user_id}/plan/{plan_id}/seed/"
+    for p in paths:
+        if not p.startswith(expected):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Clip path outside this plan's seed upload prefix: {p}",
+            )
+
+
 @router.post("/{plan_id}/seed-clips", response_model=ContentPlanResponse)
 async def attach_seed_clips(
     plan_id: str,
@@ -332,13 +367,7 @@ async def attach_seed_clips(
 ) -> ContentPlanResponse:
     """Record the uploaded seed batch on the plan (validated to the seed prefix)."""
     plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
-    expected = f"users/{user.id}/plan/{plan.id}/seed/"
-    for p in body.clip_gcs_paths:
-        if not p.startswith(expected):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Clip path outside this plan's seed upload prefix",
-            )
+    _validate_seed_clip_prefix(body.clip_gcs_paths, user.id, plan.id)
     plan.seed_clip_paths = list(body.clip_gcs_paths)
     plan.activation_status = "seeding"
     await db.commit()
