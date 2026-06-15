@@ -1217,7 +1217,10 @@ async def onboarding_fork(
     if body.content_mode not in _VALID_CONTENT_MODES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"content_mode must be one of {sorted(_VALID_CONTENT_MODES)}, got {body.content_mode!r}",
+            detail=(
+                f"content_mode must be one of {sorted(_VALID_CONTENT_MODES)},"
+                f" got {body.content_mode!r}"
+            ),
         )
 
     existing = (
