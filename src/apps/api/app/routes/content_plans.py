@@ -67,9 +67,13 @@ class ContentPlanResponse(BaseModel):
     pool_status: str = "none"
     pool_clip_count: int = 0
     pool_matched_count: int = 0
+    # BYO-Ideas (M1): idea seeds from the persona, included here so the plan-home
+    # sidebar can show them with their in_plan status without a separate persona call.
+    # Empty list when the persona has no seeds or when the plan has no linked persona.
+    idea_seeds: list[dict] = []
 
 
-def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
+def _plan_response(plan: ContentPlan, idea_seeds: list[dict] | None = None) -> ContentPlanResponse:
     pool = plan.pool or {}
     pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
     return ContentPlanResponse(
@@ -86,6 +90,7 @@ def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
         pool_status=str(pool.get("status") or "none"),
         pool_clip_count=len(pool_clips),
         pool_matched_count=sum(1 for c in pool_clips if c.get("matched_item_id")),
+        idea_seeds=idea_seeds or [],
     )
 
 
@@ -166,7 +171,15 @@ async def get_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
-    return _plan_response(plan)
+    # Include idea_seeds from the linked persona so the plan-home sidebar can show
+    # them with their current in_plan status without a separate persona API call.
+    persona = await db.get(PersonaRow, plan.persona_id)
+    idea_seeds = (
+        [s for s in persona.idea_seeds if isinstance(s, dict)]
+        if persona is not None and isinstance(persona.idea_seeds, list)
+        else []
+    )
+    return _plan_response(plan, idea_seeds=idea_seeds)
 
 
 @router.post("/{plan_id}/regenerate", response_model=ContentPlanResponse)

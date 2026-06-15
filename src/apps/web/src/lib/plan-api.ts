@@ -51,6 +51,9 @@ export interface PersonaContent {
   // shown verbatim as "You said: '...'" on the persona reveal. Empty for
   // personas generated from the old flat-field questionnaire.
   signature_quote?: string;
+  // "What kind of videos do you make?" onboarding signal.
+  // talking_head | montage | day_vlog | mixed
+  footage_type_bias?: string[];
 }
 
 export type PersonaStatus = "generating" | "ready" | "failed" | "edited" | "chat_pending";
@@ -186,6 +189,21 @@ export function updatePersona(
 }
 
 /**
+ * Persist the "what kind of videos do you make" onboarding answer.
+ * Stored in persona.footage_type_bias — no USER_STYLE_ENABLED gate.
+ * Values: ["talking_head"] | ["montage"] | ["day_vlog"] | ["mixed"]
+ */
+export function patchPersonaFootageType(
+  personaId: string,
+  footage_type_bias: string[],
+): Promise<PersonaResponse> {
+  return request<PersonaResponse>(`/personas/${personaId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ footage_type_bias }),
+  });
+}
+
+/**
  * Replace the user's idea seeds list (M1 Bring-Your-Own-Ideas).
  * The server stamps missing ids and sanitizes text/pillar. Returns the updated
  * PersonaResponse with the server-stamped seeds (idempotent: call on every edit).
@@ -259,6 +277,8 @@ export interface PlanItem {
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
+  /** BYO-Ideas provenance: the seed that generated this item, if any. */
+  source_idea_seed_id?: string | null;
 }
 
 /** Activation seed (T8) lifecycle: none→seeding→activating→activated|activated_empty|failed. */
@@ -280,6 +300,9 @@ export interface ContentPlan {
   seed_clip_count: number;
   generation_started_at?: string | null;
   start_date?: string | null;
+  /** BYO-Ideas (M1): idea seeds from the linked persona, included in the plan GET
+   *  so the workspace sidebar can show them without a separate persona call. */
+  idea_seeds?: IdeaSeed[];
 }
 
 /** Create a plan from the user's ready persona + optional events; generation runs async. */

@@ -77,6 +77,10 @@ class PersonaEdit(BaseModel):
     # content_pillars). Omit to leave the existing seeds unchanged. Seeds with
     # no id get server-stamped; text + pillar are sanitized before storage.
     idea_seeds: list[IdeaSeed] | None = None
+    # "What kind of videos do you make?" onboarding signal. Stored in persona JSONB
+    # so it is readable by planners + archetype dispatch WITHOUT USER_STYLE_ENABLED.
+    # Allowed values: talking_head | montage | day_vlog | mixed.
+    footage_type_bias: list[str] | None = None
 
 
 class PersonaResponse(BaseModel):

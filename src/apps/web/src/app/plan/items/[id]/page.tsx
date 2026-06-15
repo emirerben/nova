@@ -41,7 +41,6 @@ import { ProgressTheater } from "@/components/progress";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
-import PlanFilmstrip from "../../_components/PlanFilmstrip";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
@@ -436,6 +435,11 @@ export default function PlanItemPage() {
     focused && (!!focused.output_url || focused.render_status === "failed");
   const showResults = isGenerating || variants.length > 0;
 
+  // "N shots left" caption under the Generate button.
+  const totalShots = item.filming_guide?.length ?? 0;
+  const filledShots = item.clip_assignments?.filter((a) => a.shot_id !== null).length ?? 0;
+  const shotsLeft = Math.max(0, totalShots - filledShots);
+
   const currentPhase =
     data?.job?.current_phase ??
     (!data?.job?.started_at ? "queued" : null);
@@ -447,341 +451,271 @@ export default function PlanItemPage() {
       {/* @font-face for style-preview chips */}
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
       <div className="motion-safe:animate-fade-up">
-        {/* ── Editorial header + controls ── */}
-        <div className="max-w-2xl">
-          <Link
-            href="/plan"
-            className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
-          >
-            ← back to plan
-          </Link>
-          <div className="mb-1 mt-4 flex items-center gap-3">
-            <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
-              Day {item.day_index}
-            </span>
-          </div>
-          <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
-          <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
 
-          {/* ── FILM CARD (D5: primary action, above "Why this works") ── */}
-          {isInstructed ? (
-            <ShotSlotUploader
-              item={item}
-              onAttached={(updated) => {
-                conformancePolls.current = 0;
-                // Merge updated item into polling data without waiting for a refetch.
-                refetch();
-              }}
-              onBusyChange={setUploaderBusy}
-            />
-          ) : (
-            <>
-              {/* Uninstructed: legacy pool upload section (unchanged) */}
-              {item.filming_suggestion ? (
-                <p className="mb-4 text-sm text-[#71717a]">📋 {item.filming_suggestion}</p>
-              ) : null}
-              <section className="mb-8 rounded-xl border border-zinc-200 bg-white p-5">
-                <h2 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Themed clips</h2>
-                <p className="mb-4 text-sm text-[#71717a]">
-                  {clipCount > 0
-                    ? "The editor will use the best parts."
-                    : "Upload footage for this idea. None yet."}
-                </p>
-                {(item.clip_assignments?.length ?? 0) > 0 && (
-                  <ul className="mb-4 space-y-3">
-                    {item.clip_assignments!.map((a) => {
-                      const raw = a.gcs_path.split("/").pop() ?? a.gcs_path;
-                      const name = raw.includes("-") ? raw.slice(raw.indexOf("-") + 1) : raw;
-                      return (
-                        <li key={a.gcs_path} className="border-b border-zinc-100 pb-3 last:border-0 last:pb-0">
-                          <div className="flex items-center gap-3">
-                            {a.machine_matched ? (
-                              <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
-                                <span className="max-w-[180px] truncate">{name}</span>
-                                <span className="shrink-0 text-lime-700">· Matched — keep?</span>
-                              </span>
-                            ) : (
-                              <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
-                                <span>✓</span>
-                                <span className="max-w-[220px] truncate">{name}</span>
-                              </span>
-                            )}
-                            {a.machine_matched && (
-                              <button
-                                type="button"
-                                onClick={() => keepUninstructedMatch(a)}
-                                className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800"
-                              >
-                                Keep
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeUninstructedClip(a)}
-                              className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
-                            >
-                              Remove
-                            </button>
-                          </div>
-                          <ClipNoteControl
-                            note={a.user_note ?? ""}
-                            onSave={(note) => saveUninstructedNote(a, note)}
-                          />
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-                <label className="block">
-                  <span className="sr-only">Upload video clips for this idea</span>
-                  <input
-                    type="file"
-                    accept="video/mp4,video/quicktime"
-                    multiple
-                    disabled={uploading}
-                    onChange={(e) => handleFiles(e.target.files)}
-                    className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
-                  />
-                </label>
-                {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
-              </section>
-            </>
-          )}
+        {/* ── Two-pane grid: LEFT = shot checklist | RIGHT = sticky action panel ── */}
+        <div className="lg:grid lg:grid-cols-[1fr_400px] lg:gap-10 lg:items-start">
 
-          {/* Error banner — outside the instructed/uninstructed fork so the
-              render-register error (and any other) shows on BOTH item types
-              (dogfood: it was trapped in the uninstructed branch, so the
-              first-click fix never surfaced on filming-guide items). */}
-          {error && (
-            <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
-              {error}
-            </div>
-          )}
-
-          {/* Conformance read — ABOVE Generate so the read informs the action,
-              with the explicit generate-anyway line so proximity never reads as
-              a gate. State machine: checking shimmer → tile / one-liner / nothing. */}
-          {conformanceChecking ? (
-            <p
-              className="mb-4 text-sm text-[#71717a] motion-safe:animate-pulse"
-              role="status"
-              aria-live="polite"
+          {/* LEFT: back link + editorial header + uploader + progress */}
+          <div>
+            <Link
+              href="/plan"
+              className="text-sm text-[#71717a] underline-offset-2 transition-colors hover:text-[#0c0c0e]"
             >
-              Reading your clips against the brief…
-            </p>
-          ) : (
-            item.conformance?.verdict && (
-              <ConformanceVerdictPanel
-                conformance={item.conformance}
-                onTellNova={() => setAskNova("contest")}
-                onDismiss={async () => {
-                  try {
-                    await dismissConformance(itemId);
-                  } finally {
-                    refetch();
-                  }
-                }}
-              />
-            )
-          )}
+              ← back to plan
+            </Link>
+            <div className="mb-1 mt-4 flex items-center gap-3">
+              <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
+                Day {item.day_index}
+              </span>
+            </div>
+            <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
+            <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
 
-          {/* Generate button (D6: also disabled while ShotSlotUploader has in-flight uploads) */}
-          <InkButton
-            onClick={handleGenerate}
-            disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
-          >
-            {isGenerating
-              ? "Generating…"
-              : generating
-                ? "Starting…"
-                : uploaderBusy
-                  ? `Finishing upload…`
-                  : "Generate videos"}
-          </InkButton>
-          {clipCount === 0 && !uploaderBusy && (
-            <p className="mt-2 text-sm text-[#a1a1aa]">
-              {isInstructed
-                ? "You can generate with any shots filled — more footage means better edits."
-                : "Upload at least one clip first."}
-            </p>
-          )}
-          {uploaderBusy && (
-            <p className="mt-2 text-sm text-[#a1a1aa]">Finishing upload…</p>
-          )}
-
-          {/* Ask Nova — collapsed trigger + bounded panel BELOW Generate (the
-              page's primary action keeps its page). */}
-          <div className="mt-4">
-            {askNova === null ? (
-              <button
-                type="button"
-                onClick={() => setAskNova("default")}
-                className="text-sm font-medium text-lime-700 underline-offset-2 hover:underline"
-              >
-                Not sure which clip fits? Ask Nova
-              </button>
-            ) : (
-              <AskNovaPanel
+            {/* Uploader — instructed: shot-slot guide; uninstructed: pool card */}
+            {isInstructed ? (
+              <ShotSlotUploader
                 item={item}
-                mode={askNova}
-                onClose={() => setAskNova(null)}
-                onItemChanged={() => {
+                onAttached={(updated) => {
                   conformancePolls.current = 0;
+                  // Merge updated item into polling data without waiting for a refetch.
                   refetch();
                 }}
+                onBusyChange={setUploaderBusy}
               />
+            ) : (
+              <>
+                {item.filming_suggestion ? (
+                  <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
+                ) : null}
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
+                />
+              </>
+            )}
+
+            {/* Error banner — outside the fork so it shows on both item types */}
+            {error && (
+              <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
+                {error}
+              </div>
+            )}
+
+            {/* ProgressTheater — light tone */}
+            {data?.job && (
+              <div className="mt-8">
+                <ProgressTheater
+                  phases={GENERATIVE_PHASE_ORDER}
+                  phaseLabels={GENERATIVE_PHASE_LABEL}
+                  currentPhase={currentPhase}
+                  expectedPhaseMs={data.job.expected_phase_durations ?? null}
+                  phaseLog={data.job.phase_log ?? null}
+                  startedAt={data.job.started_at ?? null}
+                  jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
+                  isTerminal={theaterIsTerminal}
+                  isSuccess={theaterIsSuccess}
+                  receiptText={deriveReceiptText(data.job)}
+                  variants={variants}
+                  size="full"
+                  tone="light"
+                >
+                  {null}
+                </ProgressTheater>
+              </div>
+            )}
+            {isGenerating && (
+              <p className="mt-1 text-xs text-[#a1a1aa]">
+                Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
+              </p>
+            )}
+            {item.status === "failed" && variants.length === 0 && (
+              <p className="mt-2 text-sm text-[#71717a]">
+                Generation failed before any variant rendered. Try generating again.
+              </p>
             )}
           </div>
 
-          {/* "Why this works" — D5: moved below the film card + Generate */}
-          {item.rationale && (
-            <div className="mb-4 mt-6 rounded-lg border border-zinc-200 bg-white p-4">
-              <p className="mb-1 text-xs font-medium text-lime-700">Why this works</p>
-              <p className="text-sm text-[#3f3f46]">{stripRationalePrefix(item.rationale)}</p>
+          {/* RIGHT: sticky action panel — preview + Nova helper + Generate */}
+          <div className="mt-8 space-y-4 lg:sticky lg:top-6 lg:mt-0">
+            {/* Small preview — shows the latest result or skeleton before generation */}
+            <div className="mx-auto max-w-[200px]">
+              <Hero variant={focused} generating={isGenerating} />
             </div>
-          )}
 
-          {/* ProgressTheater — light tone */}
-          {data?.job && (
-            <div className="mt-8">
-              <ProgressTheater
-                phases={GENERATIVE_PHASE_ORDER}
-                phaseLabels={GENERATIVE_PHASE_LABEL}
-                currentPhase={currentPhase}
-                expectedPhaseMs={data.job.expected_phase_durations ?? null}
-                phaseLog={data.job.phase_log ?? null}
-                startedAt={data.job.started_at ?? null}
-                jobCreatedAt={data.job.created_at ?? new Date().toISOString()}
-                isTerminal={theaterIsTerminal}
-                isSuccess={theaterIsSuccess}
-                receiptText={deriveReceiptText(data.job)}
-                variants={variants}
-                size="full"
-                tone="light"
+            {/* Nova helper — one quiet line; expands to AskNovaPanel on request.
+                Collapses conformance critic + Ask Nova into a single surface. */}
+            <NovaHelper
+              item={item}
+              conformanceChecking={conformanceChecking}
+              askNova={askNova}
+              onOpen={() => setAskNova("default")}
+              onContest={() => setAskNova("contest")}
+              onClose={() => setAskNova(null)}
+              onDismissConformance={async () => {
+                try {
+                  await dismissConformance(itemId);
+                } finally {
+                  refetch();
+                }
+              }}
+              onItemChanged={() => {
+                conformancePolls.current = 0;
+                refetch();
+              }}
+            />
+
+            {/* Generate + "N shots left" caption */}
+            <div className="space-y-2">
+              <InkButton
+                onClick={handleGenerate}
+                disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
               >
-                {null}
-              </ProgressTheater>
+                {isGenerating
+                  ? "Generating…"
+                  : generating
+                    ? "Starting…"
+                    : uploaderBusy
+                      ? "Finishing upload…"
+                      : "Generate videos"}
+              </InkButton>
+              <p className="text-center text-sm text-[#a1a1aa]">
+                {uploaderBusy
+                  ? "Finishing upload…"
+                  : clipCount === 0
+                    ? "Add clips to generate"
+                    : isInstructed && shotsLeft > 0
+                      ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
+                      : null}
+              </p>
             </div>
-          )}
-          {isGenerating && (
-            <p className="mt-1 text-xs text-[#a1a1aa]">
-              Usually 2–3 minutes. You can leave this page — we&apos;ll keep rendering.
-            </p>
-          )}
-          {item.status === "failed" && variants.length === 0 && (
-            <p className="mt-2 text-sm text-[#71717a]">
-              Generation failed before any variant rendered. Try generating again.
-            </p>
-          )}
+          </div>
         </div>
 
-        {/* ── Results: focused player + filmstrip + editor ── */}
-        {/* FocusedResults owns the edit session and renders BOTH columns so an
-            active instant edit replaces the LEFT hero with the live base-video +
-            overlay preview (one video the user looks at) and the RIGHT column
-            shows only the toolbar. Keyed by variant_id so switching the focused
-            variant remounts → fresh session (no stale draft over the new video). */}
-        {showResults &&
-          (focused && focusedEditable ? (
-            <FocusedResults
-              key={focused.variant_id}
-              itemId={itemId}
-              item={item}
-              variant={focused}
-              variants={variants}
-              focusedVariantId={focusedVariantId}
-              onFocus={setFocusedVariantId}
-              tracks={tracks}
-              styleSets={styleSets}
-              isGenerating={isGenerating}
-              refetch={refetch}
-              markVariantRendering={markVariantRendering}
-              onSwap={(trackId) =>
-                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                  swapPlanItemSong(itemId, focused.variant_id, trackId),
-                )
-              }
-              onRetext={(text) =>
-                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                  retextPlanItem(itemId, focused.variant_id, { text }),
-                )
-              }
-              onRemoveText={() =>
-                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                  retextPlanItem(itemId, focused.variant_id, { remove: true }),
-                )
-              }
-              onChangeStyle={(styleSetId) =>
-                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                  changePlanItemStyle(itemId, focused.variant_id, styleSetId),
-                )
-              }
-              onResize={(px) =>
-                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                  setPlanItemIntroSize(itemId, focused.variant_id, px),
-                )
-              }
-              onChangeLayout={(layout) =>
-                runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                  editPlanItemVariant(itemId, focused.variant_id, {
-                    intro_layout: layout,
-                  }),
-                )
-              }
-            />
-          ) : (
-            <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
-              <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
-                <Hero variant={focused} generating={isGenerating} />
-              </div>
-              <div className="min-w-0 flex-1 space-y-5">
-                {variants.length > 0 && (
-                  <PlanFilmstrip
-                    variants={variants}
-                    focusedId={focusedVariantId}
-                    onFocus={setFocusedVariantId}
-                  />
-                )}
-                {isGenerating && (
-                  <p className="text-sm text-[#71717a]">
-                    Edit controls unlock as soon as a variant finishes rendering.
-                  </p>
-                )}
-                {item.current_job_id && !isGenerating && (
-                  <div className="border-t border-zinc-200 pt-4">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
-                      How&apos;s this one?
-                    </p>
-                    <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+        {/* ── Results: Hero + rail layout ── */}
+        {/* FocusedResults owns the edit session and renders the hero+rail layout.
+            The hero shows the active variant; the rail shows alternates + rationale
+            + editor row. Keyed by variant_id so switching the focused variant
+            remounts → fresh session (no stale draft over the new video). */}
+        {showResults && (
+          <FocusedResults
+            key={focused?.variant_id ?? "pending"}
+            itemId={itemId}
+            item={item}
+            variant={focused}
+            variants={variants}
+            focusedVariantId={focusedVariantId}
+            onFocus={setFocusedVariantId}
+            tracks={tracks}
+            styleSets={styleSets}
+            isGenerating={isGenerating}
+            refetch={refetch}
+            markVariantRendering={markVariantRendering}
+            onSwap={
+              focused
+                ? (trackId) =>
+                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
+                      swapPlanItemSong(itemId, focused.variant_id, trackId),
+                    )
+                : async () => {}
+            }
+            onRetext={
+              focused
+                ? (text) =>
+                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
+                      retextPlanItem(itemId, focused.variant_id, { text }),
+                    )
+                : async () => {}
+            }
+            onRemoveText={
+              focused
+                ? () =>
+                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
+                      retextPlanItem(itemId, focused.variant_id, { remove: true }),
+                    )
+                : async () => {}
+            }
+            onChangeStyle={
+              focused
+                ? (styleSetId) =>
+                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
+                      changePlanItemStyle(itemId, focused.variant_id, styleSetId),
+                    )
+                : async () => {}
+            }
+            onResize={
+              focused
+                ? (px) =>
+                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
+                      setPlanItemIntroSize(itemId, focused.variant_id, px),
+                    )
+                : async () => {}
+            }
+            onChangeLayout={
+              focused
+                ? (layout) =>
+                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
+                      editPlanItemVariant(itemId, focused.variant_id, {
+                        intro_layout: layout,
+                      }),
+                    )
+                : async () => {}
+            }
+          />
+        )}
       </div>
     </LightShell>
   );
 }
 
+// ── Variant rationale (client-only, no LLM) ─────────────────────────────────
+// Maps text_mode + track_title to a 1-2 sentence blurb shown below the hero.
+function deriveRationale(variant: PlanItemVariant, totalVariants: number): string {
+  const track = variant.track_title ?? null;
+  if (variant.text_mode === "lyrics" && track) return `Beat-synced to ${track}.`;
+  if (variant.text_mode === "lyrics") return "Beat-synced lyrics overlay.";
+  if (variant.text_mode === "agent_text" && track) return `Styled text over ${track}.`;
+  if (variant.text_mode === "agent_text") return "Nova-written intro, your original audio.";
+  if (variant.text_mode === "none") return "Your original audio, kept.";
+  return `Nova generated ${totalVariants} edit${totalVariants !== 1 ? "s" : ""}.`;
+}
+
+// ── Editor panel tabs ────────────────────────────────────────────────────────
+type EditorTab = "text" | "font" | "song" | "clips";
+
+const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
+  { id: "text", icon: "T", label: "Text" },
+  { id: "font", icon: "Aa", label: "Font" },
+  { id: "song", icon: "♫", label: "Song" },
+  { id: "clips", icon: "✂", label: "Clips" },
+];
+
 /**
- * Owns the focused variant's edit session and lays out BOTH results columns.
+ * Owns the focused variant's edit session and renders the Hero + rail layout.
+ *
+ * Layout:
+ *   HERO — large 9/16 video player (active variant). "Nova's pick" lime badge
+ *   on variants[0]; text_mode label pill below the video.
+ *
+ *   RIGHT (desktop) / BELOW (mobile):
+ *     Rationale blurb (1-2 sentences derived from text_mode + track_title)
+ *     Alternates row — small thumbnails for the other ready variants
+ *     Editor row — 4 icon+label buttons that reveal PlanVariantEditor inline
+ *     Download button + feedback
  *
  * DEFERRED-BURN model: for an instant-edit-eligible variant the session is the
- * draft store. Caption / Text size / Layout / Style controls (the normal
- * PlanVariantEditor sections, un-hidden) mutate that draft with ZERO network;
- * the LEFT hero is the text-free base video + a live IntroTextPreview overlay
- * that re-renders from the draft. Nothing re-renders while editing. The single
- * FFmpeg bake fires only when the user clicks Download/Share — one batched
- * /edit, a brief "Preparing your video…", then the file downloads.
+ * draft store. Caption / Text size / Layout / Style controls mutate that draft
+ * with ZERO network; the hero is the text-free base video + a live
+ * IntroTextPreview overlay. The single FFmpeg bake fires only on Download.
  *
- * INELIGIBLE variants (sequence-synced / lyrics / cluster-without-base / no
- * base_video_url) keep the legacy behavior: the burned output_url in the hero +
+ * INELIGIBLE variants keep the legacy behavior: burned output_url in the hero +
  * PlanVariantEditor controls that re-render server-side per field.
  *
- * Keyed by variant_id in the parent so the `useVariantEditSession` here (plus
- * its cached timeline GET) resets when the user focuses a different variant —
- * never showing variant A's draft text over variant B's video. Do NOT lift the
- * session above this key boundary.
+ * Keyed by variant_id in the parent so the edit session resets when the user
+ * focuses a different variant — never showing variant A's draft over variant B.
  */
 function FocusedResults({
   itemId,
@@ -804,7 +738,7 @@ function FocusedResults({
 }: {
   itemId: string;
   item: PlanItem;
-  variant: PlanItemVariant;
+  variant: PlanItemVariant | null;
   variants: PlanItemVariant[];
   focusedVariantId: string | null;
   onFocus: (id: string) => void;
@@ -820,59 +754,55 @@ function FocusedResults({
   onResize: (textSizePx: number) => Promise<void>;
   onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
 }) {
+  const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
+
   // ── Deferred-burn session — eligible variants only ──────────────────────────
-  // The session holds the draft. Its onCommit IS the bake: one batched /edit per
-  // Download (the same endpoint + render path the legacy controls used per
-  // field). Ineligible variants ignore the session and re-render server-side.
-  const editSession = useVariantEditSession(variant, async (payload) => {
+  // Use a stable no-op variant when nothing is focused yet (pre-first-render).
+  const stableVariant: PlanItemVariant = variant ?? {
+    variant_id: "__pending__",
+    output_url: null,
+    render_status: null,
+    text_mode: "none",
+    style_set_id: null,
+    intro_text_size_px: null,
+  };
+
+  const editSession = useVariantEditSession(stableVariant, async (payload) => {
+    if (!variant) return;
     await editPlanItemVariant(itemId, variant.variant_id, payload);
     refetch();
   });
-  const instantEligible = isInstantEditEligible(variant);
+  const instantEligible = variant ? isInstantEditEligible(variant) : false;
 
-  // The session is always "open" for eligible variants (no enter/exit gate):
-  // controls edit the draft live. Seed the baseline + editing flag once so the
-  // beforeunload guard arms and the live overlay shows the draft.
   useEffect(() => {
     if (instantEligible && !editSession.isEditing) editSession.enterEdit();
-    // enterEdit is stable per-variant (keyed remount); run once on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instantEligible]);
 
-  // The page's job poller stops at terminal status; the Download bake flips the
-  // variant to "rendering" on the NEXT poll. Keep refetching while the session
-  // is saving so the fresh output settles without a tab refocus.
   useEffect(() => {
     if (!editSession.isSaving) return;
     const t = setInterval(refetch, 2000);
     return () => clearInterval(t);
   }, [editSession.isSaving, refetch]);
 
-  // While baking, swap to the just-landed output: when isSaving clears and the
-  // variant carries a fresh output_url, fire the download. A ref so the effect
-  // only triggers the download once per bake.
   const pendingDownloadRef = useRef(false);
   const downloadName = `nova-${slugify(item.theme) || itemId.slice(0, 8)}.mp4`;
 
   useEffect(() => {
     if (!pendingDownloadRef.current) return;
-    // The bake is done once the session settles (isSaving false) and a ready
-    // output is present. justSaved fires on settle for a text-only render too.
     if (editSession.isSaving) return;
-    if (variant.render_status === "ready" && variant.output_url) {
+    if (variant?.render_status === "ready" && variant.output_url) {
       pendingDownloadRef.current = false;
       downloadVideo(variant.output_url, downloadName);
-    } else if (variant.render_status === "failed") {
+    } else if (variant?.render_status === "failed") {
       pendingDownloadRef.current = false;
     }
-  }, [editSession.isSaving, variant.render_status, variant.output_url, downloadName]);
+  }, [editSession.isSaving, variant?.render_status, variant?.output_url, downloadName]);
 
   const baking = instantEligible && (editSession.isSaving || pendingDownloadRef.current);
 
-  // Download = the bake. Unsaved overlay edits → commit (one batched render),
-  // poll until ready, then download the fresh output. No edits → download the
-  // current output immediately.
   const handleDownload = useCallback(() => {
+    if (!variant) return;
     if (!variant.output_url && !editSession.isDirty) return;
     if (instantEligible && editSession.isDirty) {
       pendingDownloadRef.current = true;
@@ -880,70 +810,211 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
-  }, [variant.output_url, editSession, instantEligible, downloadName]);
+  }, [variant, editSession, instantEligible, downloadName]);
+
+  // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
+  const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
+  // "Nova's pick" is always the first variant (index 0 in the variants array)
+  const isNovaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
+
+  // Text-mode label for the pill below the hero
+  const TEXT_MODE_PILL: Record<string, string> = {
+    lyrics: "With lyrics",
+    agent_text: "Original audio",
+    none: "Original audio",
+  };
+  const modePill = variant ? (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio") : null;
+
+  // The editor panel reveals PlanVariantEditor filtered to the active tab.
+  // We keep one PlanVariantEditor instance and use the tab to scroll/focus.
+  const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
 
   return (
-    <div className="mt-6 flex flex-col gap-6 lg:flex-row lg:items-start">
-      {/* LEFT: the single hero the user looks at. For an eligible variant this is
-          the text-free base video + the live overlay (updates instantly as the
-          RIGHT controls change the draft); otherwise the burned-output Hero. */}
-      <div className="w-full shrink-0 sm:max-w-sm lg:w-[380px]">
-        {instantEligible ? (
-          <LiveEditPreview variant={variant} styleSets={styleSets} session={editSession} playToken={editSession.playToken} />
-        ) : (
-          <Hero variant={variant} generating={isGenerating} />
-        )}
-        {(instantEligible ? variant.base_video_url : variant.output_url) && (
-          <>
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={baking}
-              className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-200 px-5 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {baking ? "Preparing your video…" : "Download"}
-            </button>
-            {instantEligible && editSession.isDirty && !baking && (
-              <p className="mt-2 text-center text-xs text-[#a1a1aa]">
-                Unsaved — downloads will include your changes
-              </p>
-            )}
-          </>
-        )}
-      </div>
+    <div className="mt-8">
+      {/* Hero + rail: on desktop they are side-by-side */}
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
 
-      {/* RIGHT: filmstrip + the normal full controls. For an eligible variant the
-          Caption/Size/Layout/Style controls drive the SESSION DRAFT (no render);
-          Song + Clips still re-render server-side. */}
-      <div className="min-w-0 flex-1 space-y-5">
-        {variants.length > 0 && (
-          <PlanFilmstrip variants={variants} focusedId={focusedVariantId} onFocus={onFocus} />
-        )}
-        <FocusedVariantControls
-          itemId={itemId}
-          variant={variant}
-          tracks={tracks}
-          styleSets={styleSets}
-          session={editSession}
-          instantEligible={instantEligible}
-          baking={baking}
-          refetch={refetch}
-          markVariantRendering={markVariantRendering}
-          onSwap={onSwap}
-          onRetext={onRetext}
-          onRemoveText={onRemoveText}
-          onChangeStyle={onChangeStyle}
-          onResize={onResize}
-          onChangeLayout={onChangeLayout}
-        />
-        {item.current_job_id && !isGenerating && (
-          <div className="border-t border-zinc-200 pt-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
-              How&apos;s this one?
-            </p>
-            <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+        {/* ── HERO: large video player ── */}
+        <div className="w-full shrink-0 sm:max-w-xs lg:w-[300px]">
+          <div className="relative">
+            {/* "Nova's pick" badge */}
+            {isNovaPick && variant?.output_url && (
+              <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
+                Nova&apos;s pick
+              </span>
+            )}
+            {instantEligible && variant ? (
+              <LiveEditPreview
+                variant={variant}
+                styleSets={styleSets}
+                session={editSession}
+                playToken={editSession.playToken}
+              />
+            ) : (
+              <Hero variant={variant} generating={isGenerating} />
+            )}
           </div>
-        )}
+          {/* Text-mode pill below video */}
+          {modePill && !isGenerating && (
+            <div className="mt-2 flex justify-center">
+              <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
+                {modePill}
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* ── RAIL: rationale + alternates + editor ── */}
+        <div className="min-w-0 flex-1 space-y-5">
+
+          {/* Rationale blurb */}
+          {variant && !isGenerating && (
+            <p className="text-sm text-[#3f3f46]">
+              {deriveRationale(variant, variants.length)}
+            </p>
+          )}
+          {isGenerating && (
+            <p className="text-sm text-[#71717a]">
+              Edit controls unlock as soon as a variant finishes rendering.
+            </p>
+          )}
+
+          {/* Alternates row — small thumbnails, click to swap hero */}
+          {alternates.length > 0 && (
+            <div>
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
+                Other takes
+              </p>
+              <div className="flex gap-2">
+                {alternates.slice(0, 3).map((v) => {
+                  const altLabel: Record<string, string> = {
+                    lyrics: "Lyrics",
+                    agent_text: "AI text",
+                    none: "Original",
+                  };
+                  const label = altLabel[v.text_mode] ?? "Edit";
+                  const rendering = v.render_status === "rendering";
+                  const failed = v.render_status === "failed";
+                  return (
+                    <button
+                      key={v.variant_id}
+                      type="button"
+                      aria-label={`Switch to ${label} — ${v.track_title ?? "original audio"}`}
+                      onClick={() => onFocus(v.variant_id)}
+                      className="group relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 transition-colors hover:border-zinc-400"
+                    >
+                      {v.output_url ? (
+                        <video
+                          src={v.output_url}
+                          muted
+                          preload="metadata"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-full w-full bg-zinc-200" />
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 py-0.5 text-[8px] text-white">
+                        {label}
+                      </span>
+                      {rendering && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
+                          …
+                        </span>
+                      )}
+                      {failed && (
+                        <span className="absolute right-0.5 top-0.5 text-[10px]">⚠</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── Editor row: 4 icon+label buttons ── */}
+          {focusedEditable && (
+            <div>
+              <div className="flex gap-2">
+                {EDITOR_TABS.map((tab) => {
+                  // Hide Song tab when no song is swappable
+                  if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
+                  // Hide Font tab for lyrics (font is locked to lyrics renderer)
+                  if (tab.id === "font" && variant?.text_mode === "lyrics") return null;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => setActiveTab(isActive ? null : tab.id)}
+                      className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
+                        isActive
+                          ? "border-lime-600 bg-lime-50 text-lime-800"
+                          : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                      }`}
+                    >
+                      <span className="text-sm font-semibold leading-none">{tab.icon}</span>
+                      <span className="text-[10px] leading-tight">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Inline editor panel — slides open below the tab row */}
+              {activeTab !== null && variant && (
+                <div className="mt-3">
+                  <FocusedVariantControls
+                    itemId={itemId}
+                    variant={variant}
+                    tracks={tracks}
+                    styleSets={styleSets}
+                    session={editSession}
+                    instantEligible={instantEligible}
+                    baking={baking}
+                    activeTab={activeTab}
+                    refetch={refetch}
+                    markVariantRendering={markVariantRendering}
+                    onSwap={onSwap}
+                    onRetext={onRetext}
+                    onRemoveText={onRemoveText}
+                    onChangeStyle={onChangeStyle}
+                    onResize={onResize}
+                    onChangeLayout={onChangeLayout}
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Download button */}
+          {variant && (instantEligible ? variant.base_video_url : variant.output_url) && (
+            <>
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={baking}
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {baking ? "Preparing your video…" : "Download"}
+              </button>
+              {instantEligible && editSession.isDirty && !baking && (
+                <p className="mt-1 text-center text-xs text-[#a1a1aa]">
+                  Unsaved — downloads will include your changes
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Feedback */}
+          {item.current_job_id && !isGenerating && (
+            <div className="border-t border-zinc-200 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
+                How&apos;s this one?
+              </p>
+              <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -953,16 +1024,15 @@ function FocusedResults({
  * Controls-only column for the focused variant. Receives the edit session as a
  * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
  *
- * For an ELIGIBLE variant the Caption / Text size / Layout / Style controls are
- * re-pointed at the session draft (no render); the variant the editor reads is
- * overlaid with the draft so the controls reflect the live selection. Song +
- * Clips keep their server paths (a real re-render). An INELIGIBLE variant gets
- * the original server handlers verbatim (per-field re-render, today's behavior).
+ * `activeTab` controls which section of PlanVariantEditor is surfaced. The
+ * "text" tab shows caption/size/layout/style; "font" shows the EditToolbar font
+ * controls (instant-edit variants only); "song" shows the song-swap picker;
+ * "clips" opens the timeline editor sheet.
  *
- * Wraps PlanVariantEditor with a timeline session against the plan-item mirror
- * endpoints (`/plan-items/{itemId}/variants/{vid}/timeline`, via the /api/plan
- * proxy). A committed timeline edit re-renders server-side; we flip the variant
- * to "rendering" through markVariantRendering so the page keeps polling.
+ * For an ELIGIBLE variant the Caption / Text size / Layout / Style controls are
+ * re-pointed at the session draft (no render). Song + Clips keep their server
+ * paths. An INELIGIBLE variant gets the original server handlers (per-field
+ * re-render, legacy behavior).
  */
 function FocusedVariantControls({
   itemId,
@@ -972,6 +1042,7 @@ function FocusedVariantControls({
   session,
   instantEligible,
   baking,
+  activeTab,
   refetch,
   markVariantRendering,
   onSwap,
@@ -988,6 +1059,7 @@ function FocusedVariantControls({
   session: VariantEditSession;
   instantEligible: boolean;
   baking: boolean;
+  activeTab: EditorTab;
   refetch: () => void;
   markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
   onSwap: (trackId: string) => Promise<void>;
@@ -1024,27 +1096,44 @@ function FocusedVariantControls({
       }
     : { onRetext, onRemoveText, onChangeStyle, onResize, onChangeLayout };
 
+  // "clips" tab: open the timeline editor inline. The TimelineEditor is always
+  // rendered (it's a sheet) but we auto-open it when the tab activates.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — open on tab change, not on every render
+  useEffect(() => {
+    if (activeTab === "clips" && timeline.entryVisible && !timeline.isEditorOpen) {
+      timeline.openEditor();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const showTextSection = activeTab === "text";
+  const showFontSection = activeTab === "font" && instantEligible;
+  const showSongSection = activeTab === "song";
+  // Clips: the TimelineEditor sheet handles itself; we just need the render.
+
   return (
     <>
-      <PlanVariantEditor
-        // Eligible: the controls reflect the live draft; ineligible: the server
-        // truth. While baking, render_status flips to "rendering" via the saving
-        // overlay below — pass it through so controls disable during the bake.
-        variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
-        tracks={tracks}
-        styleSets={instantEligible ? [] : styleSets}
-        onSwap={onSwap}
-        onRetext={draftHandlers.onRetext}
-        onRemoveText={draftHandlers.onRemoveText}
-        onChangeStyle={draftHandlers.onChangeStyle}
-        onResize={instantEligible ? undefined : draftHandlers.onResize}
-        onChangeLayout={draftHandlers.onChangeLayout}
-        onEditClips={timeline.openEditor}
-        showClipEditor={timeline.entryVisible}
-        clipSlotCount={timeline.slotCount}
-        hasClipEdits={timeline.hasUserEdits}
-      />
-      {instantEligible && (
+      {/* Text tab: Caption + size + layout + style (no Song / no Clips) */}
+      {showTextSection && (
+        <PlanVariantEditor
+          variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+          tracks={[]}
+          styleSets={instantEligible ? [] : styleSets}
+          onSwap={onSwap}
+          onRetext={draftHandlers.onRetext}
+          onRemoveText={draftHandlers.onRemoveText}
+          onChangeStyle={draftHandlers.onChangeStyle}
+          onResize={instantEligible ? undefined : draftHandlers.onResize}
+          onChangeLayout={draftHandlers.onChangeLayout}
+          onEditClips={undefined}
+          showClipEditor={false}
+          clipSlotCount={null}
+          hasClipEdits={false}
+        />
+      )}
+
+      {/* Font tab: EditToolbar (instant-edit eligible variants only) */}
+      {showFontSection && (
         <EditToolbar
           session={session}
           styleSets={[]}
@@ -1052,6 +1141,28 @@ function FocusedVariantControls({
           resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
         />
       )}
+
+      {/* Song tab: song picker only — a standalone SongPicker section */}
+      {showSongSection && (
+        <PlanVariantEditor
+          variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+          tracks={tracks}
+          styleSets={[]}
+          onSwap={onSwap}
+          onRetext={async () => {}}
+          onRemoveText={async () => {}}
+          onChangeStyle={async () => {}}
+          onResize={undefined}
+          onChangeLayout={undefined}
+          onEditClips={undefined}
+          showClipEditor={false}
+          clipSlotCount={null}
+          hasClipEdits={timeline.hasUserEdits}
+          hideSections={["caption", "size", "layout", "style", "clips"]}
+        />
+      )}
+
+      {/* Timeline editor sheet — always rendered, opened when clips tab is active */}
       {timeline.isEditorOpen && (
         <TimelineEditor
           ownerId={itemId}
@@ -1059,11 +1170,6 @@ function FocusedVariantControls({
           base="plan-item"
           onClose={timeline.closeEditor}
           onRenderEnqueued={() => {
-            // Close the sheet + refetch (session bookkeeping), then flip the
-            // variant to "rendering" exactly like a retext edit does.
-            // Key off render_finished_at (not output_url) so the pin clears
-            // reliably when the re-render completes — the clip re-render holds
-            // the stored output_url stable, which used to strand the pin forever.
             timeline.onRenderEnqueued();
             markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
           }}
@@ -1322,6 +1428,216 @@ function ConformanceVerdictPanel({
       <p className="mt-2 text-xs text-[#71717a]">
         You can generate anyway — this is just a read on the brief.
       </p>
+    </div>
+  );
+}
+
+// ── Nova helper ─────────────────────────────────────────────────────────────────
+// One quiet line in the right action panel. Collapses the two pre-generate AI
+// surfaces (conformance critic + Ask Nova) into a single lime-dot row.
+// States: checking (pulse) → on-track → off-brief one-liner → default prompt.
+// Expanding → AskNovaPanel (full advisor chat) replaces this row entirely.
+
+function NovaHelper({
+  item,
+  conformanceChecking,
+  askNova,
+  onOpen,
+  onContest,
+  onClose,
+  onDismissConformance,
+  onItemChanged,
+}: {
+  item: PlanItem;
+  conformanceChecking: boolean;
+  askNova: null | "default" | "contest";
+  onOpen: () => void;
+  onContest: () => void;
+  onClose: () => void;
+  onDismissConformance: () => void;
+  onItemChanged: () => void;
+}) {
+  // AskNovaPanel is the full-expanded state — it takes over the row entirely.
+  if (askNova !== null) {
+    return (
+      <AskNovaPanel
+        item={item}
+        mode={askNova}
+        onClose={onClose}
+        onItemChanged={onItemChanged}
+      />
+    );
+  }
+
+  const c = item.conformance;
+  // Reuse the same render gates as ConformanceVerdictPanel: dismissed,
+  // suppressed, and low-confidence reads are silent.
+  const hasVerdict =
+    !!c?.verdict &&
+    !c.dismissed &&
+    !c.suppressed &&
+    (c.confidence ?? 0) >= 0.6;
+
+  return (
+    <div role="status" aria-live="polite" className="space-y-1.5" data-testid="nova-helper">
+      {conformanceChecking ? (
+        <p className="flex items-start gap-2 text-sm text-[#71717a] motion-safe:animate-pulse">
+          <span
+            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+            aria-hidden="true"
+          />
+          Reading your clips against the brief…
+        </p>
+      ) : hasVerdict && c!.verdict === "on_track" ? (
+        <p className="flex items-start gap-2 text-sm text-[#3f3f46]">
+          <span
+            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+            aria-hidden="true"
+          />
+          Looks on-brief.{" "}
+          <button
+            type="button"
+            onClick={onOpen}
+            className="font-medium text-lime-700 underline-offset-2 hover:underline"
+          >
+            Ask Nova ↗
+          </button>
+        </p>
+      ) : hasVerdict ? (
+        <div className="space-y-1">
+          <p className="flex items-start gap-2 text-sm text-[#3f3f46]">
+            <span
+              className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+              aria-hidden="true"
+            />
+            <span>{c!.summary}</span>
+          </p>
+          <div className="flex gap-3 pl-3.5">
+            <button
+              type="button"
+              onClick={onContest}
+              className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
+            >
+              Tell Nova
+            </button>
+            <button
+              type="button"
+              onClick={onDismissConformance}
+              className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+            >
+              Hide
+            </button>
+            <button
+              type="button"
+              onClick={onOpen}
+              className="text-xs text-[#71717a] underline-offset-2 hover:underline"
+            >
+              Ask Nova ↗
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="flex items-start gap-2 text-sm text-[#71717a]">
+          <span
+            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
+            aria-hidden="true"
+          />
+          Not sure which clip fits?{" "}
+          <button
+            type="button"
+            onClick={onOpen}
+            className="font-medium text-lime-700 underline-offset-2 hover:underline"
+          >
+            Ask Nova ↗
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Pool upload card (uninstructed items) ────────────────────────────────────────
+// Replaces the legacy inline <section> for items without a filming guide.
+// Visually matches the shot-slot card: rounded-2xl, border-zinc-200, bg-white.
+// Logic is identical to the old section — only the markup has been trimmed.
+
+function PoolUploadCard({
+  clips,
+  uploading,
+  onFiles,
+  onKeep,
+  onRemove,
+  onNoteChange,
+}: {
+  clips: ClipAssignment[];
+  uploading: boolean;
+  onFiles: (files: FileList | null) => void;
+  onKeep: (a: ClipAssignment) => void;
+  onRemove: (a: ClipAssignment) => void;
+  onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
+}) {
+  return (
+    <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-5">
+      {clips.length > 0 && (
+        <ul className="mb-4 space-y-3">
+          {clips.map((a) => {
+            const raw = a.gcs_path.split("/").pop() ?? a.gcs_path;
+            const name = raw.includes("-") ? raw.slice(raw.indexOf("-") + 1) : raw;
+            return (
+              <li
+                key={a.gcs_path}
+                className="border-b border-zinc-100 pb-3 last:border-0 last:pb-0"
+              >
+                <div className="flex items-center gap-3">
+                  {a.machine_matched ? (
+                    <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
+                      <span className="max-w-[180px] truncate">{name}</span>
+                      <span className="shrink-0 text-lime-700">· Matched — keep?</span>
+                    </span>
+                  ) : (
+                    <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
+                      <span>✓</span>
+                      <span className="max-w-[220px] truncate">{name}</span>
+                    </span>
+                  )}
+                  {a.machine_matched && (
+                    <button
+                      type="button"
+                      onClick={() => onKeep(a)}
+                      className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800"
+                    >
+                      Keep
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onRemove(a)}
+                    className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+                  >
+                    Remove
+                  </button>
+                </div>
+                <ClipNoteControl
+                  note={a.user_note ?? ""}
+                  onSave={(note) => onNoteChange(a, note)}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <label className="block">
+        <span className="sr-only">Upload video clips for this idea</span>
+        <input
+          type="file"
+          accept="video/mp4,video/quicktime"
+          multiple
+          disabled={uploading}
+          onChange={(e) => onFiles(e.target.files)}
+          className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+        />
+      </label>
+      {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
     </div>
   );
 }

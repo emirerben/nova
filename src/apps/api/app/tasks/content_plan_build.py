@@ -1056,11 +1056,38 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
         if plan is None:
             return
 
+        # Stamp provenance: flip each seed's status to "in_plan" and link the
+        # new PlanItem back via source_idea_seed_id (BYO-Ideas T5 finish).
+        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+        persona_for_seeds = session.get(PersonaRow, plan.persona_id)
+        live_seeds: list[dict] = (
+            list(persona_for_seeds.idea_seeds)
+            if persona_for_seeds is not None and isinstance(persona_for_seeds.idea_seeds, list)
+            else []
+        )
+        # Re-derive the pending seeds in the same order used above (status != in_plan).
+        live_pending = [
+            s
+            for s in live_seeds
+            if isinstance(s, dict) and s.get("text") and s.get("status") != "in_plan"
+        ]
+        # Flip the first N (= number of new items generated) pending seeds to in_plan.
+        for seed_dict in live_pending[: len(new_specs)]:
+            seed_dict["status"] = "in_plan"
+        if persona_for_seeds is not None and live_pending:
+            persona_for_seeds.idea_seeds = live_seeds  # type: ignore[assignment]
+            flag_modified(persona_for_seeds, "idea_seeds")
+
         for i, spec in enumerate(new_specs):
             if i < len(free_slots):
                 slot = free_slots[i]
             else:
                 slot = max_day + 1 + (i - len(free_slots))
+            # Link back to the seed by position (same ordering as live_pending).
+            seed_id: str | None = None
+            if i < len(live_pending):
+                seed_id = live_pending[i].get("id") or None
             item = PlanItem(
                 content_plan_id=plan.id,
                 day_index=slot,
@@ -1074,6 +1101,7 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
                     for s in (spec.filming_guide or [])
                 ],
                 item_status="idea",
+                source_idea_seed_id=seed_id,
             )
             session.add(item)
 
