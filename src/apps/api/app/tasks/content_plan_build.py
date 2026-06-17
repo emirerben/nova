@@ -116,6 +116,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 PlanItem(
                     content_plan_id=plan.id,
                     day_index=spec.day_index,
+                    position=spec.day_index,
                     theme=spec.theme,
                     idea=spec.idea,
                     filming_suggestion=spec.filming_suggestion or None,
@@ -1012,7 +1013,7 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
         existing_items = list(plan.items or [])
         all_ideas = [it.idea for it in existing_items if it.idea]
         horizon = plan.horizon_days or 30
-        used_days = {it.day_index for it in existing_items}
+        used_days = {it.day_index for it in existing_items if it.day_index is not None}
         # Prefer empty slots within the horizon; fall back to extending beyond it.
         free_slots = [d for d in range(1, horizon + 1) if d not in used_days]
         max_day = max(used_days, default=0)
@@ -1091,6 +1092,7 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
             item = PlanItem(
                 content_plan_id=plan.id,
                 day_index=slot,
+                position=slot,
                 theme=spec.theme,
                 idea=spec.idea,
                 filming_suggestion=spec.filming_suggestion or None,
@@ -1113,4 +1115,120 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
         plan_id=plan_id,
         added=len(new_specs),
         seeds=len(seed_texts),
+    )
+
+
+@celery_app.task(
+    name="app.tasks.content_plan_build.generate_ideas_into_plan",
+    bind=True,
+    max_retries=1,
+    default_retry_delay=10,
+    soft_time_limit=120,
+    time_limit=180,
+)
+def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
+    """Generate AI ideas and append to the plan (idea-centric mode opt-in).
+
+    Called by POST /content-plans/{id}/generate-ideas. Appends new PlanItems
+    while preserving all existing items (regardless of user_edited status).
+    Uses ContentPlanGeneratorAgent with exclude_ideas populated from existing items
+    so the AI never repeats what is already in the plan.
+
+    Idempotency: if plan_status is already 'ready' by the time this runs (e.g.
+    duplicate delivery), skip silently.
+    """
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    pid = uuid.UUID(str(plan_id))
+
+    with sync_session() as session:
+        plan = session.get(ContentPlan, pid)
+        if plan is None:
+            return
+
+        persona_row = session.get(PersonaRow, plan.persona_id)
+        if persona_row is None:
+            plan.plan_status = "ready"
+            session.commit()
+            return
+
+        existing_items = list(plan.items or [])
+        all_ideas = [it.idea for it in existing_items if it.idea]
+        horizon = plan.horizon_days or 30
+        used_positions = {it.position for it in existing_items}
+        # If all slots within horizon are occupied, extend beyond.
+        free_positions = [p for p in range(1, horizon + 1) if p not in used_positions]
+        max_position = max(used_positions, default=0)
+
+        persona = (
+            Persona(**persona_row.persona)
+            if persona_row.persona
+            else Persona(
+                summary="",
+                content_pillars=[],
+                tone="",
+                audience="",
+                posting_cadence="",
+                sample_topics=[],
+            )
+        )
+        # Request one batch of new ideas (default horizon / 5, min 5, max 10).
+        batch_size = max(5, min(10, horizon // 5))
+        agent_input = ContentPlanInput(
+            persona=persona,
+            events=str((plan.events or {}).get("text", "") or ""),
+            horizon_days=batch_size,
+            exclude_ideas=all_ideas,
+            user_idea_seeds=[],
+        )
+
+    with pipeline_trace_for(pid):
+        try:
+            agent = ContentPlanGeneratorAgent(default_client())
+            output = agent.run(agent_input, ctx=RunContext(job_id=None))
+            new_specs = list(output.items)[:batch_size]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("generate_ideas_into_plan.failed", plan_id=plan_id, error=str(exc))
+            with sync_session() as session:
+                plan = session.get(ContentPlan, pid)
+                if plan is not None:
+                    plan.plan_status = "ready"
+                    session.commit()
+            raise self.retry(exc=exc) from exc
+
+    with sync_session() as session:
+        plan = session.get(ContentPlan, pid)
+        if plan is None:
+            return
+
+        for i, spec in enumerate(new_specs):
+            if i < len(free_positions):
+                pos = free_positions[i]
+            else:
+                pos = max_position + 1 + (i - len(free_positions))
+            session.add(
+                PlanItem(
+                    content_plan_id=plan.id,
+                    day_index=pos,
+                    position=pos,
+                    theme=spec.theme,
+                    idea=spec.idea,
+                    filming_suggestion=spec.filming_suggestion or None,
+                    rationale=spec.rationale or None,
+                    edit_format=spec.edit_format or "montage",
+                    filming_guide=[
+                        {**s.model_dump(), "shot_id": uuid.uuid4().hex}
+                        for s in (spec.filming_guide or [])
+                    ],
+                    item_status="idea",
+                )
+            )
+
+        plan.plan_status = "ready"
+        session.commit()
+
+    log.info(
+        "generate_ideas_into_plan.done",
+        plan_id=plan_id,
+        added=len(new_specs),
     )
