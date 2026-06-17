@@ -793,3 +793,93 @@ def test_pool_match_limit_within_matcher_schema():
         max_assignments=_POOL_MATCH_LIMIT,
     )
     assert inp.max_assignments == _POOL_MATCH_LIMIT
+
+
+# ── T15: generate_ideas_into_plan preserves user_edited items ─────────────────
+
+
+def test_generate_ideas_preserves_user_edited() -> None:
+    """generate_ideas_into_plan appends new items and never deletes existing ones.
+
+    Verifies:
+    - session.delete is never called (no items removed)
+    - session.add is called for each new spec (new items appended)
+    - each new PlanItem has position set
+    """
+    from app.agents._schemas.content_plan import (
+        ContentPlanOutput,  # noqa: PLC0415 (already imported)
+    )
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+
+    existing_user_item = MagicMock()
+    existing_user_item.idea = "my own idea"
+    existing_user_item.user_edited = True
+    existing_user_item.position = 1
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.plan_status = "generating"
+    plan.events = {}
+    plan.items = [existing_user_item]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["fitness"],
+        "tone": "warm",
+        "audience": "gym-goers",
+        "posting_cadence": "4/wk",
+        "sample_topics": ["morning routine"],
+    }
+
+    new_output = ContentPlanOutput(
+        items=[
+            _spec(2, "sunrise hike first attempt"),
+            _spec(3, "coffee shop productivity session"),
+        ]
+    )
+
+    session = MagicMock()
+    session.get = MagicMock(side_effect=lambda model, pk: {
+        ContentPlan: plan,
+        PersonaRow: persona_row,
+    }.get(model))
+    session.add = MagicMock()
+    session.delete = MagicMock()
+    session.commit = MagicMock()
+    session.flush = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+    ):
+        mock_trace_ctx = MagicMock()
+        mock_trace_ctx.__enter__ = MagicMock(return_value=None)
+        mock_trace_ctx.__exit__ = MagicMock(return_value=False)
+        mock_trace.return_value = mock_trace_ctx
+
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = new_output
+        mock_agent_cls.return_value = mock_agent
+
+        generate_ideas_into_plan.run(plan_id)
+
+    # Existing items must not be deleted.
+    session.delete.assert_not_called()
+    # New items were added (2 new specs → 2 add calls).
+    assert session.add.call_count == 2
+    # Each added PlanItem must have a position set.
+    for call in session.add.call_args_list:
+        added_item = call.args[0]
+        assert added_item.position is not None
+    # Plan status was reset to ready.
+    assert plan.plan_status == "ready"

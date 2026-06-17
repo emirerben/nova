@@ -61,6 +61,11 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None, assignmen
     item.item_status = "idea"
     item.user_edited = False
     item.conformance = None
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.source_idea_seed_id = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan

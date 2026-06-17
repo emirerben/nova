@@ -93,18 +93,48 @@ def test_create_plan_requires_ready_persona(client: TestClient) -> None:
 
 
 def test_create_plan_enqueues_when_persona_ready(client: TestClient) -> None:
+    """Kill switch OFF → old auto-generate behavior: plan starts 'generating'."""
     user = _fake_user()
     persona = MagicMock()
     persona.persona_status = "ready"
     persona.id = uuid.uuid4()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=persona)
-    with patch("app.tasks.content_plan_build.generate_content_plan") as task:
+    with (
+        patch("app.tasks.content_plan_build.generate_content_plan") as task,
+        patch("app.config.settings") as mock_settings,
+    ):
+        mock_settings.idea_centric_plan_enabled = False
         task.delay = MagicMock()
         resp = client.post("/content-plans", json={"events": "spring break", "horizon_days": 30})
     assert resp.status_code == 201
     assert resp.json()["plan_status"] == "generating"
     task.delay.assert_called_once()
+
+
+def test_create_plan_no_auto_generate(client: TestClient) -> None:
+    """Kill switch ON (default) → idea-centric: plan starts 'ready', no generation task."""
+    user = _fake_user()
+    persona = MagicMock()
+    persona.persona_status = "ready"
+    persona.id = uuid.uuid4()
+    persona.idea_seeds = []
+    persona.questionnaire = {}
+    app.dependency_overrides[get_current_user] = lambda: user
+    db = _async_db(scalar_result=persona)
+    # db.execute for plan items returns empty list.
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(scalar_one_or_none=MagicMock(return_value=persona)),  # persona lookup
+            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),
+        ]
+    )
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.config.settings") as mock_settings:
+        mock_settings.idea_centric_plan_enabled = True
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+    assert resp.status_code == 201
+    assert resp.json()["plan_status"] == "ready"
 
 
 def test_get_plan_404_when_absent(client: TestClient) -> None:

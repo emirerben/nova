@@ -46,6 +46,12 @@ def _idea_item(user_id: uuid.UUID, *, item_status: str = "idea", current_job_id=
     item.current_job = None
     item.user_edited = False
     item.conformance = None
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.source_idea_seed_id = None
+    item.clip_assignments = []
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
