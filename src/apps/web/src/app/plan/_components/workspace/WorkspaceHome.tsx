@@ -97,8 +97,7 @@ export function WorkspaceHome({
           <div className="w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-8">
             <IdeasSidebar
               plan={plan}
-              persona={persona}
-              onSaved={setPersona}
+              onRefresh={onRefresh}
             />
           </div>
 

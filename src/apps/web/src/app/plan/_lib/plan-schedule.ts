@@ -44,6 +44,7 @@ export function calendarToday(
  */
 export function cellState(item: PlanItem, todayDay: number | null): CellState {
   const day = item.day_index;
+  if (day == null) return "film";
   const isReady = item.status === "ready";
   if (isReady) {
     if (todayDay !== null && day < todayDay) return "done";

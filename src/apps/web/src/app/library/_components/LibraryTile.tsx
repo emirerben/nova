@@ -127,8 +127,8 @@ function AddToPlan({
             <option value="" disabled>
               Pick a day…
             </option>
-            {plan.items.map((it) => (
-              <option key={it.id} value={it.day_index}>
+            {plan.items.filter((it) => it.day_index != null).map((it) => (
+              <option key={it.id} value={it.day_index!}>
                 Day {it.day_index} — {it.theme}
               </option>
             ))}
