@@ -631,7 +631,7 @@ class ContentPlan(Base):
     user: Mapped["User"] = relationship()
     persona: Mapped["Persona"] = relationship(back_populates="content_plans")
     items: Mapped[list["PlanItem"]] = relationship(
-        back_populates="content_plan", order_by="PlanItem.day_index"
+        back_populates="content_plan", order_by="PlanItem.position"
     )
 
     __table_args__ = (Index("idx_content_plans_user_id", "user_id"),)
@@ -648,9 +648,14 @@ class PlanItem(Base):
     content_plan_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("content_plans.id", ondelete="CASCADE"), nullable=False
     )
-    # 1..horizon_days, validated app-side
-    day_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    theme: Mapped[str] = mapped_column(Text, nullable=False)
+    # Calendar slot (1..horizon_days). Nullable in the idea-centric model — bare ideas
+    # have no calendar position until explicitly scheduled.
+    day_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # AI-generated theme. Nullable — a bare user idea has no theme until AI fills it.
+    theme: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # User-controlled ordering position. Backfilled from day_index for existing rows.
+    # Must be set explicitly when creating new items — no server_default (see migration 0055).
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
     idea: Mapped[str] = mapped_column(Text, nullable=False)
     filming_suggestion: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The AI's short "why this video works", shown read-only in the dashboard.
@@ -688,6 +693,13 @@ class PlanItem(Base):
     # run yet. Stored as TEXT (the uuid4 hex from the seed's id field) rather than
     # a FK so it survives seed deletion without a cascade constraint.
     source_idea_seed_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional date the user wants to post this idea (distinct from plan-level start_date).
+    scheduled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # Freeform notes the user adds to flesh out the idea.
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Planned scenes: [{id: str, text: str, transition_after?: str}]. Always reassign
+    # (never mutate in-place) so SQLAlchemy detects the change.
+    scenes: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     user_edited: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -698,7 +710,10 @@ class PlanItem(Base):
     # One-directional (not the inverse of Job.content_plan_item — distinct FK column).
     current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
 
-    __table_args__ = (Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),)
+    __table_args__ = (
+        Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),
+        Index("idx_plan_items_content_plan_id_position", "content_plan_id", "position"),
+    )
 
 
 # Allowed signals — kept in lockstep with the CHECK constraint in migration 0043
