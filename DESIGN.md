@@ -221,6 +221,39 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 
 ---
 
+## §12 Idea-centric plan components (v0.4.111+)
+
+Four new / redesigned components shipped with the idea-centric plan redesign. Rules here supplement §2 (light editorial system).
+
+### IdeasSidebar (`/plan` left rail)
+- **Data source:** `plan.items` sorted by `position` — NOT `persona.idea_seeds`.
+- **Item row:** `min-h-[44px] border-t border-zinc-100 py-2.5`; idea text `text-[14px] leading-snug text-[#0c0c0e]`; each row is a `Link` to `/plan/items/{id}`.
+- **Delete affordance:** `× button` opacity-0 → opacity-100 on `group-hover`. `w-[28px] h-[28px]` tap target.
+- **Add input:** dashed border `border-zinc-300`, focus ring `border-lime-500/60`; lime `+` prefix; commits on Enter or blur.
+- **Empty state:** Fraunces `text-[16px] font-medium` invitation + `text-[12px]` muted sub-line inside `rounded-xl border-dashed border-zinc-200` tile.
+- **Generating spinner:** `animate-ping` lime dot + `text-[12px] text-[#71717a]` label (matches §7 ping convention).
+
+### IdeaItem row (inside IdeasSidebar)
+- Idea text truncated at 2 lines (`line-clamp-2`). Full text is accessible via `/plan/items/{id}`.
+- Hover: idea text transitions to `text-lime-700`; delete `×` fades in.
+- No "Day N" badge — items are position-ordered, not calendar-slotted until AI expands them.
+- Focus ring: `focus-visible:outline-2 focus-visible:outline-[#0c0c0e] focus-visible:rounded`.
+
+### Generate-with-AI button
+- Full-width button below the add-input in IdeasSidebar.
+- Tokens: `border border-zinc-200 bg-white text-[12px] text-[#71717a]`; hover `border-lime-400 text-lime-700`.
+- Disabled while `aiGenerating` or `plan.plan_status === "generating"`: `opacity-50 cursor-not-allowed`.
+- Sparkle icon `✦` prefix (aria-hidden). Copy: "Generate with AI" / "Generating…".
+
+### Expand-with-AI proposal card (item detail page)
+- Shown only when `!item.theme && clip_gcs_paths.length === 0` — un-expanded pure ideas.
+- Trigger button matches Generate-with-AI token pattern.
+- Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`. Rationale `text-xs text-[#71717a]`.
+- Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold`. Dismiss: `border-zinc-200 bg-white text-[#71717a]`.
+- On accept: writes `theme + filming_suggestion` to item via `updatePlanItem`, then refetches — card disappears.
+
+---
+
 ## §11 Calibration examples
 
 Quick right/wrong pairs for common review questions.
