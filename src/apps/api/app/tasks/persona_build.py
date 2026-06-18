@@ -248,7 +248,15 @@ def retune_persona_from_feedback(self, persona_id: str) -> None:  # noqa: ANN001
         row = session.get(Persona, uuid.UUID(str(persona_id)))
         if row is None:
             return
-        row.persona = persona.to_dict()
+        # Preserve onboarding preferences (e.g. footage_type_bias from "What you make")
+        # that live in the same JSONB column but are NOT part of the generated Persona
+        # schema. Same preservation pattern as generate_persona — both write paths must
+        # carry these keys across or retune silently drops the Step-2 multi-select.
+        prev = dict(row.persona or {})
+        new_persona_dict = persona.to_dict()
+        if "footage_type_bias" in prev:
+            new_persona_dict["footage_type_bias"] = prev["footage_type_bias"]
+        row.persona = new_persona_dict
         row.persona_status = "ready"
         row.error_detail = None
         row.prompt_version = PERSONA_PROMPT_VERSION

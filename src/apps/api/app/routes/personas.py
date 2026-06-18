@@ -365,7 +365,7 @@ async def retune_persona_from_feedback(
             detail="Your persona is hand-edited and stays authoritative. "
             "Edit it directly, or reset to AI before retuning from feedback.",
         )
-    if row.persona is None or row.persona_status == "generating":
+    if row.persona is None or row.persona_status in ("generating", "chat_pending"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Persona must be ready before retuning",
