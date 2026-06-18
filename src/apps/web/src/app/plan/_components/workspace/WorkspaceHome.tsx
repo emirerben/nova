@@ -3,11 +3,11 @@ import { useState, useEffect } from "react";
 import type { ContentPlan, PersonaResponse, StyleResponse } from "@/lib/plan-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { calendarToday, behindBy } from "@/app/plan/_lib/plan-schedule";
-import { TodayCard } from "./TodayCard";
+import { HomeTodayCard } from "./HomeTodayCard";
+import { IdeasSidebar } from "./IdeasSidebar";
 import { MomentumCard } from "./MomentumCard";
 import { PersonaCard } from "./PersonaCard";
 import { StyleCard } from "./StyleCard";
-import { IdeasCard } from "./IdeasCard";
 import { ThisWeekStrip } from "./ThisWeekStrip";
 import { MonthCalendarGrid } from "./MonthCalendarGrid";
 import { PlanReadyBanner } from "./PlanReadyBanner";
@@ -39,15 +39,16 @@ export function WorkspaceHome({
   onBannerDismiss,
   styleResponse,
 }: WorkspaceHomeProps) {
-  // Local copy of persona so IdeasCard can optimistically update idea_seeds
+  // Local copy of persona so IdeasSidebar can optimistically update idea_seeds
   // without triggering a full plan refresh (saves avoid a round-trip to the parent).
   const [persona, setPersona] = useState<PersonaResponse>(personaProp);
 
   // When the parent refreshes (e.g. plan regeneration, poll cycle), propagate
   // changes from outside while keeping any in-flight local saves stable.
   // Keyed on the parent's generation_started_at so a new plan generation always
-  // wins; idea_seeds changes from IdeasCard's own saves are the one authoritative
-  // local mutation path and do NOT come through personaProp until the next poll.
+  // wins; idea_seeds changes from IdeasSidebar's own saves are the one
+  // authoritative local mutation path and do NOT come through personaProp
+  // until the next poll.
   useEffect(
     () => {
       setPersona(personaProp);
@@ -59,6 +60,7 @@ export function WorkspaceHome({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [personaProp.generation_started_at, personaProp.persona_status],
   );
+
   const items = plan.items ?? [];
   const todayDay = calendarToday(plan.start_date, plan.horizon_days);
 
@@ -73,7 +75,7 @@ export function WorkspaceHome({
     });
   }
 
-  // Find the first non-ready item for TodayCard and behindBy
+  // Find the first non-ready item for HomeTodayCard and behindBy
   const nextActionItem = items.find((i) => i.status !== "ready") ?? null;
   const behind = behindBy(todayDay, nextActionItem?.day_index ?? null);
 
@@ -85,41 +87,22 @@ export function WorkspaceHome({
           component in this subtree) can render fonts in their REAL typeface. The item page
           already does this; WorkspaceHome is a separate subtree so we inject it here too. */}
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
-      <div className="mx-auto max-w-[1180px] px-6 pb-24 pt-8">
+
+      <div className="mx-auto max-w-[1280px] px-6 pb-24 pt-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
-          {/* Left rail */}
-          <div className="flex flex-col gap-4 lg:w-[360px] lg:shrink-0">
-            <TodayCard
-              nextItem={nextActionItem}
+
+          {/* ── Left rail: "Your ideas" sidebar ───────────────────────────── */}
+          {/* Mobile: stacks above Today card
+              Desktop: sticky left rail w-64 */}
+          <div className="w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-8">
+            <IdeasSidebar
               plan={plan}
               persona={persona}
-              horizonDays={plan.horizon_days}
-              calendarDay={todayDay}
-              weekdayLabel={weekdayLabel}
-              behind={behind}
-              onRefresh={onRefresh}
-            />
-            <MomentumCard plan={plan} />
-            {/* M1: "Your ideas" — persistent idea seeds that survive across plans */}
-            <IdeasCard
-              persona={persona}
               onSaved={setPersona}
-              planId={plan.id}
-              onRegenerate={onRefresh}
             />
-            <PersonaCard persona={persona} />
-            {/* Creator Agent M1: StyleCard — absent when USER_STYLE_ENABLED=false */}
-            {styleResponse && (
-              <StyleCard
-                style={styleResponse.style}
-                status={styleResponse.status}
-                styleSetPreview={styleResponse.style_set_preview}
-                fontPreview={styleResponse.font_preview}
-              />
-            )}
           </div>
 
-          {/* Right column */}
+          {/* ── Center / main column ──────────────────────────────────────── */}
           <div className="flex flex-1 flex-col gap-6">
             {/* Plan-ready one-time banner */}
             <PlanReadyBanner
@@ -133,24 +116,58 @@ export function WorkspaceHome({
               <SeedUploadCard plan={plan} onError={onError} onRefresh={onRefresh} />
             )}
 
+            {/* A. Today card — dominant, Fraunces heading + shot chips + one CTA */}
+            <HomeTodayCard
+              nextItem={nextActionItem}
+              plan={plan}
+              horizonDays={plan.horizon_days}
+              calendarDay={todayDay}
+              weekdayLabel={weekdayLabel}
+              behind={behind}
+              onRefresh={onRefresh}
+            />
+
+            {/* B. "This week" strip */}
             <ThisWeekStrip
               plan={plan}
               todayDay={todayDay}
               regenerating={regenerating}
             />
+
+            {/* C. Month calendar grid */}
             <MonthCalendarGrid
               plan={plan}
               todayDay={todayDay}
               regenerating={regenerating}
             />
 
-            {/* Footage pool — a power-up below the calendar; suppressed during
-                activation (SeedUploadCard IS the pool at that moment). */}
+            {/* Footage pool — power-up below calendar; suppressed during activation */}
             {!activating && (
               <FootagePool plan={plan} onRefresh={onRefresh} onError={onError} />
             )}
 
-            {/* SteerInput — recessive, below the grid */}
+            {/* Secondary cards — recessive, below the primary flow */}
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+              <div className="flex-1">
+                <MomentumCard plan={plan} />
+              </div>
+              <div className="flex-1">
+                <PersonaCard persona={persona} />
+              </div>
+              {/* Creator Agent M1: StyleCard — absent when USER_STYLE_ENABLED=false */}
+              {styleResponse && (
+                <div className="flex-1">
+                  <StyleCard
+                    style={styleResponse.style}
+                    status={styleResponse.status}
+                    styleSetPreview={styleResponse.style_set_preview}
+                    fontPreview={styleResponse.font_preview}
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* SteerInput — recessive, below everything */}
             <div className="mt-2">
               {regenerating && (
                 <p className="mb-3 flex items-center gap-2 text-[13px] text-[#71717a]">

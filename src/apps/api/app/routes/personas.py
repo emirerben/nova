@@ -77,6 +77,10 @@ class PersonaEdit(BaseModel):
     # content_pillars). Omit to leave the existing seeds unchanged. Seeds with
     # no id get server-stamped; text + pillar are sanitized before storage.
     idea_seeds: list[IdeaSeed] | None = None
+    # "What kind of videos do you make?" onboarding signal. Stored in persona JSONB
+    # so it is readable by planners + archetype dispatch WITHOUT USER_STYLE_ENABLED.
+    # Allowed values: talking_head | montage | day_vlog | mixed.
+    footage_type_bias: list[str] | None = None
 
 
 class PersonaResponse(BaseModel):
@@ -1168,5 +1172,115 @@ async def style_agent_turn(
         suggestions=intent_result.suggestions,
         applied=applied,
         intent=intent_result.intent,
+        persona_status=row.persona_status,
+    )
+
+
+# ── Onboarding fork ───────────────────────────────────────────────────────────
+
+
+_VALID_CONTENT_MODES = frozenset({"existing_footage", "create_new", "mixed"})
+
+
+class OnboardingForkRequest(BaseModel):
+    content_mode: str
+    topic: str | None = None
+    intent: str | None = None
+    # Optional: durable clip paths from the onboarding edit job (server-derived,
+    # lifecycle-exempt under generative-jobs/*/sources/). Stored in questionnaire
+    # so create_plan can carry them as seed_clip_paths without the 422 prefix guard.
+    onboarding_clip_paths: list[str] | None = None
+    onboarding_edit_job_id: str | None = None
+    onboarding_payoff_done: bool | None = None
+
+
+class OnboardingForkResponse(BaseModel):
+    persona_id: str
+    persona_status: str
+
+
+@router.post("/onboarding-fork", response_model=OnboardingForkResponse)
+async def onboarding_fork(
+    body: OnboardingForkRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OnboardingForkResponse:
+    """Record the onboarding fork choice (content_mode, topic, intent) on the persona.
+
+    Gets or creates the Persona row using the same race-safe pattern as chat_start.
+    Merges into `questionnaire` (read-modify-write) — NEVER clobbers existing keys
+    so a post-scrape tiktok_handle is preserved.
+
+    Seeds interview_turns with a synthetic user turn (answered) so chat_start opens
+    at the NEXT question rather than re-asking what the footage is about.
+    Does NOT leave an unanswered agent turn as the last entry — that would trigger
+    the resume-without-LLM stall in chat_start (~line 668).
+    """
+    from sqlalchemy.exc import IntegrityError  # noqa: PLC0415
+
+    if body.content_mode not in _VALID_CONTENT_MODES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"content_mode must be one of {sorted(_VALID_CONTENT_MODES)},"
+                f" got {body.content_mode!r}"
+            ),
+        )
+
+    existing = (
+        await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+    ).scalar_one_or_none()
+
+    if existing is None:
+        row = PersonaRow(
+            user_id=user.id,
+            questionnaire={"interview_turns": []},
+            persona_status="chat_pending",
+        )
+        db.add(row)
+        try:
+            await db.commit()
+            await db.refresh(row)
+        except IntegrityError:
+            # tiktok_scrape or chat_start beat us to the INSERT — re-fetch.
+            await db.rollback()
+            row = (
+                await db.execute(select(PersonaRow).where(PersonaRow.user_id == user.id))
+            ).scalar_one()
+    else:
+        await db.refresh(existing)
+        row = existing
+
+    # Read-modify-write: preserve all existing questionnaire keys (tiktok_handle,
+    # interview_turns from a prior scrape, etc.).
+    q = dict(row.questionnaire or {})
+    q["content_mode"] = body.content_mode
+    if body.topic:
+        q["onboarding_topic"] = body.topic
+    if body.intent:
+        q["onboarding_intent"] = body.intent
+    if body.onboarding_clip_paths is not None:
+        q["onboarding_clip_paths"] = body.onboarding_clip_paths
+    if body.onboarding_edit_job_id is not None:
+        q["onboarding_edit_job_id"] = body.onboarding_edit_job_id
+    if body.onboarding_payoff_done is True:
+        q["onboarding_payoff_done"] = True
+
+    # Seed a synthetic answered-user turn so chat_start asks the NEXT question.
+    # Only seed if no prior interview_turns exist (respect any previous chat progress).
+    # Never leave an agent turn as the last entry — that stalls the resume branch.
+    if body.topic or body.intent:
+        existing_turns = q.get("interview_turns", [])
+        if not existing_turns:
+            seed_text = body.topic or ""
+            if body.intent:
+                seed_text = f"{seed_text}. I want viewers to {body.intent}".strip(". ")
+            q["interview_turns"] = [{"role": "user", "content": seed_text}]
+
+    row.questionnaire = q
+    await db.commit()
+
+    return OnboardingForkResponse(
+        persona_id=str(row.id),
         persona_status=row.persona_status,
     )
