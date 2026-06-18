@@ -545,6 +545,14 @@ export default function PlanItemPage() {
             <div className="mx-auto max-w-[200px]">
               <Hero variant={focused} generating={isGenerating} />
             </div>
+            {item.edit_format && (
+              <div className="mb-2">
+                <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
+                  {item.edit_format}
+                </span>
+              </div>
+            )}
+
 
             {/* Nova helper — one quiet line; expands to AskNovaPanel on request.
                 Collapses conformance critic + Ask Nova into a single surface. */}

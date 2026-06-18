@@ -277,6 +277,8 @@ export interface PlanItem {
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
+  /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
+  edit_format?: string | null;
   /** BYO-Ideas provenance: the seed that generated this item, if any. */
   source_idea_seed_id?: string | null;
 }

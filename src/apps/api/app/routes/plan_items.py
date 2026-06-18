@@ -135,6 +135,9 @@ class PlanItemResponse(BaseModel):
     # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Populated on the item
     # GET (the page's poll path); other responses default to create_new.
     content_mode: str = "create_new"
+    # Render archetype assigned at plan-generation time (e.g. "montage",
+    # "talking_head"). Null for items generated before this field shipped.
+    edit_format: str | None = None
     # BYO-Ideas provenance: the idea seed that seeded this item, if any.
     # Null for items generated from scratch (no seed match).
     source_idea_seed_id: str | None = None
@@ -194,6 +197,7 @@ def plan_item_response(
         content_mode=content_mode
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
+        edit_format=item.edit_format,
         source_idea_seed_id=item.source_idea_seed_id
         if isinstance(item.source_idea_seed_id, str)
         else None,
