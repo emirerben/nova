@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from app.models import PlanItem
 
-_MAX_CLIPS_PER_ITEM = 20  # mirrors routes/plan_items.py; kept in sync, not imported (avoids circ)
+_MAX_CLIPS_PER_ITEM = 30  # mirrors routes/plan_items.py; kept in sync, not imported (avoids circ)
 
 
 @dataclass
@@ -52,9 +52,8 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
     engine, which currently treats clips as an unordered pool.
 
     Validates (raises ClipAssignmentError on violation):
-      - Total count ≤ _MAX_CLIPS_PER_ITEM (20)
+      - Total count ≤ _MAX_CLIPS_PER_ITEM (30)
       - No duplicate gcs_path within the batch
-      - No duplicate shot_id within the batch (one clip per shot)
 
     Does NOT validate GCS path prefixes — that is the caller's responsibility.
     """
@@ -69,13 +68,8 @@ def set_item_clips(item: PlanItem, assignments: list[ClipAssignment]) -> None:
             raise ClipAssignmentError(f"Duplicate gcs_path in one request: {a.gcs_path}")
         seen_paths.add(a.gcs_path)
 
-    # Dupe-check shot_ids (only non-null — pool clips don't deduplicate on shot_id).
-    seen_shot_ids: set[str] = set()
-    for a in assignments:
-        if a.shot_id is not None:
-            if a.shot_id in seen_shot_ids:
-                raise ClipAssignmentError(f"Duplicate shot_id in one request: {a.shot_id}")
-            seen_shot_ids.add(a.shot_id)
+    # Multiple clips per shot_id are allowed (a shot may request several clips,
+    # e.g. "5+ clips from the run"). Only gcs_path must be unique.
 
     # Derive clip_gcs_paths: shot-slot clips first, pool after.
     slot_clips = [a.gcs_path for a in assignments if a.shot_id is not None]

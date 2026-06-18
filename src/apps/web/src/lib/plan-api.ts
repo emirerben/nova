@@ -251,6 +251,8 @@ export interface FilmingShot {
   what: string;
   how: string;
   duration_s: number;
+  /** How many clips the creator should film for this shot (default 1). */
+  clip_count?: number;
 }
 
 /** One clip assignment — shot_id=null means extra-footage pool. */
@@ -507,6 +509,23 @@ export function attachClips(
 
 export function generatePlanItem(itemId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/generate`, { method: "POST" });
+}
+
+/** Patch one shot in the filming guide (editable text, duration, clip_count). */
+export function updatePlanItemShot(
+  itemId: string,
+  shotId: string,
+  patch: { what?: string; how?: string; duration_s?: number; clip_count?: number },
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/shots/${shotId}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+/** Generate a fresh filming guide for an item whose guide is currently empty. */
+export function generatePlanItemGuide(itemId: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/generate-guide`, { method: "POST" });
 }
 
 export function generateFirstWeek(

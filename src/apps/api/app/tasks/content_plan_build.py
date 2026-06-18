@@ -391,18 +391,21 @@ def _narrative_clip_order(item: PlanItem, clip_paths: list[str]) -> tuple[list[s
     assignments = list(item.clip_assignments or [])
     if not guide or not assignments:
         return clip_paths, 0
-    path_by_shot: dict[str, str] = {
-        str(a.get("shot_id")): str(a.get("gcs_path"))
-        for a in assignments
-        if isinstance(a, dict) and a.get("shot_id") and a.get("gcs_path")
-    }
+    paths_by_shot: dict[str, list[str]] = {}
+    for a in assignments:
+        if not isinstance(a, dict):
+            continue
+        sid = str(a.get("shot_id") or "")
+        path = str(a.get("gcs_path") or "")
+        if sid and path:
+            paths_by_shot.setdefault(sid, []).append(path)
     known_paths = set(clip_paths)
     ordered: list[str] = []
     for shot in guide:
         sid = str(shot.get("shot_id") or "")
-        path = path_by_shot.get(sid)
-        if path and path in known_paths and path not in ordered:
-            ordered.append(path)
+        for path in paths_by_shot.get(sid, []):
+            if path in known_paths and path not in ordered:
+                ordered.append(path)
     if not ordered:
         return clip_paths, 0
     pool = [p for p in clip_paths if p not in ordered]
@@ -1224,10 +1227,7 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
             free_slots += list(range(horizon + 1, horizon + 1 + extra))
 
         # Collect (item_id, idea_text, assigned_slot) for the agent loop.
-        work = [
-            (item.id, item.idea or "", free_slots[i])
-            for i, item in enumerate(bare_items)
-        ]
+        work = [(item.id, item.idea or "", free_slots[i]) for i, item in enumerate(bare_items)]
 
         persona = (
             Persona(**persona_row.persona)

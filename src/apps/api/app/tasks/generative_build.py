@@ -207,6 +207,11 @@ def _run_generative_job(job_id: str) -> None:
         # intro_writer for hook voice. Absent on public/legacy jobs → empty list →
         # byte-identical to pre-M3 behavior.
         filming_guide_candidates: list[dict] = list(all_candidates.get("filming_guide") or [])
+        # Creator clip notes (WS5 / dogfood feedback #3). gcs_path → note_text,
+        # only populated on plan-item jobs where the creator typed a note. Absent
+        # on public/legacy jobs → empty dict → byte-identical baseline. Forwarded
+        # to intro_writer for hook grounding.
+        clip_notes_candidates: dict = dict(all_candidates.get("clip_notes") or {})
         # Narrative clip order (filming-guide alignment): the first N entries of
         # clip_paths are the guide's shot clips, in guide order (derived at
         # dispatch by _dispatch_item_render). 0/absent on public/legacy jobs.
@@ -297,6 +302,7 @@ def _run_generative_job(job_id: str) -> None:
                 language=language,
                 persona=persona,
                 filming_guide=filming_guide_candidates,
+                clip_notes=clip_notes_candidates,
             )
             # Creator Agent M1: if the user has a pinned style_set_id, bypass the
             # per-render AgenticStyleSelectorAgent and use it directly. This ensures
@@ -1653,6 +1659,9 @@ def _run_regenerate_variant(
         filming_guide_regen: list[dict] = list(
             (job.all_candidates or {}).get("filming_guide") or []
         )
+        # Re-renders inherit the creator clip notes too (WS5), so a retext/swap_song
+        # hook still has the per-clip context the creator provided at job creation.
+        clip_notes_regen: dict = dict((job.all_candidates or {}).get("clip_notes") or {})
         # Re-renders inherit the narrative clip order too — otherwise the first
         # song swap would silently reshuffle a guide-ordered edit back to random.
         narrative_shot_count_regen: int = int(
@@ -1998,6 +2007,7 @@ def _run_regenerate_variant(
                     language=language,
                     persona=persona,
                     filming_guide=filming_guide_regen,
+                    clip_notes=clip_notes_regen,
                 ),
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
@@ -2451,6 +2461,7 @@ def _run_text_agents(
     language: str = "en",
     persona: dict | None = None,
     filming_guide: list[dict] | None = None,
+    clip_notes: dict | None = None,
 ) -> tuple[Any, dict]:
     """Run overlay_format_matcher → intro_writer. Returns (IntroWriterOutput|None, form dict).
 
@@ -2469,11 +2480,16 @@ def _run_text_agents(
     the intended shots so the hook can reflect the shooting intent. Empty for public
     jobs → byte-identical to pre-M3 behavior.
 
+    `clip_notes` is the optional per-clip creator notes (WS5 / dogfood feedback #3):
+    gcs_path → note_text. Only populated on plan-item jobs where the creator typed a
+    note. Empty for public jobs → byte-identical baseline.
+
     Best-effort: any failure yields (None, {}) so the text variants render footage
     without an intro rather than failing the job.
     """
     persona = persona or {}
     filming_guide = filming_guide or []
+    clip_notes = clip_notes or {}
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RefusalError, RunContext, TerminalError  # noqa: PLC0415
@@ -2515,6 +2531,9 @@ def _run_text_agents(
             # Filming guide (Creator Agent M3 / B2). Shot-list context for the
             # hook writer — DATA only, never a command. Empty → byte-identical.
             filming_guide=filming_guide,
+            # Creator clip notes (WS5). Per-clip context the creator typed before
+            # submitting. DATA only, re-sanitized in intro_writer. Empty → byte-identical.
+            clip_notes=clip_notes,
             form=form.model_dump(),
             exemplars=exemplars,
             language=language,

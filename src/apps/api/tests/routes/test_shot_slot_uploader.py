@@ -66,6 +66,8 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None, assignmen
     item.notes = None
     item.scenes = []
     item.source_idea_seed_id = None
+    item.source_idea_seed_text = None
+    item.edit_format = "montage"
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -115,9 +117,10 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
 
 
 def test_set_item_clips_raises_on_cap() -> None:
+    # Cap was raised from 20 → 30 (multi-clip per shot: ~4 shots × 7 clips).
     item = MagicMock()
     with pytest.raises(ClipAssignmentError, match="Too many clips"):
-        set_item_clips(item, [ClipAssignment(gcs_path=f"p/{i}.mp4") for i in range(21)])
+        set_item_clips(item, [ClipAssignment(gcs_path=f"p/{i}.mp4") for i in range(31)])
 
 
 def test_set_item_clips_raises_on_dup_path() -> None:
@@ -132,16 +135,20 @@ def test_set_item_clips_raises_on_dup_path() -> None:
         )
 
 
-def test_set_item_clips_raises_on_dup_shot_id() -> None:
+def test_set_item_clips_allows_multiple_clips_per_shot_id() -> None:
+    """Multiple clips with the same shot_id are now allowed (multi-clip per shot,
+    e.g. 'film 5+ clips from the run'). The old dup-shot_id check was removed."""
     item = MagicMock()
-    with pytest.raises(ClipAssignmentError, match="Duplicate shot_id"):
-        set_item_clips(
-            item,
-            [
-                ClipAssignment(gcs_path="p/a.mp4", shot_id="sid-1"),
-                ClipAssignment(gcs_path="p/b.mp4", shot_id="sid-1"),
-            ],
-        )
+    # Should NOT raise — two clips for the same shot_id is the multi-clip feature.
+    set_item_clips(
+        item,
+        [
+            ClipAssignment(gcs_path="p/a.mp4", shot_id="sid-1"),
+            ClipAssignment(gcs_path="p/b.mp4", shot_id="sid-1"),
+        ],
+    )
+    # Both clips for shot-1 should appear in clip_gcs_paths (shot-slot clips first).
+    assert item.clip_gcs_paths == ["p/a.mp4", "p/b.mp4"]
 
 
 def test_set_item_clips_allows_multiple_pool_clips() -> None:
@@ -195,7 +202,9 @@ def test_attach_clips_rejects_unknown_shot_id(client: TestClient) -> None:
     assert "shot_id" in resp.json()["detail"]
 
 
-def test_attach_clips_rejects_dup_shot_id(client: TestClient) -> None:
+def test_attach_clips_allows_multiple_clips_per_shot_id(client: TestClient) -> None:
+    """Multiple clips per shot_id are now accepted (multi-clip-per-shot feature).
+    The route should return 200 and store both assignments with the same shot_id."""
     user = _user()
     sid = uuid.uuid4().hex
     guide = [_shot(shot_id=sid)]
@@ -217,7 +226,11 @@ def test_attach_clips_rejects_dup_shot_id(client: TestClient) -> None:
                 ],
             },
         )
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    data = resp.json()
+    # Both clips should appear in the response
+    assert len(data["clip_assignments"]) == 2
+    assert all(a["shot_id"] == sid for a in data["clip_assignments"])
 
 
 def test_attach_clips_rejects_dup_gcs_path(client: TestClient) -> None:
@@ -251,7 +264,7 @@ def test_attach_clips_rejects_over_cap(client: TestClient) -> None:
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
-    paths = [f"users/{user.id}/plan/{item.id}/{i}.mp4" for i in range(21)]
+    paths = [f"users/{user.id}/plan/{item.id}/{i}.mp4" for i in range(31)]
     with patch("app.tasks.conformance_build.analyze_item_conformance") as mock_task:
         mock_task.delay = MagicMock()
         resp = client.post(
