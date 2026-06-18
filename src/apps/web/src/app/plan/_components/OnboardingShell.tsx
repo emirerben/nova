@@ -11,13 +11,16 @@
  *
  *   RIGHT PANE (flex-1, max-w-lg centered):
  *     Step 1 — TikTok: <TikTokPreScreen>
- *     Step 2 — What you make: 4 large toggle cards
+ *     Step 2 — What you make: 4 multi-select toggle cards
  *     Step 3 — Style: <ChatInterview> while persona building, then <PersonaEditor>
  *     Step 4 — First plan: navigate to /plan workspace (handled by caller)
  *
  * Internal branch on TikTok signal:
  *   - Handle submitted with reach → Step 1 done, advance to Step 2.
  *   - Skipped / failed → Step 1 shown as "Skipped" (zinc dot), still advance.
+ *
+ * Step ordering is linear: TikTok → What you make → AI interview → Persona reveal → plan.
+ * The edit/footage funnel is available from the workspace, not here.
  *
  * This component owns its own step-index state and drives the visual rail;
  * page.tsx remains the API orchestrator (it still owns persona/plan state and
@@ -176,20 +179,26 @@ function StepRail({
   );
 }
 
-// ── Step 2: What you make ────────────────────────────────────────────────────
+// ── Step 2: What you make (multi-select) ─────────────────────────────────────
 
 function WhatYouMakeStep({
   preselected,
   onContinue,
 }: {
-  preselected?: string;
-  onContinue: (value: string) => Promise<void>;
+  preselected?: string[];
+  onContinue: (values: string[]) => Promise<void>;
 }) {
-  const [selected, setSelected] = useState<string>(preselected ?? "");
+  const [selected, setSelected] = useState<string[]>(preselected ?? []);
   const [saving, setSaving] = useState(false);
 
+  function toggle(value: string) {
+    setSelected((prev) =>
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value],
+    );
+  }
+
   async function handleContinue() {
-    if (!selected || saving) return;
+    if (selected.length === 0 || saving) return;
     setSaving(true);
     try {
       await onContinue(selected);
@@ -207,17 +216,17 @@ function WhatYouMakeStep({
         What do you make?
       </h1>
       <p className="mt-3 text-[#71717a]">
-        Pick the type that fits most — Nova adapts edits to your style.
+        Pick all that apply — Nova adapts edits to your style.
       </p>
 
       <div className="mt-10 grid grid-cols-2 gap-4">
         {FOOTAGE_OPTIONS.map((opt) => {
-          const isSelected = selected === opt.value;
+          const isSelected = selected.includes(opt.value);
           return (
             <button
               key={opt.value}
               type="button"
-              onClick={() => setSelected(opt.value)}
+              onClick={() => toggle(opt.value)}
               className={cn(
                 "flex flex-col gap-1 rounded-2xl border p-6 text-left transition-all",
                 isSelected
@@ -237,13 +246,41 @@ function WhatYouMakeStep({
       <button
         type="button"
         onClick={handleContinue}
-        disabled={!selected || saving}
+        disabled={selected.length === 0 || saving}
         className="mt-10 inline-flex min-h-[48px] items-center rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {saving ? "Saving…" : "Continue →"}
       </button>
     </div>
   );
+}
+
+// ── Derive the right initial step from server state ───────────────────────────
+// Used as a lazy useState initializer so that on remount (e.g. after the edit
+// funnel finishes) the shell opens at the correct step rather than always
+// resetting to TikTok.
+
+function deriveInitialStep(persona: PersonaResponse | null): OnboardingStep {
+  // No persona row yet → start at TikTok.
+  if (!persona) return 1;
+
+  const status = persona.persona_status;
+
+  // Persona already produced → always land on the reveal/Style step.
+  // A returning user who has a persona should never see TikTok again.
+  if (status === "ready" || status === "edited" || status === "failed" || status === "generating") {
+    return 3;
+  }
+
+  // chat_pending: did the user already pick "What you make"?
+  // footage_type_bias is written by patchPersonaFootageType (Step 2 completion).
+  const bias = persona.persona?.footage_type_bias;
+  const madeChoice = Array.isArray(bias) && bias.length > 0;
+  if (madeChoice) return 3; // interview already started
+
+  // chat_pending with no bias → What you make (TikTok was already done; a persona
+  // row only exists once the TikTok step or chatStart created it).
+  return 2;
 }
 
 // ── Main shell ────────────────────────────────────────────────────────────────
@@ -259,8 +296,13 @@ export default function OnboardingShell({
   onRetune,
   error,
 }: OnboardingShellProps) {
-  const [step, setStep] = useState<OnboardingStep>(1);
-  const [tiktokStatus, setTiktokStatus] = useState<TikTokStatus>("pending");
+  // Lazy initializers: derive the right step/tiktokStatus from server state on
+  // mount so that a remount (e.g. after page navigates back from the edit funnel)
+  // doesn't drop the user back to TikTok.
+  const [step, setStep] = useState<OnboardingStep>(() => deriveInitialStep(persona));
+  const [tiktokStatus, setTiktokStatus] = useState<TikTokStatus>(() =>
+    persona ? "done" : "pending",
+  );
 
   // ── Step 1: TikTok ────────────────────────────────────────────────────────
 
@@ -272,10 +314,12 @@ export default function OnboardingShell({
 
   // ── Step 2: What you make ─────────────────────────────────────────────────
 
-  async function handleWhatYouMake(value: string) {
+  async function handleWhatYouMake(values: string[]) {
     if (persona) {
       // Best-effort persist — non-blocking; onboarding continues regardless.
-      await patchPersonaFootageType(persona.id, [value]).catch(() => undefined);
+      // Backend keeps chat_pending status when only footage_type_bias is being set,
+      // so the interview still runs after this write.
+      await patchPersonaFootageType(persona.id, values).catch(() => undefined);
     }
     setStep(3);
   }
@@ -323,11 +367,10 @@ export default function OnboardingShell({
           status={persona.persona_status}
           onSave={onSavePersona}
           onContinue={handlePersonaContinue}
-          continueLabel="Plan my 30 days →"
+          continueLabel="Get my ideas →"
           continuing={planBusy}
           onRetuneFromFeedback={onRetune}
           tiktokProfile={persona.tiktok_profile}
-          onUpdateAnswers={() => setStep(1)}
         />
       );
     }
@@ -357,12 +400,10 @@ export default function OnboardingShell({
             <TikTokPreScreen onContinue={handleTikTok} submitting={tiktokBusy} />
           )}
 
-          {/* Step 2 — What you make */}
+          {/* Step 2 — What you make (multi-select) */}
           {step === 2 && (
             <WhatYouMakeStep
-              preselected={
-                (persona?.persona?.footage_type_bias as string[] | undefined)?.[0]
-              }
+              preselected={persona?.persona?.footage_type_bias as string[] | undefined}
               onContinue={handleWhatYouMake}
             />
           )}
@@ -371,7 +412,7 @@ export default function OnboardingShell({
           {step === 3 && renderStep3()}
 
           {/* Step 4 — Navigating to plan (transient) */}
-          {step === 4 && <GeneratingStateLight label="Building your plan…" />}
+          {step === 4 && <GeneratingStateLight label="Building your ideas…" />}
         </div>
       </main>
     </div>

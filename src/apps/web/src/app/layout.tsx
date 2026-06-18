@@ -6,7 +6,7 @@ import Providers from "./providers";
 export const metadata: Metadata = {
   title: "Nova — Your AI content agent",
   description:
-    "An AI agent that plans your 30-day content calendar, tells you what to film, and edits every video. You just press record.",
+    "An AI agent that gives you video ideas, tells you what to film, and edits every video. You just press record.",
   openGraph: {
     title: "Nova — Your AI content agent",
     description: "An AI agent for your content career.",

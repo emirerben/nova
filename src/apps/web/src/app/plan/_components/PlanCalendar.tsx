@@ -163,7 +163,7 @@ export default function PlanCalendar({
   if (plan.items.length === 0) {
     return (
       <div className="animate-fade-up py-2">
-        <h1 className="mb-1 font-display text-3xl text-[#0c0c0e]">Your 30-day plan</h1>
+        <h1 className="mb-1 font-display text-3xl text-[#0c0c0e]">Your ideas</h1>
         <div className="mt-6 rounded-xl border border-zinc-200 bg-white p-8 text-center shadow-sm">
           <p className="text-[#3f3f46]">Your plan came back empty.</p>
           <p className="mt-2 text-sm text-[#71717a]">
@@ -182,7 +182,7 @@ export default function PlanCalendar({
 
   return (
     <div className="animate-fade-up py-2">
-      <h1 className="mb-1 font-display text-3xl text-[#0c0c0e]">Your 30-day plan</h1>
+      <h1 className="mb-1 font-display text-3xl text-[#0c0c0e]">Your ideas</h1>
       <p className="mb-6 text-[#71717a]">
         Edit any idea. Week 1 is your activation week — film those first.
       </p>

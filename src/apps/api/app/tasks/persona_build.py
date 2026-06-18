@@ -179,7 +179,14 @@ def generate_persona(self, persona_id: str) -> None:  # noqa: ANN001
         row = session.get(Persona, uuid.UUID(str(persona_id)))
         if row is None:
             return
-        row.persona = persona.to_dict()
+        # Preserve onboarding preferences stored before generation ran (e.g.
+        # footage_type_bias from the "What you make" step). These are not part of
+        # the generated Persona schema but must survive the overwrite.
+        prev = dict(row.persona or {})
+        new_persona_dict = persona.to_dict()
+        if "footage_type_bias" in prev:
+            new_persona_dict["footage_type_bias"] = prev["footage_type_bias"]
+        row.persona = new_persona_dict
         row.persona_status = "ready"
         row.error_detail = None
         row.prompt_version = PERSONA_PROMPT_VERSION
