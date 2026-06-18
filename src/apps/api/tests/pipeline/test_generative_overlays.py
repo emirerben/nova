@@ -213,20 +213,21 @@ def test_inject_no_slots_is_noop():
 
 
 def test_build_persistent_overlays_returns_reveal_and_hold():
+    # Use reveal_window_s < hook_window_s so a hold overlay is produced.
     overlays = build_persistent_intro_overlays(
         text="i did not expect this",
         effect="karaoke-line",
-        reveal_window_s=3.0,
+        reveal_window_s=2.0,
         position="center",
     )
     assert len(overlays) == 2
     reveal, hold = overlays
     assert reveal["effect"] == "karaoke-line"
     assert reveal["start_s"] == 0.0
-    assert reveal["end_s"] == 3.0
+    assert reveal["end_s"] == 2.0
     assert hold["effect"] == "static"
-    assert hold["start_s"] == 3.0
-    assert hold["end_s"] == _HOLD_TO_END_S
+    assert hold["start_s"] == 2.0
+    assert hold["end_s"] == 3.0  # capped at HOOK_WINDOW_S default
     # Same screen slot, back-to-back, both no-merge.
     assert reveal["text"] == hold["text"] == "i did not expect this"
     assert reveal["position"] == hold["position"] == "center"
@@ -254,6 +255,8 @@ def _hero_overlays(recipe: dict) -> list[dict]:
 
 
 def test_persistent_intro_emits_reveal_plus_spanning_hold():
+    # Pass hook_window_s=_HOLD_TO_END_S to test the overlay structure independent of
+    # the default cap — the hold must span past EOF when the caller opts into it.
     recipe = {"slots": [{"position": 0, "target_duration_s": 5.0}]}
     out = inject_persistent_intro(
         recipe,
@@ -262,6 +265,7 @@ def test_persistent_intro_emits_reveal_plus_spanning_hold():
         effect="karaoke-line",
         reveal_window_s=3.0,
         position="center",
+        hook_window_s=_HOLD_TO_END_S,
     )
     overlays = _hero_overlays(out)
     assert len(overlays) == 2
@@ -292,7 +296,7 @@ def test_persistent_intro_karaoke_hold_uses_highlight_color():
         0,
         text="hello world",
         effect="karaoke-line",
-        reveal_window_s=3.0,
+        reveal_window_s=2.0,
         text_color="#FFFFFF",
         highlight_color="#FFD24A",
     )
@@ -308,7 +312,7 @@ def test_persistent_intro_non_karaoke_hold_uses_text_color():
         0,
         text="hello world",
         effect="pop-in",
-        reveal_window_s=3.0,
+        reveal_window_s=2.0,
         text_color="#FFFFFF",
         highlight_color="#FFD24A",
     )
@@ -324,7 +328,7 @@ def test_persistent_intro_style_fields_on_both_overlays():
         0,
         text="ai answer",
         effect="stream-in",
-        reveal_window_s=3.0,
+        reveal_window_s=2.0,
         font_family="Space Mono",
         text_size_px=56,
         position_x_frac=0.06,
@@ -364,7 +368,7 @@ def test_persistent_intro_only_hero_slot_gets_overlays():
         ]
     }
     out = inject_persistent_intro(
-        recipe, 0, text="stays up", effect="karaoke-line", reveal_window_s=3.0
+        recipe, 0, text="stays up", effect="karaoke-line", reveal_window_s=2.0
     )
     assert len(out["slots"][0]["text_overlays"]) == 2
     assert out["slots"][1].get("text_overlays") in (None, [])
@@ -373,7 +377,8 @@ def test_persistent_intro_only_hero_slot_gets_overlays():
 def test_persistent_intro_survives_collect_absolute_overlays():
     # End-to-end against the REAL burn-time overlay collection: the reveal and hold must
     # NOT merge (Dedup 1), the hold must span past every later cut, and the karaoke
-    # reveal must keep its word_timings.
+    # reveal must keep its word_timings. Explicit hook_window_s=_HOLD_TO_END_S to test
+    # the collect path independent of the default cap.
     from app.pipeline.agents.gemini_analyzer import AssemblyStep
     from app.tasks.template_orchestrate import _collect_absolute_overlays
 
@@ -382,7 +387,12 @@ def test_persistent_intro_survives_collect_absolute_overlays():
         for i, d in enumerate((5.0, 4.0, 6.0))
     ]
     inject_persistent_intro(
-        {"slots": slots}, 0, text="i did not expect", effect="karaoke-line", reveal_window_s=3.0
+        {"slots": slots},
+        0,
+        text="i did not expect",
+        effect="karaoke-line",
+        reveal_window_s=3.0,
+        hook_window_s=_HOLD_TO_END_S,
     )
     steps = [AssemblyStep(slot=s, clip_id=f"c{i}", moment={}) for i, s in enumerate(slots)]
     slot_durs = [s["target_duration_s"] for s in slots]
@@ -413,6 +423,9 @@ def _cluster_overlays(**kw):
         reveal_window_s=3.0,
         layout="cluster",
         text_size_px=60,
+        # Use legacy end-of-file cap so existing cluster tests verify overlay structure
+        # independent of the hook-window default.
+        hook_window_s=_HOLD_TO_END_S,
     )
     defaults.update(kw)
     return build_persistent_intro_overlays(**defaults)
@@ -461,13 +474,14 @@ def test_cluster_engine_failure_falls_back_to_linear(monkeypatch):
         raise RuntimeError("engine exploded")
 
     monkeypatch.setattr(ic, "compute_cluster_blocks", boom)
-    overlays = _cluster_overlays()
+    overlays = _cluster_overlays()  # uses hook_window_s=_HOLD_TO_END_S
     linear = build_persistent_intro_overlays(
         text="what's your favorite place?",
         effect="fade-in",
         reveal_window_s=3.0,
         layout="linear",
         text_size_px=60,
+        hook_window_s=_HOLD_TO_END_S,
     )
     assert overlays == linear  # exact linear pair — fallback parity
 
@@ -504,6 +518,7 @@ def test_inject_persistent_intro_forwards_cluster_layout():
         reveal_window_s=3.0,
         layout="cluster",
         text_size_px=60,
+        hook_window_s=_HOLD_TO_END_S,
     )
     overlays = out["slots"][0]["text_overlays"]
     assert len(overlays) >= 4  # multi-block cluster, not the linear pair
@@ -821,3 +836,75 @@ def test_cluster_intro_default_style_is_none_legacy(monkeypatch):
         text_size_px=60,
     )
     assert seen == [None]
+
+
+# ── hook_window_s — time-boxing the hook text ─────────────────────────────────
+
+
+def test_hook_window_caps_hold_end_s():
+    # When hook_window_s is set, the static hold must not extend past it.
+    overlays = build_persistent_intro_overlays(
+        text="you won't believe this",
+        effect="fade-in",
+        reveal_window_s=2.0,
+        hook_window_s=3.0,
+    )
+    reveal, hold = overlays
+    assert reveal["start_s"] == 0.0
+    assert reveal["end_s"] == 2.0
+    assert hold["start_s"] == 2.0
+    assert hold["end_s"] == 3.0  # capped at hook_window_s, not _HOLD_TO_END_S
+
+
+def test_hook_window_omits_hold_when_reveal_fills_window():
+    # When reveal_window_s >= hook_window_s there is nothing left to hold.
+    overlays = build_persistent_intro_overlays(
+        text="you won't believe this",
+        effect="fade-in",
+        reveal_window_s=3.0,
+        hook_window_s=3.0,
+    )
+    assert len(overlays) == 1
+    assert overlays[0]["effect"] == "fade-in"
+
+
+def test_hook_window_respected_by_inject():
+    recipe = {"slots": [{"position": 0, "target_duration_s": 10.0}]}
+    out = inject_persistent_intro(
+        recipe,
+        0,
+        text="catch your eye",
+        effect="pop-in",
+        reveal_window_s=2.0,
+        hook_window_s=3.0,
+    )
+    reveal, hold = _hero_overlays(out)
+    assert hold["end_s"] == 3.0
+
+
+def test_hook_window_default_is_hook_window_s_constant():
+    from app.pipeline.generative_overlays import HOOK_WINDOW_S
+
+    # Default behaviour: the hold is time-boxed to HOOK_WINDOW_S.
+    overlays = build_persistent_intro_overlays(
+        text="first seconds matter",
+        effect="pop-in",
+        reveal_window_s=2.0,
+    )
+    reveal, hold = overlays
+    assert hold["end_s"] == HOOK_WINDOW_S
+
+
+def test_hook_window_cluster_hold_capped():
+    # Cluster path: each block's hold must also respect hook_window_s.
+    overlays = build_persistent_intro_overlays(
+        text="what is your story here",
+        effect="fade-in",
+        reveal_window_s=3.0,
+        layout="cluster",
+        text_size_px=60,
+        hook_window_s=3.0,
+    )
+    holds = [o for o in overlays if o["effect"] == "static"]
+    for h in holds:
+        assert h["end_s"] <= 3.0, f"hold end_s {h['end_s']} exceeds hook_window_s 3.0"
