@@ -67,17 +67,42 @@ class ContentPlanResponse(BaseModel):
     pool_status: str = "none"
     pool_clip_count: int = 0
     pool_matched_count: int = 0
+    # BYO-Ideas (M1): idea seeds from the persona, included here so the plan-home
+    # sidebar can show them with their in_plan status without a separate persona call.
+    # Empty list when the persona has no seeds or when the plan has no linked persona.
+    idea_seeds: list[dict] = []
 
 
-def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
+def _plan_response(
+    plan: ContentPlan,
+    idea_seeds: list[dict] | None = None,
+    seed_text_by_id: dict[str, str] | None = None,
+) -> ContentPlanResponse:
     pool = plan.pool or {}
     pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
+    _seed_map = seed_text_by_id or {}
+
+    # Reconcile matched_item_id: if the clip is no longer in the item's
+    # clip_gcs_paths (user removed/replaced it), reset matched_item_id to None
+    # so pool_matched_count stays accurate and "Match again" doesn't skip it.
+    # Read-side only — no DB write in this pass.
+    item_clips_index: dict[str, set[str]] = {
+        str(it.id): set(it.clip_gcs_paths or []) for it in plan.items
+    }
+    for clip in pool_clips:
+        mid = clip.get("matched_item_id")
+        if not mid:
+            continue
+        item_paths = item_clips_index.get(str(mid))
+        if item_paths is None or clip.get("gcs_path") not in item_paths:
+            clip["matched_item_id"] = None
+
     return ContentPlanResponse(
         id=str(plan.id),
         plan_status=plan.plan_status,
         horizon_days=plan.horizon_days,
         events=plan.events,
-        items=[plan_item_response(it) for it in plan.items],
+        items=[plan_item_response(it, seed_text_by_id=_seed_map) for it in plan.items],
         activation_status=plan.activation_status,
         seed_clip_count=len(plan.seed_clip_paths or []),
         generation_started_at=plan.generation_started_at,
@@ -86,6 +111,7 @@ def _plan_response(plan: ContentPlan) -> ContentPlanResponse:
         pool_status=str(pool.get("status") or "none"),
         pool_clip_count=len(pool_clips),
         pool_matched_count=sum(1 for c in pool_clips if c.get("matched_item_id")),
+        idea_seeds=idea_seeds or [],
     )
 
 
@@ -104,7 +130,87 @@ async def create_plan(
             detail="Persona must be ready before generating a content plan",
         )
 
+    from app.config import settings  # noqa: PLC0415
+
     horizon = max(1, min(body.horizon_days or 30, 60))
+
+    if settings.idea_centric_plan_enabled:
+        # Idea-centric mode: plan starts ready; no auto-generation.
+        # Materialize one lightweight PlanItem per existing idea_seed that does not
+        # already have a PlanItem (guard: check source_idea_seed_id linkage to avoid
+        # duplicating ideas when a user creates a second plan from the same persona).
+        plan = ContentPlan(
+            user_id=user.id,
+            persona_id=persona.id,
+            events={"text": body.events} if body.events else None,
+            plan_status="ready",
+            horizon_days=horizon,
+        )
+        db.add(plan)
+        await db.commit()
+        await db.refresh(plan)
+
+        # Seed-pool carry (onboarding clips).
+        onboarding_paths = list((persona.questionnaire or {}).get("onboarding_clip_paths", []))
+        if onboarding_paths:
+            durable = [
+                p for p in onboarding_paths if p.startswith("generative-jobs/") and "/sources/" in p
+            ]
+            if durable:
+                plan.seed_clip_paths = durable
+                await db.commit()
+
+        # Materialize seeds that don't already have a PlanItem.
+        raw_seeds = persona.idea_seeds if isinstance(persona.idea_seeds, list) else []
+        if raw_seeds:
+            existing_seed_ids = set()  # all source_idea_seed_ids already in this plan
+            position = 0
+            for seed in raw_seeds:
+                if not isinstance(seed, dict) or not seed.get("text"):
+                    continue
+                seed_id = str(seed.get("id") or "")
+                if seed_id and seed_id in existing_seed_ids:
+                    continue
+                if seed_id:
+                    existing_seed_ids.add(seed_id)
+                db.add(
+                    PlanItem(
+                        content_plan_id=plan.id,
+                        idea=str(seed["text"]),
+                        theme=None,
+                        day_index=None,
+                        position=position,
+                        item_status="idea",
+                        source_idea_seed_id=seed_id or None,
+                        scenes=[],
+                    )
+                )
+                position += 1
+            if position > 0:
+                await db.commit()
+
+        await db.refresh(plan)
+        items = (
+            (
+                await db.execute(
+                    select(PlanItem)
+                    .where(PlanItem.content_plan_id == plan.id)
+                    .options(selectinload(PlanItem.current_job))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return ContentPlanResponse(
+            id=str(plan.id),
+            plan_status=plan.plan_status,
+            horizon_days=plan.horizon_days,
+            events=plan.events,
+            items=[plan_item_response(it) for it in items],
+            idea_seeds=raw_seeds,
+        )
+
+    # Legacy mode (kill switch off): auto-generate on create.
     plan = ContentPlan(
         user_id=user.id,
         persona_id=persona.id,
@@ -117,10 +223,19 @@ async def create_plan(
     await db.commit()
     await db.refresh(plan)
 
+    # Server-side seed-pool carry from onboarding edit job.
+    onboarding_paths = list((persona.questionnaire or {}).get("onboarding_clip_paths", []))
+    if onboarding_paths:
+        durable = [
+            p for p in onboarding_paths if p.startswith("generative-jobs/") and "/sources/" in p
+        ]
+        if durable:
+            plan.seed_clip_paths = durable
+            await db.commit()
+
     from app.tasks.content_plan_build import generate_content_plan  # noqa: PLC0415
 
     generate_content_plan.delay(str(plan.id))
-    # Freshly created — no items yet (generation runs async).
     return ContentPlanResponse(
         id=str(plan.id),
         plan_status=plan.plan_status,
@@ -147,7 +262,20 @@ async def get_plan(
     ).scalar_one_or_none()
     if plan is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
-    return _plan_response(plan)
+    # Include idea_seeds from the linked persona so the plan-home sidebar can show
+    # them with their current in_plan status without a separate persona API call.
+    # Also build id→text map for T5 provenance badge.
+    persona = await db.get(PersonaRow, plan.persona_id)
+    seeds = (
+        persona.idea_seeds if persona is not None and isinstance(persona.idea_seeds, list) else []
+    )
+    idea_seeds = [s for s in seeds if isinstance(s, dict)]
+    seed_text_by_id = {
+        str(s["id"]): str(s["text"])
+        for s in seeds
+        if isinstance(s, dict) and s.get("id") and s.get("text")
+    }
+    return _plan_response(plan, idea_seeds=idea_seeds, seed_text_by_id=seed_text_by_id)
 
 
 @router.post("/{plan_id}/regenerate", response_model=ContentPlanResponse)
@@ -207,6 +335,35 @@ async def add_ideas_to_plan(
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
+@router.post("/{plan_id}/generate-ideas", response_model=ContentPlanResponse)
+async def generate_ideas_into_plan(
+    plan_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ContentPlanResponse:
+    """Generate AI ideas and append to the plan (opt-in, idea-centric mode).
+
+    Uses ContentPlanGeneratorAgent to create new idea items; appends them
+    preserving all existing user-edited/in-flight items. 409 if already generating.
+    """
+    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    if plan.plan_status == "generating":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A plan generation is already in progress",
+        )
+    plan.plan_status = "generating"
+    plan.generation_started_at = datetime.now(UTC)
+    await db.commit()
+
+    from app.tasks.content_plan_build import (
+        generate_ideas_into_plan as _gen_ideas_task,  # noqa: PLC0415
+    )
+
+    _gen_ideas_task.delay(str(plan.id))
+    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
+
+
 class GenerateFirstWeekResponse(BaseModel):
     enqueued: int
     skipped_no_clips: int
@@ -242,7 +399,7 @@ async def generate_first_week(
     enqueued = 0
     skipped = 0
     for item in plan.items:
-        if item.day_index > 7:
+        if item.day_index is None or item.day_index > 7:
             continue
         if item.clip_gcs_paths:
             generate_plan_item_videos.delay(str(item.id))
@@ -250,6 +407,48 @@ async def generate_first_week(
         else:
             skipped += 1
     return GenerateFirstWeekResponse(enqueued=enqueued, skipped_no_clips=skipped)
+
+
+class ReorderBody(BaseModel):
+    # Ordered list of plan-item UUIDs representing the new position sequence.
+    item_ids: list[str]
+
+
+@router.post("/{plan_id}/reorder", response_model=ContentPlanResponse)
+async def reorder_items(
+    plan_id: str,
+    body: ReorderBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ContentPlanResponse:
+    """Atomically reorder plan items by reassigning position values.
+
+    The caller must supply ALL item ids for the plan in the desired order.
+    Foreign ids (not belonging to this plan) cause a 400.
+    """
+    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+
+    item_map = {str(it.id): it for it in plan.items}
+    incoming = body.item_ids
+
+    if len(incoming) != len(item_map):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Expected {len(item_map)} item ids, got {len(incoming)}",
+        )
+
+    for iid in incoming:
+        if iid not in item_map:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Item {iid!r} does not belong to this plan",
+            )
+
+    for new_pos, iid in enumerate(incoming, start=1):
+        item_map[iid].position = new_pos
+
+    await db.commit()
+    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
 # ── Activation seed (T8): upload recent clips → auto-match → instant first video ──
@@ -310,6 +509,22 @@ class AttachSeedClipsBody(BaseModel):
     clip_gcs_paths: list[str]
 
 
+def _validate_seed_clip_prefix(paths: list[str], user_id: uuid.UUID, plan_id: uuid.UUID) -> None:
+    """Raise 422 if any path is outside the plan's seed upload prefix.
+
+    This validator applies ONLY to request-body paths (untrusted input from the
+    public attach_seed_clips endpoint). Server-derived paths — e.g. the durable
+    generative-jobs/*/sources/ carry in create_plan — intentionally bypass it.
+    """
+    expected = f"users/{user_id}/plan/{plan_id}/seed/"
+    for p in paths:
+        if not p.startswith(expected):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Clip path outside this plan's seed upload prefix: {p}",
+            )
+
+
 @router.post("/{plan_id}/seed-clips", response_model=ContentPlanResponse)
 async def attach_seed_clips(
     plan_id: str,
@@ -319,13 +534,7 @@ async def attach_seed_clips(
 ) -> ContentPlanResponse:
     """Record the uploaded seed batch on the plan (validated to the seed prefix)."""
     plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
-    expected = f"users/{user.id}/plan/{plan.id}/seed/"
-    for p in body.clip_gcs_paths:
-        if not p.startswith(expected):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Clip path outside this plan's seed upload prefix",
-            )
+    _validate_seed_clip_prefix(body.clip_gcs_paths, user.id, plan.id)
     plan.seed_clip_paths = list(body.clip_gcs_paths)
     plan.activation_status = "seeding"
     await db.commit()

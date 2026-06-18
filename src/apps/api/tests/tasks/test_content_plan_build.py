@@ -189,6 +189,228 @@ def test_dedup_replaces_duplicate_with_distinct_regen_idea() -> None:
     assert day3.rationale == "save-worthy"
 
 
+# ── T5 provenance: add_ideas_to_plan sets source_idea_seed_id + flips status ──
+
+
+from app.tasks.content_plan_build import add_ideas_to_plan  # noqa: E402
+
+
+def _make_add_ideas_sessions(plan, persona_row, new_specs):
+    """Build the two sync_session context managers used by add_ideas_to_plan.
+
+    Session 1: returns plan + persona_row (setup read).
+    Session 2: returns a fresh plan mock + persona_row (persist write).
+    """
+    added_items = []
+
+    # --- session 1 (read) ---
+    session1 = MagicMock()
+    plan1 = MagicMock()
+    plan1.persona_id = plan.persona_id
+    plan1.id = plan.id
+    plan1.horizon_days = plan.horizon_days
+    plan1.events = {}
+    plan1.items = []
+    plan1.plan_status = "ready"
+
+    def _get1(model, _pk):
+        return {ContentPlan: plan1, PersonaRow: persona_row}.get(model)
+
+    session1.get = MagicMock(side_effect=_get1)
+    ctx1 = MagicMock()
+    ctx1.__enter__ = MagicMock(return_value=session1)
+    ctx1.__exit__ = MagicMock(return_value=False)
+
+    # --- session 2 (write) ---
+    session2 = MagicMock()
+    plan2 = MagicMock()
+    plan2.persona_id = plan.persona_id
+    plan2.id = plan.id
+    plan2.plan_status = "ready"
+
+    persona_row2 = MagicMock()
+    persona_row2.idea_seeds = list(persona_row.idea_seeds)
+
+    def _get2(model, _pk):
+        return {ContentPlan: plan2, PersonaRow: persona_row2}.get(model)
+
+    session2.get = MagicMock(side_effect=_get2)
+
+    def _add(item):
+        added_items.append(item)
+
+    session2.add = MagicMock(side_effect=_add)
+    ctx2 = MagicMock()
+    ctx2.__enter__ = MagicMock(return_value=session2)
+    ctx2.__exit__ = MagicMock(return_value=False)
+
+    return [ctx1, ctx2], added_items, persona_row2
+
+
+def test_add_ideas_sets_source_idea_seed_id() -> None:
+    """add_ideas_to_plan writes source_idea_seed_id on the new PlanItem."""
+    persona_id = uuid.uuid4()
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "s",
+        "content_pillars": ["sport"],
+        "tone": "cool",
+        "audience": "gen z",
+        "posting_cadence": "daily",
+        "sample_topics": ["football"],
+    }
+    persona_row.idea_seeds = [
+        {"id": "seed_fb", "text": "Fenerbahce game", "status": "pending"},
+    ]
+    persona_row.style = None
+
+    plan = MagicMock()
+    plan.persona_id = persona_id
+    plan.id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.items = []
+
+    # One spec closely matching the seed
+    new_spec = PlanItemSpec(
+        day_index=1,
+        theme="Football",
+        idea="Fenerbahce match day atmosphere",
+        filming_guide=[],
+    )
+    agent_output = ContentPlanOutput(items=[new_spec])
+
+    ctxs, added_items, persona_row2 = _make_add_ideas_sessions(plan, persona_row, [new_spec])
+    ctx_iter = iter(ctxs)
+
+    with (
+        patch(
+            "app.tasks.content_plan_build.sync_session",
+            side_effect=lambda: next(ctx_iter),
+        ),
+        patch(
+            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
+        ) as mock_agent_cls,
+    ):
+        mock_agent_cls.return_value.run.return_value = agent_output
+        add_ideas_to_plan.run(str(uuid.uuid4()))
+
+    assert len(added_items) == 1
+    assert added_items[0].source_idea_seed_id == "seed_fb"
+
+
+def test_add_ideas_flips_seed_status_to_in_plan() -> None:
+    """Matched seeds are flipped to in_plan so IdeasCard shows ✓ and re-submission is idempotent."""
+    persona_id = uuid.uuid4()
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "s",
+        "content_pillars": ["running"],
+        "tone": "energetic",
+        "audience": "runners",
+        "posting_cadence": "daily",
+        "sample_topics": ["marathon"],
+    }
+    persona_row.idea_seeds = [
+        {"id": "seed_run", "text": "morning run in London", "status": "pending"},
+    ]
+    persona_row.style = None
+
+    plan = MagicMock()
+    plan.persona_id = persona_id
+    plan.id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.items = []
+
+    new_spec = PlanItemSpec(
+        day_index=2,
+        theme="Morning fitness",
+        idea="early morning run along the Thames",
+        filming_guide=[],
+    )
+    agent_output = ContentPlanOutput(items=[new_spec])
+
+    ctxs, added_items, persona_row2 = _make_add_ideas_sessions(plan, persona_row, [new_spec])
+    ctx_iter = iter(ctxs)
+
+    with (
+        patch(
+            "app.tasks.content_plan_build.sync_session",
+            side_effect=lambda: next(ctx_iter),
+        ),
+        patch(
+            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
+        ) as mock_agent_cls,
+    ):
+        mock_agent_cls.return_value.run.return_value = agent_output
+        add_ideas_to_plan.run(str(uuid.uuid4()))
+
+    # persona_row2.idea_seeds must have been reassigned with status flipped.
+    updated_seeds = persona_row2.idea_seeds
+    assert any(s.get("id") == "seed_run" and s.get("status") == "in_plan" for s in updated_seeds), (
+        f"Seed not flipped to in_plan; got: {updated_seeds}"
+    )
+
+
+def test_add_ideas_unmatched_seed_stays_pending() -> None:
+    """A seed that the model ignored stays pending (no false positive flip)."""
+    persona_id = uuid.uuid4()
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "s",
+        "content_pillars": ["cooking"],
+        "tone": "casual",
+        "audience": "foodies",
+        "posting_cadence": "daily",
+        "sample_topics": ["recipes"],
+    }
+    persona_row.idea_seeds = [
+        {"id": "seed_run", "text": "morning run in London", "status": "pending"},
+        {"id": "seed_food", "text": "pasta carbonara recipe", "status": "pending"},
+    ]
+    persona_row.style = None
+
+    plan = MagicMock()
+    plan.persona_id = persona_id
+    plan.id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.items = []
+
+    # Only one seed in pending (status != in_plan) but we filter to both above.
+    # The model only deepens "morning run" here; "pasta" gets no matching spec.
+    new_spec = PlanItemSpec(
+        day_index=3,
+        theme="Morning run",
+        idea="early morning run jog in London parks",
+        filming_guide=[],
+    )
+    agent_output = ContentPlanOutput(items=[new_spec])
+
+    ctxs, added_items, persona_row2 = _make_add_ideas_sessions(plan, persona_row, [new_spec])
+    ctx_iter = iter(ctxs)
+
+    with (
+        patch(
+            "app.tasks.content_plan_build.sync_session",
+            side_effect=lambda: next(ctx_iter),
+        ),
+        patch(
+            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
+        ) as mock_agent_cls,
+    ):
+        mock_agent_cls.return_value.run.return_value = agent_output
+        add_ideas_to_plan.run(str(uuid.uuid4()))
+
+    updated = {s["id"]: s["status"] for s in persona_row2.idea_seeds if isinstance(s, dict)}
+    assert updated.get("seed_run") == "in_plan"
+    assert updated.get("seed_food") == "pending"
+
+
 def test_dedup_keeps_original_when_regen_fails() -> None:
     output = ContentPlanOutput(
         items=[
@@ -793,3 +1015,104 @@ def test_pool_match_limit_within_matcher_schema():
         max_assignments=_POOL_MATCH_LIMIT,
     )
     assert inp.max_assignments == _POOL_MATCH_LIMIT
+
+
+# ── T15: generate_ideas_into_plan updates bare ideas in-place ─────────────────
+
+
+def test_generate_ideas_updates_in_place() -> None:
+    """generate_ideas_into_plan expands bare ideas in-place (update, not append).
+
+    Verifies:
+    - session.add is never called (no new rows created)
+    - each bare idea item gets theme, day_index, filming_guide written back
+    - plan_status is set to "ready"
+    """
+    from app.agents.idea_expander import FilmingShot, IdeaExpanderOutput  # noqa: PLC0415
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    item1_id = uuid.uuid4()
+    item2_id = uuid.uuid4()
+
+    bare1 = MagicMock()
+    bare1.id = item1_id
+    bare1.idea = "sunrise hike"
+    bare1.day_index = None
+    bare1.position = 1
+
+    bare2 = MagicMock()
+    bare2.id = item2_id
+    bare2.idea = "coffee productivity"
+    bare2.day_index = None
+    bare2.position = 2
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.plan_status = "generating"
+    plan.items = [bare1, bare2]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["outdoor"],
+        "tone": "warm",
+        "audience": "hikers",
+        "posting_cadence": "3/wk",
+        "sample_topics": ["trails"],
+    }
+
+    expand1 = IdeaExpanderOutput(
+        theme="Golden Hour Hike",
+        filming_suggestion="Film at dawn on a local trail",
+        filming_guide=[FilmingShot(what="trail entrance", how="wide angle", duration_s=4)],
+        rationale="sunrise hooks viewers",
+    )
+    expand2 = IdeaExpanderOutput(
+        theme="Focused Work Session",
+        filming_suggestion="Film your desk setup with natural light",
+        filming_guide=[],
+        rationale="relatable productivity content",
+    )
+
+    session = MagicMock()
+    session.get = MagicMock(side_effect=lambda model, pk: {
+        ContentPlan: plan,
+        PersonaRow: persona_row,
+        PlanItem: bare1 if pk == item1_id else bare2,
+    }.get(model))
+    session.add = MagicMock()
+    session.commit = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.agents.idea_expander.IdeaExpanderAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+    ):
+        mock_trace_ctx = MagicMock()
+        mock_trace_ctx.__enter__ = MagicMock(return_value=None)
+        mock_trace_ctx.__exit__ = MagicMock(return_value=False)
+        mock_trace.return_value = mock_trace_ctx
+
+        mock_agent = MagicMock()
+        mock_agent.run.side_effect = [expand1, expand2]
+        mock_agent_cls.return_value = mock_agent
+
+        generate_ideas_into_plan.run(plan_id)
+
+    # No new rows — update only.
+    session.add.assert_not_called()
+    # Each bare idea item got its theme and day_index written back.
+    assert bare1.theme == "Golden Hour Hike"
+    assert bare1.day_index == 1
+    assert bare2.theme == "Focused Work Session"
+    assert bare2.day_index == 2
+    # Plan status was reset to ready.
+    assert plan.plan_status == "ready"

@@ -75,6 +75,12 @@ class CreateGenerativeJobRequest(BaseModel):
     # voiceover variants (voice over a footage montage) instead of song/original.
     # Validated against its OWN prefix so it can't be smuggled in as a footage clip.
     voiceover_gcs_path: str | None = None
+    # Onboarding-supplied context: what the footage is about (topic) and what the
+    # creator wants viewers to feel or do (intent). Passed through to build_generative_job
+    # as item_theme / item_idea so intro_writer produces a coherent hook even without
+    # a full persona. Old clients posting without these fields get None — no 422.
+    topic: str | None = None
+    intent: str | None = None
 
     @field_validator("clip_gcs_paths")
     @classmethod
@@ -1189,6 +1195,8 @@ async def create_generative_job(
         edit_format=req.edit_format or DEFAULT_EDIT_FORMAT,
         voiceover_gcs_path=req.voiceover_gcs_path,
         user_style=user_style_raw,
+        item_theme=req.topic or "",
+        item_idea=req.intent or "",
     )
     db.add(job)
     await db.commit()

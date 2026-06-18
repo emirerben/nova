@@ -114,6 +114,11 @@ export function ThisWeekStrip({
                 </p>
                 <p className="mt-1 text-[11px] text-[#a1a1aa]">
                   {isToday ? "film today" : "film"}
+                  {(item.filming_guide?.length ?? 0) > 0 && (
+                    <span className="ml-1 text-[10px] text-zinc-400">
+                      · {item.filming_guide.length} shots
+                    </span>
+                  )}
                 </p>
               </>
             );

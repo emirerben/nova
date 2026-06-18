@@ -105,9 +105,14 @@ class ClipAssignmentResponse(BaseModel):
 
 class PlanItemResponse(BaseModel):
     id: str
-    day_index: int
-    theme: str
+    # Idea-centric (0055+): day_index and theme are nullable; position is the sort key.
+    day_index: int | None
+    theme: str | None
     idea: str
+    position: int
+    scheduled_date: str | None = None  # ISO date string (YYYY-MM-DD) or None
+    notes: str | None = None
+    scenes: list = []
     filming_suggestion: str | None
     # The AI's "why this works", surfaced read-only in the dashboard.
     rationale: str | None
@@ -135,6 +140,14 @@ class PlanItemResponse(BaseModel):
     # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Populated on the item
     # GET (the page's poll path); other responses default to create_new.
     content_mode: str = "create_new"
+    # Render archetype assigned at plan-generation time (e.g. "montage",
+    # "talking_head"). Null for items generated before this field shipped.
+    edit_format: str | None = None
+    # BYO-Ideas provenance (M1 T5): the seed whose subject this item honours.
+    # NULL = market-bank origin or the item predates T5. Both fields are resolved
+    # server-side so the badge is a pure function of the item on the client.
+    source_idea_seed_id: str | None = None
+    source_idea_seed_text: str | None = None
 
 
 def plan_item_response(
@@ -142,6 +155,7 @@ def plan_item_response(
     *,
     instruction_level: str = "full",
     content_mode: str = "create_new",
+    seed_text_by_id: dict[str, str] | None = None,
 ) -> PlanItemResponse:
     # Tolerate missing keys in individual JSONB shots — each shot is constructed
     # via .get() so a hand-corrupted row or a migration-era partial row never raises.
@@ -178,6 +192,10 @@ def plan_item_response(
         day_index=item.day_index,
         theme=item.theme,
         idea=item.idea,
+        position=item.position,
+        scheduled_date=item.scheduled_date.isoformat() if item.scheduled_date else None,
+        notes=item.notes,
+        scenes=list(item.scenes) if item.scenes else [],
         filming_suggestion=item.filming_suggestion,
         rationale=item.rationale,
         filming_guide=shots,
@@ -191,6 +209,11 @@ def plan_item_response(
         content_mode=content_mode
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
+        edit_format=item.edit_format,
+        source_idea_seed_id=item.source_idea_seed_id,
+        source_idea_seed_text=(seed_text_by_id or {}).get(item.source_idea_seed_id)
+        if item.source_idea_seed_id
+        else None,
     )
 
 
@@ -228,6 +251,29 @@ async def _get_instruction_level(item: PlanItem, db: AsyncSession) -> str:
         return "full"
 
 
+async def _get_seed_text_by_id(item: PlanItem, db: AsyncSession) -> dict[str, str]:
+    """Build {seed_id: seed_text} map from the owning persona's idea_seeds.
+
+    Used to resolve source_idea_seed_text at read time for the provenance badge.
+    Any missing link returns {} — the badge gracefully shows nothing.
+    """
+    try:
+        plan = await db.get(ContentPlan, item.content_plan_id)
+        if plan is None:
+            return {}
+        persona = await db.get(Persona, plan.persona_id)
+        if persona is None:
+            return {}
+        seeds = persona.idea_seeds if isinstance(persona.idea_seeds, list) else []
+        return {
+            str(s["id"]): str(s["text"])
+            for s in seeds
+            if isinstance(s, dict) and s.get("id") and s.get("text")
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 @router.get("/{item_id}", response_model=PlanItemResponse)
 async def get_plan_item(
     item_id: str,
@@ -237,13 +283,22 @@ async def get_plan_item(
     item = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(item, db)
     content_mode = await _get_content_mode(item, db)
-    return plan_item_response(item, instruction_level=instruction_level, content_mode=content_mode)
+    seed_text_by_id = await _get_seed_text_by_id(item, db)
+    return plan_item_response(
+        item,
+        instruction_level=instruction_level,
+        content_mode=content_mode,
+        seed_text_by_id=seed_text_by_id,
+    )
 
 
 class PlanItemEdit(BaseModel):
     theme: str | None = None
     idea: str | None = None
     filming_suggestion: str | None = None
+    notes: str | None = None
+    scenes: list | None = None
+    scheduled_date: str | None = None  # ISO date string (YYYY-MM-DD)
 
 
 @router.patch("/{item_id}", response_model=PlanItemResponse)
@@ -253,6 +308,10 @@ async def edit_plan_item(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
+    from datetime import date as date_type  # noqa: PLC0415
+
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
     item = await _load_owned_item(item_id, user.id, db)
 
     updates = edit.model_dump(exclude_none=True)
@@ -262,6 +321,14 @@ async def edit_plan_item(
         item.idea = _sanitize_text(updates["idea"]) or item.idea
     if "filming_suggestion" in updates:
         item.filming_suggestion = _sanitize_text(updates["filming_suggestion"]) or None
+    if "notes" in updates:
+        item.notes = updates["notes"] or None
+    if "scenes" in updates:
+        item.scenes = list(updates["scenes"])
+        flag_modified(item, "scenes")
+    if "scheduled_date" in updates:
+        raw = updates["scheduled_date"]
+        item.scheduled_date = date_type.fromisoformat(raw) if raw else None
     if updates:
         item.user_edited = True
     await db.commit()
@@ -269,6 +336,122 @@ async def edit_plan_item(
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+# ── Idea-centric CRUD (0055+) ─────────────────────────────────────────────────
+
+
+class AddIdeaBody(BaseModel):
+    idea: str = Field(..., min_length=1, max_length=500)
+    # Optional seed mirror: pass the client-side seed id to link the new item.
+    source_idea_seed_id: str | None = None
+
+
+@router.post("", response_model=PlanItemResponse, status_code=status.HTTP_201_CREATED)
+async def add_idea(
+    body: AddIdeaBody,
+    plan_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Create a bare-minimum PlanItem from a user-supplied idea string.
+
+    Position = max(existing positions) + 1; day_index = None (no calendar slot
+    until the item is expanded or explicitly scheduled).
+    Also upserts an idea_seed mirror on the persona (status='in_plan') so that
+    the idea persists even if the item is later deleted.
+    """
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    try:
+        pid = uuid.UUID(plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad plan id") from exc
+
+    plan = (
+        await db.execute(
+            select(ContentPlan)
+            .where(ContentPlan.id == pid, ContentPlan.user_id == user.id)
+            .options(selectinload(ContentPlan.items).selectinload(PlanItem.current_job))
+        )
+    ).scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan not found")
+
+    existing_positions = [it.position for it in plan.items]
+    next_position = (max(existing_positions) + 1) if existing_positions else 1
+
+    sanitized = _sanitize_text(body.idea) or body.idea
+    seed_id = body.source_idea_seed_id or None
+
+    item_id = uuid.uuid4()
+    item = PlanItem(
+        id=item_id,
+        content_plan_id=plan.id,
+        idea=sanitized,
+        position=next_position,
+        day_index=None,  # bare ideas have no calendar slot until explicitly scheduled
+        item_status="idea",
+        source_idea_seed_id=seed_id,
+        user_edited=True,
+    )
+    db.add(item)
+
+    # Mirror to idea_seeds on the persona (upsert by id if seed_id supplied).
+    persona = await db.get(Persona, plan.persona_id)
+    if persona is not None:
+        raw_seeds: list = list(persona.idea_seeds) if isinstance(persona.idea_seeds, list) else []
+        if seed_id:
+            # Update existing seed status to in_plan.
+            for s in raw_seeds:
+                if isinstance(s, dict) and s.get("id") == seed_id:
+                    s["status"] = "in_plan"
+                    break
+            else:
+                raw_seeds.append({"id": seed_id, "text": sanitized, "status": "in_plan"})
+        else:
+            new_seed_id = uuid.uuid4().hex
+            raw_seeds.append({"id": new_seed_id, "text": sanitized, "status": "in_plan"})
+            # Backfill on the item so clients can correlate.
+            item.source_idea_seed_id = new_seed_id
+        persona.idea_seeds = raw_seeds  # type: ignore[assignment]
+        flag_modified(persona, "idea_seeds")
+
+    await db.commit()
+    reloaded = await _load_owned_item(str(item_id), user.id, db)
+    return plan_item_response(reloaded)
+
+
+@router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_idea(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a plan item.
+
+    Refuses with 409 if:
+    - The item has an active (non-failed/non-done) job attached.
+    - The item has clips attached (clips are not automatically cleaned up from GCS).
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+
+    if item.current_job_id is not None:
+        derived = derive_item_status(item)
+        if derived == "generating":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Cannot delete an item with an active job. Cancel the job first.",
+            )
+
+    if item.clip_gcs_paths:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete an item that has clips attached. Remove clips first.",
+        )
+
+    await db.delete(item)
+    await db.commit()
 
 
 # ── Themed uploads + per-item generation ──────────────────────────────────────
@@ -917,3 +1100,60 @@ async def reroll_plan_item_route(
 
     log.info("plan_item_reroll.dispatched", item_id=item_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+# ── Idea expansion (propose-only) ─────────────────────────────────────────────
+
+
+class IdeaExpandResponse(BaseModel):
+    """Proposed expansion — never written to DB by this endpoint."""
+
+    theme: str
+    filming_suggestion: str
+    filming_guide: list[dict]
+    rationale: str
+
+
+@router.post("/{item_id}/expand", response_model=IdeaExpandResponse)
+async def expand_idea(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> IdeaExpandResponse:
+    """Propose an AI-expanded plan item (theme, shots, rationale).
+
+    Propose-only: this endpoint NEVER writes to the DB. The caller displays
+    the proposal in a card and calls PATCH /{item_id} if the user accepts.
+    """
+    from app.agents._model_client import default_client  # noqa: PLC0415
+    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents.idea_expander import IdeaExpanderAgent, IdeaExpanderInput  # noqa: PLC0415
+
+    item = await _load_owned_item(item_id, user.id, db)
+
+    # Gather persona context for richer expansion.
+    persona_summary = ""
+    content_pillars: list[str] = []
+    plan = await db.get(ContentPlan, item.content_plan_id)
+    if plan is not None:
+        persona = await db.get(Persona, plan.persona_id)
+        if persona is not None and isinstance(persona.persona, dict):
+            persona_summary = str(persona.persona.get("summary", ""))
+            content_pillars = list(persona.persona.get("content_pillars") or [])
+
+    agent = IdeaExpanderAgent(default_client())
+    output = agent.run(
+        IdeaExpanderInput(
+            idea=item.idea or "",
+            persona_summary=persona_summary,
+            content_pillars=content_pillars,
+        ),
+        ctx=RunContext(job_id=None),
+    )
+
+    return IdeaExpandResponse(
+        theme=output.theme,
+        filming_suggestion=output.filming_suggestion,
+        filming_guide=[s.model_dump() for s in output.filming_guide],
+        rationale=output.rationale,
+    )

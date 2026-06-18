@@ -64,6 +64,8 @@ Rules:
 - `src/apps/api/app/pipeline/music_recipe.py` — beat-snap recipe generator (see `docs/pipelines/music.md`)
 - `src/apps/api/app/tasks/music_orchestrate.py` — Celery tasks: beat analysis + music job orchestration
 - `src/apps/api/app/services/audio_download.py` — yt-dlp audio download + beat detection via FFmpeg
+- `src/apps/api/app/services/seed_provenance.py` — token-set matcher (`match_specs_to_seeds`) that links generated plan items back to the idea seed they honour; called at plan-generation time to set `PlanItem.source_idea_seed_id` and flip matched seeds to `in_plan`
+- `src/apps/web/src/app/plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge rendered on TodayCard, PlanItemCard, and item detail page; driven by `source_idea_seed_text` from the API
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
 

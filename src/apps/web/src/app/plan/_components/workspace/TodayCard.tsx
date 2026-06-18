@@ -6,6 +6,7 @@ import { Eyebrow } from "../ui/Eyebrow";
 import { InkButton } from "../ui/InkButton";
 import { rerollPlanItem, createContentPlan } from "@/lib/plan-api";
 import type { PlanItem, PersonaResponse, ContentPlan } from "@/lib/plan-api";
+import { SeedProvenanceBadge } from "../ui/SeedProvenanceBadge";
 
 interface TodayCardProps {
   /** The next-action item (first non-ready item) — null means all done */
@@ -134,6 +135,13 @@ export function TodayCard({
           {nextItem.idea.length > 110 ? "…" : ""}
         </p>
       )}
+
+      {!isRerolling && (nextItem.filming_guide?.length ?? 0) > 0 && (
+        <p className="mt-1.5 text-[12px] text-[#a1a1aa]">
+          {nextItem.filming_guide.length} shots to film
+        </p>
+      )}
+      {!isRerolling && <SeedProvenanceBadge item={nextItem} />}
 
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <Link

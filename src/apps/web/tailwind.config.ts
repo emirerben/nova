@@ -9,10 +9,12 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        // Playfair Display is loaded via the Google Fonts @import
-        // in globals.css. `font-display` is the editorial serif used for plan
-        // headings + key prompts.
-        display: ['"Playfair Display"', "Georgia", "serif"],
+        // Fraunces is the editorial display serif — plan headings, key prompts,
+        // and serif accents. Loaded via Google Fonts @import in globals.css.
+        display: ['"Fraunces"', "Georgia", "serif"],
+        // Inter is the body/label sans. Loaded via Google Fonts @import in
+        // globals.css; listed first so it wins over system-ui when available.
+        sans: ['"Inter"', "ui-sans-serif", "system-ui", "-apple-system", "sans-serif"],
       },
       keyframes: {
         "fade-up": {

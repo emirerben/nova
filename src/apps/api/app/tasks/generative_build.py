@@ -477,6 +477,9 @@ def _run_generative_job(job_id: str) -> None:
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
                         narrative_order=narrative_order,
+                        filming_guide=(
+                            filming_guide_candidates if narrative_shot_count > 0 else None
+                        ),
                         author_quote_fn=_author_quote,
                         language=language,
                     )
@@ -2052,6 +2055,7 @@ def _run_regenerate_variant(
             intro_size_override_px=resolved_size_override_px,
             user_style_knobs=existing_user_style_knobs,
             narrative_order=narrative_order_regen,
+            filming_guide=(filming_guide_regen if narrative_shot_count_regen > 0 else None),
             assembly_steps_override=assembly_steps_override,
             allow_sequence=allow_sequence,
             author_quote_fn=regen_author_quote_fn,
@@ -3068,6 +3072,7 @@ def _render_generative_variant(
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
     narrative_order: list[str] | None = None,
+    filming_guide: list[dict] | None = None,
     assembly_steps_override: list | None = None,
     allow_sequence: bool = True,
     author_quote_fn: Any | None = None,
@@ -3245,13 +3250,15 @@ def _render_generative_variant(
                 "track_config": track_config,
                 "duration_s": track.duration_s,
             }
-            recipe_dict = generate_music_recipe(track_data)
+            recipe_dict = generate_music_recipe(track_data, filming_guide=filming_guide)
             beats = list(recipe_dict.get("beat_timestamps_s") or [])
             recipe_dict["slots"] = _enrich_slots_with_energy(
                 recipe_dict["slots"], track_data["beat_timestamps_s"]
             )
         else:
-            recipe_dict = _build_no_music_recipe(clip_metas, available_footage_s)
+            recipe_dict = _build_no_music_recipe(
+                clip_metas, available_footage_s, filming_guide=filming_guide
+            )
 
         # Text injection per mode. The chosen style set styles BOTH the lyric
         # overlays (lyrics variant) and the AI hero-intro (text variants).
@@ -4096,7 +4103,12 @@ def _resolve_intro_overlay_params(
     return params, intro_px, intro_source
 
 
-def _build_no_music_recipe(clip_metas: list, available_footage_s: float) -> dict:
+def _build_no_music_recipe(
+    clip_metas: list,
+    available_footage_s: float,
+    *,
+    filming_guide: list[dict] | None = None,
+) -> dict:
     """A song-free recipe: one slot per clip (capped), even-split of the footage.
 
     Variant 3 keeps the clips' original audio, so there are no song beats to slice
@@ -4104,13 +4116,32 @@ def _build_no_music_recipe(clip_metas: list, available_footage_s: float) -> dict
     total length. `consolidate_slots` + `match` handle the actual clip assignment
     downstream, and `allow_slowdown_fill=False` trims any slot whose assigned clip
     is shorter than its share, so the output never exceeds the real footage.
+
+    When `filming_guide` is provided and has at least `n` entries, slot durations
+    are proportional to the guide's ``duration_s`` hints rather than equal. Payoff
+    shots declared longer in the guide receive a larger share of the total footage,
+    biasing both clip selection and the actual rendered duration toward the intended
+    setup:payoff ratio.
     """
+    from app.pipeline.music_recipe import _extract_guide_durations  # noqa: PLC0415
+
     n = max(1, min(len(clip_metas), _MAX_NO_MUSIC_SLOTS))
-    per = max(0.5, round(float(available_footage_s) / n, 3))
+
+    # Narrative payoff weighting: proportional slot durations from the guide.
+    guide_durs = _extract_guide_durations(filming_guide or [], n)
+    if guide_durs is not None:
+        total_guide = sum(guide_durs)
+        slot_durs = [
+            max(0.5, round(float(available_footage_s) * (d / total_guide), 3)) for d in guide_durs
+        ]
+    else:
+        per = max(0.5, round(float(available_footage_s) / n, 3))
+        slot_durs = [per] * n
+
     slots = [
         {
             "position": i + 1,
-            "target_duration_s": per,
+            "target_duration_s": slot_durs[i],
             "slot_type": "broll",
             "energy": 5.0,
             "priority": 5,
@@ -4120,10 +4151,11 @@ def _build_no_music_recipe(clip_metas: list, available_footage_s: float) -> dict
         }
         for i in range(n)
     ]
+    total_duration = round(sum(slot_durs), 3)
     return {
         "shot_count": n,
-        "total_duration_s": round(per * n, 3),
-        "hook_duration_s": per,
+        "total_duration_s": total_duration,
+        "hook_duration_s": slot_durs[0],
         "slots": slots,
         "beat_timestamps_s": [],
         "sync_style": "freeform",

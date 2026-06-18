@@ -124,14 +124,6 @@ lower-probability items deferred so the PR stays scoped.
 **Effort:** S-M (CC: ~1h)
 **Priority:** P2
 
-### Narrative payoff duration weighting (judge finding)
-**What:** pacing 7/10 noted the guide's climax shot (intended ~6s) rendered as the SHORTEST slot (3.1s) while setup footage got 7.8s. v1 narrative mode deliberately ignores guide `duration_s` (beat grid owns timing). Consider biasing recipe slot generation (or slot→run weighting) by guide durations when narrative mode is active.
-**Why:** Setup:payoff at 2.5:1 makes the climax feel cut off; influencers proportion toward the payoff.
-**How:** In `generate_music_recipe`/`_build_no_music_recipe`, when narrative_shot_count>0, weight slot durations by normalized guide `duration_s` before beat-snap. Judge with the workflow before/after.
-**Effort:** M (CC: ~1-2h)
-**Priority:** P3
-**Depends on:** narrative ordering (this PR)
-
 ### Shot-count hint on the content-plan calendar card
 **What:** The calendar card today shows the day's theme and idea. Adding a tiny `3 shots` badge would give the user a sense of filming effort before tapping into the item.
 **Why:** Helps plan filming sessions — a 4-shot montage vs a 1-shot talking head are very different commitment levels.

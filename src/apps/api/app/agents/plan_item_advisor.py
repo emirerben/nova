@@ -89,6 +89,10 @@ def _format_clips(clips: list[dict]) -> str:
 def _format_conformance(conformance: dict | None) -> str:
     if not isinstance(conformance, dict) or not conformance.get("verdict"):
         return "  (no brief read yet)"
+    # Skip verdicts the user has dismissed or suppressed — surfacing hidden
+    # context to the advisor would quote context the user explicitly hid.
+    if conformance.get("dismissed") or conformance.get("suppressed"):
+        return "  (no brief read yet)"
     verdict = _sanitize_text(str(conformance.get("verdict", "")))
     summary = _sanitize_text(str(conformance.get("summary", "")))
     return f"  verdict: {verdict} — {summary}"

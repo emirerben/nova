@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { type PlanItem, type PlanItemStatus, updatePlanItem } from "@/lib/plan-api";
 import { stripRationalePrefix } from "@/lib/plan-text";
+import { SeedProvenanceBadge } from "./ui/SeedProvenanceBadge";
 
 // Glyph + text so status reads without relying on color alone (a11y).
 const STATUS_META: Record<PlanItemStatus, { glyph: string; label: string; cls: string }> = {
@@ -45,7 +46,7 @@ export default function PlanItemCard({
   onError: (msg: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [theme, setTheme] = useState(item.theme);
+  const [theme, setTheme] = useState(item.theme ?? "");
   const [idea, setIdea] = useState(item.idea);
   const [filming, setFilming] = useState(item.filming_suggestion ?? "");
   const [saving, setSaving] = useState(false);
@@ -53,7 +54,7 @@ export default function PlanItemCard({
   // Track the last-persisted values so `dirty` resets after a save (the parent
   // doesn't refetch the item prop, so comparing against `item` would re-flag dirty).
   const [baseline, setBaseline] = useState({
-    theme: item.theme,
+    theme: item.theme ?? "",
     idea: item.idea,
     filming: item.filming_suggestion ?? "",
   });
@@ -94,6 +95,7 @@ export default function PlanItemCard({
         </h3>
         <ItemStatusBadge status={item.status} />
       </div>
+      <SeedProvenanceBadge item={item} />
 
       {!editing ? (
         <>
@@ -102,6 +104,11 @@ export default function PlanItemCard({
             <p className="mt-2 text-xs text-zinc-500">
               <span className="text-amber-300/80">Why this works:</span>{" "}
               {stripRationalePrefix(item.rationale)}
+            </p>
+          )}
+          {(item.filming_guide?.length ?? 0) > 0 && (
+            <p className="mt-1.5 text-xs text-zinc-500">
+              {item.filming_guide.length} shots
             </p>
           )}
           <div className="mt-2 flex items-center justify-between border-t border-zinc-800 pt-1">

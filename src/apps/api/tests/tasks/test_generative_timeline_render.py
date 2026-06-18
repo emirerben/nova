@@ -202,7 +202,7 @@ def _patch_music_recipe(monkeypatch, beats):
     monkeypatch.setattr(
         mr,
         "generate_music_recipe",
-        lambda td: {
+        lambda td, **_kw: {
             "slots": [{"position": 1, "target_duration_s": 1.0, "text_overlays": []}],
             "beat_timestamps_s": list(beats),
         },
