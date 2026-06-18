@@ -795,63 +795,74 @@ def test_pool_match_limit_within_matcher_schema():
     assert inp.max_assignments == _POOL_MATCH_LIMIT
 
 
-# ── T15: generate_ideas_into_plan preserves user_edited items ─────────────────
+# ── T15: generate_ideas_into_plan updates bare ideas in-place ─────────────────
 
 
-def test_generate_ideas_preserves_user_edited() -> None:
-    """generate_ideas_into_plan appends new items and never deletes existing ones.
+def test_generate_ideas_updates_in_place() -> None:
+    """generate_ideas_into_plan expands bare ideas in-place (update, not append).
 
     Verifies:
-    - session.delete is never called (no items removed)
-    - session.add is called for each new spec (new items appended)
-    - each new PlanItem has position set
+    - session.add is never called (no new rows created)
+    - each bare idea item gets theme, day_index, filming_guide written back
+    - plan_status is set to "ready"
     """
-    from app.agents._schemas.content_plan import (
-        ContentPlanOutput,  # noqa: PLC0415 (already imported)
-    )
+    from app.agents.idea_expander import IdeaExpanderOutput, FilmingShot  # noqa: PLC0415
     from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
+    item1_id = uuid.uuid4()
+    item2_id = uuid.uuid4()
 
-    existing_user_item = MagicMock()
-    existing_user_item.idea = "my own idea"
-    existing_user_item.user_edited = True
-    existing_user_item.position = 1
+    bare1 = MagicMock()
+    bare1.id = item1_id
+    bare1.idea = "sunrise hike"
+    bare1.day_index = None
+    bare1.position = 1
+
+    bare2 = MagicMock()
+    bare2.id = item2_id
+    bare2.idea = "coffee productivity"
+    bare2.day_index = None
+    bare2.position = 2
 
     plan = MagicMock()
     plan.id = uuid.UUID(plan_id)
     plan.persona_id = uuid.uuid4()
     plan.horizon_days = 30
     plan.plan_status = "generating"
-    plan.events = {}
-    plan.items = [existing_user_item]
+    plan.items = [bare1, bare2]
 
     persona_row = MagicMock()
     persona_row.persona = {
         "summary": "creator",
-        "content_pillars": ["fitness"],
+        "content_pillars": ["outdoor"],
         "tone": "warm",
-        "audience": "gym-goers",
-        "posting_cadence": "4/wk",
-        "sample_topics": ["morning routine"],
+        "audience": "hikers",
+        "posting_cadence": "3/wk",
+        "sample_topics": ["trails"],
     }
 
-    new_output = ContentPlanOutput(
-        items=[
-            _spec(2, "sunrise hike first attempt"),
-            _spec(3, "coffee shop productivity session"),
-        ]
+    expand1 = IdeaExpanderOutput(
+        theme="Golden Hour Hike",
+        filming_suggestion="Film at dawn on a local trail",
+        filming_guide=[FilmingShot(what="trail entrance", how="wide angle", duration_s=4)],
+        rationale="sunrise hooks viewers",
+    )
+    expand2 = IdeaExpanderOutput(
+        theme="Focused Work Session",
+        filming_suggestion="Film your desk setup with natural light",
+        filming_guide=[],
+        rationale="relatable productivity content",
     )
 
     session = MagicMock()
     session.get = MagicMock(side_effect=lambda model, pk: {
         ContentPlan: plan,
         PersonaRow: persona_row,
+        PlanItem: bare1 if pk == item1_id else bare2,
     }.get(model))
     session.add = MagicMock()
-    session.delete = MagicMock()
     session.commit = MagicMock()
-    session.flush = MagicMock()
 
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
@@ -859,8 +870,9 @@ def test_generate_ideas_preserves_user_edited() -> None:
 
     with (
         patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
-        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.agents.idea_expander.IdeaExpanderAgent") as mock_agent_cls,
         patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         mock_trace_ctx = MagicMock()
         mock_trace_ctx.__enter__ = MagicMock(return_value=None)
@@ -868,18 +880,17 @@ def test_generate_ideas_preserves_user_edited() -> None:
         mock_trace.return_value = mock_trace_ctx
 
         mock_agent = MagicMock()
-        mock_agent.run.return_value = new_output
+        mock_agent.run.side_effect = [expand1, expand2]
         mock_agent_cls.return_value = mock_agent
 
         generate_ideas_into_plan.run(plan_id)
 
-    # Existing items must not be deleted.
-    session.delete.assert_not_called()
-    # New items were added (2 new specs → 2 add calls).
-    assert session.add.call_count == 2
-    # Each added PlanItem must have a position set.
-    for call in session.add.call_args_list:
-        added_item = call.args[0]
-        assert added_item.position is not None
+    # No new rows — update only.
+    session.add.assert_not_called()
+    # Each bare idea item got its theme and day_index written back.
+    assert bare1.theme == "Golden Hour Hike"
+    assert bare1.day_index == 1
+    assert bare2.theme == "Focused Work Session"
+    assert bare2.day_index == 2
     # Plan status was reset to ready.
     assert plan.plan_status == "ready"

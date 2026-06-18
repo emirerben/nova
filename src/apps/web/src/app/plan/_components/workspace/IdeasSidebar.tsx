@@ -18,7 +18,10 @@ export function IdeasSidebar({ plan, onRefresh }: IdeasSidebarProps) {
   const [aiGenerating, setAiGenerating] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const items = [...(plan.items ?? [])].sort((a, b) => a.position - b.position);
+  // Only bare ideas (no day_index yet). Expanded/scheduled items live in the calendar.
+  const items = [...(plan.items ?? [])]
+    .filter((i) => i.day_index === null)
+    .sort((a, b) => a.position - b.position);
   const isEmpty = items.length === 0;
   const serverGenerating = plan.plan_status === "generating";
 
