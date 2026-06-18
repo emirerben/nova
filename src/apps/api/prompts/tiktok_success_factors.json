@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-07",
+  "version": "2026-06-14",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -118,6 +118,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder set, five consecutive brand-chapter videos (naming, packaging, launch prep, launch day, live post) all indexed 2–5x the account median — consistent outperformance across the full arc, not just the reveal",
       "source": "tiktok market research 2026-06 (founder account)"
+    },
+    {
+      "id": "ultrashort-aesthetic-clip-corpus-08",
+      "factor": "For aesthetic lifestyle and fashion content, keep clips to 6-10 seconds — each second past 10 adds friction without adding depth",
+      "why": "Ultra-short clips achieve near-100% completion, feeding the algorithm a strong signal across the full audience; re-watches compound that signal further",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched city-lifestyle set, the top 5 performers were all 6-13s (median 9s); a 7s morning clip indexed 14x, a 9s city clip 2.75x. Posts over 30s sat below median. Consistent pattern across the full 20-video sample.",
+      "source": "tiktok market research 2026-06 (city-lifestyle account)"
+    },
+    {
+      "id": "event-community-reach-corpus-09",
+      "factor": "Appear at or with a notable community event alongside a brand partner — it spikes views even when engagement is minimal; use it for discovery, not conversion",
+      "why": "Events carry a captive, primed audience; embedding your presence in that moment borrows the event's reach and bypasses the normal cold-start cost on the For You page",
+      "applies_to": ["plan", "persona"],
+      "provenance": "corpus",
+      "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
+      "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
     }
   ]
 }
