@@ -1137,9 +1137,9 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
     Items that fail to expand are left untouched (remain as bare ideas).
     Idempotency: if there are no bare ideas, sets plan_status="ready" and returns.
     """
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: I001, PLC0415
     from app.agents.idea_expander import IdeaExpanderAgent, IdeaExpanderInput  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     pid = uuid.UUID(str(plan_id))
 

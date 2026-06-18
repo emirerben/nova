@@ -806,7 +806,7 @@ def test_generate_ideas_updates_in_place() -> None:
     - each bare idea item gets theme, day_index, filming_guide written back
     - plan_status is set to "ready"
     """
-    from app.agents.idea_expander import IdeaExpanderOutput, FilmingShot  # noqa: PLC0415
+    from app.agents.idea_expander import FilmingShot, IdeaExpanderOutput  # noqa: PLC0415
     from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
