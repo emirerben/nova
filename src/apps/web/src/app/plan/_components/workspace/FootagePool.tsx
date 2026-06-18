@@ -50,7 +50,7 @@ export function FootagePool({
   // calendar hunt (dogfood: "nereye aktarıldı göremiyorum").
   const matchedItems = items
     .filter((i) => i.clip_assignments?.some((a) => a.machine_matched))
-    .sort((a, b) => a.day_index - b.day_index);
+    .sort((a, b) => (a.day_index ?? Infinity) - (b.day_index ?? Infinity));
 
   // While the matcher runs, the status only changes server-side — poll so
   // "Sorting…" resolves to matched/failed without a manual reload (dogfood

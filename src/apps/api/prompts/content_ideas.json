@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-07",
+  "version": "2026-06-14",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -192,6 +192,26 @@
       "filming_context": "slow pan or still hold on the work, natural museum light, respectful framing — let the art occupy the frame",
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.122, "view_index": 1.2, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "9to5-minimal-glimpse-01",
+      "niche": "professional lifestyle & city aesthetics",
+      "pillar": "work outfits (#9to5)",
+      "idea": "a 6-10s minimal clip from your workday in [city] — just the outfit and where you're going, no narration needed",
+      "hook_pattern": "#9to5",
+      "filming_context": "mirror or building exterior, natural light, 6-10s, single look — the brevity IS the format; don't add explanation",
+      "source": "tiktok:@allexmarielle (2026-06)",
+      "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "parallel-life-aspiration-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "mindset & growth",
+      "idea": "a short clip of a beautiful place or lifestyle moment, captioned as the parallel life you want — lets the viewer project themselves into it",
+      "hook_pattern": "in another life this is my reality",
+      "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
+      "source": "tiktok:@izzsiomoi (2026-06)",
+      "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
     }
   ]
 }

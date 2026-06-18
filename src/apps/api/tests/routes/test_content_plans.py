@@ -93,18 +93,48 @@ def test_create_plan_requires_ready_persona(client: TestClient) -> None:
 
 
 def test_create_plan_enqueues_when_persona_ready(client: TestClient) -> None:
+    """Kill switch OFF → old auto-generate behavior: plan starts 'generating'."""
     user = _fake_user()
     persona = MagicMock()
     persona.persona_status = "ready"
     persona.id = uuid.uuid4()
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=persona)
-    with patch("app.tasks.content_plan_build.generate_content_plan") as task:
+    with (
+        patch("app.tasks.content_plan_build.generate_content_plan") as task,
+        patch("app.config.settings") as mock_settings,
+    ):
+        mock_settings.idea_centric_plan_enabled = False
         task.delay = MagicMock()
         resp = client.post("/content-plans", json={"events": "spring break", "horizon_days": 30})
     assert resp.status_code == 201
     assert resp.json()["plan_status"] == "generating"
     task.delay.assert_called_once()
+
+
+def test_create_plan_no_auto_generate(client: TestClient) -> None:
+    """Kill switch ON (default) → idea-centric: plan starts 'ready', no generation task."""
+    user = _fake_user()
+    persona = MagicMock()
+    persona.persona_status = "ready"
+    persona.id = uuid.uuid4()
+    persona.idea_seeds = []
+    persona.questionnaire = {}
+    app.dependency_overrides[get_current_user] = lambda: user
+    db = _async_db(scalar_result=persona)
+    # db.execute for plan items returns empty list.
+    db.execute = AsyncMock(
+        side_effect=[
+            MagicMock(scalar_one_or_none=MagicMock(return_value=persona)),  # persona lookup
+            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),
+        ]
+    )
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.config.settings") as mock_settings:
+        mock_settings.idea_centric_plan_enabled = True
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+    assert resp.status_code == 201
+    assert resp.json()["plan_status"] == "ready"
 
 
 def test_get_plan_404_when_absent(client: TestClient) -> None:
@@ -342,3 +372,241 @@ def test_regenerate_preserves_start_date() -> None:
 
     # The original anchor date must not be overwritten.
     assert plan.start_date == original_date
+
+
+# ── pool matched_item_id reconciliation ─────────────────────────────────────
+
+
+def _pool_plan(user_id: uuid.UUID, pool: dict, items: list) -> MagicMock:
+    """Build a plan mock with a pool and a list of item mocks."""
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.user_id = user_id
+    plan.plan_status = "ready"
+    plan.horizon_days = 30
+    plan.events = None
+    plan.activation_status = "none"
+    plan.seed_clip_paths = []
+    plan.start_date = None
+    plan.generation_started_at = None
+    plan.pool = pool
+    plan.items = items
+    return plan
+
+
+def _item_mock(item_id: uuid.UUID, clip_gcs_paths: list[str]) -> MagicMock:
+    it = MagicMock()
+    it.id = item_id
+    it.clip_gcs_paths = clip_gcs_paths
+    it.clip_assignments = [{"gcs_path": p, "shot_id": None} for p in clip_gcs_paths]
+    it.item_status = "idea"
+    it.current_job = None
+    it.content_plan_id = uuid.uuid4()
+    it.day_index = 1
+    it.theme = "Test"
+    it.idea = "Test idea"
+    it.filming_suggestion = None
+    it.rationale = None
+    it.edit_format = "montage"
+    it.user_edited = False
+    it.current_job_id = None
+    it.filming_guide = []
+    it.conformance = None
+    it.sequence_quote = None
+    it.sequence_mode = None
+    return it
+
+
+def test_pool_matched_count_resets_stale_match() -> None:
+    """Pool clip whose matched_item_id no longer exists in the item's clips
+    must be treated as unmatched in the response (matched_item_id -> null).
+
+    Scenario: user uploaded clip A to the pool; the matcher assigned it to
+    item #1. User later replaced clip A on item #1 with a different clip.
+    Now pool clip A's matched_item_id still points at item #1, but clip A
+    is no longer in item #1's clip_gcs_paths. The reconciler must reset it.
+    """
+    from app.routes.content_plans import _plan_response  # noqa: PLC0415
+
+    item_id = uuid.uuid4()
+    stale_clip_path = "users/u/plan-pool/p/clip_a.mp4"
+    live_clip_path = "users/u/plan-pool/p/clip_b.mp4"  # replacement clip
+
+    # Item now has only the replacement clip -- the pool clip was removed.
+    item = _item_mock(item_id, [live_clip_path])
+
+    pool = {
+        "status": "matched",
+        "clips": [
+            # clip_a is stale: still in pool but no longer on the item
+            {"gcs_path": stale_clip_path, "matched_item_id": str(item_id)},
+            # clip_b is genuinely matched (it IS on the item now)
+            {"gcs_path": live_clip_path, "matched_item_id": str(item_id)},
+        ],
+    }
+    plan = _pool_plan(uuid.uuid4(), pool, [item])
+
+    resp = _plan_response(plan)
+
+    # The stale match must not count.
+    assert resp.pool_matched_count == 1
+    # The live match is preserved.
+    assert resp.pool_clip_count == 2
+
+
+def test_pool_matched_count_resets_deleted_item() -> None:
+    """Pool clip whose matched_item_id points at a non-existent item is reset."""
+    from app.routes.content_plans import _plan_response  # noqa: PLC0415
+
+    deleted_item_id = uuid.uuid4()
+    clip_path = "users/u/plan-pool/p/clip_gone.mp4"
+
+    pool = {
+        "status": "matched",
+        "clips": [
+            {"gcs_path": clip_path, "matched_item_id": str(deleted_item_id)},
+        ],
+    }
+    # Plan has no items -- the item was deleted.
+    plan = _pool_plan(uuid.uuid4(), pool, [])
+
+    resp = _plan_response(plan)
+
+    assert resp.pool_matched_count == 0
+    assert resp.pool_clip_count == 1
+
+
+def test_pool_matched_count_preserves_valid_match() -> None:
+    """Pool clips whose matched item still holds the clip are not reset."""
+    from app.routes.content_plans import _plan_response  # noqa: PLC0415
+
+    item_id = uuid.uuid4()
+    clip_path = "users/u/plan-pool/p/clip_keep.mp4"
+
+    item = _item_mock(item_id, [clip_path])
+
+    pool = {
+        "status": "matched",
+        "clips": [
+            {"gcs_path": clip_path, "matched_item_id": str(item_id)},
+        ],
+    }
+    plan = _pool_plan(uuid.uuid4(), pool, [item])
+
+    resp = _plan_response(plan)
+
+    assert resp.pool_matched_count == 1
+    assert resp.pool_clip_count == 1
+
+# ── T3: seed-pool carry (onboarding-fork → create_plan) ──────────────────────
+
+
+def _ready_persona(questionnaire: dict | None = None) -> MagicMock:
+    """A persona in 'ready' state with a real dict questionnaire."""
+    persona = MagicMock()
+    persona.persona_status = "ready"
+    persona.id = uuid.uuid4()
+    # Use a real dict so .get() works correctly (MagicMock.get() returns MagicMock).
+    persona.questionnaire = questionnaire if questionnaire is not None else {}
+    return persona
+
+
+def test_create_plan_carries_durable_onboarding_paths(client: TestClient) -> None:
+    """Durable generative-jobs/*/sources/ paths in onboarding_clip_paths → seed_clip_paths."""
+    user = _fake_user()
+    durable_paths = [
+        "generative-jobs/abc123/sources/clip1.mp4",
+        "generative-jobs/abc123/sources/clip2.mp4",
+    ]
+    persona = _ready_persona(questionnaire={"onboarding_clip_paths": durable_paths})
+    db = _async_db(scalar_result=persona)
+
+    # Capture the ContentPlan instance added to the session.
+    added_plans: list = []
+
+    def _capture_add(obj):  # noqa: E301
+        from app.models import ContentPlan  # noqa: PLC0415
+
+        if isinstance(obj, ContentPlan):
+            added_plans.append(obj)
+
+    db.add = MagicMock(side_effect=_capture_add)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.generate_content_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+
+    assert resp.status_code == 201
+    assert added_plans, "ContentPlan must have been added to the session"
+    plan = added_plans[0]
+    assert plan.seed_clip_paths == durable_paths
+
+
+def test_create_plan_does_not_carry_ephemeral_paths(client: TestClient) -> None:
+    """Ephemeral music-uploads/ paths must NOT be carried to seed_clip_paths."""
+    user = _fake_user()
+    persona = _ready_persona(
+        questionnaire={"onboarding_clip_paths": ["music-uploads/tmp/clip.mp4"]}
+    )
+    db = _async_db(scalar_result=persona)
+
+    added_plans: list = []
+
+    def _capture_add(obj):  # noqa: E301
+        from app.models import ContentPlan  # noqa: PLC0415
+
+        if isinstance(obj, ContentPlan):
+            added_plans.append(obj)
+
+    db.add = MagicMock(side_effect=_capture_add)
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.generate_content_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post("/content-plans", json={"events": "", "horizon_days": 30})
+
+    assert resp.status_code == 201
+    # Plan must exist and seed_clip_paths must NOT have been set to the ephemeral path.
+    assert added_plans, "ContentPlan must have been added to the session"
+    plan = added_plans[0]
+    # seed_clip_paths is either None or [] — never an ephemeral path.
+    assert not plan.seed_clip_paths
+
+
+def test_attach_seed_clips_still_rejects_wrong_prefix(client: TestClient) -> None:
+    """attach_seed_clips (public endpoint) must still 422 a generative-jobs path.
+
+    The refactor extracted _validate_seed_clip_prefix into a helper but must NOT
+    have accidentally loosened the public endpoint's prefix guard.
+    """
+    user = _fake_user()
+    plan_id = uuid.uuid4()
+    plan = MagicMock()
+    plan.id = plan_id
+    plan.user_id = user.id
+    plan.items = []
+    plan.pool = {}
+    plan.activation_status = "none"
+    plan.seed_clip_paths = []
+    plan.plan_status = "generating"
+    plan.horizon_days = 30
+    plan.events = None
+    plan.generation_started_at = None
+    plan.start_date = None
+
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    # A durable generative-jobs path posted via request body must be rejected
+    # (only server-derived carry in create_plan bypasses the validator).
+    resp = client.post(
+        f"/content-plans/{plan_id}/seed-clips",
+        json={"clip_gcs_paths": ["generative-jobs/abc123/sources/clip1.mp4"]},
+    )
+    assert resp.status_code == 422

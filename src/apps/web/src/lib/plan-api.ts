@@ -51,6 +51,9 @@ export interface PersonaContent {
   // shown verbatim as "You said: '...'" on the persona reveal. Empty for
   // personas generated from the old flat-field questionnaire.
   signature_quote?: string;
+  // "What kind of videos do you make?" onboarding signal.
+  // talking_head | montage | day_vlog | mixed
+  footage_type_bias?: string[];
 }
 
 export type PersonaStatus = "generating" | "ready" | "failed" | "edited" | "chat_pending";
@@ -186,6 +189,21 @@ export function updatePersona(
 }
 
 /**
+ * Persist the "what kind of videos do you make" onboarding answer.
+ * Stored in persona.footage_type_bias — no USER_STYLE_ENABLED gate.
+ * Values: ["talking_head"] | ["montage"] | ["day_vlog"] | ["mixed"]
+ */
+export function patchPersonaFootageType(
+  personaId: string,
+  footage_type_bias: string[],
+): Promise<PersonaResponse> {
+  return request<PersonaResponse>(`/personas/${personaId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ footage_type_bias }),
+  });
+}
+
+/**
  * Replace the user's idea seeds list (M1 Bring-Your-Own-Ideas).
  * The server stamps missing ids and sanitizes text/pillar. Returns the updated
  * PersonaResponse with the server-stamped seeds (idempotent: call on every edit).
@@ -243,9 +261,17 @@ export interface ClipAssignment {
 
 export interface PlanItem {
   id: string;
-  day_index: number;
-  theme: string;
+  /** Idea-centric (0055+): nullable. Use `position` for sort order. */
+  day_index: number | null;
+  /** Idea-centric (0055+): nullable until AI expands the item. */
+  theme: string | null;
   idea: string;
+  /** User-controlled sort order (0055+). Use this instead of day_index for ordering. */
+  position: number;
+  /** ISO date string (YYYY-MM-DD) or null. */
+  scheduled_date?: string | null;
+  notes?: string | null;
+  scenes?: SceneBlock[];
   filming_suggestion: string | null;
   // The AI's "why this works" — shown read-only. null for items made before
   // this field shipped (the UI hides the line).
@@ -259,9 +285,24 @@ export interface PlanItem {
   status: PlanItemStatus;
   current_job_id: string | null;
   user_edited: boolean;
+  /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
+  edit_format?: string | null;
   /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
   source_idea_seed_text?: string | null;
+}
+
+export interface SceneBlock {
+  id?: string;
+  text: string;
+  transition_after?: string | null;
+}
+
+export interface IdeaExpandProposal {
+  theme: string;
+  filming_suggestion: string;
+  filming_guide: FilmingShot[];
+  rationale: string;
 }
 
 /** Activation seed (T8) lifecycle: none→seeding→activating→activated|activated_empty|failed. */
@@ -283,6 +324,9 @@ export interface ContentPlan {
   seed_clip_count: number;
   generation_started_at?: string | null;
   start_date?: string | null;
+  /** BYO-Ideas (M1): idea seeds from the linked persona, included in the plan GET
+   *  so the workspace sidebar can show them without a separate persona call. */
+  idea_seeds?: IdeaSeed[];
 }
 
 /** Create a plan from the user's ready persona + optional events; generation runs async. */
@@ -316,9 +360,49 @@ export function addIdeasToPlan(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/add-ideas`, { method: "POST" });
 }
 
+/** Idea-centric: append AI-generated ideas to the plan (opt-in, never auto-runs). */
+export function generateIdeasWithAI(planId: string): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/generate-ideas`, { method: "POST" });
+}
+
+/** Add a bare idea to the plan immediately (no AI). Returns the new PlanItem. */
+export function addIdea(planId: string, idea: string, sourceIdeaSeedId?: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items?plan_id=${encodeURIComponent(planId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idea, source_idea_seed_id: sourceIdeaSeedId ?? null }),
+  });
+}
+
+/** Delete a plan item (refuses if active job or clips attached). */
+export function deleteIdea(itemId: string): Promise<void> {
+  return request<void>(`/plan-items/${itemId}`, { method: "DELETE" });
+}
+
+/** Reorder all plan items atomically. itemIds = full ordered list of item IDs. */
+export function reorderItems(planId: string, itemIds: string[]): Promise<ContentPlan> {
+  return request<ContentPlan>(`/content-plans/${planId}/reorder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item_ids: itemIds }),
+  });
+}
+
+/** Propose an AI expansion for a bare idea (propose-only, never writes DB). */
+export function expandIdea(itemId: string): Promise<IdeaExpandProposal> {
+  return request<IdeaExpandProposal>(`/plan-items/${itemId}/expand`, { method: "POST" });
+}
+
 export function updatePlanItem(
   id: string,
-  edit: { theme?: string; idea?: string; filming_suggestion?: string },
+  edit: {
+    theme?: string;
+    idea?: string;
+    filming_suggestion?: string;
+    notes?: string;
+    scenes?: SceneBlock[];
+    scheduled_date?: string | null;
+  },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {
     method: "PATCH",
@@ -800,6 +884,22 @@ export interface PersonaContent {
   current_situation?: string;
 }
 
+// Onboarding state fields on PersonaQuestionnaire (interface merging, append-only rule).
+// These track where the user is in the edits-first footage funnel.
+export interface PersonaQuestionnaire {
+  // edits-first funnel: chosen path ("existing_footage" | "create_new" | "mixed")
+  content_mode?: "existing_footage" | "create_new" | "mixed";
+  // optional context the user typed in EditContextStep
+  onboarding_topic?: string;
+  onboarding_intent?: string;
+  // generative job kicked off from the onboarding upload step
+  onboarding_edit_job_id?: string;
+  // clip GCS paths used for that job
+  onboarding_clip_paths?: string[];
+  // true once the user has seen and interacted with the payoff screen
+  onboarding_payoff_done?: boolean;
+}
+
 /** Footage pool lifecycle on the plan. */
 export type PoolStatus = "none" | "matching" | "matched" | "matched_empty" | "match_failed";
 
@@ -876,4 +976,29 @@ export function attachPoolClips(planId: string, clipGcsPaths: string[]): Promise
 /** "Match again" — re-run pool matching (e.g. after new items freed up). */
 export function rematchPoolClips(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/pool/match`, { method: "POST" });
+}
+
+// ── Edits-first onboarding fork (append-only rule) ────────────────────────────
+
+/**
+ * POST /personas/onboarding-fork — persist the fork choice and optional
+ * context/footage state on the persona's questionnaire. Called at each
+ * step of the footage funnel so the server is the source of truth, and
+ * the user can resume if they close the tab.
+ */
+export function recordOnboardingFork(data: {
+  content_mode: string;
+  topic?: string;
+  intent?: string;
+  onboarding_clip_paths?: string[];
+  onboarding_edit_job_id?: string;
+  onboarding_payoff_done?: boolean;
+}): Promise<{ persona_id: string; persona_status: string }> {
+  return request<{ persona_id: string; persona_status: string }>(
+    "/personas/onboarding-fork",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    },
+  );
 }

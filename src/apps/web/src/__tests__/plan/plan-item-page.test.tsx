@@ -223,8 +223,11 @@ describe("PlanItemPage — variant count from job not a constant", () => {
       render(<PlanItemPage />);
     });
 
-    // Should render the filmstrip (has 2 variants, not 3).
-    expect(screen.getByTestId("plan-filmstrip")).toBeInTheDocument();
+    // Hero + rail: the page renders the results section without crashing.
+    // With 2 ready variants the light-shell is present and the results area renders.
+    expect(screen.getByTestId("light-shell")).toBeInTheDocument();
+    // The "Other takes" label appears when there are alternates to show.
+    expect(screen.getByText(/Other takes/i)).toBeInTheDocument();
     // No EXPECTED_VARIANTS=3 in sight — the page uses job.variants.length.
   });
 });
@@ -281,8 +284,8 @@ describe("PlanItemPage — pendingEdits overlay", () => {
       render(<PlanItemPage />);
     });
 
-    // The filmstrip is present and no crash.
-    expect(screen.getByTestId("plan-filmstrip")).toBeInTheDocument();
+    // Hero + rail: the results section renders without crash.
+    expect(screen.getByTestId("light-shell")).toBeInTheDocument();
   });
 });
 
@@ -313,11 +316,13 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
+    // Two-pane redesign: NovaHelper replaces the full ConformanceVerdictPanel tile.
+    // on_track shows a one-liner (lime dot + "Looks on-brief.") inside nova-helper.
+    expect(screen.getByTestId("nova-helper")).toBeInTheDocument();
     expect(screen.getByText(/Looks on-brief/)).toBeInTheDocument();
   });
 
-  it("test_conformance_off_brief_tile: calm label, evidence line, advice voice, recourse", async () => {
+  it("test_conformance_off_brief_tile: one-liner summary + Tell Nova + Hide", async () => {
     const item = makeItem({
       status: "awaiting_clips",
       clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
@@ -342,19 +347,19 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByTestId("conformance-verdict-panel")).toBeInTheDocument();
-    // Evidence line: the user can SEE which brief was judged (wrong-brief incident fix).
-    expect(screen.getByText(/Read against:/i)).toBeInTheDocument();
-    expect(screen.getByText(/Quick Weeknight Dinner/)).toBeInTheDocument();
-    expect(screen.getByText(/Different from the brief/i)).toBeInTheDocument();
+    // Two-pane redesign: NovaHelper shows the conformance summary as a one-liner
+    // (no label, no evidence line, no full-tile chrome) — calmer and less opinionated.
+    expect(screen.getByTestId("nova-helper")).toBeInTheDocument();
     expect(screen.getByText(/This reads as a guitar session/)).toBeInTheDocument();
-    expect(screen.getByText(/steady overhead of the cutting board/)).toBeInTheDocument();
-    // Mismatch bullets are data, not display — the tile stays calm.
+    // Recourse buttons — condensed labels in the one-liner.
+    expect(screen.getByText(/Tell Nova/)).toBeInTheDocument();
+    expect(screen.getByText(/Hide/)).toBeInTheDocument();
+    // Mismatch bullets and suggestions are data, not display.
     expect(screen.queryByText(/Expected kitchen footage/)).toBeNull();
-    // Recourse + never-a-gate line.
-    expect(screen.getByText(/Looks wrong\? Tell Nova/)).toBeInTheDocument();
-    expect(screen.getByText(/Hide this read/)).toBeInTheDocument();
-    expect(screen.getByText(/You can generate anyway/)).toBeInTheDocument();
+    expect(screen.queryByText(/steady overhead of the cutting board/)).toBeNull();
+    // Full tile chrome is gone (label, evidence line, "generate anyway" copy).
+    expect(screen.queryByText(/Different from the brief/i)).toBeNull();
+    expect(screen.queryByText(/Read against:/i)).toBeNull();
   });
 
   it("test_conformance_suppressed_or_dismissed_renders_nothing", async () => {

@@ -14,9 +14,11 @@ import SteerInput from "./SteerInput";
 
 function groupByWeek(items: PlanItem[]): { week: number; items: PlanItem[] }[] {
   const byWeek = new Map<number, PlanItem[]>();
-  const sorted = Array.from(items).sort((a, b) => a.day_index - b.day_index);
+  const sorted = Array.from(items)
+    .filter((it) => it.day_index != null)
+    .sort((a, b) => a.day_index! - b.day_index!);
   for (const it of sorted) {
-    const week = Math.floor((it.day_index - 1) / 7) + 1;
+    const week = Math.floor((it.day_index! - 1) / 7) + 1;
     if (!byWeek.has(week)) byWeek.set(week, []);
     byWeek.get(week)!.push(it);
   }
@@ -46,13 +48,15 @@ export interface PlanNudge {
  */
 export function planNudge(items: PlanItem[]): PlanNudge | null {
   if (items.length === 0) return null;
-  const sorted = Array.from(items).sort((a, b) => a.day_index - b.day_index);
+  const sorted = Array.from(items)
+    .filter((i) => i.day_index != null)
+    .sort((a, b) => a.day_index! - b.day_index!);
 
   if (sorted.every((i) => i.status === "ready")) {
     return { text: `You've made all ${sorted.length} videos. Incredible run.` };
   }
 
-  const week1 = sorted.filter((i) => weekOf(i.day_index) === 1);
+  const week1 = sorted.filter((i) => weekOf(i.day_index!) === 1);
   const nextW1 = week1.find((i) => i.status !== "ready");
   if (nextW1) {
     if (nextW1.status === "generating") {
@@ -77,7 +81,7 @@ export function planNudge(items: PlanItem[]): PlanNudge | null {
   const next = sorted.find((i) => i.status !== "ready");
   if (next) {
     return {
-      text: `Week 1 done — you're on week ${weekOf(next.day_index)}. Day ${next.day_index} is next.`,
+      text: `Week 1 done — you're on week ${weekOf(next.day_index!)}. Day ${next.day_index} is next.`,
       itemId: next.id,
     };
   }

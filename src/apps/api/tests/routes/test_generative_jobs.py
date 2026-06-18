@@ -1291,3 +1291,24 @@ def test_variants_for_response_intro_mode_does_not_mutate_stored_dicts(monkeypat
     gj._variants_for_response(job)
     assert "intro_mode" not in stored
     assert "sequence_synced" not in stored
+
+
+# ── T1: topic/intent schema fields ────────────────────────────────────────────
+
+
+def test_topic_and_intent_accepted_by_schema():
+    """topic + intent are optional string fields on CreateGenerativeJobRequest."""
+    req = CreateGenerativeJobRequest(
+        clip_gcs_paths=["music-uploads/a.mp4"],
+        topic="hiking weekend",
+        intent="motivate friends",
+    )
+    assert req.topic == "hiking weekend"
+    assert req.intent == "motivate friends"
+
+
+def test_topic_and_intent_default_to_none():
+    """Old clients posting without topic/intent get None — no 422."""
+    req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"])
+    assert req.topic is None
+    assert req.intent is None

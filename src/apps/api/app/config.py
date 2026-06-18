@@ -344,6 +344,11 @@ class Settings(BaseSettings):
     # Kill switch: PLAN_ITEM_ADVISOR_ENABLED=false → route returns 404.
     plan_item_advisor_enabled: bool = True
 
+    # Idea-centric plan redesign (2026-06-17): PlanItem is the spine; no auto-generate
+    # on create; ideas added directly as PlanItems; AI generation is opt-in.
+    # Kill switch: IDEA_CENTRIC_PLAN_ENABLED=false → create_plan auto-generates (old behavior).
+    idea_centric_plan_enabled: bool = True
+
     # Scoring weights (named constants — change here only)
     hook_weight: float = 0.65
     engagement_weight: float = 0.35

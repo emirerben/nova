@@ -136,6 +136,11 @@ export function TodayCard({
         </p>
       )}
 
+      {!isRerolling && (nextItem.filming_guide?.length ?? 0) > 0 && (
+        <p className="mt-1.5 text-[12px] text-[#a1a1aa]">
+          {nextItem.filming_guide.length} shots to film
+        </p>
+      )}
       {!isRerolling && <SeedProvenanceBadge item={nextItem} />}
 
       <div className="mt-5 flex flex-wrap items-center gap-4">
