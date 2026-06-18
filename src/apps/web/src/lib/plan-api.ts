@@ -287,8 +287,9 @@ export interface PlanItem {
   user_edited: boolean;
   /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
   edit_format?: string | null;
-  /** BYO-Ideas provenance: the seed that generated this item, if any. */
+  /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
+  source_idea_seed_text?: string | null;
 }
 
 export interface SceneBlock {

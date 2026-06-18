@@ -73,9 +73,14 @@ class ContentPlanResponse(BaseModel):
     idea_seeds: list[dict] = []
 
 
-def _plan_response(plan: ContentPlan, idea_seeds: list[dict] | None = None) -> ContentPlanResponse:
+def _plan_response(
+    plan: ContentPlan,
+    idea_seeds: list[dict] | None = None,
+    seed_text_by_id: dict[str, str] | None = None,
+) -> ContentPlanResponse:
     pool = plan.pool or {}
     pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
+    _seed_map = seed_text_by_id or {}
 
     # Reconcile matched_item_id: if the clip is no longer in the item's
     # clip_gcs_paths (user removed/replaced it), reset matched_item_id to None
@@ -97,7 +102,7 @@ def _plan_response(plan: ContentPlan, idea_seeds: list[dict] | None = None) -> C
         plan_status=plan.plan_status,
         horizon_days=plan.horizon_days,
         events=plan.events,
-        items=[plan_item_response(it) for it in plan.items],
+        items=[plan_item_response(it, seed_text_by_id=_seed_map) for it in plan.items],
         activation_status=plan.activation_status,
         seed_clip_count=len(plan.seed_clip_paths or []),
         generation_started_at=plan.generation_started_at,
@@ -259,13 +264,18 @@ async def get_plan(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No content plan yet")
     # Include idea_seeds from the linked persona so the plan-home sidebar can show
     # them with their current in_plan status without a separate persona API call.
+    # Also build id→text map for T5 provenance badge.
     persona = await db.get(PersonaRow, plan.persona_id)
-    idea_seeds = (
-        [s for s in persona.idea_seeds if isinstance(s, dict)]
-        if persona is not None and isinstance(persona.idea_seeds, list)
-        else []
+    seeds = (
+        persona.idea_seeds if persona is not None and isinstance(persona.idea_seeds, list) else []
     )
-    return _plan_response(plan, idea_seeds=idea_seeds)
+    idea_seeds = [s for s in seeds if isinstance(s, dict)]
+    seed_text_by_id = {
+        str(s["id"]): str(s["text"])
+        for s in seeds
+        if isinstance(s, dict) and s.get("id") and s.get("text")
+    }
+    return _plan_response(plan, idea_seeds=idea_seeds, seed_text_by_id=seed_text_by_id)
 
 
 @router.post("/{plan_id}/regenerate", response_model=ContentPlanResponse)

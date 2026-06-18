@@ -44,6 +44,7 @@ import { ProgressTheater } from "@/components/progress";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
+import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
@@ -481,6 +482,7 @@ export default function PlanItemPage() {
               {item.theme ?? item.idea}
             </h1>
             {item.theme && <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>}
+            <SeedProvenanceBadge item={item} />
 
             {/* Notes textarea — editable, saves on blur */}
             <textarea
