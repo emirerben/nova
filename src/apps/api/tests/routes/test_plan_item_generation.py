@@ -53,6 +53,12 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.user_edited = False
     # M4: explicit None so plan_item_response does not mistake MagicMock for a dict.
     item.conformance = None
+    # 0055: new nullable/added fields.
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.source_idea_seed_id = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -261,6 +267,12 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     item.item_status = "idea"
     item.user_edited = False
     item.conformance = None  # M4: must be None/dict, not a MagicMock attribute
+    item.clip_assignments = []
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.source_idea_seed_id = None
 
     resp = plan_item_response(item)
     # non-dict skipped; 2 dicts kept with defaults

@@ -68,7 +68,9 @@ export function resolvePlanMode(
   const hasItems = Array.isArray(plan.items) && plan.items.length > 0;
 
   if (plan.plan_status === "generating") {
-    return hasItems ? "workspace:regenerating" : "setup:plan-generating";
+    // Idea-centric: plan always starts ready-with-items; generating = append-only.
+    // Always show the workspace regenerating state (never the empty setup spinner).
+    return "workspace:regenerating";
   }
   if (plan.plan_status === "failed") {
     return hasItems ? "workspace:refresh-failed" : "setup:plan-failed";

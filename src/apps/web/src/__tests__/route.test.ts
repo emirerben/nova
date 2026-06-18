@@ -110,8 +110,10 @@ describe("resolvePlanMode", () => {
   });
 
   // ── Plan generating ─────────────────────────────────────────────────────
-  it("returns setup:plan-generating when generating + no items", () => {
-    expect(resolvePlanMode(persona("ready"), plan("generating", []))).toBe("setup:plan-generating");
+  // Idea-centric (T8): generating always shows workspace:regenerating, even
+  // with zero items — plans now start ready-with-items; generating = AI append.
+  it("returns workspace:regenerating when generating + no items", () => {
+    expect(resolvePlanMode(persona("ready"), plan("generating", []))).toBe("workspace:regenerating");
   });
 
   it("returns workspace:regenerating when generating + items", () => {

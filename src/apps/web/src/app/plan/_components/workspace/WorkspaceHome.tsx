@@ -62,6 +62,9 @@ export function WorkspaceHome({
   );
 
   const items = plan.items ?? [];
+  // Items that have been scheduled (expanded ideas with a calendar slot).
+  const scheduledItems = items.filter((i) => i.day_index !== null);
+  const hasSchedule = scheduledItems.length > 0;
   const todayDay = calendarToday(plan.start_date, plan.horizon_days);
 
   // Weekday label from start_date
@@ -75,8 +78,8 @@ export function WorkspaceHome({
     });
   }
 
-  // Find the first non-ready item for HomeTodayCard and behindBy
-  const nextActionItem = items.find((i) => i.status !== "ready") ?? null;
+  // Find the first non-ready scheduled item for HomeTodayCard and behindBy
+  const nextActionItem = scheduledItems.find((i) => i.status !== "ready") ?? null;
   const behind = behindBy(todayDay, nextActionItem?.day_index ?? null);
 
   const activating = ["seeding", "activating"].includes(plan.activation_status ?? "");
@@ -97,8 +100,7 @@ export function WorkspaceHome({
           <div className="w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-8">
             <IdeasSidebar
               plan={plan}
-              persona={persona}
-              onSaved={setPersona}
+              onRefresh={onRefresh}
             />
           </div>
 
@@ -116,34 +118,49 @@ export function WorkspaceHome({
               <SeedUploadCard plan={plan} onError={onError} onRefresh={onRefresh} />
             )}
 
-            {/* A. Today card — dominant, Fraunces heading + shot chips + one CTA */}
-            <HomeTodayCard
-              nextItem={nextActionItem}
-              plan={plan}
-              horizonDays={plan.horizon_days}
-              calendarDay={todayDay}
-              weekdayLabel={weekdayLabel}
-              behind={behind}
-              onRefresh={onRefresh}
-            />
+            {hasSchedule ? (
+              <>
+                {/* A. Today card — dominant, Fraunces heading + shot chips + one CTA */}
+                <HomeTodayCard
+                  nextItem={nextActionItem}
+                  plan={plan}
+                  horizonDays={plan.horizon_days}
+                  calendarDay={todayDay}
+                  weekdayLabel={weekdayLabel}
+                  behind={behind}
+                  onRefresh={onRefresh}
+                />
 
-            {/* B. "This week" strip */}
-            <ThisWeekStrip
-              plan={plan}
-              todayDay={todayDay}
-              regenerating={regenerating}
-            />
+                {/* B. "This week" strip */}
+                <ThisWeekStrip
+                  plan={plan}
+                  todayDay={todayDay}
+                  regenerating={regenerating}
+                />
 
-            {/* C. Month calendar grid */}
-            <MonthCalendarGrid
-              plan={plan}
-              todayDay={todayDay}
-              regenerating={regenerating}
-            />
+                {/* C. Month calendar grid */}
+                <MonthCalendarGrid
+                  plan={plan}
+                  todayDay={todayDay}
+                  regenerating={regenerating}
+                />
 
-            {/* Footage pool — power-up below calendar; suppressed during activation */}
-            {!activating && (
-              <FootagePool plan={plan} onRefresh={onRefresh} onError={onError} />
+                {/* Footage pool — power-up below calendar; suppressed during activation */}
+                {!activating && (
+                  <FootagePool plan={plan} onRefresh={onRefresh} onError={onError} />
+                )}
+              </>
+            ) : (
+              /* No scheduled items yet — ideas are in the sidebar, waiting to be expanded */
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-200 px-8 py-16 text-center">
+                <p className="font-display text-2xl font-medium text-[#0c0c0e]">
+                  Your ideas are ready
+                </p>
+                <p className="mt-3 max-w-sm text-[14px] text-[#71717a]">
+                  Click an idea on the left to add notes or expand it with AI.
+                  Hit &ldquo;Generate with AI&rdquo; to turn all your ideas into a full filming plan.
+                </p>
+              </div>
             )}
 
             {/* Secondary cards — recessive, below the primary flow */}

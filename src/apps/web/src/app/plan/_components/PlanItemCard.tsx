@@ -45,7 +45,7 @@ export default function PlanItemCard({
   onError: (msg: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [theme, setTheme] = useState(item.theme);
+  const [theme, setTheme] = useState(item.theme ?? "");
   const [idea, setIdea] = useState(item.idea);
   const [filming, setFilming] = useState(item.filming_suggestion ?? "");
   const [saving, setSaving] = useState(false);
@@ -53,7 +53,7 @@ export default function PlanItemCard({
   // Track the last-persisted values so `dirty` resets after a save (the parent
   // doesn't refetch the item prop, so comparing against `item` would re-flag dirty).
   const [baseline, setBaseline] = useState({
-    theme: item.theme,
+    theme: item.theme ?? "",
     idea: item.idea,
     filming: item.filming_suggestion ?? "",
   });

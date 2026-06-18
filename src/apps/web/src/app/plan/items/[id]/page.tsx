@@ -8,13 +8,16 @@ import {
   changePlanItemStyle,
   dismissConformance,
   editPlanItemVariant,
+  expandIdea,
   generatePlanItem,
   getPlanItem,
   getPlanItemJobStatus,
   NotAuthenticatedError,
   setClipNote,
+  updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
+  type IdeaExpandProposal,
   type PlanItem,
   type PlanItemJobStatus,
   type PlanItemVariant,
@@ -84,6 +87,10 @@ export default function PlanItemPage() {
   const [generating, setGenerating] = useState(false);
   // uploaderBusy: true while ShotSlotUploader has any upload/commit in flight (D6).
   const [uploaderBusy, setUploaderBusy] = useState(false);
+  // Idea-centric: "Expand with AI" proposal state.
+  const [expandProposal, setExpandProposal] = useState<IdeaExpandProposal | null>(null);
+  const [expanding, setExpanding] = useState(false);
+  const [acceptingExpand, setAcceptingExpand] = useState(false);
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
@@ -463,13 +470,106 @@ export default function PlanItemPage() {
             >
               ← back to plan
             </Link>
-            <div className="mb-1 mt-4 flex items-center gap-3">
-              <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
-                Day {item.day_index}
-              </span>
-            </div>
-            <h1 className="font-display text-3xl text-[#0c0c0e]">{item.theme}</h1>
-            <p className="mb-4 mt-2 text-[#3f3f46]">{item.idea}</p>
+            {item.day_index != null && (
+              <div className="mb-1 mt-4 flex items-center gap-3">
+                <span className="rounded bg-zinc-100 px-2 py-0.5 text-xs text-[#71717a]">
+                  Day {item.day_index}
+                </span>
+              </div>
+            )}
+            <h1 className="font-display mt-4 text-3xl text-[#0c0c0e]">
+              {item.theme ?? item.idea}
+            </h1>
+            {item.theme && <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>}
+
+            {/* Notes textarea — editable, saves on blur */}
+            <textarea
+              defaultValue={item.notes ?? ""}
+              onBlur={async (e) => {
+                const val = e.currentTarget.value.trim() || null;
+                if (val !== (item.notes ?? null)) {
+                  await updatePlanItem(item.id, { notes: val ?? undefined }).catch(() => null);
+                  refetch();
+                }
+              }}
+              placeholder="Add notes…"
+              rows={2}
+              className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-zinc-400 focus:outline-none"
+            />
+
+            {/* Expand with AI — only for un-expanded ideas (no theme yet, no clips) */}
+            {!item.theme && item.clip_gcs_paths.length === 0 && !expandProposal && (
+              <div className="mb-4">
+                <button
+                  type="button"
+                  disabled={expanding}
+                  onClick={async () => {
+                    setExpanding(true);
+                    try {
+                      const proposal = await expandIdea(item.id);
+                      setExpandProposal(proposal);
+                    } catch {
+                      /* swallow — user can retry */
+                    } finally {
+                      setExpanding(false);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span aria-hidden>✦</span>
+                  {expanding ? "Thinking…" : "Expand with AI"}
+                </button>
+              </div>
+            )}
+
+            {/* Expand proposal card */}
+            {expandProposal && (
+              <div className="mb-4 rounded-xl border border-lime-200 bg-lime-50 p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">
+                  AI suggestion
+                </p>
+                <p className="mt-1 font-display text-lg font-medium text-[#0c0c0e]">
+                  {expandProposal.theme}
+                </p>
+                {expandProposal.filming_suggestion && (
+                  <p className="mt-1 text-sm text-[#3f3f46]">{expandProposal.filming_suggestion}</p>
+                )}
+                {expandProposal.rationale && (
+                  <p className="mt-2 text-xs text-[#71717a]">{expandProposal.rationale}</p>
+                )}
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={acceptingExpand}
+                    onClick={async () => {
+                      setAcceptingExpand(true);
+                      try {
+                        await updatePlanItem(item.id, {
+                          theme: expandProposal.theme,
+                          filming_suggestion: expandProposal.filming_suggestion,
+                        });
+                        setExpandProposal(null);
+                        refetch();
+                      } catch {
+                        /* swallow */
+                      } finally {
+                        setAcceptingExpand(false);
+                      }
+                    }}
+                    className="rounded-lg bg-lime-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {acceptingExpand ? "Saving…" : "Accept"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setExpandProposal(null)}
+                    className="rounded-lg border border-zinc-200 bg-white px-4 py-1.5 text-[12px] text-[#71717a] hover:border-zinc-400"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Uploader — instructed: shot-slot guide; uninstructed: pool card */}
             {isInstructed ? (
@@ -794,7 +894,7 @@ function FocusedResults({
   }, [editSession.isSaving, refetch]);
 
   const pendingDownloadRef = useRef(false);
-  const downloadName = `nova-${slugify(item.theme) || itemId.slice(0, 8)}.mp4`;
+  const downloadName = `nova-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
 
   useEffect(() => {
     if (!pendingDownloadRef.current) return;

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.111.0] — 2026-06-17
+
+### Added
+- **Idea-centric plan: add any idea instantly, generate with AI when ready.** Plans now materialize a `PlanItem` the moment the user types an idea — no waiting for AI. The "Generate with AI" button triggers AI-generated themes and filming guides as an opt-in append, never replacing existing items.
+  - **New `IdeasSidebar` component.** Rewritten to drive from `plan.items` sorted by `position`. Each item is a live link to its detail page. Add-idea input commits on Enter or blur; "Generate with AI" button (✦ icon) triggers the AI append flow and shows a spinner while generating.
+  - **Bare ideas have no calendar slot.** New items start with `day_index=null` and `item_status="idea"`. The calendar and nudge logic filter null-day items; they appear in the sidebar instead.
+  - **`POST /plan-items?plan_id=` (add idea).** Creates a bare `PlanItem` immediately with `position=max+1`, no day_index, no AI call. 204 response includes the new item.
+  - **`DELETE /plan-items/{id}` (delete idea).** Refuses 409 if the item has an active job or uploaded clips. 204 on success.
+  - **`POST /plan-items/{id}/expand` (expand with AI).** Proposes theme, filming_guide, and rationale without writing to the DB. The user sees a lime proposal card on the item page and can Accept or Dismiss.
+  - **`POST /content-plans/{id}/generate-ideas` (AI append).** Dispatches the `generate_ideas_into_plan` Celery task, which calls the new `IdeaExpanderAgent` and appends items without touching existing ones. 409 if already generating.
+  - **`POST /content-plans/{id}/reorder` (reorder items).** Atomically reassigns `position` values from a client-provided ordered list of item IDs.
+  - **Migration 0055.** Adds `position` (NOT NULL, backfilled from `day_index`), `scheduled_date`, `notes`, and `scenes` (JSONB `[]` default) to `plan_items`. Makes `day_index` and `theme` nullable.
+  - **`IdeaExpanderAgent`.** New Gemini Flash agent (`nova.plan.idea_expander`) with `idea_expander.txt` prompt. Returns theme/filming_guide/rationale; never writes DB.
+  - **Notes on item detail page.** Textarea on `/plan/items/[id]` auto-saves on blur via `PATCH /plan-items/{id}`.
+  - **Kill switch.** `settings.idea_centric_plan_enabled` (default `True`) — set to `False` to restore legacy AI-generate-on-create behavior.
+
+### Changed
+- `resolvePlanMode` now returns `"workspace:regenerating"` when `plan_status === "generating"` regardless of item count — plans start ready-with-items; generating means AI is appending, not replacing.
+- `ContentPlan.items` relationship now orders by `position` instead of `day_index`.
+- `planNudge` and `PlanCalendar` filter items with `day_index == null` before calendar/week logic to avoid sort errors on bare ideas.
+
 ## [0.4.110.0] — 2026-06-15
 
 ### Added
