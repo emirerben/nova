@@ -38,6 +38,7 @@ export default function PlanVariantEditor({
   showClipEditor = false,
   clipSlotCount = null,
   hasClipEdits = false,
+  hideSections = [],
 }: {
   variant: PlanItemVariant;
   tracks: MusicTrackSummary[];
@@ -58,6 +59,10 @@ export default function PlanVariantEditor({
   /** has_user_edits from the timeline GET — a song swap rebuilds the cut, so
    * confirm before destroying the user's clip edits (mirrors VariantCard). */
   hasClipEdits?: boolean;
+  /** Sections to suppress from rendering. Used by the editor row to show only
+   * the active tab's section. Values: "caption" | "size" | "layout" | "style" |
+   * "song" | "clips". Defaults to showing all. */
+  hideSections?: Array<"caption" | "size" | "layout" | "style" | "song" | "clips">;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -84,10 +89,12 @@ export default function PlanVariantEditor({
     }
   };
 
+  const hide = new Set(hideSections);
+
   return (
     <div className="space-y-6">
       {/* ── Synced-sequence chip (D6/D19) ───────────────────────── */}
-      {sequenceSynced && (
+      {sequenceSynced && !hide.has("caption") && (
         <span
           title={SEQUENCE_TEXT_LOCKED_HINT}
           className="inline-flex w-fit rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800"
@@ -97,7 +104,7 @@ export default function PlanVariantEditor({
       )}
 
       {/* ── Caption ─────────────────────────────────────────────── */}
-      <section>
+      {!hide.has("caption") && <section>
         <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Caption</h3>
         {editing ? (
           <form
@@ -159,10 +166,10 @@ export default function PlanVariantEditor({
             </button>
           </div>
         )}
-      </section>
+      </section>}
 
       {/* ── Text size ───────────────────────────────────────────── */}
-      {onResize && curPx != null && (
+      {!hide.has("size") && onResize && curPx != null && (
         <section>
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Text size</h3>
           <div className="flex items-center gap-3">
@@ -203,7 +210,7 @@ export default function PlanVariantEditor({
       )}
 
       {/* ── Layout ──────────────────────────────────────────────── */}
-      {onChangeLayout &&
+      {!hide.has("layout") && onChangeLayout &&
         variant.text_mode === "agent_text" &&
         (() => {
           // Sequence-synced variants render Editorial as the active state and
@@ -257,7 +264,7 @@ export default function PlanVariantEditor({
         })()}
 
       {/* ── Text style ──────────────────────────────────────────── */}
-      {styleSets.length > 0 && (
+      {!hide.has("style") && styleSets.length > 0 && (
         <section>
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Style</h3>
           <div role="radiogroup" aria-label="Text style" className="flex flex-wrap gap-2">
@@ -277,7 +284,7 @@ export default function PlanVariantEditor({
       )}
 
       {/* ── Song ────────────────────────────────────────────────── */}
-      {canSwap && (
+      {!hide.has("song") && canSwap && (
         <section>
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Song</h3>
           <SongPicker
@@ -295,7 +302,7 @@ export default function PlanVariantEditor({
       )}
 
       {/* ── Clips ───────────────────────────────────────────────── */}
-      {onEditClips && showClipEditor && (
+      {!hide.has("clips") && onEditClips && showClipEditor && (
         <section>
           <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Clips</h3>
           <button

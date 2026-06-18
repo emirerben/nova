@@ -138,3 +138,30 @@ def test_rejects_empty_clip_list() -> None:
 def test_rejects_path_traversal() -> None:
     with pytest.raises(ValueError):
         build_generative_job(user_id=uuid.uuid4(), clip_paths=["users/../../etc/passwd"])
+
+
+# ── T1: topic/intent passthrough ─────────────────────────────────────────────
+
+
+def test_topic_and_intent_passed_as_item_theme_and_idea() -> None:
+    """topic/intent from the onboarding fork must arrive as persona.theme/idea."""
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["music-uploads/a.mp4"],
+        item_theme="travel cooking",
+        item_idea="inspire wanderlust",
+    )
+    persona = job.all_candidates["persona"]
+    assert persona["theme"] == "travel cooking"
+    assert persona["idea"] == "inspire wanderlust"
+
+
+def test_empty_topic_intent_omits_persona_key_unchanged() -> None:
+    """Empty/blank topic+intent → persona key absent (same as test_public_job_omits_persona_key)."""
+    job = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["music-uploads/a.mp4"],
+        item_theme="",
+        item_idea="",
+    )
+    assert "persona" not in job.all_candidates

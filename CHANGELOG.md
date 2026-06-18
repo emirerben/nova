@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.110.0] — 2026-06-15
+
+### Added
+- **Edits-first onboarding — make your first edit in ~90 seconds.** New users now experience a resequenced onboarding: TikTok prescreen → ~6 AI interview questions → footage upload offer → upload → group clips (with per-group context) → generative edit (~90 s) → pick-your-take gallery → plan. The 30-day content plan becomes a clearly separate second act after the aha moment.
+  - **New onboarding state machine.** `resolvePlanMode` in `plan/_lib/route.ts` emits four new mode values (`setup:fork`, `setup:edit-upload`, `setup:edit-generating`, `setup:edit-payoff`) driven by new keys on `Persona.questionnaire` JSONB (`content_mode`, `onboarding_edit_job_id`, `onboarding_clip_paths`, `onboarding_payoff_done`). No Alembic migration — new keys inside the existing column.
+  - **`ForkScreen`, `EditUploadStep`, `ClipGroupStep`, `EditPayoff` components.** New onboarding screens under `app/plan/_components/onboarding/`. All reuse the light editorial surface (cream/ink/lime/Playfair) and pass `tone="light"` to the four dark-defaulting progress components. `EditUploadStep` drives uploads via `uploadGenerativeClip` (FormData → `music-jobs/upload-slot`). Context is collected per-group in `ClipGroupStep`, not as a standalone step.
+  - **Context-injection exposed on `POST /generative-jobs`.** Added optional `topic` + `intent` fields to `CreateGenerativeJobRequest`; passed as `item_theme`/`item_idea` into the pre-existing `build_generative_job` context-injection channel so the intro writer receives the user's stated theme.
+  - **`POST /personas/onboarding-fork` endpoint.** Race-safe get-or-create persona row (reuses the `IntegrityError` re-fetch pattern), read-modify-write merge into `questionnaire` (never clobbers existing `tiktok_handle`/`interview_turns`), seeds a synthetic answered first turn so the plan-act chat resumes at the next question without stalling.
+  - **Server-side seed-pool carry in `create_plan`.** When a plan is created post-onboarding, `create_plan` reads `onboarding_clip_paths` off the persona questionnaire, filters to `generative-jobs/*/sources/` (durable, lifecycle-exempt), and assigns `ContentPlan.seed_clip_paths` directly — bypassing the public `attach_seed_clips` endpoint whose prefix validator would 422-reject the durable path.
+  - **Fresh path unchanged.** Users who complete the AI interview and skip the footage upload offer go directly to persona generating → plan flow; every pre-existing `resolvePlanMode` branch is unchanged.
+
+## [0.4.109.0] — 2026-06-14
+
+### Changed
+- **Edit result — Hero + rail layout (Build Goal #4).** Redesigned the post-generation results section on `/plan/items/[id]` from a filmstrip-over-editor layout to a Hero + rail design.
+  - **Hero**: the active variant plays in a large 9/16 video player (full-width on mobile, fixed 300px column on desktop). A lime "Nova's pick" badge appears on the first variant if it has an output URL. A text-mode pill ("Original audio" / "With lyrics") shows below the video.
+  - **Rationale blurb**: a 1-2 sentence description derived client-side from `text_mode` + `track_title` (no LLM call). E.g. "Beat-synced to [track]." / "Your original audio, kept."
+  - **Alternates row**: up to 3 small 9/16 thumbnails for non-focused ready variants. Clicking swaps the hero and updates the rationale.
+  - **Editor row**: 4 icon+label tab buttons (T Text · Aa Font · ♫ Song · ✂ Clips) that reveal `PlanVariantEditor` or `EditToolbar` inline when clicked. Hidden when no tab is active (saves vertical space). Song tab hidden when no song is swappable; Font tab hidden for lyrics variants.
+  - **Download**: always visible below the editor row (no longer buried in the LEFT column).
+  - **All editing functionality preserved**: retext, font/style, song swap, clip timeline — just gated behind tabs instead of always visible.
+- **`PlanVariantEditor`**: added `hideSections` prop (`"caption" | "size" | "layout" | "style" | "song" | "clips"`) so the editor row can surface only the active tab's section without modifying component internals.
+- **Tests updated**: `plan-instant-editor`, `plan-item-page`, and `plan-item-pending-edits` tests updated to reflect the new tab-driven UI (click tab to expose controls before asserting).
+
+## [0.4.108.0] — 2026-06-14
+
+### Changed
+- **Onboarding — Split rail layout (Build Goal #1).** The `/plan` setup flow now renders as a two-pane desktop layout: a fixed left rail (white, border-right) shows a 4-step progress indicator (TikTok → What you make → Style → First plan) with lime dots for done, ink for active, zinc for upcoming/skipped. The right pane (flex-1, max-w-lg) shows one question at a time. Clicking a completed step goes back to it; upcoming steps are non-interactive.
+- **New "What you make" step.** A new Step 2 asks "What do you make?" with four large toggle cards: Talking to camera (`talking_head`), B-roll & nature (`montage`), Vlogs & daily life (`day_vlog`), Mixed. The selection is persisted as `footage_type_bias` on the user's persona (PATCH /personas/:id, no flag gate) and used by planners + archetype dispatch.
+- **TikTok branch.** Handle submitted with a result → Step 1 marked done; skipped or failed → Step 1 shown as "Skipped" (zinc dot). Both paths advance to Step 2.
+- **Deleted legacy files:** `OnboardingStep.tsx`, `QuestionCard.tsx`, `plan/onboarding/page.tsx`, `plan/setup/page.tsx` (simple redirect shims, no other logic). Tests updated to cover `OnboardingShell` instead.
+- **Backend: `footage_type_bias` added to `PersonaEdit`.** `PATCH /personas/:id` now accepts `footage_type_bias: list[str] | None`, storing it in the persona JSONB alongside other persona fields. No migration needed (JSONB). No `USER_STYLE_ENABLED` gate.
+
+## [0.4.107.0] — 2026-06-14
+
+### Changed
+- **Plan home — Ideas sidebar + Today layout.** The workspace home page (`/plan`) now uses a two-column desktop layout: a sticky left rail ("Your ideas", w-64) lists the user's BYO idea seeds with a lime "Day N" badge when linked to a plan item and a hover "→" that navigates to that item; the center column leads with a large "Today" card (Fraunces heading, status pill, glanceable shot-chip list, one ink "Film this →" CTA) followed by the This Week strip. Mobile: Ideas sidebar stacks above Today card. Empty-state: "Nothing planned for today — pick an idea from your list." Secondary cards (Momentum, Persona, Style) move to a horizontal row below the calendar.
+- **BYO-Ideas provenance wired (T5 finish).** `add_ideas_to_plan` now writes `PlanItem.source_idea_seed_id` and flips seed `status` to `"in_plan"` for each seed that generates an item. The plan's linked persona's `idea_seeds` list is also included in `GET /content-plans` so the sidebar can show live `in_plan` status without a separate persona fetch.
+- **`source_idea_seed_id` exposed on `PlanItemResponse`** (additive field; null for items with no seed link). `ContentPlanResponse` now carries `idea_seeds: list[dict]` from the linked persona (populated in the workspace GET; empty in all other responses).
+
+## [0.4.106.0] — 2026-06-14
+
+### Changed
+- **Plan item — two-pane desktop layout.** The plan item page (`/plan/items/[id]`) now splits into a LEFT column (shot checklist) and a RIGHT sticky action panel (small preview + Nova helper + Generate + "N shots left" caption). Stacks on mobile. The shot checklist and upload controls remain in view while the Generate button is always visible without scrolling on desktop.
+- **Conformance critic + Ask Nova collapsed into one quiet Nova helper.** The two pre-generate AI surfaces are now a single lime-dot one-liner: it shows the conformance verdict summary when present (with "Tell Nova" / "Hide" / "Ask Nova ↗" in compact form), "Looks on-brief." when on-track, or a soft "Not sure which clip fits? Ask Nova ↗" prompt by default. Expanding via "Ask Nova ↗" opens the full advisor chat (existing `AskNovaPanel`) in-place. The verbose `ConformanceVerdictPanel` tile is gone from the default view.
+- **Display font: Playfair Display → Fraunces** across the entire web UI. Fraunces is an optical-size variable serif (`opsz,wght@9..144`) that reads better at small display sizes and was chosen via a 3-font user comparison (D6/D8). Body and label text remains Inter (unchanged). Web UI only — burned-in video fonts (`assets/fonts/`, Skia/ASS) are unaffected.
+- **Uninstructed upload card tidied.** The legacy verbose `<section>` for uninstructed items is replaced by a clean `PoolUploadCard` matching the shot-slot visual style (rounded-2xl, white card). Logic is unchanged.
+- **"N shots left" caption** under Generate counts unfilled shot-slot assignments, giving creators a glanceable sense of how complete the checklist is.
+- **"Why this works" rationale card removed** from the item page (density reduction; rationale is available via Ask Nova on request).
+- **DESIGN.md updated:** §5 typography, §9 brand voice, §11 examples, and §10 token ledger (row 11) updated to Fraunces.
+
+## [0.4.105.0] — 2026-06-14
+
+### Changed
+- **Narrative payoff duration weighting.** When a filming guide is active (`narrative_shot_count > 0`), recipe slot durations are now weighted by the guide's stated `duration_s` hints instead of equal-splitting the footage. For the no-music path (`original_text` variant), payoff slots declared longer in the guide receive a proportionally larger share of the total footage — a 6s payoff hint vs 2s setup hints yields a 3× longer slot rather than equal time. For music variants, `target_duration_s` is rescaled by the same proportions so the clip matcher routes longer/better clips to the payoff slot. Beat boundaries are unchanged. Addresses the pacing judge finding: setup:payoff at 2.5:1 (guide-intended climax renders as the shortest slot).
 ## [0.4.104.0] — 2026-06-13
 
 ### Added
@@ -20,6 +75,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Clip-timeline edit locks all controls and doesn't auto-refresh.** After trimming or extending a clip via "Edit clips", every other control on that variant (style, layout, caption, song, text size) became permanently disabled — a manual page refresh was required to recover. Root cause: the optimistic "pending edit" pin used `output_url` string equality to detect completion, but clip re-renders hold the signed URL stable across the render lifecycle, so the pin never cleared. Replaced the URL-equality signal with the `render_finished_at` + `sawRendering` fingerprint already used in `useVariantEditSession` — the pin now clears as soon as the server reports a genuinely-new render (advanced timestamp or observed "releasing" state), so controls re-enable and the hero swaps automatically the moment the re-render finishes.
+
 
 ## [0.4.102.0] — 2026-06-13
 
