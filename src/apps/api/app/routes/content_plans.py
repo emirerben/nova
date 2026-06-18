@@ -76,6 +76,22 @@ class ContentPlanResponse(BaseModel):
 def _plan_response(plan: ContentPlan, idea_seeds: list[dict] | None = None) -> ContentPlanResponse:
     pool = plan.pool or {}
     pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
+
+    # Reconcile matched_item_id: if the clip is no longer in the item's
+    # clip_gcs_paths (user removed/replaced it), reset matched_item_id to None
+    # so pool_matched_count stays accurate and "Match again" doesn't skip it.
+    # Read-side only — no DB write in this pass.
+    item_clips_index: dict[str, set[str]] = {
+        str(it.id): set(it.clip_gcs_paths or []) for it in plan.items
+    }
+    for clip in pool_clips:
+        mid = clip.get("matched_item_id")
+        if not mid:
+            continue
+        item_paths = item_clips_index.get(str(mid))
+        if item_paths is None or clip.get("gcs_path") not in item_paths:
+            clip["matched_item_id"] = None
+
     return ContentPlanResponse(
         id=str(plan.id),
         plan_status=plan.plan_status,
