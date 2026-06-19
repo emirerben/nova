@@ -59,6 +59,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.notes = None
     item.scenes = []
     item.source_idea_seed_id = None
+    item.edit_format = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -273,6 +274,7 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     item.notes = None
     item.scenes = []
     item.source_idea_seed_id = None
+    item.edit_format = None
 
     resp = plan_item_response(item)
     # non-dict skipped; 2 dicts kept with defaults
