@@ -38,7 +38,7 @@ import {
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
-import { variantFailureCopy } from "@/lib/variant-failure-copy";
+import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { ProgressTheater } from "@/components/progress";
@@ -1061,6 +1061,24 @@ function FocusedResults({
             </div>
           )}
 
+          {/* ── Unplaced shots info card ── */}
+          {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+                Not in this take
+              </p>
+              <ul className="space-y-0.5">
+                {variant.unplaced_shots!.map((shot) => (
+                  <li key={shot.clip_id} className="text-xs text-amber-800">
+                    <span className="font-medium">Shot {shot.shot_index}</span>
+                    {" – "}
+                    {unplacedShotCopy(shot.reason)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* ── Editor row: 4 icon+label buttons ── */}
           {focusedEditable && (
             <div>
@@ -1771,3 +1789,4 @@ function PoolUploadCard({
     </div>
   );
 }
+

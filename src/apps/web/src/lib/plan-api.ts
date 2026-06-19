@@ -580,6 +580,17 @@ export interface PlanItemVariant {
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
+  /**
+   * Assigned shot clips that couldn't be placed in this variant.
+   * Absent on pool-only / legacy jobs and when all assigned shots landed.
+   * reason: "song_too_short" | "unusable_footage"
+   */
+  unplaced_shots?: Array<{
+    clip_id: string;
+    gcs_path: string | null;
+    shot_index: number;
+    reason: "song_too_short" | "unusable_footage";
+  }> | null;
   intro_font_family?: string | null;
   intro_effect?: string | null;
   intro_text_color?: string | null;

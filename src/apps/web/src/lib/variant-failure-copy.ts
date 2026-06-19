@@ -5,6 +5,21 @@
  * suggested a retry that couldn't fix a language problem (the Chinese-lyrics
  * incident, dogfood feedback #6).
  */
+/**
+ * Plain-language explanation for a clip that couldn't be placed in a variant.
+ * Returned as a sentence that slots into "Shot N – <copy>".
+ */
+export function unplacedShotCopy(reason: string | null | undefined): string {
+  switch (reason) {
+    case "song_too_short":
+      return "didn't fit this song — the beat window was shorter than your shots. It's in the Original-audio take.";
+    case "unusable_footage":
+      return "couldn't be used here (the clip may have failed to process).";
+    default:
+      return "wasn't placed in this take. It's in the Original-audio take.";
+  }
+}
+
 export function variantFailureCopy(errorClass?: string | null): string {
   switch (errorClass) {
     case "lyrics_unsupported_language":
