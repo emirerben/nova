@@ -400,6 +400,7 @@ def _run_generative_job(job_id: str) -> None:
             clip_id_to_local,
             job_id=job_id,
             voiceover_gcs_path=voiceover_gcs_path,
+            filming_guide=filming_guide_candidates,
             footage_type_bias=_footage_type_bias,
         )
         _set_status(job_id, "rendering")
@@ -469,6 +470,16 @@ def _run_generative_job(job_id: str) -> None:
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
                         language=language,
+                    )
+                elif spec.get("archetype") == "narrated":
+                    result = _render_narrated_variant(
+                        job_id=job_id,
+                        rank=rank,
+                        spec=spec,
+                        filming_guide=filming_guide_candidates,
+                        narrative_order=narrative_order,
+                        clip_id_to_local=clip_id_to_local,
+                        variant_dir=variant_dir,
                     )
                 else:
                     result = _render_generative_variant(
@@ -2227,6 +2238,7 @@ def _resolve_archetype(
     *,
     job_id: str,
     voiceover_gcs_path: str | None = None,
+    filming_guide: list[dict] | None = None,
     footage_type_bias: list[str] | None = None,
 ) -> tuple[str, str | None]:
     """Resolve the plan-declared edit_format against the footage → (archetype, spine).
@@ -2262,6 +2274,27 @@ def _resolve_archetype(
             "generative_archetype_fallback", job_id=job_id, declared=edit_format, reason=reason
         )
         return "montage", None
+
+    guide = list(filming_guide or [])
+    narrated_steps = [
+        shot for shot in guide if isinstance(shot, dict) and str(shot.get("what") or "").strip()
+    ]
+    if edit_format == "narrated" and voiceover_gcs_path and len(narrated_steps) >= 2:
+        if settings.narrated_archetype_enabled:
+            record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
+            log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")
+            return "narrated", None
+        record_pipeline_event(
+            "assembly",
+            "archetype_fallback",
+            {"declared": edit_format, "reason": "flag_disabled"},
+        )
+        log.info(
+            "generative_archetype_fallback",
+            job_id=job_id,
+            declared=edit_format,
+            reason="flag_disabled",
+        )
 
     # A user-supplied voiceover wins over any footage-derived archetype: the voice is
     # the spine. Resolved BEFORE the speech-coverage logic because it's driven by an
@@ -2441,6 +2474,17 @@ def _specs_for_archetype(
                 }
             )
         return specs
+    if archetype == "narrated":
+        return [
+            {
+                "variant_id": "narrated",
+                "text_mode": "none",
+                "track": None,
+                "archetype": "narrated",
+                "voiceover_gcs_path": voiceover_gcs_path,
+                "mix": 1.0,
+            }
+        ]
     if archetype == "talking_head":
         return [
             {
@@ -3839,6 +3883,156 @@ def _render_talking_head_variant(
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
         log.error(
             "generative_variant_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=err,
+            exc_info=True,
+        )
+        return {
+            **base,
+            "ok": False,
+            "render_status": "failed",
+            "error": err,
+            "error_class": _classify_error(exc),
+        }
+
+
+def _narrated_script_steps(filming_guide: list[dict]) -> list:
+    from app.pipeline.narrated_alignment import StepScript  # noqa: PLC0415
+
+    steps: list[StepScript] = []
+    for idx, shot in enumerate(filming_guide):
+        if not isinstance(shot, dict):
+            continue
+        text = str(shot.get("what") or "").strip()
+        if not text:
+            continue
+        step_id = str(shot.get("shot_id") or f"step_{idx + 1}")
+        steps.append(StepScript(step_id=step_id, text=text))
+    return steps
+
+
+def _narrated_clip_assignments(
+    filming_guide: list[dict],
+    narrative_order: list[str] | None,
+    clip_id_to_local: dict[str, str],
+) -> list:
+    from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
+
+    ordered_clip_ids = list(narrative_order or list(clip_id_to_local))
+    assignments: list[NarratedClip] = []
+    clip_idx = 0
+    for idx, shot in enumerate(filming_guide):
+        if not isinstance(shot, dict) or not str(shot.get("what") or "").strip():
+            continue
+        if clip_idx >= len(ordered_clip_ids):
+            break
+        clip_id = ordered_clip_ids[clip_idx]
+        clip_idx += 1
+        clip_path = clip_id_to_local.get(clip_id)
+        if not clip_path:
+            continue
+        step_id = str(shot.get("shot_id") or f"step_{idx + 1}")
+        assignments.append(NarratedClip(step_id=step_id, clip_path=clip_path))
+    return assignments
+
+
+def _render_narrated_variant(
+    *,
+    job_id: str,
+    rank: int,
+    spec: dict[str, Any],
+    filming_guide: list[dict],
+    narrative_order: list[str] | None,
+    clip_id_to_local: dict[str, str],
+    variant_dir: str,
+) -> dict[str, Any]:
+    """Render one narrated walkthrough variant."""
+    from app.pipeline.narrated_alignment import align_script_to_voiceover  # noqa: PLC0415
+    from app.pipeline.narrated_assembler import assemble_narrated  # noqa: PLC0415
+    from app.pipeline.transcribe import _transcribe_openai  # noqa: PLC0415
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+
+    variant_id = spec["variant_id"]
+    voiceover_gcs_path = str(spec.get("voiceover_gcs_path") or "")
+    base = {
+        "variant_id": variant_id,
+        "rank": rank,
+        "text_mode": "none",
+        "music_track_id": None,
+        "track_title": None,
+        "style_set_id": None,
+        "intro_text_size_px": None,
+        "intro_size_source": None,
+        "intro_text": None,
+        "intro_highlight_word": None,
+        "intro_layout": None,
+        "intro_word_roles": None,
+        "intro_mode": None,
+        "transcript": None,
+        "scenes": None,
+        "sequence_base_size_px": None,
+        "sequence_mode": None,
+        "sequence_quote": None,
+        "mix": 1.0,
+        "user_style_knobs": None,
+        "base_video_path": None,
+        "ai_timeline": None,
+        "resolved_archetype": "narrated",
+    }
+    try:
+        if not voiceover_gcs_path:
+            raise ValueError("narrated variant missing voiceover_gcs_path")
+        script_steps = _narrated_script_steps(filming_guide)
+        if len(script_steps) < 2:
+            raise ValueError("narrated variant requires at least two scripted steps")
+        clip_assignments = _narrated_clip_assignments(
+            filming_guide, narrative_order, clip_id_to_local
+        )
+        if len(clip_assignments) < len(script_steps):
+            raise ValueError(
+                f"narrated variant has {len(clip_assignments)} clips for "
+                f"{len(script_steps)} scripted steps"
+            )
+
+        voiceover_local = os.path.join(variant_dir, "voiceover_src")
+        download_to_file(voiceover_gcs_path, voiceover_local)
+        transcript = _transcribe_openai(voiceover_local)
+        step_timings = align_script_to_voiceover(script_steps, transcript.words)
+
+        final_path = os.path.join(variant_dir, "final.mp4")
+        assemble_narrated(
+            step_timings,
+            clip_assignments,
+            voiceover_local,
+            final_path,
+            variant_dir,
+        )
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise RuntimeError("narrated variant produced empty output")
+
+        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        output_url = upload_public_read(final_path, output_gcs)
+        return {
+            **base,
+            "ok": True,
+            "render_status": "ready",
+            "video_path": output_gcs,
+            "output_url": output_url,
+            "narrated_timings": [
+                {
+                    "step_id": t.step_id,
+                    "start_s": t.start_s,
+                    "end_s": t.end_s,
+                    "confidence": t.confidence,
+                }
+                for t in step_timings
+            ],
+        }
+    except Exception as exc:
+        err = str(exc)[:MAX_ERROR_DETAIL_LEN]
+        log.error(
+            "generative_narrated_variant_failed",
             job_id=job_id,
             variant_id=variant_id,
             error=err,
