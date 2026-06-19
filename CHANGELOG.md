@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.112.0] — 2026-06-19
+
+### Added
+- **Shot-assigned clips are now guaranteed to land in every variant.** When you assign clips to specific shots in the per-shot planning UI, those clips always appear in every generated take — song variants and original-audio alike. Previously, slot-count caps silently dropped assigned clips when you had more shots than the variant's default slot count.
+- **"Not in this take" signal per variant.** If a clip couldn't physically fit in a specific variant (e.g. the song window was shorter than your shots), an amber info card now appears in the results rail explaining why and confirming it's in the Original-audio take.
+
+### Changed
+- **Slot-count floor for music variants.** `generate_music_recipe` now reduces `slot_every_n_beats` as low as `n=1` to satisfy the floor before falling back to an unplaced signal.
+- **No-music variant slot cap overridden by shot count.** `_build_no_music_recipe`'s default 6-slot cap is now a floor, not a ceiling, when assigned shots exceed it.
+
 ## [0.4.110.0] — 2026-06-18
 
 ### Added

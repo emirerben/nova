@@ -486,7 +486,9 @@ def test_generate_guide_happy_path(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: db
 
     mock_shot = MagicMock()
-    mock_shot.model_dump.return_value = {"what": "lace up shoes", "how": "close-up", "duration_s": 4}
+    mock_shot.model_dump.return_value = {
+        "what": "lace up shoes", "how": "close-up", "duration_s": 4
+    }
     mock_result = MagicMock()
     mock_result.shots = [mock_shot]
 
