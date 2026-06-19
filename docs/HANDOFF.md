@@ -681,3 +681,74 @@ status=variants_ready variant=ready text=this bridge sunset layout=cluster
 distinct resolved_typeface.file across cluster blocks: 2
 resolved_typeface.file values: GreatVibes-Regular.ttf, PlayfairDisplay-Bold.ttf
 ```
+
+---
+
+## Narrated Walkthrough — Slice 1: Backend Core
+
+**Architect:** Claude Opus 4.8
+**Date:** 2026-06-19
+**Branch:** feat/narrated-walkthrough-2026-06-19
+**Spec file:** `docs/specs/narrated-walkthrough.md`
+
+### Slice summary
+
+New `"narrated"` archetype in the generative pipeline. The backend receives a `PlanItem` with `edit_format="narrated"`, a written narration in `filming_guide[*].what`, and a `voiceover_gcs_path`. It transcribes the voiceover (Whisper word timestamps), force-aligns each shot's spoken line to the recording via `lyrics_alignment`, trims one clip per step to its aligned duration, concatenates them in narration order, and lays the voiceover over the whole sequence (footage muted via `_mix_user_voiceover(mix=1.0)`). Kill-switched behind `NARRATED_ARCHETYPE_ENABLED=False`.
+
+### PHASE 0 — builder plan + disagreements
+
+Codex Pass 1 (`codex exec -s read-only -c 'model_reasoning_effort="high"'`, 2026-06-19, 147k tokens).
+
+**Builder plan (verbatim):**
+
+`src/apps/api/app/config.py` — Add `narrated_archetype_enabled: bool = False` near `edit_format_talking_head_enabled`.
+
+`src/apps/api/app/agents/_schemas/edit_format.py` — Add `"narrated"` to `EditFormat` literal; update `coerce_edit_format` allowlist so `"narrated"` survives job construction. *(Builder flagged agents/ boundary — accepted to un-block: editing `_schemas/edit_format.py` is permitted as it is Python source, not an agent prompt.)*
+
+`src/apps/api/app/pipeline/narrated_alignment.py` — Define `StepScript(step_id, text)` and `StepTiming(step_id, start_s, end_s, confidence)`. Implement pure `align_script_to_voiceover(script_steps, whisper_words) → list[StepTiming]`. Map `AlignmentResult.lines` back to steps by index; derive per-step confidence from word-count ratio heuristic. Implement `_even_split` + `_fallback_low_confidence_steps`. Optional wrapper `align_script_gcs_to_voiceover(…, voiceover_gcs_path, tmpdir)` that downloads + transcribes + calls the pure function.
+
+`src/apps/api/app/pipeline/narrated_assembler.py` — Define `NarratedClip(step_id, clip_path, …)`. Implement `assemble_narrated(step_timings, clip_assignments, voiceover_local_path, output_path, tmpdir)`. Use `SinglePassSpec + run_single_pass` (NOT `_build_xfade_chain`). Per-step output duration = `end_s - start_s`. Mix voiceover via `_mix_user_voiceover(…, mix=1.0)`.
+
+`src/apps/api/app/tasks/generative_build.py` — Gate narrated check before existing voiceover fast path (line 2253). Extend `_resolve_archetype` to check narrated eligibility before returning `"voiceover"`. Extend `_specs_for_archetype` with one narrated spec. Add `_render_narrated_variant`. Update `_render_one_spec` dispatch.
+
+Tests — `src/apps/api/tests/pipeline/test_narrated_alignment.py`, `test_narrated_assembler.py`; extend `src/apps/api/tests/tasks/test_generative_dispatch.py`.
+
+**Builder disagreements (verbatim, 14 items):**
+
+1. Spec paths abbreviated; real paths under `src/apps/api/app/…`.
+2. Config is `src/apps/api/app/config.py`, not `app/core/config.py`.
+3. `_resolve_archetype` sig is `(edit_format, clip_metas, clip_id_to_local, *, job_id, voiceover_gcs_path, …)` at line 2210, not item-based.
+4. Narrated dispatch conflicts with voiceover fast path at line 2253-2260; narrated check must go before it.
+5. `PlanItem` has no `voiceover_gcs_path` column (it's on `VideoTemplate` at models.py:94-114).
+6. Content-plan dispatch doesn't pass voiceover to generative jobs.
+7. `PlanItem.voiceover_gcs_path` would require DB/API changes, contradicting "no migration" constraint.
+8. Spec contradicts itself: file table says function downloads VO, criterion 4 says pure.
+9. `lyrics_alignment.align()` returns `AlignmentResult` (global confidence), not `list[LineAlignment]`; per-step confidence needs heuristics.
+10. `filming_guide` has no `clip_count`; actual shape is `{shot_id, what, how, duration_s}`.
+11. `shot_id` join only works after server stamping.
+12. "Trim to `[start_s, end_s]`" ambiguous — those are voiceover timeline positions, not source clip times.
+13. `_build_xfade_chain` raises if all transitions are `"none"`; use `SinglePassSpec + run_single_pass`.
+14. Test paths need `src/apps/api/tests/` prefix.
+15. Criterion 8 vacuous for a helper function.
+
+**Architect verdicts (all ACCEPT):**
+
+All 14 disagreements are accurate. Key clarifications: (5/6/7) Slice 1 reads voiceover from `all_candidates["voiceover_gcs_path"]` only — no new DB column; (8) pure function + wrapper split; (4) narrated check must precede the `voiceover` fast path; (13) use `run_single_pass`; (15) criterion 8 applies only if a new Celery `@app.task` is added.
+
+### Slice 1 raw results
+
+_To be filled in by Codex after Pass 2 (`codex exec --full-auto`): test output tables, ruff exit codes, coverage of each acceptance criterion._
+
+| Command | Exit | Raw result |
+|---|---:|---|
+| `pytest src/apps/api/tests/pipeline/test_narrated_alignment.py src/apps/api/tests/pipeline/test_narrated_assembler.py -q` | 127 | `zsh:1: command not found: pytest` |
+| `python3 -m pytest src/apps/api/tests/pipeline/test_narrated_alignment.py src/apps/api/tests/pipeline/test_narrated_assembler.py -q` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named pytest` |
+| `python3 -m compileall -q src/apps/api/app/pipeline/narrated_alignment.py src/apps/api/app/pipeline/narrated_assembler.py src/apps/api/app/agents/_schemas/edit_format.py src/apps/api/app/config.py src/apps/api/app/tasks/generative_build.py src/apps/api/tests/pipeline/test_narrated_alignment.py src/apps/api/tests/pipeline/test_narrated_assembler.py src/apps/api/tests/tasks/test_generative_dispatch.py` | 0 | `<no output>` |
+| `cd src/apps/api && python3 -m pytest tests/pipeline/test_narrated_alignment.py -q` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named pytest` |
+| `cd src/apps/api && python3 -m pytest tests/pipeline/test_narrated_assembler.py -q` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named pytest` |
+| `cd src/apps/api && python3 -m pytest tests/tasks/test_generative_dispatch.py tests/tasks/test_task_time_limits.py -q` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named pytest` |
+| `cd src/apps/api && python3 -m ruff check . && python3 -m ruff format --check .` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named ruff` |
+| `python3 -m pytest src/apps/api/tests/tasks/test_task_time_limits.py -q` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named pytest` |
+| `cd src/apps/api && python3 -m ruff check .` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named ruff` |
+| `cd src/apps/api && python3 -m ruff format --check .` | 1 | `/opt/homebrew/opt/python@3.14/bin/python3.14: No module named ruff` |
+| `git diff --check` | 0 | `<no output>` |
