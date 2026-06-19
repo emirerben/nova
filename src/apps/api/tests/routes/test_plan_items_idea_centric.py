@@ -73,7 +73,8 @@ def _idea_item(user_id: uuid.UUID, *, item_status: str = "idea", current_job_id=
     item.conformance = None
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
-    item.edit_format = "montage"
+    item.voiceover_gcs_path = None
+    item.edit_format = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -118,7 +119,8 @@ def test_add_idea_creates_plan_item_and_seed_mirror(client: TestClient) -> None:
     new_item.conformance = None
     new_item.source_idea_seed_id = None
     new_item.source_idea_seed_text = None
-    new_item.edit_format = "montage"
+    new_item.voiceover_gcs_path = None
+    new_item.edit_format = None
 
     persona = MagicMock()
     persona.persona = {"summary": "creator"}
@@ -241,7 +243,8 @@ def _plan_with_items(user_id: uuid.UUID, n: int = 3):
         it.conformance = None
         it.source_idea_seed_id = None
         it.source_idea_seed_text = None
-        it.edit_format = "montage"
+        it.voiceover_gcs_path = None
+        it.edit_format = None
         items.append(it)
     plan = _plan(user_id, items=items)
     return plan, items

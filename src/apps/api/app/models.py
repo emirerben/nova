@@ -693,6 +693,10 @@ class PlanItem(Base):
     # run yet. Stored as TEXT (the uuid4 hex from the seed's id field) rather than
     # a FK so it survives seed deletion without a cascade constraint.
     source_idea_seed_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # GCS key of a user-recorded or -uploaded voiceover for narrated-walkthrough items.
+    # Set via PATCH /plan-items/{id}/voiceover; threaded to build_generative_job at
+    # generate time so the narrated archetype can do force-alignment + per-step trimming.
+    voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Optional date the user wants to post this idea (distinct from plan-level start_date).
     scheduled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Freeform notes the user adds to flesh out the idea.

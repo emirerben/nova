@@ -15,6 +15,7 @@ import {
   getPlanItemJobStatus,
   NotAuthenticatedError,
   setClipNote,
+  setItemVoiceover,
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
@@ -28,6 +29,7 @@ import {
   swapPlanItemSong,
   uploadToGcs,
 } from "@/lib/plan-api";
+import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskNovaPanel from "./components/AskNovaPanel";
 import {
@@ -100,6 +102,10 @@ export default function PlanItemPage() {
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
   const [generatingGuide, setGeneratingGuide] = useState(false);
   const pendingEdits = useRef<Map<string, { priorFinishedAt: string | null; sawRendering: boolean }>>(new Map());
+  // Narrated-walkthrough: local shadow of voiceover_gcs_path — updated optimistically
+  // when VoiceRecorder fires onVoiceover; reset from item on refetch.
+  const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
+  const [voiceoverSaving, setVoiceoverSaving] = useState(false);
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -191,6 +197,13 @@ export default function PlanItemPage() {
   }, [pollError]);
 
   const item = data?.item ?? null;
+
+  // Sync voiceover path from item whenever it changes (after refetch / on load).
+  useEffect(() => {
+    if (item?.voiceover_gcs_path !== undefined) {
+      setVoiceoverGcsPath(item.voiceover_gcs_path ?? null);
+    }
+  }, [item?.voiceover_gcs_path]);
 
   const variants = useMemo(
     () => {
@@ -355,6 +368,19 @@ export default function PlanItemPage() {
       refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't remove that clip");
+    }
+  }
+
+  async function handleVoiceover(gcsPath: string | null) {
+    setVoiceoverGcsPath(gcsPath);
+    setVoiceoverSaving(true);
+    try {
+      await setItemVoiceover(itemId, gcsPath);
+      refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save voiceover");
+    } finally {
+      setVoiceoverSaving(false);
     }
   }
 
@@ -575,6 +601,24 @@ export default function PlanItemPage() {
                     Dismiss
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* Narrated walkthrough: sticky voice recorder bar */}
+            {item.edit_format === "narrated" && isInstructed && (
+              <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Voice recording
+                </p>
+                <VoiceRecorder onVoiceover={handleVoiceover} />
+                {voiceoverSaving && (
+                  <p className="mt-1 text-xs text-zinc-400">Saving…</p>
+                )}
+                {voiceoverGcsPath && !voiceoverSaving && (
+                  <p className="mt-1 text-xs text-lime-700">
+                    Voice recorded — clips will be timed to match your narration.
+                  </p>
+                )}
               </div>
             )}
 

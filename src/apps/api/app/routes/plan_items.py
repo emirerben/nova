@@ -144,6 +144,9 @@ class PlanItemResponse(BaseModel):
     # Render archetype assigned at plan-generation time (e.g. "montage",
     # "talking_head"). Null for items generated before this field shipped.
     edit_format: str | None = None
+    # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
+    # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
+    voiceover_gcs_path: str | None = None
     # BYO-Ideas provenance (M1 T5): the seed whose subject this item honours.
     # NULL = market-bank origin or the item predates T5. Both fields are resolved
     # server-side so the badge is a pure function of the item on the client.
@@ -212,6 +215,7 @@ def plan_item_response(
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
         edit_format=item.edit_format,
+        voiceover_gcs_path=item.voiceover_gcs_path,
         source_idea_seed_id=item.source_idea_seed_id,
         source_idea_seed_text=(seed_text_by_id or {}).get(item.source_idea_seed_id)
         if item.source_idea_seed_id
@@ -835,6 +839,38 @@ async def set_clip_note(
     from app.tasks.conformance_build import analyze_item_conformance  # noqa: PLC0415
 
     analyze_item_conformance.delay(str(item.id))
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+class VoiceoverBody(BaseModel):
+    voiceover_gcs_path: str | None = None
+
+
+@router.patch("/{item_id}/voiceover", response_model=PlanItemResponse)
+async def set_item_voiceover(
+    item_id: str,
+    body: VoiceoverBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Attach or clear the narrated-walkthrough voiceover for a plan item.
+
+    The GCS path must be under the voiceover-uploads/ prefix (validated by the
+    narrated archetype at generate time). Passing null clears a prior recording.
+    No re-render is triggered — the user still needs to click Generate.
+    """
+    from app.routes.admin_music import _validate_voiceover_path  # noqa: PLC0415
+
+    item = await _load_owned_item(item_id, user.id, db)
+    if body.voiceover_gcs_path is not None:
+        try:
+            _validate_voiceover_path(body.voiceover_gcs_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    item.voiceover_gcs_path = body.voiceover_gcs_path
+    await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)
