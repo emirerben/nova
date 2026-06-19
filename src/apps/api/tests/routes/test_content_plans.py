@@ -414,6 +414,14 @@ def _item_mock(item_id: uuid.UUID, clip_gcs_paths: list[str]) -> MagicMock:
     it.conformance = None
     it.sequence_quote = None
     it.sequence_mode = None
+    it.position = 1
+    it.scheduled_date = None
+    it.notes = None
+    it.scenes = []
+    it.source_idea_seed_id = None
+    it.edit_format = None
+    it.user_edited = False
+    it.current_job_id = None
     return it
 
 

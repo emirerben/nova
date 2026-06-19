@@ -166,9 +166,9 @@ function PlanPageInner() {
   }
 
   /** OnboardingShell Step 3 — ChatInterview completed (persona generation fires).
-   *  Instead of advancing immediately to the plan, we pause to offer footage upload. */
+   *  Reload so the polling loop surfaces generating → ready → PersonaEditor reveal. */
   function handleChatComplete() {
-    setSubStep("upload-offer");
+    void load();
   }
 
   async function handleSavePersona(draft: PersonaContent) {
@@ -464,7 +464,7 @@ function PlanPageInner() {
       <LightShell>
         <GeneratingStateLight
           horizonDays={plan?.horizon_days}
-          label={`Building your ${plan?.horizon_days ?? 30} days`}
+          label="Building your ideas"
         />
       </LightShell>
     );
