@@ -315,7 +315,12 @@ async def edit_persona(
             persona[key] = _sanitize_text(str(value))
 
     row.persona = persona
-    row.persona_status = "edited"
+    # Don't flip onboarding-in-progress rows to "edited" — only real post-generation
+    # persona edits should be authoritative. During the interview (chat_pending), this
+    # PATCH stores mid-onboarding preferences (e.g. footage_type_bias from "What you
+    # make") and must not short-circuit persona generation.
+    if row.persona_status != "chat_pending":
+        row.persona_status = "edited"
     row.error_detail = None
     # A hand-edit always unblocks onboarding, even after a failed generation.
     db_user = await db.get(User, user.id)
@@ -348,13 +353,25 @@ async def retune_persona_from_feedback(
     row = await db.get(PersonaRow, pid)
     if row is None or row.user_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
-    if row.persona_status == "edited":
+    # The "their say" invariant: a hand-edited persona with real content is
+    # authoritative and won't be overwritten by inferred feedback. But if the
+    # persona was accidentally marked "edited" before real generation ran (e.g.
+    # a mid-onboarding PATCH side-effect) and has no content at all, allow
+    # regeneration as a self-heal path.
+    # Check the core editable fields — not just summary — so that a user who
+    # cleared their summary but kept a custom tone/audience is still protected.
+    _PERSONA_KEY_FIELDS = ("summary", "tone", "audience", "posting_cadence")
+    persona_dict = dict(row.persona or {})
+    has_real_content = any(
+        bool(str(persona_dict.get(f) or "").strip()) for f in _PERSONA_KEY_FIELDS
+    )
+    if row.persona_status == "edited" and has_real_content:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Your persona is hand-edited and stays authoritative. "
             "Edit it directly, or reset to AI before retuning from feedback.",
         )
-    if row.persona is None or row.persona_status == "generating":
+    if row.persona is None or row.persona_status in ("generating", "chat_pending"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Persona must be ready before retuning",

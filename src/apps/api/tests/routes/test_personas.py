@@ -315,6 +315,71 @@ def test_patch_idea_seeds_leaves_persona_dict_untouched(client: TestClient) -> N
     assert row.persona["tone"] == original_persona["tone"]
 
 
+# ── PATCH chat_pending guard ─────────────────────────────────────────────────
+
+
+def test_patch_persona_does_not_flip_status_when_chat_pending(client: TestClient) -> None:
+    """PATCH during onboarding (chat_pending) must NOT flip persona_status to 'edited'.
+
+    The 'What you make' step calls PATCH {footage_type_bias: [...]} before the
+    AI interview runs. Flipping to 'edited' at that point prevents generate_persona
+    from ever running (it checks chat_pending / failed before writing the result).
+    Locks the guard introduced in: edit_persona → if row.persona_status != 'chat_pending'.
+    """
+    user = _fake_user()
+    row = MagicMock()
+    row.id = uuid.uuid4()
+    row.user_id = user.id
+    row.persona_status = "chat_pending"
+    row.persona = {"footage_type_bias": ["vlogs"]}
+    row.questionnaire = None
+    row.error_detail = None
+    row.tiktok_profile = None
+    row.idea_seeds = []
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{row.id}",
+        json={"footage_type_bias": ["vlogs", "talking-head"]},
+    )
+
+    assert resp.status_code == 200
+    # Status must stay chat_pending — generate_persona can still run
+    assert row.persona_status == "chat_pending"
+
+
+# ── retune self-heal (edited + no summary) ────────────────────────────────────
+
+
+def test_retune_allows_when_edited_and_empty_summary(client: TestClient) -> None:
+    """retune-from-feedback must allow re-generation when status is 'edited' but
+    summary is empty — this is the self-heal path for users whose persona was
+    accidentally flipped to 'edited' before generation completed.
+
+    The 'edited' + real-summary block stays in place (test_retune_blocks_when_persona_hand_edited
+    covers that path). This test covers only the empty-summary recovery case.
+    """
+    user = _fake_user()
+    row = _persona_row(user.id, status="edited")
+    row.persona = {"summary": "", "content_pillars": [], "tone": ""}  # empty — never generated
+    db = _async_db()
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.persona_build.retune_persona_from_feedback") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/personas/{row.id}/retune-from-feedback")
+
+    # Self-heal: should succeed, not 409
+    assert resp.status_code == 200
+    assert resp.json()["persona_status"] == "generating"
+    task.delay.assert_called_once_with(str(row.id))
+
+
 # ── POST /personas/reset ─────────────────────────────────────────────────────
 
 

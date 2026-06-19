@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.110.0] — 2026-06-18
+
+### Added
+- **Multi-select "What do you make?"** You can now pick multiple content types (Talking to camera, B-roll & nature, Vlogs & daily life, Mixed) in the onboarding step. Nova combines them to adapt edits to your style.
+
+### Changed
+- **Linear onboarding flow — TikTok → What you make → Interview → Persona → Ideas.** The footage-upload step no longer interrupts the AI interview. You'll always go through the full interview first; the edit offer is available later from the workspace. The onboarding shell also opens at the right step on remount so you never loop back to TikTok unexpectedly.
+- **Idea-forward copy throughout.** "Plan my 30 days" is now "Get my ideas →"; "Your 30-day plan" is now "Your ideas"; landing page and meta description updated to reflect Nova's idea-first positioning.
+
+### Fixed
+- **Empty persona self-heal.** If your persona shows "No summary yet" (caused by a backend status bug that marked it edited before generation ran), the "Generate persona" button is now unblocked and working. Click it from the persona page to regenerate.
+- **Persona PATCH during onboarding no longer blocks generation.** Saving your "What you make" preference during the interview previously flipped persona status to `edited`, silently preventing the AI interview result from being written. Fixed.
+- **`footage_type_bias` preserved across both generation and retune.** The multi-select "What you make" preference is no longer wiped when the AI generates or updates your persona.
+- **Retune blocked on `chat_pending` personas.** "Generate persona" now correctly requires the interview to complete first — it cannot be triggered mid-interview.
+
 ## [0.4.107.0] — 2026-06-14
 
 ### Changed

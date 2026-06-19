@@ -64,4 +64,24 @@ describe("OnboardingShell — What you make step", () => {
     const continueBtn = screen.getByRole("button", { name: /continue/i });
     expect(continueBtn).not.toBeDisabled();
   });
+
+  it("selecting a second card keeps the first selected (multi-select)", async () => {
+    await advanceToStep2();
+    // Select first card
+    fireEvent.click(screen.getByText("Talking to camera"));
+    // Select second card — both should be selected, Continue should stay enabled
+    fireEvent.click(screen.getByText("B-roll & nature"));
+    const continueBtn = screen.getByRole("button", { name: /continue/i });
+    expect(continueBtn).not.toBeDisabled();
+  });
+
+  it("clicking a selected card again deselects it (toggle-off)", async () => {
+    await advanceToStep2();
+    // Select then deselect the only card
+    fireEvent.click(screen.getByText("Talking to camera"));
+    fireEvent.click(screen.getByText("Talking to camera")); // toggle off
+    const continueBtn = screen.getByRole("button", { name: /continue/i });
+    // With nothing selected, Continue must be disabled again
+    expect(continueBtn).toBeDisabled();
+  });
 });

@@ -193,30 +193,27 @@ export default function PersonaEditor({
           <span className="text-sm text-emerald-600">Saved ✓</span>
         )}
 
-        {onRetuneFromFeedback && !editing && (
-          <button
-            onClick={handleRetune}
-            disabled={retuning || continuing || saving || status === "edited"}
-            title={
-              status === "edited"
-                ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
-                : "Re-tune this persona from your video feedback"
-            }
-            className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
-          >
-            {retuning ? "Updating…" : "Update from feedback"}
-          </button>
-        )}
-
-        {onUpdateAnswers && !editing && (
-          <button
-            type="button"
-            onClick={onUpdateAnswers}
-            className="py-3 text-sm text-[#71717a] transition-colors hover:text-[#0c0c0e]"
-          >
-            Update my answers →
-          </button>
-        )}
+        {onRetuneFromFeedback && !editing && (() => {
+          // Allow retune unless status is "edited" AND the persona has real content.
+          // When status is "edited" with no summary, it was likely an accidental status
+          // flip from a mid-onboarding PATCH — allow regeneration as a self-heal path.
+          const hasRealContent = !!draft.summary?.trim();
+          const isBlocked = status === "edited" && hasRealContent;
+          return (
+            <button
+              onClick={handleRetune}
+              disabled={retuning || continuing || saving || isBlocked}
+              title={
+                isBlocked
+                  ? "Your hand-edited persona stays as you wrote it. Reset to AI to retune."
+                  : "Re-tune this persona from your video feedback"
+              }
+              className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 px-5 py-3 text-sm font-medium text-[#3f3f46] transition-colors hover:border-zinc-400 hover:text-[#0c0c0e] disabled:opacity-60"
+            >
+              {retuning ? "Updating…" : !draft.summary?.trim() ? "Generate persona" : "Update from feedback"}
+            </button>
+          );
+        })()}
       </div>
     </div>
   );
@@ -277,7 +274,11 @@ function PersonaSummary({ persona }: { persona: PersonaContent }) {
       {persona.summary?.trim() ? (
         <p className="font-display text-xl leading-relaxed text-[#0c0c0e]">{persona.summary}</p>
       ) : (
-        <p className="text-[#71717a]">No summary yet — tap Tweak to write one.</p>
+        <p className="text-[#71717a]">
+          No summary yet — tap{" "}
+          <span className="font-medium text-[#3f3f46]">Generate persona</span> to create one,
+          or <span className="font-medium text-[#3f3f46]">Tweak</span> to write one manually.
+        </p>
       )}
 
       {pillars.length > 0 && (

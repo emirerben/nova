@@ -482,7 +482,7 @@ export function EditPayoff({
       {!hidePlanCta && (
         <div className="border-t border-[#e4e4e7] pt-6">
           <p className="text-center text-sm text-[#71717a] mb-3">
-            Want a 30-day content plan using this footage?
+            Want video ideas from this footage?
           </p>
           <button
             onClick={onMakePlan}
