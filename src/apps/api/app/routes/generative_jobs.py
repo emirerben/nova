@@ -117,7 +117,7 @@ class UnplacedShot(BaseModel):
     clip_id: str
     gcs_path: str | None = None
     shot_index: int
-    reason: str
+    reason: Literal["unusable_footage", "song_too_short"]
 
 
 class GenerativeVariant(BaseModel):

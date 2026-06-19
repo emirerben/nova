@@ -55,6 +55,9 @@ HERO_SLOT_INDEX = 0
 # Variant 3 (original audio) arrangement: one slot per clip, capped so a 20-clip
 # upload doesn't produce 20 micro-cuts with no song to justify them.
 _MAX_NO_MUSIC_SLOTS = 6
+# Soft-warn threshold: >24 shots is unusual (≈8 shots × 3 clips/shot) and risks
+# approaching the Celery soft_time_limit=1740s on long-footage jobs.
+_NARRATIVE_FLOOR_WARN_THRESHOLD = 24
 # Minimum speech_coverage (0-1) for ANY clip to qualify a talking_head edit. Below
 # this the footage carries no usable spoken spine, so the job degrades to montage.
 # Deliberately low — silencedetect undercounts quiet/lapel speech; we only want to
@@ -3240,7 +3243,7 @@ def _render_generative_variant(
         # Slot-count floor: every clip in narrative_order is owed a slot in this
         # variant. 0 on pool-only / legacy / kill-switch-off jobs → no change.
         min_slots = len(narrative_order) if narrative_order else 0
-        if min_slots > 24:
+        if min_slots > _NARRATIVE_FLOOR_WARN_THRESHOLD:
             log.warning(
                 "narrative_floor_high",
                 min_slots=min_slots,
@@ -4186,9 +4189,10 @@ def _build_unplaced_shots(
     _build_filming_guide_context).
     """
     analyzed_ids = {getattr(m, "clip_id", None) for m in clip_metas}
+    narrative_index = {cid: i for i, cid in enumerate(narrative_order)}
     records = []
     for cid in unplaced_ids:
-        shot_index = narrative_order.index(cid) + 1
+        shot_index = narrative_index.get(cid, -1) + 1
         gcs_path = clip_id_to_gcs.get(cid)
         if cid not in analyzed_ids:
             reason = "unusable_footage"

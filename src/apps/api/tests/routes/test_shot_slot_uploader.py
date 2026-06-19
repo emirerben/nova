@@ -391,3 +391,147 @@ def test_get_plan_item_returns_shot_id_in_filming_guide(client: TestClient) -> N
     assert resp.status_code == 200
     body = resp.json()
     assert body["filming_guide"][0]["shot_id"] == sid
+
+
+# ── PATCH /{item_id}/shots/{shot_id} ─────────────────────────────────────────
+
+
+def test_edit_shot_happy_path(client: TestClient) -> None:
+    """PATCH /shots/{shot_id} mutates the matching shot and sets user_edited=True."""
+    user = _user()
+    sid = uuid.uuid4().hex
+    guide = [{"shot_id": sid, "what": "original", "how": "eye level", "duration_s": 5}]
+    item, plan = _owned_item(user.id, filming_guide=guide)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}/shots/{sid}",
+        json={"what": "updated text", "duration_s": 10},
+    )
+
+    assert resp.status_code == 200
+    # The item's guide was mutated in-place.
+    assert item.filming_guide[0]["what"] == "updated text"
+    assert item.filming_guide[0]["duration_s"] == 10
+    assert item.user_edited is True
+    db.commit.assert_awaited()
+
+
+def test_edit_shot_unknown_shot_id_returns_422(client: TestClient) -> None:
+    """PATCH /shots/{shot_id} returns 422 when shot_id is not in the guide."""
+    user = _user()
+    sid = uuid.uuid4().hex
+    guide = [{"shot_id": "other-id", "what": "x", "duration_s": 5}]
+    item, plan = _owned_item(user.id, filming_guide=guide)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(f"/plan-items/{item.id}/shots/{sid}", json={"what": "new"})
+
+    assert resp.status_code == 422
+
+
+def test_edit_shot_wrong_user_returns_404(client: TestClient) -> None:
+    """PATCH /shots/{shot_id} returns 404 when the plan belongs to someone else."""
+    user = _user()
+    other_user = _user()
+    sid = uuid.uuid4().hex
+    guide = [{"shot_id": sid, "what": "x", "duration_s": 5}]
+    item, plan = _owned_item(other_user.id, filming_guide=guide)  # owned by other_user
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user  # logged in as user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(f"/plan-items/{item.id}/shots/{sid}", json={"what": "x"})
+
+    assert resp.status_code == 404
+
+
+def test_edit_shot_clip_count_is_clamped(client: TestClient) -> None:
+    """clip_count is clamped to [1, 10] — out-of-range values are silently adjusted."""
+    user = _user()
+    sid = uuid.uuid4().hex
+    guide = [{"shot_id": sid, "what": "x", "duration_s": 5, "clip_count": 3}]
+    item, plan = _owned_item(user.id, filming_guide=guide)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    # 0 → clamps to 1; 11 → clamps to 10.
+    resp = client.patch(f"/plan-items/{item.id}/shots/{sid}", json={"clip_count": 0})
+    assert resp.status_code == 200
+    assert item.filming_guide[0]["clip_count"] == 1
+
+    item.filming_guide[0]["clip_count"] = 3  # reset
+    resp = client.patch(f"/plan-items/{item.id}/shots/{sid}", json={"clip_count": 11})
+    assert resp.status_code == 200
+    assert item.filming_guide[0]["clip_count"] == 10
+
+
+# ── POST /{item_id}/generate-guide ───────────────────────────────────────────
+
+
+def test_generate_guide_happy_path(client: TestClient) -> None:
+    """POST /generate-guide calls run_shot_list_writer and persists the guide."""
+    user = _user()
+    item, plan = _owned_item(user.id, filming_guide=[])  # empty guide → AI generates
+    item.theme = "morning run"
+    item.idea = "5 AM training session"
+    item.edit_format = "montage"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    mock_shot = MagicMock()
+    mock_shot.model_dump.return_value = {"what": "lace up shoes", "how": "close-up", "duration_s": 4}
+    mock_result = MagicMock()
+    mock_result.shots = [mock_shot]
+
+    with patch("app.agents.shot_list_writer.run_shot_list_writer", return_value=mock_result):
+        resp = client.post(f"/plan-items/{item.id}/generate-guide")
+
+    assert resp.status_code == 200
+    # Guide was written with a minted shot_id on each shot.
+    assert len(item.filming_guide) == 1
+    assert "shot_id" in item.filming_guide[0]
+    assert item.filming_guide[0]["what"] == "lace up shoes"
+    assert item.user_edited is True
+    db.commit.assert_awaited()
+
+
+def test_generate_guide_returns_409_when_guide_exists(client: TestClient) -> None:
+    """POST /generate-guide returns 409 when the item already has a filming guide."""
+    user = _user()
+    sid = uuid.uuid4().hex
+    guide = [{"shot_id": sid, "what": "existing", "duration_s": 5}]
+    item, plan = _owned_item(user.id, filming_guide=guide)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(f"/plan-items/{item.id}/generate-guide")
+
+    assert resp.status_code == 409
+
+
+def test_generate_guide_returns_500_when_agent_produces_no_shots(client: TestClient) -> None:
+    """POST /generate-guide returns 500 when the LLM produces an empty shots list."""
+    user = _user()
+    item, plan = _owned_item(user.id, filming_guide=[])
+    item.theme = "test"
+    item.idea = "test"
+    item.edit_format = "montage"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    mock_result = MagicMock()
+    mock_result.shots = []  # agent returned nothing
+
+    with patch("app.agents.shot_list_writer.run_shot_list_writer", return_value=mock_result):
+        resp = client.post(f"/plan-items/{item.id}/generate-guide")
+
+    assert resp.status_code == 500

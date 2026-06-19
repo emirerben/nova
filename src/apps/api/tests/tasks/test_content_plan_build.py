@@ -989,6 +989,33 @@ def test_narrative_order_assignment_path_not_in_clip_paths_ignored() -> None:
     assert count == 0
 
 
+def test_narrative_order_multi_clip_per_shot() -> None:
+    """Multiple clips assigned to the same shot all appear in guide order, then pool."""
+    from app.tasks.content_plan_build import _narrative_clip_order
+
+    guide = [
+        {"shot_id": "s1", "what": "opening", "duration_s": 4},
+        {"shot_id": "s2", "what": "closing", "duration_s": 5},
+    ]
+    # s1 has two clips attached in reverse order; s2 has one; one pool clip.
+    assignments = [
+        {"gcs_path": "u/c1b.mp4", "shot_id": "s1"},
+        {"gcs_path": "u/c2.mp4", "shot_id": "s2"},
+        {"gcs_path": "u/c1a.mp4", "shot_id": "s1"},
+        {"gcs_path": "u/pool.mp4", "shot_id": None},
+    ]
+    clip_paths = ["u/c1b.mp4", "u/c2.mp4", "u/c1a.mp4", "u/pool.mp4"]
+    item = _narrative_item(guide, assignments)
+
+    ordered, count = _narrative_clip_order(item, clip_paths)
+
+    # Guide order: s1 clips (both) before s2 clip; pool is tail.
+    assert ordered[:2] == ["u/c1b.mp4", "u/c1a.mp4"]  # both s1 clips in attach order
+    assert ordered[2] == "u/c2.mp4"                    # s2 clip
+    assert ordered[3] == "u/pool.mp4"                  # pool last
+    assert count == 3  # 3 clips placed (the 2 for s1 + 1 for s2)
+
+
 # ── Footage pool ────────────────────────────────────────────────────────────────
 
 
