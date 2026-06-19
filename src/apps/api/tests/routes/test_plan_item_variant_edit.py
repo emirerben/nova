@@ -70,6 +70,8 @@ def _owned_item(user_id: uuid.UUID, *, job=None):
     item.notes = None
     item.scenes = []
     item.source_idea_seed_id = None
+    item.source_idea_seed_text = None
+    item.edit_format = "montage"
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
