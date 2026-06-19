@@ -10,6 +10,7 @@ import {
   editPlanItemVariant,
   expandIdea,
   generatePlanItem,
+  generatePlanItemGuide,
   getPlanItem,
   getPlanItemJobStatus,
   NotAuthenticatedError,
@@ -37,7 +38,7 @@ import {
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
-import { variantFailureCopy } from "@/lib/variant-failure-copy";
+import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { ProgressTheater } from "@/components/progress";
@@ -97,6 +98,7 @@ export default function PlanItemPage() {
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
   // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
+  const [generatingGuide, setGeneratingGuide] = useState(false);
   const pendingEdits = useRef<Map<string, { priorFinishedAt: string | null; sawRendering: boolean }>>(new Map());
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
@@ -275,10 +277,13 @@ export default function PlanItemPage() {
     [markVariantRendering, refetch],
   );
 
-  // Instructed items: filming_guide present + instruction_level != "none".
-  // These use ShotSlotUploader. Uninstructed items keep the legacy pool upload.
-  const isInstructed =
-    (item?.filming_guide?.length ?? 0) > 0 && item?.instruction_level !== "none";
+  // Instructed items (WS2): create-new/mixed items with a filmed shot guide use
+  // ShotSlotUploader. existing_footage items keep the legacy pool upload.
+  // instruction_level no longer gates the upload UI — it only affects copy/tone.
+  const contentMode = item?.content_mode ?? "create_new";
+  const isFilmThis = contentMode !== "existing_footage";
+  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
+  const isInstructed = isFilmThis && hasGuide;
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -460,10 +465,10 @@ export default function PlanItemPage() {
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
       <div className="motion-safe:animate-fade-up">
 
-        {/* ── Two-pane grid: LEFT = shot checklist | RIGHT = sticky action panel ── */}
-        <div className="lg:grid lg:grid-cols-[1fr_400px] lg:gap-10 lg:items-start">
+        {/* ── Single-column layout: back link + header + shot plan + generate + progress ── */}
+        <div>
 
-          {/* LEFT: back link + editorial header + uploader + progress */}
+          {/* Content: back link + editorial header + uploader + generate + progress */}
           <div>
             <Link
               href="/plan"
@@ -573,18 +578,48 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Uploader — instructed: shot-slot guide; uninstructed: pool card */}
+            {/* Uploader — three paths:
+                1. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
+                2. isFilmThis but no guide yet → "Generate shot list" CTA
+                3. existing_footage → PoolUploadCard (use footage you already have) */}
             {isInstructed ? (
               <ShotSlotUploader
                 item={item}
                 onAttached={(updated) => {
                   conformancePolls.current = 0;
-                  // Merge updated item into polling data without waiting for a refetch.
                   refetch();
                 }}
                 onBusyChange={setUploaderBusy}
               />
+            ) : isFilmThis ? (
+              /* create_new/mixed with empty filming guide — offer to generate one */
+              <div className="mb-6 rounded-2xl border border-dashed border-zinc-200 bg-white p-5 text-center">
+                <p className="text-sm text-[#71717a]">
+                  {item.filming_suggestion ?? "No shot plan yet."}
+                </p>
+                <button
+                  type="button"
+                  disabled={generatingGuide}
+                  onClick={async () => {
+                    setGeneratingGuide(true);
+                    setError(null);
+                    try {
+                      await generatePlanItemGuide(item.id);
+                      refetch();
+                    } catch {
+                      setError("Couldn't generate a shot plan. Please try again.");
+                    } finally {
+                      setGeneratingGuide(false);
+                    }
+                  }}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <span aria-hidden>✦</span>
+                  {generatingGuide ? "Generating shot plan…" : "Generate shot plan"}
+                </button>
+              </div>
             ) : (
+              /* existing_footage — pool upload (find the footage you already have) */
               <>
                 {item.filming_suggestion ? (
                   <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
@@ -599,6 +634,54 @@ export default function PlanItemPage() {
                 />
               </>
             )}
+
+            {/* Generate + "N shots left" caption — below the shot sections (WS1) */}
+            {!isGenerating && (
+              <div className="mt-4 space-y-2">
+                <InkButton
+                  onClick={handleGenerate}
+                  disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
+                >
+                  {generating
+                    ? "Starting…"
+                    : uploaderBusy
+                      ? "Finishing upload…"
+                      : "Generate videos"}
+                </InkButton>
+                <p className="text-center text-sm text-[#a1a1aa]">
+                  {uploaderBusy
+                    ? "Finishing upload…"
+                    : clipCount === 0
+                      ? "Add clips to generate"
+                      : isInstructed && shotsLeft > 0
+                        ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
+                        : null}
+                </p>
+              </div>
+            )}
+
+            {/* Nova helper — inline, below Generate (WS1: moved from right rail) */}
+            <div className="mt-4">
+              <NovaHelper
+                item={item}
+                conformanceChecking={conformanceChecking}
+                askNova={askNova}
+                onOpen={() => setAskNova("default")}
+                onContest={() => setAskNova("contest")}
+                onClose={() => setAskNova(null)}
+                onDismissConformance={async () => {
+                  try {
+                    await dismissConformance(itemId);
+                  } finally {
+                    refetch();
+                  }
+                }}
+                onItemChanged={() => {
+                  conformancePolls.current = 0;
+                  refetch();
+                }}
+              />
+            </div>
 
             {/* Error banner — outside the fork so it shows on both item types */}
             {error && (
@@ -639,69 +722,6 @@ export default function PlanItemPage() {
                 Generation failed before any variant rendered. Try generating again.
               </p>
             )}
-          </div>
-
-          {/* RIGHT: sticky action panel — preview + Nova helper + Generate */}
-          <div className="mt-8 space-y-4 lg:sticky lg:top-6 lg:mt-0">
-            {/* Small preview — shows the latest result or skeleton before generation */}
-            <div className="mx-auto max-w-[200px]">
-              <Hero variant={focused} generating={isGenerating} />
-            </div>
-            {item.edit_format && (
-              <div className="mb-2">
-                <span className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-                  {item.edit_format}
-                </span>
-              </div>
-            )}
-
-
-            {/* Nova helper — one quiet line; expands to AskNovaPanel on request.
-                Collapses conformance critic + Ask Nova into a single surface. */}
-            <NovaHelper
-              item={item}
-              conformanceChecking={conformanceChecking}
-              askNova={askNova}
-              onOpen={() => setAskNova("default")}
-              onContest={() => setAskNova("contest")}
-              onClose={() => setAskNova(null)}
-              onDismissConformance={async () => {
-                try {
-                  await dismissConformance(itemId);
-                } finally {
-                  refetch();
-                }
-              }}
-              onItemChanged={() => {
-                conformancePolls.current = 0;
-                refetch();
-              }}
-            />
-
-            {/* Generate + "N shots left" caption */}
-            <div className="space-y-2">
-              <InkButton
-                onClick={handleGenerate}
-                disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
-              >
-                {isGenerating
-                  ? "Generating…"
-                  : generating
-                    ? "Starting…"
-                    : uploaderBusy
-                      ? "Finishing upload…"
-                      : "Generate videos"}
-              </InkButton>
-              <p className="text-center text-sm text-[#a1a1aa]">
-                {uploaderBusy
-                  ? "Finishing upload…"
-                  : clipCount === 0
-                    ? "Add clips to generate"
-                    : isInstructed && shotsLeft > 0
-                      ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
-                      : null}
-              </p>
-            </div>
           </div>
         </div>
 
@@ -1038,6 +1058,24 @@ function FocusedResults({
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* ── Unplaced shots info card ── */}
+          {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+                Not in this take
+              </p>
+              <ul className="space-y-0.5">
+                {variant.unplaced_shots!.map((shot) => (
+                  <li key={shot.clip_id} className="text-xs text-amber-800">
+                    <span className="font-medium">Shot {shot.shot_index}</span>
+                    {" – "}
+                    {unplacedShotCopy(shot.reason)}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
@@ -1751,3 +1789,4 @@ function PoolUploadCard({
     </div>
   );
 }
+

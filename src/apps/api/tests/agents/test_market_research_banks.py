@@ -261,10 +261,11 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Intro bumped to 2026-06-12 when overlay_examples added broader cluster exemplars.
     # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
+    # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
     assert success_factors_version() == "2026-06-14"
     assert PERSONA_PROMPT_VERSION == "2026-06-14"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-14"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -284,8 +285,9 @@ def test_overlay_bank_version_couples_to_agent_versions():
     #                  hooks and updated the matcher layout policy.
     # Bump 2026-06-14: weekly research refresh — added professional-ootd-static-01
     #                  (office fashion / professional aesthetic lane).
+    # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
     assert library_version() == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-14"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-14"
 
 

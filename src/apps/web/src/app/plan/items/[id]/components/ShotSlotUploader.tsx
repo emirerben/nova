@@ -19,6 +19,8 @@ import {
   attachClips,
   requestUploadUrls,
   setClipNote,
+  updatePlanItemShot,
+  uploadToGcs,
   uploadToGcsWithProgress,
   type ClipAssignment,
   type FilmingShot,
@@ -412,6 +414,131 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     }
   }
 
+  // ── WS3: Inline shot text editing ────────────────────────────────────────
+
+  const [editingShotId, setEditingShotId] = useState<string | null>(null);
+  const [editWhat, setEditWhat] = useState("");
+  const [editHow, setEditHow] = useState("");
+  const [shotEditError, setShotEditError] = useState<string | null>(null);
+
+  function startEditShot(shot: FilmingShot) {
+    if (!shot.shot_id) return;
+    setEditingShotId(shot.shot_id);
+    setEditWhat(shot.what);
+    setEditHow(shot.how ?? "");
+    setShotEditError(null);
+  }
+
+  async function handleSaveEditedShot(shot: FilmingShot) {
+    if (!shot.shot_id) return;
+    try {
+      const updated = await updatePlanItemShot(item.id, shot.shot_id, {
+        what: editWhat.trim() || shot.what,
+        how: editHow.trim(),
+      });
+      setEditingShotId(null);
+      setShotEditError(null);
+      onAttached(updated);
+    } catch {
+      setShotEditError("Couldn't save — try again");
+    }
+  }
+
+  function handleCancelEditShot() {
+    setEditingShotId(null);
+    setShotEditError(null);
+  }
+
+  // Determine if any slot is busy uploading (used to gate shot editing).
+  const uploaderBusy = Object.values(slotState).some(
+    (s) => s.phase === "uploading" || s.phase === "committing",
+  );
+
+  // ── WS4: Multi-clip per shot ──────────────────────────────────────────────
+  // Per-shot extra-clip upload state: tracks whether a shot's secondary upload
+  // is in progress.
+  const [multiUploadBusy, setMultiUploadBusy] = useState<Record<string, boolean>>({});
+
+  async function handleExtraClipFiles(shot: FilmingShot, files: FileList | null) {
+    const sid = shot.shot_id;
+    if (!sid || !files || files.length === 0) return;
+
+    const fileList = Array.from(files);
+    setMultiUploadBusy((prev) => ({ ...prev, [sid]: true }));
+    try {
+      const urls = await requestUploadUrls(
+        item.id,
+        fileList.map((f) => ({
+          filename: f.name,
+          content_type: f.type || "video/mp4",
+          file_size_bytes: f.size,
+        })),
+      );
+      await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, fileList[i])));
+
+      // Build the full assignment list: existing shot assignments + pool, plus the new ones.
+      const newAssignments: ClipAssignment[] = urls.map((u) => ({
+        gcs_path: u.gcs_path,
+        shot_id: sid,
+        user_note: "",
+      }));
+
+      // Read current state synchronously via a callback so we see the latest.
+      let latestSlots: Record<string, SlotState> = {};
+      let latestPool: ClipAssignment[] = [];
+      flushSync(() => {
+        setSlotState((prev) => {
+          latestSlots = prev;
+          return prev;
+        });
+        setPoolPaths((prev) => {
+          latestPool = prev;
+          return prev;
+        });
+      });
+
+      const existingAssignments = buildAssignments(latestSlots, latestPool);
+      const allAssignments = [...existingAssignments, ...newAssignments];
+      const allPaths = allAssignments.map((a) => a.gcs_path);
+      const updated = await attachClips(item.id, allPaths, allAssignments);
+      onAttached(updated);
+    } catch {
+      // Non-fatal: show no error — upload inputs reset naturally.
+    } finally {
+      setMultiUploadBusy((prev) => ({ ...prev, [sid]: false }));
+    }
+  }
+
+  async function handleRemoveExtraClip(sid: string, gcsPathToRemove: string) {
+    let latestSlots: Record<string, SlotState> = {};
+    let latestPool: ClipAssignment[] = [];
+    flushSync(() => {
+      setSlotState((prev) => {
+        latestSlots = prev;
+        return prev;
+      });
+      setPoolPaths((prev) => {
+        latestPool = prev;
+        return prev;
+      });
+    });
+
+    const existingAssignments = buildAssignments(latestSlots, latestPool);
+    // Remove only the specific extra clip (not the primary slot clip for this shot_id).
+    // Extra clips are ones where shot_id matches AND gcs_path is NOT the primary slot path.
+    const primaryPath = latestSlots[sid]?.gcsPaths;
+    const filtered = existingAssignments.filter(
+      (a) => !(a.shot_id === sid && a.gcs_path === gcsPathToRemove && a.gcs_path !== primaryPath),
+    );
+    const paths = filtered.map((a) => a.gcs_path);
+    try {
+      const updated = await attachClips(item.id, paths, filtered);
+      onAttached(updated);
+    } catch {
+      // Non-fatal.
+    }
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -443,23 +570,118 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
         {shots.map((shot, i) => {
           const sid = shot.shot_id ?? `legacy-${i}`;
           const state = slotState[sid] ?? { phase: "idle" };
+          const isEditing = editingShotId === shot.shot_id;
+          const canEdit = !!shot.shot_id && !uploaderBusy;
+          const clipCount = shot.clip_count ?? 1;
+          // Extra clips for this shot: assignments with shot_id === sid that are NOT
+          // the primary slot clip.
+          const primaryPath = state.gcsPaths;
+          const extraClips = (item.clip_assignments ?? []).filter(
+            (a) => a.shot_id === sid && a.gcs_path !== primaryPath,
+          );
+          const totalFilled = (state.phase === "filled" ? 1 : 0) + extraClips.length;
+          const remaining = Math.max(0, clipCount - totalFilled);
           return (
             <div key={sid} className="py-3 first:pt-0 last:pb-0">
-              {/* Shot header */}
-              <div className="mb-2 flex items-start gap-2">
-                <span className="font-display italic text-[#a1a1aa]">{i + 1}.</span>
-                {shot.duration_s ? (
-                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-[#71717a]">
-                    {shot.duration_s}s
-                  </span>
-                ) : null}
-                <span className="text-sm text-[#3f3f46]">
-                  {shot.what}
-                  {shot.how ? (
-                    <span className="text-[#71717a]"> — {shot.how}</span>
+              {/* Shot header — WS3: inline editable */}
+              {isEditing ? (
+                <div className="mb-2">
+                  <div className="flex items-start gap-2">
+                    <span className="font-display italic text-[#a1a1aa]">{i + 1}.</span>
+                    <div className="flex flex-1 flex-col gap-1.5">
+                      <input
+                        autoFocus
+                        type="text"
+                        value={editWhat}
+                        onChange={(e) => setEditWhat(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); void handleSaveEditedShot(shot); }
+                          if (e.key === "Escape") handleCancelEditShot();
+                        }}
+                        className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-sm text-[#3f3f46] focus:border-lime-600 focus:outline-none focus:ring-1 focus:ring-lime-600"
+                        placeholder="What to film"
+                      />
+                      <input
+                        type="text"
+                        value={editHow}
+                        onChange={(e) => setEditHow(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { e.preventDefault(); void handleSaveEditedShot(shot); }
+                          if (e.key === "Escape") handleCancelEditShot();
+                        }}
+                        className="rounded border border-zinc-300 bg-white px-2 py-0.5 text-sm text-[#71717a] focus:border-lime-600 focus:outline-none focus:ring-1 focus:ring-lime-600"
+                        placeholder="How (optional)"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleSaveEditedShot(shot)}
+                          className="text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelEditShot}
+                          className="text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e] focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                        >
+                          Cancel
+                        </button>
+                        {shotEditError && (
+                          <span className="text-xs text-red-600">{shotEditError}</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="group mb-2 flex items-start gap-2">
+                  <span className="font-display italic text-[#a1a1aa]">{i + 1}.</span>
+                  {shot.duration_s ? (
+                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-[#71717a]">
+                      {shot.duration_s}s
+                    </span>
                   ) : null}
-                </span>
-              </div>
+                  {/* WS4: clip count badge */}
+                  {clipCount > 1 && (
+                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-[#71717a]">
+                      Film {clipCount} clips
+                    </span>
+                  )}
+                  <span className="flex-1 text-sm text-[#3f3f46]">
+                    {shot.what}
+                    {shot.how ? (
+                      <span className="text-[#71717a]"> — {shot.how}</span>
+                    ) : null}
+                  </span>
+                  {/* WS3: pencil edit button — only visible on hover, only when canEdit */}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => startEditShot(shot)}
+                      aria-label={`Edit shot ${i + 1} text`}
+                      className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 14 14"
+                        fill="none"
+                        className="text-[#a1a1aa] hover:text-[#71717a]"
+                        aria-hidden="true"
+                      >
+                        <path
+                          d="M9.5 2.5L11.5 4.5M2 12H4L10.5 5.5L8.5 3.5L2 10V12Z"
+                          stroke="currentColor"
+                          strokeWidth="1.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Slot well (min-h prevents layout shift — D13) */}
               <SlotWell
@@ -474,6 +696,60 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                 onKeepMatch={() => handleKeepMatch(sid)}
                 onSaveNote={(note) => handleSaveNote(sid, note)}
               />
+
+              {/* WS4: Multi-clip strip — only when clip_count > 1 */}
+              {clipCount > 1 && (
+                <div className="mt-2">
+                  {/* Progress */}
+                  <div className="mb-1.5 text-xs text-[#71717a]">
+                    {totalFilled} of {clipCount} clips filmed
+                  </div>
+                  {/* Extra clip chips */}
+                  {extraClips.length > 0 && (
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {extraClips.map((a) => {
+                        const name = a.gcs_path.split("/").pop() ?? a.gcs_path;
+                        return (
+                          <span
+                            key={a.gcs_path}
+                            className="flex items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800"
+                          >
+                            <span>✓</span>
+                            <span className="max-w-[160px] truncate">{name}</span>
+                            <button
+                              type="button"
+                              aria-label={`Remove clip ${name}`}
+                              onClick={() => void handleRemoveExtraClip(sid, a.gcs_path)}
+                              className="ml-0.5 text-lime-600 hover:text-lime-800 focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {/* Add more clips input */}
+                  {remaining > 0 && (
+                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-[8px] border border-dashed border-zinc-200 px-3 py-1.5 text-xs text-[#71717a] hover:border-zinc-400 focus-within:ring-2 focus-within:ring-lime-600 focus-within:ring-offset-2">
+                      {multiUploadBusy[sid] ? (
+                        <span>Uploading…</span>
+                      ) : (
+                        <>
+                          <span>+ Add {remaining > 1 ? `${remaining} more` : "1 more"}</span>
+                          <input
+                            type="file"
+                            accept="video/mp4,video/quicktime"
+                            multiple
+                            className="sr-only"
+                            onChange={(e) => void handleExtraClipFiles(shot, e.target.files)}
+                          />
+                        </>
+                      )}
+                    </label>
+                  )}
+                </div>
+              )}
             </div>
           );
         })}

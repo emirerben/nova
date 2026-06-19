@@ -419,6 +419,7 @@ def _item_mock(item_id: uuid.UUID, clip_gcs_paths: list[str]) -> MagicMock:
     it.notes = None
     it.scenes = []
     it.source_idea_seed_id = None
+    it.source_idea_seed_text = None
     it.edit_format = None
     it.user_edited = False
     it.current_job_id = None
@@ -505,6 +506,7 @@ def test_pool_matched_count_preserves_valid_match() -> None:
 
     assert resp.pool_matched_count == 1
     assert resp.pool_clip_count == 1
+
 
 # ── T3: seed-pool carry (onboarding-fork → create_plan) ──────────────────────
 

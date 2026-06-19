@@ -59,7 +59,8 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.notes = None
     item.scenes = []
     item.source_idea_seed_id = None
-    item.edit_format = None
+    item.source_idea_seed_text = None
+    item.edit_format = "montage"
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -170,7 +171,8 @@ def test_get_plan_item_returns_filming_guide(client: TestClient) -> None:
     body = resp.json()
     # filming_guide now includes shot_id (null for pre-0052 rows without a stamped id).
     assert body["filming_guide"] == [
-        {"shot_id": None, "what": "creator to camera", "how": "eye level", "duration_s": 8}
+        {"shot_id": None, "what": "creator to camera", "how": "eye level",  # noqa: E501
+         "duration_s": 8, "clip_count": 1}
     ]
 
 
@@ -274,7 +276,8 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     item.notes = None
     item.scenes = []
     item.source_idea_seed_id = None
-    item.edit_format = None
+    item.source_idea_seed_text = None
+    item.edit_format = "montage"
 
     resp = plan_item_response(item)
     # non-dict skipped; 2 dicts kept with defaults

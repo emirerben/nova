@@ -89,6 +89,7 @@ class FilmingShotResponse(BaseModel):
     what: str = ""
     how: str = ""
     duration_s: int = 1  # matches MIN_SHOT_DURATION_S; 0 would render as confusing "0s" badge
+    clip_count: int = 1  # Number of clips the creator should film for this shot
 
 
 class ClipAssignmentResponse(BaseModel):
@@ -165,6 +166,7 @@ def plan_item_response(
             what=s.get("what", ""),
             how=s.get("how", ""),
             duration_s=s.get("duration_s", 1),  # 1 = MIN_SHOT_DURATION_S; 0 renders as "0s" badge
+            clip_count=s.get("clip_count", 1),
         )
         for s in (item.filming_guide or [])
         if isinstance(s, dict)
@@ -660,6 +662,111 @@ async def attach_clips(
 
     analyze_item_conformance.delay(str(item.id))
     # Reload with current_job eager-loaded (commit expired it) before serializing.
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+class ShotEditBody(BaseModel):
+    what: str | None = None
+    how: str | None = None
+    duration_s: int | None = None
+    clip_count: int | None = None
+
+
+@router.patch("/{item_id}/shots/{shot_id}", response_model=PlanItemResponse)
+async def edit_shot(
+    item_id: str,
+    shot_id: str,
+    body: ShotEditBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Edit the text/metadata of one shot in the item's filming guide.
+
+    Updates filming_guide in-place. shot_id is stable across the edit — attached
+    clip_assignments remain bound to the shot. Sets user_edited=True so re-analysis
+    knows the guide was touched by the user.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+
+    guide = list(item.filming_guide or [])
+    matched = False
+    for shot in guide:
+        if not isinstance(shot, dict):
+            continue
+        if str(shot.get("shot_id") or "") == shot_id:
+            if body.what is not None:
+                clean = _sanitize_text(body.what.strip())
+                if clean:
+                    shot["what"] = clean
+            if body.how is not None:
+                shot["how"] = _sanitize_text(body.how.strip())
+            if body.duration_s is not None:
+                shot["duration_s"] = max(1, min(60, int(body.duration_s)))
+            if body.clip_count is not None:
+                shot["clip_count"] = max(1, min(10, int(body.clip_count)))
+            matched = True
+            break
+
+    if not matched:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown shot_id: {shot_id}",
+        )
+
+    item.filming_guide = guide
+    item.user_edited = True
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+@router.post("/{item_id}/generate-guide", response_model=PlanItemResponse)
+async def generate_guide(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Generate a fresh filming guide for an item with an empty guide.
+
+    Uses the shot_list_writer agent (gemini-2.5-flash). Mints stable shot_ids on
+    each new shot. Only allowed when the current guide is empty — existing guides
+    are not overwritten (use the PATCH /shots/{shot_id} endpoint to edit them).
+    Returns 409 if the item already has a filming guide.
+    """
+    import uuid as _uuid  # noqa: PLC0415
+
+    from app.agents.shot_list_writer import (  # noqa: PLC0415
+        ShotListWriterInput,
+        run_shot_list_writer,
+    )
+
+    item = await _load_owned_item(item_id, user.id, db)
+
+    if item.filming_guide:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This item already has a filming guide. Use PATCH /shots/{shot_id} to edit it.",
+        )
+
+    inp = ShotListWriterInput(
+        theme=item.theme or "",
+        idea=item.idea or "",
+        edit_format=str(item.edit_format or "montage"),
+    )
+    result = await asyncio.get_event_loop().run_in_executor(None, run_shot_list_writer, inp)
+
+    if not result.shots:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Shot list generation returned no shots. Please try again.",
+        )
+
+    item.filming_guide = [{**s.model_dump(), "shot_id": _uuid.uuid4().hex} for s in result.shots]
+    item.user_edited = True
+    await db.commit()
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     return plan_item_response(reloaded, instruction_level=instruction_level)

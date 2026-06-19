@@ -722,3 +722,76 @@ def test_music_recipe_dict_constructs_template_recipe() -> None:
     assert isinstance(recipe, TemplateRecipe)
     assert recipe.shot_count == len(recipe_dict["slots"])
     assert recipe.shot_count > 0
+
+
+# ── generate_music_recipe min_slots floor ─────────────────────────────────────
+
+
+def _dense_track_data(
+    n_beats: int = 90, best_start: float = 0.0, best_end: float = 45.0, slot_every_n: int = 8
+) -> dict:
+    """Build track_data with dense beats (1s intervals) for floor tests."""
+    beats = [float(i) for i in range(n_beats)]
+    return {
+        "beat_timestamps_s": beats,
+        "track_config": {
+            "best_start_s": best_start,
+            "best_end_s": best_end,
+            "slot_every_n_beats": slot_every_n,
+        },
+        "duration_s": float(n_beats),
+    }
+
+
+def test_generate_music_recipe_min_slots_zero_byte_identical() -> None:
+    """min_slots=0 (default) must produce the same output as omitting the kwarg.
+
+    Guards the 0-on-legacy path: pool-only jobs and kill-switch-off jobs pass 0,
+    which must be a no-op so the no-narrative path is byte-identical to pre-fix.
+    """
+    data = _dense_track_data()
+    recipe_default = generate_music_recipe(data)
+    recipe_zero = generate_music_recipe(data, min_slots=0)
+    assert recipe_default["shot_count"] == recipe_zero["shot_count"]
+    assert recipe_default["slots"] == recipe_zero["slots"]
+
+
+def test_generate_music_recipe_min_slots_already_satisfied_no_reduction() -> None:
+    """When the default n already produces ≥ min_slots slots, n is unchanged."""
+    data = _dense_track_data()  # 90 beats, n=8 → ~10 slots
+    natural_slots = generate_music_recipe(data)["shot_count"]
+    # min_slots below the natural count → no change
+    recipe = generate_music_recipe(data, min_slots=natural_slots - 1)
+    assert recipe["shot_count"] == natural_slots
+
+
+def test_generate_music_recipe_min_slots_reduces_n_to_hit_floor() -> None:
+    """When default n yields fewer slots than min_slots, n is reduced until the
+    floor is met. The resulting slot count must be ≥ min_slots.
+    """
+    data = _dense_track_data(n_beats=90, best_start=0.0, best_end=45.0, slot_every_n=8)
+    natural = generate_music_recipe(data)["shot_count"]
+    target = natural + 3  # ask for 3 more slots than the natural count
+    recipe = generate_music_recipe(data, min_slots=target)
+    assert recipe["shot_count"] >= target, (
+        f"Expected ≥ {target} slots to satisfy floor, got {recipe['shot_count']}"
+    )
+
+
+def test_generate_music_recipe_min_slots_residual_when_window_too_short() -> None:
+    """When even n=1 can't reach min_slots, the recipe must NOT raise — it
+    emits as many slots as physically possible and lets _build_unplaced_shots
+    surface the residual.
+    """
+    # Only 5 beats → n=1 yields at most 4 slots
+    beats = [0.0, 1.0, 2.0, 3.0, 4.0]
+    data = {
+        "beat_timestamps_s": beats,
+        "track_config": {"best_start_s": 0.0, "best_end_s": 4.0, "slot_every_n_beats": 4},
+        "duration_s": 5.0,
+    }
+    # Request 8 slots — physically impossible with 5 beats
+    recipe = generate_music_recipe(data, min_slots=8)
+    # Should not raise; must produce some slots (n=1 path)
+    assert recipe["shot_count"] >= 1
+    assert recipe["shot_count"] < 8  # honest residual, not a lie

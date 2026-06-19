@@ -103,6 +103,23 @@ class GenerativeJobResponse(BaseModel):
     status: str
 
 
+class UnplacedShot(BaseModel):
+    """An assigned shot clip that could not be placed in this variant.
+
+    shot_index is the 1-based ordinal of the clip in narrative_order (the only
+    shot pointer recoverable at render time — shot_id is stripped before the job).
+    reason is one of:
+      "unusable_footage"  — clip absent from clip_metas (analysis failed / missing)
+      "song_too_short"    — analyzed but unplaceable because the song window had
+                            fewer beats than assigned shots even at n=1
+    """
+
+    clip_id: str
+    gcs_path: str | None = None
+    shot_index: int
+    reason: Literal["unusable_footage", "song_too_short"]
+
+
 class GenerativeVariant(BaseModel):
     """Per-variant state as surfaced on the status response.
 
@@ -161,6 +178,10 @@ class GenerativeVariant(BaseModel):
     intro_cluster_hero_size_px: int | None = None
     intro_cluster_body_size_px: int | None = None
     intro_cluster_accent_size_px: int | None = None
+    # Assigned shot clips that couldn't be placed in this variant. Absent (None)
+    # on pool-only jobs, legacy renders, and variants where all shots landed.
+    # Present only when ≥1 assigned clip was left unplaced after match().
+    unplaced_shots: list[UnplacedShot] | None = None
 
     model_config = {"extra": "allow"}
 

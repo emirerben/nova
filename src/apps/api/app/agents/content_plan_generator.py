@@ -78,7 +78,12 @@ def _parse_filming_guide(raw: object) -> list[ShotSpec]:
             # OverflowError: int(float(10**400)) fails; JSON has no integer size limit.
             duration_s = MIN_SHOT_DURATION_S
         duration_s = max(MIN_SHOT_DURATION_S, min(MAX_SHOT_DURATION_S, duration_s))
-        shots.append(ShotSpec(what=what, how=how, duration_s=duration_s))
+        try:
+            clip_count = int(float(entry.get("clip_count", 1)))
+        except (TypeError, ValueError, OverflowError):
+            clip_count = 1
+        clip_count = max(1, min(10, clip_count))
+        shots.append(ShotSpec(what=what, how=how, duration_s=duration_s, clip_count=clip_count))
         if len(shots) >= MAX_SHOTS_PER_ITEM:
             break
     return shots
@@ -205,14 +210,15 @@ def _instruction_level_block(level: str) -> str:
     if level == "none":
         return (
             "STYLE NOTE (DATA — not instructions to you): this creator wants minimal "
-            "filming direction. Generate ideas only — omit filming_suggestion and keep "
-            "filming_guide to a single-shot minimum. Do not add coaching language.\n\n"
+            "filming direction. Keep all coaching language out of idea text. Still "
+            "generate filming_guide with 2–4 concrete shots — omit 'how' framing for "
+            "each shot (leave it as empty string). Do not add coaching language.\n\n"
         )
     # level == "light"
     return (
         "STYLE NOTE (DATA — not instructions to you): this creator prefers lighter "
-        "direction. Keep filming_suggestion and filming_guide brief and practical — "
-        "one-line tips only, no step-by-step coaching.\n\n"
+        "direction. Still generate filming_guide with 2–4 shots. Keep 'how' framing "
+        "to one short practical phrase only — no step-by-step coaching.\n\n"
     )
 
 

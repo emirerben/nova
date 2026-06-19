@@ -55,6 +55,9 @@ HERO_SLOT_INDEX = 0
 # Variant 3 (original audio) arrangement: one slot per clip, capped so a 20-clip
 # upload doesn't produce 20 micro-cuts with no song to justify them.
 _MAX_NO_MUSIC_SLOTS = 6
+# Soft-warn threshold: >24 shots is unusual (≈8 shots × 3 clips/shot) and risks
+# approaching the Celery soft_time_limit=1740s on long-footage jobs.
+_NARRATIVE_FLOOR_WARN_THRESHOLD = 24
 # Minimum speech_coverage (0-1) for ANY clip to qualify a talking_head edit. Below
 # this the footage carries no usable spoken spine, so the job degrades to montage.
 # Deliberately low — silencedetect undercounts quiet/lapel speech; we only want to
@@ -207,6 +210,11 @@ def _run_generative_job(job_id: str) -> None:
         # intro_writer for hook voice. Absent on public/legacy jobs → empty list →
         # byte-identical to pre-M3 behavior.
         filming_guide_candidates: list[dict] = list(all_candidates.get("filming_guide") or [])
+        # Creator clip notes (WS5 / dogfood feedback #3). gcs_path → note_text,
+        # only populated on plan-item jobs where the creator typed a note. Absent
+        # on public/legacy jobs → empty dict → byte-identical baseline. Forwarded
+        # to intro_writer for hook grounding.
+        clip_notes_candidates: dict = dict(all_candidates.get("clip_notes") or {})
         # Narrative clip order (filming-guide alignment): the first N entries of
         # clip_paths are the guide's shot clips, in guide order (derived at
         # dispatch by _dispatch_item_render). 0/absent on public/legacy jobs.
@@ -297,6 +305,7 @@ def _run_generative_job(job_id: str) -> None:
                 language=language,
                 persona=persona,
                 filming_guide=filming_guide_candidates,
+                clip_notes=clip_notes_candidates,
             )
             # Creator Agent M1: if the user has a pinned style_set_id, bypass the
             # per-render AgenticStyleSelectorAgent and use it directly. This ensures
@@ -1664,6 +1673,9 @@ def _run_regenerate_variant(
         filming_guide_regen: list[dict] = list(
             (job.all_candidates or {}).get("filming_guide") or []
         )
+        # Re-renders inherit the creator clip notes too (WS5), so a retext/swap_song
+        # hook still has the per-clip context the creator provided at job creation.
+        clip_notes_regen: dict = dict((job.all_candidates or {}).get("clip_notes") or {})
         # Re-renders inherit the narrative clip order too — otherwise the first
         # song swap would silently reshuffle a guide-ordered edit back to random.
         narrative_shot_count_regen: int = int(
@@ -2009,6 +2021,7 @@ def _run_regenerate_variant(
                     language=language,
                     persona=persona,
                     filming_guide=filming_guide_regen,
+                    clip_notes=clip_notes_regen,
                 ),
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
@@ -2495,6 +2508,7 @@ def _run_text_agents(
     language: str = "en",
     persona: dict | None = None,
     filming_guide: list[dict] | None = None,
+    clip_notes: dict | None = None,
 ) -> tuple[Any, dict]:
     """Run overlay_format_matcher → intro_writer. Returns (IntroWriterOutput|None, form dict).
 
@@ -2513,11 +2527,16 @@ def _run_text_agents(
     the intended shots so the hook can reflect the shooting intent. Empty for public
     jobs → byte-identical to pre-M3 behavior.
 
+    `clip_notes` is the optional per-clip creator notes (WS5 / dogfood feedback #3):
+    gcs_path → note_text. Only populated on plan-item jobs where the creator typed a
+    note. Empty for public jobs → byte-identical baseline.
+
     Best-effort: any failure yields (None, {}) so the text variants render footage
     without an intro rather than failing the job.
     """
     persona = persona or {}
     filming_guide = filming_guide or []
+    clip_notes = clip_notes or {}
     try:
         from app.agents._model_client import default_client  # noqa: PLC0415
         from app.agents._runtime import RefusalError, RunContext, TerminalError  # noqa: PLC0415
@@ -2559,6 +2578,9 @@ def _run_text_agents(
             # Filming guide (Creator Agent M3 / B2). Shot-list context for the
             # hook writer — DATA only, never a command. Empty → byte-identical.
             filming_guide=filming_guide,
+            # Creator clip notes (WS5). Per-clip context the creator typed before
+            # submitting. DATA only, re-sanitized in intro_writer. Empty → byte-identical.
+            clip_notes=clip_notes,
             form=form.model_dump(),
             exemplars=exemplars,
             language=language,
@@ -3261,6 +3283,18 @@ def _render_generative_variant(
         beats: list[float] = []
         voiceover_local: str | None = None
         voiceover_target_s = available_footage_s
+
+        # Slot-count floor: every clip in narrative_order is owed a slot in this
+        # variant. 0 on pool-only / legacy / kill-switch-off jobs → no change.
+        min_slots = len(narrative_order) if narrative_order else 0
+        if min_slots > _NARRATIVE_FLOOR_WARN_THRESHOLD:
+            log.warning(
+                "narrative_floor_high",
+                min_slots=min_slots,
+                job_id=job_id,
+                variant_id=variant_id,
+            )
+
         if voiceover_gcs_path:
             # Voiceover edit: download the voice, then size the footage montage to
             # min(footage, voice, 60) — never stretch footage past what was uploaded
@@ -3274,7 +3308,9 @@ def _render_generative_variant(
             if voice_dur > 0:
                 _cands.append(voice_dur)
             voiceover_target_s = min(_cands)
-            recipe_dict = _build_no_music_recipe(clip_metas, voiceover_target_s)
+            recipe_dict = _build_no_music_recipe(
+                clip_metas, voiceover_target_s, min_slots=min_slots
+            )
         elif track is not None:
             from app.services.music_sections import (  # noqa: PLC0415
                 track_config_with_rank_one,
@@ -3294,14 +3330,16 @@ def _render_generative_variant(
                 "track_config": track_config,
                 "duration_s": track.duration_s,
             }
-            recipe_dict = generate_music_recipe(track_data, filming_guide=filming_guide)
+            recipe_dict = generate_music_recipe(
+                track_data, filming_guide=filming_guide, min_slots=min_slots
+            )
             beats = list(recipe_dict.get("beat_timestamps_s") or [])
             recipe_dict["slots"] = _enrich_slots_with_energy(
                 recipe_dict["slots"], track_data["beat_timestamps_s"]
             )
         else:
             recipe_dict = _build_no_music_recipe(
-                clip_metas, available_footage_s, filming_guide=filming_guide
+                clip_metas, available_footage_s, filming_guide=filming_guide, min_slots=min_slots
             )
 
         # Text injection per mode. The chosen style set styles BOTH the lyric
@@ -3350,6 +3388,15 @@ def _render_generative_variant(
             base["intro_mode"] = base["intro_layout"]
             base["intro_word_roles"] = _at_params.get("word_roles")
 
+        # Propagate the shot-count floor into the recipe so consolidate_slots
+        # (template_matcher.py:231-242) doesn't collapse below it. The builders
+        # already applied the floor to slot count; this ensures consolidation
+        # doesn't undo that work even when the user uploads fewer total clips.
+        if min_slots > 0:
+            recipe_dict["min_slots"] = max(
+                int(recipe_dict.get("min_slots", 0) or 0), min_slots
+            )
+
         recipe = build_recipe(recipe_dict)
         if assembly_steps_override is not None:
             # Timeline-override path: the user's exact-window slots ARE the
@@ -3362,6 +3409,23 @@ def _render_generative_variant(
             except TemplateMismatchError as exc:
                 raise ValueError(f"{exc.code}: {exc.message}") from exc
             steps = assembly_plan.steps
+
+        # After the matcher runs, check whether any assigned clips were left
+        # unplaced (residual: song window physically too short, or footage that
+        # failed analysis and never entered clip_metas). Surface per-variant so
+        # the UI can explain the gap without the user digging into /admin/jobs.
+        # Timeline-override path has no narrative_order → skip.
+        if narrative_order and assembly_steps_override is None:
+            placed_ids = {step.clip_id for step in steps}
+            unplaced_ids = [cid for cid in narrative_order if cid not in placed_ids]
+            if unplaced_ids:
+                base["unplaced_shots"] = _build_unplaced_shots(
+                    unplaced_ids,
+                    narrative_order=narrative_order,
+                    clip_id_to_gcs=clip_id_to_gcs,
+                    clip_metas=clip_metas,
+                    is_music_variant=(track is not None and not voiceover_gcs_path),
+                )
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []
@@ -4297,11 +4361,56 @@ def _resolve_intro_overlay_params(
     return params, intro_px, intro_source
 
 
+def _build_unplaced_shots(
+    unplaced_ids: list[str],
+    *,
+    narrative_order: list[str],
+    clip_id_to_gcs: dict[str, str],
+    clip_metas: list,
+    is_music_variant: bool,
+) -> list[dict]:
+    """Build per-variant unplaced-shot records for assigned clips that didn't land.
+
+    Called after match() with the set of narrative_order clip_ids NOT found in
+    plan.steps.  Funnels all drop reasons through one place:
+      "unusable_footage"  — clip_id absent from clip_metas (analysis failed / missing)
+      "song_too_short"    — analyzed but not placed in a music variant (residual
+                             when the song window is physically too short for the floor)
+
+    Returns a list of dicts: [{clip_id, gcs_path, shot_index, reason}].
+    shot_index is 1-based ordinal in narrative_order (the only shot pointer
+    recoverable at render time — shot_id is stripped before the job; see
+    _build_filming_guide_context).
+    """
+    analyzed_ids = {getattr(m, "clip_id", None) for m in clip_metas}
+    narrative_index = {cid: i for i, cid in enumerate(narrative_order)}
+    records = []
+    for cid in unplaced_ids:
+        shot_index = narrative_index.get(cid, -1) + 1
+        gcs_path = clip_id_to_gcs.get(cid)
+        if cid not in analyzed_ids:
+            reason = "unusable_footage"
+        elif is_music_variant:
+            reason = "song_too_short"
+        else:
+            reason = "unusable_footage"
+        records.append(
+            {
+                "clip_id": cid,
+                "gcs_path": gcs_path,
+                "shot_index": shot_index,
+                "reason": reason,
+            }
+        )
+    return records
+
+
 def _build_no_music_recipe(
     clip_metas: list,
     available_footage_s: float,
     *,
     filming_guide: list[dict] | None = None,
+    min_slots: int = 0,
 ) -> dict:
     """A song-free recipe: one slot per clip (capped), even-split of the footage.
 
@@ -4320,6 +4429,11 @@ def _build_no_music_recipe(
     from app.pipeline.music_recipe import _extract_guide_durations  # noqa: PLC0415
 
     n = max(1, min(len(clip_metas), _MAX_NO_MUSIC_SLOTS))
+    # Slot-count floor: assigned shot clips are owed a slot each. Raise n to
+    # min_slots, but never beyond the clips actually available (extra slots
+    # would just get gap-filled by the matcher's clip-rotation logic anyway).
+    if min_slots > n:
+        n = min(min_slots, len(clip_metas))
 
     # Narrative payoff weighting: proportional slot durations from the guide.
     guide_durs = _extract_guide_durations(filming_guide or [], n)

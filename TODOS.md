@@ -1,3 +1,11 @@
+---
+type: concept
+title: Todos
+ingested_at: '2026-06-19T09:00:23.936Z'
+source_kind: put_page
+ingested_via: put_page
+---
+
 # Nova — Deferred Work
 
 ## Plan dogfood fixes — review-deferred items (2026-06-12)
@@ -26,6 +34,20 @@ lower-probability items deferred so the PR stays scoped.
 
 ### Advisor prompt: exclude dismissed/suppressed verdicts
 **What:** `_format_conformance` in `plan_item_advisor.py` includes the verdict even when the user dismissed/suppressed it, so Nova may quote a read the user explicitly hid. **How:** skip the conformance block when `dismissed`/`suppressed`. **Priority:** P3.
+
+## Shot-plan guarantee follow-ups (v0.4.112.0)
+
+### PATCH /shots/{shot_id} returns 422 instead of 404 for missing shot
+**What:** `edit_shot` raises HTTP 422 UNPROCESSABLE_ENTITY when the shot_id isn't found, but 404 NOT_FOUND is the correct semantic for a missing resource. Low impact (clients only see this on stale shot IDs), but inconsistent with the rest of the route file. **How:** change `HTTP_422_UNPROCESSABLE_ENTITY` to `HTTP_404_NOT_FOUND` in `plan_items.py:714`. **Priority:** P3.
+
+### POST /generate-guide lacks rate limiting
+**What:** The LLM-backed `/generate-guide` endpoint has no rate limit — repeated calls can exhaust the Gemini spend cap. The `slowapi` limiter is wired up in `main.py:39` but not applied here. **How:** add `@limiter.limit("10/minute", key_func=get_real_ip)` on `generate_guide`. **Priority:** P3.
+
+### _narrative_pass cursor adjustment on dropped guide clip at cursor position
+**What:** Adversarial review found a potential off-by-one in `_narrative_pass` (template_matcher.py) when a guide clip is dropped at the cursor position mid-loop — the cursor adjustment only fires for `cursor > bad_idx`, missing the `cursor == bad_idx` case. Pre-existing code, not introduced on this branch. **Priority:** P2.
+
+### Prose shot labels in unplaced signal
+**What:** The "Not in this take" card shows "Shot N" (ordinal) but not the shot's prose description ("morning run"). Surfacing the literal label requires stashing `narrative_shot_labels` on `all_candidates` before `shot_id` is stripped. **Priority:** P3.
 
 ## Creator Agent — follow-up work (M1 shipped dark in v0.4.90.0)
 

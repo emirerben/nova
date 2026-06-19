@@ -87,6 +87,8 @@ class ShotSpec(BaseModel):
     what: str = Field(min_length=1)  # what to film ("wide shot of the dish being plated")
     how: str = ""  # angle / framing / movement ("handheld, eye level")
     duration_s: int = Field(ge=MIN_SHOT_DURATION_S, le=MAX_SHOT_DURATION_S)
+    # How many clips the creator should film for this shot (default 1).
+    clip_count: int = Field(default=1, ge=1, le=10)
 
 
 class ContentPlanInput(BaseModel):
