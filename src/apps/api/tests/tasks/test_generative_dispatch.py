@@ -56,6 +56,17 @@ def test_specs_for_talking_head_is_single_original_audio_variant():
     assert spec["archetype"] == "talking_head"
 
 
+def test_specs_for_narrated_is_single_voiceover_variant():
+    specs = gb._specs_for_archetype("narrated", None, voiceover_gcs_path="gcs/voice.m4a")
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec["variant_id"] == "narrated"
+    assert spec["text_mode"] == "none"
+    assert spec["track"] is None
+    assert spec["archetype"] == "narrated"
+    assert spec["voiceover_gcs_path"] == "gcs/voice.m4a"
+
+
 # ── _resolve_archetype matrix ─────────────────────────────────────────────────
 
 
@@ -76,6 +87,75 @@ def test_resolve_unimplemented_format_falls_back(monkeypatch):
         e[1] == "archetype_fallback" and e[2]["reason"] == "archetype_not_implemented"
         for e in events
     )
+
+
+def test_resolve_narrated_flag_off_falls_through_to_voiceover(monkeypatch):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", False, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "narrated",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[
+            {"shot_id": "s1", "what": "open the app"},
+            {"shot_id": "s2", "what": "tap profile"},
+        ],
+    )
+    assert (archetype, spine) == ("voiceover", None)
+    assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "flag_disabled" for e in events)
+
+
+def test_resolve_narrated_requires_voiceover_and_two_scripted_steps(monkeypatch):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "narrated",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path=None,
+        filming_guide=[
+            {"shot_id": "s1", "what": "open the app"},
+            {"shot_id": "s2", "what": "tap profile"},
+        ],
+    )
+    assert (archetype, spine) == ("montage", None)
+    assert any(
+        e[1] == "archetype_fallback" and e[2]["reason"] == "archetype_not_implemented"
+        for e in events
+    )
+
+    events.clear()
+    archetype, spine = gb._resolve_archetype(
+        "narrated",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[{"shot_id": "s1", "what": "open the app"}],
+    )
+    assert (archetype, spine) == ("voiceover", None)
+
+
+def test_resolve_narrated_enabled_selects_before_voiceover(monkeypatch):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "narrated",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[
+            {"shot_id": "s1", "what": "open the app"},
+            {"shot_id": "s2", "what": "tap profile"},
+        ],
+    )
+    assert (archetype, spine) == ("narrated", None)
+    sel = [e for e in events if e[1] == "archetype_selected"]
+    assert sel and sel[0][2]["archetype"] == "narrated"
 
 
 def test_resolve_talking_head_flag_off_falls_back(monkeypatch):

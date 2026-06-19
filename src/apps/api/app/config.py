@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     # verified end-to-end.
     edit_format_talking_head_enabled: bool = False
 
+    # Kill switch for the narrated walkthrough archetype. When False, a job
+    # whose plan declares edit_format="narrated" follows the existing voiceover
+    # or montage path. When True, eligible voiceover + filming-guide jobs align
+    # each shot's script to the recorded narration and render one cut per step.
+    narrated_archetype_enabled: bool = False
+
     # Layer-2 text-overlay extraction pipeline. When False, the existing
     # single-call `nova.compose.template_text` Gemini agent runs unchanged.
     # When True, the OCR + grouping + transcript-alignment pipeline replaces
