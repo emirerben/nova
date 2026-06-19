@@ -49,7 +49,12 @@ def _extract_guide_durations(filming_guide: list[dict], n: int) -> list[float] |
     return durs if sum(durs) > 0 else None
 
 
-def generate_music_recipe(track_data: dict, *, filming_guide: list[dict] | None = None) -> dict:
+def generate_music_recipe(
+    track_data: dict,
+    *,
+    filming_guide: list[dict] | None = None,
+    min_slots: int = 0,
+) -> dict:
     """Build a recipe dict from a MusicTrack's stored config and beat timestamps.
 
     Args:
@@ -83,6 +88,21 @@ def generate_music_recipe(track_data: dict, *, filming_guide: list[dict] | None 
 
     # Beats inside the configured window (inclusive on both ends)
     window_beats = sorted(b for b in beats if start_s <= b <= end_s)
+
+    # Slot-count floor: when a shot plan assigned N clips to this variant, the
+    # recipe must yield ≥ N slots so _narrative_pass can guarantee every clip
+    # lands. Reduce slot_every_n_beats toward 1 to reach the floor, using
+    # count_slots() as the single source of slot-loop arithmetic. Do NOT widen
+    # the song window — that would change which section plays and hurt quality.
+    # If even n=1 can't satisfy the floor (tiny song window), emit max-possible
+    # slots and let _build_unplaced_shots surface the residual per-variant.
+    if min_slots > 0 and count_slots(beats, start_s, end_s, n) < min_slots:
+        for candidate_n in range(n - 1, 0, -1):
+            if count_slots(beats, start_s, end_s, candidate_n) >= min_slots:
+                n = candidate_n
+                break
+        else:
+            n = 1  # window physically too few beats → max-possible + residual
 
     # Generate slots: every N beats → one clip cut
     slots = []
