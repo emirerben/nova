@@ -27,7 +27,7 @@
  * the mode-resolution logic for workspace vs setup).
  */
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { PersonaContent, PersonaResponse } from "@/lib/plan-api";
 import { patchPersonaFootageType } from "@/lib/plan-api";
@@ -303,6 +303,9 @@ export default function OnboardingShell({
   const [tiktokStatus, setTiktokStatus] = useState<TikTokStatus>(() =>
     persona ? "done" : "pending",
   );
+  // Holds footage_type_bias selections made in step 2 when persona doesn't exist yet.
+  // Patched to the persona row as soon as chatStart() creates it.
+  const pendingBiasRef = useRef<string[]>([]);
 
   // ── Step 1: TikTok ────────────────────────────────────────────────────────
 
@@ -320,8 +323,19 @@ export default function OnboardingShell({
       // Backend keeps chat_pending status when only footage_type_bias is being set,
       // so the interview still runs after this write.
       await patchPersonaFootageType(persona.id, values).catch(() => undefined);
+    } else {
+      // No persona row yet (user skipped TikTok). Store values for patching
+      // once chatStart() creates the row and fires onPersonaCreated.
+      pendingBiasRef.current = values;
     }
     setStep(3);
+  }
+
+  function handlePersonaCreated(personaId: string) {
+    if (pendingBiasRef.current.length > 0) {
+      patchPersonaFootageType(personaId, pendingBiasRef.current).catch(() => undefined);
+      pendingBiasRef.current = [];
+    }
   }
 
   // ── Step 3: Chat complete (persona generation starts) ─────────────────────
@@ -350,8 +364,11 @@ export default function OnboardingShell({
   // ready/edited/failed → PersonaEditor.
   function renderStep3() {
     if (!persona) {
-      // Persona row not yet created (TikTok scrape may still be in progress).
-      return <GeneratingStateLight label="Setting things up…" />;
+      // No persona row yet — show ChatInterview so chatStart() fires and creates it.
+      // (TikTok was skipped or scrape returned nothing; interview creates the row.)
+      return (
+        <ChatInterview onComplete={handleChatComplete} onPersonaCreated={handlePersonaCreated} />
+      );
     }
 
     const status = persona.persona_status;
@@ -376,7 +393,7 @@ export default function OnboardingShell({
     }
 
     // chat_pending or any other status → show ChatInterview.
-    return <ChatInterview onComplete={handleChatComplete} />;
+    return <ChatInterview onComplete={handleChatComplete} onPersonaCreated={handlePersonaCreated} />;
   }
 
   // ── Layout ────────────────────────────────────────────────────────────────
