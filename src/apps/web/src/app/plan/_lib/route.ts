@@ -38,17 +38,10 @@ export function resolvePlanMode(
 
   // Persona in-progress states
   if (persona.persona_status === "chat_pending") {
-    // If they chose the footage path, route into that funnel
-    if (isFootagePath) {
-      if (!q?.onboarding_payoff_done) {
-        if (!q?.onboarding_edit_job_id) return "setup:edit-upload";
-        return "setup:edit-generating";
-      }
-      // payoff_done → fall through to chat
-    }
-    // No content_mode yet → show fork screen
-    if (!q?.content_mode) return "setup:fork";
-    // content_mode="create_new" → fresh path chat
+    // Edit funnel runs ONLY after the full interview + persona reveal.
+    // While chat_pending we always route to the interview regardless of
+    // content_mode — the footage offer is surfaced by page.tsx after the
+    // persona reveal (post-interview), not before.
     return "setup:chat";
   }
 

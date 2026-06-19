@@ -219,13 +219,13 @@ export default async function HomePage() {
                 02
               </span>
               <h3 className="font-display mb-3 mt-1 text-[28px] font-medium leading-snug">
-                It writes your{" "}
-                <em className="italic text-lime-600">month.</em>
+                It gives you{" "}
+                <em className="italic text-lime-600">ideas.</em>
               </h3>
               <p className="text-[15px] leading-relaxed text-[#71717a]">
-                Thirty days of video ideas from your actual life — filmable
-                moments laid out on a calendar. Not recycled hooks. Film once,
-                post all week. Every post is its own idea.
+                Video ideas from your actual life — filmable moments laid out
+                so you always know what to film. Not recycled hooks. Every
+                post is its own idea.
               </p>
             </div>
             <div className="md:flex-1">

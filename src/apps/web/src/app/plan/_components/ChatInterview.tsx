@@ -18,7 +18,14 @@ type Phase = "loading" | "chat" | "thinking" | "error";
  * - Suggestion chips: horizontal scroll on mobile, 44px touch targets.
  * - Input: sticky bottom-0, keyboard-safe on iOS (env safe-area-inset-bottom).
  */
-export default function ChatInterview({ onComplete }: { onComplete: () => void }) {
+export default function ChatInterview({
+  onComplete,
+  onPersonaCreated,
+}: {
+  onComplete: () => void;
+  /** Fires with persona_id immediately after chatStart() creates the row. */
+  onPersonaCreated?: (personaId: string) => void;
+}) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
@@ -39,6 +46,7 @@ export default function ChatInterview({ onComplete }: { onComplete: () => void }
           return;
         }
         setPersonaId(res.persona_id);
+        onPersonaCreated?.(res.persona_id);
         setQuestion(res.question);
         setSuggestions(res.suggestions);
         setTurnLabel(res.turn_label);

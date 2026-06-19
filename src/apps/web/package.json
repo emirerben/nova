@@ -1,6 +1,6 @@
 {
   "name": "nova-web",
-  "version": "0.4.99.1",
+  "version": "0.4.110.0",
   "private": true,
   "scripts": {
     "dev": "node scripts/sync-font-registry.mjs && next dev",
