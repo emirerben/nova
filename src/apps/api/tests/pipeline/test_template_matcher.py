@@ -1463,3 +1463,62 @@ class TestNarrativeOrder:
         plan = match(recipe, clips, narrative_order=["g1", "g1", "g2"])
 
         assert [s.clip_id for s in plan.steps] == ["g1", "g2"]
+
+    def test_every_guide_clip_lands_when_min_slots_floor_satisfied(self):
+        """THE missing invariant: when slots == guide-clip count, forced-advance
+        guarantees every assigned clip appears in the plan AND in guide order.
+
+        This is the core guarantee of the slot-floor fix: set recipe.min_slots
+        to the assigned-clip count so consolidate_slots can't collapse below it,
+        then match() places every clip.
+        """
+        n_guide = 8
+        slots = [_slot(i + 1, 5.0) for i in range(n_guide)]
+        recipe = _make_recipe(slots)
+        # Propagate the floor so consolidate_slots won't collapse below 8.
+        recipe.min_slots = n_guide
+
+        guide = [
+            _make_clip(f"g{i}", [_moment(0, 5, energy=float(i))]) for i in range(1, n_guide + 1)
+        ]
+        pool = [_make_clip("p1", [_moment(0, 5, energy=99.0)])]  # higher energy, never first
+        narrative_order = [f"g{i}" for i in range(1, n_guide + 1)]
+
+        plan = match(recipe, guide + pool, narrative_order=narrative_order)
+
+        placed_ids = [s.clip_id for s in plan.steps]
+        for gid in narrative_order:
+            assert gid in placed_ids, f"{gid} was dropped — slot-floor guarantee broken"
+        # First appearances must be in guide order (forced-advance invariant)
+        first = self._first_appearance(plan)
+        g_first = [first.index(gid) for gid in narrative_order if gid in first]
+        assert g_first == sorted(g_first), f"guide clips not in order: {first}"
+
+    def test_consolidate_respects_min_slots_floor_for_narrative(self):
+        """consolidate_slots must not merge below recipe.min_slots even when
+        n_unique_clips < n_slots. The slot-floor fix sets min_slots = N assigned
+        clips so the matcher can't silently drop tail shots.
+        """
+        n_guide = 8
+        n_slots = 12
+        slots = [_slot(i + 1, 5.0) for i in range(n_slots)]
+        recipe = _make_recipe(slots)
+        recipe.min_slots = n_guide
+
+        # Only 8 unique clips → without the floor, consolidate would reduce to 8
+        # based on n_unique_clips == 8 == CONSOLIDATION_MIN_SLOTS anyway;
+        # with min_slots the target floor is also exactly 8 so we assert ≥ floor.
+        clips = [_make_clip(f"g{i}", [_moment(0, 5)]) for i in range(1, n_guide + 1)]
+
+        consolidated = consolidate_slots(recipe, clips)
+
+        assert len(consolidated.slots) >= n_guide, (
+            f"consolidate_slots collapsed below min_slots ({n_guide}): "
+            f"got {len(consolidated.slots)} slots"
+        )
+        # And every guide clip must land when we then run match().
+        narrative_order = [f"g{i}" for i in range(1, n_guide + 1)]
+        plan = match(consolidated, clips, narrative_order=narrative_order)
+        placed = {s.clip_id for s in plan.steps}
+        for gid in narrative_order:
+            assert gid in placed, f"{gid} dropped after consolidate + match"

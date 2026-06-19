@@ -2555,3 +2555,155 @@ class TestFailJobVariantReconciliation:
         job = self._make_job(None)
         self._call_fail_job(job, monkeypatch)
         assert job.status == "processing_failed"
+
+
+# ── _build_no_music_recipe min_slots floor ────────────────────────────────────
+
+
+def test_build_no_music_recipe_floor_8_assigned_8_slots():
+    """8 assigned clips + min_slots=8 → recipe emits exactly 8 slots."""
+    metas = [_Meta(f"c{i}", 5.0) for i in range(8)]
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=24.0, min_slots=8)
+    assert recipe["shot_count"] == 8
+    assert len(recipe["slots"]) == 8
+
+
+def test_build_no_music_recipe_floor_exceeds_cap():
+    """min_slots > _MAX_NO_MUSIC_SLOTS → floor takes over the cap."""
+    n_clips = 9
+    metas = [_Meta(f"c{i}", 5.0) for i in range(n_clips)]
+    assert n_clips > gb._MAX_NO_MUSIC_SLOTS  # guard: this test requires n > cap
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=30.0, min_slots=n_clips)
+    assert recipe["shot_count"] == n_clips
+
+
+def test_build_no_music_recipe_floor_clamped_to_clip_count():
+    """min_slots cannot exceed available clips — n stays at clip count."""
+    metas = [_Meta(f"c{i}", 5.0) for i in range(3)]
+    recipe = gb._build_no_music_recipe(metas, available_footage_s=9.0, min_slots=10)
+    # 3 clips → at most 3 slots regardless of min_slots
+    assert recipe["shot_count"] == 3
+
+
+def test_build_no_music_recipe_floor_below_cap_unchanged():
+    """min_slots below the natural cap leaves shot_count at the normal cap."""
+    metas = [_Meta(f"c{i}", 5.0) for i in range(10)]
+    recipe_natural = gb._build_no_music_recipe(metas, available_footage_s=30.0)
+    recipe_floor = gb._build_no_music_recipe(metas, available_footage_s=30.0, min_slots=2)
+    assert recipe_floor["shot_count"] == recipe_natural["shot_count"]
+
+
+def test_build_no_music_recipe_min_slots_zero_byte_identical():
+    """min_slots=0 is identical to the pre-floor default (no change for pool-only jobs)."""
+    metas = [_Meta(f"c{i}", 5.0) for i in range(5)]
+    default = gb._build_no_music_recipe(metas, available_footage_s=15.0)
+    floored = gb._build_no_music_recipe(metas, available_footage_s=15.0, min_slots=0)
+    assert default["shot_count"] == floored["shot_count"]
+    assert default["slots"] == floored["slots"]
+
+
+# ── _build_unplaced_shots ─────────────────────────────────────────────────────
+
+
+class _FakeMeta:
+    def __init__(self, clip_id):
+        self.clip_id = clip_id
+
+
+def test_build_unplaced_shots_empty_when_all_placed():
+    clip_metas = [_FakeMeta("g1"), _FakeMeta("g2"), _FakeMeta("g3")]
+    result = gb._build_unplaced_shots(
+        [],  # no unplaced ids
+        narrative_order=["g1", "g2", "g3"],
+        clip_id_to_gcs={"g1": "gs://b/g1.mp4", "g2": "gs://b/g2.mp4", "g3": "gs://b/g3.mp4"},
+        clip_metas=clip_metas,
+        is_music_variant=False,
+    )
+    assert result == []
+
+
+def test_build_unplaced_shots_unusable_for_missing_clip():
+    """A clip absent from clip_metas → 'unusable_footage' regardless of variant type."""
+    # g2 not analyzed (not in clip_metas)
+    clip_metas = [_FakeMeta("g1"), _FakeMeta("g3")]
+    result = gb._build_unplaced_shots(
+        ["g2"],
+        narrative_order=["g1", "g2", "g3"],
+        clip_id_to_gcs={"g1": "gs://b/g1.mp4", "g2": "gs://b/g2.mp4", "g3": "gs://b/g3.mp4"},
+        clip_metas=clip_metas,
+        is_music_variant=True,  # even in a music variant, missing clip → unusable
+    )
+    assert len(result) == 1
+    r = result[0]
+    assert r["clip_id"] == "g2"
+    assert r["shot_index"] == 2  # 1-based ordinal in narrative_order
+    assert r["reason"] == "unusable_footage"
+    assert r["gcs_path"] == "gs://b/g2.mp4"
+
+
+def test_build_unplaced_shots_song_too_short_for_music_variant():
+    """A clip that IS analyzed but unplaced in a music variant → 'song_too_short'."""
+    clip_metas = [_FakeMeta("g1"), _FakeMeta("g2"), _FakeMeta("g3")]
+    result = gb._build_unplaced_shots(
+        ["g3"],
+        narrative_order=["g1", "g2", "g3"],
+        clip_id_to_gcs={"g1": "gs://b/g1.mp4", "g2": "gs://b/g2.mp4", "g3": "gs://b/g3.mp4"},
+        clip_metas=clip_metas,
+        is_music_variant=True,
+    )
+    assert len(result) == 1
+    r = result[0]
+    assert r["clip_id"] == "g3"
+    assert r["shot_index"] == 3
+    assert r["reason"] == "song_too_short"
+
+
+def test_build_unplaced_shots_analyzed_unplaced_no_music_is_unusable():
+    """In a no-music variant, an analyzed-but-unplaced clip → 'unusable_footage'
+    (there's no song-length reason; something else degraded the clip at match time).
+    """
+    clip_metas = [_FakeMeta("g1"), _FakeMeta("g2")]
+    result = gb._build_unplaced_shots(
+        ["g2"],
+        narrative_order=["g1", "g2"],
+        clip_id_to_gcs={"g1": "gs://b/g1.mp4", "g2": "gs://b/g2.mp4"},
+        clip_metas=clip_metas,
+        is_music_variant=False,
+    )
+    assert result[0]["reason"] == "unusable_footage"
+
+
+def test_build_unplaced_shots_shot_index_preserves_ordinal():
+    """shot_index is 1-based position in narrative_order — NOT the clip name suffix."""
+    clip_metas = [_FakeMeta("z"), _FakeMeta("a"), _FakeMeta("m")]
+    result = gb._build_unplaced_shots(
+        ["m"],
+        narrative_order=["z", "a", "m"],
+        clip_id_to_gcs={"z": "gs://b/z.mp4", "a": "gs://b/a.mp4", "m": "gs://b/m.mp4"},
+        clip_metas=clip_metas,
+        is_music_variant=True,
+    )
+    assert result[0]["shot_index"] == 3  # "m" is 3rd in narrative_order
+
+
+def test_build_unplaced_shots_gcs_path_none_when_absent():
+    """clip_id_to_gcs may not have an entry for every clip (defensive)."""
+    clip_metas = [_FakeMeta("g1"), _FakeMeta("g2")]
+    result = gb._build_unplaced_shots(
+        ["g2"],
+        narrative_order=["g1", "g2"],
+        clip_id_to_gcs={"g1": "gs://b/g1.mp4"},  # g2 missing from map
+        clip_metas=clip_metas,
+        is_music_variant=False,
+    )
+    assert result[0]["gcs_path"] is None
+
+
+def test_build_no_music_recipe_min_slots_narrative_order_none():
+    """When narrative_order is None (pool-only / kill switch), min_slots is 0
+    and the recipe is byte-identical to the pre-fix baseline.
+    """
+    metas = [_Meta(f"c{i}", 5.0) for i in range(5)]
+    baseline = gb._build_no_music_recipe(metas, available_footage_s=15.0)
+    floor_zero = gb._build_no_music_recipe(metas, available_footage_s=15.0, min_slots=0)
+    assert baseline == floor_zero
