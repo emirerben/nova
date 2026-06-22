@@ -305,6 +305,9 @@ class PlanItemEdit(BaseModel):
     notes: str | None = None
     scenes: list | None = None
     scheduled_date: str | None = None  # ISO date string (YYYY-MM-DD)
+    # User-chosen format (e.g. "montage", "narrated"). Only allowed when the
+    # item hasn't started generating (no active job) to avoid mid-flight changes.
+    edit_format: str | None = None
 
 
 @router.patch("/{item_id}", response_model=PlanItemResponse)
@@ -335,6 +338,8 @@ async def edit_plan_item(
     if "scheduled_date" in updates:
         raw = updates["scheduled_date"]
         item.scheduled_date = date_type.fromisoformat(raw) if raw else None
+    if "edit_format" in updates:
+        item.edit_format = updates["edit_format"] or None
     if updates:
         item.user_edited = True
     await db.commit()

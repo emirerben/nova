@@ -530,6 +530,46 @@ export default function PlanItemPage() {
               className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-zinc-400 focus:outline-none"
             />
 
+            {/* Format picker — shown when item hasn't started generating */}
+            {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Edit style
+                </p>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
+                      { value: "narrated", label: "Narrated walkthrough", desc: "Record your voice, clips follow along" },
+                    ] as { value: string; label: string; desc: string }[]
+                  ).map(({ value, label, desc }) => {
+                    const active = (item.edit_format ?? "montage") === value;
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={async () => {
+                          if (active) return;
+                          await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
+                          refetch();
+                        }}
+                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          active
+                            ? "border-lime-400 bg-lime-50"
+                            : "border-zinc-200 bg-white hover:border-zinc-300"
+                        }`}
+                      >
+                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                          {label}
+                        </span>
+                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Expand with AI — only for un-expanded ideas (no theme yet, no clips) */}
             {!item.theme && item.clip_gcs_paths.length === 0 && !expandProposal && (
               <div className="mb-4">

@@ -406,6 +406,7 @@ export function updatePlanItem(
     notes?: string;
     scenes?: SceneBlock[];
     scheduled_date?: string | null;
+    edit_format?: string | null;
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {
