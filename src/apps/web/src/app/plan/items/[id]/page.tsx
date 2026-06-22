@@ -720,7 +720,7 @@ export default function PlanItemPage() {
                   Your clips
                 </p>
                 <p className="mb-4 text-sm text-[#71717a]">
-                  Upload all the clips you filmed. We'll listen to your recording and match each moment to the right clip automatically.
+                  Upload all the clips you filmed. We&apos;ll listen to your recording and match each moment to the right clip automatically.
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
