@@ -756,12 +756,27 @@ async def generate_guide(
         idea=item.idea or "",
         edit_format=str(item.edit_format or "montage"),
     )
-    result = await asyncio.get_event_loop().run_in_executor(None, run_shot_list_writer, inp)
+    try:
+        result = await asyncio.to_thread(run_shot_list_writer, inp)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Shot list generation failed. Please try again.",
+        )
 
     if not result.shots:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Shot list generation returned no shots. Please try again.",
+        )
+
+    # Re-check after Gemini (20s) to catch concurrent double-submit that would
+    # otherwise orphan clip assignments from the first write's shot_ids.
+    await db.refresh(item)
+    if item.filming_guide:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This item already has a filming guide. Use PATCH /shots/{shot_id} to edit it.",
         )
 
     item.filming_guide = [{**s.model_dump(), "shot_id": _uuid.uuid4().hex} for s in result.shots]

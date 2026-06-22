@@ -73,7 +73,7 @@ def _parse_shots_with_count(raw: object) -> list[ShotSpecWithCount]:
             duration_s = MIN_SHOT_DURATION_S
         duration_s = max(MIN_SHOT_DURATION_S, min(MAX_SHOT_DURATION_S, duration_s))
         try:
-            clip_count = int(entry.get("clip_count", 1))
+            clip_count = int(float(entry.get("clip_count", 1)))
         except (TypeError, ValueError, OverflowError):
             clip_count = 1
         clip_count = max(_MIN_CLIP_COUNT, min(_MAX_CLIP_COUNT, clip_count))

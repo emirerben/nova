@@ -110,9 +110,24 @@ def test_set_item_clips_derives_paths_shots_first() -> None:
         "users/u/plan/p/pool.mp4",
     ]
     assert item.clip_assignments == [
-        {"gcs_path": "users/u/plan/p/a.mp4", "shot_id": "sid-a", "user_note": "", "machine_matched": False},  # noqa: E501
-        {"gcs_path": "users/u/plan/p/pool.mp4", "shot_id": None, "user_note": "", "machine_matched": False},  # noqa: E501
-        {"gcs_path": "users/u/plan/p/b.mp4", "shot_id": "sid-b", "user_note": "", "machine_matched": False},  # noqa: E501
+        {
+            "gcs_path": "users/u/plan/p/a.mp4",
+            "shot_id": "sid-a",
+            "user_note": "",
+            "machine_matched": False,
+        },  # noqa: E501
+        {
+            "gcs_path": "users/u/plan/p/pool.mp4",
+            "shot_id": None,
+            "user_note": "",
+            "machine_matched": False,
+        },  # noqa: E501
+        {
+            "gcs_path": "users/u/plan/p/b.mp4",
+            "shot_id": "sid-b",
+            "user_note": "",
+            "machine_matched": False,
+        },  # noqa: E501
     ]
 
 
@@ -487,7 +502,9 @@ def test_generate_guide_happy_path(client: TestClient) -> None:
 
     mock_shot = MagicMock()
     mock_shot.model_dump.return_value = {
-        "what": "lace up shoes", "how": "close-up", "duration_s": 4
+        "what": "lace up shoes",
+        "how": "close-up",
+        "duration_s": 4,
     }
     mock_result = MagicMock()
     mock_result.shots = [mock_shot]
@@ -537,3 +554,24 @@ def test_generate_guide_returns_500_when_agent_produces_no_shots(client: TestCli
         resp = client.post(f"/plan-items/{item.id}/generate-guide")
 
     assert resp.status_code == 500
+
+
+def test_generate_guide_returns_500_when_agent_raises(client: TestClient) -> None:
+    """POST /generate-guide returns 500 (not a raw exception) when the agent raises."""
+    user = _user()
+    item, plan = _owned_item(user.id, filming_guide=[])
+    item.theme = "test"
+    item.idea = "test"
+    item.edit_format = "montage"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch(
+        "app.agents.shot_list_writer.run_shot_list_writer",
+        side_effect=RuntimeError("LLM timeout"),
+    ):
+        resp = client.post(f"/plan-items/{item.id}/generate-guide")
+
+    assert resp.status_code == 500
+    assert "Shot list generation failed" in resp.json().get("detail", "")
