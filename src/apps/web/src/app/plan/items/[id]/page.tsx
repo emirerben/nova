@@ -578,7 +578,7 @@ export default function PlanItemPage() {
                 </div>
 
                 {/* Narrated sub-mode picker */}
-                {isNarrated && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+                {isNarrated && (
                   <div className="mt-3 flex gap-2">
                     {(
                       [
