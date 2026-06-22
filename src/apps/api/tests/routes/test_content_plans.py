@@ -421,6 +421,7 @@ def _item_mock(item_id: uuid.UUID, clip_gcs_paths: list[str]) -> MagicMock:
     it.source_idea_seed_id = None
     it.source_idea_seed_text = None
     it.edit_format = None
+    it.voiceover_gcs_path = None
     it.user_edited = False
     it.current_job_id = None
     return it
