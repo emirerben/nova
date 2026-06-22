@@ -345,3 +345,71 @@ def test_specs_for_voiceover_includes_music_when_track():
     assert music["track"] is track
     assert music["voiceover_gcs_path"] == "voiceover-uploads/a/voice.webm"
     assert music["mix"] == gb._VOICEOVER_MUSIC_DEFAULT_MIX
+
+
+# ── narrated_planned / narrated_ready dispatch ────────────────────────────────
+
+
+def test_resolve_narrated_planned_dispatches(monkeypatch):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "narrated_planned",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[
+            {"shot_id": "s1", "what": "stir the sauce"},
+            {"shot_id": "s2", "what": "plate the dish"},
+        ],
+    )
+    assert (archetype, spine) == ("narrated", None)
+    sel = [e for e in events if e[1] == "archetype_selected"]
+    assert sel and sel[0][2]["archetype"] == "narrated"
+
+
+def test_resolve_narrated_ready_dispatches_without_filming_guide(monkeypatch):
+    """narrated_ready needs only a voiceover — no pre-written filming_guide required."""
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "narrated_ready",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[],  # empty — no pre-defined steps
+    )
+    assert (archetype, spine) == ("narrated", None)
+    sel = [e for e in events if e[1] == "archetype_selected"]
+    assert sel and sel[0][2]["archetype"] == "narrated"
+
+
+def test_resolve_narrated_ready_flag_off_falls_through(monkeypatch):
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", False, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "narrated_ready",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[],
+    )
+    assert (archetype, spine) == ("voiceover", None)
+    assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "flag_disabled" for e in events)
+
+
+def test_resolve_narrated_planned_requires_steps(monkeypatch):
+    """narrated_planned with only one step falls through to voiceover (not narrated)."""
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    archetype, spine = gb._resolve_archetype(
+        "narrated_planned",
+        [_Meta("c1")],
+        {"c1": "/a.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[{"shot_id": "s1", "what": "only step"}],
+    )
+    assert (archetype, spine) == ("voiceover", None)

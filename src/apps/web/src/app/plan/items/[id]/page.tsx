@@ -15,6 +15,7 @@ import {
   getPlanItemJobStatus,
   NotAuthenticatedError,
   setClipNote,
+  setItemVoiceover,
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
@@ -28,6 +29,7 @@ import {
   swapPlanItemSong,
   uploadToGcs,
 } from "@/lib/plan-api";
+import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskNovaPanel from "./components/AskNovaPanel";
 import {
@@ -100,6 +102,10 @@ export default function PlanItemPage() {
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
   const [generatingGuide, setGeneratingGuide] = useState(false);
   const pendingEdits = useRef<Map<string, { priorFinishedAt: string | null; sawRendering: boolean }>>(new Map());
+  // Narrated-walkthrough: local shadow of voiceover_gcs_path — updated optimistically
+  // when VoiceRecorder fires onVoiceover; reset from item on refetch.
+  const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
+  const [voiceoverSaving, setVoiceoverSaving] = useState(false);
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -191,6 +197,13 @@ export default function PlanItemPage() {
   }, [pollError]);
 
   const item = data?.item ?? null;
+
+  // Sync voiceover path from item whenever it changes (after refetch / on load).
+  useEffect(() => {
+    if (item?.voiceover_gcs_path !== undefined) {
+      setVoiceoverGcsPath(item.voiceover_gcs_path ?? null);
+    }
+  }, [item?.voiceover_gcs_path]);
 
   const variants = useMemo(
     () => {
@@ -285,6 +298,15 @@ export default function PlanItemPage() {
   const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
   const isInstructed = isFilmThis && hasGuide;
 
+  // Narrated sub-modes:
+  //   "narrated" | "narrated_planned" → step-guided flow (plan first, then film)
+  //   "narrated_ready"               → have-videos flow (audio first, pool clips)
+  const isNarrated =
+    item?.edit_format === "narrated" ||
+    item?.edit_format === "narrated_planned" ||
+    item?.edit_format === "narrated_ready";
+  const isNarratedReady = item?.edit_format === "narrated_ready";
+
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0 || isInstructed) return;
@@ -355,6 +377,19 @@ export default function PlanItemPage() {
       refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't remove that clip");
+    }
+  }
+
+  async function handleVoiceover(gcsPath: string | null) {
+    setVoiceoverGcsPath(gcsPath);
+    setVoiceoverSaving(true);
+    try {
+      await setItemVoiceover(itemId, gcsPath);
+      refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save voiceover");
+    } finally {
+      setVoiceoverSaving(false);
     }
   }
 
@@ -504,8 +539,85 @@ export default function PlanItemPage() {
               className="mb-4 mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-transparent px-3 py-2 text-sm text-[#3f3f46] placeholder-zinc-400 focus:border-zinc-400 focus:outline-none"
             />
 
-            {/* Expand with AI — only for un-expanded ideas (no theme yet, no clips) */}
-            {!item.theme && item.clip_gcs_paths.length === 0 && !expandProposal && (
+            {/* Format picker — shown when item hasn't started generating */}
+            {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Edit style
+                </p>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
+                      { value: "narrated_planned", label: "Narrated walkthrough", desc: "Record your voice, clips follow along" },
+                    ] as { value: string; label: string; desc: string }[]
+                  ).map(({ value, label, desc }) => {
+                    const active = value === "narrated_planned" ? isNarrated : (item.edit_format ?? "montage") === value;
+                    return (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={async () => {
+                          if (active) return;
+                          await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
+                          refetch();
+                        }}
+                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          active
+                            ? "border-lime-400 bg-lime-50"
+                            : "border-zinc-200 bg-white hover:border-zinc-300"
+                        }`}
+                      >
+                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                          {label}
+                        </span>
+                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Narrated sub-mode picker */}
+                {isNarrated && (
+                  <div className="mt-3 flex gap-2">
+                    {(
+                      [
+                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, film each shot" },
+                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload audio + clips, we match them" },
+                      ] as { value: string; label: string; desc: string }[]
+                    ).map(({ value, label, desc }) => {
+                      const active = isNarratedReady
+                        ? value === "narrated_ready"
+                        : value === "narrated_planned";
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={async () => {
+                            if (active) return;
+                            await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
+                            refetch();
+                          }}
+                          className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
+                            active
+                              ? "border-zinc-900 bg-zinc-900"
+                              : "border-zinc-200 bg-white hover:border-zinc-300"
+                          }`}
+                        >
+                          <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
+                            {label}
+                          </span>
+                          <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Expand with AI — only for planned mode; hide in ready (have-videos) mode */}
+            {!isNarratedReady && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <div className="mb-4">
                 <button
                   type="button"
@@ -554,6 +666,7 @@ export default function PlanItemPage() {
                         await updatePlanItem(item.id, {
                           theme: expandProposal.theme,
                           filming_suggestion: expandProposal.filming_suggestion,
+                          filming_guide: expandProposal.filming_guide,
                         });
                         setExpandProposal(null);
                         refetch();
@@ -578,11 +691,47 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Uploader — three paths:
-                1. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                2. isFilmThis but no guide yet → "Generate shot list" CTA
-                3. existing_footage → PoolUploadCard (use footage you already have) */}
-            {isInstructed ? (
+            {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
+            {isNarrated && (
+              <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Voice recording
+                </p>
+                <VoiceRecorder onVoiceover={handleVoiceover} />
+                {voiceoverSaving && (
+                  <p className="mt-1 text-xs text-zinc-400">Saving…</p>
+                )}
+                {voiceoverGcsPath && !voiceoverSaving && (
+                  <p className="mt-1 text-xs text-lime-700">
+                    Voice recorded — clips will be timed to match your narration.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Uploader — four branches:
+                1. narrated_ready: audio-first flow, pool upload, no step spine
+                2. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
+                3. isFilmThis but no guide yet → "Generate shot list" CTA
+                4. existing_footage → PoolUploadCard (use footage you already have) */}
+            {isNarratedReady ? (
+              <div>
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Your clips
+                </p>
+                <p className="mb-4 text-sm text-[#71717a]">
+                  Upload all the clips you filmed. We&apos;ll listen to your recording and match each moment to the right clip automatically.
+                </p>
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
+                />
+              </div>
+            ) : isInstructed ? (
               <ShotSlotUploader
                 item={item}
                 onAttached={(updated) => {

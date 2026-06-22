@@ -475,6 +475,9 @@ def _dispatch_item_render(
             # Filming guide (Creator Agent M3 / B2). Plain plan data, threaded down
             # to intro_writer so the hook voice reflects the intended shots.
             filming_guide=list(item.filming_guide or []),
+            # Narrated-walkthrough: user-recorded voiceover rides all_candidates so the
+            # narrated archetype can force-align the script and per-step trim the clips.
+            voiceover_gcs_path=str(item.voiceover_gcs_path) if item.voiceover_gcs_path else None,
             # Filming-guide alignment: how many leading clip_paths are guide
             # shots (in guide order). 0 = no narrative ordering (pure greedy).
             narrative_shot_count=narrative_shot_count,

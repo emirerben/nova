@@ -18,7 +18,15 @@ from typing import Literal, get_args
 # The canonical vocabulary. Keep this Literal, the EDIT_FORMATS tuple, the
 # plan_items.edit_format CHECK-free Text column (server_default 'montage'), and
 # the per-archetype variant-set config in generative_build in lockstep.
-EditFormat = Literal["montage", "talking_head", "day_vlog", "single_hero", "narrated"]
+EditFormat = Literal[
+    "montage",
+    "talking_head",
+    "day_vlog",
+    "single_hero",
+    "narrated",
+    "narrated_planned",
+    "narrated_ready",
+]
 
 DEFAULT_EDIT_FORMAT: EditFormat = "montage"
 

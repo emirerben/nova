@@ -19,7 +19,15 @@ from app.agents._schemas.edit_format import (
 
 def test_vocabulary_and_default() -> None:
     assert DEFAULT_EDIT_FORMAT == "montage"
-    assert set(EDIT_FORMATS) == {"montage", "talking_head", "day_vlog", "single_hero", "narrated"}
+    assert set(EDIT_FORMATS) == {
+        "montage",
+        "talking_head",
+        "day_vlog",
+        "single_hero",
+        "narrated",
+        "narrated_planned",
+        "narrated_ready",
+    }
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,30 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Narrated Walkthrough — frontend slice (backend shipped 2026-06-22)
+
+Backend is complete and tested (narrated_alignment, narrated_assembler, _render_narrated_variant, dispatch). Kill switch `narrated_archetype_enabled=False` (default). These are the remaining frontend tasks before flipping the switch.
+
+### T1 — Script block UI (step spine)
+**What:** Step rows on the plan-item page: faint Fraunces step numeral, editable spoken line (Inter body), lime `~3.2s` duration pill, zinc `timing estimated` / `voice differs` state pills. Reuses existing `ShotSlotUploader` clip wells per step. No new design tokens.
+**Effort:** M (CC: ~45 min)
+
+### T2 — VoiceRecorder mount on plan item page
+**What:** Mount `VoiceRecorder.tsx` on plan item page, sticky once steps exist. Upload via `POST /plan-items/{id}/generate` voiceover path (NOT `/music-jobs/upload-slot` — that's the generative flow). Show `ProgressTheater tone="light"` during transcribe+align (future: separate `/align` endpoint for pre-generate step durations).
+**Effort:** M (CC: ~30 min)
+
+### T3 — narrated sub-mode display branching
+**What:** `narrated_ready` shows `PoolUploadCard`; `narrated_planned` shows `ShotSlotUploader` per step. Already partially committed (commit `495e0eee`) — needs wire-up to actual clip paths + generate gate.
+**Effort:** S (CC: ~20 min)
+
+### T4 — Timeline editor voice-locked mode
+**What:** For narrated variants, `TimelineEditor` exposes only swap-clip / pick-alternate / trim-in-point. Disable cross-step reorder and per-clip length changes. `voice_locked: true` on the variant to signal the editor.
+**Effort:** M (CC: ~30 min)
+
+### T5 — Generate gate + flip kill switch
+**What:** `N of M steps filled` progress pill; Generate disabled until ≥1 clip per step. Then flip `narrated_archetype_enabled=True` on Fly: `fly secrets set NARRATED_ARCHETYPE_ENABLED=true --app nova-video` + worker restart.
+**Effort:** S (CC: ~15 min)
+
 ## Plan dogfood fixes — review-deferred items (2026-06-12)
 
 These surfaced in the pre-PR `/review` (footage pool + Ask Nova + conformance branch).

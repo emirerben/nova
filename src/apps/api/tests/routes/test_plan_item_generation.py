@@ -60,7 +60,8 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.scenes = []
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
-    item.edit_format = "montage"
+    item.edit_format = None
+    item.voiceover_gcs_path = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -118,6 +119,43 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     task.delay.assert_called_once_with(str(item.id))
 
 
+def test_set_voiceover_stores_path(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.voiceover_gcs_path = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    gcs_path = "voiceover-uploads/some-vo.webm"
+    resp = client.patch(f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": gcs_path})
+    assert resp.status_code == 200
+    assert item.voiceover_gcs_path == gcs_path
+
+
+def test_set_voiceover_rejects_bad_prefix(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.patch(
+        f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": "music/bad.mp3"}
+    )
+    assert resp.status_code == 422
+
+
+def test_set_voiceover_clears_with_null(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.voiceover_gcs_path = "voiceover-uploads/old.webm"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.patch(f"/plan-items/{item.id}/voiceover", json={"voiceover_gcs_path": None})
+    assert resp.status_code == 200
+    assert item.voiceover_gcs_path is None
+
+
 def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
@@ -171,8 +209,13 @@ def test_get_plan_item_returns_filming_guide(client: TestClient) -> None:
     body = resp.json()
     # filming_guide now includes shot_id (null for pre-0052 rows without a stamped id).
     assert body["filming_guide"] == [
-        {"shot_id": None, "what": "creator to camera", "how": "eye level",  # noqa: E501
-         "duration_s": 8, "clip_count": 1}
+        {
+            "shot_id": None,
+            "what": "creator to camera",
+            "how": "eye level",  # noqa: E501
+            "duration_s": 8,
+            "clip_count": 1,
+        }
     ]
 
 
@@ -277,7 +320,8 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     item.scenes = []
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
-    item.edit_format = "montage"
+    item.edit_format = None
+    item.voiceover_gcs_path = None
 
     resp = plan_item_response(item)
     # non-dict skipped; 2 dicts kept with defaults

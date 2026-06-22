@@ -2279,7 +2279,12 @@ def _resolve_archetype(
     narrated_steps = [
         shot for shot in guide if isinstance(shot, dict) and str(shot.get("what") or "").strip()
     ]
-    if edit_format == "narrated" and voiceover_gcs_path and len(narrated_steps) >= 2:
+    _narrated_ready = edit_format == "narrated_ready"
+    if (
+        edit_format in {"narrated", "narrated_planned", "narrated_ready"}
+        and voiceover_gcs_path
+        and (_narrated_ready or len(narrated_steps) >= 2)
+    ):
         if settings.narrated_archetype_enabled:
             record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
             log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")
@@ -3948,9 +3953,8 @@ def _render_narrated_variant(
     variant_dir: str,
 ) -> dict[str, Any]:
     """Render one narrated walkthrough variant."""
-    from app.pipeline.narrated_alignment import align_script_to_voiceover  # noqa: PLC0415
     from app.pipeline.narrated_assembler import assemble_narrated  # noqa: PLC0415
-    from app.pipeline.transcribe import _transcribe_openai  # noqa: PLC0415
+    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
     variant_id = spec["variant_id"]
@@ -3983,22 +3987,97 @@ def _render_narrated_variant(
     try:
         if not voiceover_gcs_path:
             raise ValueError("narrated variant missing voiceover_gcs_path")
-        script_steps = _narrated_script_steps(filming_guide)
-        if len(script_steps) < 2:
-            raise ValueError("narrated variant requires at least two scripted steps")
-        clip_assignments = _narrated_clip_assignments(
-            filming_guide, narrative_order, clip_id_to_local
-        )
-        if len(clip_assignments) < len(script_steps):
-            raise ValueError(
-                f"narrated variant has {len(clip_assignments)} clips for "
-                f"{len(script_steps)} scripted steps"
-            )
-
         voiceover_local = os.path.join(variant_dir, "voiceover_src")
         download_to_file(voiceover_gcs_path, voiceover_local)
-        transcript = _transcribe_openai(voiceover_local)
-        step_timings = align_script_to_voiceover(script_steps, transcript.words)
+        transcript = transcribe_whisper(voiceover_local)
+
+        script_steps = _narrated_script_steps(filming_guide)
+        if script_steps:
+            # narrated / narrated_planned: force-align written script to voiceover
+            from app.pipeline.narrated_alignment import align_script_to_voiceover  # noqa: PLC0415
+
+            if len(script_steps) < 2:
+                raise ValueError("narrated variant requires at least two scripted steps")
+            clip_assignments = _narrated_clip_assignments(
+                filming_guide, narrative_order, clip_id_to_local
+            )
+            if len(clip_assignments) < len(script_steps):
+                raise ValueError(
+                    f"narrated variant has {len(clip_assignments)} clips for "
+                    f"{len(script_steps)} scripted steps"
+                )
+            step_timings = align_script_to_voiceover(script_steps, transcript.words)
+        else:
+            # narrated_ready: no pre-written script — auto-segment the voiceover transcript
+            # into at most n_clips duration-proportional buckets so each uploaded clip
+            # appears at most once and segments stay at sentence granularity.
+            from app.pipeline.narrated_alignment import StepTiming  # noqa: PLC0415
+            from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
+            from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
+
+            words = transcript.words
+            total_s = max((w.end_s for w in words), default=60.0)
+            phrases = split_phrases(words, video_duration_s=total_s)
+            if len(phrases) < 2:
+                raise ValueError(
+                    "narrated_ready auto-segmentation produced fewer than two segments"
+                )
+
+            # Bucket micro-phrases into at most n_clips segments so each clip shows once.
+            # Strategy: fill each bucket until its accumulated duration covers its share
+            # of the total speech duration, then start a new bucket.
+            ordered_ids = list(narrative_order or list(clip_id_to_local))
+            if not ordered_ids:
+                raise ValueError("narrated_ready variant has no clips")
+            n_clips = len(ordered_ids)
+            target_count = max(2, min(n_clips, len(phrases)))
+
+            if len(phrases) > target_count:
+                speech_start = phrases[0]["speech_start_s"]
+                speech_end = phrases[-1]["speech_end_s"]
+                total_speech = max(speech_end - speech_start, 0.1)
+                bucket_dur = total_speech / target_count
+                buckets: list[dict] = []
+                bucket_open = phrases[0].copy()
+                for p in phrases[1:]:
+                    if (p["speech_end_s"] - bucket_open["speech_start_s"]) >= bucket_dur and len(
+                        buckets
+                    ) < target_count - 1:
+                        buckets.append({**bucket_open, "speech_end_s": bucket_open["speech_end_s"]})
+                        bucket_open = p.copy()
+                    else:
+                        bucket_open = {**bucket_open, "speech_end_s": p["speech_end_s"]}
+                buckets.append(bucket_open)
+                phrases = buckets
+
+            step_timings = [
+                StepTiming(
+                    step_id=f"seg_{i}",
+                    start_s=p["speech_start_s"],
+                    end_s=p["speech_end_s"],
+                    confidence=1.0,
+                )
+                for i, p in enumerate(phrases)
+            ]
+            log.info(
+                "narrated_ready_segments",
+                job_id=job_id,
+                n_clips=n_clips,
+                n_segments=len(step_timings),
+                durations=[round(t.end_s - t.start_s, 2) for t in step_timings],
+            )
+
+            # Assign clips 1-to-1 in upload order; cycle only if segments > clips.
+            clip_assignments = []
+            for i, timing in enumerate(step_timings):
+                clip_id = ordered_ids[i % len(ordered_ids)]
+                clip_path = clip_id_to_local.get(clip_id)
+                if clip_path:
+                    clip_assignments.append(
+                        NarratedClip(step_id=timing.step_id, clip_path=clip_path)
+                    )
+            if not clip_assignments:
+                raise ValueError("narrated_ready variant: no valid clip paths found")
 
         final_path = os.path.join(variant_dir, "final.mp4")
         assemble_narrated(

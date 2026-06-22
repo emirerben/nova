@@ -289,6 +289,8 @@ export interface PlanItem {
   user_edited: boolean;
   /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
   edit_format?: string | null;
+  /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
+  voiceover_gcs_path?: string | null;
   /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
   source_idea_seed_text?: string | null;
@@ -404,6 +406,8 @@ export function updatePlanItem(
     notes?: string;
     scenes?: SceneBlock[];
     scheduled_date?: string | null;
+    edit_format?: string | null;
+    filming_guide?: FilmingShot[];
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {
@@ -526,6 +530,18 @@ export function updatePlanItemShot(
 /** Generate a fresh filming guide for an item whose guide is currently empty. */
 export function generatePlanItemGuide(itemId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/generate-guide`, { method: "POST" });
+}
+
+/** Attach or clear the narrated-walkthrough voiceover GCS path on a plan item. */
+export function setItemVoiceover(
+  itemId: string,
+  voiceoverGcsPath: string | null,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/voiceover`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voiceover_gcs_path: voiceoverGcsPath }),
+  });
 }
 
 export function generateFirstWeek(
