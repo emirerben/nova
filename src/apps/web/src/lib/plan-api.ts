@@ -407,6 +407,7 @@ export function updatePlanItem(
     scenes?: SceneBlock[];
     scheduled_date?: string | null;
     edit_format?: string | null;
+    filming_guide?: FilmingShot[];
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {

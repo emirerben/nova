@@ -308,6 +308,8 @@ class PlanItemEdit(BaseModel):
     # User-chosen format (e.g. "montage", "narrated"). Only allowed when the
     # item hasn't started generating (no active job) to avoid mid-flight changes.
     edit_format: str | None = None
+    # Accept an expand proposal's filming_guide directly.
+    filming_guide: list[dict] | None = None
 
 
 @router.patch("/{item_id}", response_model=PlanItemResponse)
@@ -340,6 +342,11 @@ async def edit_plan_item(
         item.scheduled_date = date_type.fromisoformat(raw) if raw else None
     if "edit_format" in updates:
         item.edit_format = updates["edit_format"] or None
+    if "filming_guide" in updates:
+        from sqlalchemy.orm.attributes import flag_modified as _flag  # noqa: PLC0415
+
+        item.filming_guide = list(updates["filming_guide"])
+        _flag(item, "filming_guide")
     if updates:
         item.user_edited = True
     await db.commit()

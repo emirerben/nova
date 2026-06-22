@@ -570,8 +570,8 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Expand with AI — only for un-expanded ideas (no theme yet, no clips) */}
-            {!item.theme && item.clip_gcs_paths.length === 0 && !expandProposal && (
+            {/* Expand with AI — hide only when a proposal is pending or item has clips */}
+            {item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <div className="mb-4">
                 <button
                   type="button"
@@ -620,6 +620,7 @@ export default function PlanItemPage() {
                         await updatePlanItem(item.id, {
                           theme: expandProposal.theme,
                           filming_suggestion: expandProposal.filming_suggestion,
+                          filming_guide: expandProposal.filming_guide,
                         });
                         setExpandProposal(null);
                         refetch();
@@ -675,14 +676,6 @@ export default function PlanItemPage() {
                 }}
                 onBusyChange={setUploaderBusy}
               />
-            ) : item.edit_format === "narrated" ? (
-              <div className="rounded-xl border border-zinc-100 bg-white px-5 py-4 text-sm text-[#71717a]">
-                <p className="font-medium text-[#0c0c0e]">Get your step guide first</p>
-                <p className="mt-1">
-                  Use <span className="font-medium">Expand with AI</span> above to break your idea into
-                  filming steps — then upload one clip per step and your recorded voice.
-                </p>
-              </div>
             ) : isFilmThis ? (
               /* create_new/mixed with empty filming guide — offer to generate one */
               <div className="mb-6 rounded-2xl border border-dashed border-zinc-200 bg-white p-5 text-center">
