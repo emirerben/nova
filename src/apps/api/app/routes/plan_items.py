@@ -41,6 +41,7 @@ from app.routes.generative_jobs import (
     dispatch_reset_timeline,
     dispatch_retext,
     dispatch_set_intro_size,
+    dispatch_set_media_overlays,
     dispatch_swap_song,
 )
 
@@ -52,6 +53,18 @@ router = APIRouter()
 _MAX_CLIPS_PER_ITEM = 20
 _MAX_BYTES_PER_FILE = 4 * 1024 * 1024 * 1024  # 4GB
 _ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime"}
+
+# Allowed content types for media-overlay card uploads (images + short video).
+_OVERLAY_ALLOWED_CONTENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/heic",
+    "video/mp4",
+    "video/quicktime",
+}
+_MAX_OVERLAY_CARDS = 10
+_MAX_OVERLAY_FILE_BYTES = 512 * 1024 * 1024  # 512 MB per card (video card upper bound)
 
 # Job.status buckets (mode="content_plan" reuses the generative variant states).
 _JOB_READY = {"variants_ready", "variants_ready_partial", "done", "clips_ready"}
@@ -1327,3 +1340,111 @@ async def expand_idea(
         filming_guide=[s.model_dump() for s in output.filming_guide],
         rationale=output.rationale,
     )
+
+
+# ── Media-overlay routes ──────────────────────────────────────────────────────
+
+
+class OverlayUploadFile(BaseModel):
+    filename: str
+    content_type: str
+    file_size_bytes: int
+
+
+class OverlayUploadUrlsBody(BaseModel):
+    files: list[OverlayUploadFile]
+
+
+class OverlayUploadUrlsResponse(BaseModel):
+    urls: list[UploadUrlItem]
+
+
+@router.post("/{item_id}/overlay-upload-urls", response_model=OverlayUploadUrlsResponse)
+async def create_overlay_upload_urls(
+    item_id: str,
+    body: OverlayUploadUrlsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OverlayUploadUrlsResponse:
+    """Signed PUT URLs for media-overlay card assets under the persistent users/ prefix.
+
+    Cards land under `users/{user_id}/plan/{item_id}/overlays/...` which is NOT
+    swept by the 24h GCS lifecycle rule — assets survive for the lifetime of the
+    plan item and can be re-applied on swap-song/retext re-renders.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
+        )
+
+    item = await _load_owned_item(item_id, user.id, db)
+    if not body.files or len(body.files) > _MAX_OVERLAY_CARDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provide 1-{_MAX_OVERLAY_CARDS} files",
+        )
+    urls: list[UploadUrlItem] = []
+    for f in body.files:
+        if f.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported overlay content type: {f.content_type}",
+            )
+        if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_OVERLAY_FILE_BYTES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
+        safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
+        upload_url, gcs_path = storage.presigned_put_url_for_media_overlay(
+            user_id=str(user.id),
+            plan_item_id=str(item.id),
+            filename=safe_name,
+            content_type=f.content_type,
+        )
+        urls.append(UploadUrlItem(upload_url=upload_url, gcs_path=gcs_path))
+    return OverlayUploadUrlsResponse(urls=urls)
+
+
+class SetMediaOverlaysBody(BaseModel):
+    """Full-replace body: the entire new card list. Send [] to clear all cards."""
+
+    overlays: list[dict] = Field(default_factory=list)
+
+
+@router.put(
+    "/{item_id}/variants/{variant_id}/media-overlays",
+    response_model=PlanItemResponse,
+)
+async def set_item_media_overlays(
+    item_id: str,
+    variant_id: str,
+    body: SetMediaOverlaysBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Apply or clear media-overlay cards on one of this item's variants.
+
+    Full-replace: the `overlays` list becomes the card set for this variant.
+    Send an empty list (`{"overlays": []}`) to remove all cards and restore the
+    clean (un-carded) variant from the pre-overlay backup.
+
+    Returns the updated plan item immediately; the variant flips to
+    render_status="rendering" and the apply-pass runs async.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
+        )
+
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_set_media_overlays(job, variant_id, overlays_raw=body.overlays, user_id=str(user.id))
+    await db.commit()
+    log.info(
+        "plan_item_set_media_overlays",
+        item_id=item_id,
+        variant_id=variant_id,
+        card_count=len(body.overlays),
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))

@@ -616,6 +616,94 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
     regenerate_generative_variant.delay(str(job.id), variant_id, size_override_px=px)
 
 
+def dispatch_set_media_overlays(
+    job: Job,
+    variant_id: str,
+    *,
+    overlays_raw: list[dict],
+    user_id: str,
+) -> None:
+    """Validate + enqueue a media-overlay card apply-pass for one variant.
+
+    Full-replace semantics: the caller sends the entire new card list.
+    An empty list clears all cards (restores the clean variant from
+    pre_media_overlay_video_path if available).
+
+    Persists render_status="rendering" on the variant BEFORE enqueuing so the
+    frontend immediately reflects the in-progress state — same pattern as
+    dispatch_edit_timeline (persist first, enqueue second).
+    """
+    from app.agents._schemas.media_overlay import (  # noqa: PLC0415
+        coerce_media_overlays,
+        validate_overlay_gcs_path,
+    )
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Media overlays are not available.",
+        )
+
+    require_editable_variant(job, variant_id)
+
+    # Validate each overlay: parse schema + check GCS prefix allowlist.
+    # Path must be scoped to this user's namespace (users/{user_id}/) to
+    # prevent referencing another user's overlay assets.
+    _user_prefix = f"users/{user_id}/"
+    validated: list[dict] = []
+    if overlays_raw:
+        cards = coerce_media_overlays(overlays_raw) or []
+        for card in cards:
+            try:
+                validate_overlay_gcs_path(card.src_gcs_path)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid overlay asset path: {exc}",
+                ) from exc
+            if not card.src_gcs_path.startswith(_user_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Overlay asset path must be under '{_user_prefix}': "
+                        f"{card.src_gcs_path!r}"
+                    ),
+                )
+            if card.end_s <= card.start_s:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Card {card.id}: end_s must be greater than start_s.",
+                )
+            validated.append(card.model_dump())
+
+    # Persist render_status="rendering" first (row-locked by the DB session the
+    # route holds), then enqueue — prevents a race where the worker reads "ready"
+    # and an immediate second PUT sees "ready" and double-enqueues.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
+    # NOTE: .delay() sends to Redis immediately (synchronously). The DB commit
+    # in the caller's route (`await db.commit()`) happens after this function
+    # returns. The window where the task sees an uncommitted row is milliseconds —
+    # the same accepted race as other dispatch_* functions in this module.
+    # (Celery's ALWAYS_EAGER test mode is the exception — tasks run inline.)
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.delay(
+        str(job.id),
+        variant_id,
+        media_overlays_override=validated,
+    )
+
+
 def dispatch_edit_variant(
     job: Job,
     variant_id: str,
