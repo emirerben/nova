@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0.0] — 2026-06-23
+
+### Added
+- **Media overlay cards on plan-item edits (slice 1, dark-launched).** You can now attach timed image and video cards to any rendered variant — position them at the top, center, or bottom of the frame, set a scale, and give each card its own start/end time window. Cards composite on top of captions, never below. The feature ships behind `MEDIA_OVERLAYS_ENABLED=false` and is byte-identical to existing renders when the flag is off.
+- **Presigned upload URLs for overlay assets.** A new `POST /plan-items/{id}/overlay-upload-urls` route returns GCS PUT URLs so the browser can upload card images and videos directly without passing them through the API.
+- **Per-variant overlay apply/clear.** `PUT /plan-items/{id}/variants/{variant_id}/media-overlays` applies a set of overlay cards as a post-pass on the finished variant. A durable clean-copy (`pre_media_overlay_video_path`) is stored on first apply via server-side copy, so removing all cards restores the original variant without a re-render.
+
 ## [0.4.112.0] — 2026-06-19
 
 ### Added
