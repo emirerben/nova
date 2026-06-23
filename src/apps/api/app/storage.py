@@ -161,6 +161,35 @@ def presigned_put_url_for_plan_pool(
     return url, object_path
 
 
+def presigned_put_url_for_media_overlay(
+    user_id: str,
+    plan_item_id: str,
+    filename: str,
+    content_type: str = "video/mp4",
+) -> tuple[str, str]:
+    """Signed PUT URL for a media-overlay card asset.
+
+    Lands under `users/{user_id}/plan/{plan_item_id}/overlays/...` — the same
+    PERSISTENT `users/` namespace as themed uploads (NOT swept by the 24h GCS
+    delete rule). This ensures overlay assets survive past the 24h lifecycle so
+    a later re-render (e.g. swap-song) can re-apply the same cards.
+
+    Accepted content types: images (jpeg/png/webp/heic) and short video clips
+    (mp4/quicktime). The route layer validates the content_type before calling
+    this function.
+    """
+    object_path = f"users/{user_id}/plan/{plan_item_id}/overlays/{filename}"
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    url = blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=15),
+        method="PUT",
+        content_type=content_type,
+    )
+    return url, object_path
+
+
 def upload_public_read(local_path: str, object_path: str, content_type: str = "video/mp4") -> str:
     """Upload a local file to GCS and return a signed URL valid for 1 day.
 

@@ -344,6 +344,15 @@ class Settings(BaseSettings):
     # When False: analyze_item_conformance task is a no-op; item.conformance stays NULL.
     conformance_feedback_enabled: bool = False
 
+    # Media-overlay cards (slice 1): timed, positioned image/video "cards"
+    # composited on top of a finished plan-item variant via a post-pass ffmpeg
+    # encode. Additive + kill-switched; when False all variant bytes are
+    # byte-identical to pre-slice-1 output. Enable after browser QA:
+    #   fly secrets set MEDIA_OVERLAYS_ENABLED=true --app nova-video + restart workers.
+    # When False: upload-urls + set-media-overlays routes return 404; the
+    # worker apply-pass branch never fires.
+    media_overlays_enabled: bool = False
+
     # Per-item "Ask Nova" advisor (plan dogfood feedback #2): conversational,
     # read-only advice about which clip fits which shot. Additive + auth'd; it
     # never writes state (the re-read offer goes through the clip-note PATCH).
