@@ -28,6 +28,9 @@ import {
   setPlanItemIntroSize,
   swapPlanItemSong,
   uploadToGcs,
+  requestOverlayUploadUrls,
+  setVariantMediaOverlays,
+  type MediaOverlay,
 } from "@/lib/plan-api";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
@@ -52,6 +55,7 @@ import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
 import { useTimelineSession } from "../../../generative/useTimelineSession";
+import MediaOverlayEditor from "../../_components/MediaOverlayEditor";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -67,6 +71,10 @@ import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 // failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
 // queue waits can too. Keep this comfortably above both.
 const RENDER_REGISTER_TIMEOUT_MS = 45_000;
+
+// Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
+const MEDIA_OVERLAYS_ENABLED =
+  process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED === "true";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 function deriveReceiptText(job: PlanItemJobStatus): string {
@@ -963,13 +971,14 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
 }
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
-type EditorTab = "text" | "font" | "song" | "clips";
+type EditorTab = "text" | "font" | "song" | "clips" | "overlays";
 
 const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "text", icon: "T", label: "Text" },
   { id: "font", icon: "Aa", label: "Font" },
   { id: "song", icon: "♫", label: "Song" },
   { id: "clips", icon: "✂", label: "Clips" },
+  { id: "overlays", icon: "⊞", label: "Overlays" },
 ];
 
 /**
@@ -1237,6 +1246,8 @@ function FocusedResults({
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
                   // Hide Font tab for lyrics (font is locked to lyrics renderer)
                   if (tab.id === "font" && variant?.text_mode === "lyrics") return null;
+                  // Hide Overlays tab when kill-switch is off
+                  if (tab.id === "overlays" && !MEDIA_OVERLAYS_ENABLED) return null;
                   const isActive = activeTab === tab.id;
                   return (
                     <button
@@ -1368,6 +1379,73 @@ function FocusedVariantControls({
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
 
+  // ── Overlay-card local state ─────────────────────────────────────────────
+  // Initialized from the server variant; user edits live here until "Apply".
+  const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
+    variant.media_overlays ?? [],
+  );
+  const [overlayUploading, setOverlayUploading] = useState(false);
+
+  // Keep overlay cards in sync when the variant refreshes from the server.
+  // When the variant_id changes, reset from server state (not from local).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
+  useEffect(() => {
+    setOverlayCards(variant.media_overlays ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant.variant_id]);
+
+  /** Upload new files, append as new overlay cards with default settings. */
+  async function handleOverlayUpload(
+    files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
+  ) {
+    setOverlayUploading(true);
+    try {
+      const urls = await requestOverlayUploadUrls(
+        itemId,
+        files.map((f) => ({
+          filename: f.filename,
+          content_type: f.content_type,
+          file_size_bytes: f.file_size_bytes,
+        })),
+      );
+      await Promise.all(
+        urls.map((u, i) =>
+          uploadToGcs(u.upload_url, files[i].file),
+        ),
+      );
+      const newCards: MediaOverlay[] = urls.map((u, i) => ({
+        id: crypto.randomUUID(),
+        kind: files[i].content_type.startsWith("video/") ? "video" : "image",
+        src_gcs_path: u.gcs_path,
+        position: "center",
+        x_frac: 0.5,
+        y_frac: 0.5,
+        scale: 0.35,
+        start_s: 0,
+        end_s: 5,
+        z: overlayCards.length + i,
+      }));
+      setOverlayCards((prev) => [...prev, ...newCards]);
+    } finally {
+      setOverlayUploading(false);
+    }
+  }
+
+  /** Trigger the overlay render pass on the current variant. */
+  async function handleApplyOverlays() {
+    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+    await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards);
+    refetch();
+  }
+
+  /** Clear all overlays (restore pre-overlay clean variant). */
+  async function handleClearOverlays() {
+    setOverlayCards([]);
+    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+    await setVariantMediaOverlays(itemId, variant.variant_id, []);
+    refetch();
+  }
+
   // For an eligible variant, re-point the text/size/layout/style handlers at the
   // session draft (synchronous → resolved promise so PlanVariantEditor's `run()`
   // busy-wrapper completes immediately). Song + Clips stay on the server paths.
@@ -1406,6 +1484,7 @@ function FocusedVariantControls({
   const showTextSection = activeTab === "text";
   const showFontSection = activeTab === "font" && instantEligible;
   const showSongSection = activeTab === "song";
+  const showOverlaysSection = activeTab === "overlays" && MEDIA_OVERLAYS_ENABLED;
   // Clips: the TimelineEditor sheet handles itself; we just need the render.
 
   return (
@@ -1471,6 +1550,28 @@ function FocusedVariantControls({
             markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
           }}
         />
+      )}
+
+      {/* Overlays tab: media-overlay card editor (kill-switched) */}
+      {showOverlaysSection && (
+        <div className="rounded-xl bg-[#0c0c0e] border border-white/10">
+          <MediaOverlayEditor
+            overlays={overlayCards}
+            variantDurationS={30}
+            rendering={variant.render_status === "rendering" || overlayUploading}
+            onUploadRequest={handleOverlayUpload}
+            onUpdateCard={(id, patch) =>
+              setOverlayCards((prev) =>
+                prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+              )
+            }
+            onRemoveCard={(id) =>
+              setOverlayCards((prev) => prev.filter((c) => c.id !== id))
+            }
+            onApply={handleApplyOverlays}
+            onClear={handleClearOverlays}
+          />
+        </div>
       )}
     </>
   );

@@ -39,6 +39,8 @@ export default function PlanVariantEditor({
   clipSlotCount = null,
   hasClipEdits = false,
   hideSections = [],
+  onEditOverlays,
+  mediaOverlaysEnabled = false,
 }: {
   variant: PlanItemVariant;
   tracks: MusicTrackSummary[];
@@ -61,8 +63,12 @@ export default function PlanVariantEditor({
   hasClipEdits?: boolean;
   /** Sections to suppress from rendering. Used by the editor row to show only
    * the active tab's section. Values: "caption" | "size" | "layout" | "style" |
-   * "song" | "clips". Defaults to showing all. */
-  hideSections?: Array<"caption" | "size" | "layout" | "style" | "song" | "clips">;
+   * "song" | "clips" | "overlays". Defaults to showing all. */
+  hideSections?: Array<"caption" | "size" | "layout" | "style" | "song" | "clips" | "overlays">;
+  /** Opens the media-overlay editor sheet (mounted by the parent page). */
+  onEditOverlays?: () => void;
+  /** Whether the media-overlay feature is enabled for this user/plan. */
+  mediaOverlaysEnabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -319,6 +325,24 @@ export default function PlanVariantEditor({
               Edited cut
             </span>
           )}
+        </section>
+      )}
+
+      {/* ── Overlays (media-overlay cards, slice 1) ─────────────── */}
+      {!hide.has("overlays") && mediaOverlaysEnabled && onEditOverlays && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-[#0c0c0e]">Overlay cards</h3>
+          <button
+            type="button"
+            disabled={rendering}
+            onClick={onEditOverlays}
+            className="rounded-full border border-zinc-200 px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Edit overlays
+            {(variant.media_overlays?.length ?? 0) > 0
+              ? ` · ${variant.media_overlays!.length}`
+              : ""}
+          </button>
         </section>
       )}
 
