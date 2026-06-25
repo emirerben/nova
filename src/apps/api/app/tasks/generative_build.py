@@ -3474,9 +3474,10 @@ def _render_generative_variant(
         voiceover_local: str | None = None
         voiceover_target_s = available_footage_s
 
-        # Slot-count floor: every clip in narrative_order is owed a slot in this
-        # variant. 0 on pool-only / legacy / kill-switch-off jobs → no change.
-        min_slots = len(narrative_order) if narrative_order else 0
+        # Slot-count floor: shot-assigned clips each get a guaranteed slot; for
+        # pool-only jobs (no narrative_order) use total analyzed clip count so
+        # that all uploaded footage is represented in the edit.
+        min_slots = len(narrative_order) if narrative_order else len(clip_metas)
         if min_slots > _NARRATIVE_FLOOR_WARN_THRESHOLD:
             log.warning(
                 "narrative_floor_high",
