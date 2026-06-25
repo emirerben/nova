@@ -87,5 +87,5 @@ export const proxyMaxDuration = 60;
 /** Build Next.js route handlers that proxy to `${API_BASE}/${upstreamPrefix}/<path>`. */
 export function makeProxyHandlers(upstreamPrefix = "") {
   const handler = (req: NextRequest, ctx: RouteCtx) => proxy(req, ctx.params, upstreamPrefix);
-  return { GET: handler, POST: handler, PATCH: handler, DELETE: handler };
+  return { GET: handler, POST: handler, PUT: handler, PATCH: handler, DELETE: handler };
 }

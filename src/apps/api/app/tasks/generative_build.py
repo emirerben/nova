@@ -1199,6 +1199,7 @@ def _run_media_overlay_pass(
                 copy_object(clean_path, current_video_path)
                 # Re-sign for 1 day (matches PLAYBACK_URL_TTL_MIN in generative_jobs.py).
                 from app.storage import signed_get_url  # noqa: PLC0415
+
                 signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
             else:
                 signed_url = existing.get("output_url", "")
@@ -1213,11 +1214,10 @@ def _run_media_overlay_pass(
                     break
             job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
             from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
             flag_modified(job, "assembly_plan")
             db.commit()
-            record_pipeline_event(
-                job_id, "media_overlay", "cards_cleared", {"variant_id": variant_id}
-            )
+            record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
             return
 
         # ── Apply path: composite cards onto the clean base ──────────────────
@@ -1259,11 +1259,10 @@ def _run_media_overlay_pass(
                     break
             job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
             from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
             flag_modified(job, "assembly_plan")
             db.commit()
-            record_pipeline_event(
-                job_id, "media_overlay", "apply_failed", {"error": str(exc)[:200]}
-            )
+            record_pipeline_event("media_overlay", "apply_failed", {"error": str(exc)[:200]})
             return
 
         for v in variants:
@@ -1276,10 +1275,10 @@ def _run_media_overlay_pass(
                 break
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
         flag_modified(job, "assembly_plan")
         db.commit()
         record_pipeline_event(
-            job_id,
             "media_overlay",
             "cards_applied",
             {"variant_id": variant_id, "card_count": len(cards)},
@@ -3584,9 +3583,7 @@ def _render_generative_variant(
         # already applied the floor to slot count; this ensures consolidation
         # doesn't undo that work even when the user uploads fewer total clips.
         if min_slots > 0:
-            recipe_dict["min_slots"] = max(
-                int(recipe_dict.get("min_slots", 0) or 0), min_slots
-            )
+            recipe_dict["min_slots"] = max(int(recipe_dict.get("min_slots", 0) or 0), min_slots)
 
         recipe = build_recipe(recipe_dict)
         if assembly_steps_override is not None:
