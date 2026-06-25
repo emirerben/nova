@@ -2700,10 +2700,60 @@ def test_build_unplaced_shots_gcs_path_none_when_absent():
 
 
 def test_build_no_music_recipe_min_slots_narrative_order_none():
-    """When narrative_order is None (pool-only / kill switch), min_slots is 0
-    and the recipe is byte-identical to the pre-fix baseline.
-    """
+    """_build_no_music_recipe with min_slots=0 is byte-identical to the baseline."""
     metas = [_Meta(f"c{i}", 5.0) for i in range(5)]
     baseline = gb._build_no_music_recipe(metas, available_footage_s=15.0)
     floor_zero = gb._build_no_music_recipe(metas, available_footage_s=15.0, min_slots=0)
     assert baseline == floor_zero
+
+
+def test_pool_only_job_passes_clip_count_as_min_slots_to_recipe(monkeypatch, tmp_path):
+    """Pool-only jobs (narrative_order=None) must pass len(clip_metas) as min_slots
+    to generate_music_recipe so all uploaded clips get a slot in music variants.
+
+    Regression guard for the investigation finding where 9 pool clips produced
+    only 3 slots because min_slots was 0 instead of 9.
+    """
+    import app.pipeline.music_recipe as mr
+
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+
+    captured_min_slots: list[int] = []
+
+    def _capturing_recipe(td, **kw):
+        captured_min_slots.append(kw.get("min_slots", 0))
+        return {
+            "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.5, 1.0],
+        }
+
+    monkeypatch.setattr(mr, "generate_music_recipe", _capturing_recipe, raising=False)
+
+    vdir = tmp_path / "v1"
+    vdir.mkdir()
+    spec = {"variant_id": "song_lyrics", "rank": 1, "text_mode": "none", "track": _track()}
+    n_clips = 9
+    clip_metas = [_Meta(f"c{i}", 5.0) for i in range(n_clips)]
+    clip_id_to_local = {f"c{i}": f"/clip{i}.mp4" for i in range(n_clips)}
+    clip_id_to_gcs = {f"c{i}": f"music-uploads/clip{i}.mp4" for i in range(n_clips)}
+
+    gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=clip_metas,
+        clip_id_to_local=clip_id_to_local,
+        clip_id_to_gcs=clip_id_to_gcs,
+        probe_map={},
+        available_footage_s=45.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        narrative_order=None,  # pool-only — no shot assignments
+    )
+
+    assert captured_min_slots, "generate_music_recipe was not called"
+    assert captured_min_slots[0] == n_clips, (
+        f"min_slots should equal clip count ({n_clips}), got {captured_min_slots[0]}"
+    )
