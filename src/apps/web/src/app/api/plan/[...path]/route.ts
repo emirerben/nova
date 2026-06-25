@@ -10,4 +10,4 @@ import { makeProxyHandlers, proxyMaxDuration } from "@/lib/api-proxy";
 
 export const maxDuration = proxyMaxDuration;
 
-export const { GET, POST, PATCH, DELETE } = makeProxyHandlers();
+export const { GET, POST, PUT, PATCH, DELETE } = makeProxyHandlers();
