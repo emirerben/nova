@@ -980,6 +980,7 @@ def regenerate_generative_variant(
     cluster_hero_size_px_override: int | None = None,
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
+    media_overlays_override: list[dict] | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1029,6 +1030,7 @@ def regenerate_generative_variant(
                 cluster_hero_size_px_override=cluster_hero_size_px_override,
                 cluster_body_size_px_override=cluster_body_size_px_override,
                 cluster_accent_size_px_override=cluster_accent_size_px_override,
+                media_overlays_override=media_overlays_override,
             )
         except OperationalError:
             raise
@@ -1144,6 +1146,143 @@ def _is_fast_reburn_eligible(
     if text_mode not in ("agent_text", "none"):
         return False  # lyrics variants: full path in v1
     return True
+
+
+def _run_media_overlay_pass(
+    *,
+    job_id: str,
+    variant_id: str,
+    overlays_raw: list[dict],
+) -> None:
+    """Apply (or clear) media-overlay cards on a finished variant (fast path).
+
+    Steps:
+    1. Load the variant entry from the DB.
+    2. Parse + validate the overlay list (coerce_media_overlays).
+    3. If overlays is empty/None → restore from pre_media_overlay_video_path (clear).
+    4. Otherwise → ensure a clean base copy exists (pre_media_overlay_video_path),
+       then apply_media_overlays on top of it → overwrite video_path.
+    5. Persist updated variant keys + re-sign output_url.
+
+    Uses `storage.copy_object` (server-side, no egress) to durable-copy the
+    original variant before the first apply-pass; subsequent card edits work
+    from the same clean copy.
+    """
+    from app.agents._schemas.media_overlay import coerce_media_overlays  # noqa: PLC0415
+    from app.pipeline.media_overlay import apply_media_overlays  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    from app.storage import copy_object  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("media_overlay_job_not_found", job_id=job_id)
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+        if existing is None:
+            log.error("media_overlay_variant_not_found", job_id=job_id, variant_id=variant_id)
+            return
+
+        current_video_path = existing.get("video_path")
+        if not current_video_path:
+            log.error("media_overlay_no_video_path", job_id=job_id, variant_id=variant_id)
+            return
+
+        cards = coerce_media_overlays(overlays_raw)
+
+        # ── Clear path: remove all cards ──────────────────────────────────────
+        if not cards:
+            clean_path = existing.get("pre_media_overlay_video_path")
+            if clean_path and clean_path != current_video_path:
+                # Restore the clean variant by overwriting current with the clean copy.
+                copy_object(clean_path, current_video_path)
+                # Re-sign for 1 day (matches PLAYBACK_URL_TTL_MIN in generative_jobs.py).
+                from app.storage import signed_get_url  # noqa: PLC0415
+
+                signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
+            else:
+                signed_url = existing.get("output_url", "")
+
+            # Patch the variant.
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["media_overlays"] = None
+                    v["output_url"] = signed_url
+                    v["render_status"] = "ready"
+                    v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+            record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
+            return
+
+        # ── Apply path: composite cards onto the clean base ──────────────────
+        pre_clean = existing.get("pre_media_overlay_video_path")
+        if not pre_clean:
+            # First apply-pass: durable-copy the current (un-carded) variant.
+            pre_clean = current_video_path + "_pre_overlay"
+            try:
+                copy_object(current_video_path, pre_clean)
+                log.info("media_overlay_clean_copy_created", job_id=job_id, dst=pre_clean)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "media_overlay_clean_copy_failed",
+                    job_id=job_id,
+                    error=str(exc),
+                )
+                # Continue with current_video_path as the base (no restore on clear).
+                pre_clean = current_video_path
+
+        try:
+            new_url = apply_media_overlays(
+                base_gcs_path=pre_clean,
+                cards=cards,
+                output_gcs_path=current_video_path,
+                job_id=job_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "media_overlay_apply_failed",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["render_status"] = "failed"
+                    v["render_error"] = str(exc)[:500]
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+            record_pipeline_event("media_overlay", "apply_failed", {"error": str(exc)[:200]})
+            return
+
+        for v in variants:
+            if v.get("variant_id") == variant_id:
+                v["media_overlays"] = [c.model_dump() for c in cards]
+                v["pre_media_overlay_video_path"] = pre_clean
+                v["output_url"] = new_url
+                v["render_status"] = "ready"
+                v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                break
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+        flag_modified(job, "assembly_plan")
+        db.commit()
+        record_pipeline_event(
+            "media_overlay",
+            "cards_applied",
+            {"variant_id": variant_id, "card_count": len(cards)},
+        )
 
 
 def _reburn_text_on_base(
@@ -1652,8 +1791,45 @@ def _run_regenerate_variant(
     cluster_hero_size_px_override: int | None = None,
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
+    media_overlays_override: list[dict] | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    # ── Media-overlay fast path ─────────────────────────────────────────────────
+    # When the only change is adding/removing media-overlay cards (no song/text/
+    # style/timeline change), take this lightweight path:
+    #   1. Download the clean base (pre_media_overlay or current video_path).
+    #   2. Composite cards on top via apply_media_overlays.
+    #   3. Upload, patch the variant entry, done.
+    # No clip ingest, no Gemini, no music — just one ffmpeg encode.
+    # Guarded by the kill switch (settings.media_overlays_enabled).
+    _is_overlay_only = (
+        media_overlays_override is not None
+        and new_track_id is None
+        and override_text is None
+        and not remove_text
+        and style_set_id is None
+        and size_override_px is None
+        and mix_override is None
+        and layout_override is None
+        and timeline_override is None
+        and font_family_override is None
+        and effect_override is None
+        and text_color_override is None
+        and cluster_hero_font_override is None
+        and cluster_body_font_override is None
+        and cluster_accent_font_override is None
+        and cluster_hero_size_px_override is None
+        and cluster_body_size_px_override is None
+        and cluster_accent_size_px_override is None
+    )
+    if _is_overlay_only and settings.media_overlays_enabled:
+        _run_media_overlay_pass(
+            job_id=job_id,
+            variant_id=variant_id,
+            overlays_raw=media_overlays_override or [],
+        )
+        return
 
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
@@ -3271,6 +3447,15 @@ def _render_generative_variant(
         # Post-assembly clip timeline (clip timeline editor). Rewritten on EVERY
         # full montage assembly; None for voiceover/spine variants.
         "ai_timeline": None,
+        # Media-overlay cards (slice 1): list of MediaOverlay dicts set by the
+        # apply-media-overlays variant-edit action; None when no cards have been
+        # applied. The render path branches on truthiness (if media_overlays:)
+        # so None is byte-identical to the pre-feature baseline.
+        "media_overlays": None,
+        # Durable clean copy of the variant before the first card apply-pass.
+        # Enables "remove all cards" to restore the unmodified variant.
+        # Stored as a GCS object key; None until the first apply-pass fires.
+        "pre_media_overlay_video_path": None,
         # User-pinned independent style overrides (decoupled from style_set_id).
         # Resolved by the caller (_run_regenerate_variant) via sticky-override merge;
         # persisted here so the next re-render can carry them forward.
@@ -3398,9 +3583,7 @@ def _render_generative_variant(
         # already applied the floor to slot count; this ensures consolidation
         # doesn't undo that work even when the user uploads fewer total clips.
         if min_slots > 0:
-            recipe_dict["min_slots"] = max(
-                int(recipe_dict.get("min_slots", 0) or 0), min_slots
-            )
+            recipe_dict["min_slots"] = max(int(recipe_dict.get("min_slots", 0) or 0), min_slots)
 
         recipe = build_recipe(recipe_dict)
         if assembly_steps_override is not None:
@@ -3804,6 +3987,9 @@ def _render_talking_head_variant(
         # No text-free base cached for talking_head in v1 (the assembler's spine
         # extraction is the expensive step, not text burn; fast-reburn not yet applied).
         "base_video_path": None,
+        # Media-overlay cards (slice 1) — see montage finalize dict for docs.
+        "media_overlays": None,
+        "pre_media_overlay_video_path": None,
     }
 
     try:
@@ -3983,6 +4169,9 @@ def _render_narrated_variant(
         "base_video_path": None,
         "ai_timeline": None,
         "resolved_archetype": "narrated",
+        # Media-overlay cards (slice 1) — see montage finalize dict for docs.
+        "media_overlays": None,
+        "pre_media_overlay_video_path": None,
     }
     try:
         if not voiceover_gcs_path:
@@ -4625,6 +4814,10 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_text": r.get("intro_text"),
                     "intro_highlight_word": r.get("intro_highlight_word"),
                     "base_video_path": r.get("base_video_path"),
+                    # media-overlay cards (slice 1) — MUST survive finalization
+                    # or "clear all" loses the pre-overlay clean copy reference.
+                    "media_overlays": r.get("media_overlays"),
+                    "pre_media_overlay_video_path": r.get("pre_media_overlay_video_path"),
                     # sequence + cluster persistence (D15/D19) — MUST survive
                     # finalization or every re-render loses the synced typography:
                     # intro_mode gates route behavior (sequence_synced, retext

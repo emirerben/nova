@@ -555,6 +555,25 @@ export function generateFirstWeek(
  * Mirrors the subset of generative `GenerativeVariant` the plan editor needs: the
  * status endpoint already returns these fields, this type just surfaces them.
  */
+// ── Media-overlay types ───────────────────────────────────────────────────────
+
+/**
+ * One timed, positioned image/video overlay card on a plan-item variant.
+ * Mirrors `MediaOverlay` in app/agents/_schemas/media_overlay.py.
+ */
+export interface MediaOverlay {
+  id: string;
+  kind: "image" | "video";
+  src_gcs_path: string;
+  position: "top" | "center" | "bottom" | "custom";
+  x_frac: number;
+  y_frac: number;
+  scale: number;
+  start_s: number;
+  end_s: number;
+  z: number;
+}
+
 // NOTE: `PlanItemVariant` is kept structurally assignable to the shared
 // `EditableVariant` (lib/variant-editor/types.ts) so the 0-latency instant
 // editor (IntroTextPreview + EditToolbar + useVariantEditSession) drives plan-item
@@ -616,6 +635,10 @@ export interface PlanItemVariant {
   intro_cluster_hero_size_px?: number | null;
   intro_cluster_body_size_px?: number | null;
   intro_cluster_accent_size_px?: number | null;
+  /** Media-overlay cards applied on top of this variant (slice 1). */
+  media_overlays?: MediaOverlay[] | null;
+  /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
+  pre_media_overlay_video_path?: string | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
@@ -691,6 +714,45 @@ export function setPlanItemIntroSize(
     method: "POST",
     body: JSON.stringify({ text_size_px: Math.round(textSizePx) }),
   });
+}
+
+// ── Media-overlay card upload + apply ─────────────────────────────────────────
+
+/**
+ * Request signed PUT URLs for media-overlay card assets.
+ * Assets land under users/{uid}/plan/{itemId}/overlays/ (persistent, not 24h-swept).
+ */
+export async function requestOverlayUploadUrls(
+  itemId: string,
+  files: { filename: string; content_type: string; file_size_bytes: number }[],
+): Promise<UploadUrl[]> {
+  const res = await request<{ urls: UploadUrl[] }>(
+    `/plan-items/${itemId}/overlay-upload-urls`,
+    {
+      method: "POST",
+      body: JSON.stringify({ files }),
+    },
+  );
+  return res.urls;
+}
+
+/**
+ * Full-replace the media-overlay card list on a variant.
+ * Send an empty array to clear all cards and restore the clean variant.
+ * Returns the updated PlanItem (variant flips to render_status="rendering").
+ */
+export function setVariantMediaOverlays(
+  itemId: string,
+  variantId: string,
+  overlays: MediaOverlay[],
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/plan-items/${itemId}/variants/${variantId}/media-overlays`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ overlays }),
+    },
+  );
 }
 
 // ── Activation seed: upload recent clips → auto-match → instant first video (T8) ──
