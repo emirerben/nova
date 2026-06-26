@@ -1625,9 +1625,31 @@ function LiveEditPreview({
   const previewLayout =
     (session.draft.layout ?? variant.intro_layout) === "cluster" ? "cluster" : "linear";
 
+  // When the draft is clean (no uncommitted edits, not saving), show the burned
+  // output_url — byte-identical to what the download button serves. Switch to
+  // the WYSIWYG DOM overlay only while the user is actively editing or a reburn
+  // is in flight, giving 0-latency live preview during edits while ensuring
+  // what they see at rest IS what they get.
+  // (fireCommit already calls setBaseline(toCommit) so isDirty resets to false
+  // as soon as a commit fires; it goes true again only on the next keystroke.)
+  const burnedSrc: string | null =
+    !session.isDirty && !session.isSaving ? (variant.output_url ?? null) : null;
+  const burnedIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {variant.base_video_url ? (
+      {burnedSrc ? (
+        <StableVideo
+          src={burnedSrc}
+          identity={burnedIdentity}
+          controls
+          loop
+          autoPlay
+          muted
+          playsInline
+          className="h-full w-full object-contain"
+        />
+      ) : variant.base_video_url ? (
         // StableVideo holds the base src across re-signed polls (same base_video_path
         // identity → no reload) and only swaps when a new base video is rendered
         // (clip timeline edit changes base_video_path → identity changes → swap).
@@ -1646,7 +1668,9 @@ function LiveEditPreview({
           No preview
         </div>
       )}
-      <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
+      {!burnedSrc && (
+        <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
+      )}
     </div>
   );
 }
