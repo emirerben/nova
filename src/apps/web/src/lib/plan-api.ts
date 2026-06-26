@@ -569,8 +569,14 @@ export interface MediaOverlay {
   x_frac: number;
   y_frac: number;
   scale: number;
+  /** When the overlay is visible on the main video timeline. */
   start_s: number;
   end_s: number;
+  /** Trim bounds within the uploaded clip itself (video cards only). */
+  clip_trim_start_s?: number;
+  clip_trim_end_s?: number;
+  /** Source clip total duration (video cards). Persisted so trim UI survives Apply/reload. */
+  clip_duration_s?: number;
   z: number;
 }
 

@@ -1419,6 +1419,20 @@ function FocusedVariantControls({
 
   const [overlayUploading, setOverlayUploading] = useState(false);
 
+  // Probe the actual variant duration so the overlay timeline shows the right length.
+  const [variantDurationS, setVariantDurationS] = useState(30);
+  useEffect(() => {
+    const url = variant.output_url;
+    if (!url) return;
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => {
+      if (isFinite(v.duration) && v.duration > 0) setVariantDurationS(v.duration);
+      v.src = "";
+    };
+    v.src = url;
+  }, [variant.output_url]);
+
   /** Upload new files, append as new overlay cards with default settings. */
   async function handleOverlayUpload(
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
@@ -1438,25 +1452,63 @@ function FocusedVariantControls({
           uploadToGcs(u.upload_url, files[i].file),
         ),
       );
-      const newCards: MediaOverlay[] = urls.map((u, i) => ({
-        id: crypto.randomUUID(),
-        kind: files[i].content_type.startsWith("video/") ? "video" : "image",
-        src_gcs_path: u.gcs_path,
-        position: "center",
-        x_frac: 0.5,
-        y_frac: 0.5,
-        scale: 0.35,
-        start_s: 0,
-        end_s: 5,
-        z: overlayCards.length + i,
-      }));
+      // Cycle default positions so successive cards don't stack on top of each other.
+      const POSITION_CYCLE: { position: "top" | "center" | "bottom"; x_frac: number; y_frac: number }[] = [
+        { position: "center", x_frac: 0.5, y_frac: 0.5 },
+        { position: "top", x_frac: 0.5, y_frac: 0.18 },
+        { position: "bottom", x_frac: 0.5, y_frac: 0.82 },
+      ];
+      const newCards: MediaOverlay[] = urls.map((u, i) => {
+        const slot = POSITION_CYCLE[(overlayCards.length + i) % POSITION_CYCLE.length];
+        return {
+          id: crypto.randomUUID(),
+          kind: files[i].content_type.startsWith("video/") ? "video" : "image",
+          src_gcs_path: u.gcs_path,
+          position: slot.position,
+          x_frac: slot.x_frac,
+          y_frac: slot.y_frac,
+          scale: 0.35,
+          start_s: 0,
+          end_s: +Math.min(5, variantDurationS).toFixed(2),
+          z: overlayCards.length + i,
+        };
+      });
       // Capture blob URLs for instant in-browser preview (no FFmpeg pass needed).
       const blobUrls: Record<string, string> = {};
       newCards.forEach((card, i) => {
         blobUrls[card.id] = URL.createObjectURL(files[i].file);
       });
+      // Probe video clip durations eagerly (while we still have the File reference).
+      const durationsMap: Record<string, number> = {};
+      await Promise.all(
+        newCards
+          .filter((card) => card.kind === "video")
+          .map(
+            (card) =>
+              new Promise<void>((resolve) => {
+                const url = blobUrls[card.id];
+                const v = document.createElement("video");
+                v.preload = "metadata";
+                const done = () => {
+                  if (isFinite(v.duration) && v.duration > 0) {
+                    durationsMap[card.id] = v.duration;
+                  }
+                  v.src = "";
+                  resolve();
+                };
+                v.onloadedmetadata = done;
+                v.onerror = done;
+                setTimeout(done, 3000);
+                v.src = url;
+              }),
+          ),
+      );
       setLocalPreviewUrls((prev) => ({ ...prev, ...blobUrls }));
-      setOverlayCards((prev) => [...prev, ...newCards]);
+      // Embed clip_duration_s on each video card so the trim UI survives Apply/reload.
+      const cardsWithDuration = newCards.map((card) =>
+        durationsMap[card.id] ? { ...card, clip_duration_s: durationsMap[card.id] } : card,
+      );
+      setOverlayCards((prev) => [...prev, ...cardsWithDuration]);
     } finally {
       setOverlayUploading(false);
     }
@@ -1597,22 +1649,29 @@ function FocusedVariantControls({
         <div className="rounded-xl bg-[#0c0c0e] border border-white/10">
           <MediaOverlayEditor
             overlays={overlayCards}
-            variantDurationS={30}
+            variantDurationS={variantDurationS}
             rendering={variant.render_status === "rendering" || overlayUploading}
             onUploadRequest={handleOverlayUpload}
-            onUpdateCard={(id, patch) =>
+            onUpdateCard={(id, patch) => {
+              // Resolve position presets to fracs so the CSS preview updates
+              // immediately — Python's resolved_xy_frac() does the same on render.
+              const resolved: Partial<MediaOverlay> = { ...patch };
+              if (patch.position === "top") { resolved.x_frac = 0.5; resolved.y_frac = 0.18; }
+              else if (patch.position === "center") { resolved.x_frac = 0.5; resolved.y_frac = 0.5; }
+              else if (patch.position === "bottom") { resolved.x_frac = 0.5; resolved.y_frac = 0.82; }
               setOverlayCards((prev) =>
-                prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
-              )
-            }
+                prev.map((c) => (c.id === id ? { ...c, ...resolved } : c)),
+              );
+            }}
             onRemoveCard={(id) => {
               setOverlayCards((prev) => prev.filter((c) => c.id !== id));
               setLocalPreviewUrls((prev) => {
+                if (!prev[id]) return prev;
                 const next = { ...prev };
-                if (next[id]) URL.revokeObjectURL(next[id]);
                 delete next[id];
                 return next;
               });
+              if (localPreviewUrls[id]) URL.revokeObjectURL(localPreviewUrls[id]);
             }}
             onApply={handleApplyOverlays}
             onClear={handleClearOverlays}
@@ -1695,6 +1754,74 @@ function LiveEditPreview({
   );
 }
 
+/** Video overlay card synced to the main edit player.
+ *  Seeks to the trim-offset position in lock-step with the edit video, and
+ *  mirrors play/pause so it never plays independently in a loop. */
+function TrimmedVideoPreview({
+  src,
+  trimStart,
+  trimEnd,
+  mainVideoRef,
+  cardStartS,
+}: {
+  src: string;
+  trimStart: number;
+  trimEnd: number | null;
+  /** Ref to the main edit <video> element used for sync. */
+  mainVideoRef: React.RefObject<HTMLVideoElement | null>;
+  /** The card's start_s on the edit timeline (used to compute card offset). */
+  cardStartS: number;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const card = ref.current;
+    const main = mainVideoRef.current;
+    if (!card) return;
+    // No main video (configuration-only mode, no render yet) — just autoplay.
+    if (!main) {
+      card.currentTime = trimStart;
+      card.play().catch(() => {});
+      return;
+    }
+
+    // Seek card to its trim-offset position matching the main video's current time.
+    function syncTime() {
+      if (!card || !main) return;
+      const cardTime = trimStart + Math.max(0, main.currentTime - cardStartS);
+      const cappedTime = trimEnd !== null ? Math.min(cardTime, trimEnd) : cardTime;
+      // Only seek if the drift exceeds 150ms to avoid thrashing.
+      if (Math.abs(card.currentTime - cappedTime) > 0.15) {
+        card.currentTime = cappedTime;
+      }
+    }
+
+    const c = card, m = main;
+    function onMainPlay() { c.play().catch(() => {}); syncTime(); }
+    function onMainPause() { c.pause(); syncTime(); }
+    function onMainTimeUpdate() { syncTime(); }
+    function onMainSeeked() { syncTime(); }
+
+    // Seed initial state.
+    syncTime();
+    if (!main.paused) card.play().catch(() => {});
+    else card.pause();
+
+    m.addEventListener("play", onMainPlay);
+    m.addEventListener("pause", onMainPause);
+    m.addEventListener("timeupdate", onMainTimeUpdate);
+    m.addEventListener("seeked", onMainSeeked);
+    return () => {
+      m.removeEventListener("play", onMainPlay);
+      m.removeEventListener("pause", onMainPause);
+      m.removeEventListener("timeupdate", onMainTimeUpdate);
+      m.removeEventListener("seeked", onMainSeeked);
+    };
+  }, [src, trimStart, trimEnd, cardStartS, mainVideoRef]);
+
+  return <video ref={ref} src={src} muted playsInline className="w-full h-auto rounded" />;
+}
+
 /** Large hero player for the focused variant. */
 function Hero({
   variant,
@@ -1707,6 +1834,18 @@ function Hero({
   overlayCards?: MediaOverlay[];
   localPreviewUrls?: Record<string, string>;
 }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [videoTime, setVideoTime] = useState(0);
+
+  // Re-attach when the video src changes (output_url becomes available after render).
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    const onTimeUpdate = () => setVideoTime(el.currentTime);
+    el.addEventListener("timeupdate", onTimeUpdate);
+    return () => el.removeEventListener("timeupdate", onTimeUpdate);
+  }, [variant?.output_url]);
+
   if (!variant) return <SkeletonTile />;
   const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
@@ -1718,13 +1857,22 @@ function Hero({
   // and the swap happens automatically when render_finished_at advances.
   const heroIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
 
-  // Cards that have a local blob URL — shown as CSS overlays instantly on upload.
-  const previewableCards = overlayCards.filter((c) => localPreviewUrls[c.id]);
+  // Cards visible in the CSS preview layer:
+  //   - must have a blob URL (locally uploaded, not yet FFmpeg-burned)
+  //   - when a rendered video exists: only show the card during its [start_s, end_s]
+  //     window so the preview matches what the final render will look like
+  //   - when no video yet (configuration-only mode): show all cards unconditionally
+  const previewableCards = overlayCards.filter((c) => {
+    if (!localPreviewUrls[c.id]) return false;
+    if (!variant.output_url) return true;
+    return videoTime >= c.start_s && videoTime <= c.end_s;
+  });
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
       {variant.output_url ? (
         <StableVideo
+          ref={videoRef}
           src={variant.output_url}
           identity={heroIdentity}
           controls
@@ -1761,13 +1909,12 @@ function Hero({
               className="w-full h-auto rounded"
             />
           ) : (
-            <video
+            <TrimmedVideoPreview
               src={localPreviewUrls[card.id]}
-              muted
-              loop
-              autoPlay
-              playsInline
-              className="w-full h-auto rounded"
+              trimStart={card.clip_trim_start_s ?? 0}
+              trimEnd={card.clip_trim_end_s ?? null}
+              mainVideoRef={videoRef}
+              cardStartS={card.start_s}
             />
           )}
         </div>
