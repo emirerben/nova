@@ -164,6 +164,7 @@ def build_generative_job(
     filming_guide: list[dict] | None = None,
     narrative_shot_count: int = 0,
     clip_notes: dict[str, str] | None = None,
+    landscape_fit: str = "fill",
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -241,6 +242,11 @@ def build_generative_job(
         }
         if notes_ctx:
             all_candidates["clip_notes"] = notes_ctx
+    # Landscape-fit preference (plan-item editor). Only stash when "fit" so
+    # public/legacy jobs keep byte-identical all_candidates shape — same omit-
+    # when-default discipline used for persona / user_style / filming_guide above.
+    if landscape_fit == "fit":
+        all_candidates["landscape_fit"] = "fit"
     return Job(
         user_id=user_id,
         job_type="generative",

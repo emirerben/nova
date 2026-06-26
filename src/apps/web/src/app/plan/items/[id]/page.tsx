@@ -625,6 +625,46 @@ export default function PlanItemPage() {
               </div>
             )}
 
+            {/* Landscape-clip fit picker — shown alongside Edit style */}
+            {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Landscape clips
+                </p>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: "fit",  label: "Fit",  desc: "Keep horizontal, black bars top & bottom" },
+                      { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
+                    ] as { value: "fit" | "fill"; label: string; desc: string }[]
+                  ).map(({ value, label, desc }) => {
+                    const active = (item.landscape_fit ?? "fit") === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={async () => {
+                          if (active) return;
+                          await updatePlanItem(item.id, { landscape_fit: value }).catch(() => null);
+                          refetch();
+                        }}
+                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          active
+                            ? "border-lime-400 bg-lime-50"
+                            : "border-zinc-200 bg-white hover:border-zinc-300"
+                        }`}
+                      >
+                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                          {label}
+                        </span>
+                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Expand with AI — only for planned mode; hide in ready (have-videos) mode */}
             {!isNarratedReady && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <div className="mb-4">

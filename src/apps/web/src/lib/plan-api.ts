@@ -291,6 +291,13 @@ export interface PlanItem {
   edit_format?: string | null;
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
   voiceover_gcs_path?: string | null;
+  /**
+   * Landscape-clip fit preference (0057+).
+   * "fit"  = letterbox (full-width, black bars top & bottom, never enlarged) — default.
+   * "fill" = center-crop to fill the 9:16 frame (old behavior).
+   * Only affects clips where width > height; portrait/square always crop.
+   */
+  landscape_fit?: "fit" | "fill";
   /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
   source_idea_seed_text?: string | null;
@@ -408,6 +415,7 @@ export function updatePlanItem(
     scheduled_date?: string | null;
     edit_format?: string | null;
     filming_guide?: FilmingShot[];
+    landscape_fit?: "fit" | "fill";
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {

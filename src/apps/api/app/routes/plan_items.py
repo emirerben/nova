@@ -160,6 +160,9 @@ class PlanItemResponse(BaseModel):
     # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
+    # Landscape-clip fit preference (0057+). "fit" (letterbox, default) | "fill" (crop).
+    # Only affects clips where width > height; portrait/square always crop.
+    landscape_fit: str = "fit"
     # BYO-Ideas provenance (M1 T5): the seed whose subject this item honours.
     # NULL = market-bank origin or the item predates T5. Both fields are resolved
     # server-side so the badge is a pure function of the item on the client.
@@ -229,6 +232,9 @@ def plan_item_response(
         else "create_new",
         edit_format=item.edit_format,
         voiceover_gcs_path=item.voiceover_gcs_path,
+        landscape_fit=(
+            _lf if isinstance(_lf := getattr(item, "landscape_fit", None), str) else "fit"
+        ),
         source_idea_seed_id=item.source_idea_seed_id,
         source_idea_seed_text=(seed_text_by_id or {}).get(item.source_idea_seed_id)
         if item.source_idea_seed_id
@@ -323,6 +329,9 @@ class PlanItemEdit(BaseModel):
     edit_format: str | None = None
     # Accept an expand proposal's filming_guide directly.
     filming_guide: list[dict] | None = None
+    # Landscape-clip render preference: "fit" (letterbox) | "fill" (crop-to-fill).
+    # Ignored for portrait/square clips — they always crop regardless.
+    landscape_fit: str | None = None
 
 
 @router.patch("/{item_id}", response_model=PlanItemResponse)
@@ -360,6 +369,8 @@ async def edit_plan_item(
 
         item.filming_guide = list(updates["filming_guide"])
         _flag(item, "filming_guide")
+    if "landscape_fit" in updates and updates["landscape_fit"] in ("fit", "fill"):
+        item.landscape_fit = updates["landscape_fit"]
     if updates:
         item.user_edited = True
     await db.commit()

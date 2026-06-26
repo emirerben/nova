@@ -219,6 +219,11 @@ def _run_generative_job(job_id: str) -> None:
         # clip_paths are the guide's shot clips, in guide order (derived at
         # dispatch by _dispatch_item_render). 0/absent on public/legacy jobs.
         narrative_shot_count: int = int(all_candidates.get("narrative_shot_count") or 0)
+        # Landscape-clip fit preference (plan-item editor, 0057+). "fit" = letterbox
+        # landscape clips (black bars, never enlarged). "fill" = crop to fill (legacy
+        # default). Absent on public/legacy jobs → defaults to "fill" → byte-identical
+        # crop behavior everywhere those jobs previously ran.
+        landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -470,6 +475,7 @@ def _run_generative_job(job_id: str) -> None:
                         style_set_id=style_set_id,
                         user_style_knobs=user_style_knobs,
                         language=language,
+                        landscape_fit=landscape_fit,
                     )
                 elif spec.get("archetype") == "narrated":
                     result = _render_narrated_variant(
@@ -480,6 +486,7 @@ def _run_generative_job(job_id: str) -> None:
                         narrative_order=narrative_order,
                         clip_id_to_local=clip_id_to_local,
                         variant_dir=variant_dir,
+                        landscape_fit=landscape_fit,
                     )
                 else:
                     result = _render_generative_variant(
@@ -502,6 +509,7 @@ def _run_generative_job(job_id: str) -> None:
                         ),
                         author_quote_fn=_author_quote,
                         language=language,
+                        landscape_fit=landscape_fit,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -1862,6 +1870,9 @@ def _run_regenerate_variant(
         voiceover_gcs_path: str | None = (job.all_candidates or {}).get(
             "voiceover_gcs_path"
         ) or None
+        # Re-renders inherit the landscape-fit preference too — otherwise the
+        # toggle would silently revert to crop on the first song-swap / retext.
+        landscape_fit_regen: str = (job.all_candidates or {}).get("landscape_fit") or "fill"
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -2270,6 +2281,7 @@ def _run_regenerate_variant(
             cluster_hero_size_px_override=resolved_cluster_hero_size_override,
             cluster_body_size_px_override=resolved_cluster_body_size_override,
             cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+            landscape_fit=landscape_fit_regen,
         )
 
     if result.get("ok"):
@@ -3334,6 +3346,7 @@ def _render_generative_variant(
     cluster_hero_size_px_override: int | None = None,
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
+    landscape_fit: str = "fill",
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -3639,6 +3652,7 @@ def _render_generative_variant(
             # Post-resolution source windows per slot — the clip editor's
             # ground truth for what each slot actually rendered.
             resolved_plans_out=resolved_plans,
+            landscape_fit=landscape_fit,
         )
 
         # ai_timeline persistence (clip timeline editor): rewritten on every
@@ -3940,6 +3954,7 @@ def _render_talking_head_variant(
     intro_size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
     language: str = "en",
+    landscape_fit: str = "fill",
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -4008,6 +4023,7 @@ def _render_talking_head_variant(
             tmpdir=variant_dir,
             job_id=job_id,
             spine_clip_id=spine_clip_id,
+            landscape_fit=landscape_fit,
         )
 
         final_path = base_path
@@ -4138,6 +4154,7 @@ def _render_narrated_variant(
     narrative_order: list[str] | None,
     clip_id_to_local: dict[str, str],
     variant_dir: str,
+    landscape_fit: str = "fill",
 ) -> dict[str, Any]:
     """Render one narrated walkthrough variant."""
     from app.pipeline.narrated_assembler import assemble_narrated  # noqa: PLC0415
@@ -4276,6 +4293,7 @@ def _render_narrated_variant(
             voiceover_local,
             final_path,
             variant_dir,
+            landscape_fit=landscape_fit,
         )
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("narrated variant produced empty output")

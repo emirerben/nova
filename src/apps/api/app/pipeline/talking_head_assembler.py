@@ -32,7 +32,7 @@ from dataclasses import dataclass
 import structlog
 
 from app.pipeline.probe import probe_video
-from app.pipeline.reframe import _encoding_args, reframe_and_export
+from app.pipeline.reframe import _encoding_args, reframe_and_export, resolve_output_fit
 from app.services.clip_speech import speech_coverage
 from app.services.pipeline_trace import record_pipeline_event
 
@@ -262,6 +262,7 @@ def assemble_talking_head(
     tmpdir: str,
     job_id: str | None = None,
     spine_clip_id: str | None = None,
+    landscape_fit: str = "fill",
 ) -> str:
     """Render a talking-head edit: spine audio under B-roll cutaways.
 
@@ -307,8 +308,17 @@ def assemble_talking_head(
     usable_s = min(spine_dur, target_duration_s) if target_duration_s else spine_dur
 
     spine_reframed = f"{tmpdir}/spine_{_safe_stem(selection.spine_clip_id)}.mp4"
+    spine_probe = (probe_map or {}).get(selection.spine_clip_id)
     try:
-        reframe_and_export(spine_path, 0.0, spine_dur, _ASPECT, None, spine_reframed)
+        reframe_and_export(
+            spine_path,
+            0.0,
+            spine_dur,
+            _ASPECT,
+            None,
+            spine_reframed,
+            output_fit=resolve_output_fit(spine_probe, landscape_fit=landscape_fit),
+        )
     except Exception as exc:  # noqa: BLE001 — ReframeError or any probe/IO failure degrades
         raise SpineExtractionError(
             f"failed to reframe spine clip {selection.spine_clip_id}: {exc}"
@@ -324,8 +334,17 @@ def assemble_talking_head(
             continue
         # Index-prefixed so two clip_ids that sanitize to the same stem can't collide.
         reframed = f"{tmpdir}/broll_{i}_{_safe_stem(cid)}.mp4"
+        broll_probe = (probe_map or {}).get(cid)
         try:
-            reframe_and_export(path, 0.0, dur, _ASPECT, None, reframed)
+            reframe_and_export(
+                path,
+                0.0,
+                dur,
+                _ASPECT,
+                None,
+                reframed,
+                output_fit=resolve_output_fit(broll_probe, landscape_fit=landscape_fit),
+            )
         except Exception as exc:  # noqa: BLE001 — drop this window, keep the job
             log.warning(
                 "talking_head_broll_reframe_failed", job_id=job_id, clip_id=cid, error=str(exc)
