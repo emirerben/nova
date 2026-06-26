@@ -207,9 +207,11 @@ def inject_intro_overlay(recipe: dict, hero_slot_index: int, overlay: dict | Non
 # drop the tail, over-shooting is free.
 _HOLD_TO_END_S = 3600.0
 
-# How long the hook text shows on screen. The intro animates in over reveal_window_s
-# (≤ MAX_INTRO_S = 3.0s) then holds as a static block until this cutoff. Callers
-# that want the old "hold to EOF" behaviour pass hook_window_s=_HOLD_TO_END_S explicitly.
+# Optional cutoff for the hook text. When passed explicitly to
+# build_persistent_intro_overlays / inject_persistent_intro the static hold ends at
+# min(hook_window_s, _HOLD_TO_END_S); the default is _HOLD_TO_END_S (text persists for
+# the full video — matching the browser preview). Callers that want a timed hook pass
+# hook_window_s=HOOK_WINDOW_S (or any desired cutoff).
 HOOK_WINDOW_S: float = 3.0
 
 
@@ -341,7 +343,7 @@ def build_persistent_intro_overlays(
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
     language: str = "en",
-    hook_window_s: float = HOOK_WINDOW_S,
+    hook_window_s: float = _HOLD_TO_END_S,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -355,9 +357,11 @@ def build_persistent_intro_overlays(
     contract) selects the cluster engine's style profile — see
     `_build_cluster_intro_overlays`; it never affects the linear path.
 
-    A persistent intro keeps the hero text on screen for the WHOLE video: animate it in
-    over the opening, then hold the settled text statically until the video ends. The
-    Skia renderer caps ANIMATED overlays at `MAX_OVERLAY_FRAMES` (~4s), so a single
+    By default the intro text persists for the WHOLE video (matching the browser
+    preview): animate in over the opening, then hold statically until EOF. Pass
+    `hook_window_s=HOOK_WINDOW_S` (3s) or any other cutoff to time-box the hold.
+
+    The Skia renderer caps ANIMATED overlays at `MAX_OVERLAY_FRAMES` (~4s), so a single
     animated overlay stretched across a longer video would vanish at the cap. Hence two
     overlays:
 
@@ -489,7 +493,7 @@ def inject_persistent_intro(
     word_roles: list[str] | None = None,
     cluster_style: dict | None = None,
     language: str = "en",
-    hook_window_s: float = HOOK_WINDOW_S,
+    hook_window_s: float = _HOLD_TO_END_S,
     **style_kwargs,
 ) -> dict:
     """Inject the persistent hero intro (reveal + static hold) into the hero slot.
