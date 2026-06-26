@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.3] — 2026-06-26
+
+### Fixed
+- **Beat detection no longer emits `AudioFileOpen failed ('wht?')` noise on macOS.** Added `-hide_banner -v error` to the FFmpeg command in `_detect_music_beats` so macOS CoreAudio probe warnings are suppressed; actual FFmpeg errors still surface normally.
+
 ## [0.5.3.2] — 2026-06-26
 
 ### Internal
@@ -11,6 +16,7 @@ All notable changes to this project will be documented in this file.
 - Added DONE implementation plans from the June 12 audit (`plans/001`–`004`).
 - Fixed `.gitignore` to cover `.venv-test/`, `.sources/`, `supabase/.temp/`, and local Claude settings backups — prevents these machine-local dirs from leaking into future commits.
 - Added root-level `package.json` (TypeScript + React type stubs for the repo root; version field mirrors `VERSION`).
+
 
 ## [0.5.3.1] — 2026-06-26
 
