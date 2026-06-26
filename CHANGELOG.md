@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.4] — 2026-06-27
+
+### Added
+- **Landscape clips — read-only applied-fit display post-render.** After the first render the Fit/Fill interactive toggle is replaced by a compact read-only label ("Landscape clips — Fit · Keep horizontal, black bars top & bottom") so the applied preference stays visible. Pre-render behavior is unchanged.
+
+### Internal
+- Extracted `LANDSCAPE_FIT_OPTIONS` module-level const in `page.tsx` (DRY — shared by the interactive toggle and the read-only display).
+- 6-test Jest suite covering the Fit/Fill toggle: pre-render visibility, click dispatch, no-op on active, active-state styling, hidden-while-generating, read-only post-render.
+
 ## [0.5.3.3] — 2026-06-26
 
 ### Fixed
