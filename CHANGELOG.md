@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.1] — 2026-06-26
+
+### Fixed
+- **Media overlay card video syncs to the main edit player.** Overlay video cards no longer play independently — they sync play/pause and seek to the main variant player, so you see exactly which frame the card is on at each moment in the edit.
+- **Clip trim window survives Apply and page reload.** The source clip's total duration is probed at upload time and persisted as `clip_duration_s` on the overlay so the trim bounds are never lost when ephemeral state goes away.
+- **Overlay position presets resolve immediately for CSS preview.** Choosing Top/Center/Bottom snaps the card visually on the first click without waiting for Apply.
+- **Card `end_s` is capped to the edit duration at creation** — cards can no longer extend past the end of the variant.
+- Variant duration probed from the actual video (was hardcoded 30 s).
+- Blob URL leak on card remove fixed (revoke only when URL exists).
+
+### Internal
+- Overlay Celery tasks routed to dedicated `overlay-jobs` queue; `dev-auto.sh` starts a `--pool=solo` worker for that queue (macOS prefork+CLIP SIGSEGV fix).
+- `fly.toml`: worker `-Q` list extended to include `overlay-jobs` for prod.
+- Pipeline: clip-level trim applied before scale in `media_overlay.py`; scale uses `:-2,format=yuv420p` (even height + correct colorspace).
+- Backend schema + TS interface: `clip_duration_s: float | None` added to `MediaOverlay`.
+
 ## [0.5.3.0] — 2026-06-26
 
 ### Added

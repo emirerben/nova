@@ -115,20 +115,39 @@ def build_media_overlay_command(
 
         # Build the per-card filter chain.
         card_filter_parts: list[str] = []
+        is_video_card = not is_image_file(local) and not local.endswith(
+            (".jpg", ".jpeg", ".png", ".gif")
+        )
 
-        # Scale to card width; preserve aspect.
-        card_filter_parts.append(f"[{in_idx}:v]scale={cw}:-1")
+        # For video cards: apply clip-level trim before scale so we only process
+        # the user-selected segment. trim+setpts resets PTS to 0 within the segment.
+        if is_video_card and (card.clip_trim_start_s or card.clip_trim_end_s):
+            ts = card.clip_trim_start_s or 0.0
+            if card.clip_trim_end_s is not None:
+                card_filter_parts.append(
+                    f"[{in_idx}:v]trim=start={ts:.3f}:end={card.clip_trim_end_s:.3f}"
+                    f",setpts=PTS-STARTPTS"
+                )
+            else:
+                card_filter_parts.append(f"[{in_idx}:v]trim=start={ts:.3f},setpts=PTS-STARTPTS")
+        else:
+            # No trim — enter the scale step directly.
+            card_filter_parts.append(f"[{in_idx}:v]null")
 
-        # For video cards: freeze last frame to fill the window if the card is
+        # Scale to card width; -2 rounds height to nearest even number so
+        # yuv420p chroma subsampling doesn't misinterpret odd dimensions.
+        # format=yuv420p normalises pixel format before the overlay compositor
+        # to prevent implicit BT.601/709 colour-space conversions.
+        card_filter_parts.append(f"scale={cw}:-2,format=yuv420p")
+
+        # For video cards: freeze last frame to fill the window if the clip is
         # shorter than (end_s - start_s). `tpad=stop_mode=clone:stop=-1` supplies
         # an infinite clone of the last frame; the `enable` gate bounds visibility.
-        if not is_image_file(local) and not local.endswith((".jpg", ".jpeg", ".png", ".gif")):
+        if is_video_card:
             card_filter_parts.append("tpad=stop_mode=clone:stop=-1")
 
         # PTS shift so the card plays from its own start during the window.
-        card_filter_parts.append(
-            f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]"
-        )
+        card_filter_parts.append(f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]")
 
         filter_parts.append(",".join(card_filter_parts))
 

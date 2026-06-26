@@ -1,7 +1,7 @@
 """Pure unit tests for build_media_overlay_command (no ffmpeg, no I/O).
 
 Guards:
-- Per-card scale filter present (scale={cw}:-1).
+- Per-card scale filter present (scale={cw}:-2,format=yuv420p — even height + correct colorspace).
 - center → top-left overlay=x:y math on 1080x1920 canvas.
 - enable='between(t,s,e)' present.
 - Video cards get tpad clone; image cards get -loop 1.
@@ -92,7 +92,8 @@ class TestImageCard:
         expected_w = card.card_width_px()  # round(0.4 * 1080) = 432
         cmd = _build([card])
         fc = cmd[cmd.index("-filter_complex") + 1]
-        assert f"scale={expected_w}:-1" in fc
+        # -2 rounds height to nearest even (yuv420p chroma-subsampling safe); format=yuv420p
+        assert f"scale={expected_w}:-2,format=yuv420p" in fc
 
     def test_enable_gate_present(self):
         card = _card_img(start_s=2.0, end_s=5.0)

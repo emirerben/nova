@@ -666,8 +666,7 @@ def dispatch_set_media_overlays(
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        f"Overlay asset path must be under '{_user_prefix}': "
-                        f"{card.src_gcs_path!r}"
+                        f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
                     ),
                 )
             if card.end_s <= card.start_s:
@@ -697,10 +696,15 @@ def dispatch_set_media_overlays(
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-    regenerate_generative_variant.delay(
-        str(job.id),
-        variant_id,
-        media_overlays_override=validated,
+    # Route overlay-only tasks to the dedicated overlay queue so they land on
+    # the --pool=solo worker (overlay-jobs) rather than the prefork worker.
+    # On macOS the CLIP model causes SIGSEGV in forked prefork children; the
+    # solo worker avoids the fork entirely. Prod: fly.toml worker listens on
+    # celery,plan-jobs,overlay-jobs so no extra process needed.
+    regenerate_generative_variant.apply_async(
+        args=[str(job.id), variant_id],
+        kwargs={"media_overlays_override": validated},
+        queue="overlay-jobs",
     )
 
 

@@ -137,7 +137,7 @@ class TestVariantFinalizeKeys:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Dict):
                 continue
-            keys = [k.s if isinstance(k, ast.Constant) else None for k in node.keys]
+            keys = [k.value if isinstance(k, ast.Constant) else None for k in node.keys]
             if "base_video_path" in keys:
                 found_base += 1
                 if "media_overlays" in keys:

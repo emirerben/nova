@@ -72,6 +72,16 @@ class MediaOverlay(BaseModel):
     start_s: float = Field(default=0.0, ge=0.0)
     end_s: float = Field(default=3.0, ge=0.0)
 
+    # Trim bounds within the uploaded clip itself (video cards only).
+    # None = use the full clip. clip_trim_start_s defaults to 0 when absent.
+    clip_trim_start_s: float | None = Field(default=None, ge=0.0)
+    clip_trim_end_s: float | None = Field(default=None, ge=0.0)
+
+    # Source clip's total duration in seconds (video cards only).
+    # Probed client-side at upload time and persisted so the trim UI can show
+    # correct bounds without re-probing after Apply or page reload.
+    clip_duration_s: float | None = Field(default=None, ge=0.0)
+
     # z-order (higher = rendered later = on top). Defaults to list position.
     z: int = Field(default=0, ge=0)
 
@@ -119,9 +129,7 @@ class MediaOverlay(BaseModel):
 def validate_overlay_gcs_path(path: str) -> None:
     """Raise ValueError if the path is not under the persistent overlay prefix."""
     if not path.startswith(_OVERLAY_GCS_PREFIX):
-        raise ValueError(
-            f"Overlay asset must be under '{_OVERLAY_GCS_PREFIX}', got: {path!r}"
-        )
+        raise ValueError(f"Overlay asset must be under '{_OVERLAY_GCS_PREFIX}', got: {path!r}")
 
 
 def coerce_media_overlays(raw: list | None) -> list[MediaOverlay] | None:

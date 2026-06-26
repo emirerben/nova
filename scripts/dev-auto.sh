@@ -107,6 +107,22 @@ log "Starting Celery worker (watchfiles auto-restart on .py changes)..."
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"
 
+# ── 7b. Overlay worker (--pool=solo, no fork) ────────────────────────────────
+# Media-overlay apply tasks load FFmpeg + GCS but NOT the CLIP model.  On macOS,
+# forked prefork children inherit the CLIP singleton's C-library handles and
+# crash (SIGSEGV) when they first touch those handles.  A solo worker avoids
+# the fork entirely.  overlay-jobs is a lightweight, fast queue (< 60s per
+# task) so solo concurrency is fine.
+log "Starting overlay worker (--pool=solo for macOS fork-safety)..."
+(
+  cd "$REPO/src/apps/api"
+  exec .venv/bin/celery -A app.worker:celery_app worker \
+    --pool=solo --loglevel=info \
+    -Q overlay-jobs \
+    -n worker-overlay@%h
+) >> "$DEV_DIR/worker.log" 2>&1 &
+echo $! >> "$PID_FILE"
+
 # ── 8. Start web (Next.js HMR) ───────────────────────────────────────────────
 log "Starting Next.js on :3000..."
 (
