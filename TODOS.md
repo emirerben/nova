@@ -8,6 +8,22 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## CSS Motion System — Follow-ups (from transitions.dev slice, PR #TODO)
+
+These were deliberately deferred from the initial slice to keep scope tight.
+
+### T-MOTION-1 — Extract `useNextFrameCallback` hook
+**What:** The `requestAnimationFrame(() => setState(...)) / return () => cancelAnimationFrame(raf)` pattern is copy-pasted in `TemplatePreviewModal.tsx`, `OnboardingShell.tsx` (StepSlide), and `VariantRenderCard.tsx`. Extract into `src/apps/web/src/lib/hooks.ts` as `useNextFrameCallback(fn, deps)`.
+**Effort:** XS (CC: ~10 min)
+
+### T-MOTION-2 — Wire `t-stagger` exit via IntersectionObserver
+**What:** `.t-stagger.is-hiding` CSS is defined but `is-hiding` is never applied. Add an IntersectionObserver on the hero `<section>` to apply/remove `is-shown`/`is-hiding` as it enters/leaves the viewport.
+**Effort:** S (CC: ~20 min)
+
+### T-MOTION-3 — Extend motion to remaining surfaces (t-tabs, t-accordion, spinner)
+**What:** The skill ships `t-tabs` (tab-switch slide), `t-accordion` (height expand), and `t-success-check` (checkmark draw). Apply where appropriate once UX direction is confirmed.
+**Effort:** M per surface (3 surfaces)
+
 ## Narrated Walkthrough — frontend slice (backend shipped 2026-06-22)
 
 Backend is complete and tested (narrated_alignment, narrated_assembler, _render_narrated_variant, dispatch). Kill switch `narrated_archetype_enabled=False` (default). These are the remaining frontend tasks before flipping the switch.

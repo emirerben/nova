@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2.0] — 2026-06-26
+
+### Added
+- **CSS motion system — four production-ready transitions from transitions.dev.** Adds a curated slice of four CSS-only, `prefers-reduced-motion`-safe transitions that cover every major user surface:
+  - **`t-modal` on TemplatePreviewModal** — scale-up entrance / scale-down exit via a three-state animState machine (`closed → open → closing → closed`). Backdrop fade also guards against reduced motion via Tailwind `motion-safe:`.
+  - **`step-slide` on OnboardingShell** — slide-in entrance on each step change; `key={step}` causes React to remount the wrapper, replaying the animation naturally.
+  - **`t-skel` on VariantRenderCard** — cross-blur skeleton→content reveal once the variant finishes rendering; start `revealed=true` on mount when already ready; one rAF delay so the skeleton is fully painted before the flip.
+  - **`t-stagger` on the landing hero** — staggered blurred-rise entrance on the four headline lines; static `is-shown` class (no IntersectionObserver needed at MVP).
+- All motion tokens registered in **DESIGN.md §6** as the single source of truth; no `_root.css` imported wholesale.
+- **8 animation-state tests** covering the reveal, open, close, and stagger paths (coverage gate: PASS at 73%).
+
+### Internal
+- Deferred follow-up items logged in TODOS.md: `useNextFrameCallback` hook extraction (DRY), `t-tabs`/`t-accordion`, spinner consolidation, `is-hiding` scroll-out for stagger.
+
 ## [0.5.1.0] — 2026-06-26
 
 ### Fixed
