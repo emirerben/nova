@@ -6,7 +6,7 @@ export { ProgressTheater } from "./ProgressTheater";
 export { PhaseChipRow } from "./PhaseChipRow";
 export { StatusHeadline } from "./StatusHeadline";
 export { EtaBar } from "./EtaBar";
-export { VariantRenderCard } from "./VariantRenderCard";
+export { VariantRenderCard, ShimmerSweep } from "./VariantRenderCard";
 export type { VariantRenderCardVariant } from "./VariantRenderCard";
 export { PayoffField } from "./PayoffField";
 export { UploadBar } from "./UploadBar";

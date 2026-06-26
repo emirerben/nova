@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { StableVideo } from "@/components/StableVideo";
 import {
   changeVariantStyle,
   editVariant,
@@ -86,12 +87,7 @@ function FocusedVariantPanel({
     return () => clearInterval(t);
   }, [awaitingTimelineRender, session.isSaving, refresh]);
 
-  // Pin the first output URL so a subsequent poll doesn't clear the video.
-  const outputSrcRef = useRef<string | null>(null);
-  if (variant.output_url && outputSrcRef.current === null) {
-    outputSrcRef.current = variant.output_url;
-  }
-  const pinnedOutputSrc = outputSrcRef.current ?? variant.output_url;
+  // StableVideo handles URL stability; no manual pin ref needed.
 
   const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
@@ -119,9 +115,9 @@ function FocusedVariantPanel({
             </div>
           ) : showWysiwyg ? (
             <>
-              <video
-                key={variant.base_video_url!}
-                src={variant.base_video_url!}
+              <StableVideo
+                src={variant.base_video_url}
+                identity={variant.base_video_path ?? undefined}
                 autoPlay
                 loop
                 muted
@@ -157,9 +153,10 @@ function FocusedVariantPanel({
             <div className="flex h-full items-center justify-center px-3 text-center text-sm text-[#3f3f46]">
               This variant didn&apos;t render
             </div>
-          ) : pinnedOutputSrc ? (
-            <video
-              src={pinnedOutputSrc}
+          ) : variant.output_url ? (
+            <StableVideo
+              src={variant.output_url}
+              identity={variant.render_finished_at ?? undefined}
               controls
               className="h-full w-full object-contain"
             />
@@ -431,8 +428,9 @@ export function EditPayoff({
                         .join(" ")}
                     >
                       {isReady && v.output_url ? (
-                        <video
+                        <StableVideo
                           src={v.output_url}
+                          identity={v.render_finished_at ?? undefined}
                           className="h-full w-full object-cover"
                           muted
                           playsInline

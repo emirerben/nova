@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { StableVideo } from "@/components/StableVideo";
 import {
   INTRO_SIZE_MAX,
   INTRO_SIZE_MIN,
@@ -103,28 +104,12 @@ export function VariantCard({
   // them). Size nudge stays enabled; Classic remains the opt-out.
   const sequenceSynced = variant.intro_mode === "sequence";
 
-  // Pin the base-video src for the whole session: every poll re-signs the URL
-  // (new query string), and swapping <video src> restarts playback. On a media
-  // error (expired signature in a very long session) fall forward to the
-  // freshest signed URL from the latest poll.
-  const baseSrcRef = useRef<string | null>(null);
-  const [baseSrcNonce, setBaseSrcNonce] = useState(0);
-  if (editActive && baseSrcRef.current === null && variant.base_video_url) {
-    baseSrcRef.current = variant.base_video_url;
-  }
-  if (!editActive && baseSrcRef.current !== null) {
-    baseSrcRef.current = null;
-  }
-  void baseSrcNonce; // re-render trigger only
-
-  // Pin the result output_url for the ready-state preview.  Every poll
-  // re-signs output_url with a new query string; binding <video src> directly
-  // reloads the video on every 2s tick.  Same pattern as baseSrcRef above.
-  const outputSrcRef = useRef<string | null>(null);
-  if (variant.output_url && outputSrcRef.current === null) {
-    outputSrcRef.current = variant.output_url;
-  }
-  const pinnedOutputSrc = outputSrcRef.current ?? variant.output_url;
+  // StableVideo handles URL stability for both the base and output videos:
+  // - base_video_path is the GCS key (stable across re-signs, changes only when
+  //   a clip edit produces a new base render).
+  // - render_finished_at advances when a new output render completes, signalling
+  //   StableVideo to adopt the new output_url (no page refresh needed).
+  // No manual pin refs or nonce state are required here.
 
   // Voice/footage mix for voiceover variants.
   const isVoiceover = variant.variant_id.startsWith("voiceover");
@@ -223,26 +208,16 @@ export function VariantCard({
 
         {!hideVideoWell && (
           <div className={`relative ${videoWellClass}`}>
-            {baseSrcRef.current ? (
-              <video
-                src={baseSrcRef.current}
+            {variant.base_video_url ? (
+              <StableVideo
+                src={variant.base_video_url}
+                identity={variant.base_video_path ?? undefined}
                 controls
                 loop
                 autoPlay
                 muted
                 playsInline
                 className="h-full w-full object-contain"
-                onError={() => {
-                  // Expired signature mid-session → fall forward to the freshest
-                  // signed URL the poll delivered.
-                  if (
-                    variant.base_video_url &&
-                    baseSrcRef.current !== variant.base_video_url
-                  ) {
-                    baseSrcRef.current = variant.base_video_url;
-                    setBaseSrcNonce((n) => n + 1);
-                  }
-                }}
               />
             ) : (
               <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
@@ -339,17 +314,12 @@ export function VariantCard({
             <div className={`flex h-full items-center justify-center px-3 text-center text-sm ${failedTextClass}`}>
               {variantFailureCopy(variant.error_class)}
             </div>
-          ) : pinnedOutputSrc ? (
-            <video
-              src={pinnedOutputSrc}
+          ) : variant.output_url ? (
+            <StableVideo
+              src={variant.output_url}
+              identity={variant.render_finished_at ?? undefined}
               controls
               className="h-full w-full object-contain"
-              onError={() => {
-                // Expired signature — fall forward to the freshest signed URL.
-                if (variant.output_url && variant.output_url !== outputSrcRef.current) {
-                  outputSrcRef.current = variant.output_url;
-                }
-              }}
             />
           ) : (
             <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>

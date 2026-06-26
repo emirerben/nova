@@ -1,13 +1,18 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { StableVideo } from "../StableVideo";
 import { errorCopy, variantDisplayName } from "./constants";
 import { formatElapsed } from "./logic";
+
+/** How long a variant can stay "rendering" before we surface a stall hint. */
+const STALL_HINT_MS = 300_000; // 5 min
 
 export interface VariantRenderCardVariant {
   variant_id: string;
   render_status: string | null;
   render_started_at?: string | null;
+  render_finished_at?: string | null;
   output_url?: string | null;
   error?: string | null;
   error_class?: string | null;
@@ -28,7 +33,8 @@ interface VariantRenderCardProps {
  *
  * States:
  * - pending:   shimmer sweep, "Getting ready…"
- * - rendering: shimmer sweep + live elapsed clock from render_started_at
+ * - rendering: shimmer sweep + live elapsed clock from render_started_at;
+ *              after 5 min surfaces a stall hint with "Try again"
  * - ready:     9:16 video player + Download; arrive animation on isNewlyReady
  * - failed:    dashed border, human error copy + "Try again"
  *
@@ -36,7 +42,7 @@ interface VariantRenderCardProps {
  * No red (brand guideline). No raw error text shown.
  */
 export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark" }: VariantRenderCardProps) {
-  const { variant_id, render_status, render_started_at, output_url, error_class } = variant;
+  const { variant_id, render_status, render_started_at, render_finished_at, output_url, error_class } = variant;
   const displayName = variantDisplayName(variant_id);
 
   const [arrivedOnce, setArrivedOnce] = useState(false);
@@ -64,6 +70,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
       {render_status === "ready" ? (
         <ReadyCard
           outputUrl={output_url ?? null}
+          renderFinishedAt={render_finished_at ?? null}
           displayName={displayName}
           isNew={arrivedOnce}
           tone={tone}
@@ -71,7 +78,7 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
       ) : render_status === "failed" ? (
         <FailedCard errorClass={error_class ?? null} onRetry={onRetry} tone={tone} />
       ) : render_status === "rendering" ? (
-        <RenderingCard startedAt={render_started_at ?? null} tone={tone} />
+        <RenderingCard startedAt={render_started_at ?? null} tone={tone} onRetry={onRetry} />
       ) : (
         <PendingCard tone={tone} />
       )}
@@ -96,7 +103,15 @@ function PendingCard({ tone }: { tone: "dark" | "light" }) {
   );
 }
 
-function RenderingCard({ startedAt, tone }: { startedAt: string | null; tone: "dark" | "light" }) {
+function RenderingCard({
+  startedAt,
+  tone,
+  onRetry,
+}: {
+  startedAt: string | null;
+  tone: "dark" | "light";
+  onRetry?: () => void;
+}) {
   const [elapsed, setElapsed] = useState(() => {
     if (!startedAt) return 0;
     return Date.now() - new Date(startedAt).getTime();
@@ -110,15 +125,30 @@ function RenderingCard({ startedAt, tone }: { startedAt: string | null; tone: "d
     return () => clearInterval(id);
   }, [startedAt]);
 
+  const stalled = elapsed >= STALL_HINT_MS;
   const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
   const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-400";
+  const btnClass = tone === "light"
+    ? "rounded border border-zinc-200 px-3 py-1 text-xs text-[#3f3f46] hover:bg-zinc-100"
+    : "rounded border border-zinc-600 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800";
   return (
     <div className={`relative aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`}>
       <ShimmerSweep tone={tone} />
-      <div className="absolute inset-0 flex items-center justify-center">
-        <p className={`text-sm ${textClass}`}>
-          Rendering · {formatElapsed(elapsed)}
-        </p>
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+        {stalled ? (
+          <>
+            <p className={`text-sm ${textClass}`}>Taking longer than usual…</p>
+            {onRetry && (
+              <button onClick={onRetry} className={btnClass}>
+                Try again
+              </button>
+            )}
+          </>
+        ) : (
+          <p className={`text-sm ${textClass}`}>
+            Rendering · {formatElapsed(elapsed)}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -126,31 +156,30 @@ function RenderingCard({ startedAt, tone }: { startedAt: string | null; tone: "d
 
 function ReadyCard({
   outputUrl,
+  renderFinishedAt,
   displayName,
   isNew,
   tone,
 }: {
   outputUrl: string | null;
+  renderFinishedAt: string | null;
   displayName: string;
   isNew: boolean;
   tone: "dark" | "light";
 }) {
-  // Pin the video src for the session lifetime.  Every status poll re-signs the
-  // GCS URL with a fresh query string; swapping <video src> restarts playback.
-  // Only advance to the new URL on a media error (expired sig after a very long
-  // session).  Pattern mirrors VariantCard.tsx baseSrcRef.
-  const pinnedSrcRef = useRef<string | null>(null);
-  if (outputUrl && pinnedSrcRef.current === null) {
-    pinnedSrcRef.current = outputUrl;
-  }
-  const videoSrc = pinnedSrcRef.current ?? outputUrl;
-
   const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
   const ringClass = tone === "light" ? "ring-lime-600/60" : "ring-amber-400/60";
   const emptyTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
   const btnClass = tone === "light"
     ? "border-zinc-200 text-[#3f3f46] hover:bg-zinc-100"
     : "border-zinc-700 text-zinc-300 hover:bg-zinc-800";
+
+  // Use StableVideo so re-signed URLs (new ?X-Goog-Signature every 2s poll) don't
+  // restart playback. ReadyCard unmounts while a re-render is in progress (parent
+  // shows RenderingCard), so StableVideo remounts fresh and adopts the new URL
+  // naturally on re-render completion without a page refresh.
+  const stableVideoSrc = outputUrl ?? undefined;
+
   return (
     <div
       className={[
@@ -163,22 +192,16 @@ function ReadyCard({
         .filter(Boolean)
         .join(" ")}
     >
-      {videoSrc ? (
+      {stableVideoSrc ? (
         <div className="flex h-full flex-col">
-          <video
-            src={videoSrc}
+          <StableVideo
+            src={stableVideoSrc}
+            identity={renderFinishedAt ?? undefined}
             controls
             playsInline
             loop
             className="h-full w-full object-cover"
             aria-label={`${displayName} edit preview`}
-            onError={() => {
-              // Signed URL expired (very long session) — fall forward to the
-              // freshest URL from the latest poll.
-              if (outputUrl && outputUrl !== pinnedSrcRef.current) {
-                pinnedSrcRef.current = outputUrl;
-              }
-            }}
           />
         </div>
       ) : (
@@ -187,16 +210,16 @@ function ReadyCard({
         </div>
       )}
       {/* Download / Share actions */}
-      {videoSrc && (
+      {stableVideoSrc && (
         <div className="flex gap-2 pt-2">
           <a
-            href={videoSrc}
+            href={stableVideoSrc}
             download
             className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
           >
             Download
           </a>
-          <ShareButton url={videoSrc} label={displayName} tone={tone} />
+          <ShareButton url={stableVideoSrc} label={displayName} tone={tone} />
         </div>
       )}
     </div>
@@ -238,10 +261,10 @@ function FailedCard({
 }
 
 // ---------------------------------------------------------------------------
-// Shimmer utility
+// Shimmer utility — exported so Hero and other overlays can reuse it
 // ---------------------------------------------------------------------------
 
-function ShimmerSweep({ tone }: { tone: "dark" | "light" }) {
+export function ShimmerSweep({ tone }: { tone: "dark" | "light" }) {
   const gradClass = tone === "light"
     ? "from-zinc-100 via-zinc-200 to-zinc-100"
     : "from-zinc-900 via-zinc-800 to-zinc-900";
