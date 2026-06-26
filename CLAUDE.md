@@ -68,6 +68,7 @@ Rules:
 - `src/apps/web/src/app/plan/_components/ui/SeedProvenanceBadge.tsx` — "From your idea" lime badge rendered on TodayCard, PlanItemCard, and item detail page; driven by `source_idea_seed_text` from the API
 - `src/apps/api/prompts/` — LLM prompt templates (template analysis, transcription)
 - `agents/` — project-level agent context (VIDEO_CONTEXT.md, STACK.md, DECISIONS.md)
+- `plans/` — DONE implementation plans from the June 12 audit (`plans/README.md` has execution order + status; 001–004 all shipped)
 
 ## Local dev
 ```bash
@@ -281,6 +282,7 @@ class of bug fails on the PR, not on merge-to-main.
 - **For batchable work** across N items, run the decompose workflow: `Workflow({ scriptPath: ".claude/workflows/decompose.js", args: { subtasks: [{title, prompt}, ...] } })`. Running ANY workflow needs explicit opt-in — include the word "workflow" in the request.
 - **Prefer gbrain over grep for semantic lookups.** `gbrain search "<intent>"`, `gbrain code-def <symbol>`, `gbrain code-callers <symbol>`. Grep is still right for exact strings and regex.
 - **Only start a new session when** the work is genuinely unrelated, or after a deliberate `/context-save` → `/context-restore` handoff.
+- **Project agent skills** live in `.agents/skills/` and are symlinked into `.claude/skills/` so they travel with all worktrees. Active skills: `/improve` (full-repo audit + improvement plans) and `/transitions-dev` (21 CSS transition patterns from transitions.dev). Versions pinned in `skills-lock.json`.
 
 ## GBrain Search Guidance (configured by /sync-gbrain)
 <!-- gstack-gbrain-search-guidance:start -->

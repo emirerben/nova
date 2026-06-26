@@ -49,3 +49,15 @@ research/tiktok/raw/
 # gbrain per-worktree pin (machine-local, not shared)
 .gbrain-source
 .cluster-e2e/
+
+# Test virtualenv (separate dir from .venv/, shared across worktrees)
+.venv-test/
+
+# gbrain local source caches / mirrors (machine-local; rebuilt by gbrain sync)
+.sources/
+
+# Supabase CLI local link state
+supabase/.temp/
+
+# Local Claude settings backups
+.claude/settings.local.json.bak*
