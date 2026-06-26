@@ -14,6 +14,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { StableVideo } from "@/components/StableVideo";
 
 import { AgentSection } from "@/app/admin/_shared/AgentSection";
 import { JsonTreeView } from "@/components/JsonTreeView";
@@ -385,7 +386,12 @@ function GenerativeVariants({
                     {v.error ?? "Render failed"}
                   </div>
                 ) : v.output_url ? (
-                  <video src={v.output_url} controls className="h-full w-full object-contain" />
+                  <StableVideo
+                    src={v.output_url}
+                    identity={v.render_finished_at ?? undefined}
+                    controls
+                    className="h-full w-full object-contain"
+                  />
                 ) : (
                   <div className="flex h-full items-center justify-center text-xs text-zinc-600">
                     No preview

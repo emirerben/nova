@@ -46,7 +46,8 @@ import { downloadVideo } from "@/lib/download-video";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
-import { ProgressTheater } from "@/components/progress";
+import { ProgressTheater, ShimmerSweep } from "@/components/progress";
+import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
@@ -1192,8 +1193,9 @@ function FocusedResults({
                       className="group relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 transition-colors hover:border-zinc-400"
                     >
                       {v.output_url ? (
-                        <video
+                        <StableVideo
                           src={v.output_url}
+                          identity={v.render_finished_at ?? undefined}
                           muted
                           preload="metadata"
                           className="h-full w-full object-cover"
@@ -1618,16 +1620,6 @@ function LiveEditPreview({
 }) {
   const introParams = resolveIntroParams(variant, styleSets, session.draft);
 
-  // Pin the base-video src for the session: every poll re-signs the URL (new
-  // query string), and swapping <video src> restarts playback. Fall forward to
-  // the freshest signed URL only on a media error (expired sig mid-session).
-  const baseSrcRef = useRef<string | null>(null);
-  const [baseSrcNonce, setBaseSrcNonce] = useState(0);
-  if (baseSrcRef.current === null && variant.base_video_url) {
-    baseSrcRef.current = variant.base_video_url;
-  }
-  void baseSrcNonce; // re-render trigger only
-
   // Live layout follows the draft (so toggling Classic/Editorial re-lays the
   // overlay instantly), falling back to the variant's persisted layout.
   const previewLayout =
@@ -1635,24 +1627,19 @@ function LiveEditPreview({
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {baseSrcRef.current ? (
-        <video
-          src={baseSrcRef.current}
+      {variant.base_video_url ? (
+        // StableVideo holds the base src across re-signed polls (same base_video_path
+        // identity → no reload) and only swaps when a new base video is rendered
+        // (clip timeline edit changes base_video_path → identity changes → swap).
+        <StableVideo
+          src={variant.base_video_url}
+          identity={variant.base_video_path ?? undefined}
           controls
           loop
           autoPlay
           muted
           playsInline
           className="h-full w-full object-contain"
-          onError={() => {
-            if (
-              variant.base_video_url &&
-              baseSrcRef.current !== variant.base_video_url
-            ) {
-              baseSrcRef.current = variant.base_video_url;
-              setBaseSrcNonce((n) => n + 1);
-            }
-          }}
         />
       ) : (
         <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
@@ -1672,37 +1659,25 @@ function Hero({
   variant: PlanItemVariant | null;
   generating: boolean;
 }) {
-  // Pin the video src for the session lifetime.  Every 2s poll re-signs the GCS
-  // URL with a fresh query string; swapping <video src> restarts playback.
-  // Only advance on media error (expired sig in a very long session).
-  const pinnedSrcRef = useRef<string | null>(null);
-  if (variant?.output_url && pinnedSrcRef.current === null) {
-    pinnedSrcRef.current = variant.output_url;
-  }
-  // Reset pin when switching to a different variant (different video entirely).
-  const prevVariantIdRef = useRef<string | null>(null);
-  if (variant?.variant_id !== prevVariantIdRef.current) {
-    prevVariantIdRef.current = variant?.variant_id ?? null;
-    pinnedSrcRef.current = variant?.output_url ?? null;
-  }
-  const videoSrc = pinnedSrcRef.current ?? variant?.output_url ?? null;
-
   if (!variant) return <SkeletonTile />;
   const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
+
+  // StableVideo identity: composite of variant_id + render_finished_at so it
+  // adopts a new src on BOTH a re-render of the same variant (render_finished_at
+  // advances) and a focus switch to a different variant (variant_id changes).
+  // The old video keeps playing through a re-render; the overlay dims it gently
+  // and the swap happens automatically when render_finished_at advances.
+  const heroIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {videoSrc ? (
-        <video
-          src={videoSrc}
+      {variant.output_url ? (
+        <StableVideo
+          src={variant.output_url}
+          identity={heroIdentity}
           controls
           className="h-full w-full object-contain"
-          onError={() => {
-            // Expired signature — fall forward to the freshest signed URL.
-            if (variant?.output_url && variant.output_url !== pinnedSrcRef.current) {
-              pinnedSrcRef.current = variant.output_url;
-            }
-          }}
         />
       ) : failed ? (
         <div className="flex h-full items-center justify-center px-4 text-center text-sm text-[#3f3f46]">
@@ -1713,14 +1688,37 @@ function Hero({
           {generating ? "Rendering…" : "No preview yet"}
         </div>
       )}
+      {/* While a re-render runs, keep old video playing under a gentle overlay.
+          pointer-events-none ensures the video controls beneath remain usable. */}
       {rendering && variant.output_url && (
-        <div
-          className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-lime-700"
-          role="status"
-        >
-          Rendering new version…
+        <div className="pointer-events-none absolute inset-0" role="status" aria-label="Rendering new version">
+          <div className="absolute inset-0 bg-white/25" />
+          <ShimmerSweep tone="light" />
+          <HeroRenderingLabel startedAt={variant.render_started_at ?? null} />
         </div>
       )}
+    </div>
+  );
+}
+
+/** Status label shown during a same-variant re-render, with a stall hint after 5 min. */
+function HeroRenderingLabel({ startedAt }: { startedAt: string | null }) {
+  const STALL_HINT_MS = 300_000; // 5 min
+  const [elapsed, setElapsed] = useState(() =>
+    startedAt ? Date.now() - new Date(startedAt).getTime() : 0,
+  );
+  useEffect(() => {
+    const id = setInterval(() => {
+      setElapsed(startedAt ? Date.now() - new Date(startedAt).getTime() : 0);
+    }, 5000);
+    return () => clearInterval(id);
+  }, [startedAt]);
+
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
+      <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-lime-700">
+        {elapsed >= STALL_HINT_MS ? "Taking longer than usual…" : "Rendering new version…"}
+      </span>
     </div>
   );
 }

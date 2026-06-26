@@ -1,5 +1,6 @@
 "use client";
 
+import { StableVideo } from "@/components/StableVideo";
 import { cn } from "@/lib/cn";
 import type { PlanItemVariant } from "@/lib/plan-api";
 
@@ -59,7 +60,13 @@ export default function PlanFilmstrip({
             )}
           >
             {v.output_url ? (
-              <video src={v.output_url} muted preload="metadata" className="h-full w-full object-cover" />
+              <StableVideo
+                src={v.output_url}
+                identity={v.render_finished_at ?? undefined}
+                muted
+                preload="metadata"
+                className="h-full w-full object-cover"
+              />
             ) : (
               <div className="h-full w-full bg-zinc-200" />
             )}
