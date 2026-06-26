@@ -175,7 +175,8 @@ lower-probability items deferred so the PR stays scoped.
 **What:** The agent intro line burns verbatim for the FULL video. The `edit-quality-review` judge workflow graded a real guide-ordered render: influencer_readiness 5/10 FAIL, naming static full-duration text "the strongest templated-AI tell". Show the hook only for the first ~2.5-3s, then fade out (or swap to a payoff line when the closing scene lands).
 **Why:** It's the top blocker between "correct edit" and "edit an established influencer would post" now that sequence alignment passes (8.5/10).
 **How:** Overlay end-time support exists in the burn dict (lyrics use timed overlays); intro path pins end=video duration. Plumb a `hook_window_s` through `_resolve_intro_overlay_params` → both renderers (renderer-parity invariant! extend `test_both_renderers_honor_text_anchor_left` pattern) + fast-reburn base unaffected (text burns on base). Run `make verify-overlays` + judge workflow before/after.
-**Effort:** M (CC: ~1-2h incl. parity tests)
+**⚠️ Temporarily reverted (v0.5.1.1, 2026-06-26):** The 3s time-box was shipped in `7758af58` but the browser preview (`LinearIntroTextPreview.tsx` / `ClusterTextPreview.tsx`) was never updated to match — so users saw persistent text on screen but the download cut it off at 3s. Reverted to hold-to-EOF (matching browser) at user request. **When re-implementing:** update the browser preview to also time-box (or fade+swap) so download and preview stay in sync. The `HOOK_WINDOW_S = 3.0` constant and `hook_window_s` param are preserved as opt-in; callers pass `hook_window_s=HOOK_WINDOW_S` to re-enable.
+**Effort:** M (CC: ~1-2h incl. parity tests + browser preview update)
 **Priority:** P2
 **Depends on:** nothing; verify with `.claude/workflows/edit-quality-review.js`
 
