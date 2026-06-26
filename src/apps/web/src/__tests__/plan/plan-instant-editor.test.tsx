@@ -209,14 +209,15 @@ beforeEach(() => {
 });
 
 describe("Plan item page — deferred-burn editor", () => {
-  it("eligible variant shows the live overlay + the normal Caption/Layout/Style controls", async () => {
+  it("eligible variant shows burned output at rest, overlay only while editing", async () => {
     setData(makeItem(), [eligibleVariant]);
     await act(async () => {
       render(<PlanItemPage />);
     });
 
-    // HERO: the live base-video + overlay preview is on screen.
-    expect(screen.getByTestId("intro-text-preview")).toBeInTheDocument();
+    // HERO at rest (draft clean = no uncommitted edits): the burned output_url is shown,
+    // NOT the live DOM overlay. This is preview-parity: what you see at rest IS the download.
+    expect(screen.queryByTestId("intro-text-preview")).toBeNull();
 
     // Editor row is visible with tab buttons.
     // There is NO separate "Edit text & style" entry button anymore.
@@ -240,6 +241,11 @@ describe("Plan item page — deferred-burn editor", () => {
 
     // Download is always visible (not behind a tab).
     expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
+
+    // Making a draft edit flips isDirty → overlay switches on for live WYSIWYG feedback.
+    const slider = screen.getByRole("slider", { name: /intro text size/i });
+    fireEvent.change(slider, { target: { value: "62" } });
+    expect(screen.getByTestId("intro-text-preview")).toBeInTheDocument();
   });
 
   it("changing a control updates the draft and does NOT call the server render endpoint", async () => {

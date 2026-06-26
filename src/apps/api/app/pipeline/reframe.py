@@ -134,11 +134,16 @@ def _encoding_args(
                   sites that PR #102/#105 missed.
     """
     args = [
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", preset,
-        "-crf", crf,
-        "-pix_fmt", "yuv420p",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        preset,
+        "-crf",
+        crf,
+        "-pix_fmt",
+        "yuv420p",
         # ── Closed-GOP, no-B-frame encoding for clean concat boundaries ────
         # Each slot is encoded independently then joined by `_concat_demuxer`
         # with `-c copy` (PR #87). Without these args, libx264 produces
@@ -150,7 +155,8 @@ def _encoding_args(
         # `-bf 0` disables B-frames entirely; `keyint=30:scenecut=0:open_gop=0`
         # forces an I-frame at clip start with no scene-detected mid-clip
         # I-frames. File-size cost: ~5-10% larger per slot; visual cost: zero.
-        "-bf", "0",
+        "-bf",
+        "0",
     ]
     # Only re-enable scenecut for final-output encodes (preset="fast").
     # ultrafast intermediates set scenecut=0 internally — overriding it wastes
@@ -172,15 +178,21 @@ def _encoding_args(
         # iPhone clips often come as bt2020/HLG; without explicit tagging
         # the encoder copies source tags → player misinterprets SDR data
         # as HDR → washed-out look.
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
         # Capped CRF, not ABR — see the rate-control note in the docstring.
         # `-crf` (set above) is the quality driver; `-maxrate`/`-bufsize` are the
         # ceiling. No `-b:v` here, on purpose.
-        "-maxrate", settings.output_video_bitrate,
-        "-bufsize", _double_rate(settings.output_video_bitrate),
-        "-r", str(settings.output_fps),
+        "-maxrate",
+        settings.output_video_bitrate,
+        "-bufsize",
+        _double_rate(settings.output_video_bitrate),
+        "-r",
+        str(settings.output_fps),
     ]
     if include_audio:
         # Force identical body-slot audio layout (44.1kHz stereo AAC 192k) so
@@ -190,8 +202,10 @@ def _encoding_args(
         # audio separately and passes -an) set include_audio=False to skip these.
         args += [*BODY_SLOT_AUDIO_OUT_ARGS]
     args += [
-        "-s", f"{settings.output_width}x{settings.output_height}",
-        "-movflags", "+faststart",
+        "-s",
+        f"{settings.output_width}x{settings.output_height}",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -256,7 +270,8 @@ def reframe_and_export(
 
     # Build video filter chain
     vf_parts = _build_video_filter(
-        aspect_ratio, ass_subtitle_path,
+        aspect_ratio,
+        ass_subtitle_path,
         color_hint=color_hint,
         speed_factor=speed_factor,
         darkening_windows=darkening_windows,
@@ -288,7 +303,10 @@ def reframe_and_export(
 
     if has_overlays:
         cmd = _build_overlay_cmd(
-            input_path, start_s, duration, vf_parts,
+            input_path,
+            start_s,
+            duration,
+            vf_parts,
             text_overlay_pngs or [],
             ass_overlay_paths or [],
             output_path,
@@ -304,7 +322,8 @@ def reframe_and_export(
             cmd += _SILENT_AUDIO_INPUT
             cmd += ["-map", "0:v:0", "-map", "1:a:0", "-shortest"]
         cmd += [
-            "-vf", vf_string,
+            "-vf",
+            vf_string,
             # Intermediate (re-encoded by the final burn). ultrafast keeps per-slot
             # render speed, but its weaker tools macroblock dark gradients and the
             # final fast pass can't recover that. crf=14 (vs the 18 default) spends
@@ -315,8 +334,12 @@ def reframe_and_export(
         ]
 
     log.info(
-        "reframe_start", input=input_path, start=start_s, end=end_s,
-        aspect=aspect_ratio, speed=speed_factor,
+        "reframe_start",
+        input=input_path,
+        start=start_s,
+        end=end_s,
+        aspect=aspect_ratio,
+        speed=speed_factor,
         overlays=len(text_overlay_pngs or []),
         ass_overlays=len(ass_overlay_paths or []),
     )
@@ -371,7 +394,8 @@ def reframe_and_export(
         # exceeds our truncation buffer.
         full_stderr = result.stderr.decode(errors="replace")
         meaningful = [
-            ln for ln in full_stderr.splitlines()
+            ln
+            for ln in full_stderr.splitlines()
             if ln.strip()
             and not ln.startswith(("ffmpeg version", "  built with", "  configuration:", "  lib"))
         ]
@@ -411,9 +435,12 @@ def _build_overlay_cmd(
     """
     cmd = [
         "ffmpeg",
-        "-ss", str(start_s),
-        "-t", str(duration),
-        "-i", input_path,
+        "-ss",
+        str(start_s),
+        "-t",
+        str(duration),
+        "-i",
+        input_path,
     ]
 
     # Add each PNG as an input
@@ -453,17 +480,19 @@ def _build_overlay_cmd(
     for j, ass_path in enumerate(ass_overlay_paths):
         escaped = ass_path.replace("\\", "/").replace(":", "\\:")
         out_label = f"sub{j}"
-        fc_parts.append(
-            f"[{prev_label}]subtitles={escaped}:fontsdir={escaped_fonts}[{out_label}]"
-        )
+        fc_parts.append(f"[{prev_label}]subtitles={escaped}:fontsdir={escaped_fonts}[{out_label}]")
         prev_label = out_label
 
     filter_complex = ";".join(fc_parts)
 
-    cmd.extend([
-        "-filter_complex", filter_complex,
-        "-map", f"[{prev_label}]",
-    ])
+    cmd.extend(
+        [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            f"[{prev_label}]",
+        ]
+    )
     if has_audio:
         cmd.extend(["-map", "0:a?"])
     else:
@@ -553,7 +582,10 @@ def _zscale_available() -> bool:
     try:
         result = subprocess.run(
             ["ffmpeg", "-hide_banner", "-filters"],
-            capture_output=True, text=True, timeout=5, check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
         )
         available = "zscale" in (result.stdout or "")
     except (FileNotFoundError, subprocess.TimeoutExpired):
@@ -569,6 +601,45 @@ def _zscale_available() -> bool:
             ),
         )
     return available
+
+
+def _is_landscape(probe: object) -> bool:
+    """Return True when the source clip is wider than tall.
+
+    Prefers real pixel dimensions (probe.width / probe.height); falls back to
+    probe.aspect_ratio == "16:9" when the probe is absent or dims are zero.
+    """
+    try:
+        w = int(getattr(probe, "width", 0) or 0)
+        h = int(getattr(probe, "height", 0) or 0)
+        if w > 0 and h > 0:
+            return w > h
+    except (TypeError, ValueError):
+        pass
+    return getattr(probe, "aspect_ratio", "") == "16:9"
+
+
+def resolve_output_fit(
+    probe: object,
+    *,
+    landscape_fit: str = "fill",
+    default_fit: str = "crop",
+) -> str:
+    """Per-clip output_fit resolution for the landscape-fit user preference.
+
+    When the user chose ``landscape_fit="fit"`` AND the source is wider than
+    tall, returns ``"letterbox_black"`` — full-width, black bars top & bottom,
+    no zoom.  All other cases (portrait, square, landscape with ``"fill"``
+    preference) return ``default_fit`` unchanged, so callers that don't pass
+    the arg stay byte-identical to today's crop behavior.
+
+    ``landscape_fit`` defaults to ``"fill"`` so template/music callers that
+    don't pass the argument remain byte-identical to the current crop
+    behavior.
+    """
+    if landscape_fit == "fit" and _is_landscape(probe):
+        return "letterbox_black"
+    return default_fit
 
 
 def _build_video_filter(
@@ -668,12 +739,8 @@ def _build_video_filter(
     elif output_fit == "letterbox_black":
         # Pure black bars — match reference TikToks that don't blend the source
         # behind itself. Crisper but reads more "letterbox-y."
-        filters.append(
-            f"scale={ow}:{oh}:force_original_aspect_ratio=decrease"
-        )
-        filters.append(
-            f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:color=black"
-        )
+        filters.append(f"scale={ow}:{oh}:force_original_aspect_ratio=decrease")
+        filters.append(f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:color=black")
     elif aspect_ratio == "16:9":
         filters.append(f"scale=-2:{settings.output_height}")
         filters.append(f"crop={settings.output_width}:{settings.output_height}")
@@ -691,30 +758,24 @@ def _build_video_filter(
             f"scale={settings.output_width}:{settings.output_height}"
             f":force_original_aspect_ratio=increase"
         )
-        filters.append(
-            f"crop={settings.output_width}:{settings.output_height}"
-        )
+        filters.append(f"crop={settings.output_width}:{settings.output_height}")
 
     # 2. Color grading (applied before darkening so darkened areas have the grade)
     for f in _color_hint_filters(color_hint):
         filters.append(f)
 
     # 3. Darkening (colorlevels with enable timing)
-    for start, end in (darkening_windows or []):
+    for start, end in darkening_windows or []:
         filters.append(
             f"colorlevels=rimax=0.45:gimax=0.45:bimax=0.45"
             f":enable='between(t,{start:.3f},{end:.3f})'"
         )
 
     # 4. Narrowing (letterbox drawbox bars, top + bottom)
-    for start, end in (narrowing_windows or []):
+    for start, end in narrowing_windows or []:
         enable = f"enable='between(t,{start:.3f},{end:.3f})'"
-        filters.append(
-            f"drawbox=x=0:y=0:w=iw:h=120:color=black@0.85:t=fill:{enable}"
-        )
-        filters.append(
-            f"drawbox=x=0:y=ih-120:w=iw:h=120:color=black@0.85:t=fill:{enable}"
-        )
+        filters.append(f"drawbox=x=0:y=0:w=iw:h=120:color=black@0.85:t=fill:{enable}")
+        filters.append(f"drawbox=x=0:y=ih-120:w=iw:h=120:color=black@0.85:t=fill:{enable}")
 
     # 5. Rule-of-thirds grid overlay (per-slot)
     if has_grid:
@@ -765,9 +826,7 @@ def _build_video_filter(
             half_t = highlight_thickness // 2
 
             if grid_highlight_windows:
-                enable_parts = [
-                    f"between(t,{s:.3f},{e:.3f})" for s, e in grid_highlight_windows
-                ]
+                enable_parts = [f"between(t,{s:.3f},{e:.3f})" for s, e in grid_highlight_windows]
                 enable_clause = f":enable='{'+'.join(enable_parts)}'"
             else:
                 enable_clause = ""

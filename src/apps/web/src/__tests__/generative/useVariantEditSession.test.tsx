@@ -199,6 +199,35 @@ describe("useVariantEditSession", () => {
     }
   });
 
+  it("isDirty resets to false on commit so LiveEditPreview can show the burned output_url at rest", async () => {
+    // Contract that LiveEditPreview relies on: after commit() fires, isDirty → false
+    // (because fireCommit calls setBaseline(toCommit)) and stays false through
+    // settlement. Only a NEW keystroke makes it true again.
+    const onCommit = jest.fn(async () => {});
+    const { result, rerender } = renderHook(
+      ({ v }) => useVariantEditSession(v, onCommit),
+      { initialProps: { v: makeVariant() } },
+    );
+
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("edited hook"));
+    expect(result.current.isDirty).toBe(true); // unsaved edit → DOM overlay shown
+
+    await act(async () => result.current.commit());
+    expect(result.current.isDirty).toBe(false); // baseline = committed draft → burned output eligible
+    expect(result.current.isSaving).toBe(true); // render still in flight
+
+    rerender({ v: makeVariant({ render_status: "rendering" }) });
+    rerender({ v: makeVariant({ render_status: "ready", intro_text: "edited hook" }) });
+    expect(result.current.isDirty).toBe(false); // still clean → burned output shown
+    expect(result.current.isSaving).toBe(false); // settled
+
+    // A new edit switches back to DOM overlay mode.
+    act(() => result.current.enterEdit());
+    act(() => result.current.setText("another change"));
+    expect(result.current.isDirty).toBe(true);
+  });
+
   it("does NOT pulse 'Saved' when a render fails (failure path is preserved)", async () => {
     const onCommit = jest.fn(async () => {});
     const { result, rerender } = renderHook(

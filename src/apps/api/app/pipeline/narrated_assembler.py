@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.pipeline.narrated_alignment import StepTiming
+from app.pipeline.probe import probe_video
+from app.pipeline.reframe import resolve_output_fit
 from app.pipeline.single_pass import SinglePassInput, SinglePassSpec, run_single_pass
 from app.tasks.template_orchestrate import _mix_user_voiceover
 
@@ -43,11 +45,22 @@ def assemble_narrated(
     voiceover_local_path: str,
     output_path: str,
     tmpdir: str,
+    landscape_fit: str = "fill",
 ) -> None:
     """Hard-cut one visual clip per narrated step, then lay voiceover on top."""
     os.makedirs(tmpdir, exist_ok=True)
     coerced_clips = [_coerce_clip(c) for c in clip_assignments]
     clips_by_step = {c.step_id: c for c in coerced_clips}
+
+    # Pre-build probe map so each unique path is probed only once, even when
+    # the same clip appears in multiple narrated steps.
+    probe_map: dict[str, object] = {}
+    for c in coerced_clips:
+        if c.clip_path not in probe_map:
+            try:
+                probe_map[c.clip_path] = probe_video(c.clip_path)
+            except Exception:  # noqa: BLE001 — probe failure → fall back to crop
+                probe_map[c.clip_path] = None
 
     inputs: list[SinglePassInput] = []
     total_duration_s = 0.0
@@ -56,6 +69,7 @@ def assemble_narrated(
         clip = clips_by_step.get(timing.step_id)
         if clip is None:
             raise ValueError(f"no narrated clip assignment for step_id={timing.step_id}")
+        probe = probe_map.get(clip.clip_path)
         inputs.append(
             SinglePassInput(
                 kind="clip",
@@ -63,7 +77,7 @@ def assemble_narrated(
                 start_s=max(0.0, clip.source_start_s),
                 end_s=max(0.0, clip.source_start_s) + duration_s,
                 aspect_ratio="16:9",
-                output_fit="crop",
+                output_fit=resolve_output_fit(probe, landscape_fit=landscape_fit),
                 has_audio=False,
             )
         )

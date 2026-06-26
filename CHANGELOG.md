@@ -2,13 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.5.3.0] — 2026-06-26
-
-### Changed
-- **Media overlay cards appear instantly on upload** — uploaded image or video overlay cards now render as CSS-positioned previews over the video the moment you pick a file, with no FFmpeg render pass required. The preview is cleared automatically when you tap Apply (so the burned-in result shows cleanly) or switch to a different variant.
+## [0.5.3.1] — 2026-06-26
 
 ### Fixed
-- Blob URLs created for overlay card previews are now revoked in every case that disposes them: card removal, Clear All, Apply, variant switch, and component unmount — preventing memory leaks on long plan-editing sessions.
+- **Media overlay card video syncs to the main edit player.** Overlay video cards no longer play independently — they sync play/pause and seek to the main variant player, so you see exactly which frame the card is on at each moment in the edit.
+- **Clip trim window survives Apply and page reload.** The source clip's total duration is probed at upload time and persisted as `clip_duration_s` on the overlay so the trim bounds are never lost when ephemeral state goes away.
+- **Overlay position presets resolve immediately for CSS preview.** Choosing Top/Center/Bottom snaps the card visually on the first click without waiting for Apply.
+- **Card `end_s` is capped to the edit duration at creation** — cards can no longer extend past the end of the variant.
+- Variant duration probed from the actual video (was hardcoded 30 s).
+- Blob URL leak on card remove fixed (revoke only when URL exists).
+
+### Internal
+- Overlay Celery tasks routed to dedicated `overlay-jobs` queue; `dev-auto.sh` starts a `--pool=solo` worker for that queue (macOS prefork+CLIP SIGSEGV fix).
+- `fly.toml`: worker `-Q` list extended to include `overlay-jobs` for prod.
+- Pipeline: clip-level trim applied before scale in `media_overlay.py`; scale uses `:-2,format=yuv420p` (even height + correct colorspace).
+- Backend schema + TS interface: `clip_duration_s: float | None` added to `MediaOverlay`.
+
+## [0.5.3.0] — 2026-06-26
+
+### Added
+- **Landscape videos stay horizontal in the plan-item editor.** When you upload a wide-screen (16:9) clip, it now letterboxes inside the 9:16 frame — full-width with solid black bars — instead of being enlarged and center-cropped. A new **Fit / Fill** toggle appears on the plan-item page (below the Edit-style picker) so you can choose per item:
+  - **Fit** (default) — landscape clips stay horizontal, black bars top & bottom, never enlarged.
+  - **Fill** — center-crop to fill the vertical frame (previous behavior).
+  Portrait and square clips are unaffected; the toggle has no effect on them.
+- The preference is saved as `landscape_fit` on the plan item and respected across all three render variants (montage, talking-head, narrated) and re-renders (swap-song, retext).
+
+### Internal
+- `resolve_output_fit(probe, *, landscape_fit)` helper in `reframe.py` routes landscape clips to `letterbox_black` per-clip without touching the renderer.
+- DB: `plan_items.landscape_fit TEXT NOT NULL DEFAULT 'fit'` (migration 0057; existing rows backfilled to 'fit').
+- `PlanItemEdit.landscape_fit: Literal["fit","fill"] | None` — invalid values rejected with 422 at deserialization.
+
+## [0.5.2.2] — 2026-06-26
+
+### Fixed
+- **The preview in the browser now shows exactly what you'll download.** When you're not actively editing, the plan-item video player shows the burned server output — byte-identical to the download — instead of the approximate CSS overlay. The WYSIWYG DOM overlay still appears instantly while you're typing or changing style, so you still get 0-latency live preview during edits. Once you save, the player switches to the confirmed burned output.
+
+## [0.5.2.1] — 2026-06-26
+
+### Fixed
+- **Downloaded video now shows intro text for the full clip — matching exactly what you see in the browser editor.** Previously, the hook text burned into the downloaded MP4 disappeared at the 3-second mark even though the browser preview kept it visible the whole time. The root cause was a recently added 3 s time-box (HOOK_WINDOW_S) that applied to the server render but not the client-side preview. The default is now hold-to-EOF, matching the browser. Re-editing an existing item and downloading again will produce the corrected output.
 
 ## [0.5.2.0] — 2026-06-26
 

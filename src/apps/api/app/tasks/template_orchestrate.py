@@ -58,7 +58,7 @@ from app.pipeline.agents.gemini_analyzer import (
     gemini_upload_and_wait,
 )
 from app.pipeline.orientation import OrientationError, normalize_orientation
-from app.pipeline.reframe import ReframeError
+from app.pipeline.reframe import ReframeError, resolve_output_fit
 from app.pipeline.single_pass import (
     SinglePassError,
     SinglePassInput,
@@ -2444,6 +2444,7 @@ def _plan_slots(
     *,
     is_agentic: bool = False,
     allow_slowdown_fill: bool = True,
+    landscape_fit: str = "fill",
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
@@ -2717,7 +2718,20 @@ def _plan_slots(
         # behavior of the non-16:9 reframe branch. That branch now crops to
         # fill (the desired default for user clips), so locked sources must
         # opt in to bars explicitly.
-        slot_output_fit = "letterbox_black" if is_locked else output_fit
+        #
+        # Landscape-fit (plan-item editor): when the user chose "fit", landscape
+        # clips (width > height) are letterboxed with black bars instead of being
+        # scaled-up-and-cropped. resolve_output_fit uses probe.width/height for
+        # accuracy and falls back to aspect_ratio=="16:9". Locked slots always
+        # force letterbox_black regardless (is_locked takes precedence), and the
+        # template/music callers keep landscape_fit="fill" → byte-identical to
+        # today's crop behavior.
+        if is_locked:
+            slot_output_fit = "letterbox_black"
+        else:
+            slot_output_fit = resolve_output_fit(
+                probe, landscape_fit=landscape_fit, default_fit=output_fit
+            )
         slot_color = step.slot.get("color_hint") or global_color_grade or "none"
 
         log.debug(
@@ -3090,6 +3104,7 @@ def _assemble_clips(
     # actually rendered. Consumed by the clip editor to round-trip windows as
     # exact_window steps. Existing callers pass nothing → behavior unchanged.
     resolved_plans_out: list | None = None,
+    landscape_fit: str = "fill",
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3144,6 +3159,7 @@ def _assemble_clips(
         output_fit=output_fit,
         is_agentic=is_agentic,
         allow_slowdown_fill=allow_slowdown_fill,
+        landscape_fit=landscape_fit,
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 

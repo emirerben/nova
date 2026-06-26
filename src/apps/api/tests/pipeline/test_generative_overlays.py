@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from app.pipeline.generative_overlays import (
     _HOLD_TO_END_S,
+    HOOK_WINDOW_S,
     build_intro_overlay,
     build_persistent_intro_overlays,
     inject_intro_overlay,
@@ -213,7 +214,7 @@ def test_inject_no_slots_is_noop():
 
 
 def test_build_persistent_overlays_returns_reveal_and_hold():
-    # Use reveal_window_s < hook_window_s so a hold overlay is produced.
+    # Use reveal_window_s < _HOLD_TO_END_S so a hold overlay is produced.
     overlays = build_persistent_intro_overlays(
         text="i did not expect this",
         effect="karaoke-line",
@@ -227,7 +228,7 @@ def test_build_persistent_overlays_returns_reveal_and_hold():
     assert reveal["end_s"] == 2.0
     assert hold["effect"] == "static"
     assert hold["start_s"] == 2.0
-    assert hold["end_s"] == 3.0  # capped at HOOK_WINDOW_S default
+    assert hold["end_s"] == _HOLD_TO_END_S  # default holds to EOF (matches browser preview)
     # Same screen slot, back-to-back, both no-merge.
     assert reveal["text"] == hold["text"] == "i did not expect this"
     assert reveal["position"] == hold["position"] == "center"
@@ -842,18 +843,19 @@ def test_cluster_intro_default_style_is_none_legacy(monkeypatch):
 
 
 def test_hook_window_caps_hold_end_s():
-    # When hook_window_s is set, the static hold must not extend past it.
+    # When hook_window_s=HOOK_WINDOW_S is passed, the static hold must not extend past it.
+    # This guards the HOOK_WINDOW_S constant: if its value changes, this test fails.
     overlays = build_persistent_intro_overlays(
         text="you won't believe this",
         effect="fade-in",
         reveal_window_s=2.0,
-        hook_window_s=3.0,
+        hook_window_s=HOOK_WINDOW_S,
     )
     reveal, hold = overlays
     assert reveal["start_s"] == 0.0
     assert reveal["end_s"] == 2.0
     assert hold["start_s"] == 2.0
-    assert hold["end_s"] == 3.0  # capped at hook_window_s, not _HOLD_TO_END_S
+    assert hold["end_s"] == HOOK_WINDOW_S  # capped at hook_window_s, not _HOLD_TO_END_S
 
 
 def test_hook_window_omits_hold_when_reveal_fills_window():
@@ -861,8 +863,8 @@ def test_hook_window_omits_hold_when_reveal_fills_window():
     overlays = build_persistent_intro_overlays(
         text="you won't believe this",
         effect="fade-in",
-        reveal_window_s=3.0,
-        hook_window_s=3.0,
+        reveal_window_s=HOOK_WINDOW_S,
+        hook_window_s=HOOK_WINDOW_S,
     )
     assert len(overlays) == 1
     assert overlays[0]["effect"] == "fade-in"
@@ -876,23 +878,37 @@ def test_hook_window_respected_by_inject():
         text="catch your eye",
         effect="pop-in",
         reveal_window_s=2.0,
-        hook_window_s=3.0,
+        hook_window_s=HOOK_WINDOW_S,
     )
     reveal, hold = _hero_overlays(out)
-    assert hold["end_s"] == 3.0
+    assert hold["end_s"] == HOOK_WINDOW_S
 
 
-def test_hook_window_default_is_hook_window_s_constant():
-    from app.pipeline.generative_overlays import HOOK_WINDOW_S
-
-    # Default behaviour: the hold is time-boxed to HOOK_WINDOW_S.
+def test_hook_window_default_holds_to_eof():
+    # Default behaviour (no hook_window_s): the hold runs to EOF — matching the
+    # browser preview which shows the intro text for the full video.
     overlays = build_persistent_intro_overlays(
         text="first seconds matter",
         effect="pop-in",
         reveal_window_s=2.0,
     )
     reveal, hold = overlays
-    assert hold["end_s"] == HOOK_WINDOW_S
+    assert hold["end_s"] == _HOLD_TO_END_S
+
+    # Cluster path also defaults to EOF.
+    cluster_overlays = build_persistent_intro_overlays(
+        text="what is your story here",
+        effect="fade-in",
+        reveal_window_s=2.0,
+        layout="cluster",
+        text_size_px=60,
+    )
+    holds = [o for o in cluster_overlays if o["effect"] == "static"]
+    assert holds, "cluster should produce at least one hold overlay"
+    for h in holds:
+        assert h["end_s"] == _HOLD_TO_END_S, (
+            f"cluster hold end_s {h['end_s']} should be _HOLD_TO_END_S by default"
+        )
 
 
 def test_hook_window_cluster_hold_capped():

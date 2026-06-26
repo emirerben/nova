@@ -625,6 +625,46 @@ export default function PlanItemPage() {
               </div>
             )}
 
+            {/* Landscape-clip fit picker — shown alongside Edit style */}
+            {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Landscape clips
+                </p>
+                <div className="flex gap-2">
+                  {(
+                    [
+                      { value: "fit",  label: "Fit",  desc: "Keep horizontal, black bars top & bottom" },
+                      { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
+                    ] as { value: "fit" | "fill"; label: string; desc: string }[]
+                  ).map(({ value, label, desc }) => {
+                    const active = (item.landscape_fit ?? "fit") === value;
+                    return (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={async () => {
+                          if (active) return;
+                          await updatePlanItem(item.id, { landscape_fit: value }).catch(() => null);
+                          refetch();
+                        }}
+                        className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          active
+                            ? "border-lime-400 bg-lime-50"
+                            : "border-zinc-200 bg-white hover:border-zinc-300"
+                        }`}
+                      >
+                        <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                          {label}
+                        </span>
+                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Expand with AI — only for planned mode; hide in ready (have-videos) mode */}
             {!isNarratedReady && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <div className="mb-4">
@@ -1728,9 +1768,31 @@ function LiveEditPreview({
   const previewLayout =
     (session.draft.layout ?? variant.intro_layout) === "cluster" ? "cluster" : "linear";
 
+  // When the draft is clean (no uncommitted edits, not saving), show the burned
+  // output_url — byte-identical to what the download button serves. Switch to
+  // the WYSIWYG DOM overlay only while the user is actively editing or a reburn
+  // is in flight, giving 0-latency live preview during edits while ensuring
+  // what they see at rest IS what they get.
+  // (fireCommit already calls setBaseline(toCommit) so isDirty resets to false
+  // as soon as a commit fires; it goes true again only on the next keystroke.)
+  const burnedSrc: string | null =
+    !session.isDirty && !session.isSaving ? (variant.output_url ?? null) : null;
+  const burnedIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {variant.base_video_url ? (
+      {burnedSrc ? (
+        <StableVideo
+          src={burnedSrc}
+          identity={burnedIdentity}
+          controls
+          loop
+          autoPlay
+          muted
+          playsInline
+          className="h-full w-full object-contain"
+        />
+      ) : variant.base_video_url ? (
         // StableVideo holds the base src across re-signed polls (same base_video_path
         // identity → no reload) and only swaps when a new base video is rendered
         // (clip timeline edit changes base_video_path → identity changes → swap).
@@ -1749,7 +1811,9 @@ function LiveEditPreview({
           No preview
         </div>
       )}
-      <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
+      {!burnedSrc && (
+        <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
+      )}
     </div>
   );
 }
