@@ -32,4 +32,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # WARNING: rolling back drops any per-item landscape_fit preferences the user
+    # has saved. This is data-safe immediately after deploy (before users interact),
+    # but destructive after real usage. Prefer disabling the UI toggle in app code
+    # over running `alembic downgrade` once the feature has been in production.
     op.drop_column("plan_items", "landscape_fit")

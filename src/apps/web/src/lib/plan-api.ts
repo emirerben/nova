@@ -297,7 +297,7 @@ export interface PlanItem {
    * "fill" = center-crop to fill the 9:16 frame (old behavior).
    * Only affects clips where width > height; portrait/square always crop.
    */
-  landscape_fit?: "fit" | "fill";
+  landscape_fit: "fit" | "fill";
   /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
   source_idea_seed_text?: string | null;

@@ -60,6 +60,12 @@ def test_is_landscape_none_probe():
     assert _is_landscape(None) is False
 
 
+def test_is_landscape_zero_dims_fallback_to_aspect_ratio():
+    """When dims are present but zero, the helper falls back to aspect_ratio."""
+    assert _is_landscape(_Probe(0, 0, "16:9")) is True
+    assert _is_landscape(_Probe(0, 0, "other")) is False
+
+
 # ── 2. resolve_output_fit ────────────────────────────────────────────────────
 
 
@@ -232,3 +238,92 @@ def test_build_generative_job_default_omits_key():
         clip_paths=["slot-uploads/test.mp4"],
     )
     assert "landscape_fit" not in job.all_candidates
+
+
+# ── 5. narrated_assembler probe-failure fallback ─────────────────────────────
+
+
+def test_narrated_assembler_probe_failure_falls_back_to_crop():
+    """probe_video() exception → probe=None → resolve_output_fit returns 'crop'."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from app.pipeline.narrated_assembler import assemble_narrated
+
+    clip = SimpleNamespace(
+        step_id="s1",
+        clip_path="/fake/clip.mp4",
+        source_start_s=0.0,
+    )
+    timing = SimpleNamespace(step_id="s1", start_s=0.0, end_s=2.0)
+
+    captured: list[object] = []
+
+    def _fake_run(spec: object, _output_path: str = "") -> None:
+        captured.append(spec)
+
+    with (
+        patch("app.pipeline.narrated_assembler.probe_video", side_effect=RuntimeError("no probe")),
+        patch("app.pipeline.narrated_assembler.run_single_pass", side_effect=_fake_run),
+        patch("app.pipeline.narrated_assembler._mix_user_voiceover", return_value=None),
+    ):
+        try:
+            assemble_narrated(
+                clip_assignments=[clip],
+                step_timings=[timing],
+                voiceover_local_path="/fake/vo.m4a",
+                output_path="/fake/out.mp4",
+                tmpdir="/tmp/test_narrated",
+                landscape_fit="fit",
+            )
+        except Exception:  # mix_audio stub → output path missing, etc.
+            pass
+
+    assert captured, "run_single_pass was not called"
+    spec = captured[0]
+    assert len(spec.inputs) == 1
+    # probe failure → _is_landscape(None) = False → default_fit = "crop"
+    assert spec.inputs[0].output_fit == "crop"
+
+
+def test_narrated_assembler_landscape_probe_letterboxes():
+    """Valid landscape probe + landscape_fit='fit' → output_fit='letterbox_black'."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock, patch
+
+    from app.pipeline.narrated_assembler import assemble_narrated
+
+    clip = SimpleNamespace(
+        step_id="s1",
+        clip_path="/fake/clip.mp4",
+        source_start_s=0.0,
+    )
+    timing = SimpleNamespace(step_id="s1", start_s=0.0, end_s=2.0)
+
+    fake_probe = MagicMock()
+    fake_probe.width = 1920
+    fake_probe.height = 1080
+    fake_probe.aspect_ratio = "16:9"
+
+    captured: list[object] = []
+
+    with (
+        patch("app.pipeline.narrated_assembler.probe_video", return_value=fake_probe),
+        patch("app.pipeline.narrated_assembler.run_single_pass", side_effect=lambda s, p="": captured.append(s)),
+        patch("app.pipeline.narrated_assembler._mix_user_voiceover", return_value=None),
+    ):
+        try:
+            assemble_narrated(
+                clip_assignments=[clip],
+                step_timings=[timing],
+                voiceover_local_path="/fake/vo.m4a",
+                output_path="/fake/out.mp4",
+                tmpdir="/tmp/test_narrated_lb",
+                landscape_fit="fit",
+            )
+        except Exception:
+            pass
+
+    assert captured, "run_single_pass was not called"
+    spec = captured[0]
+    assert spec.inputs[0].output_fit == "letterbox_black"

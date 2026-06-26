@@ -308,7 +308,8 @@ def assemble_talking_head(
     usable_s = min(spine_dur, target_duration_s) if target_duration_s else spine_dur
 
     spine_reframed = f"{tmpdir}/spine_{_safe_stem(selection.spine_clip_id)}.mp4"
-    spine_probe = (probe_map or {}).get(selection.spine_clip_id)
+    # probe_map is keyed by local file path (from _probe_clips), not by clip_id.
+    spine_probe = (probe_map or {}).get(spine_path)
     try:
         reframe_and_export(
             spine_path,
@@ -334,7 +335,7 @@ def assemble_talking_head(
             continue
         # Index-prefixed so two clip_ids that sanitize to the same stem can't collide.
         reframed = f"{tmpdir}/broll_{i}_{_safe_stem(cid)}.mp4"
-        broll_probe = (probe_map or {}).get(cid)
+        broll_probe = (probe_map or {}).get(path)  # probe_map keyed by path, not clip_id
         try:
             reframe_and_export(
                 path,

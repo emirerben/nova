@@ -373,7 +373,7 @@ def test_patch_landscape_fit_persists_fill(client: TestClient) -> None:
 
 
 def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
-    """Invalid landscape_fit values must be silently ignored (not written)."""
+    """Invalid landscape_fit values must be rejected with 422 (Pydantic Literal validates)."""
     user = _user()
     item, plan = _owned_item(user.id)
     item.landscape_fit = "fit"  # must stay unchanged
@@ -386,8 +386,8 @@ def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
         json={"landscape_fit": "stretch"},
         headers={"Authorization": "Bearer test"},
     )
-    # 200 is expected — junk value is silently ignored (enum-guarded in route)
-    assert resp.status_code == 200
+    # 422 expected — Pydantic Literal["fit","fill"] rejects out-of-contract values at deserialization
+    assert resp.status_code == 422
     assert item.landscape_fit == "fit"  # unchanged
 
 

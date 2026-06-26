@@ -223,7 +223,10 @@ def _run_generative_job(job_id: str) -> None:
         # landscape clips (black bars, never enlarged). "fill" = crop to fill (legacy
         # default). Absent on public/legacy jobs → defaults to "fill" → byte-identical
         # crop behavior everywhere those jobs previously ran.
-        landscape_fit: str = all_candidates.get("landscape_fit") or "fill"
+        # "fit" stored in all_candidates by build_generative_job when the user
+        # chose letterbox; absent = fill (the legacy crop default). Use (or {})
+        # to guard the rare in-flight job where all_candidates is None.
+        landscape_fit: str = (all_candidates or {}).get("landscape_fit") or "fill"
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
