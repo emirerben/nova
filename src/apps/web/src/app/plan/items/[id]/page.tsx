@@ -78,6 +78,13 @@ const MEDIA_OVERLAYS_ENABLED =
   process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED === "true";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
+// Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
+// applied-fit display (post-render).
+const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: string }[] = [
+  { value: "fit",  label: "Fit",  desc: "Keep horizontal, black bars top & bottom" },
+  { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
+];
+
 function deriveReceiptText(job: PlanItemJobStatus): string {
   if (job.started_at && job.finished_at) {
     const ms = new Date(job.finished_at).getTime() - new Date(job.started_at).getTime();
@@ -632,12 +639,7 @@ export default function PlanItemPage() {
                   Landscape clips
                 </p>
                 <div className="flex gap-2">
-                  {(
-                    [
-                      { value: "fit",  label: "Fit",  desc: "Keep horizontal, black bars top & bottom" },
-                      { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
-                    ] as { value: "fit" | "fill"; label: string; desc: string }[]
-                  ).map(({ value, label, desc }) => {
+                  {LANDSCAPE_FIT_OPTIONS.map(({ value, label, desc }) => {
                     const active = (item.landscape_fit ?? "fit") === value;
                     return (
                       <button
@@ -664,6 +666,25 @@ export default function PlanItemPage() {
                 </div>
               </div>
             )}
+
+            {/* Landscape-clip fit — read-only status display post-render */}
+            {variants.length > 0 && (() => {
+              const applied = LANDSCAPE_FIT_OPTIONS.find(
+                (o) => o.value === (item.landscape_fit ?? "fit")
+              );
+              if (!applied) return null;
+              return (
+                <div className="mb-4">
+                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                    Landscape clips
+                  </p>
+                  <p className="text-sm font-medium text-lime-800">
+                    {applied.label}
+                    <span className="ml-1 font-normal text-zinc-400">· {applied.desc}</span>
+                  </p>
+                </div>
+              );
+            })()}
 
             {/* Expand with AI — only for planned mode; hide in ready (have-videos) mode */}
             {!isNarratedReady && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
