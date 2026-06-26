@@ -116,6 +116,9 @@ def _detect_music_beats(audio_path: str, min_gap_s: float = 0.15) -> list[float]
     """
     cmd = [
         "ffmpeg",
+        "-hide_banner",
+        "-v",
+        "error",
         "-i",
         audio_path,
         "-af",
