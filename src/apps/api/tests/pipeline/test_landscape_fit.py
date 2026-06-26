@@ -309,7 +309,10 @@ def test_narrated_assembler_landscape_probe_letterboxes():
 
     with (
         patch("app.pipeline.narrated_assembler.probe_video", return_value=fake_probe),
-        patch("app.pipeline.narrated_assembler.run_single_pass", side_effect=lambda s, p="": captured.append(s)),
+        patch(
+            "app.pipeline.narrated_assembler.run_single_pass",
+            side_effect=lambda s, p="": captured.append(s),
+        ),
         patch("app.pipeline.narrated_assembler._mix_user_voiceover", return_value=None),
     ):
         try:

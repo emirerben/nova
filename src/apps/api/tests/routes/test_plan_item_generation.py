@@ -386,7 +386,7 @@ def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
         json={"landscape_fit": "stretch"},
         headers={"Authorization": "Bearer test"},
     )
-    # 422 expected — Pydantic Literal["fit","fill"] rejects out-of-contract values at deserialization
+    # 422 expected — Pydantic Literal["fit","fill"] rejects out-of-contract values
     assert resp.status_code == 422
     assert item.landscape_fit == "fit"  # unchanged
 
