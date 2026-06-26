@@ -8,6 +8,23 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Landscape-fit — Follow-ups (from PR landscape-fit-2026-06-26, v0.5.3.0)
+
+### T-LANDSCAPE-1 — Show Fit/Fill toggle even after first render
+**What:** The Fit/Fill toggle is currently hidden when `variants.length > 0` (post-first-render). Users cannot update the preference before a re-render (song-swap / retext) — though re-renders correctly inherit the preference from `all_candidates`. Expose the toggle in a read-only info-mode when variants exist, or wire a re-render trigger on change.
+**Effort:** XS (CC: ~20 min)
+**Priority:** P3
+
+### T-LANDSCAPE-2 — Jest tests for Fit/Fill toggle
+**What:** The Fit/Fill toggle in `plan/items/[id]/page.tsx` has no Jest coverage (hidden-when-generating, click dispatches correct `updatePlanItem`, active-state styling).
+**Effort:** XS (CC: ~15 min)
+**Priority:** P3
+
+### T-LANDSCAPE-3 — Landscape support for still photos (image_to_video path)
+**What:** `image_to_video.py` does not pass through `output_fit`, so landscape still images are not letterboxed even when `landscape_fit='fit'`. Scope this separately once photo uploads become common.
+**Effort:** S
+**Priority:** P4
+
 ## CSS Motion System — Follow-ups (from transitions.dev slice, PR #TODO)
 
 These were deliberately deferred from the initial slice to keep scope tight.

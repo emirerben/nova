@@ -478,6 +478,9 @@ def _dispatch_item_render(
             # Narrated-walkthrough: user-recorded voiceover rides all_candidates so the
             # narrated archetype can force-align the script and per-step trim the clips.
             voiceover_gcs_path=str(item.voiceover_gcs_path) if item.voiceover_gcs_path else None,
+            # Landscape-clip preference (plan-item editor). Defaults to "fit" via the
+            # column server_default; getattr guard tolerates pre-0057 in-flight rows.
+            landscape_fit=str(getattr(item, "landscape_fit", "fit") or "fit"),
             # Filming-guide alignment: how many leading clip_paths are guide
             # shots (in guide order). 0 = no narrative ordering (pure greedy).
             narrative_shot_count=narrative_shot_count,

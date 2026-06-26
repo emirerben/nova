@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.0] — 2026-06-26
+
+### Added
+- **Landscape videos stay horizontal in the plan-item editor.** When you upload a wide-screen (16:9) clip, it now letterboxes inside the 9:16 frame — full-width with solid black bars — instead of being enlarged and center-cropped. A new **Fit / Fill** toggle appears on the plan-item page (below the Edit-style picker) so you can choose per item:
+  - **Fit** (default) — landscape clips stay horizontal, black bars top & bottom, never enlarged.
+  - **Fill** — center-crop to fill the vertical frame (previous behavior).
+  Portrait and square clips are unaffected; the toggle has no effect on them.
+- The preference is saved as `landscape_fit` on the plan item and respected across all three render variants (montage, talking-head, narrated) and re-renders (swap-song, retext).
+
+### Internal
+- `resolve_output_fit(probe, *, landscape_fit)` helper in `reframe.py` routes landscape clips to `letterbox_black` per-clip without touching the renderer.
+- DB: `plan_items.landscape_fit TEXT NOT NULL DEFAULT 'fit'` (migration 0057; existing rows backfilled to 'fit').
+- `PlanItemEdit.landscape_fit: Literal["fit","fill"] | None` — invalid values rejected with 422 at deserialization.
+
 ## [0.5.2.2] — 2026-06-26
 
 ### Fixed

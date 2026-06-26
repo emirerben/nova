@@ -665,6 +665,13 @@ class PlanItem(Base):
     # the schema layer (app.agents._schemas.edit_format), not a DB CHECK, so the
     # vocabulary can grow without a migration. Legacy rows read 'montage'.
     edit_format: Mapped[str] = mapped_column(Text, nullable=False, server_default="montage")
+    # Per-item preference for landscape source clips: "fit" (letterbox — full-width,
+    # black bars top & bottom, never enlarged — the default) | "fill" (center-crop to
+    # fill the 9:16 frame). Portrait and square clips are always cropped regardless.
+    # Plain Text + server_default so legacy rows immediately letterbox landscape clips
+    # without a backfill (same pattern as edit_format). Validated in the route layer;
+    # no DB CHECK so the vocabulary can grow without a migration.
+    landscape_fit: Mapped[str] = mapped_column(Text, nullable=False, server_default="fit")
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.
