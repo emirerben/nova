@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   attachClips,
   changePlanItemStyle,
@@ -1045,6 +1045,17 @@ function FocusedResults({
 }) {
   const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
 
+  // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
+  const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
+    variant?.media_overlays ?? [],
+  );
+  const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
+  useEffect(() => {
+    setOverlayCards(variant?.media_overlays ?? []);
+    setLocalPreviewUrls({});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant?.variant_id]);
+
   // ── Deferred-burn session — eligible variants only ──────────────────────────
   // Use a stable no-op variant when nothing is focused yet (pre-first-render).
   const stableVariant: PlanItemVariant = variant ?? {
@@ -1140,7 +1151,7 @@ function FocusedResults({
                 playToken={editSession.playToken}
               />
             ) : (
-              <Hero variant={variant} generating={isGenerating} />
+              <Hero variant={variant} generating={isGenerating} overlayCards={overlayCards} localPreviewUrls={localPreviewUrls} />
             )}
           </div>
           {/* Text-mode pill below video */}
@@ -1290,6 +1301,10 @@ function FocusedResults({
                     onChangeStyle={onChangeStyle}
                     onResize={onResize}
                     onChangeLayout={onChangeLayout}
+                    overlayCards={overlayCards}
+                    setOverlayCards={setOverlayCards}
+                    localPreviewUrls={localPreviewUrls}
+                    setLocalPreviewUrls={setLocalPreviewUrls}
                   />
                 </div>
               )}
@@ -1361,6 +1376,10 @@ function FocusedVariantControls({
   onChangeStyle,
   onResize,
   onChangeLayout,
+  overlayCards,
+  setOverlayCards,
+  localPreviewUrls,
+  setLocalPreviewUrls,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -1378,23 +1397,14 @@ function FocusedVariantControls({
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize: (textSizePx: number) => Promise<void>;
   onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
+  overlayCards: MediaOverlay[];
+  setOverlayCards: Dispatch<SetStateAction<MediaOverlay[]>>;
+  localPreviewUrls: Record<string, string>;
+  setLocalPreviewUrls: Dispatch<SetStateAction<Record<string, string>>>;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
 
-  // ── Overlay-card local state ─────────────────────────────────────────────
-  // Initialized from the server variant; user edits live here until "Apply".
-  const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
-    variant.media_overlays ?? [],
-  );
   const [overlayUploading, setOverlayUploading] = useState(false);
-
-  // Keep overlay cards in sync when the variant refreshes from the server.
-  // When the variant_id changes, reset from server state (not from local).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional
-  useEffect(() => {
-    setOverlayCards(variant.media_overlays ?? []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant.variant_id]);
 
   /** Upload new files, append as new overlay cards with default settings. */
   async function handleOverlayUpload(
@@ -1427,6 +1437,12 @@ function FocusedVariantControls({
         end_s: 5,
         z: overlayCards.length + i,
       }));
+      // Capture blob URLs for instant in-browser preview (no FFmpeg pass needed).
+      const blobUrls: Record<string, string> = {};
+      newCards.forEach((card, i) => {
+        blobUrls[card.id] = URL.createObjectURL(files[i].file);
+      });
+      setLocalPreviewUrls((prev) => ({ ...prev, ...blobUrls }));
       setOverlayCards((prev) => [...prev, ...newCards]);
     } finally {
       setOverlayUploading(false);
@@ -1655,9 +1671,13 @@ function LiveEditPreview({
 function Hero({
   variant,
   generating,
+  overlayCards = [],
+  localPreviewUrls = {},
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
+  overlayCards?: MediaOverlay[];
+  localPreviewUrls?: Record<string, string>;
 }) {
   if (!variant) return <SkeletonTile />;
   const rendering = variant.render_status === "rendering";
@@ -1669,6 +1689,9 @@ function Hero({
   // The old video keeps playing through a re-render; the overlay dims it gently
   // and the swap happens automatically when render_finished_at advances.
   const heroIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
+  // Cards that have a local blob URL — shown as CSS overlays instantly on upload.
+  const previewableCards = overlayCards.filter((c) => localPreviewUrls[c.id]);
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
@@ -1688,6 +1711,39 @@ function Hero({
           {generating ? "Rendering…" : "No preview yet"}
         </div>
       )}
+      {/* Instant CSS preview layer — shows uploaded cards positioned/scaled over
+          the video immediately without waiting for the FFmpeg render pass. */}
+      {previewableCards.map((card) => (
+        <div
+          key={card.id}
+          style={{
+            position: "absolute",
+            left: `${card.x_frac * 100}%`,
+            top: `${card.y_frac * 100}%`,
+            transform: "translate(-50%, -50%)",
+            width: `${card.scale * 100}%`,
+            pointerEvents: "none",
+          }}
+        >
+          {card.kind === "image" ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={localPreviewUrls[card.id]}
+              alt=""
+              className="w-full h-auto rounded"
+            />
+          ) : (
+            <video
+              src={localPreviewUrls[card.id]}
+              muted
+              loop
+              autoPlay
+              playsInline
+              className="w-full h-auto rounded"
+            />
+          )}
+        </div>
+      ))}
       {/* While a re-render runs, keep old video playing under a gentle overlay.
           pointer-events-none ensures the video controls beneath remain usable. */}
       {rendering && variant.output_url && (
