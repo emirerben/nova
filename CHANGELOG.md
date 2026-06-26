@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1.0] — 2026-06-26
+
+### Fixed
+- **Stable video playback — no more polling glitches or stale-until-refresh.** Backend GCS V4 signed URLs re-sign on every status poll (new `?X-Goog-Signature=` every 2 s), which caused `<video src>` to reload and restart playback every poll cycle. A new `StableVideo` shared component holds the video src in a ref and only adopts a new `src` when the underlying bytes genuinely change (tracked by `render_finished_at`). Re-signed-only URL churn → no reload. Same fix applied across every re-render surface: plan-item Hero, alternates filmstrip, live-edit base preview, generative variant cards, edit payoff onboarding, and admin debug tiles.
+- **Re-renders auto-swap without a page refresh.** The old "pin-the-first-URL" approach only updated on `onError` (expired signature) or a full variant-id switch — meaning a same-variant re-render (swap song, edit text, change style) required the user to refresh to see the new output. `StableVideo` now tracks `render_finished_at`: when the timestamp advances (new render complete), the component adopts the new URL in place, no refresh needed.
+- **Hero overlay during re-render keeps old video live.** Instead of blanking the frame while a re-render runs, the plan-item Hero now keeps the old video playing (with controls still usable) under a gentle dimmed overlay + shimmer sweep. The video swaps in atomically when `render_finished_at` advances.
+- **Stall affordance after 5 min.** If `render_status` stays `rendering` past 5 minutes (stuck worker), the variant card and Hero overlay now surface "Taking longer than usual…" with a "Try again" button wired to the existing retry handler.
+- **EditPayoff `key=` remount bug.** The `key={variant.base_video_url!}` prop on the base `<video>` in the onboarding payoff view caused React to unmount + remount the element on every poll (the re-signed URL is a new string every 2 s). Removed the `key` and replaced with `StableVideo` using `base_video_path` as identity.
+
 ## [0.5.0.0] — 2026-06-23
 
 ### Added
