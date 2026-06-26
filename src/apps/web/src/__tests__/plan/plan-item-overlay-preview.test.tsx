@@ -16,9 +16,8 @@
  * plan-item-page test exercises FocusedResults and the lifted state paths.
  */
 
-// @ts-nocheck
 import React from "react";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import MediaOverlayEditor from "@/app/plan/_components/MediaOverlayEditor";
@@ -152,11 +151,8 @@ describe("MediaOverlayEditor — file selection triggers onUploadRequest", () =>
 describe("MediaOverlayEditor — existing cards rendering", () => {
   it("test_cards_list_renders: shows card count when overlays are present", () => {
     const card = makeCard();
-    render(<MediaOverlayEditor {...defaultProps({ overlays: [card] })} />);
-    // The editor should render an entry for the card (via card id in the DOM or list)
-    // without crashing.
-    expect(document.querySelector('[data-overlay-id], li, [role="listitem"]') !== null
-      || document.body.innerHTML.length > 0).toBe(true);
+    const { container } = render(<MediaOverlayEditor {...defaultProps({ overlays: [card] })} />);
+    expect(container.firstChild).not.toBeNull();
   });
 
   it("test_rendering_state_disables_upload_zone: pointer-events-none when rendering=true", () => {

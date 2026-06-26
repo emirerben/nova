@@ -1052,7 +1052,10 @@ function FocusedResults({
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
   useEffect(() => {
     setOverlayCards(variant?.media_overlays ?? []);
-    setLocalPreviewUrls({});
+    setLocalPreviewUrls((prev) => {
+      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+      return {};
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.variant_id]);
 
@@ -1458,6 +1461,10 @@ function FocusedVariantControls({
 
   /** Clear all overlays (restore pre-overlay clean variant). */
   async function handleClearOverlays() {
+    setLocalPreviewUrls((prev) => {
+      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+      return {};
+    });
     setOverlayCards([]);
     markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
     await setVariantMediaOverlays(itemId, variant.variant_id, []);
@@ -1583,9 +1590,15 @@ function FocusedVariantControls({
                 prev.map((c) => (c.id === id ? { ...c, ...patch } : c)),
               )
             }
-            onRemoveCard={(id) =>
-              setOverlayCards((prev) => prev.filter((c) => c.id !== id))
-            }
+            onRemoveCard={(id) => {
+              setOverlayCards((prev) => prev.filter((c) => c.id !== id));
+              setLocalPreviewUrls((prev) => {
+                const next = { ...prev };
+                if (next[id]) URL.revokeObjectURL(next[id]);
+                delete next[id];
+                return next;
+              });
+            }}
             onApply={handleApplyOverlays}
             onClear={handleClearOverlays}
           />
