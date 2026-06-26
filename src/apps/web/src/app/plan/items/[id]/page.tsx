@@ -1058,6 +1058,16 @@ function FocusedResults({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.variant_id]);
+  // Revoke all blob URLs when the component unmounts (FocusedResults is re-keyed
+  // on variant switch, so unmount fires when the user focuses a different variant).
+  useEffect(() => {
+    return () => {
+      setLocalPreviewUrls((prev) => {
+        Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+        return {};
+      });
+    };
+  }, []);
 
   // ── Deferred-burn session — eligible variants only ──────────────────────────
   // Use a stable no-op variant when nothing is focused yet (pre-first-render).
@@ -1454,6 +1464,11 @@ function FocusedVariantControls({
 
   /** Trigger the overlay render pass on the current variant. */
   async function handleApplyOverlays() {
+    // Clear the CSS preview layer so it doesn't double on top of the burned output.
+    setLocalPreviewUrls((prev) => {
+      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+      return {};
+    });
     markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
     await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards);
     refetch();

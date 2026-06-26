@@ -881,3 +881,12 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** M (CC: ~1h)
 **Priority:** P2
 **Depends on:** editorial-sequence PR merged (provides the scene/block structure to measure against).
+
+## Media overlay — follow-ups (from instant-preview PR, v0.5.3.0)
+
+### T-OVERLAY-1 — Instant CSS preview for instantEligible variants
+**What:** When a variant satisfies `isInstantEditEligible`, the hero renders `LiveEditPreview` (not `Hero`). The `overlayCards`/`localPreviewUrls` state from the instant-preview PR is only passed to `Hero`. Uploading overlay cards on an `agent_text`/`none` variant with `base_video_url` shows no CSS preview. Fix: pass `overlayCards` + `localPreviewUrls` to `LiveEditPreview` and add the same CSS overlay `<div>` stack inside it.
+**Why:** Deferred because `media_overlays_enabled` defaults to `false` (feature is dark). Adversarial review (both Codex passes) identified this before it could reach users.
+**How:** Extend `LiveEditPreview` props with `overlayCards?: MediaOverlay[]` + `localPreviewUrls?: Record<string,string>`. Render the same `previewableCards.map(card => <div style={{position:'absolute', ...}}>)` stack inside `LiveEditPreview`'s video container.
+**Effort:** XS (CC: ~10 min)
+**Priority:** P2 — must fix before flipping `media_overlays_enabled=true` in prod

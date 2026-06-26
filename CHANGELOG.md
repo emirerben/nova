@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.0] — 2026-06-26
+
+### Changed
+- **Media overlay cards appear instantly on upload** — uploaded image or video overlay cards now render as CSS-positioned previews over the video the moment you pick a file, with no FFmpeg render pass required. The preview is cleared automatically when you tap Apply (so the burned-in result shows cleanly) or switch to a different variant.
+
+### Fixed
+- Blob URLs created for overlay card previews are now revoked in every case that disposes them: card removal, Clear All, Apply, variant switch, and component unmount — preventing memory leaks on long plan-editing sessions.
+
 ## [0.5.2.0] — 2026-06-26
 
 ### Added
