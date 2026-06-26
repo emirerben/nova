@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2.2] — 2026-06-26
+
+### Fixed
+- **The preview in the browser now shows exactly what you'll download.** When you're not actively editing, the plan-item video player shows the burned server output — byte-identical to the download — instead of the approximate CSS overlay. The WYSIWYG DOM overlay still appears instantly while you're typing or changing style, so you still get 0-latency live preview during edits. Once you save, the player switches to the confirmed burned output.
+
+## [0.5.2.1] — 2026-06-26
+
+### Fixed
+- **Downloaded video now shows intro text for the full clip — matching exactly what you see in the browser editor.** Previously, the hook text burned into the downloaded MP4 disappeared at the 3-second mark even though the browser preview kept it visible the whole time. The root cause was a recently added 3 s time-box (HOOK_WINDOW_S) that applied to the server render but not the client-side preview. The default is now hold-to-EOF, matching the browser. Re-editing an existing item and downloading again will produce the corrected output.
+
 ## [0.5.2.0] — 2026-06-26
 
 ### Added
@@ -15,11 +25,6 @@ All notable changes to this project will be documented in this file.
 
 ### Internal
 - Deferred follow-up items logged in TODOS.md: `useNextFrameCallback` hook extraction (DRY), `t-tabs`/`t-accordion`, spinner consolidation, `is-hiding` scroll-out for stagger.
-
-## [0.5.1.1] — 2026-06-26
-
-### Fixed
-- **Downloaded video now shows intro text for the full clip — matching exactly what you see in the browser editor.** Previously, the hook text burned into the downloaded MP4 disappeared at the 3-second mark even though the browser preview kept it visible the whole time. The root cause was a recently added 3 s time-box (HOOK_WINDOW_S) that applied to the server render but not the client-side preview. The default is now hold-to-EOF, matching the browser. Re-editing an existing item and downloading again will produce the corrected output.
 
 ## [0.5.1.0] — 2026-06-26
 
