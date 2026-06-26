@@ -7,8 +7,8 @@ mandatory per CLAUDE.md's #296-class history.
 from __future__ import annotations
 
 from app.pipeline.generative_overlays import (
-    HOOK_WINDOW_S,
     _HOLD_TO_END_S,
+    HOOK_WINDOW_S,
     build_intro_overlay,
     build_persistent_intro_overlays,
     inject_intro_overlay,
