@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - Added `.codex/hooks.json` session hook (runs `session-check.sh` on startup).
 - Added DONE implementation plans from the June 12 audit (`plans/001`–`004`).
 - Fixed `.gitignore` to cover `.venv-test/`, `.sources/`, `supabase/.temp/`, and local Claude settings backups — prevents these machine-local dirs from leaking into future commits.
+- Added root-level `package.json` (TypeScript + React type stubs for the repo root; version field mirrors `VERSION`).
 
 ## [0.5.3.1] — 2026-06-26
 
