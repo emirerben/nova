@@ -104,6 +104,21 @@ Token source: `src/apps/web/src/app/globals.css` and `tailwind.config.ts`. `tail
   ⚠️ **Gap (ledger):** shimmer and ping not covered by `globals.css` `@media` block — the loading-system D17 contract (§7) closes this globally; until then, use `motion-safe:animate-shimmer` / `motion-safe:animate-ping` on new surfaces.
 - **CSS-only motion** — framer-motion stays out of the repo.
 
+### transitions.dev additions (globals.css `:root`, curated slice — branch transitions-motion)
+
+Tokens reconciled with existing values (D14 constants, fade-up, shimmer) where overlap exists.
+All four CSS blocks live in `globals.css` with their own `prefers-reduced-motion: reduce` guards,
+closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/transitions.dev`.
+
+| Token group | CSS vars | Usage |
+|---|---|---|
+| `t-modal` (#6) | `--modal-open-dur: 250ms`, `--modal-close-dur: 150ms`, `--modal-scale: 0.96`, `--modal-ease` | `TemplatePreviewModal` scale-up in / scale-down out. Pattern template for all future modals. |
+| step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | `OnboardingShell` `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
+| `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
+| `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Landing hero `<section class="t-stagger is-shown">` — 4 lines stagger in on page load. |
+
+**Follow-up scope (not this PR):** `t-tabs`, `t-accordion`, `t-success-check`, `t-error-shake`, upload-dropzone drag feedback, spinner component consolidation.
+
 ---
 
 ## §7 Loading-state system

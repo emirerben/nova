@@ -9,6 +9,9 @@ import {
   invalidatePlaybackUrl,
 } from "@/lib/template-playback";
 
+// Matches --modal-close-dur in globals.css. Keep in sync.
+const MODAL_CLOSE_MS = 150;
+
 interface Props {
   template: TemplateListItem | null;
   returnFocusTo: HTMLElement | null;
@@ -23,6 +26,42 @@ export default function TemplatePreviewModal({ template, returnFocusTo, onClose 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // t-modal animation state. Driven by the `template` prop:
+  //   null  → closed (or closing → then closed)
+  //   non-null → open (after one rAF so CSS transition fires)
+  const [animState, setAnimStateState] = useState<"closed" | "open" | "closing">("closed");
+  const animStateRef = useRef<"closed" | "open" | "closing">("closed");
+  function setAnimState(s: "closed" | "open" | "closing") {
+    animStateRef.current = s;
+    setAnimStateState(s);
+  }
+
+  // Snapshot of the last non-null template so we can still render content
+  // while the close animation is playing (animState === "closing").
+  const displayedTemplateRef = useRef<TemplateListItem | null>(null);
+  if (template !== null) displayedTemplateRef.current = template;
+
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  // Drive animState from the template prop.
+  useEffect(() => {
+    clearTimeout(closeTimerRef.current);
+    if (template !== null) {
+      // One rAF ensures the element is in the DOM before is-open flips,
+      // which is what triggers the CSS scale+opacity transition.
+      const raf = requestAnimationFrame(() => setAnimState("open"));
+      return () => cancelAnimationFrame(raf);
+    } else if (animStateRef.current === "open") {
+      // Template cleared — play close animation, then unmount.
+      setAnimState("closing");
+      closeTimerRef.current = setTimeout(
+        () => setAnimState("closed"),
+        MODAL_CLOSE_MS,
+      );
+      return () => clearTimeout(closeTimerRef.current);
+    }
+  }, [template]);
 
   const isOpen = template !== null;
 
@@ -103,30 +142,42 @@ export default function TemplatePreviewModal({ template, returnFocusTo, onClose 
   }, [isOpen, returnFocusTo]);
 
   function onVideoError() {
-    if (template) invalidatePlaybackUrl(template.id);
+    const t = displayedTemplateRef.current;
+    if (t) invalidatePlaybackUrl(t.id);
     setErrorMsg("Couldn't load preview.");
   }
 
   function onUseTemplate() {
-    if (!template) return;
-    router.push(`/template/${template.id}`);
+    const t = displayedTemplateRef.current;
+    if (!t) return;
+    router.push(`/template/${t.id}`);
   }
 
-  if (!template) return null;
+  // Unmount entirely once the close animation is done.
+  if (animState === "closed") return null;
+  const displayedTemplate = displayedTemplateRef.current;
+  if (!displayedTemplate) return null;
+
+  const modalClass = animState === "open" ? "is-open" : animState === "closing" ? "is-closing" : "";
 
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Preview: ${template.name}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+      aria-label={`Preview: ${displayedTemplate.name}`}
+      className={[
+        "fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm p-4",
+        "transition-[background-color,opacity] duration-[250ms]",
+        animState === "open" ? "bg-black/80" : "bg-black/0",
+      ].join(" ")}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
+      {/* t-modal: scale-up from center on open, softer scale-down on close. */}
       <div
         ref={dialogRef}
-        className="relative flex flex-col items-center max-w-md w-full"
+        className={`t-modal ${modalClass} relative flex flex-col items-center max-w-md w-full`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="relative aspect-[9/16] w-full max-h-[85vh] bg-zinc-950 rounded-xl overflow-hidden shadow-2xl">
@@ -179,7 +230,7 @@ export default function TemplatePreviewModal({ template, returnFocusTo, onClose 
         </div>
 
         <p className="mt-3 text-xs text-zinc-500 text-center">
-          {template.name} · {Math.round(template.total_duration_s)}s
+          {displayedTemplate.name} · {Math.round(displayedTemplate.total_duration_s)}s
         </p>
       </div>
     </div>

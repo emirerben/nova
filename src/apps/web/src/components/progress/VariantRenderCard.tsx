@@ -35,7 +35,8 @@ interface VariantRenderCardProps {
  * - pending:   shimmer sweep, "Getting ready…"
  * - rendering: shimmer sweep + live elapsed clock from render_started_at;
  *              after 5 min surfaces a stall hint with "Try again"
- * - ready:     9:16 video player + Download; arrive animation on isNewlyReady
+ * - ready:     9:16 video player + Download; arrive animation on isNewlyReady;
+ *              t-skel cross-blur reveals content from skeleton on isNewlyReady
  * - failed:    dashed border, human error copy + "Try again"
  *
  * D20: tone="light" swaps to cream-canvas palette.
@@ -48,14 +49,43 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
   const [arrivedOnce, setArrivedOnce] = useState(false);
   const arrivedRef = useRef(false);
 
+  // t-skel reveal state. Starts true if status is already "ready" on mount
+  // (no animation needed — show content immediately). Otherwise false until
+  // isNewlyReady fires, which plays the cross-blur skeleton→content transition.
+  const [revealed, setRevealed] = useState(render_status === "ready");
+
   useEffect(() => {
     if (isNewlyReady && !arrivedRef.current) {
       arrivedRef.current = true;
       setArrivedOnce(true);
+      // One rAF so the skeleton layer is fully painted before we flip to content.
+      const raf = requestAnimationFrame(() => setRevealed(true));
+      return () => cancelAnimationFrame(raf);
     }
   }, [isNewlyReady]);
 
+  // Fallback: handle render_status becoming "ready" without isNewlyReady
+  // (e.g. polling catches a done state without a transition event).
+  useEffect(() => {
+    if (render_status === "ready" && !revealed) {
+      setRevealed(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [render_status]);
+
   const labelClass = tone === "light" ? "text-[#3f3f46]" : "text-zinc-300";
+  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
+  const ringClass = tone === "light" ? "ring-lime-600/60" : "ring-amber-400/60";
+
+  // Failed state: no t-skel needed, render directly.
+  if (render_status === "failed") {
+    return (
+      <div role="group" aria-label={`${displayName} edit`} className="flex flex-col gap-2">
+        <p className={`text-sm font-medium ${labelClass}`}>{displayName}</p>
+        <FailedCard errorClass={error_class ?? null} onRetry={onRetry} tone={tone} />
+      </div>
+    );
+  }
 
   return (
     <div
@@ -66,44 +96,67 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
       {/* Variant label */}
       <p className={`text-sm font-medium ${labelClass}`}>{displayName}</p>
 
-      {/* Card body */}
-      {render_status === "ready" ? (
-        <ReadyCard
-          outputUrl={output_url ?? null}
-          renderFinishedAt={render_finished_at ?? null}
-          displayName={displayName}
-          isNew={arrivedOnce}
-          tone={tone}
-        />
-      ) : render_status === "failed" ? (
-        <FailedCard errorClass={error_class ?? null} onRetry={onRetry} tone={tone} />
-      ) : render_status === "rendering" ? (
-        <RenderingCard startedAt={render_started_at ?? null} tone={tone} onRetry={onRetry} />
-      ) : (
-        <PendingCard tone={tone} />
+      {/* t-skel: stacks skeleton + content layers; .is-revealed cross-blurs between them.
+          The arrive ring (D12) is also applied here so it frames the whole card. */}
+      <div
+        className={[
+          `t-skel aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`,
+          revealed ? "is-revealed" : "",
+          arrivedOnce ? `ring-2 ${ringClass}` : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+      >
+        {/* Skeleton layer: looping shimmer + status text (pending or rendering).
+            ShimmerSweep's animate-shimmer already loops — we don't use is-pulsing
+            (one-shot) since renders can take 60s+. */}
+        <div className="t-skel-skeleton">
+          <ShimmerSweep tone={tone} />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+            {render_status === "rendering" ? (
+              <RenderingStatus
+                startedAt={render_started_at ?? null}
+                tone={tone}
+                onRetry={onRetry}
+              />
+            ) : (
+              <PendingStatus tone={tone} />
+            )}
+          </div>
+        </div>
+
+        {/* Content layer: ready state with video.
+            Invisible (opacity 0, blurred) until .is-revealed flips it visible.
+            Uses StableVideo so re-signed URLs (new ?X-Goog-Signature every 2s poll)
+            don't restart playback. */}
+        <div className="t-skel-content">
+          <ReadyCardInner
+            outputUrl={output_url ?? null}
+            renderFinishedAt={render_finished_at ?? null}
+            displayName={displayName}
+            tone={tone}
+          />
+        </div>
+      </div>
+
+      {/* Download / Share actions shown below the card after reveal */}
+      {revealed && output_url && (
+        <ReadyCardActions outputUrl={output_url} displayName={displayName} tone={tone} />
       )}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Sub-cards
+// Skeleton layer sub-components (status text inside shimmer)
 // ---------------------------------------------------------------------------
 
-function PendingCard({ tone }: { tone: "dark" | "light" }) {
-  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
+function PendingStatus({ tone }: { tone: "dark" | "light" }) {
   const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
-  return (
-    <div className={`relative aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`}>
-      <ShimmerSweep tone={tone} />
-      <div className="absolute inset-0 flex items-center justify-center">
-        <p className={`text-sm ${textClass}`}>Getting ready…</p>
-      </div>
-    </div>
-  );
+  return <p className={`text-sm ${textClass}`}>Getting ready…</p>;
 }
 
-function RenderingCard({
+function RenderingStatus({
   startedAt,
   tone,
   onRetry,
@@ -126,102 +179,93 @@ function RenderingCard({
   }, [startedAt]);
 
   const stalled = elapsed >= STALL_HINT_MS;
-  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
   const textClass = tone === "light" ? "text-[#71717a]" : "text-zinc-400";
   const btnClass = tone === "light"
     ? "rounded border border-zinc-200 px-3 py-1 text-xs text-[#3f3f46] hover:bg-zinc-100"
     : "rounded border border-zinc-600 px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800";
-  return (
-    <div className={`relative aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`}>
-      <ShimmerSweep tone={tone} />
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-        {stalled ? (
-          <>
-            <p className={`text-sm ${textClass}`}>Taking longer than usual…</p>
-            {onRetry && (
-              <button onClick={onRetry} className={btnClass}>
-                Try again
-              </button>
-            )}
-          </>
-        ) : (
-          <p className={`text-sm ${textClass}`}>
-            Rendering · {formatElapsed(elapsed)}
-          </p>
+
+  if (stalled) {
+    return (
+      <>
+        <p className={`text-sm ${textClass}`}>Taking longer than usual…</p>
+        {onRetry && (
+          <button onClick={onRetry} className={btnClass}>
+            Try again
+          </button>
         )}
-      </div>
-    </div>
+      </>
+    );
+  }
+
+  return (
+    <p className={`text-sm ${textClass}`}>
+      Rendering · {formatElapsed(elapsed)}
+    </p>
   );
 }
 
-function ReadyCard({
+// ---------------------------------------------------------------------------
+// Content layer (video + empty state, inside t-skel-content)
+// ---------------------------------------------------------------------------
+
+function ReadyCardInner({
   outputUrl,
   renderFinishedAt,
   displayName,
-  isNew,
   tone,
 }: {
   outputUrl: string | null;
   renderFinishedAt: string | null;
   displayName: string;
-  isNew: boolean;
   tone: "dark" | "light";
 }) {
-  const bodyClass = tone === "light" ? "bg-zinc-100" : "bg-zinc-900";
-  const ringClass = tone === "light" ? "ring-lime-600/60" : "ring-amber-400/60";
   const emptyTextClass = tone === "light" ? "text-[#71717a]" : "text-zinc-500";
-  const btnClass = tone === "light"
-    ? "border-zinc-200 text-[#3f3f46] hover:bg-zinc-100"
-    : "border-zinc-700 text-zinc-300 hover:bg-zinc-800";
-
-  // Use StableVideo so re-signed URLs (new ?X-Goog-Signature every 2s poll) don't
-  // restart playback. ReadyCard unmounts while a re-render is in progress (parent
-  // shows RenderingCard), so StableVideo remounts fresh and adopts the new URL
-  // naturally on re-render completion without a page refresh.
   const stableVideoSrc = outputUrl ?? undefined;
 
   return (
-    <div
-      className={[
-        `aspect-[9/16] w-full overflow-hidden rounded-lg ${bodyClass}`,
-        "motion-safe:transition-[transform,box-shadow]",
-        isNew
-          ? `motion-safe:animate-fade-up ring-2 ${ringClass}`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-    >
+    <div className="h-full w-full">
       {stableVideoSrc ? (
-        <div className="flex h-full flex-col">
-          <StableVideo
-            src={stableVideoSrc}
-            identity={renderFinishedAt ?? undefined}
-            controls
-            playsInline
-            loop
-            className="h-full w-full object-cover"
-            aria-label={`${displayName} edit preview`}
-          />
-        </div>
+        <StableVideo
+          src={stableVideoSrc}
+          identity={renderFinishedAt ?? undefined}
+          controls
+          playsInline
+          loop
+          className="h-full w-full object-cover"
+          aria-label={`${displayName} edit preview`}
+        />
       ) : (
         <div className={`flex h-full items-center justify-center text-sm ${emptyTextClass}`}>
           Video ready
         </div>
       )}
-      {/* Download / Share actions */}
-      {stableVideoSrc && (
-        <div className="flex gap-2 pt-2">
-          <a
-            href={stableVideoSrc}
-            download
-            className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
-          >
-            Download
-          </a>
-          <ShareButton url={stableVideoSrc} label={displayName} tone={tone} />
-        </div>
-      )}
+    </div>
+  );
+}
+
+// Download / Share actions rendered below the card after reveal.
+function ReadyCardActions({
+  outputUrl,
+  displayName,
+  tone,
+}: {
+  outputUrl: string;
+  displayName: string;
+  tone: "dark" | "light";
+}) {
+  const btnClass = tone === "light"
+    ? "border-zinc-200 text-[#3f3f46] hover:bg-zinc-100"
+    : "border-zinc-700 text-zinc-300 hover:bg-zinc-800";
+  return (
+    <div className="flex gap-2">
+      <a
+        href={outputUrl}
+        download
+        className={`flex-1 rounded border py-1.5 text-center text-xs ${btnClass}`}
+      >
+        Download
+      </a>
+      <ShareButton url={outputUrl} label={displayName} tone={tone} />
     </div>
   );
 }

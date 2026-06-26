@@ -27,7 +27,7 @@
  * the mode-resolution logic for workspace vs setup).
  */
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import type { PersonaContent, PersonaResponse } from "@/lib/plan-api";
 import { patchPersonaFootageType } from "@/lib/plan-api";
@@ -94,6 +94,25 @@ const FOOTAGE_OPTIONS: FootageOption[] = [
     description: "A bit of everything — Nova will adapt",
   },
 ];
+
+// ── Step slide transition ─────────────────────────────────────────────────────
+// Uses t-page (#8) motion values from globals.css. Mount with step-slide,
+// add is-entered on the next rAF so the CSS transition fires (opacity/translateX/blur).
+// Parent passes `key={step}` so React remounts this on every step change —
+// each new step plays the entrance fresh. Reduced-motion guard in globals.css.
+
+function StepSlide({ children }: { children: React.ReactNode }) {
+  const [entered, setEntered] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  return (
+    <div className={`step-slide${entered ? " is-entered" : ""}`}>
+      {children}
+    </div>
+  );
+}
 
 // ── Step rail ────────────────────────────────────────────────────────────────
 
@@ -208,7 +227,7 @@ function WhatYouMakeStep({
   }
 
   return (
-    <div className="animate-fade-up">
+    <div>
       <p className="text-xs font-semibold uppercase tracking-widest text-lime-700">
         Step 2 of 4
       </p>
@@ -405,31 +424,35 @@ export default function OnboardingShell({
       {/* Right pane */}
       <main className="flex flex-1 items-start justify-center px-12 py-16">
         <div className="w-full max-w-lg">
-          {/* Error banner */}
+          {/* Error banner (outside the slide so it doesn't re-animate on step change) */}
           {error && (
             <div className="mb-6 rounded border border-zinc-200 bg-white px-4 py-3 text-sm text-[#3f3f46]">
               {error}
             </div>
           )}
 
-          {/* Step 1 — TikTok */}
-          {step === 1 && (
-            <TikTokPreScreen onContinue={handleTikTok} submitting={tiktokBusy} />
-          )}
+          {/* StepSlide: key=step remounts on each advance, replaying the
+              slide-from-right entrance (t-page values) per step. */}
+          <StepSlide key={step}>
+            {/* Step 1 — TikTok */}
+            {step === 1 && (
+              <TikTokPreScreen onContinue={handleTikTok} submitting={tiktokBusy} />
+            )}
 
-          {/* Step 2 — What you make (multi-select) */}
-          {step === 2 && (
-            <WhatYouMakeStep
-              preselected={persona?.persona?.footage_type_bias as string[] | undefined}
-              onContinue={handleWhatYouMake}
-            />
-          )}
+            {/* Step 2 — What you make (multi-select) */}
+            {step === 2 && (
+              <WhatYouMakeStep
+                preselected={persona?.persona?.footage_type_bias as string[] | undefined}
+                onContinue={handleWhatYouMake}
+              />
+            )}
 
-          {/* Step 3 — Style */}
-          {step === 3 && renderStep3()}
+            {/* Step 3 — Style */}
+            {step === 3 && renderStep3()}
 
-          {/* Step 4 — Navigating to plan (transient) */}
-          {step === 4 && <GeneratingStateLight label="Building your ideas…" />}
+            {/* Step 4 — Navigating to plan (transient) */}
+            {step === 4 && <GeneratingStateLight label="Building your ideas…" />}
+          </StepSlide>
         </div>
       </main>
     </div>

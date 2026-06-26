@@ -16,6 +16,39 @@
   --amber-bd: #fde68a;
   --zinc1: #f4f4f5;
   --zinc2: #e4e4e7;
+
+  /* ── transitions.dev motion tokens (DESIGN.md §6) ──────────────────────────
+     Reconciled with existing Nova values where possible. Nova's existing
+     keyframes (fade-up 0.35s, shimmer 2.2s) and constants.ts D14 values are
+     the primary sources; these supplement only where no existing value fits.
+     See §6 for the full token catalogue. */
+
+  /* t-modal (#6): dialog scale-up from center */
+  --modal-open-dur: 250ms;
+  --modal-close-dur: 150ms;
+  --modal-scale: 0.96;
+  --modal-scale-close: 0.96;
+  --modal-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* t-page (#8): slide + blur used for onboarding step entrance */
+  --page-slide-dur: 250ms;
+  --page-fade-dur: 250ms;
+  --page-slide-distance: 8px;
+  --page-blur: 3px;
+  --page-slide-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --page-fade-ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* t-skel (#14): skeleton → content cross-blur reveal */
+  --reveal-dur: 400ms;   /* aligns with D14 Field→tiles 500ms intent */
+  --reveal-blur: 2px;
+  --reveal-ease: ease-in-out;
+
+  /* t-stagger (#18): blurred rise for landing hero */
+  --stagger-dur: 500ms;  /* aligns with D14 variant-arrive 500ms */
+  --stagger-distance: 12px;
+  --stagger-stagger: 40ms;
+  --stagger-blur: 3px;
+  --stagger-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -43,4 +76,149 @@
   content: attr(data-placeholder);
   opacity: 0.55;
   pointer-events: none;
+}
+
+/* ── transitions.dev CSS ────────────────────────────────────────────────────
+   Verbatim from transitions.dev skill (#6, #8, #14, #18) with Nova-specific
+   notes. CSS tokens declared in :root above. Reduced-motion guards on each.
+   DESIGN.md §6 is the single source of truth — add new t-* tokens there. */
+
+/* #6 t-modal: scale-up dialog from center. Applied to TemplatePreviewModal's
+   inner card. State classes (.is-open / .is-closing) driven by React state. */
+.t-modal {
+  transform-origin: center;
+  transform: scale(var(--modal-scale));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-open-dur) var(--modal-ease),
+    opacity   var(--modal-open-dur) var(--modal-ease);
+  will-change: transform, opacity;
+}
+.t-modal.is-open {
+  transform: scale(1);
+  opacity: 1;
+  pointer-events: auto;
+}
+.t-modal.is-closing {
+  transform: scale(var(--modal-scale-close));
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform var(--modal-close-dur) var(--modal-ease),
+    opacity   var(--modal-close-dur) var(--modal-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-modal { transition: none !important; }
+}
+
+/* #8 t-page — derived step slide used in OnboardingShell's <StepSlide>.
+   The full t-page-slide/t-page pair requires all pages simultaneously mounted
+   (position:absolute) which is unsuitable for wizard steps with async side
+   effects. Instead, we derive a single-element entrance using the same tokens:
+   element starts offset+blurred, then transitions to rest on mount. */
+.step-slide {
+  opacity: 0;
+  transform: translateX(var(--page-slide-distance));
+  filter: blur(var(--page-blur));
+  transition:
+    opacity   var(--page-fade-dur)  var(--page-fade-ease),
+    transform var(--page-slide-dur) var(--page-slide-ease),
+    filter    var(--page-slide-dur) var(--page-slide-ease);
+  will-change: opacity, transform, filter;
+}
+.step-slide.is-entered {
+  opacity: 1;
+  transform: translateX(0);
+  filter: blur(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .step-slide { transition: none !important; opacity: 1; transform: none; filter: none; }
+}
+
+/* #14 t-skel: skeleton → content cross-blur reveal.
+   Applied to VariantRenderCard's pending/rendering→ready transition.
+   The .t-skel wrapper stacks skeleton + content; .is-revealed flips opacity.
+   Pulse animation intentionally omitted here — ShimmerSweep's looping
+   animate-shimmer serves the same purpose during long renders. */
+.t-skel { position: relative; }
+.t-skel-skeleton,
+.t-skel-content {
+  position: absolute;
+  inset: 0;
+}
+.t-skel-skeleton {
+  z-index: 1;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+.t-skel-content {
+  z-index: 2;
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+.t-skel.is-revealed .t-skel-skeleton {
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+}
+.t-skel.is-revealed .t-skel-content {
+  opacity: 1;
+  filter: blur(0);
+}
+/* Snap-back when replaying (e.g. re-render triggered). Drop .is-resetting
+   after a forced reflow and the next reveal animates again. */
+.t-skel.is-resetting .t-skel-skeleton,
+.t-skel.is-resetting .t-skel-content {
+  transition: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-skel-skeleton, .t-skel-content { transition: none !important; }
+}
+
+/* #18 t-stagger: staggered blurred rise for landing hero copy.
+   Lines 1-4 supported; add --N with calc(--stagger-stagger * (N-1)) for more.
+   .is-shown added as a static class in page.tsx (always above the fold). */
+.t-stagger-line {
+  display: block;
+  opacity: 0;
+  transform: translateY(var(--stagger-distance));
+  filter: blur(var(--stagger-blur));
+  transition:
+    opacity   var(--stagger-dur) var(--stagger-ease),
+    transform var(--stagger-dur) var(--stagger-ease),
+    filter    var(--stagger-dur) var(--stagger-ease);
+  will-change: transform, opacity, filter;
+}
+.t-stagger-line--2 { transition-delay: var(--stagger-stagger); }
+.t-stagger-line--3 { transition-delay: calc(var(--stagger-stagger) * 2); }
+.t-stagger-line--4 { transition-delay: calc(var(--stagger-stagger) * 3); }
+.t-stagger.is-shown .t-stagger-line {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+/* Exit: single quiet fade for every line — no Y-return, no reverse stagger. */
+.t-stagger.is-hiding .t-stagger-line {
+  opacity: 0;
+  transform: translateY(0);
+  filter: blur(0);
+  transition:
+    opacity 200ms ease,
+    transform 0s linear,
+    filter 0s linear;
+  transition-delay: 0s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .t-stagger-line {
+    transition: none !important;
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
 }
