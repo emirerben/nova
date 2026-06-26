@@ -66,11 +66,9 @@ export function VariantRenderCard({ variant, isNewlyReady, onRetry, tone = "dark
 
   // Fallback: handle render_status becoming "ready" without isNewlyReady
   // (e.g. polling catches a done state without a transition event).
+  // setRevealed(true) is idempotent — safe to call even if already revealed.
   useEffect(() => {
-    if (render_status === "ready" && !revealed) {
-      setRevealed(true);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (render_status === "ready") setRevealed(true);
   }, [render_status]);
 
   const labelClass = tone === "light" ? "text-[#3f3f46]" : "text-zinc-300";

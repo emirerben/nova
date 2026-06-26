@@ -44,7 +44,8 @@
   --reveal-ease: ease-in-out;
 
   /* t-stagger (#18): blurred rise for landing hero */
-  --stagger-dur: 500ms;  /* aligns with D14 variant-arrive 500ms */
+  --stagger-dur: 500ms;      /* aligns with D14 variant-arrive 500ms */
+  --stagger-exit-dur: 200ms; /* exit fade for .is-hiding (future scroll-out use) */
   --stagger-distance: 12px;
   --stagger-stagger: 40ms;
   --stagger-blur: 3px;
@@ -209,7 +210,7 @@
   transform: translateY(0);
   filter: blur(0);
   transition:
-    opacity 200ms ease,
+    opacity var(--stagger-exit-dur) ease,
     transform 0s linear,
     filter 0s linear;
   transition-delay: 0s;

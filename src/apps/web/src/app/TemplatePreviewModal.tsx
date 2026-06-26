@@ -30,11 +30,11 @@ export default function TemplatePreviewModal({ template, returnFocusTo, onClose 
   // t-modal animation state. Driven by the `template` prop:
   //   null  → closed (or closing → then closed)
   //   non-null → open (after one rAF so CSS transition fires)
-  const [animState, setAnimStateState] = useState<"closed" | "open" | "closing">("closed");
+  const [animState, _setAnimState] = useState<"closed" | "open" | "closing">("closed");
   const animStateRef = useRef<"closed" | "open" | "closing">("closed");
   function setAnimState(s: "closed" | "open" | "closing") {
     animStateRef.current = s;
-    setAnimStateState(s);
+    _setAnimState(s);
   }
 
   // Snapshot of the last non-null template so we can still render content
@@ -167,7 +167,7 @@ export default function TemplatePreviewModal({ template, returnFocusTo, onClose 
       aria-label={`Preview: ${displayedTemplate.name}`}
       className={[
         "fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm p-4",
-        "transition-[background-color,opacity] duration-[250ms]",
+        "motion-safe:transition-[background-color,opacity] motion-safe:duration-[250ms]",
         animState === "open" ? "bg-black/80" : "bg-black/0",
       ].join(" ")}
       onClick={(e) => {
