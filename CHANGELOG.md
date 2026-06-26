@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.2] — 2026-06-26
+
+### Internal
+- Recovered agent skills (`improve`, `transitions-dev`) and their lockfiles into the repo; `.claude/skills/` symlinks now travel with the content across all worktrees.
+- Added `AGENTS.md` as a symlink to `CLAUDE.md` (always in sync, never stale).
+- Added `.codex/hooks.json` session hook (runs `session-check.sh` on startup).
+- Added DONE implementation plans from the June 12 audit (`plans/001`–`004`).
+- Fixed `.gitignore` to cover `.venv-test/`, `.sources/`, `supabase/.temp/`, and local Claude settings backups — prevents these machine-local dirs from leaking into future commits.
+
 ## [0.5.3.1] — 2026-06-26
 
 ### Fixed
