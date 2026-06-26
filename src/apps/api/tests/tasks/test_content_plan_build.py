@@ -1011,8 +1011,8 @@ def test_narrative_order_multi_clip_per_shot() -> None:
 
     # Guide order: s1 clips (both) before s2 clip; pool is tail.
     assert ordered[:2] == ["u/c1b.mp4", "u/c1a.mp4"]  # both s1 clips in attach order
-    assert ordered[2] == "u/c2.mp4"                    # s2 clip
-    assert ordered[3] == "u/pool.mp4"                  # pool last
+    assert ordered[2] == "u/c2.mp4"  # s2 clip
+    assert ordered[3] == "u/pool.mp4"  # pool last
     assert count == 3  # 3 clips placed (the 2 for s1 + 1 for s2)
 
 
@@ -1105,11 +1105,13 @@ def test_generate_ideas_updates_in_place() -> None:
     )
 
     session = MagicMock()
-    session.get = MagicMock(side_effect=lambda model, pk: {
-        ContentPlan: plan,
-        PersonaRow: persona_row,
-        PlanItem: bare1 if pk == item1_id else bare2,
-    }.get(model))
+    session.get = MagicMock(
+        side_effect=lambda model, pk: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+            PlanItem: bare1 if pk == item1_id else bare2,
+        }.get(model)
+    )
     session.add = MagicMock()
     session.commit = MagicMock()
 
@@ -1143,3 +1145,70 @@ def test_generate_ideas_updates_in_place() -> None:
     assert bare2.day_index == 2
     # Plan status was reset to ready.
     assert plan.plan_status == "ready"
+
+
+# ── landscape_fit threading (0057) ───────────────────────────────────────────
+
+
+def test_landscape_fit_forwarded_to_build_generative_job() -> None:
+    """generate_plan_item_videos must pass item.landscape_fit to build_generative_job."""
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = ["users/u/plan/i/a.mp4"]
+    item.theme = "morning routine"
+    item.idea = "film the sunrise"
+    item.landscape_fit = "fit"  # user's landscape preference
+
+    plan = MagicMock()
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+
+    persona_row = MagicMock()
+    persona_row.persona = {"tone": "motivational", "content_pillars": []}
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+
+    ctx = _session_with(item, plan, persona_row)
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        generate_plan_item_videos.run(str(item.id))
+
+    kwargs = mock_build.call_args.kwargs
+    assert kwargs["landscape_fit"] == "fit"
+
+
+def test_landscape_fit_fill_forwarded() -> None:
+    """landscape_fit='fill' (crop) is also threaded faithfully."""
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = ["users/u/plan/i/a.mp4"]
+    item.theme = "evening walk"
+    item.idea = "wide landscape shot"
+    item.landscape_fit = "fill"
+
+    plan = MagicMock()
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+
+    persona_row = MagicMock()
+    persona_row.persona = {"tone": "calm", "content_pillars": []}
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+
+    ctx = _session_with(item, plan, persona_row)
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        generate_plan_item_videos.run(str(item.id))
+
+    kwargs = mock_build.call_args.kwargs
+    assert kwargs["landscape_fit"] == "fill"

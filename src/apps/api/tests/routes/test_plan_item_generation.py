@@ -331,3 +331,129 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     assert resp.filming_guide[0].duration_s == 1  # FilmingShotResponse default is 1 (not 0)
     assert resp.filming_guide[1].what == ""
     assert resp.filming_guide[1].how == "wide"
+
+
+# ── landscape_fit (0057) ─────────────────────────────────────────────────────
+
+
+def test_patch_landscape_fit_persists_fit(client: TestClient) -> None:
+    """PATCH landscape_fit='fit' must be written to the item row."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.landscape_fit = "fill"  # current value before PATCH
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"landscape_fit": "fit"},
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 200
+    assert item.landscape_fit == "fit"
+
+
+def test_patch_landscape_fit_persists_fill(client: TestClient) -> None:
+    """PATCH landscape_fit='fill' (crop) must also be accepted."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.landscape_fit = "fit"
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"landscape_fit": "fill"},
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 200
+    assert item.landscape_fit == "fill"
+
+
+def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
+    """Invalid landscape_fit values must be silently ignored (not written)."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.landscape_fit = "fit"  # must stay unchanged
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"landscape_fit": "stretch"},
+        headers={"Authorization": "Bearer test"},
+    )
+    # 200 is expected — junk value is silently ignored (enum-guarded in route)
+    assert resp.status_code == 200
+    assert item.landscape_fit == "fit"  # unchanged
+
+
+def test_plan_item_response_surface_landscape_fit() -> None:
+    """plan_item_response() must expose landscape_fit; fallback to 'fit' for MagicMock."""
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.routes.plan_items import plan_item_response  # noqa: PLC0415
+
+    item = MagicMock(spec=PlanItem)
+    item.id = uuid.uuid4()
+    item.day_index = 1
+    item.theme = "t"
+    item.idea = "i"
+    item.filming_guide = []
+    item.filming_suggestion = None
+    item.rationale = None
+    item.clip_gcs_paths = []
+    item.current_job_id = None
+    item.current_job = None
+    item.item_status = "idea"
+    item.user_edited = False
+    item.conformance = None
+    item.clip_assignments = []
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.source_idea_seed_id = None
+    item.source_idea_seed_text = None
+    item.edit_format = None
+    item.voiceover_gcs_path = None
+    item.landscape_fit = "fill"  # explicitly set
+
+    resp = plan_item_response(item)
+    assert resp.landscape_fit == "fill"
+
+
+def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
+    """When landscape_fit is None (pre-migration row or missing attr), fallback is 'fit'."""
+    from app.models import PlanItem  # noqa: PLC0415
+    from app.routes.plan_items import plan_item_response  # noqa: PLC0415
+
+    item = MagicMock(spec=PlanItem)
+    item.id = uuid.uuid4()
+    item.day_index = 1
+    item.theme = "t"
+    item.idea = "i"
+    item.filming_guide = []
+    item.filming_suggestion = None
+    item.rationale = None
+    item.clip_gcs_paths = []
+    item.current_job_id = None
+    item.current_job = None
+    item.item_status = "idea"
+    item.user_edited = False
+    item.conformance = None
+    item.clip_assignments = []
+    item.position = 1
+    item.scheduled_date = None
+    item.notes = None
+    item.scenes = []
+    item.source_idea_seed_id = None
+    item.source_idea_seed_text = None
+    item.edit_format = None
+    item.voiceover_gcs_path = None
+    item.landscape_fit = None  # pre-migration row: None → should default to "fit"
+
+    resp = plan_item_response(item)
+    assert resp.landscape_fit == "fit"
