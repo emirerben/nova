@@ -122,29 +122,35 @@ export default async function HomePage() {
   return (
     <main className="min-h-screen bg-[#fafaf8] text-[#0c0c0e]">
       {/* ── HERO ── */}
-      <FadeInOnScroll>
-        <section className="mx-auto max-w-[900px] px-6 pb-0 pt-24 text-center">
-          <p className="mb-5 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700">
-            Your AI influencer agent
-          </p>
-          <h1 className="font-display mb-5 text-[clamp(36px,6vw,64px)] font-medium leading-[1.08]">
-            You film.
-            <br />
-            Your agent does{" "}
-            <em className="not-italic text-lime-600">the rest.</em>
-          </h1>
-          <p className="mx-auto mb-9 max-w-[500px] text-[17px] leading-relaxed text-[#71717a]">
-            Nova plans your month, scripts every day, edits your footage, and
-            learns what works. Your content career, on autopilot.
-          </p>
+      {/* t-stagger (#18): staggered blurred rise for hero copy. is-shown is static
+          since the hero is always above the fold — no IntersectionObserver needed.
+          FadeInOnScroll removed for the hero; FadeInOnScroll still wraps the process
+          sections below. 4 stagger lines: eyebrow → h1 → description → CTA. */}
+      <section className="t-stagger is-shown mx-auto max-w-[900px] px-6 pb-0 pt-24 text-center">
+        <p className="t-stagger-line t-stagger-line--1 mb-5 text-[11px] font-semibold uppercase tracking-[0.24em] text-lime-700">
+          Your AI influencer agent
+        </p>
+        <h1 className="t-stagger-line t-stagger-line--2 font-display mb-5 text-[clamp(36px,6vw,64px)] font-medium leading-[1.08]">
+          You film.
+          <br />
+          Your agent does{" "}
+          <em className="not-italic text-lime-600">the rest.</em>
+        </h1>
+        <p className="t-stagger-line t-stagger-line--3 mx-auto mb-9 max-w-[500px] text-[17px] leading-relaxed text-[#71717a]">
+          Nova plans your month, scripts every day, edits your footage, and
+          learns what works. Your content career, on autopilot.
+        </p>
+        {/* CTA wrapped in a block so t-stagger-line display:block centres the
+            inline-block Link via the parent text-center. */}
+        <div className="t-stagger-line t-stagger-line--4">
           <Link
             href="/plan"
             className="inline-block rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white transition-opacity hover:opacity-80"
           >
             Build my plan
           </Link>
-        </section>
-      </FadeInOnScroll>
+        </div>
+      </section>
 
       {/* ── VIDEO MARQUEE ── */}
       <ShowcaseMarquee clips={resolvedClips} />
