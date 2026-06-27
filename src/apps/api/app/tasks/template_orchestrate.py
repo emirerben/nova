@@ -5660,6 +5660,11 @@ def _mix_template_audio(
 # Music bed can never overpower the narration, no matter where the slider sits.
 _VOICEOVER_MUSIC_BED_MAX_GAIN = 0.5
 
+# Narrated original-audio bed: caps the resting footage-bed level (before the
+# voice-keyed sidechain ducks it further) so the original audio can never bury
+# the narration even with the level dialed to max.
+_NARRATED_FOOTAGE_BED_MAX_GAIN = 0.6
+
 
 def _mix_user_voiceover(
     video_path: str,
@@ -5671,6 +5676,8 @@ def _mix_user_voiceover(
     target_duration_s: float | None = None,
     music_gcs_path: str | None = None,
     music_start_offset_s: float = 0.0,
+    footage_bed_path: str | None = None,
+    bed_level: float = 0.0,
 ) -> None:
     """Mix a user-supplied voiceover over the assembled video.
 
@@ -5679,6 +5686,13 @@ def _mix_user_voiceover(
     `mix=1.0` fully ducks the bed (voice only, the default), `mix=0.0` brings the bed
     up to full. A music bed is additionally clamped to `_VOICEOVER_MUSIC_BED_MAX_GAIN`
     so it can never bury the narration.
+
+    `footage_bed_path` + `bed_level` are the narrated archetype's original-audio bed
+    (single_pass strips clip audio, so the bed is pre-assembled by the caller). When
+    set with `bed_level > 0`, the footage bed plays under the voice at `bed_level`
+    (0 = off, 1 = loudest, clamped by `_NARRATED_FOOTAGE_BED_MAX_GAIN`) AND is
+    side-chain ducked by the voice — it dips while you speak and rises in your pauses.
+    Takes precedence over the `mix`/`music_gcs_path` beds.
 
     Video is stream-copied (`-c:v copy`), exactly like `_mix_template_audio`, so this
     is NOT a final-output encode for encoder-policy purposes — the final video encode
@@ -5696,17 +5710,37 @@ def _mix_user_voiceover(
         use_duration = _probe_duration(video_path)
     fade_start = max(0.0, use_duration - 0.5)
 
+    use_footage_bed = bool(footage_bed_path) and bed_level > 0.0
+
     inputs: list[str] = ["-i", video_path, "-i", voiceover_local_path]
     voice_chain = f"[1:a]volume=1.0,afade=t=out:st={fade_start:.3f}:d=0.5[vo]"
 
-    if music_gcs_path:
+    # Pre-step: download the music bed when requested. The footage bed is a local
+    # file the caller already assembled, so it needs no download.
+    if music_gcs_path and not use_footage_bed:
         music_local = os.path.join(tmpdir, "voiceover_bed.m4a")
         try:
             download_to_file(music_gcs_path, music_local)
         except Exception as exc:
             log.warning("voiceover_music_bed_download_failed", error=str(exc))
             music_gcs_path = None  # degrade to voice-only below
-    if music_gcs_path:
+
+    if use_footage_bed:
+        # Footage audio bed, side-chain ducked under the voice. The voice is split:
+        # one copy mixes in, the other keys the compressor so the bed dips only while
+        # the voice is talking (release brings it back up in the gaps). bed_gain caps
+        # the resting level so the original audio can never bury the narration.
+        bed_gain = max(0.0, min(float(bed_level), 1.0)) * _NARRATED_FOOTAGE_BED_MAX_GAIN
+        inputs += ["-i", footage_bed_path]
+        filter_complex = (
+            f"[1:a]volume=1.0,afade=t=out:st={fade_start:.3f}:d=0.5,asplit=2[vmix][vkey];"
+            f"[2:a]volume={bed_gain:.3f}[bedraw];"
+            f"[bedraw][vkey]sidechaincompress="
+            f"threshold=0.03:ratio=8:attack=15:release=300:makeup=1[bed];"
+            f"[vmix][bed]amix=inputs=2:normalize=0:duration=first[m];"
+            f"[m]loudnorm=I={lufs}:TP=-1.5:LRA=11[a]"
+        )
+    elif music_gcs_path:
         bed_gain = max(0.0, min(1.0 - mix, _VOICEOVER_MUSIC_BED_MAX_GAIN))
         safe_offset = max(0.0, float(music_start_offset_s or 0.0))
         inputs += [

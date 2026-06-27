@@ -107,7 +107,8 @@ def test_resolve_narrated_flag_off_falls_through_to_voiceover(monkeypatch):
     assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "flag_disabled" for e in events)
 
 
-def test_resolve_narrated_requires_voiceover_and_two_scripted_steps(monkeypatch):
+def test_resolve_narrated_requires_voiceover(monkeypatch):
+    """Narrated still REQUIRES a voiceover — without one it can't be the spine."""
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
     events = _trace_capture(monkeypatch)
     archetype, spine = gb._resolve_archetype(
@@ -127,7 +128,12 @@ def test_resolve_narrated_requires_voiceover_and_two_scripted_steps(monkeypatch)
         for e in events
     )
 
-    events.clear()
+
+def test_resolve_narrated_one_step_guide_still_selects_narrated(monkeypatch):
+    """A voiceover + a thin (1-shot) guide must NOT drop to voiceover-montage —
+    the renderer auto-segments the narration, so narrated still wins (captions)."""
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    _trace_capture(monkeypatch)
     archetype, spine = gb._resolve_archetype(
         "narrated",
         [_Meta("c1"), _Meta("c2")],
@@ -136,7 +142,7 @@ def test_resolve_narrated_requires_voiceover_and_two_scripted_steps(monkeypatch)
         voiceover_gcs_path="gcs/voice.m4a",
         filming_guide=[{"shot_id": "s1", "what": "open the app"}],
     )
-    assert (archetype, spine) == ("voiceover", None)
+    assert (archetype, spine) == ("narrated", None)
 
 
 def test_resolve_narrated_enabled_selects_before_voiceover(monkeypatch):
@@ -401,9 +407,24 @@ def test_resolve_narrated_ready_flag_off_falls_through(monkeypatch):
     assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "flag_disabled" for e in events)
 
 
-def test_resolve_narrated_planned_requires_steps(monkeypatch):
-    """narrated_planned with only one step falls through to voiceover (not narrated)."""
+def test_resolve_narrated_planned_empty_guide_still_narrated(monkeypatch):
+    """narrated_planned + voiceover but an EMPTY/thin guide must still pick narrated.
+
+    Regression: an empty filming guide used to drop the item to voiceover-montage,
+    which silently lost the captions. The renderer auto-segments instead.
+    """
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    # empty guide
+    archetype, spine = gb._resolve_archetype(
+        "narrated_planned",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[],
+    )
+    assert (archetype, spine) == ("narrated", None)
+    # one-step guide
     archetype, spine = gb._resolve_archetype(
         "narrated_planned",
         [_Meta("c1")],
@@ -412,4 +433,4 @@ def test_resolve_narrated_planned_requires_steps(monkeypatch):
         voiceover_gcs_path="gcs/voice.m4a",
         filming_guide=[{"shot_id": "s1", "what": "only step"}],
     )
-    assert (archetype, spine) == ("voiceover", None)
+    assert (archetype, spine) == ("narrated", None)

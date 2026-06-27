@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     # Whisper
     whisper_backend: str = "openai-api"  # "openai-api" | "local"
     whisper_model: str = "base.en"
+    # Narrated-voiceover transcription model override (local backend only). The
+    # narration becomes burned + editable captions, so accuracy matters more here
+    # than for clip analysis — a larger model means fewer words to hand-correct.
+    # Empty → fall back to `whisper_model`. Kill switch: set to "base.en" to revert
+    # the accuracy bump (smaller/faster, the pre-bump default). Slower + more RAM
+    # than base.en; only affects the local backend (openai-api uses whisper-1).
+    narrated_whisper_model: str = "small.en"
 
     # Hard ceiling on lyric extraction wall time (LRCLIB search + Whisper
     # transcription + alignment). Beat analysis caps at 300s; the lyric task
@@ -115,8 +122,12 @@ class Settings(BaseSettings):
     # Kill switch for the narrated walkthrough archetype. When False, a job
     # whose plan declares edit_format="narrated" follows the existing voiceover
     # or montage path. When True, eligible voiceover + filming-guide jobs align
-    # each shot's script to the recorded narration and render one cut per step.
-    narrated_archetype_enabled: bool = False
+    # each shot's script to the recorded narration and render one cut per step,
+    # burn the transcribed narration as synced captions, and reflow short clips
+    # to fill their step so the visuals never end before the voice.
+    # Flipped on with the narrated captions + no-freeze work (PR1). The flag
+    # stays the rollback lever: set False to revert to the voiceover-montage path.
+    narrated_archetype_enabled: bool = True
 
     # Layer-2 text-overlay extraction pipeline. When False, the existing
     # single-call `nova.compose.template_text` Gemini agent runs unchanged.

@@ -62,6 +62,8 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.source_idea_seed_text = None
     item.edit_format = None
     item.voiceover_gcs_path = None
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
@@ -109,6 +111,36 @@ def test_generate_requires_clips(client: TestClient) -> None:
 def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{0}/plan/0/a.mp4"])
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.tasks.content_plan_build.generate_plan_item_videos") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 200
+    task.delay.assert_called_once_with(str(item.id))
+
+
+def test_generate_blocks_narrated_without_voiceover(client: TestClient) -> None:
+    """A narrated item with clips but NO voiceover must be rejected (the spine is
+    the narration). Reproduces the 'started a narrated render with no audio' bug."""
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_format = "narrated_ready"
+    item.voiceover_gcs_path = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 409
+    assert "voiceover" in resp.json()["detail"].lower()
+
+
+def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_format = "narrated_ready"
+    item.voiceover_gcs_path = "voiceover-uploads/abc/voice.m4a"
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -322,6 +354,8 @@ def test_plan_item_response_tolerates_malformed_guide() -> None:
     item.source_idea_seed_text = None
     item.edit_format = None
     item.voiceover_gcs_path = None
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
 
     resp = plan_item_response(item)
     # non-dict skipped; 2 dicts kept with defaults
@@ -420,6 +454,8 @@ def test_plan_item_response_surface_landscape_fit() -> None:
     item.edit_format = None
     item.voiceover_gcs_path = None
     item.landscape_fit = "fill"  # explicitly set
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
 
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fill"
@@ -454,6 +490,8 @@ def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
     item.edit_format = None
     item.voiceover_gcs_path = None
     item.landscape_fit = None  # pre-migration row: None → should default to "fit"
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
 
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fit"

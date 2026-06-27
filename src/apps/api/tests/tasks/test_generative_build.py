@@ -2757,3 +2757,132 @@ def test_pool_only_job_passes_clip_count_as_min_slots_to_recipe(monkeypatch, tmp
     assert captured_min_slots[0] == n_clips, (
         f"min_slots should equal clip count ({n_clips}), got {captured_min_slots[0]}"
     )
+
+
+# ── caption reburn (on-video editor Apply) ───────────────────────────────────
+
+
+def _narrated_caption_variant(**over):
+    v = {
+        "variant_id": "narrated",
+        "rank": 1,
+        "render_status": "ready",
+        "resolved_archetype": "narrated",
+        "base_video_path": "generative-jobs/j/variant_1_narrated_base.mp4",
+        "video_path": "generative-jobs/j/variant_1_narrated.mp4",
+        "output_url": "https://signed/old",
+        "caption_cues": [{"text": "the energy here", "start_s": 0.0, "end_s": 1.2}],
+    }
+    v.update(over)
+    return v
+
+
+def _patch_reburn_io(monkeypatch, burned: dict):
+    def _dl(_src, dst):
+        with open(dst, "wb") as f:
+            f.write(b"x")
+
+    monkeypatch.setattr("app.storage.download_to_file", _dl)
+    monkeypatch.setattr("app.storage.upload_public_read", lambda *a, **k: "https://signed/new")
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", lambda *a, **k: None)
+
+    def _burn(*_a, **_k):
+        burned["called"] = True
+
+    monkeypatch.setattr("app.pipeline.narrated_assembler.burn_captions_on_video", _burn)
+
+
+def test_reburn_captions_happy_swaps_video_and_marks_ready(monkeypatch):
+    import uuid
+
+    job = _FakeJob(assembly_plan={"variants": [_narrated_caption_variant()]})
+    _patch_job_session(monkeypatch, job)
+    burned = {"called": False}
+    _patch_reburn_io(monkeypatch, burned)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "narrated")
+
+    v = job.assembly_plan["variants"][0]
+    assert burned["called"] is True  # cues present → captions burned
+    assert v["render_status"] == "ready"
+    assert v["video_path"].endswith(".mp4") and "_cap_" in v["video_path"]  # new key
+    assert v["video_path"] != "generative-jobs/j/variant_1_narrated.mp4"
+    assert v["output_url"] == "https://signed/new"
+
+
+def test_reburn_empty_cues_copies_base_no_burn(monkeypatch):
+    import uuid
+
+    job = _FakeJob(assembly_plan={"variants": [_narrated_caption_variant(caption_cues=[])]})
+    _patch_job_session(monkeypatch, job)
+    burned = {"called": False}
+    _patch_reburn_io(monkeypatch, burned)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "narrated")
+
+    assert burned["called"] is False  # all cleared → caption-free copy, no libass burn
+    assert job.assembly_plan["variants"][0]["render_status"] == "ready"
+
+
+def test_reburn_rejects_non_narrated_variant(monkeypatch):
+    import uuid
+
+    import pytest
+
+    # A montage variant also carries base_video_path — reburn must refuse it.
+    montage = _narrated_caption_variant(resolved_archetype="montage", variant_id="original_text")
+    job = _FakeJob(assembly_plan={"variants": [montage]})
+    _patch_job_session(monkeypatch, job)
+    _patch_reburn_io(monkeypatch, {"called": False})
+
+    with pytest.raises(ValueError, match="not a narrated caption variant"):
+        gb._run_reburn_narrated_captions(str(uuid.uuid4()), "original_text")
+
+
+def test_finalize_job_preserves_caption_cues(monkeypatch):
+    """REGRESSION: _finalize_job rebuilds variants from a key whitelist that silently
+    strips anything not listed. caption_cues MUST survive or the on-video editor (which
+    needs the cues, not just the base) has nothing to load after the first render."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "narrated",
+        "rank": 1,
+        "text_mode": "none",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/v.mp4",
+        "resolved_archetype": "narrated",
+        "base_video_path": "generative-jobs/j/base.mp4",
+        "caption_cues": [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}],
+        "voiceover_caption_style": "word",
+        "voiceover_caption_font": "Montserrat Bold",
+    }
+    gb._finalize_job(str(uuid.uuid4()), [result])
+    v = job.assembly_plan["variants"][0]
+    assert v["caption_cues"] == [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}]
+    assert v["base_video_path"] == "generative-jobs/j/base.mp4"  # the existing whitelist field
+    # caption style + font must survive too, or a caption edit reburns wrong.
+    assert v["voiceover_caption_style"] == "word"
+    assert v["voiceover_caption_font"] == "Montserrat Bold"
+    assert job.status == "variants_ready"
+
+
+def test_specs_for_archetype_narrated_carries_caption_style():
+    """The narrated spec threads voiceover_caption_style through to the render."""
+    specs = gb._specs_for_archetype(
+        "narrated",
+        None,
+        voiceover_gcs_path="voiceover-uploads/abc/voice.m4a",
+        voiceover_caption_style="word",
+    )
+    assert len(specs) == 1
+    assert specs[0]["voiceover_caption_style"] == "word"
+    # default (no caption style) → None → render falls back to sentence captions.
+    default_specs = gb._specs_for_archetype(
+        "narrated", None, voiceover_gcs_path="voiceover-uploads/abc/voice.m4a"
+    )
+    assert default_specs[0]["voiceover_caption_style"] is None

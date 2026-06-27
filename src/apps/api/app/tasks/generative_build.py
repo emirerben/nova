@@ -36,7 +36,7 @@ from typing import Any
 import structlog
 from sqlalchemy.exc import OperationalError
 
-from app.agents._schemas.edit_format import coerce_edit_format
+from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS, coerce_edit_format
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
@@ -206,6 +206,14 @@ def _run_generative_job(job_id: str) -> None:
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
         voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
+        # Original-audio bed level for the narrated archetype (0..1; None → Nova's
+        # default). Plumbed into the narrated spec; ignored by other archetypes.
+        _raw_bed = all_candidates.get("voiceover_bed_level")
+        voiceover_bed_level: float | None = float(_raw_bed) if _raw_bed is not None else None
+        # Caption style for the narrated archetype ("sentence" | "word"; None →
+        # "sentence", today's sentence-block captions). "word" renders one big word
+        # at a time (qbuilder style). Plumbed into the narrated spec; ignored elsewhere.
+        voiceover_caption_style: str | None = all_candidates.get("voiceover_caption_style") or None
         # Filming guide (Creator Agent M3 / B2). Shot-list context forwarded to
         # intro_writer for hook voice. Absent on public/legacy jobs → empty list →
         # byte-identical to pre-M3 behavior.
@@ -248,7 +256,19 @@ def _run_generative_job(job_id: str) -> None:
     with tempfile.TemporaryDirectory(
         prefix="nova_generative_", ignore_cleanup_errors=True
     ) as tmpdir:
-        ingest = _ingest_clips(clip_paths_gcs, tmpdir, job_id=job_id)
+        # A narrated job (flag on + narrated format + voiceover) renders from the
+        # voiceover + raw clips and never reads clip_metadata — skip the Gemini
+        # clip analysis so it's faster, cheaper, and survives Gemini outages. This
+        # condition mirrors the narrated branch of _resolve_archetype exactly, so we
+        # only skip when narrated WILL be selected (a montage fallback still needs metas).
+        _skip_clip_analysis = (
+            settings.narrated_archetype_enabled
+            and edit_format in NARRATED_EDIT_FORMATS
+            and bool(voiceover_gcs_path)
+        )
+        ingest = _ingest_clips(
+            clip_paths_gcs, tmpdir, job_id=job_id, skip_analysis=_skip_clip_analysis
+        )
         clip_metas = ingest["clip_metas"]
         clip_id_to_gcs = ingest["clip_id_to_gcs"]
         clip_id_to_local = ingest["clip_id_to_local"]
@@ -599,7 +619,11 @@ def _run_generative_job(job_id: str) -> None:
         # set is known — before any render starts. The frontend sees a stable N-tile grid
         # from this point, never from a growing list that pops in mid-render (D7).
         initial_specs = _specs_for_archetype(
-            archetype, best_track, voiceover_gcs_path=voiceover_gcs_path
+            archetype,
+            best_track,
+            voiceover_gcs_path=voiceover_gcs_path,
+            voiceover_bed_level=voiceover_bed_level,
+            voiceover_caption_style=voiceover_caption_style,
         )
         for spec in initial_specs:
             _upsert_variant_entry(
@@ -658,6 +682,7 @@ def _ingest_clips(
     *,
     job_id: str,
     min_success_fraction: float = 0.5,
+    skip_analysis: bool = False,
 ) -> dict[str, Any]:
     """Download → probe → Gemini upload → clip_metadata. Reuses the proven helpers.
 
@@ -666,6 +691,12 @@ def _ingest_clips(
     (default: more than half failing aborts — right for renders, where cutting
     with half-garbage footage is worse than failing). Pool MATCHING passes 0.0:
     any analyzed subset is worth matching; only total failure raises.
+
+    ``skip_analysis``: download + probe ONLY, no Gemini upload/clip_metadata. The
+    narrated archetype renders from the voiceover + raw clips and never reads clip
+    metadata, so analysis is wasted work there — and skipping it keeps narrated
+    renders working when Gemini is rate-limited/unavailable. clip_metas is empty,
+    hero is None; clip ids use the `clip_{idx}` synthetic convention.
     """
     from app.tasks.template_orchestrate import (  # noqa: PLC0415
         _analyze_clips_parallel,
@@ -682,6 +713,16 @@ def _ingest_clips(
 
     local_clip_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
     probe_map = _probe_clips(local_clip_paths)
+    if skip_analysis:
+        return {
+            "clip_metas": [],
+            "probe_map": probe_map,
+            "clip_id_to_gcs": {_clip_id_for(None, i): gcs for i, gcs in enumerate(clip_paths_gcs)},
+            "clip_id_to_local": {
+                _clip_id_for(None, i): path for i, path in enumerate(local_clip_paths)
+            },
+            "hero": None,
+        }
     file_refs = _upload_clips_parallel(local_clip_paths)
     clip_metas, failed_count = _analyze_clips_parallel(
         file_refs, local_clip_paths, probe_map, job_id=job_id
@@ -2697,16 +2738,13 @@ def _resolve_archetype(
         )
         return "montage", None
 
-    guide = list(filming_guide or [])
-    narrated_steps = [
-        shot for shot in guide if isinstance(shot, dict) and str(shot.get("what") or "").strip()
-    ]
-    _narrated_ready = edit_format == "narrated_ready"
-    if (
-        edit_format in {"narrated", "narrated_planned", "narrated_ready"}
-        and voiceover_gcs_path
-        and (_narrated_ready or len(narrated_steps) >= 2)
-    ):
+    # Any narrated format with a voiceover renders the narrated archetype. A written
+    # script (the filming guide) drives force-alignment; without a usable one
+    # (narrated_ready, or a "Narrated walkthrough" item whose guide is empty) the
+    # renderer auto-segments the narration across the clips. Either way the voiceover
+    # spines the edit and the words become captions — so an empty guide must NOT drop
+    # a narrated item to the voiceover-montage path (which loses captions).
+    if edit_format in NARRATED_EDIT_FORMATS and voiceover_gcs_path:
         if settings.narrated_archetype_enabled:
             record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
             log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")
@@ -2866,6 +2904,8 @@ def _specs_for_archetype(
     best_track: MusicTrack | None,
     *,
     voiceover_gcs_path: str | None = None,
+    voiceover_bed_level: float | None = None,
+    voiceover_caption_style: str | None = None,
 ) -> list[dict[str, Any]]:
     """The variant set to render for a resolved archetype (single source of truth).
 
@@ -2910,6 +2950,8 @@ def _specs_for_archetype(
                 "archetype": "narrated",
                 "voiceover_gcs_path": voiceover_gcs_path,
                 "mix": 1.0,
+                "voiceover_bed_level": voiceover_bed_level,
+                "voiceover_caption_style": voiceover_caption_style,
             }
         ]
     if archetype == "talking_head":
@@ -4397,6 +4439,17 @@ def _render_narrated_variant(
 
     variant_id = spec["variant_id"]
     voiceover_gcs_path = str(spec.get("voiceover_gcs_path") or "")
+    bed_level = spec.get("voiceover_bed_level")
+    # Caption style: "word" → one big word at a time (qbuilder); anything else →
+    # "sentence" (today's sentence-block captions). Persisted on the variant so the
+    # reburn re-burns edited cues in the same style.
+    caption_style = (
+        "word" if str(spec.get("voiceover_caption_style") or "") == "word" else "sentence"
+    )
+    # Caption font (a font-registry key; None → the default TikTok Sans). Applies to
+    # both caption styles. Persisted on the variant so the editor shows the choice and
+    # the reburn re-burns in the same font. The render resolves it to a libass family.
+    caption_font = spec.get("voiceover_caption_font") or None
     base = {
         "variant_id": variant_id,
         "rank": rank,
@@ -4419,6 +4472,15 @@ def _render_narrated_variant(
         "mix": 1.0,
         "user_style_knobs": None,
         "base_video_path": None,
+        # Editable caption cues [{text, start_s, end_s}] (assembled-time). Drives the
+        # on-video caption editor; reburned onto base_video_path when the creator edits.
+        "caption_cues": None,
+        # Caption style this variant renders with ("sentence" | "word"). The reburn
+        # reads it so edited cues re-burn in the SAME style as the first render.
+        "voiceover_caption_style": caption_style,
+        # Caption font (font-registry key; None → default). Editable in the on-video
+        # caption editor; the reburn resolves it to a libass family.
+        "voiceover_caption_font": caption_font,
         "ai_timeline": None,
         "resolved_archetype": "narrated",
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
@@ -4430,15 +4492,16 @@ def _render_narrated_variant(
             raise ValueError("narrated variant missing voiceover_gcs_path")
         voiceover_local = os.path.join(variant_dir, "voiceover_src")
         download_to_file(voiceover_gcs_path, voiceover_local)
-        transcript = transcribe_whisper(voiceover_local)
+        # Caption accuracy: the narration becomes burned + editable captions, so use
+        # the larger narrated model (local backend; flag-gated, kill-switch in config).
+        transcript = transcribe_whisper(voiceover_local, model=settings.narrated_whisper_model)
 
         script_steps = _narrated_script_steps(filming_guide)
-        if script_steps:
-            # narrated / narrated_planned: force-align written script to voiceover
+        if len(script_steps) >= 2:
+            # narrated / narrated_planned with a written script: force-align it to the
+            # voiceover. Fewer than two scripted steps falls through to auto-segmentation.
             from app.pipeline.narrated_alignment import align_script_to_voiceover  # noqa: PLC0415
 
-            if len(script_steps) < 2:
-                raise ValueError("narrated variant requires at least two scripted steps")
             clip_assignments = _narrated_clip_assignments(
                 filming_guide, narrative_order, clip_id_to_local
             )
@@ -4452,9 +4515,12 @@ def _render_narrated_variant(
             # narrated_ready: no pre-written script — auto-segment the voiceover transcript
             # into at most n_clips duration-proportional buckets so each uploaded clip
             # appears at most once and segments stay at sentence granularity.
-            from app.pipeline.narrated_alignment import StepTiming  # noqa: PLC0415
+            from app.pipeline.narrated_alignment import (  # noqa: PLC0415
+                contiguous_step_timings,
+            )
             from app.pipeline.narrated_assembler import NarratedClip  # noqa: PLC0415
             from app.pipeline.phrase_sequence import split_phrases  # noqa: PLC0415
+            from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
 
             words = transcript.words
             total_s = max((w.end_s for w in words), default=60.0)
@@ -4491,20 +4557,22 @@ def _render_narrated_variant(
                 buckets.append(bucket_open)
                 phrases = buckets
 
-            step_timings = [
-                StepTiming(
-                    step_id=f"seg_{i}",
-                    start_s=p["speech_start_s"],
-                    end_s=p["speech_end_s"],
-                    confidence=1.0,
-                )
-                for i, p in enumerate(phrases)
-            ]
+            # Tile the FULL voiceover with contiguous segments (boundaries at each
+            # next phrase's speech onset) so the assembled visual timeline matches
+            # the voiceover audio's natural timing — otherwise the compressed visual
+            # makes the burned captions lead the spoken words. Use the probed audio
+            # length as the end so nothing the user said gets cut.
+            vo_dur = _probe_duration(voiceover_local) or 0.0
+            timeline_end = max(total_s, vo_dur)
+            step_timings = contiguous_step_timings(
+                [float(p["speech_start_s"]) for p in phrases], timeline_end
+            )
             log.info(
                 "narrated_ready_segments",
                 job_id=job_id,
                 n_clips=n_clips,
                 n_segments=len(step_timings),
+                timeline_end_s=round(timeline_end, 2),
                 durations=[round(t.end_s - t.start_s, 2) for t in step_timings],
             )
 
@@ -4521,25 +4589,54 @@ def _render_narrated_variant(
                 raise ValueError("narrated_ready variant: no valid clip paths found")
 
         final_path = os.path.join(variant_dir, "final.mp4")
-        assemble_narrated(
+        # Caption-free twin (same clips + voice + bed, no burned text) so the
+        # creator can edit captions live on the video and reburn just the text.
+        base_path = os.path.join(variant_dir, "final_base.mp4")
+        caption_cues = assemble_narrated(
             step_timings,
             clip_assignments,
             voiceover_local,
             final_path,
             variant_dir,
             landscape_fit=landscape_fit,
+            # Burn the transcribed narration as synced captions (the on-screen
+            # text IS the spoken voiceover). Reuses the transcript already
+            # computed above — no second Whisper pass.
+            transcript=transcript,
+            # Original-audio bed under the voice (None → Nova's default level).
+            bed_level=bed_level,
+            base_output_path=base_path,
+            # "sentence" (default) or "word" (qbuilder one-word-at-a-time).
+            caption_style=caption_style,
+            # Font for the burned captions (registry key; None → default).
+            caption_font=caption_font,
         )
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError("narrated variant produced empty output")
 
         output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
         output_url = upload_public_read(final_path, output_gcs)
+        # Persist the caption-free base + editable cues so the on-video editor +
+        # reburn work. Best-effort: a missing base just disables editing (the
+        # burned video still plays/downloads). Only when captions actually exist.
+        base_gcs: str | None = None
+        if caption_cues and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
+            base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
+            upload_public_read(base_path, base_gcs)
         return {
             **base,
             "ok": True,
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
+            "base_video_path": base_gcs,
+            "caption_cues": caption_cues or None,
+            # Narrated renders no media-overlay cards (v1), but the finalize whitelist
+            # must round-trip these keys so a montage variant can never lose overlays
+            # through a shared path. `**base` already carries them (None for narrated);
+            # naming them explicitly keeps the byte-identity guard honest.
+            "media_overlays": base["media_overlays"],
+            "pre_media_overlay_video_path": base["pre_media_overlay_video_path"],
             "narrated_timings": [
                 {
                     "step_id": t.step_id,
@@ -4566,6 +4663,116 @@ def _render_narrated_variant(
             "error": err,
             "error_class": _classify_error(exc),
         }
+
+
+@celery_app.task(
+    name="reburn_narrated_captions",
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
+    max_retries=7,
+    # Caption reburn re-encodes only the (already-mixed) base — fast. Bounded well
+    # under the broker visibility_timeout (1900s) like the other render tasks.
+    soft_time_limit=600,
+    time_limit=660,
+)
+def reburn_narrated_captions(self, job_id: str, variant_id: str) -> None:
+    """Reburn a narrated variant's (hand-edited) caption cues onto its caption-free base.
+
+    Apply step for the on-video caption editor: reads the variant's persisted
+    `caption_cues` + `base_video_path`, burns the cues with libass onto the base
+    (clips + voice + bed, no old text), uploads to a NEW key (so caches/old links
+    don't serve stale captions), and swaps in `video_path`. A failure reverts the
+    variant to `ready` keeping its last-good video.
+    """
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        try:
+            _run_reburn_narrated_captions(job_id, variant_id)
+        except OperationalError:
+            raise
+        except Exception as exc:
+            log.error(
+                "narrated_caption_reburn_failed",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc)[:MAX_ERROR_DETAIL_LEN],
+                exc_info=True,
+            )
+            # Keep the last-good burned video; just clear the in-flight state.
+            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+
+
+def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
+    from app.pipeline.captions import generate_ass_from_cues  # noqa: PLC0415
+    from app.pipeline.narrated_assembler import (  # noqa: PLC0415
+        burn_captions_on_video,
+        resolve_caption_font,
+    )
+    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("narrated_caption_reburn_job_not_found", job_id=job_id)
+            return
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if variant is None:
+        raise ValueError(f"variant {variant_id} not found on job {job_id}")
+    # Defense-in-depth: never caption-reburn a non-narrated variant (the agent_text
+    # montage base also has base_video_path; burning subtitles over it is corruption).
+    if variant.get("resolved_archetype") != "narrated":
+        raise ValueError(f"variant {variant_id} is not a narrated caption variant")
+    base_path = variant.get("base_video_path")
+    cues = list(variant.get("caption_cues") or [])
+    rank = variant.get("rank")
+    # Re-burn edited cues in the SAME caption style the variant first rendered with,
+    # so word-by-word stays word-by-word after an edit ("word" → the big centered
+    # one-word style; anything else → the plain sentence style).
+    ass_style = "word" if variant.get("voiceover_caption_style") == "word" else "plain"
+    # Re-burn in the variant's chosen caption font (registry key → libass family;
+    # None/unknown → the default). Applies to both styles.
+    ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    if not base_path:
+        raise ValueError("variant has no caption-free base — cannot reburn captions")
+
+    _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
+    with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
+        base_local = os.path.join(tmpdir, "base.mp4")
+        download_to_file(base_path, base_local)
+        out_local = os.path.join(tmpdir, "out.mp4")
+        if cues:
+            ass_path = os.path.join(tmpdir, "captions.ass")
+            generate_ass_from_cues(cues, ass_path, font_name=ass_font, style=ass_style)
+            burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+        else:
+            # All cues cleared → caption-free video.
+            shutil.copy2(base_local, out_local)
+        # New key so CDN / signed-URL caches never serve the pre-edit captions.
+        new_gcs = (
+            f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4"
+        )
+        output_url = upload_public_read(out_local, new_gcs)
+
+    _update_variant_entry(
+        job_id,
+        variant_id,
+        {
+            "video_path": new_gcs,
+            "output_url": output_url,
+            "render_status": "ready",
+            # Advance the render fingerprint so the hero player (keyed off
+            # render_finished_at) swaps to the reburned video instead of showing
+            # the pre-edit one until reload.
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+    log.info("narrated_caption_reburn_done", job_id=job_id, variant_id=variant_id, cues=len(cues))
 
 
 def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
@@ -5071,6 +5278,16 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),
                     "pre_media_overlay_video_path": r.get("pre_media_overlay_video_path"),
+                    # narrated caption editor — MUST survive or the cues are stripped
+                    # and the on-video editor has nothing to load (base survives above,
+                    # but the editor needs the cues too).
+                    "caption_cues": r.get("caption_cues"),
+                    # narrated caption style ("sentence" | "word") — MUST survive or a
+                    # caption edit reburns in the wrong style (the reburn reads it).
+                    "voiceover_caption_style": r.get("voiceover_caption_style"),
+                    # narrated caption font (registry key) — MUST survive or a caption
+                    # edit reburns in the wrong font (the reburn reads it).
+                    "voiceover_caption_font": r.get("voiceover_caption_font"),
                     # sequence + cluster persistence (D15/D19) — MUST survive
                     # finalization or every re-render loses the synced typography:
                     # intro_mode gates route behavior (sequence_synced, retext
@@ -5097,6 +5314,9 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # voiceover variants: mix must survive or the voice/bed slider
                     # resets after the first completed render (same strip class).
                     "mix": r.get("mix"),
+                    # narrated step alignment (diagnostic): keep it through finalize
+                    # so the admin job-debug view + re-render diagnostics can read it.
+                    "narrated_timings": r.get("narrated_timings"),
                 }
                 for r in results
             ],

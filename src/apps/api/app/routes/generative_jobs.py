@@ -167,6 +167,9 @@ class GenerativeVariant(BaseModel):
     # the browser can play the base under a client-side text overlay (instant edit).
     base_video_path: str | None = None
     base_video_url: str | None = None
+    # Narrated on-video caption editor: editable cues [{text, start_s, end_s}]
+    # (assembled-time). Present only on narrated variants with an editable base.
+    caption_cues: list[dict] | None = None
     # User-pinned independent overrides (decoupled from style_set_id).
     # null when not pinned; the renderer uses the style-set value.
     intro_font_family: str | None = None
@@ -598,6 +601,133 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
         override_text=(text.strip() if (text and not remove) else None),
         remove_text=bool(remove),
     )
+
+
+# A caption edit may never bloat the JSONB / slow the libass burn unbounded; the
+# sibling timeline editor caps at 50 slots, narration rarely exceeds a few dozen lines.
+_MAX_CAPTION_CUES = 300
+
+
+class CaptionCue(BaseModel):
+    # Reject NaN/±Infinity at the edge — format_ass_time(inf) crashes the reburn
+    # worker and leaves the cue poisoned (every Apply then fails).
+    model_config = {"allow_inf_nan": False}
+
+    text: str
+    start_s: float
+    end_s: float
+
+
+class CaptionsRequest(BaseModel):
+    """Edited narrated caption cues (assembled-time), the on-video editor's payload."""
+
+    cues: list[CaptionCue]
+
+    @field_validator("cues")
+    @classmethod
+    def _cap_cues(cls, v: list[CaptionCue]) -> list[CaptionCue]:
+        if len(v) > _MAX_CAPTION_CUES:
+            raise ValueError(f"Too many caption lines (max {_MAX_CAPTION_CUES}).")
+        return v
+
+
+class CaptionFontRequest(BaseModel):
+    """Caption font choice for a narrated variant. ``None`` resets to the default."""
+
+    caption_font: str | None = None
+
+
+def _is_narrated_caption_variant(variant: dict) -> bool:
+    """True iff this variant is an editable narrated-caption variant.
+
+    Gates the caption endpoints. `base_video_path` alone is NOT sufficient — the
+    agent_text montage fast-reburn base sets it too; burning subtitle captions
+    over a montage's text-free base would destroy that variant. Narration is the
+    only archetype that ships `caption_cues`, so require the narrated archetype.
+    """
+    return variant.get("resolved_archetype") == "narrated" and bool(variant.get("base_video_path"))
+
+
+async def _patch_narrated_variant(
+    job_id: uuid.UUID, variant_id: str, mutation: dict, db: AsyncSession
+) -> None:
+    """Row-locked read-modify-write of one narrated variant's `assembly_plan` entry.
+
+    The single lock + guard ladder (404 no-render / 404 unknown-variant / 422
+    not-narrated / 409 rendering) shared by every narrated-variant editor PATCH, so
+    they can't drift on which states they accept. ``mutation`` is shallow-merged onto
+    the target variant. No re-render — Apply reburns later. Matches the worker's
+    `_update_variant_entry` locking so a concurrent reburn can't clobber the edit.
+    """
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    plan = dict(job.assembly_plan or {})
+    variants = list(plan.get("variants") or [])
+    target = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if not _is_narrated_caption_variant(target):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Captions can only be edited on narrated variants.",
+        )
+    if target.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Captions are being applied — try again once the render finishes.",
+        )
+    for i, v in enumerate(variants):
+        if v.get("variant_id") == variant_id:
+            variants[i] = {**v, **mutation}
+            break
+    plan["variants"] = variants
+    job.assembly_plan = plan
+    await db.commit()
+
+
+async def persist_variant_captions(
+    job_id: uuid.UUID, variant_id: str, cues: list[CaptionCue], db: AsyncSession
+) -> None:
+    """Persist hand-edited caption cues on a narrated variant. No re-render — the
+    edit is instant (the player overlays the cues); Apply reburns them later."""
+    await _patch_narrated_variant(
+        job_id, variant_id, {"caption_cues": [c.model_dump() for c in cues]}, db
+    )
+
+
+async def persist_variant_caption_font(
+    job_id: uuid.UUID, variant_id: str, caption_font: str | None, db: AsyncSession
+) -> None:
+    """Persist the chosen caption font on a narrated variant. No re-render — the
+    on-video editor previews it locally; Apply reburns in the chosen font.
+
+    Validates the font against the registry (only known, non-deprecated fonts; or
+    None to reset to the default) so unknown input can never reach the ASS Fontname.
+    """
+    from app.pipeline.narrated_assembler import is_valid_caption_font  # noqa: PLC0415
+
+    if not is_valid_caption_font(caption_font):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown caption font.",
+        )
+    await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
+
+
+def dispatch_apply_captions(job: Job, variant_id: str) -> None:
+    """Reburn the variant's (persisted, hand-edited) caption cues onto its
+    caption-free base — the Apply step of the on-video caption editor."""
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    if not _is_narrated_caption_variant(variant):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Captions can only be applied on narrated variants.",
+        )
+    from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+    reburn_narrated_captions.delay(str(job.id), variant_id)
 
 
 def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> None:

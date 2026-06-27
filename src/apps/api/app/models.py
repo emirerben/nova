@@ -740,6 +740,16 @@ class PlanItem(Base):
     # Set via PATCH /plan-items/{id}/voiceover; threaded to build_generative_job at
     # generate time so the narrated archetype can do force-alignment + per-step trimming.
     voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Original-audio bed level for the narrated archetype (0.0 = voice only,
+    # 1.0 = loudest). NULL → Nova's default level. Set via
+    # PATCH /plan-items/{id}/voiceover-bed-level; threaded to build_generative_job
+    # so the footage audio plays, side-chain ducked, under the narration.
+    voiceover_bed_level: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Caption style for the narrated archetype: "sentence" (default, sentence-block
+    # captions) or "word" (one big word at a time, the "qbuilder" look). NULL →
+    # "sentence". Set via PATCH /plan-items/{id}/voiceover-caption-style; threaded to
+    # build_generative_job so the narrated render burns the chosen caption style.
+    voiceover_caption_style: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Optional date the user wants to post this idea (distinct from plan-level start_date).
     scheduled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Freeform notes the user adds to flesh out the idea.

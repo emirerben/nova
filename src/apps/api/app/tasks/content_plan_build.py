@@ -479,8 +479,16 @@ def _dispatch_item_render(
             # narrated archetype can force-align the script and per-step trim the clips.
             voiceover_gcs_path=str(item.voiceover_gcs_path) if item.voiceover_gcs_path else None,
             # Landscape-clip preference (plan-item editor). Defaults to "fit" via the
-            # column server_default; getattr guard tolerates pre-0057 in-flight rows.
+            # column server_default; getattr guard tolerates pre-column in-flight rows.
             landscape_fit=str(getattr(item, "landscape_fit", "fit") or "fit"),
+            # Original-audio bed level for the narrated archetype (None → Nova default).
+            voiceover_bed_level=(
+                float(item.voiceover_bed_level) if item.voiceover_bed_level is not None else None
+            ),
+            # Narrated caption style ("sentence" | "word"; None → sentence captions).
+            voiceover_caption_style=(
+                str(item.voiceover_caption_style) if item.voiceover_caption_style else None
+            ),
             # Filming-guide alignment: how many leading clip_paths are guide
             # shots (in guide order). 0 = no narrative ordering (pure greedy).
             narrative_shot_count=narrative_shot_count,

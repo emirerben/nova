@@ -72,6 +72,8 @@ def _owned_item(user_id: uuid.UUID, *, job=None):
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.voiceover_gcs_path = None
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
     item.edit_format = None
     plan = MagicMock()
     plan.user_id = user_id
@@ -509,3 +511,185 @@ def test_edit_requires_at_least_one_field(client: TestClient) -> None:
         resp = client.post(f"/plan-items/{item.id}/variants/song_text/edit", json={})
     assert resp.status_code == 422
     regen.delay.assert_not_called()
+
+
+# ── captions (on-video caption editor) ───────────────────────────────────────
+
+NARRATED_VARIANT = {
+    "variant_id": "narrated",
+    "render_status": "ready",
+    "rank": 1,
+    "resolved_archetype": "narrated",
+    "base_video_path": "generative-jobs/j/variant_1_narrated_base.mp4",
+    "music_track_id": None,
+}
+REBURN = "app.tasks.generative_build.reburn_narrated_captions"
+
+
+def test_is_narrated_caption_variant_guard() -> None:
+    from app.routes.generative_jobs import _is_narrated_caption_variant
+
+    assert _is_narrated_caption_variant(NARRATED_VARIANT) is True
+    # montage agent_text base also has base_video_path — must NOT be editable.
+    assert (
+        _is_narrated_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "montage"}) is False
+    )
+    # narrated but no base → not editable yet
+    assert _is_narrated_caption_variant({"resolved_archetype": "narrated"}) is False
+
+
+def test_caption_cue_rejects_infinity() -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionsRequest
+
+    with pytest.raises(ValidationError):
+        CaptionsRequest.model_validate_json(
+            '{"cues":[{"text":"x","start_s":1.0,"end_s":Infinity}]}'
+        )
+
+
+def test_captions_request_caps_cue_count() -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionsRequest
+
+    many = [{"text": "x", "start_s": float(i), "end_s": float(i) + 1} for i in range(301)]
+    with pytest.raises(ValidationError):
+        CaptionsRequest(cues=many)
+    # 300 is allowed
+    CaptionsRequest(cues=many[:300])
+
+
+def test_apply_captions_happy(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)  # load item → reload for response
+    _override(user, db)
+    with patch(REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(f"/plan-items/{item.id}/variants/narrated/captions/apply")
+    assert resp.status_code == 200
+    reburn.delay.assert_called_once_with(str(job.id), "narrated")
+
+
+def test_apply_captions_rejects_non_narrated_variant(client: TestClient) -> None:
+    user = _user()
+    # montage variant with a base_video_path — must be refused (422), never reburned.
+    montage = {**NARRATED_VARIANT, "variant_id": "original_text", "resolved_archetype": "montage"}
+    job = _job([montage])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)  # rejected in dispatch, before any reload
+    _override(user, db)
+    with patch(REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(f"/plan-items/{item.id}/variants/original_text/captions/apply")
+    assert resp.status_code == 422
+    reburn.delay.assert_not_called()
+
+
+def test_edit_captions_persists_cues(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    # load item → persist's FOR-UPDATE select returns the job → reload item
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions",
+        json={"cues": [{"text": "could", "start_s": 0.0, "end_s": 1.0}]},
+    )
+    assert resp.status_code == 200
+    assert job.assembly_plan["variants"][0]["caption_cues"] == [
+        {"text": "could", "start_s": 0.0, "end_s": 1.0}
+    ]
+
+
+# ── caption font (editor font picker for narrated captions) ───────────────────
+
+_VALID_CAPTION_FONT = "TikTok Sans Bold"  # a known non-deprecated registry font
+
+
+def test_set_caption_font_persists(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)  # load → FOR-UPDATE job → reload
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/caption-font",
+        json={"caption_font": _VALID_CAPTION_FONT},
+    )
+    assert resp.status_code == 200
+    assert job.assembly_plan["variants"][0]["voiceover_caption_font"] == _VALID_CAPTION_FONT
+
+
+def test_set_caption_font_null_resets(client: TestClient) -> None:
+    user = _user()
+    job = _job([{**NARRATED_VARIANT, "voiceover_caption_font": "Montserrat"}])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/caption-font",
+        json={"caption_font": None},
+    )
+    assert resp.status_code == 200
+    assert job.assembly_plan["variants"][0]["voiceover_caption_font"] is None
+
+
+def test_set_caption_font_rejects_unknown(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)  # validation 422s before the FOR-UPDATE select
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/caption-font",
+        json={"caption_font": "Not A Real Font"},
+    )
+    assert resp.status_code == 422
+    assert "voiceover_caption_font" not in job.assembly_plan["variants"][0]
+
+
+def test_set_caption_font_rejects_non_narrated(client: TestClient) -> None:
+    user = _user()
+    montage = {**NARRATED_VARIANT, "variant_id": "original_text", "resolved_archetype": "montage"}
+    job = _job([montage])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)  # font valid → FOR-UPDATE → narrated-gate 422
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/original_text/caption-font",
+        json={"caption_font": _VALID_CAPTION_FONT},
+    )
+    assert resp.status_code == 422
+
+
+def test_set_caption_font_409_while_rendering(client: TestClient) -> None:
+    # A font edit must NOT race an in-flight reburn — the shared lock+guard ladder
+    # 409s while render_status=='rendering'.
+    user = _user()
+    job = _job([{**NARRATED_VARIANT, "render_status": "rendering"}])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)  # load item → FOR-UPDATE job → 409 (rendering)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/caption-font",
+        json={"caption_font": _VALID_CAPTION_FONT},
+    )
+    assert resp.status_code == 409
+
+
+def test_edit_captions_409_while_rendering(client: TestClient) -> None:
+    user = _user()
+    job = _job([{**NARRATED_VARIANT, "render_status": "rendering"}])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions",
+        json={"cues": [{"text": "x", "start_s": 0.0, "end_s": 1.0}]},
+    )
+    assert resp.status_code == 409
