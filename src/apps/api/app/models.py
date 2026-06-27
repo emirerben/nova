@@ -316,6 +316,31 @@ class MusicTrack(Base):
     )
 
 
+class SoundEffect(Base):
+    """Admin-curated sound effects for the glossary (click sounds, meme stings, etc.)."""
+
+    __tablename__ = "sound_effects"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    audio_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # "pending" | "ready" | "failed" — no analysis stage (simpler than MusicTrack)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Original filename for admin display (set at upload time).
+    source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_sound_effects_status", "status"),
+        Index("idx_sound_effects_published", "published_at"),
+        Index("idx_sound_effects_created_at", "created_at"),
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
 

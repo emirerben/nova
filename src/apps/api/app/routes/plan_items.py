@@ -43,6 +43,7 @@ from app.routes.generative_jobs import (
     dispatch_retext,
     dispatch_set_intro_size,
     dispatch_set_media_overlays,
+    dispatch_set_sound_effects,
     dispatch_swap_song,
 )
 
@@ -66,6 +67,19 @@ _OVERLAY_ALLOWED_CONTENT_TYPES = {
 }
 _MAX_OVERLAY_CARDS = 10
 _MAX_OVERLAY_FILE_BYTES = 512 * 1024 * 1024  # 512 MB per card (video card upper bound)
+
+# Allowed content types for sound-effect uploads.
+_SFX_ALLOWED_CONTENT_TYPES = {
+    "audio/mpeg",  # .mp3
+    "audio/mp4",  # .m4a, .m4b
+    "audio/wav",  # .wav
+    "audio/x-wav",  # .wav (alternative)
+    "audio/aac",  # .aac
+    "audio/ogg",  # .ogg, .opus
+    "audio/webm",  # .webm audio
+}
+_MAX_SFX_CARDS = 20  # max placements per variant
+_MAX_SFX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB per effect
 
 # Job.status buckets (mode="content_plan" reuses the generative variant states).
 _JOB_READY = {"variants_ready", "variants_ready_partial", "done", "clips_ready"}
@@ -1480,5 +1494,147 @@ async def set_item_media_overlays(
         item_id=item_id,
         variant_id=variant_id,
         card_count=len(body.overlays),
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+# ── Sound-effects routes ──────────────────────────────────────────────────────
+
+
+class SfxUploadFile(BaseModel):
+    filename: str
+    content_type: str
+    file_size_bytes: int
+
+
+class SfxUploadUrlsBody(BaseModel):
+    files: list[SfxUploadFile]
+
+
+class SfxUploadUrlsResponse(BaseModel):
+    urls: list[UploadUrlItem]
+
+
+class SetSoundEffectsBody(BaseModel):
+    """Full-replace body: the entire new placement list. Send [] to clear all effects."""
+
+    placements: list[dict] = Field(default_factory=list)
+
+
+@router.post("/{item_id}/sfx-upload-urls", response_model=SfxUploadUrlsResponse)
+async def create_sfx_upload_urls(
+    item_id: str,
+    body: SfxUploadUrlsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> SfxUploadUrlsResponse:
+    """Signed PUT URLs for user-uploaded sound-effect assets under the persistent users/ prefix.
+
+    Assets land under `users/{user_id}/plan/{item_id}/sfx/...` which is NOT
+    swept by the 24h GCS lifecycle rule.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.sound_effects_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
+        )
+
+    item = await _load_owned_item(item_id, user.id, db)
+    if not body.files or len(body.files) > _MAX_SFX_CARDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provide 1-{_MAX_SFX_CARDS} files",
+        )
+    urls: list[UploadUrlItem] = []
+    for f in body.files:
+        if f.content_type not in _SFX_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported SFX content type: {f.content_type}",
+            )
+        if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_SFX_FILE_BYTES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
+        safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
+        upload_url, gcs_path = storage.presigned_put_url_for_sfx(
+            user_id=str(user.id),
+            plan_item_id=str(item.id),
+            filename=safe_name,
+            content_type=f.content_type,
+        )
+        urls.append(UploadUrlItem(upload_url=upload_url, gcs_path=gcs_path))
+    return SfxUploadUrlsResponse(urls=urls)
+
+
+@router.put(
+    "/{item_id}/variants/{variant_id}/sound-effects",
+    response_model=PlanItemResponse,
+)
+async def set_item_sound_effects(
+    item_id: str,
+    variant_id: str,
+    body: SetSoundEffectsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Apply or clear sound-effect placements on one of this item's variants.
+
+    Full-replace: the `placements` list becomes the SFX set for this variant.
+    Send an empty list (`{"placements": []}`) to remove all effects and restore
+    the clean (sfx-free) variant from the pre-SFX backup.
+
+    For placements that reference a glossary effect (sound_effect_id set), the
+    server resolves src_gcs_path from the SoundEffect row — client-supplied
+    sound-effects/ paths are never trusted.
+
+    Returns the updated plan item immediately; the variant flips to
+    render_status="rendering" and the mix-pass runs async.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.sound_effects_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
+        )
+
+    # Resolve glossary references server-side.
+    resolved_placements: list[dict] = []
+    for raw in body.placements:
+        placement = dict(raw)
+        sound_effect_id = placement.get("sound_effect_id")
+        if sound_effect_id:
+            from sqlalchemy import select as _select  # noqa: PLC0415
+
+            from app.models import SoundEffect  # noqa: PLC0415
+
+            effect_result = await db.execute(
+                _select(SoundEffect).where(SoundEffect.id == sound_effect_id)
+            )
+            effect = effect_result.scalar_one_or_none()
+            if effect is None or not effect.audio_gcs_path:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Sound effect {sound_effect_id!r} not found or has no audio.",
+                )
+            # Always resolve path server-side — never trust a client-supplied sound-effects/ path.
+            placement["src_gcs_path"] = effect.audio_gcs_path
+            placement["label"] = placement.get("label") or effect.name
+            placement["duration_s"] = placement.get("duration_s") or effect.duration_s
+        resolved_placements.append(placement)
+
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_set_sound_effects(
+        job,
+        variant_id,
+        sfx_raw=resolved_placements,
+        user_id=str(user.id),
+        db_for_glossary=db,
+    )
+    await db.commit()
+    log.info(
+        "plan_item_set_sound_effects",
+        item_id=item_id,
+        variant_id=variant_id,
+        effect_count=len(body.placements),
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
