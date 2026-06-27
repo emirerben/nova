@@ -1292,7 +1292,7 @@ function FocusedResults({
                 Nova&apos;s pick
               </span>
             )}
-            {instantEligible && variant ? (
+            {instantEligible && variant && activeTab !== "overlays" ? (
               <LiveEditPreview
                 variant={variant}
                 styleSets={styleSets}
