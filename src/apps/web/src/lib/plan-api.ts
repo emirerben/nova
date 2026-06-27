@@ -829,8 +829,8 @@ export async function requestSfxUploadUrls(
 
 /**
  * Full-replace the sound-effect placement list on a variant.
- * Send an empty array to clear all effects and restore the clean variant.
- * Returns the updated PlanItem (variant flips to render_status="rendering").
+ * Persists placements to DB without triggering a render.
+ * Returns the updated PlanItem.
  */
 export function setVariantSoundEffects(
   itemId: string,
@@ -844,6 +844,32 @@ export function setVariantSoundEffects(
       body: JSON.stringify({ placements }),
     },
   );
+}
+
+/**
+ * Trigger the FFmpeg SFX burn-in pass for a variant that has persisted placements.
+ * Called by the Download button when sound_effects are set and unrendered.
+ * Returns the updated PlanItem immediately (render runs async).
+ */
+export function renderVariantSfx(
+  itemId: string,
+  variantId: string,
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/plan-items/${itemId}/variants/${variantId}/render-sfx`,
+    { method: "POST" },
+  );
+}
+
+/**
+ * Return a short-lived signed GET URL for a user-uploaded SFX file.
+ * Only allows paths under users/{user_id}/ — server rejects any other prefix.
+ */
+export async function getSfxAudioUrl(itemId: string, gcsPath: string): Promise<string> {
+  const res = await request<{ url: string }>(
+    `/plan-items/${itemId}/sfx-audio-url?gcs_path=${encodeURIComponent(gcsPath)}`,
+  );
+  return res.url;
 }
 
 // ── Activation seed: upload recent clips → auto-match → instant first video (T8) ──

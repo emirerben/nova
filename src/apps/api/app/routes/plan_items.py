@@ -1577,18 +1577,18 @@ async def set_item_sound_effects(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """Apply or clear sound-effect placements on one of this item's variants.
+    """Persist sound-effect placements on one of this item's variants (no render).
 
     Full-replace: the `placements` list becomes the SFX set for this variant.
-    Send an empty list (`{"placements": []}`) to remove all effects and restore
-    the clean (sfx-free) variant from the pre-SFX backup.
+    Send an empty list (`{"placements": []}`) to clear all effects.
 
     For placements that reference a glossary effect (sound_effect_id set), the
     server resolves src_gcs_path from the SoundEffect row — client-supplied
     sound-effects/ paths are never trusted.
 
-    Returns the updated plan item immediately; the variant flips to
-    render_status="rendering" and the mix-pass runs async.
+    Returns the updated plan item immediately. The FFmpeg mix-pass is NOT
+    triggered here; call POST /{item_id}/variants/{variant_id}/render-sfx
+    (e.g. on Download) to burn the placements in.
     """
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -1623,13 +1623,17 @@ async def set_item_sound_effects(
         resolved_placements.append(placement)
 
     job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_set_sound_effects(
-        job,
-        variant_id,
-        sfx_raw=resolved_placements,
-        user_id=str(user.id),
-        db_for_glossary=db,
-    )
+
+    # Persist directly — no Celery render dispatched here.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["sound_effects"] = resolved_placements if resolved_placements else None
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
     await db.commit()
     log.info(
         "plan_item_set_sound_effects",
@@ -1638,3 +1642,76 @@ async def set_item_sound_effects(
         effect_count=len(body.placements),
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/render-sfx",
+    response_model=PlanItemResponse,
+)
+async def render_item_sound_effects(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Trigger the FFmpeg SFX burn-in pass for a variant that has persisted placements.
+
+    Called by the Download button when sound_effects are set. The variant flips to
+    render_status="rendering" and the mix-pass runs async. Returns immediately.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.sound_effects_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
+        )
+
+    job = await _owned_item_render_job(item_id, user.id, db)
+
+    # Read persisted placements from assembly_plan.
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    sfx_raw: list[dict] = []
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            sfx_raw = v.get("sound_effects") or []
+            break
+
+    dispatch_set_sound_effects(
+        job,
+        variant_id,
+        sfx_raw=sfx_raw,
+        user_id=str(user.id),
+        db_for_glossary=db,
+    )
+    await db.commit()
+    log.info("plan_item_render_sfx", item_id=item_id, variant_id=variant_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.get("/{item_id}/sfx-audio-url")
+async def get_sfx_audio_url(
+    item_id: str,
+    gcs_path: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return a short-lived signed GET URL for a user-uploaded SFX file.
+
+    Only allows paths under users/{user_id}/ — rejects any other prefix.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.sound_effects_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
+        )
+
+    expected_prefix = f"users/{user.id}/"
+    if not gcs_path.startswith(expected_prefix):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+
+    # Verify item ownership (ownership check only — we don't need the job).
+    await _load_owned_item(item_id, user.id, db)
+
+    url = storage.signed_url(gcs_path, expiration_minutes=60)
+    return {"url": url}

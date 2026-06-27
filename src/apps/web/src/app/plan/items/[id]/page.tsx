@@ -33,8 +33,11 @@ import {
   type MediaOverlay,
   requestSfxUploadUrls,
   setVariantSoundEffects,
+  renderVariantSfx,
+  getSfxAudioUrl,
   type SoundEffectPlacement,
 } from "@/lib/plan-api";
+import { useSfxPreview } from "../../_components/useSfxPreview";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskNovaPanel from "./components/AskNovaPanel";
@@ -1176,12 +1179,15 @@ function FocusedResults({
   const [sfxPlacements, setSfxPlacements] = useState<SoundEffectPlacement[]>(
     variant?.sound_effects ?? [],
   );
+  // sfxAudioUrls: map from src_gcs_path → playable URL (signed GCS or blob URL) for instant preview.
+  const [sfxAudioUrls, setSfxAudioUrls] = useState<Record<string, string>>({});
   // Current video time lifted from the hero player so "Add at playhead" works.
   const [currentTimeS, setCurrentTimeS] = useState(0);
   useEffect(() => {
     const nextCards = variant?.media_overlays ?? [];
     setOverlayCards(nextCards);
     setSfxPlacements(variant?.sound_effects ?? []);
+    setSfxAudioUrls({});
     // Repopulate from the new variant's preview_urls. Blob URLs from the old variant
     // are revoked (revokeObjectURL is a no-op on signed https:// URLs so safe to call).
     const nextUrls: Record<string, string> = {};
@@ -1250,8 +1256,21 @@ function FocusedResults({
 
   const baking = instantEligible && (editSession.isSaving || pendingDownloadRef.current);
 
-  const handleDownload = useCallback(() => {
+  const handleDownload = useCallback(async () => {
     if (!variant) return;
+
+    // If SFX placements exist but the FFmpeg mix-pass hasn't run yet, trigger it first.
+    if (sfxPlacements.length > 0 && !variant.pre_sfx_video_path) {
+      pendingDownloadRef.current = true;
+      try {
+        await renderVariantSfx(itemId, variant.variant_id);
+        markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+      } catch {
+        pendingDownloadRef.current = false;
+      }
+      return;
+    }
+
     if (!variant.output_url && !editSession.isDirty) return;
     if (instantEligible && editSession.isDirty) {
       pendingDownloadRef.current = true;
@@ -1259,7 +1278,7 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
-  }, [variant, editSession, instantEligible, downloadName]);
+  }, [variant, editSession, instantEligible, sfxPlacements, itemId, downloadName, markVariantRendering]);
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
@@ -1300,7 +1319,7 @@ function FocusedResults({
                 playToken={editSession.playToken}
               />
             ) : (
-              <Hero variant={variant} generating={isGenerating} overlayCards={overlayCards} localPreviewUrls={localPreviewUrls} />
+              <Hero variant={variant} generating={isGenerating} overlayCards={overlayCards} localPreviewUrls={localPreviewUrls} sfxPlacements={sfxPlacements} sfxAudioUrls={sfxAudioUrls} />
             )}
           </div>
           {/* Text-mode pill below video */}
@@ -1458,6 +1477,8 @@ function FocusedResults({
                     setLocalPreviewUrls={setLocalPreviewUrls}
                     sfxPlacements={sfxPlacements}
                     setSfxPlacements={setSfxPlacements}
+                    sfxAudioUrls={sfxAudioUrls}
+                    setSfxAudioUrls={setSfxAudioUrls}
                     currentTimeS={currentTimeS}
                   />
                 </div>
@@ -1536,6 +1557,8 @@ function FocusedVariantControls({
   setLocalPreviewUrls,
   sfxPlacements,
   setSfxPlacements,
+  sfxAudioUrls,
+  setSfxAudioUrls,
   currentTimeS,
 }: {
   itemId: string;
@@ -1560,6 +1583,8 @@ function FocusedVariantControls({
   setLocalPreviewUrls: Dispatch<SetStateAction<Record<string, string>>>;
   sfxPlacements: SoundEffectPlacement[];
   setSfxPlacements: Dispatch<SetStateAction<SoundEffectPlacement[]>>;
+  sfxAudioUrls: Record<string, string>;
+  setSfxAudioUrls: Dispatch<SetStateAction<Record<string, string>>>;
   currentTimeS: number;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
@@ -1762,24 +1787,57 @@ function FocusedVariantControls({
         gain: 1.0,
         label: files[i].filename.replace(/\.[^.]+$/, ""),
       }));
-      setSfxPlacements((prev) => [...prev, ...newPlacements]);
+      handleSfxChange([...sfxPlacements, ...newPlacements]);
     } finally {
       setSfxUploading(false);
     }
   }
 
-  async function handleApplySfx() {
-    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-    await setVariantSoundEffects(itemId, variant.variant_id, sfxPlacements);
-    refetch();
+  // Debounced save: persist placements to DB without triggering a render.
+  const sfxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function handleSfxChange(newPlacements: SoundEffectPlacement[]) {
+    setSfxPlacements(newPlacements);
+    if (sfxSaveTimer.current) clearTimeout(sfxSaveTimer.current);
+    sfxSaveTimer.current = setTimeout(async () => {
+      try {
+        await setVariantSoundEffects(itemId, variant.variant_id, newPlacements);
+      } catch {
+        // non-fatal — preview still works
+      }
+    }, 600);
   }
 
-  async function handleClearSfx() {
-    setSfxPlacements([]);
-    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-    await setVariantSoundEffects(itemId, variant.variant_id, []);
-    refetch();
-  }
+  // Fetch signed playback URLs for SFX placements that don't have one yet.
+  useEffect(() => {
+    if (!SOUND_EFFECTS_ENABLED) return;
+    const missing = sfxPlacements.filter(
+      (p) => p.src_gcs_path && !sfxAudioUrls[p.src_gcs_path],
+    );
+    if (missing.length === 0) return;
+
+    const newUrls: Record<string, string> = {};
+    const userPaths: SoundEffectPlacement[] = [];
+
+    for (const p of missing) {
+      const glossaryMatch = glossaryEffects.find((g) => g.id === p.sound_effect_id);
+      if (glossaryMatch?.preview_url) {
+        newUrls[p.src_gcs_path] = glossaryMatch.preview_url;
+      } else if (p.src_gcs_path.startsWith("users/")) {
+        userPaths.push(p);
+      }
+    }
+
+    if (Object.keys(newUrls).length > 0) {
+      setSfxAudioUrls((prev) => ({ ...prev, ...newUrls }));
+    }
+
+    for (const p of userPaths) {
+      getSfxAudioUrl(itemId, p.src_gcs_path)
+        .then((url) => setSfxAudioUrls((prev) => ({ ...prev, [p.src_gcs_path]: url })))
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
 
   const showTextSection = activeTab === "text";
   const showFontSection = activeTab === "font" && instantEligible;
@@ -1899,9 +1957,7 @@ function FocusedVariantControls({
             glossaryEffects={glossaryEffects}
             glossaryLoading={glossaryLoading}
             onUploadRequest={handleSfxUpload}
-            onChange={setSfxPlacements}
-            onApply={handleApplySfx}
-            onClear={handleClearSfx}
+            onChange={handleSfxChange}
           />
         </div>
       )}
@@ -2079,14 +2135,21 @@ function Hero({
   generating,
   overlayCards = [],
   localPreviewUrls = {},
+  sfxPlacements = [],
+  sfxAudioUrls = {},
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
   overlayCards?: MediaOverlay[];
   localPreviewUrls?: Record<string, string>;
+  sfxPlacements?: SoundEffectPlacement[];
+  sfxAudioUrls?: Record<string, string>;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
+
+  // Sync SFX audio elements to the video playhead for instant preview.
+  useSfxPreview(videoRef, sfxPlacements, sfxAudioUrls);
 
   // Re-attach when the video src changes (output_url becomes available after render).
   useEffect(() => {

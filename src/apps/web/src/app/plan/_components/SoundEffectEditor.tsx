@@ -49,12 +49,8 @@ interface Props {
   onUploadRequest: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
   ) => Promise<void>;
-  /** Called when the placement list changes (add/remove/edit). Does NOT trigger the render. */
+  /** Called when the placement list changes (add/remove/edit). Auto-saves via debounce. */
   onChange: (placements: SoundEffectPlacement[]) => void;
-  /** Called when the user clicks Apply — triggers the render. */
-  onApply: () => void;
-  /** Called when the user clicks Clear — sends [] to the backend. */
-  onClear: () => void;
 }
 
 export default function SoundEffectEditor({
@@ -66,8 +62,6 @@ export default function SoundEffectEditor({
   glossaryLoading,
   onUploadRequest,
   onChange,
-  onApply,
-  onClear,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -334,23 +328,6 @@ export default function SoundEffectEditor({
         </div>
       )}
 
-      {/* ── Apply / Clear bar ── */}
-      <div className="flex gap-2 pt-2 border-t border-zinc-800">
-        <button
-          onClick={onApply}
-          disabled={disabled || placements.length === 0}
-          className="flex-1 py-2 rounded bg-lime-600 hover:bg-lime-500 text-black font-semibold text-sm disabled:opacity-40"
-        >
-          {rendering ? "Rendering…" : "Apply"}
-        </button>
-        <button
-          onClick={onClear}
-          disabled={disabled}
-          className="px-4 py-2 rounded bg-zinc-700 hover:bg-zinc-600 text-sm text-zinc-300 disabled:opacity-40"
-        >
-          Clear
-        </button>
-      </div>
     </div>
   );
 }
