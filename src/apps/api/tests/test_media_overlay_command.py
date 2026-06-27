@@ -7,7 +7,7 @@ Guards:
 - Video cards get tpad clone; image cards get -loop 1.
 - Cards chained in ascending z-order.
 - Audio mapped only from input 0 (0:a?).
-- preset="fast" present (encoder-policy gate).
+- preset="veryfast" present (encoder-policy gate; see media_overlay.py module docstring).
 """
 
 from __future__ import annotations
@@ -183,9 +183,9 @@ class TestEncoderPolicy:
     def test_preset_fast_in_command(self):
         card = _card_img()
         cmd = _build([card])
-        # _encoding_args must produce preset=fast
+        # _encoding_args must produce preset=veryfast (re-encoding CRF-18 content)
         assert "-preset" in cmd
-        assert "fast" in cmd
+        assert "veryfast" in cmd
 
     def test_output_path_in_command(self):
         card = _card_img()

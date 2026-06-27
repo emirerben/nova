@@ -1422,7 +1422,7 @@ function FocusedResults({
     }
   }, [editSession.isSaving, variant?.render_status, variant?.output_url, downloadName]);
 
-  const baking = instantEligible && (editSession.isSaving || pendingDownloadRef.current);
+  const baking = (instantEligible && editSession.isSaving) || pendingDownloadRef.current;
 
   const handleDownload = useCallback(async () => {
     if (!variant) return;
@@ -1439,6 +1439,19 @@ function FocusedResults({
       return;
     }
 
+    // If overlay cards exist, composite them into the video on-demand (render=true).
+    // No background render was triggered on card changes — this is the only FFmpeg pass.
+    if (overlayCards.length > 0) {
+      pendingDownloadRef.current = true;
+      try {
+        await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards, { render: true });
+        markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+      } catch {
+        pendingDownloadRef.current = false;
+      }
+      return;
+    }
+
     if (!variant.output_url && !editSession.isDirty) return;
     if (instantEligible && editSession.isDirty) {
       pendingDownloadRef.current = true;
@@ -1446,7 +1459,7 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
-  }, [variant, editSession, instantEligible, sfxPlacements, itemId, downloadName, markVariantRendering]);
+  }, [variant, editSession, instantEligible, sfxPlacements, overlayCards, itemId, downloadName, markVariantRendering]);
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
@@ -1790,11 +1803,9 @@ function FocusedVariantControls({
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
 
   const [overlayUploading, setOverlayUploading] = useState(false);
-  // True when the user has made card changes that haven't been persisted yet.
+  // True when cards have been modified and need metadata persistence.
   const overlaysDirtyRef = useRef(false);
-  // True when a save was 409-rejected (burn in progress) — retry on next burn completion.
-  const pendingSaveRef = useRef(false);
-  // Always points at the latest overlayCards value so setTimeout closures aren't stale.
+  // Latest overlayCards value for setTimeout closures.
   const overlayCardsRef = useRef(overlayCards);
   overlayCardsRef.current = overlayCards;
 
@@ -1812,8 +1823,8 @@ function FocusedVariantControls({
     v.src = url;
   }, [variant.output_url]);
 
-  // Auto-save overlay cards 2.5 s after the user stops editing. Only fires when
-  // overlaysDirtyRef is true (user-initiated change), not on server-sync updates.
+  // Auto-save card metadata (render=false) 2.5 s after the user stops editing.
+  // No FFmpeg is triggered here — rendering only happens on explicit download.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!overlaysDirtyRef.current) return;
@@ -1821,31 +1832,14 @@ function FocusedVariantControls({
     const timer = setTimeout(async () => {
       overlaysDirtyRef.current = false;
       try {
-        await setVariantMediaOverlays(itemId, variant.variant_id, cards);
-        pendingSaveRef.current = false;
+        await setVariantMediaOverlays(itemId, variant.variant_id, cards, { render: false });
         refetch();
       } catch {
-        // 409 = burn in progress; retry when burn completes (effect below).
-        overlaysDirtyRef.current = false;
-        pendingSaveRef.current = true;
+        // Metadata save failed — silently ignore, cards are safe in local state.
       }
     }, 2500);
     return () => clearTimeout(timer);
   }, [overlayCards]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // When a burn completes, retry any pending save that was deferred due to 409.
-  const prevVcFinishedAtRef = useRef<string | null | undefined>(undefined);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    const cur = variant.render_finished_at ?? null;
-    if (prevVcFinishedAtRef.current !== undefined && cur !== prevVcFinishedAtRef.current && pendingSaveRef.current) {
-      pendingSaveRef.current = false;
-      setVariantMediaOverlays(itemId, variant.variant_id, overlayCardsRef.current)
-        .then(refetch)
-        .catch(() => { pendingSaveRef.current = true; });
-    }
-    prevVcFinishedAtRef.current = cur;
-  }, [variant.render_finished_at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Upload new files, append as new overlay cards with default settings. */
   async function handleOverlayUpload(
@@ -1946,7 +1940,7 @@ function FocusedVariantControls({
       return {};
     });
     setOverlayCards([]);
-    await setVariantMediaOverlays(itemId, variant.variant_id, []);
+    await setVariantMediaOverlays(itemId, variant.variant_id, [], { render: false });
     refetch();
   }
 

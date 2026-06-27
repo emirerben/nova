@@ -1604,9 +1604,73 @@ async def create_overlay_upload_urls(
 
 
 class SetMediaOverlaysBody(BaseModel):
-    """Full-replace body: the entire new card list. Send [] to clear all cards."""
+    """Full-replace body: the entire new card list. Send [] to clear all cards.
+
+    `render=True` (default): validate cards, persist, and enqueue the FFmpeg
+    apply-pass. The variant flips to render_status="rendering".
+
+    `render=False`: validate + persist card metadata only — NO Celery task is
+    dispatched and render_status is not changed. Used by the frontend to
+    auto-save card positions without triggering a background render; the FFmpeg
+    pass runs only when the user explicitly downloads.
+    """
 
     overlays: list[dict] = Field(default_factory=list)
+    render: bool = True
+
+
+def _persist_overlay_metadata_only(
+    job: Job,
+    variant_id: str,
+    *,
+    overlays_raw: list[dict],
+    user_id: str,
+) -> None:
+    """Save overlay card list to assembly_plan without triggering a render pass.
+
+    Validates paths and timing (same rules as dispatch_set_media_overlays) but
+    only writes `variants[i]["media_overlays"]`. render_status stays unchanged.
+    """
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.agents._schemas.media_overlay import (  # noqa: PLC0415
+        coerce_media_overlays,
+        validate_overlay_gcs_path,
+    )
+
+    _user_prefix = f"users/{user_id}/"
+    validated: list[dict] = []
+    if overlays_raw:
+        cards = coerce_media_overlays(overlays_raw) or []
+        for card in cards:
+            try:
+                validate_overlay_gcs_path(card.src_gcs_path)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid overlay asset path: {exc}",
+                ) from exc
+            if not card.src_gcs_path.startswith(_user_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
+                    ),
+                )
+            if card.end_s <= card.start_s:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Card {card.id}: end_s must be greater than start_s.",
+                )
+            validated.append(card.model_dump())
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["media_overlays"] = validated or None
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
 
 
 @router.put(
@@ -1623,11 +1687,10 @@ async def set_item_media_overlays(
     """Apply or clear media-overlay cards on one of this item's variants.
 
     Full-replace: the `overlays` list becomes the card set for this variant.
-    Send an empty list (`{"overlays": []}`) to remove all cards and restore the
-    clean (un-carded) variant from the pre-overlay backup.
-
-    Returns the updated plan item immediately; the variant flips to
-    render_status="rendering" and the apply-pass runs async.
+    When `render=True` (default), the FFmpeg apply-pass runs async and the
+    variant flips to render_status="rendering".
+    When `render=False`, only card metadata is persisted — no render is queued.
+    The frontend uses render=False for auto-save; render=True only on download.
     """
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -1637,13 +1700,21 @@ async def set_item_media_overlays(
         )
 
     job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_set_media_overlays(job, variant_id, overlays_raw=body.overlays, user_id=str(user.id))
+    if body.render:
+        dispatch_set_media_overlays(
+            job, variant_id, overlays_raw=body.overlays, user_id=str(user.id)
+        )
+    else:
+        _persist_overlay_metadata_only(
+            job, variant_id, overlays_raw=body.overlays, user_id=str(user.id)
+        )
     await db.commit()
     log.info(
         "plan_item_set_media_overlays",
         item_id=item_id,
         variant_id=variant_id,
         card_count=len(body.overlays),
+        render=body.render,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

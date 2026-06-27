@@ -886,12 +886,13 @@ export function setVariantMediaOverlays(
   itemId: string,
   variantId: string,
   overlays: MediaOverlay[],
+  options?: { render?: boolean },
 ): Promise<PlanItem> {
   return request<PlanItem>(
     `/plan-items/${itemId}/variants/${variantId}/media-overlays`,
     {
       method: "PUT",
-      body: JSON.stringify({ overlays }),
+      body: JSON.stringify({ overlays, render: options?.render ?? true }),
     },
   );
 }
