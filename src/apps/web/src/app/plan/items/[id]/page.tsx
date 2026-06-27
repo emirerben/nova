@@ -1917,6 +1917,7 @@ function FocusedVariantControls({
           <MediaOverlayEditor
             overlays={overlayCards}
             variantDurationS={variantDurationS}
+            localPreviewUrls={localPreviewUrls}
             rendering={variant.render_status === "rendering" || overlayUploading}
             onUploadRequest={handleOverlayUpload}
             onUpdateCard={(id, patch) => {
