@@ -260,7 +260,18 @@ def plan_item_response(
 
 
 async def _get_content_mode(item: PlanItem, db: AsyncSession) -> str:
-    """Persona content_mode via item → plan → persona JSONB; default create_new."""
+    """Per-item content_mode override (0058+) → persona JSONB → default create_new.
+
+    Priority: item.content_mode (if set) beats the plan-level persona value.
+    This lets montage items toggle the plan-vs-have axis independently of the
+    onboarding-fork choice that set the persona default.
+    """
+    _valid = ("existing_footage", "create_new", "mixed")
+    # 1. Per-item override (nullable column, None = "not set yet, inherit persona").
+    own = getattr(item, "content_mode", None)
+    if own in _valid:
+        return own
+    # 2. Fall back to persona JSONB (existing pre-0058 behaviour, unchanged).
     try:
         plan = await db.get(ContentPlan, item.content_plan_id)
         if plan is None:
@@ -349,6 +360,10 @@ class PlanItemEdit(BaseModel):
     # Landscape-clip render preference: "fit" (letterbox) | "fill" (crop-to-fill).
     # Ignored for portrait/square clips — they always crop regardless.
     landscape_fit: Literal["fit", "fill"] | None = None
+    # Per-item content_mode override (montage plan-vs-have toggle, 0058+).
+    # When set, supersedes the persona-level content_mode for this item only.
+    # "create_new" = "Planning to film"; "existing_footage" = "I already have footage".
+    content_mode: Literal["existing_footage", "create_new", "mixed"] | None = None
 
 
 @router.patch("/{item_id}", response_model=PlanItemResponse)
@@ -388,13 +403,18 @@ async def edit_plan_item(
         _flag(item, "filming_guide")
     if "landscape_fit" in updates and updates["landscape_fit"] is not None:
         item.landscape_fit = updates["landscape_fit"]  # Pydantic Literal already validates
+    if "content_mode" in updates and updates["content_mode"] is not None:
+        item.content_mode = updates["content_mode"]  # Pydantic Literal already validates
     if updates:
         item.user_edited = True
     await db.commit()
     # Reload with current_job eager-loaded (commit expired it) before serializing.
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
-    return plan_item_response(reloaded, instruction_level=instruction_level)
+    content_mode = await _get_content_mode(reloaded, db)
+    return plan_item_response(
+        reloaded, instruction_level=instruction_level, content_mode=content_mode
+    )
 
 
 # ── Idea-centric CRUD (0055+) ─────────────────────────────────────────────────

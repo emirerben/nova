@@ -697,6 +697,17 @@ class PlanItem(Base):
     # without a backfill (same pattern as edit_format). Validated in the route layer;
     # no DB CHECK so the vocabulary can grow without a migration.
     landscape_fit: Mapped[str] = mapped_column(Text, nullable=False, server_default="fit")
+    # Per-item override of the persona-level content_mode (montage plan-vs-have toggle,
+    # 0058+). NULL = inherit the persona's content_mode (the default for every legacy row
+    # and every item the user never toggled). When set, stores one of:
+    #   "create_new"        → "Planning to film" — show shot-plan / ShotSlotUploader flow
+    #   "existing_footage"  → "I already have footage" — skip plan, go straight to pool upload
+    #   "mixed"             → combination of the two
+    # Plain Text, nullable, no server_default (NULL means inherit). No DB CHECK —
+    # validated in the route layer (same pattern as edit_format). Only affects the
+    # upload UI; the render archetype (montage/narrated/…) is driven solely by
+    # edit_format + voiceover_gcs_path + filming_guide.
+    content_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.

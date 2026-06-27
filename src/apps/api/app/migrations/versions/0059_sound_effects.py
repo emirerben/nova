@@ -1,7 +1,7 @@
 """Add sound_effects table for the admin-curated SFX glossary.
 
-Revision ID: 0058
-Revises: 0057
+Revision ID: 0059
+Revises: 0058
 Create Date: 2026-06-27
 
 Changes:
@@ -16,8 +16,8 @@ Changes:
 import sqlalchemy as sa
 from alembic import op
 
-revision = "0058"
-down_revision = "0057"
+revision = "0059"
+down_revision = "0058"
 branch_labels = None
 depends_on = None
 

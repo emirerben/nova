@@ -79,8 +79,11 @@ import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 const RENDER_REGISTER_TIMEOUT_MS = 45_000;
 
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
+// Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
+// near-miss Vercel value ("True", trailing space) doesn't silently hide the tab.
+const _mediaOverlaysRaw = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? "").trim();
 const MEDIA_OVERLAYS_ENABLED =
-  process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED === "true";
+  _mediaOverlaysRaw.toLowerCase() === "true" || _mediaOverlaysRaw === "1";
 const SOUND_EFFECTS_ENABLED =
   process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
@@ -619,6 +622,48 @@ export default function PlanItemPage() {
                           onClick={async () => {
                             if (active) return;
                             await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
+                            refetch();
+                          }}
+                          className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
+                            active
+                              ? "border-zinc-900 bg-zinc-900"
+                              : "border-zinc-200 bg-white hover:border-zinc-300"
+                          }`}
+                        >
+                          <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
+                            {label}
+                          </span>
+                          <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Montage sub-mode picker — "Planning to film" vs "I already have footage".
+                    Flips the per-item content_mode override so the user can skip shot-plan
+                    generation and go straight to the pool uploader. Only shown when Montage
+                    is the active style (narrated has its own equivalent picker above). */}
+                {!isNarrated && (
+                  <div className="mt-3 flex gap-2">
+                    {(
+                      [
+                        { value: "create_new",       label: "Planning to film",        desc: "Get a shot plan, film each shot" },
+                        { value: "existing_footage", label: "I already have footage",  desc: "Skip the plan — just upload your footage" },
+                      ] as { value: "create_new" | "existing_footage"; label: string; desc: string }[]
+                    ).map(({ value, label, desc }) => {
+                      // "I already have footage" is active when content_mode is explicitly
+                      // existing_footage; otherwise "Planning to film" is the default.
+                      const active = value === "existing_footage"
+                        ? contentMode === "existing_footage"
+                        : contentMode !== "existing_footage";
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={async () => {
+                            if (active) return;
+                            await updatePlanItem(item.id, { content_mode: value }).catch(() => null);
                             refetch();
                           }}
                           className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
