@@ -1163,7 +1163,15 @@ function FocusedResults({
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
     variant?.media_overlays ?? [],
   );
-  const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
+  // Seed from preview_url on load so existing applied cards show in the CSS overlay
+  // immediately without re-uploading (preview_url is a fresh-signed read URL from the API).
+  const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>(() => {
+    const urls: Record<string, string> = {};
+    for (const card of variant?.media_overlays ?? []) {
+      if (card.preview_url) urls[card.id] = card.preview_url;
+    }
+    return urls;
+  });
   // SFX placements — lifted alongside overlayCards so both stay in sync with the active variant.
   const [sfxPlacements, setSfxPlacements] = useState<SoundEffectPlacement[]>(
     variant?.sound_effects ?? [],
@@ -1171,11 +1179,18 @@ function FocusedResults({
   // Current video time lifted from the hero player so "Add at playhead" works.
   const [currentTimeS, setCurrentTimeS] = useState(0);
   useEffect(() => {
-    setOverlayCards(variant?.media_overlays ?? []);
+    const nextCards = variant?.media_overlays ?? [];
+    setOverlayCards(nextCards);
     setSfxPlacements(variant?.sound_effects ?? []);
+    // Repopulate from the new variant's preview_urls. Blob URLs from the old variant
+    // are revoked (revokeObjectURL is a no-op on signed https:// URLs so safe to call).
+    const nextUrls: Record<string, string> = {};
+    for (const card of nextCards) {
+      if (card.preview_url) nextUrls[card.id] = card.preview_url;
+    }
     setLocalPreviewUrls((prev) => {
       Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
-      return {};
+      return nextUrls;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.variant_id]);

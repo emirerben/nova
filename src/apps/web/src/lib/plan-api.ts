@@ -575,6 +575,10 @@ export interface MediaOverlay {
   id: string;
   kind: "image" | "video";
   src_gcs_path: string;
+  /** Fresh-signed read URL for the card asset — added by _variants_for_response on every
+   *  status read so the browser can show existing applied cards as a live CSS overlay
+   *  without re-uploading. Absent on legacy/unsigned cards. */
+  preview_url?: string | null;
   position: "top" | "center" | "bottom" | "custom";
   x_frac: number;
   y_frac: number;
