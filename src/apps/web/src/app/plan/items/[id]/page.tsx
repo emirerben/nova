@@ -1326,13 +1326,11 @@ function FocusedResults({
   );
   // Seed from preview_url on load so existing applied cards show in the CSS overlay
   // immediately without re-uploading (preview_url is a fresh-signed read URL from the API).
-  const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>(() => {
-    const urls: Record<string, string> = {};
-    for (const card of variant?.media_overlays ?? []) {
-      if (card.preview_url) urls[card.id] = card.preview_url;
-    }
-    return urls;
-  });
+  // localPreviewUrls: blob: URLs from freshly-uploaded card files. NOT initialised from
+  // preview_url — the burned output_url already shows those cards, so using preview_url
+  // here would double the overlay on page load. Cleared when a burn completes (render_finished_at
+  // effect below), so the burned output takes over without doubling.
+  const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
   // SFX placements — lifted alongside overlayCards so both stay in sync with the active variant.
   const [sfxPlacements, setSfxPlacements] = useState<SoundEffectPlacement[]>(
     variant?.sound_effects ?? [],
@@ -1346,18 +1344,30 @@ function FocusedResults({
     setOverlayCards(nextCards);
     setSfxPlacements(variant?.sound_effects ?? []);
     setSfxAudioUrls({});
-    // Repopulate from the new variant's preview_urls. Blob URLs from the old variant
-    // are revoked (revokeObjectURL is a no-op on signed https:// URLs so safe to call).
-    const nextUrls: Record<string, string> = {};
-    for (const card of nextCards) {
-      if (card.preview_url) nextUrls[card.id] = card.preview_url;
-    }
+    // Revoke any blob URLs from the previous variant and reset to empty.
+    // Do NOT repopulate from preview_url — the burned output_url already shows the cards.
     setLocalPreviewUrls((prev) => {
       Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
-      return nextUrls;
+      return {};
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.variant_id]);
+  // When a burn completes (render_finished_at advances), clear the CSS preview layer.
+  // The burned output_url now has the cards composited in; keeping localPreviewUrls
+  // would double-render them. Fires for any burn (text/style/overlay), which is
+  // correct: any re-render produces an output_url without the unpersisted CSS cards.
+  const prevFinishedAtRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    const cur = variant?.render_finished_at ?? null;
+    if (prevFinishedAtRef.current !== undefined && cur !== prevFinishedAtRef.current) {
+      setLocalPreviewUrls((prev) => {
+        Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+        return {};
+      });
+    }
+    prevFinishedAtRef.current = cur;
+  }, [variant?.render_finished_at]);
+
   // Revoke all blob URLs when the component unmounts (FocusedResults is re-keyed
   // on variant switch, so unmount fires when the user focuses a different variant).
   useEffect(() => {
@@ -1780,6 +1790,7 @@ function FocusedVariantControls({
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
 
   const [overlayUploading, setOverlayUploading] = useState(false);
+  const [isApplying, setIsApplying] = useState(false);
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -1884,26 +1895,28 @@ function FocusedVariantControls({
     }
   }
 
-  /** Trigger the overlay render pass on the current variant. */
+  /** Persist overlay cards and kick off the background burn. Apply is instant — the
+   *  CSS preview layer already shows the correct result. The burn produces a
+   *  downloadable output_url; when it finishes, render_finished_at advances and the
+   *  effect above clears localPreviewUrls so the burned video takes over cleanly. */
   async function handleApplyOverlays() {
-    // Clear the CSS preview layer so it doesn't double on top of the burned output.
-    setLocalPreviewUrls((prev) => {
-      Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
-      return {};
-    });
-    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-    await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards);
-    refetch();
+    setIsApplying(true);
+    try {
+      await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards);
+      refetch();
+    } finally {
+      setIsApplying(false);
+    }
   }
 
   /** Clear all overlays (restore pre-overlay clean variant). */
   async function handleClearOverlays() {
+    // Clear CSS preview immediately — user explicitly removed all cards.
     setLocalPreviewUrls((prev) => {
       Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
       return {};
     });
     setOverlayCards([]);
-    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
     await setVariantMediaOverlays(itemId, variant.variant_id, []);
     refetch();
   }
@@ -2112,7 +2125,7 @@ function FocusedVariantControls({
             overlays={overlayCards}
             variantDurationS={variantDurationS}
             localPreviewUrls={localPreviewUrls}
-            rendering={variant.render_status === "rendering" || overlayUploading}
+            rendering={variant.render_status === "rendering" || overlayUploading || isApplying}
             onUploadRequest={handleOverlayUpload}
             onUpdateCard={(id, patch) => {
               // Resolve position presets to fracs so the CSS preview updates
