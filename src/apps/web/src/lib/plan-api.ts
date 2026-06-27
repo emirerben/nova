@@ -292,12 +292,16 @@ export interface PlanItem {
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
   voiceover_gcs_path?: string | null;
   /**
-   * Landscape-clip fit preference (0057+).
+   * Landscape-clip fit preference.
    * "fit"  = letterbox (full-width, black bars top & bottom, never enlarged) — default.
    * "fill" = center-crop to fill the 9:16 frame (old behavior).
    * Only affects clips where width > height; portrait/square always crop.
    */
   landscape_fit: "fit" | "fill";
+  /** Original-audio bed level for narrated. 0 = voice only, 1 = loudest. Null = Nova's default. */
+  voiceover_bed_level?: number | null;
+  /** Narrated caption style: "sentence" (sentence blocks) or "word" (one word at a time). Null = "sentence". */
+  voiceover_caption_style?: string | null;
   /** BYO-Ideas provenance (M1 T5). Null = market-bank origin or pre-T5 item. */
   source_idea_seed_id?: string | null;
   source_idea_seed_text?: string | null;
@@ -554,6 +558,40 @@ export function setItemVoiceover(
   });
 }
 
+/**
+ * Set how loud the original clip audio plays under the narration.
+ * 0 = voice only, 1 = loudest; null clears the override (Nova's default).
+ */
+export function setItemVoiceoverBedLevel(
+  itemId: string,
+  bedLevel: number | null,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/voiceover-bed-level`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voiceover_bed_level: bedLevel }),
+  });
+}
+
+/** Caption style for the narrated voiceover. */
+export type VoiceoverCaptionStyle = "sentence" | "word";
+
+/**
+ * Choose how the narrated voiceover captions render: "sentence" (sentence-block
+ * captions) or "word" (one big word at a time, the qbuilder word-by-word look).
+ * Consumed at generate time — no re-render is triggered.
+ */
+export function setItemVoiceoverCaptionStyle(
+  itemId: string,
+  captionStyle: VoiceoverCaptionStyle,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/voiceover-caption-style`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voiceover_caption_style: captionStyle }),
+  });
+}
+
 export function generateFirstWeek(
   planId: string,
 ): Promise<{ enqueued: number; skipped_no_clips: number }> {
@@ -623,6 +661,13 @@ export interface SoundEffectPlacement {
 // reads (text_mode, style_set_id, intro_text_size_px, render_status,
 // base_video_url, intro_layout, intro_mode) must mirror EditableVariant's types
 // — keep them in lockstep.
+/** One editable narrated caption line: display text held over [start_s, end_s] (assembled-time). */
+export interface CaptionCue {
+  text: string;
+  start_s: number;
+  end_s: number;
+}
+
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
@@ -654,6 +699,16 @@ export interface PlanItemVariant {
   // is what makes a variant instant-edit-eligible. Absent on lyrics/legacy.
   base_video_url?: string | null;
   base_video_path?: string | null;
+  // Narrated on-video caption editor: editable cues over the caption-free base.
+  // Present only on narrated variants; null otherwise.
+  caption_cues?: CaptionCue[] | null;
+  // Caption font (font-registry key) for narrated captions. Null = default (TikTok
+  // Sans). Editable in the on-video caption editor; the reburn honors it.
+  voiceover_caption_font?: string | null;
+  // What actually rendered. "narrated" → captions are edited via CaptionEditor and
+  // the hero shows the burned output, so it is NOT instant-edit-eligible. Absent
+  // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
+  resolved_archetype?: string | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
@@ -716,6 +771,46 @@ export function retextPlanItem(
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/retext`, {
     method: "POST",
     body: JSON.stringify({ text: opts.text ?? null, remove: opts.remove ?? false }),
+  });
+}
+
+/**
+ * Persist hand-edited narrated caption cues (no re-render — the player overlays
+ * them instantly). Call as the creator types (debounced). Apply reburns them.
+ */
+export function setPlanItemCaptions(
+  itemId: string,
+  variantId: string,
+  cues: CaptionCue[],
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/captions`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cues }),
+  });
+}
+
+/**
+ * Set the caption font for a narrated variant (no re-render — the editor previews
+ * it; Apply reburns in the chosen font). Applies to both sentence and word styles.
+ * `font` is a font-registry key (e.g. "Montserrat Bold"); null resets to default.
+ */
+export function setPlanItemCaptionFont(
+  itemId: string,
+  variantId: string,
+  font: string | null,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/caption-font`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ caption_font: font }),
+  });
+}
+
+/** Reburn the edited caption cues onto the caption-free base (async re-render). */
+export function applyPlanItemCaptions(itemId: string, variantId: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/captions/apply`, {
+    method: "POST",
   });
 }
 

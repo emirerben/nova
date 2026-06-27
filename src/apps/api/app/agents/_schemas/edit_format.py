@@ -32,6 +32,14 @@ DEFAULT_EDIT_FORMAT: EditFormat = "montage"
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 
+# Formats that render the narrated archetype — every one REQUIRES a user voiceover
+# (the narration is the spine). Generation must be blocked for these until a
+# voiceover is attached; without it the job has no narration and silently falls
+# back to montage. Single source of truth for that grouping.
+NARRATED_EDIT_FORMATS: frozenset[str] = frozenset(
+    {"narrated", "narrated_planned", "narrated_ready"}
+)
+
 
 def coerce_edit_format(value: object) -> EditFormat:
     """Normalize an arbitrary value to a known EditFormat, defaulting to montage.

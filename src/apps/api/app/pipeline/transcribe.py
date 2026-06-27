@@ -78,8 +78,13 @@ def transcribe(
     return transcribe_whisper(video_path)
 
 
-def transcribe_whisper(video_path: str) -> Transcript:
-    """Transcribe via Whisper (OpenAI API or local). Always returns a Transcript."""
+def transcribe_whisper(video_path: str, *, model: str | None = None) -> Transcript:
+    """Transcribe via Whisper (OpenAI API or local). Always returns a Transcript.
+
+    ``model`` overrides the local Whisper model for this call (e.g. the narrated
+    pipeline uses a larger model for caption accuracy). Ignored by the openai-api
+    backend, which is pinned to whisper-1. None → `settings.whisper_model`.
+    """
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         audio_path = tmp.name
 
@@ -89,7 +94,7 @@ def transcribe_whisper(video_path: str) -> Transcript:
         if settings.whisper_backend == "openai-api":
             return _transcribe_openai(audio_path)
         else:
-            return _transcribe_local(audio_path)
+            return _transcribe_local(audio_path, model=model)
     finally:
         if os.path.exists(audio_path):
             os.unlink(audio_path)
@@ -146,7 +151,7 @@ def _transcribe_openai(audio_path: str) -> Transcript:
     return transcript
 
 
-def _transcribe_local(audio_path: str) -> Transcript:
+def _transcribe_local(audio_path: str, *, model: str | None = None) -> Transcript:
     """Local faster-whisper backend — dev use only."""
     try:
         from faster_whisper import WhisperModel
@@ -155,9 +160,10 @@ def _transcribe_local(audio_path: str) -> Transcript:
             "faster-whisper not installed. Run: pip install faster-whisper"
         ) from exc
 
-    log.info("whisper_local_start", model=settings.whisper_model, path=audio_path)
-    model = WhisperModel(settings.whisper_model, device="cpu", compute_type="int8")
-    segments, _ = model.transcribe(audio_path, word_timestamps=True)
+    model_name = (model or "").strip() or settings.whisper_model
+    log.info("whisper_local_start", model=model_name, path=audio_path)
+    whisper_model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    segments, _ = whisper_model.transcribe(audio_path, word_timestamps=True)
 
     words: list[Word] = []
     text_parts: list[str] = []

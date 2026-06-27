@@ -39,6 +39,14 @@ export interface EditableVariant {
   intro_layout?: "linear" | "cluster" | null;
   /** Intro rendering mode. "sequence" → text is server-locked (transcript/rhythm sync). */
   intro_mode?: "sequence" | "cluster" | "linear" | null;
+  /**
+   * Resolved archetype — what actually rendered after footage resolution +
+   * fallback. "narrated" variants edit captions through the dedicated on-video
+   * CaptionEditor (not the instant intro-text overlay) and their hero shows the
+   * BURNED, captioned output — so they are NOT instant-edit-eligible even though
+   * text_mode is "none" and a base video exists. Absent on legacy/montage.
+   */
+  resolved_archetype?: string | null;
   /** Fresh-signed playback URL of the text-free fast-reburn base. */
   base_video_url?: string | null;
   base_video_path?: string | null;

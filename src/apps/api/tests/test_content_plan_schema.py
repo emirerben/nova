@@ -59,7 +59,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0059"], f"expected a single head 0059, got {heads}"
+    assert heads == ["0061"], f"expected a single head 0061, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:

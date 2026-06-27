@@ -96,6 +96,42 @@ def _even_split(script_steps: list[StepScript], total_duration_s: float) -> list
     ]
 
 
+def contiguous_step_timings(
+    speech_starts: list[float],
+    timeline_end: float,
+) -> list[StepTiming]:
+    """Tile ``[0, timeline_end]`` with contiguous segments, one per phrase bucket.
+
+    ``speech_starts`` is each bucket's speech-onset time (voiceover-absolute,
+    ascending). Segment 0 starts at 0 (absorbing any leading silence); every
+    other segment starts at its bucket's speech onset; each segment ends where
+    the NEXT bucket's speech begins (inter-phrase gaps absorbed into the
+    preceding segment); the last segment runs to ``timeline_end``.
+
+    This is what keeps the narrated_ready captions in lockstep with the voice:
+    the assembled visual concatenates these durations from 0, so when segments
+    tile the FULL voiceover the assembled timeline equals voiceover-absolute
+    time and burned captions (rebased onto it) land exactly on the spoken word.
+    Starting segments at the speech onset instead — leaving leading silence and
+    gaps out — compresses the visual and the captions lead the audio.
+    """
+    n = len(speech_starts)
+    timings: list[StepTiming] = []
+    for i in range(n):
+        start = 0.0 if i == 0 else float(speech_starts[i])
+        end = float(speech_starts[i + 1]) if i + 1 < n else float(timeline_end)
+        end = max(end, start + 0.001)
+        timings.append(
+            StepTiming(
+                step_id=f"seg_{i}",
+                start_s=round(start, 3),
+                end_s=round(end, 3),
+                confidence=1.0,
+            )
+        )
+    return timings
+
+
 def align_script_to_voiceover(
     script_steps: list[StepScript],
     whisper_words: list[WordLike],

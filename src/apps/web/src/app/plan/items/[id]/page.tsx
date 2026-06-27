@@ -16,6 +16,9 @@ import {
   NotAuthenticatedError,
   setClipNote,
   setItemVoiceover,
+  setItemVoiceoverBedLevel,
+  setItemVoiceoverCaptionStyle,
+  type VoiceoverCaptionStyle,
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
@@ -58,6 +61,7 @@ import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
 import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
+import CaptionEditor from "../../_components/CaptionEditor";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
@@ -135,6 +139,14 @@ export default function PlanItemPage() {
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
+  // Narrated-walkthrough: original-audio bed level (0 = voice only, 1 = loudest).
+  // null = Nova's default. Optimistic local shadow; reset from item on refetch.
+  const [bedLevel, setBedLevel] = useState<number | null>(null);
+  const [bedSaving, setBedSaving] = useState(false);
+  // Narrated-walkthrough: caption style ("sentence" | "word"). null → "sentence"
+  // (today's sentence-block captions). Optimistic local shadow; reset from item.
+  const [captionStyle, setCaptionStyle] = useState<VoiceoverCaptionStyle | null>(null);
+  const [captionSaving, setCaptionSaving] = useState(false);
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -233,6 +245,20 @@ export default function PlanItemPage() {
       setVoiceoverGcsPath(item.voiceover_gcs_path ?? null);
     }
   }, [item?.voiceover_gcs_path]);
+
+  // Sync the original-audio bed level from the item (after refetch / on load).
+  useEffect(() => {
+    if (item?.voiceover_bed_level !== undefined) {
+      setBedLevel(item.voiceover_bed_level ?? null);
+    }
+  }, [item?.voiceover_bed_level]);
+
+  // Sync the caption style from the item (after refetch / on load).
+  useEffect(() => {
+    if (item?.voiceover_caption_style !== undefined) {
+      setCaptionStyle(item.voiceover_caption_style === "word" ? "word" : "sentence");
+    }
+  }, [item?.voiceover_caption_style]);
 
   const variants = useMemo(
     () => {
@@ -419,6 +445,30 @@ export default function PlanItemPage() {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
     } finally {
       setVoiceoverSaving(false);
+    }
+  }
+
+  async function handleBedLevelChange(level: number | null) {
+    setBedLevel(level);
+    setBedSaving(true);
+    try {
+      await setItemVoiceoverBedLevel(itemId, level);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save background sound");
+    } finally {
+      setBedSaving(false);
+    }
+  }
+
+  async function handleCaptionStyleChange(style: VoiceoverCaptionStyle) {
+    setCaptionStyle(style);
+    setCaptionSaving(true);
+    try {
+      await setItemVoiceoverCaptionStyle(itemId, style);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save caption style");
+    } finally {
+      setCaptionSaving(false);
     }
   }
 
@@ -834,6 +884,105 @@ export default function PlanItemPage() {
               </div>
             )}
 
+            {/* Narrated walkthrough: original-audio bed control — sits next to the
+                clips so the creator can dial how much of their clip sound plays
+                under the voice. Nova ducks it automatically while they speak. */}
+            {isNarrated && (
+              <div className="mb-6">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Background sound
+                </p>
+                <p className="mb-3 text-sm text-[#71717a]">
+                  How loud your original clip audio plays under your voice. Nova ducks it
+                  automatically while you&apos;re talking.
+                </p>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-zinc-400">Off</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={bedLevel ?? 0.25}
+                    onChange={(e) => handleBedLevelChange(Number(e.target.value))}
+                    className="h-1 flex-1 cursor-pointer accent-lime-600"
+                    aria-label="Original video background sound level"
+                  />
+                  <span className="text-xs text-zinc-400">Loud</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between">
+                  <p className="text-xs text-lime-700">
+                    {bedSaving
+                      ? "Saving…"
+                      : bedLevel === null
+                        ? "Nova decides the best level."
+                        : bedLevel === 0
+                          ? "Voice only — no original audio."
+                          : `Original audio at ${Math.round(bedLevel * 100)}%.`}
+                  </p>
+                  {bedLevel !== null && (
+                    <button
+                      type="button"
+                      onClick={() => handleBedLevelChange(null)}
+                      className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline"
+                    >
+                      Reset to Nova
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Narrated walkthrough: caption style — sentence blocks (default) vs
+                word-by-word (one big word at a time, the qbuilder look). Consumed at
+                generate time; editable per-word afterward in the on-video editor. */}
+            {isNarrated && (
+              <div className="mb-6">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Captions
+                </p>
+                <p className="mb-3 text-sm text-[#71717a]">
+                  How your voiceover appears as on-screen text.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      {
+                        value: "sentence" as const,
+                        label: "Sentence",
+                        hint: "Full lines, like subtitles",
+                      },
+                      {
+                        value: "word" as const,
+                        label: "Word-by-word",
+                        hint: "One big word at a time",
+                      },
+                    ]
+                  ).map((opt) => {
+                    const active = (captionStyle ?? "sentence") === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        aria-pressed={active}
+                        disabled={captionSaving}
+                        onClick={() => handleCaptionStyleChange(opt.value)}
+                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                          active
+                            ? "border-lime-600 bg-lime-50 text-lime-900"
+                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                        }`}
+                      >
+                        <span className="block text-sm font-semibold">{opt.label}</span>
+                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
+              </div>
+            )}
+
             {/* Uploader — four branches:
                 1. narrated_ready: audio-first flow, pool upload, no step spine
                 2. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
@@ -914,7 +1063,13 @@ export default function PlanItemPage() {
               <div className="mt-4 space-y-2">
                 <InkButton
                   onClick={handleGenerate}
-                  disabled={generating || clipCount === 0 || isGenerating || uploaderBusy}
+                  disabled={
+                    generating ||
+                    clipCount === 0 ||
+                    isGenerating ||
+                    uploaderBusy ||
+                    (isNarrated && !voiceoverGcsPath)
+                  }
                 >
                   {generating
                     ? "Starting…"
@@ -925,11 +1080,13 @@ export default function PlanItemPage() {
                 <p className="text-center text-sm text-[#a1a1aa]">
                   {uploaderBusy
                     ? "Finishing upload…"
-                    : clipCount === 0
-                      ? "Add clips to generate"
-                      : isInstructed && shotsLeft > 0
-                        ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
-                        : null}
+                    : isNarrated && !voiceoverGcsPath
+                      ? "Record your voiceover first — narration drives the edit"
+                      : clipCount === 0
+                        ? "Add clips to generate"
+                        : isInstructed && shotsLeft > 0
+                          ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
+                          : null}
                 </p>
               </div>
             )}
@@ -1088,9 +1245,10 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
 }
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
-type EditorTab = "text" | "font" | "song" | "clips" | "overlays" | "sound";
+type EditorTab = "text" | "font" | "song" | "clips" | "overlays" | "sound" | "captions";
 
 const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
+  { id: "captions", icon: "CC", label: "Captions" },
   { id: "text", icon: "T", label: "Text" },
   { id: "font", icon: "Aa", label: "Font" },
   { id: "song", icon: "♫", label: "Song" },
@@ -1285,13 +1443,19 @@ function FocusedResults({
   // "Nova's pick" is always the first variant (index 0 in the variants array)
   const isNovaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
 
-  // Text-mode label for the pill below the hero
+  // Text-mode label for the pill below the hero. Narrated variants carry the
+  // creator's recorded voiceover (not the clips' original audio), so they get
+  // their own label regardless of text_mode ("none").
   const TEXT_MODE_PILL: Record<string, string> = {
     lyrics: "With lyrics",
     agent_text: "Original audio",
     none: "Original audio",
   };
-  const modePill = variant ? (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio") : null;
+  const modePill = variant
+    ? variant.resolved_archetype === "narrated"
+      ? "Voiceover"
+      : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
+    : null;
 
   // The editor panel reveals PlanVariantEditor filtered to the active tab.
   // We keep one PlanVariantEditor instance and use the tab to scroll/focus.
@@ -1423,6 +1587,12 @@ function FocusedResults({
             <div>
               <div className="flex gap-2">
                 {EDITOR_TABS.map((tab) => {
+                  const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
+                  // Captions tab only for narrated variants that carry editable cues.
+                  if (tab.id === "captions" && !hasCaptions) return null;
+                  // Narrated has no intro text / font / song to edit — only Captions + Clips.
+                  if (hasCaptions && (tab.id === "text" || tab.id === "font" || tab.id === "song"))
+                    return null;
                   // Hide Song tab when no song is swappable
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
                   // Hide Font tab for lyrics (font is locked to lyrics renderer)
@@ -1454,33 +1624,53 @@ function FocusedResults({
               {/* Inline editor panel — slides open below the tab row */}
               {activeTab !== null && variant && (
                 <div className="mt-3">
-                  <FocusedVariantControls
-                    itemId={itemId}
-                    variant={variant}
-                    tracks={tracks}
-                    styleSets={styleSets}
-                    session={editSession}
-                    instantEligible={instantEligible}
-                    baking={baking}
-                    activeTab={activeTab}
-                    refetch={refetch}
-                    markVariantRendering={markVariantRendering}
-                    onSwap={onSwap}
-                    onRetext={onRetext}
-                    onRemoveText={onRemoveText}
-                    onChangeStyle={onChangeStyle}
-                    onResize={onResize}
-                    onChangeLayout={onChangeLayout}
-                    overlayCards={overlayCards}
-                    setOverlayCards={setOverlayCards}
-                    localPreviewUrls={localPreviewUrls}
-                    setLocalPreviewUrls={setLocalPreviewUrls}
-                    sfxPlacements={sfxPlacements}
-                    setSfxPlacements={setSfxPlacements}
-                    sfxAudioUrls={sfxAudioUrls}
-                    setSfxAudioUrls={setSfxAudioUrls}
-                    currentTimeS={currentTimeS}
-                  />
+                  {activeTab === "captions" &&
+                  variant.base_video_url &&
+                  variant.caption_cues ? (
+                    <CaptionEditor
+                      itemId={itemId}
+                      variantId={variant.variant_id}
+                      baseVideoUrl={variant.base_video_url}
+                      initialCues={variant.caption_cues}
+                      initialFont={variant.voiceover_caption_font}
+                      rendering={variant.render_status === "rendering"}
+                      onApplied={() => {
+                        markVariantRendering(
+                          variant.variant_id,
+                          variant.render_finished_at ?? null,
+                        );
+                        refetch();
+                      }}
+                    />
+                  ) : (
+                    <FocusedVariantControls
+                      itemId={itemId}
+                      variant={variant}
+                      tracks={tracks}
+                      styleSets={styleSets}
+                      session={editSession}
+                      instantEligible={instantEligible}
+                      baking={baking}
+                      activeTab={activeTab}
+                      refetch={refetch}
+                      markVariantRendering={markVariantRendering}
+                      onSwap={onSwap}
+                      onRetext={onRetext}
+                      onRemoveText={onRemoveText}
+                      onChangeStyle={onChangeStyle}
+                      onResize={onResize}
+                      onChangeLayout={onChangeLayout}
+                      overlayCards={overlayCards}
+                      setOverlayCards={setOverlayCards}
+                      localPreviewUrls={localPreviewUrls}
+                      setLocalPreviewUrls={setLocalPreviewUrls}
+                      sfxPlacements={sfxPlacements}
+                      setSfxPlacements={setSfxPlacements}
+                      sfxAudioUrls={sfxAudioUrls}
+                      setSfxAudioUrls={setSfxAudioUrls}
+                      currentTimeS={currentTimeS}
+                    />
+                  )}
                 </div>
               )}
             </div>

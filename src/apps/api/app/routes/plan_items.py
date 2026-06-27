@@ -28,6 +28,8 @@ from app.auth import CurrentUser
 from app.database import get_db
 from app.models import ContentPlan, Job, Persona, PlanItem
 from app.routes.generative_jobs import (
+    CaptionFontRequest,
+    CaptionsRequest,
     ChangeStyleRequest,
     EditVariantRequest,
     RetextRequest,
@@ -35,6 +37,7 @@ from app.routes.generative_jobs import (
     SwapSongRequest,
     TimelineEditRequest,
     TimelineResponse,
+    dispatch_apply_captions,
     dispatch_change_style,
     dispatch_edit_timeline,
     dispatch_edit_variant,
@@ -45,6 +48,8 @@ from app.routes.generative_jobs import (
     dispatch_set_media_overlays,
     dispatch_set_sound_effects,
     dispatch_swap_song,
+    persist_variant_caption_font,
+    persist_variant_captions,
 )
 
 log = structlog.get_logger()
@@ -175,9 +180,15 @@ class PlanItemResponse(BaseModel):
     # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
-    # Landscape-clip fit preference (0057+). "fit" (letterbox, default) | "fill" (crop).
+    # Landscape-clip fit preference. "fit" (letterbox, default) | "fill" (crop).
     # Only affects clips where width > height; portrait/square always crop.
     landscape_fit: Literal["fit", "fill"] = "fit"
+    # Original-audio bed level for narrated. 0 = voice only, 1 = loudest.
+    # NULL = Nova's default level. Set via PATCH /{id}/voiceover-bed-level.
+    voiceover_bed_level: float | None = None
+    # Narrated caption style: "sentence" (sentence-block) or "word" (one big word
+    # at a time). NULL = "sentence". PATCH /{id}/voiceover-caption-style.
+    voiceover_caption_style: str | None = None
     # BYO-Ideas provenance (M1 T5): the seed whose subject this item honours.
     # NULL = market-bank origin or the item predates T5. Both fields are resolved
     # server-side so the badge is a pure function of the item on the client.
@@ -252,6 +263,8 @@ def plan_item_response(
             # from direct SQL writes or future vocab expansions reaching the Literal model.
             _lf if (_lf := getattr(item, "landscape_fit", None)) in ("fit", "fill") else "fit"
         ),
+        voiceover_bed_level=item.voiceover_bed_level,
+        voiceover_caption_style=item.voiceover_caption_style,
         source_idea_seed_id=item.source_idea_seed_id,
         source_idea_seed_text=(seed_text_by_id or {}).get(item.source_idea_seed_id)
         if item.source_idea_seed_id
@@ -949,6 +962,75 @@ async def set_item_voiceover(
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
+class VoiceoverBedLevelBody(BaseModel):
+    # 0.0 = voice only, 1.0 = original audio loudest. null → Nova's default level.
+    voiceover_bed_level: float | None = None
+
+
+@router.patch("/{item_id}/voiceover-bed-level", response_model=PlanItemResponse)
+async def set_item_voiceover_bed_level(
+    item_id: str,
+    body: VoiceoverBedLevelBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set how loud the original clip audio plays under the narration.
+
+    0.0 = voice only, 1.0 = loudest; null clears the override (Nova's default).
+    Consumed at generate time (the footage bed is side-chain ducked under the
+    voice). No re-render is triggered — the user still clicks Generate.
+    """
+    if body.voiceover_bed_level is not None and not (0.0 <= body.voiceover_bed_level <= 1.0):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="voiceover_bed_level must be between 0.0 and 1.0",
+        )
+    item = await _load_owned_item(item_id, user.id, db)
+    item.voiceover_bed_level = body.voiceover_bed_level
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
+class VoiceoverCaptionStyleBody(BaseModel):
+    # "sentence" = sentence-block captions (default); "word" = one big word at a time
+    # (qbuilder word-by-word). null clears the override (→ "sentence" at render time).
+    voiceover_caption_style: str | None = None
+
+
+_VOICEOVER_CAPTION_STYLES = frozenset({"sentence", "word"})
+
+
+@router.patch("/{item_id}/voiceover-caption-style", response_model=PlanItemResponse)
+async def set_item_voiceover_caption_style(
+    item_id: str,
+    body: VoiceoverCaptionStyleBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Choose how the narrated voiceover captions render.
+
+    "sentence" = sentence-block captions (default); "word" = the qbuilder
+    word-by-word look (one big word at a time). null clears the override (Nova's
+    default, "sentence"). Consumed at generate time — no re-render is triggered.
+    """
+    if (
+        body.voiceover_caption_style is not None
+        and body.voiceover_caption_style not in _VOICEOVER_CAPTION_STYLES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail='voiceover_caption_style must be "sentence" or "word"',
+        )
+    item = await _load_owned_item(item_id, user.id, db)
+    item.voiceover_caption_style = body.voiceover_caption_style
+    await db.commit()
+    reloaded = await _load_owned_item(item_id, user.id, db)
+    instruction_level = await _get_instruction_level(reloaded, db)
+    return plan_item_response(reloaded, instruction_level=instruction_level)
+
+
 @router.post("/{item_id}/conformance/dismiss", response_model=PlanItemResponse)
 async def dismiss_conformance(
     item_id: str,
@@ -1105,6 +1187,16 @@ async def generate_item(
 ) -> PlanItemResponse:
     """Enqueue a generative render for this item's themed clips (≥1 required)."""
     item = await _load_owned_item(item_id, user.id, db)
+    # Narrated walkthroughs are spined by the recorded voiceover — block generation
+    # until one is attached. Without it the job has no narration and silently falls
+    # back to montage (the "started a narrated render with no audio" dogfood bug).
+    from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
+
+    if (item.edit_format or "") in NARRATED_EDIT_FORMATS and not item.voiceover_gcs_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Record or upload your voiceover before generating a narrated walkthrough",
+        )
     if not (item.clip_gcs_paths or []):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1174,6 +1266,64 @@ async def retext_item(
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
     log.info("plan_item_retext", item_id=item_id, variant_id=variant_id, remove=req.remove)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.patch("/{item_id}/variants/{variant_id}/captions", response_model=PlanItemResponse)
+async def edit_item_captions(
+    item_id: str,
+    variant_id: str,
+    req: CaptionsRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Persist hand-edited caption cues for a narrated variant (no re-render).
+
+    The on-video editor calls this as the creator types — the change is instant
+    (the player overlays the cues). Apply (`/captions/apply`) reburns them.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await persist_variant_captions(job.id, variant_id, req.cues, db)
+    log.info("plan_item_edit_captions", item_id=item_id, variant_id=variant_id, cues=len(req.cues))
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/captions/apply", response_model=PlanItemResponse)
+async def apply_item_captions(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Reburn the variant's edited captions onto its caption-free base (async)."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_apply_captions(job, variant_id)
+    log.info("plan_item_apply_captions", item_id=item_id, variant_id=variant_id)
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.patch("/{item_id}/variants/{variant_id}/caption-font", response_model=PlanItemResponse)
+async def set_item_caption_font(
+    item_id: str,
+    variant_id: str,
+    req: CaptionFontRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set the caption font for a narrated variant (no re-render).
+
+    Applies to both sentence and word-by-word captions. The on-video editor previews
+    the font locally; Apply (`/captions/apply`) reburns in the chosen font. ``null``
+    resets to the default. Unknown fonts are rejected (422).
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await persist_variant_caption_font(job.id, variant_id, req.caption_font, db)
+    log.info(
+        "plan_item_set_caption_font",
+        item_id=item_id,
+        variant_id=variant_id,
+        font=req.caption_font,
+    )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 

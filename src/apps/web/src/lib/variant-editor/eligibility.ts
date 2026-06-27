@@ -19,11 +19,20 @@ import type { EditableVariant } from "@/lib/variant-editor/types";
  * the load-bearing distinction: a "cluster" layout can be sequence-synced, so
  * the intro_mode === "sequence" guard must run AFTER (and independently of) the
  * cluster check.
+ *
+ * Narrated variants (resolved_archetype === "narrated") are ALSO excluded even
+ * though they render with text_mode "none" and carry a base video: their text is
+ * voiceover captions edited through the dedicated on-video CaptionEditor, and
+ * their hero must play the BURNED, captioned output — NOT the caption-free base
+ * that LiveEditPreview would show. Without this guard the narrated hero plays the
+ * base (no captions) and a right-click "Save video as" hands the user the
+ * caption-free `*_base.mp4`.
  */
 export function isInstantEditEligible(variant: EditableVariant): boolean {
   return (
     !!variant.base_video_url &&
     (variant.text_mode === "agent_text" || variant.text_mode === "none") &&
-    variant.intro_mode !== "sequence"
+    variant.intro_mode !== "sequence" &&
+    variant.resolved_archetype !== "narrated"
   );
 }

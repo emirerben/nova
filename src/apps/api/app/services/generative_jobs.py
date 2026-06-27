@@ -159,6 +159,8 @@ def build_generative_job(
     preference_summary: str = "",
     edit_format: str = DEFAULT_EDIT_FORMAT,
     voiceover_gcs_path: str | None = None,
+    voiceover_bed_level: float | None = None,
+    voiceover_caption_style: str | None = None,
     tiktok_summary: str = "",
     user_style: dict | None = None,
     filming_guide: list[dict] | None = None,
@@ -196,6 +198,15 @@ def build_generative_job(
     # jobs keep their exact pre-voiceover all_candidates shape.
     if voiceover_gcs_path:
         all_candidates["voiceover_gcs_path"] = _validate_voiceover_path(voiceover_gcs_path)
+    # Narrated original-audio bed level (0..1). Clamped here; omitted when absent so
+    # non-narrated / pre-feature jobs keep their exact all_candidates shape.
+    if voiceover_bed_level is not None:
+        all_candidates["voiceover_bed_level"] = max(0.0, min(1.0, float(voiceover_bed_level)))
+    # Narrated caption style ("word" → word-by-word; anything else ignored so the
+    # render defaults to sentence captions). Omitted when absent so non-narrated /
+    # pre-feature jobs keep their exact all_candidates shape.
+    if voiceover_caption_style == "word":
+        all_candidates["voiceover_caption_style"] = "word"
     persona_ctx = _build_persona_context(
         tone=persona_tone,
         pillars=persona_pillars,

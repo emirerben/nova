@@ -68,6 +68,8 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None, assignmen
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.voiceover_gcs_path = None
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
     item.edit_format = None
     plan = MagicMock()
     plan.user_id = user_id
