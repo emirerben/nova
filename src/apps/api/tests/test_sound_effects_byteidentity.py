@@ -43,7 +43,7 @@ def test_sfx_pass_would_fire_when_sfx_only():
         and None is None  # media_overlays_override
         and None is None  # new_track_id
         and None is None  # override_text
-        and not False    # remove_text
+        and not False  # remove_text
         and None is None  # style_set_id
         and None is None  # size_override_px
         and None is None  # mix_override
@@ -68,7 +68,6 @@ def test_sfx_pass_blocked_when_media_overlay_also_set():
     media_overlays_override = [{"id": "card1", "kind": "image"}]
 
     _is_sfx_only = (
-        sfx_override is not None
-        and media_overlays_override is None  # NOT None → False
+        sfx_override is not None and media_overlays_override is None  # NOT None → False
     )
     assert _is_sfx_only is False
