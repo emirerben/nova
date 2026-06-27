@@ -1586,31 +1586,19 @@ function FocusedVariantControls({
   ) {
     setOverlayUploading(true);
     try {
-      const urls = await requestOverlayUploadUrls(
-        itemId,
-        files.map((f) => ({
-          filename: f.filename,
-          content_type: f.content_type,
-          file_size_bytes: f.file_size_bytes,
-        })),
-      );
-      await Promise.all(
-        urls.map((u, i) =>
-          uploadToGcs(u.upload_url, files[i].file),
-        ),
-      );
-      // Cycle default positions so successive cards don't stack on top of each other.
       const POSITION_CYCLE: { position: "top" | "center" | "bottom"; x_frac: number; y_frac: number }[] = [
         { position: "center", x_frac: 0.5, y_frac: 0.5 },
         { position: "top", x_frac: 0.5, y_frac: 0.18 },
         { position: "bottom", x_frac: 0.5, y_frac: 0.82 },
       ];
-      const newCards: MediaOverlay[] = urls.map((u, i) => {
+
+      // Build temporary cards (src_gcs_path placeholder) and blob URLs immediately.
+      const tempCards: MediaOverlay[] = files.map((f, i) => {
         const slot = POSITION_CYCLE[(overlayCards.length + i) % POSITION_CYCLE.length];
         return {
           id: crypto.randomUUID(),
-          kind: files[i].content_type.startsWith("video/") ? "video" : "image",
-          src_gcs_path: u.gcs_path,
+          kind: f.content_type.startsWith("video/") ? "video" : "image",
+          src_gcs_path: "", // filled in after GCS upload completes
           position: slot.position,
           x_frac: slot.x_frac,
           y_frac: slot.y_frac,
@@ -1620,20 +1608,19 @@ function FocusedVariantControls({
           z: overlayCards.length + i,
         };
       });
-      // Capture blob URLs for instant in-browser preview (no FFmpeg pass needed).
       const blobUrls: Record<string, string> = {};
-      newCards.forEach((card, i) => {
+      tempCards.forEach((card, i) => {
         blobUrls[card.id] = URL.createObjectURL(files[i].file);
       });
-      // Probe video clip durations eagerly (while we still have the File reference).
+
+      // Probe video durations from the local File (fast — just reads container header).
       const durationsMap: Record<string, number> = {};
       await Promise.all(
-        newCards
+        tempCards
           .filter((card) => card.kind === "video")
           .map(
             (card) =>
               new Promise<void>((resolve) => {
-                const url = blobUrls[card.id];
                 const v = document.createElement("video");
                 v.preload = "metadata";
                 const done = () => {
@@ -1646,16 +1633,37 @@ function FocusedVariantControls({
                 v.onloadedmetadata = done;
                 v.onerror = done;
                 setTimeout(done, 3000);
-                v.src = url;
+                v.src = blobUrls[card.id];
               }),
           ),
       );
-      setLocalPreviewUrls((prev) => ({ ...prev, ...blobUrls }));
-      // Embed clip_duration_s on each video card so the trim UI survives Apply/reload.
-      const cardsWithDuration = newCards.map((card) =>
+
+      // Show cards immediately — trim lane is live, CSS preview is live.
+      const immediateCards = tempCards.map((card) =>
         durationsMap[card.id] ? { ...card, clip_duration_s: durationsMap[card.id] } : card,
       );
-      setOverlayCards((prev) => [...prev, ...cardsWithDuration]);
+      setLocalPreviewUrls((prev) => ({ ...prev, ...blobUrls }));
+      setOverlayCards((prev) => [...prev, ...immediateCards]);
+
+      // Upload to GCS in the background; update src_gcs_path when done.
+      const uploadUrls = await requestOverlayUploadUrls(
+        itemId,
+        files.map((f) => ({
+          filename: f.filename,
+          content_type: f.content_type,
+          file_size_bytes: f.file_size_bytes,
+        })),
+      );
+      await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
+
+      // Patch the cards already in state with their real GCS paths.
+      setOverlayCards((prev) =>
+        prev.map((card) => {
+          const idx = immediateCards.findIndex((c) => c.id === card.id);
+          if (idx === -1) return card;
+          return { ...card, src_gcs_path: uploadUrls[idx].gcs_path };
+        }),
+      );
     } finally {
       setOverlayUploading(false);
     }
