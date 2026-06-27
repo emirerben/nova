@@ -29,6 +29,80 @@ function fmtTime(s: number): string {
   return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
 }
 
+// ── Video thumbnail extractor ──────────────────────────────────────────────────
+
+function useVideoThumbs(
+  src: string | null | undefined,
+  duration: number,
+  count: number,
+): (string | null)[] {
+  const [thumbs, setThumbs] = useState<(string | null)[]>(() => Array(count).fill(null));
+  const prevSrcRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    // Only works reliably on blob: URLs (same-origin, no CORS).
+    if (!src || !src.startsWith("blob:") || duration <= 0 || count <= 0) {
+      setThumbs(Array(count).fill(null));
+      return;
+    }
+    if (prevSrcRef.current === src) return;
+    prevSrcRef.current = src;
+    setThumbs(Array(count).fill(null));
+
+    let cancelled = false;
+    const v = document.createElement("video");
+    v.muted = true;
+    v.preload = "auto";
+    const canvas = document.createElement("canvas");
+    // 9:16 thumbnail cells
+    canvas.width = 40;
+    canvas.height = 71;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { v.src = ""; return; }
+
+    const results: (string | null)[] = Array(count).fill(null);
+
+    async function extract() {
+      for (let i = 0; i < count; i++) {
+        if (cancelled) break;
+        const t = count <= 1 ? 0 : (duration * i) / (count - 1);
+        v.currentTime = t;
+        await new Promise<void>((res) => {
+          const onSeeked = () => {
+            v.removeEventListener("seeked", onSeeked);
+            res();
+          };
+          v.addEventListener("seeked", onSeeked);
+          setTimeout(res, 400);
+        });
+        if (cancelled) break;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+          ctx!.drawImage(v, 0, 0, canvas.width, canvas.height);
+          results[i] = canvas.toDataURL("image/jpeg", 0.5);
+          setThumbs([...results]);
+        } catch {
+          // SecurityError or draw failure — leave null (gray cell shown instead)
+        }
+      }
+      v.src = "";
+    }
+
+    v.addEventListener("loadeddata", extract, { once: true });
+    v.onerror = () => { v.src = ""; };
+    v.src = src;
+
+    return () => {
+      cancelled = true;
+      v.src = "";
+    };
+  }, [src, duration, count]);
+
+  return thumbs;
+}
+
+// ── Drag state ─────────────────────────────────────────────────────────────────
+
 interface DragState {
   cardId: string;
   handle: "move" | "left" | "right" | "trim-left" | "trim-right";
@@ -39,6 +113,8 @@ interface DragState {
   origTrimEnd: number;
   containerWidth: number;
   scaleDuration: number;
+  /** Source clip total duration — null for image cards (no sync needed). */
+  clipDurationS: number | null;
 }
 
 // ── Visual timeline ────────────────────────────────────────────────────────────
@@ -47,10 +123,17 @@ interface TimelineProps {
   overlays: MediaOverlay[];
   totalDurationS: number;
   disabled: boolean;
+  localPreviewUrls: Record<string, string>;
   onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
 }
 
-function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard }: TimelineProps) {
+function OverlayCardTimeline({
+  overlays,
+  totalDurationS,
+  disabled,
+  localPreviewUrls,
+  onUpdateCard,
+}: TimelineProps) {
   const rulerRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragState | null>(null);
 
@@ -70,7 +153,7 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
     e.stopPropagation();
     const rect = containerEl.getBoundingClientRect();
     const isTrim = handle === "trim-left" || handle === "trim-right";
-    const clipDur = card.clip_duration_s ?? (card.end_s - card.start_s);
+    const clipDur = card.kind === "video" ? (card.clip_duration_s ?? null) : null;
     setDrag({
       cardId,
       handle,
@@ -78,9 +161,10 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
       origStart: card.start_s,
       origEnd: card.end_s,
       origTrimStart: card.clip_trim_start_s ?? 0,
-      origTrimEnd: card.clip_trim_end_s ?? clipDur,
+      origTrimEnd: card.clip_trim_end_s ?? (clipDur ?? card.end_s - card.start_s),
       containerWidth: rect.width,
-      scaleDuration: isTrim ? clipDur : totalDurationS,
+      scaleDuration: isTrim ? (clipDur ?? 10) : totalDurationS,
+      clipDurationS: clipDur,
     });
   }
 
@@ -93,8 +177,14 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
       const dx = e.clientX - drag.startX;
       const ds = drag.containerWidth > 0 ? (dx / drag.containerWidth) * drag.scaleDuration : 0;
       let patch: Partial<MediaOverlay> = {};
+
+      // Invariant for video cards: end_s - start_s === clip_trim_end_s - clip_trim_start_s
+      // Every handle that changes duration on one side syncs the other side.
+      const clipDur = drag.clipDurationS;
+
       switch (drag.handle) {
         case "move": {
+          // Duration unchanged — no trim sync needed.
           const dur = drag.origEnd - drag.origStart;
           const ns = Math.max(0, Math.min(totalDurationS - dur, drag.origStart + ds));
           patch = {
@@ -104,31 +194,76 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
           break;
         }
         case "left": {
-          const ns = Math.max(0, Math.min(drag.origEnd - MIN_DUR, drag.origStart + ds));
-          patch = { start_s: Math.round(ns * 10) / 10 };
+          // Timing start moves → duration changes → sync clip_trim_start_s (keep trim end).
+          // Limit: can't play more clip than origTrimEnd allows.
+          const minStart = Math.max(0, clipDur != null ? drag.origEnd - drag.origTrimEnd : 0);
+          const ns = Math.max(minStart, Math.min(drag.origEnd - MIN_DUR, drag.origStart + ds));
+          if (clipDur != null) {
+            const newTrimStart = Math.max(0, drag.origTrimEnd - (drag.origEnd - ns));
+            patch = {
+              start_s: Math.round(ns * 10) / 10,
+              clip_trim_start_s: Math.round(newTrimStart * 10) / 10,
+            };
+          } else {
+            patch = { start_s: Math.round(ns * 10) / 10 };
+          }
           break;
         }
         case "right": {
-          const ne = Math.min(totalDurationS, Math.max(drag.origStart + MIN_DUR, drag.origEnd + ds));
-          patch = { end_s: Math.round(ne * 10) / 10 };
+          // Timing end moves → duration changes → sync clip_trim_end_s (keep trim start).
+          // Limit: can't exceed remaining clip content from current trim start.
+          const maxEnd = clipDur != null
+            ? Math.min(totalDurationS, drag.origStart + (clipDur - drag.origTrimStart))
+            : totalDurationS;
+          const ne = Math.min(maxEnd, Math.max(drag.origStart + MIN_DUR, drag.origEnd + ds));
+          if (clipDur != null) {
+            const newTrimEnd = Math.min(clipDur, drag.origTrimStart + (ne - drag.origStart));
+            patch = {
+              end_s: Math.round(ne * 10) / 10,
+              clip_trim_end_s: Math.round(newTrimEnd * 10) / 10,
+            };
+          } else {
+            patch = { end_s: Math.round(ne * 10) / 10 };
+          }
           break;
         }
         case "trim-left": {
+          // Trim start moves → duration changes → sync end_s (keep start_s).
           const ns = Math.max(0, Math.min(drag.origTrimEnd - MIN_DUR, drag.origTrimStart + ds));
-          patch = { clip_trim_start_s: Math.round(ns * 10) / 10 };
+          const newDur = drag.origTrimEnd - ns;
+          // Cap: end_s can't exceed variant duration.
+          const newEnd = Math.min(totalDurationS, drag.origStart + newDur);
+          const actualDur = newEnd - drag.origStart;
+          // If end_s was capped, trim start must match to keep invariant.
+          const actualTrimStart = Math.max(0, drag.origTrimEnd - actualDur);
+          patch = {
+            clip_trim_start_s: Math.round(actualTrimStart * 10) / 10,
+            end_s: Math.round(newEnd * 10) / 10,
+          };
           break;
         }
         case "trim-right": {
+          // Trim end moves → duration changes → sync end_s (keep start_s).
           const ne = Math.min(
             drag.scaleDuration,
             Math.max(drag.origTrimStart + MIN_DUR, drag.origTrimEnd + ds),
           );
-          patch = { clip_trim_end_s: Math.round(ne * 10) / 10 };
+          const newDur = ne - drag.origTrimStart;
+          // Cap: end_s can't exceed variant duration.
+          const newEnd = Math.min(totalDurationS, drag.origStart + newDur);
+          const actualDur = newEnd - drag.origStart;
+          // If end_s was capped, trim end must match to keep invariant.
+          const actualTrimEnd = drag.origTrimStart + actualDur;
+          patch = {
+            clip_trim_end_s: Math.round(actualTrimEnd * 10) / 10,
+            end_s: Math.round(newEnd * 10) / 10,
+          };
           break;
         }
       }
       onUpdateCard(drag.cardId, patch);
     }
+
     function onUp() {
       setDrag(null);
     }
@@ -143,10 +278,7 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
   return (
     <div className={`select-none ${disabled ? "opacity-40 pointer-events-none" : ""}`}>
       {/* ── Ruler ──────────────────────────────────────────────────── */}
-      <div
-        ref={rulerRef}
-        className="relative h-5 border-b border-white/10 mb-2"
-      >
+      <div ref={rulerRef} className="relative h-5 border-b border-white/10 mb-2">
         {markers.map((t) => (
           <div
             key={t}
@@ -169,10 +301,7 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
 
           return (
             <div key={card.id} className="relative h-6">
-              {/* Track gutter */}
               <div className="absolute inset-0 rounded bg-white/5" />
-
-              {/* Card block */}
               <div
                 className={`absolute top-0 h-full rounded flex items-center overflow-hidden transition-opacity ${
                   isDragging ? "opacity-100" : "opacity-70 hover:opacity-90"
@@ -183,33 +312,22 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
                   backgroundColor: color,
                   cursor: disabled ? "default" : "grab",
                 }}
-                onMouseDown={(e) =>
-                  startDrag(e, card.id, "move", card, rulerRef.current!)
-                }
+                onMouseDown={(e) => startDrag(e, card.id, "move", card, rulerRef.current!)}
               >
-                {/* Left resize handle */}
                 <div
                   className="absolute left-0 top-0 h-full w-2.5 flex items-center justify-center hover:bg-black/30 z-10"
                   style={{ cursor: "ew-resize" }}
-                  onMouseDown={(e) =>
-                    startDrag(e, card.id, "left", card, rulerRef.current!)
-                  }
+                  onMouseDown={(e) => startDrag(e, card.id, "left", card, rulerRef.current!)}
                 >
                   <div className="w-px h-3 bg-white/70 rounded-full" />
                 </div>
-
-                {/* Label */}
                 <span className="text-[10px] text-white font-medium px-3 truncate pointer-events-none">
                   {card.kind === "video" ? "▶" : "⊞"} {card.id.slice(0, 6)}
                 </span>
-
-                {/* Right resize handle */}
                 <div
                   className="absolute right-0 top-0 h-full w-2.5 flex items-center justify-center hover:bg-black/30 z-10"
                   style={{ cursor: "ew-resize" }}
-                  onMouseDown={(e) =>
-                    startDrag(e, card.id, "right", card, rulerRef.current!)
-                  }
+                  onMouseDown={(e) => startDrag(e, card.id, "right", card, rulerRef.current!)}
                 >
                   <div className="w-px h-3 bg-white/70 rounded-full" />
                 </div>
@@ -219,84 +337,131 @@ function OverlayCardTimeline({ overlays, totalDurationS, disabled, onUpdateCard 
         })}
       </div>
 
-      {/* ── Video trim lanes (one per video card with known clip_duration_s) ── */}
+      {/* ── Video trim lanes ───────────────────────────────────────── */}
       {overlays
         .filter((c) => c.kind === "video" && c.clip_duration_s && c.clip_duration_s > 0)
-        .map((card, i) => {
+        .map((card) => {
           const clipDur = card.clip_duration_s!;
           const trimStart = card.clip_trim_start_s ?? 0;
           const trimEnd = card.clip_trim_end_s ?? clipDur;
           const lPct = (trimStart / clipDur) * 100;
           const wPct = Math.max(((trimEnd - trimStart) / clipDur) * 100, 1);
           const isTrimDragging =
-            drag?.cardId === card.id && (drag.handle === "trim-left" || drag.handle === "trim-right");
+            drag?.cardId === card.id &&
+            (drag.handle === "trim-left" || drag.handle === "trim-right");
+          const videoSrc = localPreviewUrls[card.id] ?? card.preview_url ?? null;
 
           return (
-            <div key={`trim-${card.id}`} className="mt-2">
-              <span className="text-[9px] text-white/40 mb-1 block">
-                Clip trim — {card.id.slice(0, 6)} ({fmtTime(trimStart)}–{fmtTime(trimEnd)} of{" "}
-                {fmtTime(clipDur)})
-              </span>
-              <div
-                className="relative h-8 rounded overflow-hidden bg-zinc-800"
-                data-trim-container={card.id}
-              >
-                {/* Filmstrip effect */}
-                <div className="absolute inset-0 flex items-center overflow-hidden opacity-30">
-                  {Array.from({ length: 16 }).map((_, fi) => (
-                    <div
-                      key={fi}
-                      className="flex-1 h-full border-r border-black bg-zinc-700 flex items-center justify-center"
-                    >
-                      <div className="w-1 h-5 rounded-sm bg-zinc-600" />
-                    </div>
-                  ))}
-                </div>
-
-                {/* Dimmed outside trim */}
-                <div
-                  className="absolute top-0 left-0 h-full bg-black/60 pointer-events-none"
-                  style={{ width: `${lPct}%` }}
-                />
-                <div
-                  className="absolute top-0 right-0 h-full bg-black/60 pointer-events-none"
-                  style={{ width: `${100 - lPct - wPct}%` }}
-                />
-
-                {/* Active trim region */}
-                <div
-                  className={`absolute top-0 h-full border-2 rounded transition-opacity ${
-                    isTrimDragging ? "border-white" : "border-white/60"
-                  }`}
-                  style={{ left: `${lPct}%`, width: `${wPct}%` }}
-                >
-                  {/* Left trim handle */}
-                  <div
-                    className="absolute left-0 top-0 h-full w-3 bg-white/20 flex items-center justify-center"
-                    style={{ cursor: "ew-resize" }}
-                    onMouseDown={(e) => {
-                      const el = (e.currentTarget.closest("[data-trim-container]") as HTMLElement) ?? rulerRef.current!;
-                      startDrag(e, card.id, "trim-left", card, el);
-                    }}
-                  >
-                    <div className="w-0.5 h-4 bg-white rounded-full" />
-                  </div>
-                  {/* Right trim handle */}
-                  <div
-                    className="absolute right-0 top-0 h-full w-3 bg-white/20 flex items-center justify-center"
-                    style={{ cursor: "ew-resize" }}
-                    onMouseDown={(e) => {
-                      const el = (e.currentTarget.closest("[data-trim-container]") as HTMLElement) ?? rulerRef.current!;
-                      startDrag(e, card.id, "trim-right", card, el);
-                    }}
-                  >
-                    <div className="w-0.5 h-4 bg-white rounded-full" />
-                  </div>
-                </div>
-              </div>
-            </div>
+            <TrimLane
+              key={`trim-${card.id}`}
+              card={card}
+              videoSrc={videoSrc}
+              clipDur={clipDur}
+              trimStart={trimStart}
+              trimEnd={trimEnd}
+              lPct={lPct}
+              wPct={wPct}
+              isTrimDragging={isTrimDragging}
+              onTrimLeftDown={(e) => {
+                const el = (e.currentTarget.closest("[data-trim-container]") as HTMLElement) ?? rulerRef.current!;
+                startDrag(e, card.id, "trim-left", card, el);
+              }}
+              onTrimRightDown={(e) => {
+                const el = (e.currentTarget.closest("[data-trim-container]") as HTMLElement) ?? rulerRef.current!;
+                startDrag(e, card.id, "trim-right", card, el);
+              }}
+            />
           );
         })}
+    </div>
+  );
+}
+
+// ── Trim lane with thumbnails ──────────────────────────────────────────────────
+
+interface TrimLaneProps {
+  card: MediaOverlay;
+  videoSrc: string | null;
+  clipDur: number;
+  trimStart: number;
+  trimEnd: number;
+  lPct: number;
+  wPct: number;
+  isTrimDragging: boolean;
+  onTrimLeftDown: (e: React.MouseEvent) => void;
+  onTrimRightDown: (e: React.MouseEvent) => void;
+}
+
+const THUMB_COUNT = 10;
+
+function TrimLane({
+  card,
+  videoSrc,
+  clipDur,
+  trimStart,
+  trimEnd,
+  lPct,
+  wPct,
+  isTrimDragging,
+  onTrimLeftDown,
+  onTrimRightDown,
+}: TrimLaneProps) {
+  const thumbs = useVideoThumbs(videoSrc, clipDur, THUMB_COUNT);
+  const hasAnyThumb = thumbs.some(Boolean);
+
+  return (
+    <div className="mt-2">
+      <span className="text-[9px] text-white/40 mb-1 block">
+        Clip trim — {card.id.slice(0, 6)} ({fmtTime(trimStart)}–{fmtTime(trimEnd)} of{" "}
+        {fmtTime(clipDur)})
+      </span>
+      <div className="relative h-10 rounded overflow-hidden bg-zinc-800" data-trim-container={card.id}>
+        {/* Filmstrip: real thumbnails when available, gray cells as fallback */}
+        <div className="absolute inset-0 flex">
+          {thumbs.map((thumb, i) => (
+            <div key={i} className="flex-1 h-full overflow-hidden border-r border-black/40">
+              {thumb ? (
+                <img src={thumb} className="h-full w-full object-cover" alt="" draggable={false} />
+              ) : (
+                <div className={`h-full ${hasAnyThumb ? "bg-zinc-700/60" : "bg-zinc-700"}`} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Dimmed outside-trim zones */}
+        <div
+          className="absolute top-0 left-0 h-full bg-black/60 pointer-events-none"
+          style={{ width: `${lPct}%` }}
+        />
+        <div
+          className="absolute top-0 right-0 h-full bg-black/60 pointer-events-none"
+          style={{ width: `${100 - lPct - wPct}%` }}
+        />
+
+        {/* Active trim window border */}
+        <div
+          className={`absolute top-0 h-full border-2 rounded transition-colors ${
+            isTrimDragging ? "border-white" : "border-white/60"
+          }`}
+          style={{ left: `${lPct}%`, width: `${wPct}%` }}
+        >
+          <div
+            className="absolute left-0 top-0 h-full w-3 bg-white/20 flex items-center justify-center"
+            style={{ cursor: "ew-resize" }}
+            onMouseDown={onTrimLeftDown}
+          >
+            <div className="w-0.5 h-5 bg-white rounded-full" />
+          </div>
+          <div
+            className="absolute right-0 top-0 h-full w-3 bg-white/20 flex items-center justify-center"
+            style={{ cursor: "ew-resize" }}
+            onMouseDown={onTrimRightDown}
+          >
+            <div className="w-0.5 h-5 bg-white rounded-full" />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -307,6 +472,7 @@ interface Props {
   overlays: MediaOverlay[];
   variantDurationS: number;
   rendering: boolean;
+  localPreviewUrls: Record<string, string>;
   onUploadRequest: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
   ) => void;
@@ -320,6 +486,7 @@ export default function MediaOverlayEditor({
   overlays,
   variantDurationS,
   rendering,
+  localPreviewUrls,
   onUploadRequest,
   onUpdateCard,
   onRemoveCard,
@@ -385,6 +552,7 @@ export default function MediaOverlayEditor({
               overlays={overlays}
               totalDurationS={variantDurationS || 30}
               disabled={rendering}
+              localPreviewUrls={localPreviewUrls}
               onUpdateCard={onUpdateCard}
             />
           </div>
@@ -428,7 +596,7 @@ export default function MediaOverlayEditor({
   );
 }
 
-// ── Per-card row (position + scale only — timing lives in the timeline) ────────
+// ── Per-card row (position + scale — timing lives in the timeline) ─────────────
 
 interface CardRowProps {
   card: MediaOverlay;
@@ -447,7 +615,6 @@ function CardRow({ card, color, disabled, onUpdate, onRemove }: CardRowProps) {
         disabled ? "opacity-50 pointer-events-none" : ""
       }`}
     >
-      {/* Header: color dot + kind + id + remove */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-mono text-white/40 truncate max-w-[180px] flex items-center gap-1.5">
           <span
@@ -472,7 +639,6 @@ function CardRow({ card, color, disabled, onUpdate, onRemove }: CardRowProps) {
         </button>
       </div>
 
-      {/* Position presets */}
       <div className="flex gap-1">
         {POSITION_PRESETS.map((p) => (
           <button
@@ -489,7 +655,6 @@ function CardRow({ card, color, disabled, onUpdate, onRemove }: CardRowProps) {
         ))}
       </div>
 
-      {/* Scale slider */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-white/40 w-10">Scale</span>
         <input
@@ -503,13 +668,12 @@ function CardRow({ card, color, disabled, onUpdate, onRemove }: CardRowProps) {
         <span className="text-xs text-white/60 w-10 text-right">{scalePercent}%</span>
       </div>
 
-      {/* Timing readout (editable fallback numbers) */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-white/30 w-10">Time</span>
         <span className="text-xs text-white/50">
           {card.start_s.toFixed(1)}s – {card.end_s.toFixed(1)}s
         </span>
-        <span className="text-xs text-white/30 ml-auto">drag timeline to adjust</span>
+        <span className="text-xs text-white/30 ml-auto">drag timeline ↑</span>
       </div>
     </div>
   );
