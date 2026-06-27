@@ -77,7 +77,6 @@ function useVideoThumbs(
         });
         if (cancelled) break;
         try {
-          // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
           ctx!.drawImage(v, 0, 0, canvas.width, canvas.height);
           results[i] = canvas.toDataURL("image/jpeg", 0.5);
           setThumbs([...results]);
