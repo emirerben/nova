@@ -1800,10 +1800,7 @@ function FocusedVariantControls({
     if (sfxSaveTimer.current) clearTimeout(sfxSaveTimer.current);
     sfxSaveTimer.current = setTimeout(async () => {
       try {
-        const updated = await setVariantSoundEffects(itemId, variant.variant_id, newPlacements);
-        // Server resolves src_gcs_path from sound_effect_id — sync back so URL fetch can key on it.
-        const resolved = updated.variants?.find((v) => v.variant_id === variant.variant_id)?.sound_effects;
-        if (resolved && resolved.length > 0) setSfxPlacements(resolved);
+        await setVariantSoundEffects(itemId, variant.variant_id, newPlacements);
       } catch {
         // non-fatal — preview still works
       }
