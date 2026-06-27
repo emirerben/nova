@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.5.1] — 2026-06-28
+
+### Fixed
+- **Song swap, text edit, and all variant edits now feel instant and keep working after the first change.** Previously, swapping a song or editing text could leave controls permanently disabled until a full page refresh — the "render_status=rendering" signal was never committed to the database before the Celery task fired, so a second edit attempt would either silently double-render or strand. All five dispatchers (`swap_song`, `retext`, `change_style`, `set_intro_size`, `edit_variant`) now write `render_status="rendering"` synchronously to the DB before enqueuing the task, and the routes commit it immediately. Rapid duplicate edits return a clear 409 and controls re-enable on cancel.
+- **Progress overlay is now informative, not vague.** A song swap shows "Applying 'Song Name' · ~1–3 min" and a text edit shows "Updating text · a few seconds" instead of a generic shimmer. The stall hint ("Taking longer than usual…") still fires after 5 minutes.
+- **"✓ Updated" confirmation badge** appears for 4 seconds when the new video is ready and the player swaps to it, so users don't have to refresh to confirm the change took effect.
+- **409 error from a concurrent edit shows a friendly inline message** ("Still applying your last change — wait for it to finish, then try again.") instead of a red error banner.
+
+### Internal
+- `editGeneration` counter forces `variants` useMemo to re-run on the same React tick as the click (refs are not reactive dependencies), making the optimistic render pin engage immediately.
+- 3 new backend regression tests assert that `swap_song`, `retext`, and a second concurrent `swap_song` (409) all behave correctly.
+
 ## [0.5.5.0] — 2026-06-27
 
 ### Added
