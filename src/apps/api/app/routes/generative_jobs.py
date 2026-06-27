@@ -474,6 +474,27 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # no base_video_url key → the instant editor simply stays hidden
+        # Media-overlay cards: sign each card's src_gcs_path into a preview_url so
+        # the browser can show existing applied cards as a live CSS overlay without
+        # re-uploading them. Signing failure skips the key on that card (graceful).
+        raw_overlays = v.get("media_overlays")
+        if raw_overlays:
+            signed_overlays = []
+            for card in raw_overlays:
+                if not isinstance(card, dict):
+                    signed_overlays.append(card)
+                    continue
+                src = card.get("src_gcs_path")
+                if src:
+                    try:
+                        signed_overlays.append(
+                            {**card, "preview_url": signed_get_url(src, PLAYBACK_URL_TTL_MIN)}
+                        )
+                    except Exception:  # noqa: BLE001
+                        signed_overlays.append(card)
+                else:
+                    signed_overlays.append(card)
+            v = {**v, "media_overlays": signed_overlays}
         # Intro mode (D19): expose the authoritative mode plus the FE-convenience
         # `sequence_synced` boolean. Legacy variants (pre-intro_mode) fall back to
         # the persisted intro_layout — they can never be "sequence".
