@@ -74,8 +74,11 @@ import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 const RENDER_REGISTER_TIMEOUT_MS = 45_000;
 
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
+// Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
+// near-miss Vercel value ("True", trailing space) doesn't silently hide the tab.
+const _mediaOverlaysRaw = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? "").trim();
 const MEDIA_OVERLAYS_ENABLED =
-  process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED === "true";
+  _mediaOverlaysRaw.toLowerCase() === "true" || _mediaOverlaysRaw === "1";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
