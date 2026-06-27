@@ -416,6 +416,8 @@ export function updatePlanItem(
     edit_format?: string | null;
     filming_guide?: FilmingShot[];
     landscape_fit?: "fit" | "fill";
+    /** Per-item content_mode override (montage plan-vs-have toggle, 0058+). */
+    content_mode?: "existing_footage" | "create_new" | "mixed";
   },
 ): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`, {

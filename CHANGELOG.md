@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3.5] — 2026-06-27
+
+### Added
+- **Montage items get a "Planning to film" / "I already have footage" sub-picker.** Users are no longer forced to generate a shot plan when they already have clips. Tapping "I already have footage" on a montage item switches directly to the pool uploader so they can upload and generate without waiting for a guide. The choice persists per-item (new `content_mode` column on `plan_items`, migration 0058) and overrides the plan-level onboarding default without affecting any other items. Narrated walkthrough items are unchanged.
+
 ## [0.5.3.4] — 2026-06-27
 
 ### Added

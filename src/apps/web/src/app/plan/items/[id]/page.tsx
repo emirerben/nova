@@ -629,6 +629,48 @@ export default function PlanItemPage() {
                     })}
                   </div>
                 )}
+
+                {/* Montage sub-mode picker — "Planning to film" vs "I already have footage".
+                    Flips the per-item content_mode override so the user can skip shot-plan
+                    generation and go straight to the pool uploader. Only shown when Montage
+                    is the active style (narrated has its own equivalent picker above). */}
+                {!isNarrated && (
+                  <div className="mt-3 flex gap-2">
+                    {(
+                      [
+                        { value: "create_new",       label: "Planning to film",        desc: "Get a shot plan, film each shot" },
+                        { value: "existing_footage", label: "I already have footage",  desc: "Skip the plan — just upload your footage" },
+                      ] as { value: "create_new" | "existing_footage"; label: string; desc: string }[]
+                    ).map(({ value, label, desc }) => {
+                      // "I already have footage" is active when content_mode is explicitly
+                      // existing_footage; otherwise "Planning to film" is the default.
+                      const active = value === "existing_footage"
+                        ? contentMode === "existing_footage"
+                        : contentMode !== "existing_footage";
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={async () => {
+                            if (active) return;
+                            await updatePlanItem(item.id, { content_mode: value }).catch(() => null);
+                            refetch();
+                          }}
+                          className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
+                            active
+                              ? "border-zinc-900 bg-zinc-900"
+                              : "border-zinc-200 bg-white hover:border-zinc-300"
+                          }`}
+                        >
+                          <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
+                            {label}
+                          </span>
+                          <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
