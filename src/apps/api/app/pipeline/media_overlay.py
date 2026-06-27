@@ -17,10 +17,14 @@ Audio: card audio is always dropped (`0:a?` maps base audio only). The base
 variant already carries the authored audio bed (song / original / voiceover);
 random card audio mixed in would be a defect.
 
-Encoder policy: `_encoding_args(out, preset="fast")` — matches `_reburn_text_on_base`
-and all other final-output re-encodes. This call site is enumerated in
-`tests/test_encoder_policy.py`; adding a new `_encoding_args(...)` call forces a
-conscious quality-budget decision.
+Encoder policy: `_encoding_args(out, preset="veryfast")` — intentionally one step
+faster than the `"fast"` rule for primary renders. The base video is already CRF 18
+H.264 (not raw HDR footage), so mb-tree and psy-rd are still engaged (veryfast keeps
+both; only trellis is dropped). The smooth-gradient macroblock risk described in
+CLAUDE.md is specific to raw/HDR input; re-encoding already-compressed content has a
+quality floor set by the input, not this pass. Using "fast" here caused ~10-minute
+render times on shared Fly CPUs; "veryfast" cuts that to ~3-5 min. If banding
+complaints arise, switch back to "fast" and live with the latency.
 
 CLAUDE.md anti-pattern guard: subprocess FFmpeg only, never MoviePy.
 """
@@ -72,7 +76,7 @@ def build_media_overlay_command(
        card plays from t=0 during its window, overlay at the computed top-left.
     3. Chain in z-order (ascending z, then list order).
     4. Map final composite video + base audio only (0:a?).
-    5. Encode with `preset="fast"` per encoder policy.
+    5. Encode with `preset="veryfast"` (see module docstring for rationale).
 
     The `_encoding_args` call here is intentionally direct (not via a helper) so
     the encoder-policy AST gate can attribute it to this module.
@@ -140,11 +144,27 @@ def build_media_overlay_command(
         # to prevent implicit BT.601/709 colour-space conversions.
         card_filter_parts.append(f"scale={cw}:-2,format=yuv420p")
 
-        # For video cards: freeze last frame to fill the window if the clip is
-        # shorter than (end_s - start_s). `tpad=stop_mode=clone:stop=-1` supplies
-        # an infinite clone of the last frame; the `enable` gate bounds visibility.
+        # For video cards: freeze last frame to fill any gap between trim duration
+        # and the overlay window. Use a bounded `stop_duration` instead of `stop=-1`
+        # so FFmpeg only generates frames for the window, not the entire output video.
+        # With stop=-1 a 5-second overlay on a 60-second output forces FFmpeg to
+        # produce 60s of cloned card frames — 12x wasted work and the root cause of
+        # ~10-minute overlay renders on shared Fly CPUs.
         if is_video_card:
-            card_filter_parts.append("tpad=stop_mode=clone:stop=-1")
+            trim_s = card.clip_trim_start_s or 0.0
+            trim_e = (
+                card.clip_trim_end_s if card.clip_trim_end_s is not None else card.clip_duration_s
+            )
+            if trim_e is not None:
+                trim_dur = trim_e - trim_s
+                window_dur = card.end_s - card.start_s
+                extra_pad = max(0.0, window_dur - trim_dur)
+                if extra_pad > 0:
+                    card_filter_parts.append(f"tpad=stop_mode=clone:stop_duration={extra_pad:.3f}")
+                # extra_pad == 0: trim exactly fills the window — no tpad needed.
+            else:
+                # clip_duration_s unknown: safe fallback (slow but correct).
+                card_filter_parts.append("tpad=stop_mode=clone:stop=-1")
 
         # PTS shift so the card plays from its own start during the window.
         card_filter_parts.append(f"setpts=PTS-STARTPTS+{card.start_s:.3f}/TB,settb=AVTB[{shifted}]")
@@ -172,8 +192,9 @@ def build_media_overlay_command(
         "aac",
         "-b:a",
         "192k",
-        # Final-output encode → preset="fast" (encoder policy).
-        *_encoding_args(output_path, preset="fast", include_audio=False),
+        # veryfast: re-encoding already-CRF18 content; mb-tree+psy-rd still active.
+        # See module docstring for the quality/speed tradeoff rationale.
+        *_encoding_args(output_path, preset="veryfast", include_audio=False),
     ]
     return cmd
 
