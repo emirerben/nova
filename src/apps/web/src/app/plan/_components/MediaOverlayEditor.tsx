@@ -113,8 +113,8 @@ interface DragState {
   origTrimEnd: number;
   containerWidth: number;
   scaleDuration: number;
-  /** For video cards: max allowed window = clip_duration_s. null = no cap. */
-  maxWindowS: number | null;
+  /** Source clip total duration — null for image cards (no sync needed). */
+  clipDurationS: number | null;
 }
 
 // ── Visual timeline ────────────────────────────────────────────────────────────
@@ -153,7 +153,7 @@ function OverlayCardTimeline({
     e.stopPropagation();
     const rect = containerEl.getBoundingClientRect();
     const isTrim = handle === "trim-left" || handle === "trim-right";
-    const clipDur = card.clip_duration_s ?? null;
+    const clipDur = card.kind === "video" ? (card.clip_duration_s ?? null) : null;
     setDrag({
       cardId,
       handle,
@@ -164,7 +164,7 @@ function OverlayCardTimeline({
       origTrimEnd: card.clip_trim_end_s ?? (clipDur ?? card.end_s - card.start_s),
       containerWidth: rect.width,
       scaleDuration: isTrim ? (clipDur ?? 10) : totalDurationS,
-      maxWindowS: card.kind === "video" && clipDur != null ? clipDur : null,
+      clipDurationS: clipDur,
     });
   }
 
@@ -178,8 +178,13 @@ function OverlayCardTimeline({
       const ds = drag.containerWidth > 0 ? (dx / drag.containerWidth) * drag.scaleDuration : 0;
       let patch: Partial<MediaOverlay> = {};
 
+      // Invariant for video cards: end_s - start_s === clip_trim_end_s - clip_trim_start_s
+      // Every handle that changes duration on one side syncs the other side.
+      const clipDur = drag.clipDurationS;
+
       switch (drag.handle) {
         case "move": {
+          // Duration unchanged — no trim sync needed.
           const dur = drag.origEnd - drag.origStart;
           const ns = Math.max(0, Math.min(totalDurationS - dur, drag.origStart + ds));
           patch = {
@@ -189,37 +194,70 @@ function OverlayCardTimeline({
           break;
         }
         case "left": {
-          // Prevent start from going so low that window > clip_duration_s
-          const minStart =
-            drag.maxWindowS != null ? Math.max(0, drag.origEnd - drag.maxWindowS) : 0;
+          // Timing start moves → duration changes → sync clip_trim_start_s (keep trim end).
+          // Limit: can't play more clip than origTrimEnd allows.
+          const minStart = Math.max(0, clipDur != null ? drag.origEnd - drag.origTrimEnd : 0);
           const ns = Math.max(minStart, Math.min(drag.origEnd - MIN_DUR, drag.origStart + ds));
-          patch = { start_s: Math.round(ns * 10) / 10 };
+          if (clipDur != null) {
+            const newTrimStart = Math.max(0, drag.origTrimEnd - (drag.origEnd - ns));
+            patch = {
+              start_s: Math.round(ns * 10) / 10,
+              clip_trim_start_s: Math.round(newTrimStart * 10) / 10,
+            };
+          } else {
+            patch = { start_s: Math.round(ns * 10) / 10 };
+          }
           break;
         }
         case "right": {
-          // Cap end_s so window doesn't exceed clip_duration_s
-          const maxEnd =
-            drag.maxWindowS != null
-              ? Math.min(totalDurationS, drag.origStart + drag.maxWindowS)
-              : totalDurationS;
+          // Timing end moves → duration changes → sync clip_trim_end_s (keep trim start).
+          // Limit: can't exceed remaining clip content from current trim start.
+          const maxEnd = clipDur != null
+            ? Math.min(totalDurationS, drag.origStart + (clipDur - drag.origTrimStart))
+            : totalDurationS;
           const ne = Math.min(maxEnd, Math.max(drag.origStart + MIN_DUR, drag.origEnd + ds));
-          patch = { end_s: Math.round(ne * 10) / 10 };
+          if (clipDur != null) {
+            const newTrimEnd = Math.min(clipDur, drag.origTrimStart + (ne - drag.origStart));
+            patch = {
+              end_s: Math.round(ne * 10) / 10,
+              clip_trim_end_s: Math.round(newTrimEnd * 10) / 10,
+            };
+          } else {
+            patch = { end_s: Math.round(ne * 10) / 10 };
+          }
           break;
         }
         case "trim-left": {
-          const ns = Math.max(
-            0,
-            Math.min(drag.origTrimEnd - MIN_DUR, drag.origTrimStart + ds),
-          );
-          patch = { clip_trim_start_s: Math.round(ns * 10) / 10 };
+          // Trim start moves → duration changes → sync end_s (keep start_s).
+          const ns = Math.max(0, Math.min(drag.origTrimEnd - MIN_DUR, drag.origTrimStart + ds));
+          const newDur = drag.origTrimEnd - ns;
+          // Cap: end_s can't exceed variant duration.
+          const newEnd = Math.min(totalDurationS, drag.origStart + newDur);
+          const actualDur = newEnd - drag.origStart;
+          // If end_s was capped, trim start must match to keep invariant.
+          const actualTrimStart = Math.max(0, drag.origTrimEnd - actualDur);
+          patch = {
+            clip_trim_start_s: Math.round(actualTrimStart * 10) / 10,
+            end_s: Math.round(newEnd * 10) / 10,
+          };
           break;
         }
         case "trim-right": {
+          // Trim end moves → duration changes → sync end_s (keep start_s).
           const ne = Math.min(
             drag.scaleDuration,
             Math.max(drag.origTrimStart + MIN_DUR, drag.origTrimEnd + ds),
           );
-          patch = { clip_trim_end_s: Math.round(ne * 10) / 10 };
+          const newDur = ne - drag.origTrimStart;
+          // Cap: end_s can't exceed variant duration.
+          const newEnd = Math.min(totalDurationS, drag.origStart + newDur);
+          const actualDur = newEnd - drag.origStart;
+          // If end_s was capped, trim end must match to keep invariant.
+          const actualTrimEnd = drag.origTrimStart + actualDur;
+          patch = {
+            clip_trim_end_s: Math.round(actualTrimEnd * 10) / 10,
+            end_s: Math.round(newEnd * 10) / 10,
+          };
           break;
         }
       }
