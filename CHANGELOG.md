@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.5.0] — 2026-06-27
+
+### Added
+- **Unified Timeline Editor — PR-3 (interactive Overlays lane).** The Overlays lane in `UnifiedTimeline` is now fully interactive. Drag a card bar to reposition its timing, drag the left/right edges to adjust `start_s`/`end_s`, click the bar to open a per-card popover (position presets top/center/bottom, scale slider 0.05–1.0, remove, time display), and drop or click-browse to upload new overlays inline. Video overlays show a trim lane with filmstrip thumbnails. "Clear all overlays" button clears the deck. Upload zone is disabled with visual feedback while an upload is in flight. `MediaOverlayEditor.tsx` has been retired; all its logic (drag system, `useVideoThumbs`, `TrimLane`, upload filtering) is now co-located in `UnifiedTimeline.tsx`. The `"overlays"` editor tab and its `EditorTab` union member are removed; position-preset resolution (top → x:0.5/y:0.18, center → x:0.5/y:0.5, bottom → x:0.5/y:0.82) moves from the overlay editor into `page.tsx` `handleUpdateCard` for immediate CSS preview. Kill switch: `NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=false` hides the upload zone. Backend contract (`dispatch_set_media_overlays`) is unchanged.
+
+### Internal
+- Migrated overlay editor tests from `MediaOverlayEditor` to the `UnifiedTimeline` overlay lane (`plan-item-overlay-preview.test.tsx`): 11 tests covering upload filtering, disabled-state styling, card list, popover interactions, position presets, clear-all.
+- Updated `unified-timeline.test.tsx` `makeProps` to include all new overlay props; updated stale "Overlays click-through" test to reflect interactive (non-click-through) lane.
+
 ## [0.5.4.0] — 2026-06-27
 
 ### Added
