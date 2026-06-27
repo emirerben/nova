@@ -1808,20 +1808,24 @@ function FocusedVariantControls({
   }
 
   // Fetch signed playback URLs for SFX placements that don't have one yet.
+  // Key: use src_gcs_path when available, fall back to placement.id so glossary
+  // effects (src_gcs_path="" until server resolves it) get a URL immediately.
   useEffect(() => {
     if (!SOUND_EFFECTS_ENABLED) return;
-    const missing = sfxPlacements.filter(
-      (p) => p.src_gcs_path && !sfxAudioUrls[p.src_gcs_path],
-    );
+    const missing = sfxPlacements.filter((p) => {
+      const key = p.src_gcs_path || p.id;
+      return key && !sfxAudioUrls[key];
+    });
     if (missing.length === 0) return;
 
     const newUrls: Record<string, string> = {};
     const userPaths: SoundEffectPlacement[] = [];
 
     for (const p of missing) {
+      const key = p.src_gcs_path || p.id;
       const glossaryMatch = glossaryEffects.find((g) => g.id === p.sound_effect_id);
       if (glossaryMatch?.preview_url) {
-        newUrls[p.src_gcs_path] = glossaryMatch.preview_url;
+        newUrls[key] = glossaryMatch.preview_url;
       } else if (p.src_gcs_path.startsWith("users/")) {
         userPaths.push(p);
       }

@@ -34,7 +34,7 @@ export function useSfxPreview(
     const now = video.currentTime;
     for (const entry of entriesRef.current) {
       const { placement, audio } = entry;
-      const url = audioUrls[placement.src_gcs_path] || (placement as unknown as { _previewUrl?: string })._previewUrl;
+      const url = audioUrls[placement.src_gcs_path] || audioUrls[placement.id] || (placement as unknown as { _previewUrl?: string })._previewUrl;
       if (!url) { audio.pause(); continue; }
       if (audio.src !== url) {
         audio.src = url;
@@ -88,7 +88,7 @@ export function useSfxPreview(
       const audio = new Audio();
       audio.preload = "auto";
       audio.volume = Math.min(2, Math.max(0, p.gain ?? 1));
-      const url = audioUrls[p.src_gcs_path] || (p as unknown as { _previewUrl?: string })._previewUrl;
+      const url = audioUrls[p.src_gcs_path] || audioUrls[p.id] || (p as unknown as { _previewUrl?: string })._previewUrl;
       if (url) { audio.src = url; audio.load(); }
       return { placement: p, audio, scheduledAt: null };
     });
