@@ -1362,18 +1362,24 @@ function FocusedResults({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.variant_id]);
-  // When a burn completes (render_finished_at advances), clear the CSS preview layer.
-  // The burned output_url now has the cards composited in; keeping localPreviewUrls
-  // would double-render them. Fires for any burn (text/style/overlay), which is
-  // correct: any re-render produces an output_url without the unpersisted CSS cards.
+  // Declared here (before the render_finished_at effect) so the effect can read it.
+  // The full definition lives further down alongside handleDownload.
+  const pendingDownloadRef = useRef(false);
+
+  // When a download-triggered burn completes (render_finished_at advances), clear the CSS
+  // preview layer — the burned output_url now has the cards composited in. Only fires when
+  // pendingDownloadRef is true so stale/concurrent renders (e.g. completing text edits, or
+  // lingering renders from a previous session) don't wipe newly uploaded card previews.
   const prevFinishedAtRef = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     const cur = variant?.render_finished_at ?? null;
     if (prevFinishedAtRef.current !== undefined && cur !== prevFinishedAtRef.current) {
-      setLocalPreviewUrls((prev) => {
-        Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
-        return {};
-      });
+      if (pendingDownloadRef.current) {
+        setLocalPreviewUrls((prev) => {
+          Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+          return {};
+        });
+      }
     }
     prevFinishedAtRef.current = cur;
   }, [variant?.render_finished_at]);
@@ -1418,7 +1424,6 @@ function FocusedResults({
     return () => clearInterval(t);
   }, [editSession.isSaving, refetch]);
 
-  const pendingDownloadRef = useRef(false);
   const downloadName = `nova-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
 
   useEffect(() => {
