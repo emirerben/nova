@@ -563,6 +563,19 @@ async def dispatch_swap_song(
             detail="Requested song is not available for rendering.",
         )
 
+    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays)
+    # so the 409 guard fires immediately on a second POST and the route response already
+    # carries "rendering" — the frontend can rely on the response instead of a fragile poll pin.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
+
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
     regenerate_generative_variant.delay(str(job.id), variant_id, new_track_id=new_track_id)
@@ -592,6 +605,18 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Provide `text` to update, or set `remove=true` to clear the overlay.",
         )
+
+    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays)
+    # so the route response already carries "rendering" and a second POST is rejected by 409.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -741,6 +766,19 @@ def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> No
             detail="Unknown or non-generative style set.",
         )
 
+    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays)
+    # so the 409 guard fires immediately on a second POST and the route response already
+    # carries "rendering" — the frontend can rely on the response instead of a fragile poll pin.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
+
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
     regenerate_generative_variant.delay(str(job.id), variant_id, style_set_id=style_set_id)
@@ -761,6 +799,18 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
             detail="This edit has no resizable intro text.",
         )
     px = clamp_intro_px(text_size_px)
+
+    # Persist render_status="rendering" first so the 409 guard fires on concurrent
+    # requests and the route response already reflects the in-progress state.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1136,6 +1186,18 @@ def dispatch_edit_variant(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="`text_color` must be a hex color (#RRGGBB).",
             )
+
+    # Persist render_status="rendering" first so the 409 guard fires on concurrent
+    # requests and the route response already reflects the in-progress state.
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    _variants = list((job.assembly_plan or {}).get("variants") or [])
+    for _v in _variants:
+        if _v.get("variant_id") == variant_id:
+            _v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
+    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1643,6 +1705,7 @@ async def swap_song(
     """Re-render a variant against a different library song (async re-slot)."""
     job = await _load_generative_job(job_id, db, current_user)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
+    await db.commit()
     log.info(
         "generative_swap_song", job_id=str(job.id), variant_id=variant_id, track_id=req.new_track_id
     )
@@ -1660,6 +1723,7 @@ async def retext(
     """Re-render a variant with user-supplied intro text, or remove the text."""
     job = await _load_generative_job(job_id, db, current_user)
     dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
+    await db.commit()
     log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
@@ -1679,6 +1743,7 @@ async def change_style(
     """
     job = await _load_generative_job(job_id, db, current_user)
     dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
+    await db.commit()
     log.info(
         "generative_change_style",
         job_id=str(job.id),
@@ -1699,6 +1764,7 @@ async def set_intro_size(
     """Re-render a variant with a user-pinned AI-intro font size (the ±size nudge)."""
     job = await _load_generative_job(job_id, db, current_user)
     dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
+    await db.commit()
     log.info(
         "generative_set_intro_size",
         job_id=str(job.id),
@@ -1741,6 +1807,7 @@ async def edit_variant(
         cluster_body_size_px=req.cluster_body_size_px,
         cluster_accent_size_px=req.cluster_accent_size_px,
     )
+    await db.commit()
     log.info(
         "generative_edit_variant",
         job_id=str(job.id),

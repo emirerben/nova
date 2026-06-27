@@ -1250,6 +1250,7 @@ async def swap_item_song(
     """Re-render one of this item's variants against a different library song."""
     job = await _owned_item_render_job(item_id, user.id, db)
     await dispatch_swap_song(job, variant_id, new_track_id=req.new_track_id, db=db)
+    await db.commit()
     log.info("plan_item_swap_song", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1265,6 +1266,7 @@ async def retext_item(
     """Re-render one of this item's variants with new intro text, or remove it."""
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
+    await db.commit()
     log.info("plan_item_retext", item_id=item_id, variant_id=variant_id, remove=req.remove)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1338,6 +1340,7 @@ async def change_item_style(
     """Re-render one of this item's variants with a different curated text style set."""
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_change_style(job, variant_id, style_set_id=req.style_set_id)
+    await db.commit()
     log.info("plan_item_change_style", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1375,6 +1378,7 @@ async def edit_item_variant(
         cluster_body_size_px=req.cluster_body_size_px,
         cluster_accent_size_px=req.cluster_accent_size_px,
     )
+    await db.commit()
     log.info(
         "plan_item_edit_variant",
         item_id=item_id,
@@ -1402,6 +1406,7 @@ async def set_item_intro_size(
     """Re-render one of this item's variants with a user-pinned AI-intro font size."""
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_set_intro_size(job, variant_id, text_size_px=req.text_size_px)
+    await db.commit()
     log.info(
         "plan_item_set_intro_size", item_id=item_id, variant_id=variant_id, px=req.text_size_px
     )
