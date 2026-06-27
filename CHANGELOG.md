@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.4.0] — 2026-06-27
+
+### Added
+- **Unified Timeline Editor — PR-2 (shell + interactive SFX lane).** Replaces the flat Sound tab with a horizontal multi-lane `UnifiedTimeline` component. The SFX lane is fully interactive: drag a bar to reposition it in video time, drag the right edge to trim the audio tail, click a bar to edit gain/label/remove, add from the glossary at the playhead, upload a custom file, and undo/redo up to 50 steps. Three read-only lanes (Overlays, Text, Clips) show what's on the timeline and click through to today's editors unchanged — no regressions. Kill switch: `NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED=false` to revert to the legacy Sound list. Backend contract (`setVariantSoundEffects` debounced PUT + `renderVariantSfx` on Download) is unchanged.
+
+### Internal
+- New `src/lib/timeline/` primitives: `bar-position.ts` (shared position math), `drag-zone.ts` (edge classification + clamp), `time-format.ts` (re-exports + `formatTimecode`/`formatSeconds`), `sfx-timeline-reducer.ts` (bounded undo/redo over SFX placements), `Playhead.tsx`.
+- Jest config extended with `setupFilesAfterEnv` (global `crypto.randomUUID` polyfill for jsdom) and `testMatch` covers `src/lib/**/__tests__/` for co-located lib unit tests.
+- 65 new unit/component tests across 5 files (bar-position, drag-zone, time-format, sfx-reducer, UnifiedTimeline component).
+
 ## [0.5.3.5] — 2026-06-27
 
 ### Added

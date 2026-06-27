@@ -45,11 +45,11 @@ function defaultProps(overrides = {}) {
   return {
     overlays: [] as MediaOverlay[],
     variantDurationS: 30,
-    rendering: false,
+    uploading: false,
+    localPreviewUrls: {} as Record<string, string>,
     onUploadRequest: jest.fn(),
     onUpdateCard: jest.fn(),
     onRemoveCard: jest.fn(),
-    onApply: jest.fn(),
     onClear: jest.fn(),
     ...overrides,
   };
@@ -155,9 +155,9 @@ describe("MediaOverlayEditor — existing cards rendering", () => {
     expect(container.firstChild).not.toBeNull();
   });
 
-  it("test_rendering_state_disables_upload_zone: pointer-events-none when rendering=true", () => {
-    render(<MediaOverlayEditor {...defaultProps({ rendering: true })} />);
-    // The upload zone should have opacity-40 + pointer-events-none when rendering.
+  it("test_rendering_state_disables_upload_zone: pointer-events-none when uploading=true", () => {
+    render(<MediaOverlayEditor {...defaultProps({ uploading: true })} />);
+    // The upload zone should have opacity-40 + pointer-events-none while uploading.
     const uploadZone = document.querySelector(".pointer-events-none.opacity-40");
     expect(uploadZone).not.toBeNull();
   });
