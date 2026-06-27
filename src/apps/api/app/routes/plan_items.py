@@ -1715,4 +1715,3 @@ async def get_sfx_audio_url(
 
     url = storage.signed_url(gcs_path, expiration_minutes=60)
     return {"url": url}
-
