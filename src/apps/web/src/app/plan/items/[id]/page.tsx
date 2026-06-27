@@ -1790,7 +1790,13 @@ function FocusedVariantControls({
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
 
   const [overlayUploading, setOverlayUploading] = useState(false);
-  const [isApplying, setIsApplying] = useState(false);
+  // True when the user has made card changes that haven't been persisted yet.
+  const overlaysDirtyRef = useRef(false);
+  // True when a save was 409-rejected (burn in progress) — retry on next burn completion.
+  const pendingSaveRef = useRef(false);
+  // Always points at the latest overlayCards value so setTimeout closures aren't stale.
+  const overlayCardsRef = useRef(overlayCards);
+  overlayCardsRef.current = overlayCards;
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -1805,6 +1811,41 @@ function FocusedVariantControls({
     };
     v.src = url;
   }, [variant.output_url]);
+
+  // Auto-save overlay cards 2.5 s after the user stops editing. Only fires when
+  // overlaysDirtyRef is true (user-initiated change), not on server-sync updates.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!overlaysDirtyRef.current) return;
+    const cards = overlayCardsRef.current;
+    const timer = setTimeout(async () => {
+      overlaysDirtyRef.current = false;
+      try {
+        await setVariantMediaOverlays(itemId, variant.variant_id, cards);
+        pendingSaveRef.current = false;
+        refetch();
+      } catch {
+        // 409 = burn in progress; retry when burn completes (effect below).
+        overlaysDirtyRef.current = false;
+        pendingSaveRef.current = true;
+      }
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [overlayCards]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // When a burn completes, retry any pending save that was deferred due to 409.
+  const prevVcFinishedAtRef = useRef<string | null | undefined>(undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const cur = variant.render_finished_at ?? null;
+    if (prevVcFinishedAtRef.current !== undefined && cur !== prevVcFinishedAtRef.current && pendingSaveRef.current) {
+      pendingSaveRef.current = false;
+      setVariantMediaOverlays(itemId, variant.variant_id, overlayCardsRef.current)
+        .then(refetch)
+        .catch(() => { pendingSaveRef.current = true; });
+    }
+    prevVcFinishedAtRef.current = cur;
+  }, [variant.render_finished_at]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Upload new files, append as new overlay cards with default settings. */
   async function handleOverlayUpload(
@@ -1882,7 +1923,8 @@ function FocusedVariantControls({
       );
       await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
 
-      // Patch the cards already in state with their real GCS paths.
+      // Patch the cards already in state with their real GCS paths, then mark dirty
+      // so the auto-save effect persists them (with real GCS paths) after 2.5 s.
       setOverlayCards((prev) =>
         prev.map((card) => {
           const idx = immediateCards.findIndex((c) => c.id === card.id);
@@ -1890,22 +1932,9 @@ function FocusedVariantControls({
           return { ...card, src_gcs_path: uploadUrls[idx].gcs_path };
         }),
       );
+      overlaysDirtyRef.current = true;
     } finally {
       setOverlayUploading(false);
-    }
-  }
-
-  /** Persist overlay cards and kick off the background burn. Apply is instant — the
-   *  CSS preview layer already shows the correct result. The burn produces a
-   *  downloadable output_url; when it finishes, render_finished_at advances and the
-   *  effect above clears localPreviewUrls so the burned video takes over cleanly. */
-  async function handleApplyOverlays() {
-    setIsApplying(true);
-    try {
-      await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards);
-      refetch();
-    } finally {
-      setIsApplying(false);
     }
   }
 
@@ -2125,7 +2154,7 @@ function FocusedVariantControls({
             overlays={overlayCards}
             variantDurationS={variantDurationS}
             localPreviewUrls={localPreviewUrls}
-            rendering={variant.render_status === "rendering" || overlayUploading || isApplying}
+            uploading={overlayUploading}
             onUploadRequest={handleOverlayUpload}
             onUpdateCard={(id, patch) => {
               // Resolve position presets to fracs so the CSS preview updates
@@ -2134,11 +2163,13 @@ function FocusedVariantControls({
               if (patch.position === "top") { resolved.x_frac = 0.5; resolved.y_frac = 0.18; }
               else if (patch.position === "center") { resolved.x_frac = 0.5; resolved.y_frac = 0.5; }
               else if (patch.position === "bottom") { resolved.x_frac = 0.5; resolved.y_frac = 0.82; }
+              overlaysDirtyRef.current = true;
               setOverlayCards((prev) =>
                 prev.map((c) => (c.id === id ? { ...c, ...resolved } : c)),
               );
             }}
             onRemoveCard={(id) => {
+              overlaysDirtyRef.current = true;
               setOverlayCards((prev) => prev.filter((c) => c.id !== id));
               setLocalPreviewUrls((prev) => {
                 if (!prev[id]) return prev;
@@ -2148,7 +2179,6 @@ function FocusedVariantControls({
               });
               if (localPreviewUrls[id]) URL.revokeObjectURL(localPreviewUrls[id]);
             }}
-            onApply={handleApplyOverlays}
             onClear={handleClearOverlays}
           />
         </div>

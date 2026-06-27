@@ -470,26 +470,25 @@ function TrimLane({
 interface Props {
   overlays: MediaOverlay[];
   variantDurationS: number;
-  rendering: boolean;
+  /** True while a GCS upload is in progress — disables the drop zone only. */
+  uploading: boolean;
   localPreviewUrls: Record<string, string>;
   onUploadRequest: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
   ) => void;
   onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
   onRemoveCard: (id: string) => void;
-  onApply: () => void;
   onClear: () => void;
 }
 
 export default function MediaOverlayEditor({
   overlays,
   variantDurationS,
-  rendering,
+  uploading,
   localPreviewUrls,
   onUploadRequest,
   onUpdateCard,
   onRemoveCard,
-  onApply,
   onClear,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -516,7 +515,7 @@ export default function MediaOverlayEditor({
       <div
         className={`rounded-xl border-2 border-dashed p-5 text-center transition-colors cursor-pointer ${
           dragOver ? "border-lime-400 bg-lime-400/10" : "border-white/20 hover:border-white/40"
-        } ${rendering ? "opacity-40 pointer-events-none" : ""}`}
+        } ${uploading ? "opacity-40 pointer-events-none" : ""}`}
         onClick={() => fileInputRef.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
@@ -550,7 +549,7 @@ export default function MediaOverlayEditor({
             <OverlayCardTimeline
               overlays={overlays}
               totalDurationS={variantDurationS || 30}
-              disabled={rendering}
+              disabled={false}
               localPreviewUrls={localPreviewUrls}
               onUpdateCard={onUpdateCard}
             />
@@ -563,7 +562,7 @@ export default function MediaOverlayEditor({
                 key={card.id}
                 card={card}
                 color={TRACK_COLORS[i % TRACK_COLORS.length]}
-                disabled={rendering}
+                disabled={false}
                 onUpdate={(patch) => onUpdateCard(card.id, patch)}
                 onRemove={() => onRemoveCard(card.id)}
               />
@@ -572,25 +571,17 @@ export default function MediaOverlayEditor({
         </>
       )}
 
-      {/* ── Action bar ────────────────────────────────────────────── */}
-      <div className="flex gap-2 pt-2">
-        <button
-          disabled={rendering || overlays.length === 0}
-          onClick={onApply}
-          className="flex-1 rounded-lg bg-lime-400 text-black text-sm font-semibold py-2 px-4 disabled:opacity-40"
-        >
-          {rendering ? "Applying…" : "Apply cards"}
-        </button>
-        {overlays.length > 0 && (
+      {/* ── Clear button (explicit destructive action only) ──────── */}
+      {overlays.length > 0 && (
+        <div className="flex pt-1">
           <button
-            disabled={rendering}
             onClick={onClear}
-            className="rounded-lg border border-white/20 text-white/60 text-sm py-2 px-4 hover:border-white/40 disabled:opacity-40"
+            className="rounded-lg border border-white/20 text-white/60 text-sm py-2 px-4 hover:border-white/40"
           >
             Clear all
           </button>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
