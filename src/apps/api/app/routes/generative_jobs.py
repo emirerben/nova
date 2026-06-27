@@ -708,6 +708,94 @@ def dispatch_set_media_overlays(
     )
 
 
+def dispatch_set_sound_effects(
+    job: Job,
+    variant_id: str,
+    *,
+    sfx_raw: list[dict],
+    user_id: str,
+    db_for_glossary,  # AsyncSession for resolving sound_effect_id references
+) -> None:
+    """Validate + enqueue a sound-effects apply-pass for one variant.
+
+    Full-replace semantics: the caller sends the entire new placement list.
+    An empty list clears all effects (restores the clean variant from
+    pre_sfx_video_path if available).
+
+    Persists render_status="rendering" on the variant BEFORE enqueuing.
+    Routes to the overlay-jobs queue (same as media overlays — solo worker,
+    no CLIP model fork hazard).
+    """
+    from app.agents._schemas.sound_effect import (  # noqa: PLC0415
+        coerce_sound_effects,
+        validate_sfx_gcs_path,
+    )
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.sound_effects_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sound effects are not available.",
+        )
+
+    require_editable_variant(job, variant_id)
+
+    # Validate each placement.
+    _user_prefix = f"users/{user_id}/"
+    validated: list[dict] = []
+    if sfx_raw:
+        placements = coerce_sound_effects(sfx_raw) or []
+        for placement in placements:
+            # Curated paths: resolve src_gcs_path server-side from the SoundEffect row.
+            # Never trust a client-supplied sound-effects/ path.
+            if placement.sound_effect_id:
+                # We need a sync-compatible lookup here. Use the same db session
+                # pattern as other dispatchers (db is async, but we have a sync
+                # workaround — import inline and use run_sync).
+                # For simplicity, since dispatch functions in this module already
+                # call .delay() synchronously, we do a best-effort path trust check
+                # and rely on the worker-side validate_sfx_gcs_path for enforcement.
+                # The route layer (set_item_sound_effects) resolves the path server-side
+                # before calling this function.
+                pass  # src_gcs_path is already set by the route layer
+            try:
+                validate_sfx_gcs_path(placement.src_gcs_path)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid SFX asset path: {exc}",
+                ) from exc
+            # User-uploaded paths must be scoped to this user's namespace.
+            is_user_path = placement.src_gcs_path.startswith("users/")
+            if is_user_path and not placement.src_gcs_path.startswith(_user_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"SFX asset path must be under '{_user_prefix}': {placement.src_gcs_path!r}"
+                    ),
+                )
+            validated.append(placement.model_dump())
+
+    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays).
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.apply_async(
+        args=[str(job.id), variant_id],
+        kwargs={"sfx_override": validated},
+        queue="overlay-jobs",
+    )
+
+
 def dispatch_edit_variant(
     job: Job,
     variant_id: str,

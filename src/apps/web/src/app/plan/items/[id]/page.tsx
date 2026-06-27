@@ -31,6 +31,9 @@ import {
   requestOverlayUploadUrls,
   setVariantMediaOverlays,
   type MediaOverlay,
+  requestSfxUploadUrls,
+  setVariantSoundEffects,
+  type SoundEffectPlacement,
 } from "@/lib/plan-api";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
@@ -57,6 +60,8 @@ import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
 import { useTimelineSession } from "../../../generative/useTimelineSession";
 import MediaOverlayEditor from "../../_components/MediaOverlayEditor";
+import SoundEffectEditor from "../../_components/SoundEffectEditor";
+import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -76,6 +81,8 @@ const RENDER_REGISTER_TIMEOUT_MS = 45_000;
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
 const MEDIA_OVERLAYS_ENABLED =
   process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED === "true";
+const SOUND_EFFECTS_ENABLED =
+  process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
@@ -1033,7 +1040,7 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
 }
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
-type EditorTab = "text" | "font" | "song" | "clips" | "overlays";
+type EditorTab = "text" | "font" | "song" | "clips" | "overlays" | "sound";
 
 const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "text", icon: "T", label: "Text" },
@@ -1041,6 +1048,7 @@ const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "song", icon: "♫", label: "Song" },
   { id: "clips", icon: "✂", label: "Clips" },
   { id: "overlays", icon: "⊞", label: "Overlays" },
+  { id: "sound", icon: "🔊", label: "Sound" },
 ];
 
 /**
@@ -1111,8 +1119,15 @@ function FocusedResults({
     variant?.media_overlays ?? [],
   );
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
+  // SFX placements — lifted alongside overlayCards so both stay in sync with the active variant.
+  const [sfxPlacements, setSfxPlacements] = useState<SoundEffectPlacement[]>(
+    variant?.sound_effects ?? [],
+  );
+  // Current video time lifted from the hero player so "Add at playhead" works.
+  const [currentTimeS, setCurrentTimeS] = useState(0);
   useEffect(() => {
     setOverlayCards(variant?.media_overlays ?? []);
+    setSfxPlacements(variant?.sound_effects ?? []);
     setLocalPreviewUrls((prev) => {
       Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
       return {};
@@ -1335,6 +1350,8 @@ function FocusedResults({
                   if (tab.id === "font" && variant?.text_mode === "lyrics") return null;
                   // Hide Overlays tab when kill-switch is off
                   if (tab.id === "overlays" && !MEDIA_OVERLAYS_ENABLED) return null;
+                  // Hide Sound tab when kill-switch is off
+                  if (tab.id === "sound" && !SOUND_EFFECTS_ENABLED) return null;
                   const isActive = activeTab === tab.id;
                   return (
                     <button
@@ -1379,6 +1396,9 @@ function FocusedResults({
                     setOverlayCards={setOverlayCards}
                     localPreviewUrls={localPreviewUrls}
                     setLocalPreviewUrls={setLocalPreviewUrls}
+                    sfxPlacements={sfxPlacements}
+                    setSfxPlacements={setSfxPlacements}
+                    currentTimeS={currentTimeS}
                   />
                 </div>
               )}
@@ -1454,6 +1474,9 @@ function FocusedVariantControls({
   setOverlayCards,
   localPreviewUrls,
   setLocalPreviewUrls,
+  sfxPlacements,
+  setSfxPlacements,
+  currentTimeS,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -1475,6 +1498,9 @@ function FocusedVariantControls({
   setOverlayCards: Dispatch<SetStateAction<MediaOverlay[]>>;
   localPreviewUrls: Record<string, string>;
   setLocalPreviewUrls: Dispatch<SetStateAction<Record<string, string>>>;
+  sfxPlacements: SoundEffectPlacement[];
+  setSfxPlacements: Dispatch<SetStateAction<SoundEffectPlacement[]>>;
+  currentTimeS: number;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
 
@@ -1634,10 +1660,64 @@ function FocusedVariantControls({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
+  // ── SFX state + handlers ──────────────────────────────────────────────────
+  const [sfxUploading, setSfxUploading] = useState(false);
+  const [glossaryEffects, setGlossaryEffects] = useState<SoundEffectSummary[]>([]);
+  const [glossaryLoading, setGlossaryLoading] = useState(false);
+
+  // Load glossary when the Sound tab is first opened.
+  useEffect(() => {
+    if (activeTab !== "sound" || !SOUND_EFFECTS_ENABLED) return;
+    if (glossaryEffects.length > 0) return;
+    setGlossaryLoading(true);
+    getSoundEffects()
+      .then(setGlossaryEffects)
+      .catch(() => {/* glossary is best-effort */})
+      .finally(() => setGlossaryLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  async function handleSfxUpload(
+    files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
+  ) {
+    setSfxUploading(true);
+    try {
+      const urls = await requestSfxUploadUrls(
+        itemId,
+        files.map((f) => ({ filename: f.filename, content_type: f.content_type, file_size_bytes: f.file_size_bytes })),
+      );
+      await Promise.all(urls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
+      const newPlacements: SoundEffectPlacement[] = urls.map((u, i) => ({
+        id: crypto.randomUUID(),
+        src_gcs_path: u.gcs_path,
+        at_s: Math.min(Math.max(0, currentTimeS), Math.max(0, variantDurationS - 0.05)),
+        gain: 1.0,
+        label: files[i].filename.replace(/\.[^.]+$/, ""),
+      }));
+      setSfxPlacements((prev) => [...prev, ...newPlacements]);
+    } finally {
+      setSfxUploading(false);
+    }
+  }
+
+  async function handleApplySfx() {
+    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+    await setVariantSoundEffects(itemId, variant.variant_id, sfxPlacements);
+    refetch();
+  }
+
+  async function handleClearSfx() {
+    setSfxPlacements([]);
+    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+    await setVariantSoundEffects(itemId, variant.variant_id, []);
+    refetch();
+  }
+
   const showTextSection = activeTab === "text";
   const showFontSection = activeTab === "font" && instantEligible;
   const showSongSection = activeTab === "song";
   const showOverlaysSection = activeTab === "overlays" && MEDIA_OVERLAYS_ENABLED;
+  const showSoundSection = activeTab === "sound" && SOUND_EFFECTS_ENABLED;
   // Clips: the TimelineEditor sheet handles itself; we just need the render.
 
   return (
@@ -1736,6 +1816,24 @@ function FocusedVariantControls({
             }}
             onApply={handleApplyOverlays}
             onClear={handleClearOverlays}
+          />
+        </div>
+      )}
+
+      {/* Sound tab: sound-effect placement editor (kill-switched) */}
+      {showSoundSection && (
+        <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-4">
+          <SoundEffectEditor
+            placements={sfxPlacements}
+            variantDurationS={variantDurationS}
+            currentTimeS={currentTimeS}
+            rendering={variant.render_status === "rendering" || sfxUploading}
+            glossaryEffects={glossaryEffects}
+            glossaryLoading={glossaryLoading}
+            onUploadRequest={handleSfxUpload}
+            onChange={setSfxPlacements}
+            onApply={handleApplySfx}
+            onClear={handleClearSfx}
           />
         </div>
       )}

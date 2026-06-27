@@ -992,6 +992,7 @@ def regenerate_generative_variant(
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
     media_overlays_override: list[dict] | None = None,
+    sfx_override: list[dict] | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1042,6 +1043,7 @@ def regenerate_generative_variant(
                 cluster_body_size_px_override=cluster_body_size_px_override,
                 cluster_accent_size_px_override=cluster_accent_size_px_override,
                 media_overlays_override=media_overlays_override,
+                sfx_override=sfx_override,
             )
         except OperationalError:
             raise
@@ -1229,15 +1231,20 @@ def _run_media_overlay_pass(
             flag_modified(job, "assembly_plan")
             db.commit()
             record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
+            # Terminal hook: re-apply persisted SFX on top of the restored clean variant.
+            _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
             return
 
         # ── Apply path: composite cards onto the clean base ──────────────────
         pre_clean = existing.get("pre_media_overlay_video_path")
         if not pre_clean:
-            # First apply-pass: durable-copy the current (un-carded) variant.
+            # First apply-pass: durable-copy the base.
+            # Source from pre_sfx_video_path when present so the overlay clean copy
+            # is never SFX-contaminated (SFX is the outermost layer).
+            base_for_clean = existing.get("pre_sfx_video_path") or current_video_path
             pre_clean = current_video_path + "_pre_overlay"
             try:
-                copy_object(current_video_path, pre_clean)
+                copy_object(base_for_clean, pre_clean)
                 log.info("media_overlay_clean_copy_created", job_id=job_id, dst=pre_clean)
             except Exception as exc:  # noqa: BLE001
                 log.warning(
@@ -1293,6 +1300,190 @@ def _run_media_overlay_pass(
             "media_overlay",
             "cards_applied",
             {"variant_id": variant_id, "card_count": len(cards)},
+        )
+        # Terminal hook: re-apply persisted SFX on top of the newly composited video.
+        _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+
+
+def _reapply_persisted_sfx_if_any(*, job_id: str, variant_id: str) -> None:
+    """Re-apply sound effects after an overlay edit, if any SFX are persisted.
+
+    SFX is the outermost layer: an overlay edit replaces video_path from the
+    overlay-clean base, so any SFX mixed on top are wiped. This terminal hook
+    fires at the end of both branches of _run_media_overlay_pass to restore
+    the SFX layer.
+
+    No-op when SOUND_EFFECTS_ENABLED is False or the variant has no persisted SFX.
+    Never raises — best-effort, overlay success must not be gated on SFX reapply.
+    """
+    from app.config import settings as _settings_sfx  # noqa: PLC0415
+
+    if not _settings_sfx.sound_effects_enabled:
+        return
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return
+            variants = list((job.assembly_plan or {}).get("variants") or [])
+            existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+            if existing is None:
+                return
+            sfx_raw = existing.get("sound_effects")
+            if not sfx_raw:
+                return
+            # pre_sfx_video_path must now point to the newly composited overlay video
+            # (the current video_path post-overlay), so SFX are re-applied on top.
+            # Clear the stale pre_sfx_video_path so _run_sfx_pass takes a fresh copy.
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["pre_sfx_video_path"] = None
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sfx_reapply_prep_failed", job_id=job_id, error=str(exc))
+        return
+
+    try:
+        _run_sfx_pass(job_id=job_id, variant_id=variant_id, sfx_raw=sfx_raw)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sfx_reapply_failed", job_id=job_id, error=str(exc))
+
+
+def _run_sfx_pass(
+    *,
+    job_id: str,
+    variant_id: str,
+    sfx_raw: list[dict],
+) -> None:
+    """Apply (or clear) sound-effect placements on a finished variant (fast path).
+
+    Steps:
+    1. Load the variant entry from the DB.
+    2. Parse + validate the SFX list (coerce_sound_effects).
+    3. If sfx_raw is empty/None → restore from pre_sfx_video_path (clear).
+    4. Otherwise → ensure a clean base copy exists (pre_sfx_video_path),
+       then apply_sound_effects on top of it → overwrite video_path.
+    5. Persist updated variant keys + re-sign output_url.
+
+    SFX is the OUTERMOST audio layer: pre_sfx_video_path = final variant
+    with overlays applied but without SFX. When overlays are edited, they
+    must re-apply SFX on top (handled by the terminal hook in
+    _run_media_overlay_pass). The clean-copy for overlays is sourced from
+    pre_sfx_video_path when present so the overlay base is never SFX-contaminated.
+    """
+    from app.agents._schemas.sound_effect import coerce_sound_effects  # noqa: PLC0415
+    from app.pipeline.sound_effects import apply_sound_effects  # noqa: PLC0415
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+    from app.storage import copy_object  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("sfx_job_not_found", job_id=job_id)
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+        if existing is None:
+            log.error("sfx_variant_not_found", job_id=job_id, variant_id=variant_id)
+            return
+
+        current_video_path = existing.get("video_path")
+        if not current_video_path:
+            log.error("sfx_no_video_path", job_id=job_id, variant_id=variant_id)
+            return
+
+        placements = coerce_sound_effects(sfx_raw)
+
+        # ── Clear path: remove all effects ───────────────────────────────────
+        if not placements:
+            clean_path = existing.get("pre_sfx_video_path")
+            if clean_path and clean_path != current_video_path:
+                copy_object(clean_path, current_video_path)
+                from app.storage import signed_get_url  # noqa: PLC0415
+
+                signed_url = signed_get_url(current_video_path, expiration_minutes=60 * 24)
+            else:
+                signed_url = existing.get("output_url", "")
+
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["sound_effects"] = None
+                    v["output_url"] = signed_url
+                    v["render_status"] = "ready"
+                    v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+            record_pipeline_event("sound_effects", "effects_cleared", {"variant_id": variant_id})
+            return
+
+        # ── Apply path: mix effects onto the clean base ───────────────────────
+        # pre_sfx_video_path is the variant with overlays but WITHOUT SFX.
+        pre_clean = existing.get("pre_sfx_video_path")
+        if not pre_clean:
+            # First apply-pass: durable-copy the current variant.
+            pre_clean = current_video_path + "_pre_sfx"
+            try:
+                copy_object(current_video_path, pre_clean)
+                log.info("sfx_clean_copy_created", job_id=job_id, dst=pre_clean)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("sfx_clean_copy_failed", job_id=job_id, error=str(exc))
+                pre_clean = current_video_path
+
+        try:
+            new_url = apply_sound_effects(
+                base_gcs_path=pre_clean,
+                effects=placements,
+                output_gcs_path=current_video_path,
+                job_id=job_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error(
+                "sfx_apply_failed",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+                exc_info=True,
+            )
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["render_status"] = "failed"
+                    v["render_error"] = str(exc)[:500]
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+            record_pipeline_event("sound_effects", "apply_failed", {"error": str(exc)[:200]})
+            return
+
+        for v in variants:
+            if v.get("variant_id") == variant_id:
+                v["sound_effects"] = [p.model_dump() for p in placements]
+                v["pre_sfx_video_path"] = pre_clean
+                v["output_url"] = new_url
+                v["render_status"] = "ready"
+                v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                break
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+        flag_modified(job, "assembly_plan")
+        db.commit()
+        record_pipeline_event(
+            "sound_effects",
+            "effects_applied",
+            {"variant_id": variant_id, "effect_count": len(placements)},
         )
 
 
@@ -1803,6 +1994,7 @@ def _run_regenerate_variant(
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
     media_overlays_override: list[dict] | None = None,
+    sfx_override: list[dict] | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -1816,6 +2008,7 @@ def _run_regenerate_variant(
     # Guarded by the kill switch (settings.media_overlays_enabled).
     _is_overlay_only = (
         media_overlays_override is not None
+        and sfx_override is None
         and new_track_id is None
         and override_text is None
         and not remove_text
@@ -1839,6 +2032,44 @@ def _run_regenerate_variant(
             job_id=job_id,
             variant_id=variant_id,
             overlays_raw=media_overlays_override or [],
+        )
+        return
+
+    # ── Sound-effects fast path ─────────────────────────────────────────────────
+    # When the only change is adding/removing sound-effect placements (no song/text/
+    # style/overlay/timeline change), take this lightweight audio-only path:
+    #   1. Download the base (pre_sfx or current video_path).
+    #   2. Mix effects via apply_sound_effects (adelay+amix, -c:v copy).
+    #   3. Upload, patch the variant entry, done.
+    # Guarded by the kill switch (settings.sound_effects_enabled).
+    from app.config import settings as _settings_sfx  # noqa: PLC0415
+
+    _is_sfx_only = (
+        sfx_override is not None
+        and media_overlays_override is None
+        and new_track_id is None
+        and override_text is None
+        and not remove_text
+        and style_set_id is None
+        and size_override_px is None
+        and mix_override is None
+        and layout_override is None
+        and timeline_override is None
+        and font_family_override is None
+        and effect_override is None
+        and text_color_override is None
+        and cluster_hero_font_override is None
+        and cluster_body_font_override is None
+        and cluster_accent_font_override is None
+        and cluster_hero_size_px_override is None
+        and cluster_body_size_px_override is None
+        and cluster_accent_size_px_override is None
+    )
+    if _is_sfx_only and _settings_sfx.sound_effects_enabled:
+        _run_sfx_pass(
+            job_id=job_id,
+            variant_id=variant_id,
+            sfx_raw=sfx_override or [],
         )
         return
 

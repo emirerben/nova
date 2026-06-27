@@ -353,6 +353,12 @@ class Settings(BaseSettings):
     # worker apply-pass branch never fires.
     media_overlays_enabled: bool = False
 
+    # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
+    # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.
+    # Kill switch: SOUND_EFFECTS_ENABLED=false → sfx-upload-urls + sound-effects
+    # routes return 404; the render apply-pass branch never fires.
+    sound_effects_enabled: bool = False
+
     # Per-item "Ask Nova" advisor (plan dogfood feedback #2): conversational,
     # read-only advice about which clip fits which shot. Additive + auth'd; it
     # never writes state (the re-read offer goes through the clip-note PATCH).

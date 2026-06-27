@@ -588,6 +588,28 @@ export interface MediaOverlay {
   z: number;
 }
 
+/**
+ * Mirrors `SoundEffectPlacement` in app/agents/_schemas/sound_effect.py.
+ */
+export interface SoundEffectPlacement {
+  id: string;
+  /** Glossary effect ID, when picked from the admin-curated list. */
+  sound_effect_id?: string | null;
+  /** Resolved GCS path (always present after backend validation). */
+  src_gcs_path: string;
+  /** When in the video to play this effect (seconds). */
+  at_s: number;
+  /** Volume multiplier 0.0–2.0 (default 1.0). */
+  gain: number;
+  /** Optional trim bounds within the effect file itself. */
+  trim_start_s?: number | null;
+  trim_end_s?: number | null;
+  /** Total effect file duration (informational, for trim UI). */
+  duration_s?: number | null;
+  /** Human label for the UI (e.g. "Fah"). */
+  label?: string | null;
+}
+
 // NOTE: `PlanItemVariant` is kept structurally assignable to the shared
 // `EditableVariant` (lib/variant-editor/types.ts) so the 0-latency instant
 // editor (IntroTextPreview + EditToolbar + useVariantEditSession) drives plan-item
@@ -653,6 +675,10 @@ export interface PlanItemVariant {
   media_overlays?: MediaOverlay[] | null;
   /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
   pre_media_overlay_video_path?: string | null;
+  /** Sound-effect placements applied as the outermost audio layer. */
+  sound_effects?: SoundEffectPlacement[] | null;
+  /** GCS key of the clean (sfx-free) variant before the first SFX apply-pass. */
+  pre_sfx_video_path?: string | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
@@ -765,6 +791,51 @@ export function setVariantMediaOverlays(
     {
       method: "PUT",
       body: JSON.stringify({ overlays }),
+    },
+  );
+}
+
+// ── Sound-effect placement: upload + apply ─────────────────────────────────────
+
+export interface SfxUploadUrl {
+  filename: string;
+  upload_url: string;
+  gcs_path: string;
+}
+
+/**
+ * Request signed PUT URLs for user-uploaded SFX assets.
+ * Assets land under users/{uid}/plan/{itemId}/sfx/ (persistent, not 24h-swept).
+ */
+export async function requestSfxUploadUrls(
+  itemId: string,
+  files: { filename: string; content_type: string; file_size_bytes: number }[],
+): Promise<SfxUploadUrl[]> {
+  const res = await request<{ urls: SfxUploadUrl[] }>(
+    `/plan-items/${itemId}/sfx-upload-urls`,
+    {
+      method: "POST",
+      body: JSON.stringify({ files }),
+    },
+  );
+  return res.urls;
+}
+
+/**
+ * Full-replace the sound-effect placement list on a variant.
+ * Send an empty array to clear all effects and restore the clean variant.
+ * Returns the updated PlanItem (variant flips to render_status="rendering").
+ */
+export function setVariantSoundEffects(
+  itemId: string,
+  variantId: string,
+  placements: SoundEffectPlacement[],
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/plan-items/${itemId}/variants/${variantId}/sound-effects`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ placements }),
     },
   );
 }

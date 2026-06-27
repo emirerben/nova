@@ -190,6 +190,34 @@ def presigned_put_url_for_media_overlay(
     return url, object_path
 
 
+def presigned_put_url_for_sfx(
+    user_id: str,
+    plan_item_id: str,
+    filename: str,
+    content_type: str = "audio/mpeg",
+) -> tuple[str, str]:
+    """Signed PUT URL for a user-uploaded sound-effect asset.
+
+    Lands under `users/{user_id}/plan/{plan_item_id}/sfx/...` — the same
+    PERSISTENT `users/` namespace as overlay assets (NOT swept by the 24h GCS
+    delete rule). This ensures SFX assets survive past the 24h lifecycle so a
+    later re-render can re-apply the same effects.
+
+    Accepted content types: audio files (mp3/mp4/wav/aac/ogg). The route layer
+    validates the content_type before calling this function.
+    """
+    object_path = f"users/{user_id}/plan/{plan_item_id}/sfx/{filename}"
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    url = blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=15),
+        method="PUT",
+        content_type=content_type,
+    )
+    return url, object_path
+
+
 def upload_public_read(local_path: str, object_path: str, content_type: str = "video/mp4") -> str:
     """Upload a local file to GCS and return a signed URL valid for 1 day.
 
