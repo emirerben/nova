@@ -1919,7 +1919,6 @@ function FocusedVariantControls({
             variantDurationS={variantDurationS}
             localPreviewUrls={localPreviewUrls}
             rendering={variant.render_status === "rendering" || overlayUploading}
-            localPreviewUrls={localPreviewUrls}
             onUploadRequest={handleOverlayUpload}
             onUpdateCard={(id, patch) => {
               // Resolve position presets to fracs so the CSS preview updates
