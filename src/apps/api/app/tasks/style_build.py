@@ -35,6 +35,38 @@ def _analysis_summary(tiktok_profile: dict | None) -> str:
     return str(analysis.get("summary_for_prompts") or "")
 
 
+def _observed_style_input(tiktok_profile: dict | None):  # noqa: ANN201
+    """Extract the vision-observed style aggregate from tiktok_profile JSONB.
+
+    Returns an ObservedStyleSummary if vision analysis has run and has data,
+    else None. Caller imports lazily to avoid module-level cost.
+    """
+    if not tiktok_profile:
+        return None
+    observations = tiktok_profile.get("style_observations") or {}
+    aggregate = observations.get("aggregate") or {}
+    if not aggregate or not observations.get("videos_seen"):
+        return None
+    from app.agents.style_derivation import ObservedStyleSummary  # noqa: PLC0415
+    try:
+        return ObservedStyleSummary(
+            videos_seen=int(observations.get("videos_seen") or 0),
+            has_on_screen_text=bool(aggregate.get("has_on_screen_text")),
+            font_feel=aggregate.get("font_feel"),
+            text_color_hex=aggregate.get("text_color_hex"),
+            highlight_color_hex=aggregate.get("highlight_color_hex"),
+            position=aggregate.get("position"),
+            size_class=aggregate.get("size_class"),
+            layout=aggregate.get("layout"),
+            stroke=aggregate.get("stroke"),
+            text_anchor=aggregate.get("text_anchor"),
+            mean_confidence=float(aggregate.get("mean_confidence") or 0.5),
+            confidence_per_field=dict(aggregate.get("confidence_per_field") or {}),
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _build_catalog_inputs():  # noqa: ANN201
     """Load the generative style-set catalog + non-deprecated font vibes."""
     from app.agents.style_derivation import FontEntry, StyleSetEntry  # noqa: PLC0415
@@ -96,6 +128,7 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
 
         persona_dict = dict(row.persona)
         tiktok_summary = _analysis_summary(row.tiktok_profile)
+        observed_style = _observed_style_input(row.tiktok_profile)
 
     # Build catalog inputs outside the session (pure CPU, no DB).
     try:
@@ -119,6 +152,7 @@ def derive_user_style(self, persona_id: str, force: bool = False) -> None:  # no
             persona_tone=str(persona_dict.get("tone", "") or ""),
             persona_audience=str(persona_dict.get("audience", "") or ""),
             tiktok_analysis_summary=tiktok_summary,
+            observed_style=observed_style,
             available_sets=available_sets,
             font_vibes=font_vibes,
         )
