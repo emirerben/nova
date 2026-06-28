@@ -563,18 +563,14 @@ async def dispatch_swap_song(
             detail="Requested song is not available for rendering.",
         )
 
-    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays)
-    # so the 409 guard fires immediately on a second POST and the route response already
-    # carries "rendering" — the frontend can rely on the response instead of a fragile poll pin.
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
+    # Persist render_status="rendering" before enqueuing — full dict replacement so
+    # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -606,17 +602,14 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
             detail="Provide `text` to update, or set `remove=true` to clear the overlay.",
         )
 
-    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays)
-    # so the route response already carries "rendering" and a second POST is rejected by 409.
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
+    # Persist render_status="rendering" before enqueuing — full dict replacement so
+    # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -766,18 +759,14 @@ def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> No
             detail="Unknown or non-generative style set.",
         )
 
-    # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays)
-    # so the 409 guard fires immediately on a second POST and the route response already
-    # carries "rendering" — the frontend can rely on the response instead of a fragile poll pin.
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
+    # Persist render_status="rendering" before enqueuing — full dict replacement so
+    # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -800,17 +789,14 @@ def dispatch_set_intro_size(job: Job, variant_id: str, *, text_size_px: int) -> 
         )
     px = clamp_intro_px(text_size_px)
 
-    # Persist render_status="rendering" first so the 409 guard fires on concurrent
-    # requests and the route response already reflects the in-progress state.
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
+    # Persist render_status="rendering" before enqueuing — full dict replacement so
+    # SQLAlchemy tracks the change without flag_modified.
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1187,17 +1173,14 @@ def dispatch_edit_variant(
                 detail="`text_color` must be a hex color (#RRGGBB).",
             )
 
-    # Persist render_status="rendering" first so the 409 guard fires on concurrent
-    # requests and the route response already reflects the in-progress state.
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
+    # Persist render_status="rendering" before enqueuing — full dict replacement so
+    # SQLAlchemy tracks the change without flag_modified.
     _variants = list((job.assembly_plan or {}).get("variants") or [])
     for _v in _variants:
         if _v.get("variant_id") == variant_id:
             _v["render_status"] = "rendering"
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": _variants}
-    flag_modified(job, "assembly_plan")
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
