@@ -707,7 +707,8 @@ export default function UnifiedTimeline({
                           <div className="w-px h-3 bg-white/70 rounded-full" />
                         </div>
                         <span
-                          className="text-[10px] text-white font-medium px-3 truncate pointer-events-none"
+                          className="text-[10px] text-white font-medium px-3 truncate"
+                          onMouseDown={(e) => e.stopPropagation()}
                           onClick={(e) => { e.stopPropagation(); setOpenCardId(isOpen ? null : card.id); }}
                         >
                           {card.kind === "video" ? "▶" : "⊞"} {card.id.slice(0, 6)}
@@ -734,7 +735,7 @@ export default function UnifiedTimeline({
                           </span>
                           <div className="flex gap-1">
                             <span className="text-xs text-zinc-500 tabular-nums">
-                              {card.start_s.toFixed(1)}s – {card.end_s.toFixed(1)}s
+                              {(card.start_s ?? 0).toFixed(1)}s – {(card.end_s ?? 0).toFixed(1)}s
                             </span>
                             <button
                               type="button"
@@ -768,12 +769,12 @@ export default function UnifiedTimeline({
                             type="range"
                             min={Math.round(MIN_SCALE * 100)}
                             max={Math.round(MAX_SCALE * 100)}
-                            value={Math.round(card.scale * 100)}
+                            value={Math.round((card.scale ?? 0.35) * 100)}
                             onChange={(e) => onUpdateCard(card.id, { scale: Number(e.target.value) / 100 })}
                             className="flex-1 accent-lime-400"
                           />
                           <span className="text-xs text-white/60 w-10 text-right">
-                            {Math.round(card.scale * 100)}%
+                            {Math.round((card.scale ?? 0.35) * 100)}%
                           </span>
                         </div>
                       </div>
@@ -869,7 +870,7 @@ export default function UnifiedTimeline({
                 key={p.id}
                 data-placement-id={p.id}
                 role="button"
-                aria-label={`Sound effect ${p.label ?? ""} at ${p.at_s.toFixed(1)}s`}
+                aria-label={`Sound effect ${p.label ?? ""} at ${(p.at_s ?? 0).toFixed(1)}s`}
                 aria-pressed={isOpen}
                 className={[
                   "absolute inset-y-1 rounded select-none border flex items-center overflow-hidden",
@@ -919,7 +920,7 @@ export default function UnifiedTimeline({
                 className="flex-1 min-w-0 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-lime-500"
               />
               <span className="text-xs text-zinc-500 shrink-0 tabular-nums">
-                @{p.at_s.toFixed(1)}s
+                @{(p.at_s ?? 0).toFixed(1)}s
               </span>
               <button
                 type="button"
@@ -937,12 +938,12 @@ export default function UnifiedTimeline({
                 min={0}
                 max={2}
                 step={0.05}
-                value={p.gain}
+                value={p.gain ?? 1}
                 onChange={(e) => dispatch({ type: "SET_GAIN", id: p.id, gain: parseFloat(e.target.value) })}
                 disabled={sfxDisabled}
                 className="flex-1 accent-lime-500 disabled:opacity-50"
               />
-              <span className="w-10 text-right tabular-nums shrink-0">{p.gain.toFixed(2)}×</span>
+              <span className="w-10 text-right tabular-nums shrink-0">{(p.gain ?? 1).toFixed(2)}×</span>
             </label>
           </div>
         ) : null,
