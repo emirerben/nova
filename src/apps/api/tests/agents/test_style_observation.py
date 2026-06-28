@@ -257,3 +257,51 @@ class TestStyleObservationInput:
     def test_with_view_index(self):
         inp = StyleObservationInput(file_uri="files/xyz", view_index=3.2)
         assert inp.view_index == pytest.approx(3.2)
+
+
+# ── render_prompt edge cases ───────────────────────────────────────────────────
+
+class TestStyleObservationRenderPrompt:
+    """Unit-test the branches in render_prompt() without hitting Gemini."""
+
+    def _make_agent(self) -> StyleObservationAgent:
+        from unittest.mock import MagicMock
+        return StyleObservationAgent(model_client=MagicMock())
+
+    def _render(self, **kwargs) -> str:
+        agent = self._make_agent()
+        inp = StyleObservationInput(file_uri="files/test", **kwargs)
+        return agent.render_prompt(inp)
+
+    def test_empty_caption_omits_caption_block(self):
+        """caption="" → caption_block="" → prompt has no caption context."""
+        prompt = self._render(caption="")
+        assert "Caption (for context only" not in prompt
+
+    def test_long_caption_truncated_at_300(self):
+        """caption > 300 chars → only first 300 chars appear in prompt."""
+        long_cap = "a" * 400
+        prompt = self._render(caption=long_cap)
+        assert "a" * 300 in prompt
+        assert "a" * 301 not in prompt
+
+    def test_view_index_underperformed(self):
+        """view_index < 0.5 → underperformed label injected."""
+        prompt = self._render(view_index=0.2)
+        assert "underperformed" in prompt.lower()
+        assert "0.2×" in prompt
+
+    def test_view_index_neutral_no_label(self):
+        """view_index in [0.5, 2.0) → no performance label."""
+        prompt = self._render(view_index=1.0)
+        assert "underperformed" not in prompt.lower()
+        assert "top performer" not in prompt.lower()
+
+
+class TestMediaMimeFallback:
+    def test_media_mime_empty_string_falls_back(self):
+        """file_mime="" → media_mime() returns 'video/mp4'."""
+        from unittest.mock import MagicMock
+        agent = StyleObservationAgent(model_client=MagicMock())
+        inp = StyleObservationInput(file_uri="files/test", file_mime="")
+        assert agent.media_mime(inp) == "video/mp4"
