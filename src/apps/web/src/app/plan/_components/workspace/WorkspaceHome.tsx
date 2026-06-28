@@ -179,6 +179,7 @@ export function WorkspaceHome({
                     status={styleResponse.status}
                     styleSetPreview={styleResponse.style_set_preview}
                     fontPreview={styleResponse.font_preview}
+                    provenance={styleResponse.provenance}
                   />
                 </div>
               )}

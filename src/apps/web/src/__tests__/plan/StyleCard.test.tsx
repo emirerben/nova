@@ -138,4 +138,48 @@ describe("StyleCard", () => {
     // No bias pills, just eyebrow
     expect(screen.getByText(/your style/i)).toBeInTheDocument();
   });
+
+  it("test_provenance_badge_shown: ready + provenance → TikTok badge rendered", () => {
+    render(
+      <StyleCard
+        status="ready"
+        style={{ style_set_id: "bold_statement", knobs: {} }}
+        provenance={{
+          videos_seen: 22,
+          videos_total: 30,
+          has_on_screen_text: true,
+          font_feel: "bold_display",
+          text_color_hex: "#ffffff",
+          highlight_color_hex: "#f6d895",
+          mean_confidence: 0.9,
+          confidence_per_field: {},
+        }}
+      />
+    );
+    expect(screen.getByText(/learned from your tiktok/i)).toBeInTheDocument();
+    expect(screen.getByText(/22/)).toBeInTheDocument();
+    expect(screen.getByText(/30/)).toBeInTheDocument();
+  });
+
+  it("test_provenance_badge_absent_when_null: ready + no provenance → no TikTok badge", () => {
+    render(
+      <StyleCard
+        status="ready"
+        style={{ style_set_id: "bold_statement", knobs: {} }}
+        provenance={null}
+      />
+    );
+    expect(screen.queryByText(/learned from your tiktok/i)).toBeNull();
+  });
+
+  it("test_provenance_badge_absent_when_zero_videos: 0 videos_seen → badge hidden", () => {
+    render(
+      <StyleCard
+        status="ready"
+        style={{ style_set_id: "bold_statement", knobs: {} }}
+        provenance={{ videos_seen: 0, videos_total: 30, has_on_screen_text: false }}
+      />
+    );
+    expect(screen.queryByText(/learned from your tiktok/i)).toBeNull();
+  });
 });
