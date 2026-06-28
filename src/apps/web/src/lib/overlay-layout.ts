@@ -19,6 +19,7 @@
  */
 
 import { CANVAS_H, CANVAS_W, FONT_SIZE_MAP, POSITION_Y_MAP } from "@/lib/overlay-constants";
+import type { TextElement } from "@/lib/plan-api";
 
 // Must match text_overlay_skia.py: _MAX_LINE_W_FRAC / _LINE_SPACING / _MIN_FONT_SIZE
 export const MAX_LINE_W_FRAC = 0.9;
@@ -265,3 +266,64 @@ export function verticalBlockTop(
 }
 
 export { CANVAS_H, CANVAS_W };
+
+// ── N-element text preview (T6) ───────────────────────────────────────────────
+
+/** Named vertical position presets for TextElement — mirrors _POSITION_Y in
+ *  text_overlay.py.  "middle" maps to the same canvas fraction as "center". */
+const _TEXT_ELEMENT_Y: Record<string, number> = {
+  top: 0.15,
+  middle: 0.45,
+  bottom: 0.85,
+};
+
+/**
+ * Per-element layout data for the N-element DOM preview.
+ * All coordinates are fractional [0,1] relative to the 9:16 frame so the
+ * caller can position with percentage CSS without knowing canvas dimensions.
+ * `sizePx` is at 1080×1920 scale; callers must scale to the rendered box.
+ */
+export interface TextElementLayout {
+  id: string;
+  text: string;
+  /** Fractional X center [0,1].  0.5 = horizontal center. */
+  xFrac: number;
+  /** Fractional Y center [0,1].  Derived from x_frac/y_frac or position preset. */
+  yFrac: number;
+  /** Font size in pixels at 1080×1920 canvas scale. */
+  sizePx: number;
+  fontFamily: string;
+  color: string;
+  alignment: "left" | "center" | "right";
+  start_s: number;
+  end_s: number;
+}
+
+/**
+ * Convert TextElement[] (API data) to layout objects for the N-element DOM preview.
+ *
+ * Position precedence (mirrors the Skia renderer):
+ *   explicit x_frac / y_frac > named position preset ("top" / "middle" / "bottom") > 0.45
+ *
+ * Size precedence:
+ *   size_px > size_class bucket > "medium" default (72px)
+ */
+export function resolveTextElementsLayout(elements: TextElement[]): TextElementLayout[] {
+  return elements.map((el) => {
+    const sizePx = el.size_px ?? FONT_SIZE_MAP[el.size_class ?? "medium"] ?? 72;
+    const xFrac = el.x_frac ?? 0.5;
+    const yFrac = el.y_frac ?? _TEXT_ELEMENT_Y[el.position ?? "middle"] ?? 0.45;
+    return {
+      id: el.id,
+      text: el.text,
+      xFrac,
+      yFrac,
+      sizePx,
+      fontFamily: el.font_family ?? "PlayfairDisplay-Bold",
+      color: el.color ?? "#FFFFFF",
+      alignment: (el.alignment ?? "center") as "left" | "center" | "right",
+      start_s: el.start_s,
+      end_s: el.end_s,
+    };
+  });
+}

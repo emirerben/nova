@@ -35,6 +35,7 @@ from app.routes.generative_jobs import (
     RetextRequest,
     SetIntroSizeRequest,
     SwapSongRequest,
+    TextElementsRequest,
     TimelineEditRequest,
     TimelineResponse,
     dispatch_apply_captions,
@@ -47,6 +48,7 @@ from app.routes.generative_jobs import (
     dispatch_set_intro_size,
     dispatch_set_media_overlays,
     dispatch_set_sound_effects,
+    dispatch_set_text_elements,
     dispatch_swap_song,
     persist_variant_caption_font,
     persist_variant_captions,
@@ -1719,6 +1721,43 @@ async def set_item_media_overlays(
         item_id=item_id,
         variant_id=variant_id,
         card_count=len(body.overlays),
+        render=body.render,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+# ── TextElement routes ────────────────────────────────────────────────────────
+
+
+@router.put(
+    "/{item_id}/variants/{variant_id}/text-elements",
+    response_model=PlanItemResponse,
+)
+async def set_item_text_elements(
+    item_id: str,
+    variant_id: str,
+    body: TextElementsRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set (or clear) the TextElement list for one of this item's variants.
+
+    Full-replace: `body.elements` becomes the authoritative element list.
+    When `render=True` (default), the fast-reburn task runs async and the
+    variant flips to render_status="rendering".
+    When `render=False`, only the elements are persisted — no render is queued.
+
+    Once text_elements_user_edited is set, the instant-edit surface (PUT /edit)
+    returns 409 and directs the caller here instead (A15).
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_set_text_elements(job, variant_id, elements=body.elements, render=body.render)
+    await db.commit()
+    log.info(
+        "plan_item_set_text_elements",
+        item_id=item_id,
+        variant_id=variant_id,
+        element_count=len(body.elements),
         render=body.render,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))

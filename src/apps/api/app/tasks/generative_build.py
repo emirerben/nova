@@ -1045,6 +1045,7 @@ def regenerate_generative_variant(
     cluster_accent_size_px_override: int | None = None,
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
+    render_gen_id: str | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1096,6 +1097,7 @@ def regenerate_generative_variant(
                 cluster_accent_size_px_override=cluster_accent_size_px_override,
                 media_overlays_override=media_overlays_override,
                 sfx_override=sfx_override,
+                render_gen_id=render_gen_id,
             )
         except OperationalError:
             raise
@@ -2107,6 +2109,7 @@ def _run_regenerate_variant(
     cluster_accent_size_px_override: int | None = None,
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
+    render_gen_id: str | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -2433,6 +2436,37 @@ def _run_regenerate_variant(
             else:
                 raise
         if _used_fast_path:
+            # A20: stale-write guard for text_elements reburns.  A subsequent
+            # PUT /text-elements overwrites `render_generation_id` in the DB; if
+            # it differs from the token we were launched with, our result is stale
+            # and the newer task will write its own — discard rather than clobber.
+            if render_gen_id is not None:
+                with _sync_session() as _guard_db:
+                    _guard_job = _guard_db.get(Job, uuid.UUID(job_id))
+                    if _guard_job is not None:
+                        _guard_variants = (
+                            (_guard_job.assembly_plan or {}).get("variants") or []
+                        )
+                        _guard_v = next(
+                            (
+                                v
+                                for v in _guard_variants
+                                if v.get("variant_id") == variant_id
+                            ),
+                            None,
+                        )
+                        if (
+                            _guard_v is not None
+                            and _guard_v.get("render_generation_id") != render_gen_id
+                        ):
+                            log.warning(
+                                "stale_text_elements_reburn_discarded",
+                                job_id=job_id,
+                                variant_id=variant_id,
+                                expected_gen_id=render_gen_id,
+                                actual_gen_id=_guard_v.get("render_generation_id"),
+                            )
+                            return
             _update_variant_entry(job_id, variant_id, result)
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
