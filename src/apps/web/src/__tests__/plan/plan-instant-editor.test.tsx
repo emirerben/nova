@@ -219,23 +219,21 @@ describe("Plan item page — deferred-burn editor", () => {
     // NOT the live DOM overlay. This is preview-parity: what you see at rest IS the download.
     expect(screen.queryByTestId("intro-text-preview")).toBeNull();
 
-    // Editor row is visible with tab buttons.
-    // There is NO separate "Edit text & style" entry button anymore.
-    expect(screen.queryByRole("button", { name: /edit text & style/i })).toBeNull();
+    // Editor row is visible with tab buttons. Text + Font tabs were retired in PR-4.
+    expect(screen.queryByRole("button", { name: /T Text/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Aa Font/i })).toBeNull();
 
-    // Click the "Text" tab to reveal caption/layout controls.
+    // Open the Timeline tab → expand the Text lane to reveal caption/layout/font controls.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
+      fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i }));
     });
-    // PlanVariantEditor shows "Remove text" in the text tab.
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]);
+    });
+    // PlanVariantEditor shows "Remove text" inline in the text panel.
     expect(screen.getAllByRole("button", { name: /^Remove text$/ }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
-
-    // Click the "Font" tab to reveal EditToolbar (size slider).
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Aa Font/i }));
-    });
-    // EditToolbar replaces the A+ size stepper with a range slider; A+ is hidden.
+    // EditToolbar (font/size) is also inline — slider present, A+ stepper hidden.
     expect(screen.queryByRole("button", { name: /bigger intro text/i })).toBeNull();
     expect(screen.getByRole("slider", { name: /intro text size/i })).toBeInTheDocument();
 
@@ -243,6 +241,7 @@ describe("Plan item page — deferred-burn editor", () => {
     expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
 
     // Making a draft edit flips isDirty → overlay switches on for live WYSIWYG feedback.
+    // textLaneOpen=true restores LiveEditPreview in the hero for instant-edit variants.
     const slider = screen.getByRole("slider", { name: /intro text size/i });
     fireEvent.change(slider, { target: { value: "62" } });
     expect(screen.getByTestId("intro-text-preview")).toBeInTheDocument();
@@ -254,10 +253,9 @@ describe("Plan item page — deferred-burn editor", () => {
       render(<PlanItemPage />);
     });
 
-    // Click the Font tab to reveal EditToolbar (size slider).
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Aa Font/i }));
-    });
+    // Open Timeline tab → expand Text lane → EditToolbar slider is inline (PR-4).
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
+    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
 
     // Bump the text size via the EditToolbar range slider — this is a draft mutation.
     // (The A+ stepper is hidden in the deferred path; the slider replaces it.)
@@ -279,23 +277,17 @@ describe("Plan item page — deferred-burn editor", () => {
       render(<PlanItemPage />);
     });
 
-    // Click Font tab to reveal size slider.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /Aa Font/i }));
-    });
+    // Open Timeline → expand Text lane to access both EditToolbar (slider) and PlanVariantEditor (PR-4).
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
+    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
 
     // Accumulate two draft edits: size bump + remove text (batched, no network).
     // Size via range slider (A+ stepper is hidden in the deferred path).
     const slider = screen.getByRole("slider", { name: /intro text size/i });
     fireEvent.change(slider, { target: { value: "62" } });
 
-    // Switch to Text tab to access Remove text.
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
-    });
-
-    await act(async () => {
-      // Both PlanVariantEditor and EditToolbar show Remove text — click the first.
+      // Both PlanVariantEditor and EditToolbar are inline in the text panel.
       screen.getAllByRole("button", { name: /^Remove text$/ })[0].click();
     });
     expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
@@ -321,13 +313,12 @@ describe("Plan item page — deferred-burn editor", () => {
     await act(async () => {
       render(<PlanItemPage />);
     });
-    // No live overlay preview — the burned hero is shown instead.
+    // No live overlay preview — ineligible variant always shows Hero.
     expect(screen.queryByTestId("intro-text-preview")).toBeNull();
 
-    // Click the Text tab to expose PlanVariantEditor controls.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
-    });
+    // Open Timeline → expand Text lane to expose PlanVariantEditor controls (PR-4).
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
+    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
 
     // Legacy PlanVariantEditor renders the synced badge + Remove text control.
     expect(screen.getByText(/Editorial · synced/)).toBeInTheDocument();
@@ -349,10 +340,9 @@ describe("Plan item page — deferred-burn editor", () => {
     });
     expect(screen.queryByTestId("intro-text-preview")).toBeNull();
 
-    // Click the Text tab to expose PlanVariantEditor controls.
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /T Text/i }));
-    });
+    // Open Timeline → expand Text lane to expose PlanVariantEditor controls (PR-4).
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
+    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
     expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
   });
 });

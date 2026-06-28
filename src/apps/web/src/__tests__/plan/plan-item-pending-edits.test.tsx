@@ -134,13 +134,21 @@ import type { PlanItemJobStatus } from "@/lib/plan-api";
 import { swapPlanItemSong } from "@/lib/plan-api";
 const mockSwap = swapPlanItemSong as jest.MockedFunction<typeof swapPlanItemSong>;
 
-/** Click the Song tab to expose PlanVariantEditor and capture spyOnSwap. */
+/**
+ * Surface PlanVariantEditor by opening the Timeline tab and expanding its Text panel.
+ * The makeServerVariant uses text_mode "original_text" (no music_track_id), so the
+ * Song tab is hidden. Text editing is now inline in the Timeline Text lane (PR-4).
+ */
 async function openSongTab() {
-  // The makeServerVariant uses text_mode "original_text" (no music_track_id),
-  // so the Song tab is hidden. Use the Text tab to surface PlanVariantEditor.
-  const textTab = screen.queryByRole("button", { name: /T Text/i });
-  if (textTab) {
-    await act(async () => { fireEvent.click(textTab); });
+  // Click the Timeline tab (▭).
+  const timelineTab = screen.queryByRole("button", { name: /▭.*Timeline|Timeline/i });
+  if (timelineTab) {
+    await act(async () => { fireEvent.click(timelineTab); });
+  }
+  // Expand the Text lane to render PlanVariantEditor inline.
+  const textBars = screen.queryAllByRole("button", { name: /Edit text/i });
+  if (textBars.length > 0) {
+    await act(async () => { fireEvent.click(textBars[0]); });
   }
 }
 
