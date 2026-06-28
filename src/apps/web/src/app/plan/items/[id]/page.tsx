@@ -1322,14 +1322,12 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
 // "timeline" replaces "sound" when UNIFIED_TIMELINE_ENABLED is true (default).
-// Both remain in the union so TypeScript narrows correctly in each branch.
-// Overlays tab removed in PR-3: editing moved inline to the Timeline lane.
-type EditorTab = "text" | "font" | "song" | "clips" | "sound" | "captions" | "timeline";
+// Text + Font tabs removed in PR-4: editing moved inline to the Timeline Text lane.
+// Overlays tab removed in PR-3: editing moved inline to the Timeline Overlays lane.
+type EditorTab = "song" | "clips" | "sound" | "captions" | "timeline";
 
 const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "captions", icon: "CC", label: "Captions" },
-  { id: "text", icon: "T", label: "Text" },
-  { id: "font", icon: "Aa", label: "Font" },
   { id: "song", icon: "♫", label: "Song" },
   { id: "clips", icon: "✂", label: "Clips" },
   // Legacy Sound list — shown only when UNIFIED_TIMELINE_ENABLED is off.
@@ -1404,6 +1402,8 @@ function FocusedResults({
   updatedVariantId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
+  // Tracks whether UnifiedTimeline's Text panel is expanded — switches the hero to LiveEditPreview.
+  const [textLaneOpen, setTextLaneOpen] = useState(false);
 
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
@@ -1588,7 +1588,7 @@ function FocusedResults({
                 Nova&apos;s pick
               </span>
             )}
-            {instantEligible && variant && activeTab !== "timeline" ? (
+            {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
               <LiveEditPreview
                 variant={variant}
                 styleSets={styleSets}
@@ -1712,13 +1712,10 @@ function FocusedResults({
                   const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
                   // Captions tab only for narrated variants that carry editable cues.
                   if (tab.id === "captions" && !hasCaptions) return null;
-                  // Narrated has no intro text / font / song to edit — only Captions + Clips.
-                  if (hasCaptions && (tab.id === "text" || tab.id === "font" || tab.id === "song"))
-                    return null;
+                  // Narrated has no song to edit — only Captions + Clips.
+                  if (hasCaptions && tab.id === "song") return null;
                   // Hide Song tab when no song is swappable
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                  // Hide Font tab for lyrics (font is locked to lyrics renderer)
-                  if (tab.id === "font" && variant?.text_mode === "lyrics") return null;
                   // Legacy Sound list: only when SFX enabled AND unified timeline is off.
                   if (tab.id === "sound" && (!SOUND_EFFECTS_ENABLED || UNIFIED_TIMELINE_ENABLED)) return null;
                   // Unified Timeline: only when SFX enabled AND unified timeline is on.
@@ -1791,6 +1788,7 @@ function FocusedResults({
                       sfxAudioUrls={sfxAudioUrls}
                       setSfxAudioUrls={setSfxAudioUrls}
                       currentTimeS={currentTimeS}
+                      onTextPanelChange={setTextLaneOpen}
                       onSetActiveTab={setActiveTab}
                     />
                   )}
@@ -1838,9 +1836,8 @@ function FocusedResults({
  * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
  *
  * `activeTab` controls which section of PlanVariantEditor is surfaced. The
- * "text" tab shows caption/size/layout/style; "font" shows the EditToolbar font
- * controls (instant-edit variants only); "song" shows the song-swap picker;
- * "clips" opens the timeline editor sheet.
+ * "song" tab shows the song-swap picker; "clips" opens the timeline editor sheet.
+ * Text/font editing is now inline in the UnifiedTimeline Text lane (PR-4).
  *
  * For an ELIGIBLE variant the Caption / Text size / Layout / Style controls are
  * re-pointed at the session draft (no render). Song + Clips keep their server
@@ -1873,6 +1870,7 @@ function FocusedVariantControls({
   sfxAudioUrls,
   setSfxAudioUrls,
   currentTimeS,
+  onTextPanelChange,
   onSetActiveTab,
 }: {
   itemId: string;
@@ -1900,7 +1898,9 @@ function FocusedVariantControls({
   sfxAudioUrls: Record<string, string>;
   setSfxAudioUrls: Dispatch<SetStateAction<Record<string, string>>>;
   currentTimeS: number;
-  /** Sets the active editor tab — used by UnifiedTimeline to click-through to overlay/text/clips editors. */
+  /** Called when the UnifiedTimeline Text panel opens/closes — parent switches hero to LiveEditPreview. */
+  onTextPanelChange: (open: boolean) => void;
+  /** Sets the active editor tab — used by UnifiedTimeline to click-through to clips editor. */
   onSetActiveTab: (tab: EditorTab | null) => void;
 }) {
   const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
@@ -2194,8 +2194,6 @@ function FocusedVariantControls({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
 
-  const showTextSection = activeTab === "text";
-  const showFontSection = activeTab === "font" && instantEligible;
   const showSongSection = activeTab === "song";
   const showSoundSection = activeTab === "sound" && SOUND_EFFECTS_ENABLED && !UNIFIED_TIMELINE_ENABLED;
   const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED && UNIFIED_TIMELINE_ENABLED;
@@ -2203,35 +2201,6 @@ function FocusedVariantControls({
 
   return (
     <>
-      {/* Text tab: Caption + size + layout + style (no Song / no Clips) */}
-      {showTextSection && (
-        <PlanVariantEditor
-          variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
-          tracks={[]}
-          styleSets={instantEligible ? [] : styleSets}
-          onSwap={onSwap}
-          onRetext={draftHandlers.onRetext}
-          onRemoveText={draftHandlers.onRemoveText}
-          onChangeStyle={draftHandlers.onChangeStyle}
-          onResize={instantEligible ? undefined : draftHandlers.onResize}
-          onChangeLayout={draftHandlers.onChangeLayout}
-          onEditClips={undefined}
-          showClipEditor={false}
-          clipSlotCount={null}
-          hasClipEdits={false}
-        />
-      )}
-
-      {/* Font tab: EditToolbar (instant-edit eligible variants only) */}
-      {showFontSection && (
-        <EditToolbar
-          session={session}
-          styleSets={[]}
-          fallbackSizePx={variant.intro_text_size_px}
-          resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
-        />
-      )}
-
       {/* Song tab: song picker only — a standalone SongPicker section */}
       {showSongSection && (
         <PlanVariantEditor
@@ -2282,7 +2251,7 @@ function FocusedVariantControls({
         </div>
       )}
 
-      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays interactive, Text/Clips read-only) */}
+      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text interactive, Clips read-only) */}
       {showTimelineSection && (
         <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
           <UnifiedTimeline
@@ -2304,6 +2273,36 @@ function FocusedVariantControls({
             onRemoveCard={handleRemoveCard}
             onClearOverlays={handleClearOverlays}
             hasText={variant.text_mode !== "none"}
+            onTextPanelChange={onTextPanelChange}
+            textPanel={
+              variant.text_mode !== "none" ? (
+                <div className="space-y-3">
+                  <PlanVariantEditor
+                    variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+                    tracks={[]}
+                    styleSets={instantEligible ? [] : styleSets}
+                    onSwap={onSwap}
+                    onRetext={draftHandlers.onRetext}
+                    onRemoveText={draftHandlers.onRemoveText}
+                    onChangeStyle={draftHandlers.onChangeStyle}
+                    onResize={instantEligible ? undefined : draftHandlers.onResize}
+                    onChangeLayout={draftHandlers.onChangeLayout}
+                    onEditClips={undefined}
+                    showClipEditor={false}
+                    clipSlotCount={null}
+                    hasClipEdits={false}
+                  />
+                  {instantEligible && (
+                    <EditToolbar
+                      session={session}
+                      styleSets={[]}
+                      fallbackSizePx={variant.intro_text_size_px}
+                      resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
+                    />
+                  )}
+                </div>
+              ) : null
+            }
             onOpenTab={(tab) => onSetActiveTab(tab)}
           />
         </div>

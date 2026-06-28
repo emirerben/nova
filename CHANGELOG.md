@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6.0] — 2026-06-28
+
+### Added
+- **Unified Timeline Editor — PR-4 (inline Text lane).** Text and font editing is now inline in the `UnifiedTimeline` Text lane rather than behind separate "Text" and "Font" editor tabs. Clicking the Text lane bar expands a panel with `PlanVariantEditor` (caption, layout, style) and `EditToolbar` (font size slider) directly beneath the timeline. Instant-edit variants retain the live CSS preview in the hero while the text panel is open (`textLaneOpen` state bubbles up via `onTextPanelChange` callback). Ineligible variants (no `base_video_url`, sequence-synced) use the same server-render controls, now inline. The `"text"` and `"font"` `EditorTab` union members and their render blocks are removed. Backend contract (`buildEditPayload` deferred burn on Download) is unchanged.
+
+### Internal
+- `UnifiedTimeline` accepts `textPanel?: React.ReactNode` (render-prop) and `onTextPanelChange?: (open: boolean) => void` (open/close callback). `onOpenTab` narrowed from `"text" | "clips"` to `"clips"` only.
+- `jest.setup.ts` now sets `NEXT_PUBLIC_SOUND_EFFECTS_ENABLED`, `NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED`, and `NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED` so feature-flag-gated tabs render in the test environment.
+- Updated `plan-instant-editor.test.tsx` and `plan-item-pending-edits.test.tsx` to access text controls via Timeline tab → Text lane expand (not the retired "T Text" / "Aa Font" tab buttons).
+
 ## [0.5.5.1] — 2026-06-28
 
 ### Fixed

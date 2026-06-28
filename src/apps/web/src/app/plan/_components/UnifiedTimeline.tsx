@@ -7,12 +7,13 @@
  *   SFX      — fully interactive (drag/trim/add/remove/undo-redo).
  *   Overlays — fully interactive (drag start_s/end_s, trim video clips,
  *               per-card popover for position/scale/remove, upload zone).
- *   Text     — read-only bar  (click → open "text" tab).
+ *   Text     — expandable inline panel (click bar → toggle textPanel content).
  *   Clips    — read-only bar  (click → open "clips" tab / TimelineEditor sheet).
  *
  * All SFX mutations flow through the SFX reducer.
  * Overlay mutations flow through onUpdateCard/onRemoveCard/onClearOverlays
  * (same contracts as the retired MediaOverlayEditor).
+ * Text mutations flow through textPanel (rendered inline when expanded).
  *
  * Kill switch: NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED (default on).
  */
@@ -96,9 +97,14 @@ export interface UnifiedTimelineProps {
   onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
   onRemoveCard: (id: string) => void;
   onClearOverlays: () => void;
-  // Read-only lanes -----------------------------------------------------------
+  // Text lane (inline editing) -----------------------------------------------
   hasText: boolean;
-  onOpenTab: (tab: "text" | "clips") => void;
+  /** Inline text/font editing controls — rendered inside the Text lane when expanded. */
+  textPanel?: React.ReactNode;
+  /** Called when the Text lane expands or collapses — parent can use to switch hero mode. */
+  onTextPanelChange?: (open: boolean) => void;
+  // Clips lane (read-only click-through) -------------------------------------
+  onOpenTab: (tab: "clips") => void;
 }
 
 // ── SFX drag ─────────────────────────────────────────────────────────────────
@@ -234,8 +240,17 @@ export default function UnifiedTimeline({
   onRemoveCard,
   onClearOverlays,
   hasText,
+  textPanel,
+  onTextPanelChange,
   onOpenTab,
 }: UnifiedTimelineProps) {
+  const [textOpen, setTextOpen] = useState(false);
+
+  function toggleTextOpen() {
+    const next = !textOpen;
+    setTextOpen(next);
+    onTextPanelChange?.(next);
+  }
   // ── SFX reducer (undo/redo) ─────────────────────────────────────────────────
 
   const lastEmitted = useRef<SoundEffectPlacement[]>(sfxPlacements);
@@ -605,20 +620,38 @@ export default function UnifiedTimeline({
         />
       </ReadOnlyLane>
 
-      {/* ── Text lane (read-only) ── */}
+      {/* ── Text lane (inline editing) ── */}
       {hasText && (
-        <ReadOnlyLane
-          label="Text"
-          totalDurationS={totalDurationS}
-          currentTimeS={currentTimeS}
-          onClick={() => onOpenTab("text")}
-        >
-          <FullWidthBar
-            label="Edit text ↗"
-            colorClass="bg-amber-700/30 border-amber-600/40 hover:bg-amber-700/50 text-amber-300/80"
-            onClick={() => onOpenTab("text")}
-          />
-        </ReadOnlyLane>
+        <div>
+          <div
+            role="button"
+            tabIndex={0}
+            className="flex h-10 group cursor-pointer"
+            onClick={toggleTextOpen}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleTextOpen(); } }}
+          >
+            <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
+              <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider truncate">Text</span>
+            </div>
+            <div className="relative flex-1 bg-zinc-800/15 border-y border-zinc-700/30 overflow-hidden group-hover:bg-zinc-800/30 transition-colors">
+              <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
+              <button
+                type="button"
+                className="absolute inset-1 rounded flex items-center px-2 border border-amber-600/40 bg-amber-700/30 hover:bg-amber-700/50 text-amber-300/80 transition-colors"
+                onClick={(e) => { e.stopPropagation(); toggleTextOpen(); }}
+              >
+                <span className="text-[10px] truncate pointer-events-none">
+                  {textOpen ? "Text ▲" : "Edit text ▼"}
+                </span>
+              </button>
+            </div>
+          </div>
+          {textOpen && textPanel && (
+            <div className="pl-14 pr-2 pb-3 pt-2 border-b border-zinc-700/30">
+              {textPanel}
+            </div>
+          )}
+        </div>
       )}
 
       {/* ── Overlays lane (interactive) ── */}
@@ -986,7 +1019,7 @@ export default function UnifiedTimeline({
       </div>
 
       <p className="pl-14 pt-1.5 text-[9px] text-zinc-600">
-        Clips · Text lanes — click to open editor
+        Clips lane — click to open editor · Text lane — click to expand inline
       </p>
     </div>
   );

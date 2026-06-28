@@ -84,6 +84,8 @@ function makeProps(override = {}) {
     onRemoveCard: jest.fn(),
     onClearOverlays: jest.fn(),
     hasText: false,
+    textPanel: null,
+    onTextPanelChange: jest.fn(),
     onOpenTab: jest.fn(),
     ...override,
   };
@@ -232,12 +234,17 @@ describe("UnifiedTimeline — read-only lane click-through", () => {
     expect(onOpenTab).toHaveBeenCalledWith("clips");
   });
 
-  it("Text lane shown when hasText=true; click calls onOpenTab('text')", () => {
-    const onOpenTab = jest.fn();
-    render(<UnifiedTimeline {...makeProps({ hasText: true, onOpenTab })} />);
+  it("Text lane shown when hasText=true; click expands inline panel (not a click-through)", async () => {
+    const onTextPanelChange = jest.fn();
+    const textPanel = <div data-testid="text-panel-content">Text controls</div>;
+    render(<UnifiedTimeline {...makeProps({ hasText: true, textPanel, onTextPanelChange })} />);
     expect(screen.getByText("Text")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Text").closest("[role='button']")!);
-    expect(onOpenTab).toHaveBeenCalledWith("text");
+    // Panel content hidden initially.
+    expect(screen.queryByTestId("text-panel-content")).toBeNull();
+    // Click expands the inline panel.
+    await act(async () => { fireEvent.click(screen.getByText("Text").closest("[role='button']")!); });
+    expect(screen.getByTestId("text-panel-content")).toBeInTheDocument();
+    expect(onTextPanelChange).toHaveBeenCalledWith(true);
   });
 
   it("Text lane hidden when hasText=false", () => {
