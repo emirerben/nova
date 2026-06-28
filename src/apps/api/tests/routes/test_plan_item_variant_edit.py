@@ -374,6 +374,84 @@ def test_dispatch_retext_requires_text_or_remove() -> None:
     assert exc.value.status_code == 422
 
 
+# ── synchronous render_status="rendering" mutation ───────────────────────────
+# These guard the backend fix: dispatch_swap_song and dispatch_retext must
+# set render_status="rendering" on the variant synchronously (before .delay()),
+# mirroring dispatch_set_media_overlays.  Without this fix the frontend's
+# pending-edits pin is the only barrier and the 409 lock has a race window.
+
+
+def test_swap_song_sets_rendering_synchronously(client: TestClient) -> None:
+    """After POST swap-song, the variant in the reload response is rendering."""
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    track = MagicMock(analysis_status="ready", audio_gcs_path="music/x.mp3")
+    db = _db([item, track, item], plan)
+    _override(user, db)
+
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        client.post(
+            f"/plan-items/{item.id}/variants/song_text/swap-song",
+            json={"new_track_id": "track-123"},
+        )
+
+    # The job's assembly_plan must reflect render_status="rendering" before .delay().
+    variants = job.assembly_plan["variants"]
+    match = next((v for v in variants if v["variant_id"] == "song_text"), None)
+    assert match is not None, "variant not found in assembly_plan"
+    assert match["render_status"] == "rendering", (
+        "dispatch_swap_song must set render_status='rendering' synchronously "
+        f"(got {match['render_status']!r})"
+    )
+    # And the commit was called (persists to DB before worker fires).
+    db.commit.assert_awaited()
+
+
+def test_retext_sets_rendering_synchronously(client: TestClient) -> None:
+    """After POST retext, the variant in the reload response is rendering."""
+    user = _user()
+    job = _job([dict(SONG_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        client.post(
+            f"/plan-items/{item.id}/variants/song_text/retext",
+            json={"text": "new hook"},
+        )
+
+    variants = job.assembly_plan["variants"]
+    match = next((v for v in variants if v["variant_id"] == "song_text"), None)
+    assert match is not None, "variant not found in assembly_plan"
+    assert match["render_status"] == "rendering", (
+        "dispatch_retext must set render_status='rendering' synchronously "
+        f"(got {match['render_status']!r})"
+    )
+    db.commit.assert_awaited()
+
+
+def test_second_swap_song_returns_409(client: TestClient) -> None:
+    """A swap-song on an already-rendering variant returns 409 immediately."""
+    user = _user()
+    rendering_variant = {**SONG_VARIANT, "render_status": "rendering"}
+    job = _job([rendering_variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/song_text/swap-song",
+        json={"new_track_id": "track-456"},
+    )
+    assert resp.status_code == 409, (
+        "Second swap-song on a rendering variant must return 409"
+    )
+
+
 # ── combined /edit (intro layout pick) ────────────────────────────────────────
 
 

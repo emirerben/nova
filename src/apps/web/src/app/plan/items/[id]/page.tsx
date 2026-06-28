@@ -139,6 +139,14 @@ export default function PlanItemPage() {
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
   const [generatingGuide, setGeneratingGuide] = useState(false);
   const pendingEdits = useRef<Map<string, { priorFinishedAt: string | null; sawRendering: boolean }>>(new Map());
+  // Incremented whenever pendingEdits is mutated so the variants memo re-runs
+  // immediately (useMemo only tracks reactive dependencies; the ref itself is not reactive).
+  const [editGeneration, setEditGeneration] = useState(0);
+  // Tracks what kind of edit is in-flight for the focused variant so the Hero
+  // overlay can show a meaningful label ("Applying your new song…" vs "Updating text…").
+  const renderingAction = useRef<{ type: "song" | "text" | "style" | "other"; label: string } | null>(null);
+  // Transient "✓ Updated" cue: set to the variantId for 4s when render_finished_at advances.
+  const [updatedVariantId, setUpdatedVariantId] = useState<string | null>(null);
   // Narrated-walkthrough: local shadow of voiceover_gcs_path — updated optimistically
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
@@ -303,7 +311,10 @@ export default function PlanItemPage() {
         return { ...v, render_status: "rendering" as const };
       });
     },
-    [data],
+    // editGeneration forces a re-run when pendingEdits is mutated (refs are not
+    // reactive; without this, the optimistic pin only takes effect on the next data update).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, editGeneration],
   );
 
   useEffect(() => {
@@ -315,6 +326,23 @@ export default function PlanItemPage() {
       const firstReady = variants.find((v) => v.output_url) ?? variants[0];
       setFocusedVariantId(firstReady.variant_id);
     }
+  }, [variants, focusedVariantId]);
+
+  // "✓ Updated" cue: detect when the focused variant's render_finished_at advances
+  // (the exact moment StableVideo swaps in fresh bytes) and flash a transient badge.
+  const prevFocusedFinishedAtRef = useRef<string | null>(undefined as unknown as null);
+  useEffect(() => {
+    const focused = variants.find((v) => v.variant_id === focusedVariantId);
+    const cur = focused?.render_finished_at ?? null;
+    const prev = prevFocusedFinishedAtRef.current;
+    if (prev !== undefined && prev !== null && cur !== null && cur !== prev && focused?.render_status === "ready") {
+      renderingAction.current = null; // clear the in-flight label now that it's done
+      setUpdatedVariantId(focusedVariantId);
+      const timer = setTimeout(() => setUpdatedVariantId(null), 4000);
+      return () => clearTimeout(timer);
+    }
+    prevFocusedFinishedAtRef.current = cur;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variants, focusedVariantId]);
 
   const markVariantRendering = useCallback(
@@ -336,13 +364,37 @@ export default function PlanItemPage() {
   );
 
   const runEdit = useCallback(
-    async (variantId: string, prevFinishedAt: string | null, action: () => Promise<unknown>) => {
+    async (
+      variantId: string,
+      prevFinishedAt: string | null,
+      action: () => Promise<unknown>,
+      actionMeta?: { type: "song" | "text" | "style" | "other"; label: string },
+    ) => {
       setError(null);
+      // Optimistic pin: mark rendering immediately so the variants memo (which reads
+      // pendingEdits.current) fires on the SAME React tick as the click — not after
+      // the HTTP round-trip + next poll. setEditGeneration triggers the parent re-render
+      // that re-runs the memo; pendingEdits.current is already mutated by then.
+      pendingEdits.current.set(variantId, { priorFinishedAt: prevFinishedAt, sawRendering: false });
+      if (actionMeta) renderingAction.current = actionMeta;
+      setEditGeneration((g) => g + 1);
       try {
         await action();
+        // Re-anchor the pin now that the dispatch succeeded; keeps it alive until the
+        // poll catches the variant mid-rendering or render_finished_at advances.
         markVariantRendering(variantId, prevFinishedAt);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to update variant");
+        // Clear the optimistic pin on any error so controls re-enable.
+        pendingEdits.current.delete(variantId);
+        renderingAction.current = null;
+        setEditGeneration((g) => g + 1);
+        const msg = err instanceof Error ? err.message : "Failed to update variant";
+        // 409 = variant is being rendered by a prior edit — don't treat as a scary error.
+        if (msg.toLowerCase().includes("re-rendering") || msg.includes("409")) {
+          setError("Still applying your last change — wait for it to finish, then try again.");
+        } else {
+          setError(msg);
+        }
         refetch();
       }
     },
@@ -1181,54 +1233,74 @@ export default function PlanItemPage() {
             markVariantRendering={markVariantRendering}
             onSwap={
               focused
-                ? (trackId) =>
-                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                      swapPlanItemSong(itemId, focused.variant_id, trackId),
-                    )
+                ? (trackId) => {
+                    const trackName = tracks.find((t) => t.id === trackId)?.title ?? "new song";
+                    return runEdit(
+                      focused.variant_id,
+                      focused.render_finished_at ?? null,
+                      () => swapPlanItemSong(itemId, focused.variant_id, trackId),
+                      { type: "song", label: trackName },
+                    );
+                  }
                 : async () => {}
             }
             onRetext={
               focused
                 ? (text) =>
-                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                      retextPlanItem(itemId, focused.variant_id, { text }),
+                    runEdit(
+                      focused.variant_id,
+                      focused.render_finished_at ?? null,
+                      () => retextPlanItem(itemId, focused.variant_id, { text }),
+                      { type: "text", label: "Updating text…" },
                     )
                 : async () => {}
             }
             onRemoveText={
               focused
                 ? () =>
-                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                      retextPlanItem(itemId, focused.variant_id, { remove: true }),
+                    runEdit(
+                      focused.variant_id,
+                      focused.render_finished_at ?? null,
+                      () => retextPlanItem(itemId, focused.variant_id, { remove: true }),
+                      { type: "text", label: "Removing text…" },
                     )
                 : async () => {}
             }
             onChangeStyle={
               focused
                 ? (styleSetId) =>
-                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                      changePlanItemStyle(itemId, focused.variant_id, styleSetId),
+                    runEdit(
+                      focused.variant_id,
+                      focused.render_finished_at ?? null,
+                      () => changePlanItemStyle(itemId, focused.variant_id, styleSetId),
+                      { type: "style", label: "Applying style…" },
                     )
                 : async () => {}
             }
             onResize={
               focused
                 ? (px) =>
-                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                      setPlanItemIntroSize(itemId, focused.variant_id, px),
+                    runEdit(
+                      focused.variant_id,
+                      focused.render_finished_at ?? null,
+                      () => setPlanItemIntroSize(itemId, focused.variant_id, px),
+                      { type: "style", label: "Updating text size…" },
                     )
                 : async () => {}
             }
             onChangeLayout={
               focused
                 ? (layout) =>
-                    runEdit(focused.variant_id, focused.render_finished_at ?? null, () =>
-                      editPlanItemVariant(itemId, focused.variant_id, {
-                        intro_layout: layout,
-                      }),
+                    runEdit(
+                      focused.variant_id,
+                      focused.render_finished_at ?? null,
+                      () => editPlanItemVariant(itemId, focused.variant_id, { intro_layout: layout }),
+                      { type: "style", label: "Updating layout…" },
                     )
                 : async () => {}
             }
+            renderingAction={renderingAction.current}
+            updatedVariantId={updatedVariantId}
           />
         )}
       </div>
@@ -1308,6 +1380,8 @@ function FocusedResults({
   onChangeStyle,
   onResize,
   onChangeLayout,
+  renderingAction,
+  updatedVariantId,
 }: {
   itemId: string;
   item: PlanItem;
@@ -1326,6 +1400,8 @@ function FocusedResults({
   onChangeStyle: (styleSetId: string) => Promise<void>;
   onResize: (textSizePx: number) => Promise<void>;
   onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
+  renderingAction: { type: "song" | "text" | "style" | "other"; label: string } | null;
+  updatedVariantId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
 
@@ -1520,7 +1596,16 @@ function FocusedResults({
                 playToken={editSession.playToken}
               />
             ) : (
-              <Hero variant={variant} generating={isGenerating} overlayCards={overlayCards} localPreviewUrls={localPreviewUrls} sfxPlacements={sfxPlacements} sfxAudioUrls={sfxAudioUrls} />
+              <Hero
+                variant={variant}
+                generating={isGenerating}
+                overlayCards={overlayCards}
+                localPreviewUrls={localPreviewUrls}
+                sfxPlacements={sfxPlacements}
+                sfxAudioUrls={sfxAudioUrls}
+                renderingAction={renderingAction}
+                showUpdatedCue={updatedVariantId === variant?.variant_id}
+              />
             )}
           </div>
           {/* Text-mode pill below video */}
@@ -2399,6 +2484,8 @@ function Hero({
   localPreviewUrls = {},
   sfxPlacements = [],
   sfxAudioUrls = {},
+  renderingAction = null,
+  showUpdatedCue = false,
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
@@ -2406,6 +2493,10 @@ function Hero({
   localPreviewUrls?: Record<string, string>;
   sfxPlacements?: SoundEffectPlacement[];
   sfxAudioUrls?: Record<string, string>;
+  /** Describes what edit is in-flight so the overlay can show a meaningful label. */
+  renderingAction?: { type: "song" | "text" | "style" | "other"; label: string } | null;
+  /** Show the "✓ Updated" confirmation cue for 4 s after render_finished_at advances. */
+  showUpdatedCue?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
@@ -2501,15 +2592,33 @@ function Hero({
         <div className="pointer-events-none absolute inset-0" role="status" aria-label="Rendering new version">
           <div className="absolute inset-0 bg-white/25" />
           <ShimmerSweep tone="light" />
-          <HeroRenderingLabel startedAt={variant.render_started_at ?? null} />
+          <HeroRenderingLabel
+            startedAt={variant.render_started_at ?? null}
+            action={renderingAction}
+          />
+        </div>
+      )}
+      {/* "✓ Updated" confirmation — flashes for 4 s when the new video swaps in. */}
+      {showUpdatedCue && !rendering && variant.output_url && (
+        <div className="pointer-events-none absolute inset-0 flex items-end justify-center pb-5">
+          <span className="rounded-full bg-lime-600/90 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm">
+            ✓ Updated
+          </span>
         </div>
       )}
     </div>
   );
 }
 
-/** Status label shown during a same-variant re-render, with a stall hint after 5 min. */
-function HeroRenderingLabel({ startedAt }: { startedAt: string | null }) {
+/** Status label shown during a same-variant re-render, with a stall hint after 5 min.
+ *  Shows action-specific copy when `action` is provided (e.g. the picked song name). */
+function HeroRenderingLabel({
+  startedAt,
+  action,
+}: {
+  startedAt: string | null;
+  action?: { type: "song" | "text" | "style" | "other"; label: string } | null;
+}) {
   const STALL_HINT_MS = 300_000; // 5 min
   const [elapsed, setElapsed] = useState(() =>
     startedAt ? Date.now() - new Date(startedAt).getTime() : 0,
@@ -2521,10 +2630,50 @@ function HeroRenderingLabel({ startedAt }: { startedAt: string | null }) {
     return () => clearInterval(id);
   }, [startedAt]);
 
+  if (elapsed >= STALL_HINT_MS) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
+        <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-[#3f3f46]">
+          Taking longer than usual…
+        </span>
+      </div>
+    );
+  }
+
+  // Song swap: full re-render takes ~1-3 min — show the song name + duration hint.
+  if (action?.type === "song") {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1.5 text-center">
+        <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-lime-700 leading-tight max-w-[85%] truncate">
+          Applying &ldquo;{action.label}&rdquo;
+        </span>
+        <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] text-[#71717a]">
+          ~1–3 min
+        </span>
+      </div>
+    );
+  }
+
+  // Text reburn: fast path, a few seconds.
+  if (action?.type === "text") {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
+        <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-lime-700">
+          {action.label || "Updating text…"}
+        </span>
+        <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] text-[#71717a]">
+          a few seconds
+        </span>
+      </div>
+    );
+  }
+
+  // Style / size / layout / generic re-render.
+  const genericLabel = action?.label ?? "Rendering new version…";
   return (
     <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1 text-center">
       <span className="rounded-full bg-white/80 px-3 py-1 text-xs text-lime-700">
-        {elapsed >= STALL_HINT_MS ? "Taking longer than usual…" : "Rendering new version…"}
+        {genericLabel}
       </span>
     </div>
   );
