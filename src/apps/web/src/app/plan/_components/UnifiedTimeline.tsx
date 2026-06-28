@@ -24,10 +24,12 @@
  *   ClipsLane.tsx   — Clips expand/collapse
  */
 
+import { useState } from "react";
 import type { SoundEffectPlacement, MediaOverlay } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { Playhead } from "@/lib/timeline/Playhead";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { UploadFile } from "./UnifiedTimelineTypes";
 import SfxLane from "./SfxLane";
 import OverlayLane from "./OverlayLane";
@@ -66,12 +68,22 @@ export interface UnifiedTimelineProps {
   onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
   onRemoveCard: (id: string) => void;
   onClearOverlays: () => void;
-  // Text lane (inline editing) -----------------------------------------------
-  hasText: boolean;
-  /** Inline text/font editing controls — rendered inside the Text lane when expanded. */
-  textPanel?: React.ReactNode;
-  /** Called when the Text lane expands or collapses — parent can use to switch hero mode. */
-  onTextPanelChange?: (open: boolean) => void;
+  // Text lane (interactive multi-block) ----------------------------------------
+  /**
+   * Text element bars to display. T6 will wire real API data here.
+   * Defaults to [] (empty state) when not provided.
+   */
+  textElements?: TextElementBar[];
+  /**
+   * Called after every user edit to text bars (move, trim, add, delete).
+   * T6 will wire this to the API persist path.
+   */
+  onTextElementsChange?: (bars: TextElementBar[]) => void;
+  /**
+   * T10 State 4: called when a trim drag is clamped to the minimum bar duration.
+   * Parent (page.tsx) can show a brief "Minimum 0.Xs" note.
+   */
+  onTextTrimClamped?: () => void;
   // Clips lane (inline editing) ----------------------------------------------
   /** Inline clips editor — rendered inside the Clips lane when expanded. */
   clipsPanel?: React.ReactNode;
@@ -99,12 +111,16 @@ export default function UnifiedTimeline({
   onUpdateCard,
   onRemoveCard,
   onClearOverlays,
-  hasText,
-  textPanel,
-  onTextPanelChange,
+  textElements,
+  onTextElementsChange,
+  onTextTrimClamped,
   clipsPanel,
   onClipsPanelChange,
 }: UnifiedTimelineProps) {
+  // ── Text lane selection (controlled here so T7 can read expandedBarId) ────────
+
+  const [textExpandedBarId, setTextExpandedBarId] = useState<string | null>(null);
+
   // ── Ruler ─────────────────────────────────────────────────────────────────────
 
   const tickInterval = tickIntervalFor(totalDurationS);
@@ -153,11 +169,13 @@ export default function UnifiedTimeline({
 
       {/* ── Text lane ── */}
       <TextLane
-        totalDurationS={totalDurationS}
-        currentTimeS={currentTimeS}
-        hasText={hasText}
-        textPanel={textPanel}
-        onTextPanelChange={onTextPanelChange}
+        textElements={textElements ?? []}
+        durationSeconds={totalDurationS}
+        currentTime={currentTimeS}
+        onTextElementsChange={onTextElementsChange ?? (() => {})}
+        expandedBarId={textExpandedBarId}
+        onBarSelect={setTextExpandedBarId}
+        onTrimClamped={onTextTrimClamped}
       />
 
       {/* ── Overlays lane ── */}

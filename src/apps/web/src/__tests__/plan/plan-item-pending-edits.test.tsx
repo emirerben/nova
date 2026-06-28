@@ -140,16 +140,15 @@ const mockSwap = swapPlanItemSong as jest.MockedFunction<typeof swapPlanItemSong
  * Song tab is hidden. Text editing is now inline in the Timeline Text lane (PR-4).
  */
 async function openSongTab() {
-  // Click the Timeline tab (▭).
+  // Click the Timeline tab (▭) — opens showTimelineSection which renders
+  // PlanVariantEditor in the text-controls area below UnifiedTimeline (T5).
+  // The old "Edit text ▼" expand button is gone (T5 replaced it with interactive bars).
   const timelineTab = screen.queryByRole("button", { name: /▭.*Timeline|Timeline/i });
   if (timelineTab) {
     await act(async () => { fireEvent.click(timelineTab); });
   }
-  // Expand the Text lane to render PlanVariantEditor inline.
-  const textBars = screen.queryAllByRole("button", { name: /Edit text/i });
-  if (textBars.length > 0) {
-    await act(async () => { fireEvent.click(textBars[0]); });
-  }
+  // PlanVariantEditor is now directly rendered below the timeline for text-mode
+  // variants — no additional click needed (T5 architecture change).
 }
 
 // ─── Factory helpers ──────────────────────────────────────────────────────────

@@ -67,6 +67,7 @@ import SignInPrompt from "../../_components/SignInPrompt";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
 import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
+import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -1392,8 +1393,12 @@ function FocusedResults({
   updatedVariantId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
-  // Tracks whether UnifiedTimeline's Text panel is expanded — switches the hero to LiveEditPreview.
-  const [textLaneOpen, setTextLaneOpen] = useState(false);
+  // T5: textLaneOpen is derived (not state) — true when the timeline tab is open and the variant
+  // has text. Text controls are now always visible below the timeline (not in a collapsible panel),
+  // so we show LiveEditPreview whenever the user can interact with them.
+  // Previously this was state set via onTextPanelChange from UnifiedTimeline; that callback was
+  // removed in T5 when the expandable textPanel slot was replaced by the interactive bar lane.
+  const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
 
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
@@ -1776,7 +1781,6 @@ function FocusedResults({
                       sfxAudioUrls={sfxAudioUrls}
                       setSfxAudioUrls={setSfxAudioUrls}
                       currentTimeS={currentTimeS}
-                      onTextPanelChange={setTextLaneOpen}
                     />
                   )}
                 </div>
@@ -1857,7 +1861,6 @@ function FocusedVariantControls({
   sfxAudioUrls,
   setSfxAudioUrls,
   currentTimeS,
-  onTextPanelChange,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -1884,8 +1887,6 @@ function FocusedVariantControls({
   sfxAudioUrls: Record<string, string>;
   setSfxAudioUrls: Dispatch<SetStateAction<Record<string, string>>>;
   currentTimeS: number;
-  /** Called when the UnifiedTimeline Text panel opens/closes — parent switches hero to LiveEditPreview. */
-  onTextPanelChange: (open: boolean) => void;
 }) {
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
@@ -2081,6 +2082,19 @@ function FocusedVariantControls({
   const [glossaryEffects, setGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [glossaryLoading, setGlossaryLoading] = useState(false);
 
+  // ── Text-elements state (T10) ─────────────────────────────────────────────
+  // Optimistic render status per variantId so the UI doesn't freeze on apply
+  // before the server round-trip returns (Part B: plan-item-edit-no-optimistic-state).
+  const [optimisticRenderStatus, setOptimisticRenderStatus] = useState<Record<string, string>>({});
+  // Transient error/retry banner shown after a save conflict (409) or failed save.
+  const [textApplyError, setTextApplyError] = useState<string | null>(null);
+  // Brief note after a TRIM_START clamp (e.g. "Minimum 0.1s") — auto-clears after 2 s.
+  const [textElementNote, setTextElementNote] = useState<string | null>(null);
+  // State 3 note: selected-bar tracking is managed internally by TextLane (onBarSelect).
+  // UnifiedTimeline's textExpandedBarId is cleared when the selected bar is deleted.
+  // Local mirror of textElements bars — used to derive State 5 (text too long) warning.
+  const [textElements, setTextElements] = useState<TextElementBar[]>([]);
+
   // Load glossary when the Timeline tab is first opened.
   useEffect(() => {
     if (activeTab !== "timeline" || !SOUND_EFFECTS_ENABLED) return;
@@ -2166,6 +2180,74 @@ function FocusedVariantControls({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
 
+  // ── Text-element handlers (T10) ───────────────────────────────────────────
+
+  /**
+   * Apply text-element bars to the variant.
+   *
+   * Part A (apply-clears-preview-layer learning): clears localPreviewUrls
+   * BEFORE triggering the render pass so the burned output takes over without
+   * double-compositing previously-uploaded overlay blob URLs.
+   *
+   * Part B (plan-item-edit-no-optimistic-state learning): sets optimistic
+   * "rendering" state synchronously so the UI reflects in-flight rendering
+   * before the server round-trip completes.
+   *
+   * TODO: wire the actual fetch to PUT /plan-items/{id}/variants/{vid}/text-elements in T4/T6.
+   */
+  const handleApplyTextElements = useCallback(
+    async (variantId: string, _elements: TextElementBar[]) => {
+      // Part A: clear preview layer first.
+      setLocalPreviewUrls((prev) => {
+        Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+        return {};
+      });
+      // Part B: optimistic rendering state so controls show "rendering" immediately.
+      setOptimisticRenderStatus((prev) => ({ ...prev, [variantId]: "rendering" }));
+      setTextApplyError(null);
+      try {
+        // TODO: will be wired to PUT /plan-items/{id}/variants/{vid}/text-elements in T4/T6.
+        markVariantRendering(variantId, variant.render_finished_at ?? null);
+      } catch (err) {
+        // Clear optimistic state on failure so controls re-enable.
+        setOptimisticRenderStatus((prev) => {
+          const next = { ...prev };
+          delete next[variantId];
+          return next;
+        });
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+          // State 1: save conflict — refresh to get latest server state.
+          setTextApplyError("Text updated elsewhere — refreshing");
+          refetch();
+        } else {
+          // State 2: undo after failed save — inform the user; caller should revert reducer.
+          setTextApplyError("Couldn't save text — retrying");
+        }
+      }
+    },
+    [setLocalPreviewUrls, markVariantRendering, variant.render_finished_at, refetch],
+  );
+
+  /** Handle text-element changes: update local mirror + trigger debounced apply. */
+  const handleTextElementsChange = useCallback(
+    (bars: TextElementBar[]) => {
+      setTextElements(bars);
+      // TODO: debounced persist will be wired in T6. For now just update local state.
+    },
+    [],
+  );
+
+  /** State 4: called by UnifiedTimeline when a trim drag is clamped to MIN_DUR_S. */
+  const handleTextTrimClamped = useCallback(() => {
+    setTextElementNote("Minimum 0.1s");
+    const t = setTimeout(() => setTextElementNote(null), 2000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Expose handleApplyTextElements for future wiring in T6 (suppress TS unused-var).
+  void handleApplyTextElements;
+
   const showSongSection = activeTab === "song";
   const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED;
 
@@ -2193,68 +2275,95 @@ function FocusedVariantControls({
 
       {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text + Clips inline) */}
       {showTimelineSection && (
-        <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
-          <UnifiedTimeline
-            totalDurationS={variantDurationS}
-            currentTimeS={currentTimeS}
-            sfxPlacements={sfxPlacements}
-            sfxGlossaryEffects={glossaryEffects}
-            sfxGlossaryLoading={glossaryLoading}
-            sfxRendering={variant.render_status === "rendering"}
-            sfxUploading={sfxUploading}
-            onSfxChange={handleSfxChange}
-            onSfxUploadRequest={handleSfxUpload}
-            overlayCards={overlayCards}
-            overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
-            overlayUploading={overlayUploading}
-            localPreviewUrls={localPreviewUrls}
-            onOverlayUploadRequest={handleOverlayUpload}
-            onUpdateCard={handleUpdateCard}
-            onRemoveCard={handleRemoveCard}
-            onClearOverlays={handleClearOverlays}
-            hasText={variant.text_mode !== "none"}
-            onTextPanelChange={onTextPanelChange}
-            textPanel={
-              variant.text_mode !== "none" ? (
-                <div className="space-y-3">
-                  <PlanVariantEditor
-                    variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
-                    tracks={[]}
-                    styleSets={instantEligible ? [] : styleSets}
-                    onSwap={onSwap}
-                    onRetext={draftHandlers.onRetext}
-                    onRemoveText={draftHandlers.onRemoveText}
-                    onChangeStyle={draftHandlers.onChangeStyle}
-                    onResize={instantEligible ? undefined : draftHandlers.onResize}
-                    onChangeLayout={draftHandlers.onChangeLayout}
-                    onEditClips={undefined}
-                    showClipEditor={false}
-                    clipSlotCount={null}
-                    hasClipEdits={false}
-                  />
-                  {instantEligible && (
-                    <EditToolbar
-                      session={session}
-                      styleSets={[]}
-                      fallbackSizePx={variant.intro_text_size_px}
-                      resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
-                    />
-                  )}
-                </div>
-              ) : null
-            }
-            clipsPanel={
-              <InlineClipsEditor
-                ownerId={itemId}
-                variantId={variant.variant_id}
-                base="plan-item"
-                onRenderEnqueued={() => {
-                  markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-                  refetch();
-                }}
+        <div className="space-y-1.5">
+          {/* State 6: no base_video_path = fast reburn unavailable — inform the user. */}
+          {!variant.base_video_path && (
+            <p className="text-[11px] text-zinc-500">
+              Full re-render needed (may take a moment)
+            </p>
+          )}
+          {/* States 1+2: save conflict or failed save — amber banner. */}
+          {textApplyError && (
+            <p className="rounded bg-amber-900/30 px-2 py-1 text-[11px] text-amber-400">
+              {textApplyError}
+            </p>
+          )}
+          {/* State 4: minimum-duration clamp note — auto-clears after 2 s. */}
+          {textElementNote && (
+            <p className="px-1 text-[11px] text-zinc-500">{textElementNote}</p>
+          )}
+          {/* State 5: text too long — inline character count warning. */}
+          {textElements.some((b) => b.text.length > 500) && (
+            <p className="px-1 text-[11px] text-amber-400">
+              Text block exceeds 500 chars — may be truncated on render
+            </p>
+          )}
+          <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
+            <UnifiedTimeline
+              totalDurationS={variantDurationS}
+              currentTimeS={currentTimeS}
+              sfxPlacements={sfxPlacements}
+              sfxGlossaryEffects={glossaryEffects}
+              sfxGlossaryLoading={glossaryLoading}
+              sfxRendering={variant.render_status === "rendering"}
+              sfxUploading={sfxUploading}
+              onSfxChange={handleSfxChange}
+              onSfxUploadRequest={handleSfxUpload}
+              overlayCards={overlayCards}
+              overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
+              overlayUploading={overlayUploading}
+              localPreviewUrls={localPreviewUrls}
+              onOverlayUploadRequest={handleOverlayUpload}
+              onUpdateCard={handleUpdateCard}
+              onRemoveCard={handleRemoveCard}
+              onClearOverlays={handleClearOverlays}
+              textElements={textElements}
+              onTextElementsChange={handleTextElementsChange}
+              onTextTrimClamped={handleTextTrimClamped}
+              clipsPanel={
+                <InlineClipsEditor
+                  ownerId={itemId}
+                  variantId={variant.variant_id}
+                  base="plan-item"
+                  onRenderEnqueued={() => {
+                    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+                    refetch();
+                  }}
+                />
+              }
+            />
+          </div>
+          {/* Text editing controls — rendered below the timeline for text-mode variants.
+              T5 removed the `textPanel` prop in favour of the interactive bar lane;
+              T7 will move these into per-bar panels. Until then, keep them visible here
+              so text editing remains accessible and existing tests stay green. */}
+          {variant.text_mode !== "none" && (
+            <div className="mt-2 space-y-3">
+              <PlanVariantEditor
+                variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+                tracks={[]}
+                styleSets={instantEligible ? [] : styleSets}
+                onSwap={onSwap}
+                onRetext={draftHandlers.onRetext}
+                onRemoveText={draftHandlers.onRemoveText}
+                onChangeStyle={draftHandlers.onChangeStyle}
+                onResize={instantEligible ? undefined : draftHandlers.onResize}
+                onChangeLayout={draftHandlers.onChangeLayout}
+                onEditClips={undefined}
+                showClipEditor={false}
+                clipSlotCount={null}
+                hasClipEdits={false}
               />
-            }
-          />
+              {instantEligible && (
+                <EditToolbar
+                  session={session}
+                  styleSets={[]}
+                  fallbackSizePx={variant.intro_text_size_px}
+                  resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
     </>

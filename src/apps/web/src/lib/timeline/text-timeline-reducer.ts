@@ -1,0 +1,183 @@
+/**
+ * Text-element timeline reducer: bounded undo/redo over TextElementBar[].
+ *
+ * Pure (no DOM, no React) — drives `useReducer` in TextLane and is
+ * unit-testable in __tests__/text-timeline-reducer.test.ts.
+ *
+ * Modelled on sfx-timeline-reducer.ts (HISTORY_LIMIT, withHistory pattern,
+ * past/future arrays). Simpler because text bars have no beat-grid math.
+ */
+
+export const TEXT_HISTORY_LIMIT = 50;
+
+// ── Domain type ───────────────────────────────────────────────────────────────
+
+/**
+ * One positioned text block on the video timeline.
+ *
+ * `start_s` / `end_s` are assembled-time seconds (same coordinate space as
+ * SoundEffectPlacement.at_s and MediaOverlay.start_s / end_s).
+ *
+ * Styling fields (font_family, size_px, …) are Phase-3 territory — for now
+ * TextLane passes them through unchanged; no UI is rendered for them yet.
+ */
+export interface TextElementBar {
+  id: string;
+  text: string;
+  start_s: number;
+  end_s: number;
+  role: "generative_intro" | "generative_sequence";
+  /** Phase 3 — pass-through only. */
+  font_family?: string;
+  size_px?: number;
+  size_class?: string;
+  color?: string;
+  effect?: string;
+  alignment?: string;
+  source_params?: Record<string, unknown>;
+}
+
+// ── Reducer state ─────────────────────────────────────────────────────────────
+
+export interface TextEditorState {
+  bars: TextElementBar[];
+  /** Snapshots of bars before each mutating action (most recent last). */
+  past: TextElementBar[][];
+  /** Snapshots for redo (most recent first). */
+  future: TextElementBar[][];
+}
+
+// ── Action union ──────────────────────────────────────────────────────────────
+
+export type TextEditorAction =
+  /** Add a new text bar (e.g. user clicks [＋]). */
+  | { type: "ADD_TEXT"; bar: TextElementBar }
+  /** Update the text content of a bar. */
+  | { type: "EDIT_TEXT"; id: string; text: string }
+  /** Move a bar left/right (drag-body): changes start_s, keeps duration. */
+  | { type: "MOVE_BAR"; id: string; start_s: number }
+  /** Drag the left edge (trim start): changes start_s only. */
+  | { type: "TRIM_START"; id: string; start_s: number }
+  /** Drag the right edge (trim end): changes end_s only. */
+  | { type: "TRIM_END"; id: string; end_s: number }
+  /** Remove a bar. */
+  | { type: "DELETE_BAR"; id: string }
+  /** Reorder a bar up or down in z-index stacking order. */
+  | { type: "REORDER"; id: string; direction: "up" | "down" }
+  /** Step back one mutation. */
+  | { type: "UNDO" }
+  /** Step forward one mutation. */
+  | { type: "REDO" }
+  /** Replace the entire state (e.g. when the parent refreshes from the API). */
+  | { type: "RESET"; bars: TextElementBar[] };
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+
+export function initTextEditorState(bars: TextElementBar[]): TextEditorState {
+  return { bars, past: [], future: [] };
+}
+
+// ── History helper ────────────────────────────────────────────────────────────
+
+/** Push current bars to past, set next, clear future. Caps at TEXT_HISTORY_LIMIT. */
+function withHistory(
+  state: TextEditorState,
+  next: TextElementBar[],
+): TextEditorState {
+  const past = [...state.past, state.bars];
+  if (past.length > TEXT_HISTORY_LIMIT) past.shift();
+  return { bars: next, past, future: [] };
+}
+
+// ── Reducer ───────────────────────────────────────────────────────────────────
+
+export function textReducer(
+  state: TextEditorState,
+  action: TextEditorAction,
+): TextEditorState {
+  switch (action.type) {
+    case "ADD_TEXT":
+      return withHistory(state, [...state.bars, action.bar]);
+
+    case "EDIT_TEXT": {
+      const next = state.bars.map((b) =>
+        b.id === action.id ? { ...b, text: action.text } : b,
+      );
+      return withHistory(state, next);
+    }
+
+    case "MOVE_BAR": {
+      const next = state.bars.map((b) => {
+        if (b.id !== action.id) return b;
+        const dur = b.end_s - b.start_s;
+        const newStart = Math.max(0, action.start_s);
+        return { ...b, start_s: Math.round(newStart * 10) / 10, end_s: Math.round((newStart + dur) * 10) / 10 };
+      });
+      return withHistory(state, next);
+    }
+
+    case "TRIM_START": {
+      const next = state.bars.map((b) => {
+        if (b.id !== action.id) return b;
+        const newStart = Math.max(0, Math.min(action.start_s, b.end_s - 0.1));
+        return { ...b, start_s: Math.round(newStart * 10) / 10 };
+      });
+      return withHistory(state, next);
+    }
+
+    case "TRIM_END": {
+      const next = state.bars.map((b) => {
+        if (b.id !== action.id) return b;
+        const newEnd = Math.max(b.start_s + 0.1, action.end_s);
+        return { ...b, end_s: Math.round(newEnd * 10) / 10 };
+      });
+      return withHistory(state, next);
+    }
+
+    case "DELETE_BAR":
+      return withHistory(
+        state,
+        state.bars.filter((b) => b.id !== action.id),
+      );
+
+    case "REORDER": {
+      const idx = state.bars.findIndex((b) => b.id === action.id);
+      if (idx === -1) return state;
+      const next = [...state.bars];
+      if (action.direction === "up" && idx > 0) {
+        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      } else if (action.direction === "down" && idx < next.length - 1) {
+        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      } else {
+        return state; // already at edge — no change, no history push
+      }
+      return withHistory(state, next);
+    }
+
+    case "UNDO": {
+      if (state.past.length === 0) return state;
+      const prev = state.past[state.past.length - 1];
+      return {
+        bars: prev,
+        past: state.past.slice(0, -1),
+        future: [state.bars, ...state.future],
+      };
+    }
+
+    case "REDO": {
+      if (state.future.length === 0) return state;
+      const next = state.future[0];
+      return {
+        bars: next,
+        past: [...state.past, state.bars],
+        future: state.future.slice(1),
+      };
+    }
+
+    case "RESET":
+      return initTextEditorState(action.bars);
+
+    default:
+      return state;
+  }
+}
