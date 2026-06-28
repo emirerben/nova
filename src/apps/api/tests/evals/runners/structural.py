@@ -1556,6 +1556,119 @@ def check_style_intent(output: Any) -> list[str]:
     return failures
 
 
+def check_style_observation(output: Any) -> list[str]:
+    """Structural checks for nova.video.style_observation.
+
+    Guards the vocabulary-discipline invariant: the output must only contain
+    fields from the constrained Literal vocabulary (no raw font names, no
+    ``effect`` field). These are the same rules enforced by parse() — this
+    function validates the stored fixture output matches the expected schema.
+    """
+    failures: list[str] = []
+
+    from app.agents.style_observation import (
+        _ANCHORS,
+        _FONT_FEELS,
+        _LAYOUTS,
+        _POSITIONS,
+        _SIZE_CLASSES,
+        _STROKES,
+    )
+    _VALID_FONT_FEELS = frozenset(_FONT_FEELS)
+    _VALID_POSITIONS = frozenset(_POSITIONS)
+    _VALID_SIZE_CLASSES = frozenset(_SIZE_CLASSES)
+    _VALID_LAYOUTS = frozenset(_LAYOUTS)
+    _VALID_STROKES = frozenset(_STROKES)
+    _VALID_ANCHORS = frozenset(_ANCHORS)
+
+    has_text = getattr(output, "has_on_screen_text", None)
+    if not isinstance(has_text, bool):
+        failures.append(f"has_on_screen_text must be bool, got {type(has_text)!r}")
+        return failures  # can't check the rest meaningfully
+
+    font_feel = getattr(output, "font_feel", None)
+    if font_feel not in _VALID_FONT_FEELS:
+        failures.append(f"font_feel must be one of {sorted(_VALID_FONT_FEELS)}, got {font_feel!r}")
+
+    # Vocabulary discipline: if no on-screen text, font_feel must be 'none'
+    # and all other style fields must be None.
+    if not has_text:
+        if font_feel != "none":
+            failures.append(
+                f"font_feel must be 'none' when has_on_screen_text=False, got {font_feel!r}"
+            )
+        for field in ("text_color_hex", "highlight_color_hex", "position",
+                      "size_class", "layout", "stroke", "text_anchor"):
+            val = getattr(output, field, None)
+            if val is not None:
+                failures.append(
+                    f"{field} must be None when has_on_screen_text=False, got {val!r}"
+                )
+    else:
+        # When text IS present, font_feel="none" is semantically contradictory —
+        # it means the model returned an unrecognized font name that was coerced
+        # to the fallback. Flag as a quality warning (not a hard failure, since
+        # the observation is still usable; the aggregator discards low-confidence fields).
+        if font_feel == "none":
+            failures.append(
+                "font_feel is 'none' but has_on_screen_text=True — "
+                "likely an unrecognized font value from the model (coerced to fallback)"
+            )
+        # When text IS present, validate any non-None style fields against vocabulary.
+        position = getattr(output, "position", None)
+        if position is not None and position not in _VALID_POSITIONS:
+            failures.append(
+                f"position must be one of {sorted(_VALID_POSITIONS)} or None, got {position!r}"
+            )
+        size_class = getattr(output, "size_class", None)
+        if size_class is not None and size_class not in _VALID_SIZE_CLASSES:
+            failures.append(
+                f"size_class must be one of {sorted(_VALID_SIZE_CLASSES)}"
+                f" or None, got {size_class!r}"
+            )
+        layout = getattr(output, "layout", None)
+        if layout is not None and layout not in _VALID_LAYOUTS:
+            failures.append(
+                f"layout must be one of {sorted(_VALID_LAYOUTS)} or None, got {layout!r}"
+            )
+        stroke = getattr(output, "stroke", None)
+        if stroke is not None and stroke not in _VALID_STROKES:
+            failures.append(
+                f"stroke must be one of {sorted(_VALID_STROKES)} or None, got {stroke!r}"
+            )
+        text_anchor = getattr(output, "text_anchor", None)
+        if text_anchor is not None and text_anchor not in _VALID_ANCHORS:
+            failures.append(
+                f"text_anchor must be one of {sorted(_VALID_ANCHORS)} or None, got {text_anchor!r}"
+            )
+        # Hex color validation — must be #rrggbb or #rgb format if present.
+        for color_field in ("text_color_hex", "highlight_color_hex"):
+            hex_val = getattr(output, color_field, None)
+            if hex_val is not None:
+                if not (
+                    isinstance(hex_val, str)
+                    and hex_val.startswith("#")
+                    and len(hex_val) in (4, 7)
+                    and all(c in "0123456789abcdef" for c in hex_val[1:])
+                ):
+                    failures.append(
+                        f"{color_field} must be a lowercase hex color or None, got {hex_val!r}"
+                    )
+
+    confidence = getattr(output, "confidence", None)
+    if not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
+        failures.append(f"confidence must be float in [0, 1], got {confidence!r}")
+
+    # Parity guard: VideoStyleObservation has model_config=extra="forbid", so
+    # Pydantic rejects unknown fields (incl. "effect") at construction time —
+    # they never reach this checker. The guard below is defense-in-depth for
+    # dict-based fixture replay where the model is bypassed.
+    if isinstance(output, dict) and "effect" in output:
+        failures.append("'effect' field must not be present (parity guard — not renderer-safe)")
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1608,4 +1721,6 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_style_intent(output)
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
+    if agent_name == "nova.video.style_observation":
+        return check_style_observation(output)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

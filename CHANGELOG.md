@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.8.0] — 2026-06-28
+
+### Added
+- **Style Observation agent (PR 1/5 — TikTok style personalization).** `StyleObservationAgent` (`app/agents/style_observation.py`) watches a creator's TikTok MP4 via the Gemini File API and emits a `VideoStyleObservation`: `font_feel` (6-value Literal), `text_color_hex`, `highlight_color_hex`, `position`, `size_class`, `layout`, `stroke`, `text_anchor`, and `confidence`. All fields use constrained Literals — Gemini cannot emit raw font names or an `effect` field (renderer-parity guard, mirrors `StyleKnobs(extra="forbid")`). `parse()` defensively coerces every field; `has_on_screen_text=False` returns an early result without raising. Live eval on @qbuilder's video confirms `bold_display` + gold highlight at confidence 0.9. Dark behind `tiktok_style_vision_enabled=False` (no code path calls it yet). Prompt: `prompts/observe_video_style.txt`. Evals: `tests/evals/test_style_observation_evals.py` + rubric `tests/evals/rubrics/style_observation.md` + 3 fixtures (2 golden, 1 live). 62 unit tests.
+
 ## [0.5.7.0] — 2026-06-28
 
 ### Added
