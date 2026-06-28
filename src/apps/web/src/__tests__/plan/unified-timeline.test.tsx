@@ -86,7 +86,8 @@ function makeProps(override = {}) {
     hasText: false,
     textPanel: null,
     onTextPanelChange: jest.fn(),
-    onOpenTab: jest.fn(),
+    clipsPanel: null,
+    onClipsPanelChange: jest.fn(),
     ...override,
   };
 }
@@ -226,12 +227,18 @@ describe("UnifiedTimeline — undo/redo", () => {
   });
 });
 
-describe("UnifiedTimeline — read-only lane click-through", () => {
-  it("Clips lane click calls onOpenTab('clips')", () => {
-    const onOpenTab = jest.fn();
-    render(<UnifiedTimeline {...makeProps({ onOpenTab })} />);
-    fireEvent.click(screen.getByText("Clips").closest("[role='button']")!);
-    expect(onOpenTab).toHaveBeenCalledWith("clips");
+describe("UnifiedTimeline — expandable lanes", () => {
+  it("Clips lane click expands inline panel", async () => {
+    const onClipsPanelChange = jest.fn();
+    const clipsPanel = <div data-testid="clips-panel-content">Clips controls</div>;
+    render(<UnifiedTimeline {...makeProps({ clipsPanel, onClipsPanelChange })} />);
+    expect(screen.getByText("Clips")).toBeInTheDocument();
+    // Panel content hidden initially.
+    expect(screen.queryByTestId("clips-panel-content")).toBeNull();
+    // Click expands the inline panel.
+    await act(async () => { fireEvent.click(screen.getByText("Clips").closest("[role='button']")!); });
+    expect(screen.getByTestId("clips-panel-content")).toBeInTheDocument();
+    expect(onClipsPanelChange).toHaveBeenCalledWith(true);
   });
 
   it("Text lane shown when hasText=true; click expands inline panel (not a click-through)", async () => {

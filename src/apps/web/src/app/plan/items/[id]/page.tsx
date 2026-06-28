@@ -64,10 +64,8 @@ import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
 import CaptionEditor from "../../_components/CaptionEditor";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
-import { TimelineEditor } from "../../../generative/TimelineEditor";
-import { useTimelineSession } from "../../../generative/useTimelineSession";
-import SoundEffectEditor from "../../_components/SoundEffectEditor";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
+import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
@@ -93,10 +91,6 @@ const MEDIA_OVERLAYS_ENABLED =
   _mediaOverlaysRaw.toLowerCase() === "true" || _mediaOverlaysRaw === "1";
 const SOUND_EFFECTS_ENABLED =
   process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
-// Kill-switch: unified multi-lane timeline replaces the legacy Sound tab when true (default).
-// Set NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED=false to fall back to SoundEffectEditor list view.
-const UNIFIED_TIMELINE_ENABLED =
-  process.env.NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED !== "false";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
@@ -1321,18 +1315,14 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
 }
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
-// "timeline" replaces "sound" when UNIFIED_TIMELINE_ENABLED is true (default).
+// Clips tab removed in PR-5: editing moved inline to the Timeline Clips lane.
 // Text + Font tabs removed in PR-4: editing moved inline to the Timeline Text lane.
 // Overlays tab removed in PR-3: editing moved inline to the Timeline Overlays lane.
-type EditorTab = "song" | "clips" | "sound" | "captions" | "timeline";
+type EditorTab = "song" | "captions" | "timeline";
 
 const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "captions", icon: "CC", label: "Captions" },
   { id: "song", icon: "♫", label: "Song" },
-  { id: "clips", icon: "✂", label: "Clips" },
-  // Legacy Sound list — shown only when UNIFIED_TIMELINE_ENABLED is off.
-  { id: "sound", icon: "🔊", label: "Sound" },
-  // Unified multi-lane Timeline — shown when UNIFIED_TIMELINE_ENABLED is on (default).
   { id: "timeline", icon: "▭", label: "Timeline" },
 ];
 
@@ -1716,10 +1706,8 @@ function FocusedResults({
                   if (hasCaptions && tab.id === "song") return null;
                   // Hide Song tab when no song is swappable
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                  // Legacy Sound list: only when SFX enabled AND unified timeline is off.
-                  if (tab.id === "sound" && (!SOUND_EFFECTS_ENABLED || UNIFIED_TIMELINE_ENABLED)) return null;
-                  // Unified Timeline: only when SFX enabled AND unified timeline is on.
-                  if (tab.id === "timeline" && (!SOUND_EFFECTS_ENABLED || !UNIFIED_TIMELINE_ENABLED)) return null;
+                  // Timeline: only when SFX is enabled.
+                  if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
                   const isActive = activeTab === tab.id;
                   return (
                     <button
@@ -1789,7 +1777,6 @@ function FocusedResults({
                       setSfxAudioUrls={setSfxAudioUrls}
                       currentTimeS={currentTimeS}
                       onTextPanelChange={setTextLaneOpen}
-                      onSetActiveTab={setActiveTab}
                     />
                   )}
                 </div>
@@ -1871,7 +1858,6 @@ function FocusedVariantControls({
   setSfxAudioUrls,
   currentTimeS,
   onTextPanelChange,
-  onSetActiveTab,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -1900,11 +1886,7 @@ function FocusedVariantControls({
   currentTimeS: number;
   /** Called when the UnifiedTimeline Text panel opens/closes — parent switches hero to LiveEditPreview. */
   onTextPanelChange: (open: boolean) => void;
-  /** Sets the active editor tab — used by UnifiedTimeline to click-through to clips editor. */
-  onSetActiveTab: (tab: EditorTab | null) => void;
 }) {
-  const timeline = useTimelineSession(itemId, variant, refetch, "plan-item");
-
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
   const overlaysDirtyRef = useRef(false);
@@ -2094,24 +2076,14 @@ function FocusedVariantControls({
       }
     : { onRetext, onRemoveText, onChangeStyle, onResize, onChangeLayout };
 
-  // "clips" tab: open the timeline editor inline. The TimelineEditor is always
-  // rendered (it's a sheet) but we auto-open it when the tab activates.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — open on tab change, not on every render
-  useEffect(() => {
-    if (activeTab === "clips" && timeline.entryVisible && !timeline.isEditorOpen) {
-      timeline.openEditor();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
-
   // ── SFX state + handlers ──────────────────────────────────────────────────
   const [sfxUploading, setSfxUploading] = useState(false);
   const [glossaryEffects, setGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [glossaryLoading, setGlossaryLoading] = useState(false);
 
-  // Load glossary when the Sound or Timeline tab is first opened.
+  // Load glossary when the Timeline tab is first opened.
   useEffect(() => {
-    if ((activeTab !== "sound" && activeTab !== "timeline") || !SOUND_EFFECTS_ENABLED) return;
+    if (activeTab !== "timeline" || !SOUND_EFFECTS_ENABLED) return;
     if (glossaryEffects.length > 0) return;
     setGlossaryLoading(true);
     getSoundEffects()
@@ -2195,9 +2167,7 @@ function FocusedVariantControls({
   }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
 
   const showSongSection = activeTab === "song";
-  const showSoundSection = activeTab === "sound" && SOUND_EFFECTS_ENABLED && !UNIFIED_TIMELINE_ENABLED;
-  const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED && UNIFIED_TIMELINE_ENABLED;
-  // Clips: the TimelineEditor sheet handles itself; we just need the render.
+  const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED;
 
   return (
     <>
@@ -2216,42 +2186,12 @@ function FocusedVariantControls({
           onEditClips={undefined}
           showClipEditor={false}
           clipSlotCount={null}
-          hasClipEdits={timeline.hasUserEdits}
+          hasClipEdits={false}
           hideSections={["caption", "size", "layout", "style", "clips"]}
         />
       )}
 
-      {/* Timeline editor sheet — always rendered, opened when clips tab is active */}
-      {timeline.isEditorOpen && (
-        <TimelineEditor
-          ownerId={itemId}
-          variantId={variant.variant_id}
-          base="plan-item"
-          onClose={timeline.closeEditor}
-          onRenderEnqueued={() => {
-            timeline.onRenderEnqueued();
-            markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-          }}
-        />
-      )}
-
-      {/* Sound tab: legacy sound-effect list (visible only when UNIFIED_TIMELINE_ENABLED=false) */}
-      {showSoundSection && (
-        <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-4">
-          <SoundEffectEditor
-            placements={sfxPlacements}
-            variantDurationS={variantDurationS}
-            currentTimeS={currentTimeS}
-            rendering={variant.render_status === "rendering" || sfxUploading}
-            glossaryEffects={glossaryEffects}
-            glossaryLoading={glossaryLoading}
-            onUploadRequest={handleSfxUpload}
-            onChange={handleSfxChange}
-          />
-        </div>
-      )}
-
-      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text interactive, Clips read-only) */}
+      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text + Clips inline) */}
       {showTimelineSection && (
         <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
           <UnifiedTimeline
@@ -2303,7 +2243,17 @@ function FocusedVariantControls({
                 </div>
               ) : null
             }
-            onOpenTab={(tab) => onSetActiveTab(tab)}
+            clipsPanel={
+              <InlineClipsEditor
+                ownerId={itemId}
+                variantId={variant.variant_id}
+                base="plan-item"
+                onRenderEnqueued={() => {
+                  markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+                  refetch();
+                }}
+              />
+            }
           />
         </div>
       )}
