@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.7.0] — 2026-06-28
+
+### Added
+- **Unified Timeline Editor — PR-5 (inline Clips lane).** The full-screen `TimelineEditor` sheet is retired in favour of an `InlineClipsEditor` component that renders directly inside the `UnifiedTimeline` Clips lane. Clicking the Clips lane bar expands a compact slot list with drag-to-reorder, in-point scrubbing, trim nudge buttons, and remove controls, all powered by the existing `timeline-reducer.ts` + `timeline-math.ts` + `getTimeline`/`editTimeline`/`resetTimeline` backend contracts. The `InlineClipsEditor` is shared across the generative page (`VariantTile`), plan-item page, and the onboarding `EditPayoff` payoff panel. Deleted: `TimelineEditor.tsx` (1 603 lines), `useTimelineSession.ts`, `SoundEffectEditor.tsx`, and the `NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED` fallback branch. The `EditorTab` union now has three members: `"song" | "captions" | "timeline"`.
+
+### Removed
+- `TimelineEditor.tsx`, `useTimelineSession.ts`, `SoundEffectEditor.tsx` — superseded by `InlineClipsEditor`.
+- `NEXT_PUBLIC_UNIFIED_TIMELINE_ENABLED` kill-switch and its fallback branches — the unified timeline is now unconditional.
+- `"clips"` and `"sound"` `EditorTab` values — no longer needed after all editing moves inline.
+
 ## [0.5.6.1] — 2026-06-28
 
 ### Fixed

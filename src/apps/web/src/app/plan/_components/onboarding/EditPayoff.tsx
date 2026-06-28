@@ -19,8 +19,7 @@ import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { ProgressTheater } from "@/components/progress";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
 import { TEXT_MODE_LABEL } from "@/app/generative/VariantCard";
-import { TimelineEditor } from "@/app/generative/TimelineEditor";
-import { useTimelineSession } from "@/app/generative/useTimelineSession";
+import { InlineClipsEditor } from "@/app/plan/_components/InlineClipsEditor";
 import { downloadVideo } from "@/lib/download-video";
 import { formatElapsed } from "@/components/progress/logic";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
@@ -78,20 +77,18 @@ function FocusedVariantPanel({
   );
 
   const instantEligible = isInstantEditEligible(variant as unknown as EditableVariant);
-  const timelineSession = useTimelineSession(jobId, variant, refresh);
+  const [clipsOpen, setClipsOpen] = useState(false);
 
-  const awaitingTimelineRender = timelineSession.wait.phase === "rendering";
   useEffect(() => {
-    if (!awaitingTimelineRender && !session.isSaving) return;
+    if (!session.isSaving) return;
     const t = setInterval(refresh, 2000);
     return () => clearInterval(t);
-  }, [awaitingTimelineRender, session.isSaving, refresh]);
+  }, [session.isSaving, refresh]);
 
   // StableVideo handles URL stability; no manual pin ref needed.
 
   const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
-  const timelineWait = timelineSession.wait.phase;
 
   const introParams = resolveIntroParams(
     variant as unknown as EditableVariant,
@@ -109,11 +106,7 @@ function FocusedVariantPanel({
       {/* LEFT: hero video — fixed narrow column so the editor gets the room */}
       <div className="w-full shrink-0 sm:max-w-[260px] lg:w-[260px]">
         <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-          {timelineWait === "rendering" ? (
-            <div className="flex h-full items-center justify-center text-sm text-[#71717a]">
-              Applying your edit…
-            </div>
-          ) : showWysiwyg ? (
+          {showWysiwyg ? (
             <>
               <StableVideo
                 src={variant.base_video_url}
@@ -239,10 +232,10 @@ function FocusedVariantPanel({
               refresh();
             }
           }}
-          onEditClips={timelineSession.openEditor}
-          showClipEditor={timelineSession.entryVisible}
-          clipSlotCount={timelineSession.slotCount}
-          hasClipEdits={timelineSession.hasUserEdits}
+          onEditClips={() => setClipsOpen((o) => !o)}
+          showClipEditor
+          clipSlotCount={null}
+          hasClipEdits={false}
         />
         {instantEligible && (
           <div className="mt-6">
@@ -254,13 +247,13 @@ function FocusedVariantPanel({
             />
           </div>
         )}
-        {timelineSession.isEditorOpen && (
+        {clipsOpen && (
           <div className="mt-4">
-            <TimelineEditor
+            <InlineClipsEditor
               ownerId={jobId}
               variantId={variant.variant_id}
-              onClose={timelineSession.closeEditor}
-              onRenderEnqueued={timelineSession.onRenderEnqueued}
+              base="generative"
+              onRenderEnqueued={() => { setClipsOpen(false); refresh(); }}
             />
           </div>
         )}
