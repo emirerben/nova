@@ -1,14 +1,15 @@
 "use client";
 
 /**
- * Inline clips editor for the UnifiedTimeline Clips lane.
+ * Inline clips editor — timeline bar view.
  *
- * Self-contained: fetches the timeline, manages the reducer draft, and submits
- * via editTimeline / resetTimeline. Designed to render inside the Clips lane's
- * expandable panel (same pattern as the Text lane's inline textPanel).
+ * Each clip is shown as a proportional bar on a shared output timeline.
+ * • Left handle on a bar  → trim in-point (scrubs source video live)
+ * • Right handle on a bar → extend / shrink clip duration in output
+ * • Click bar body        → expand source-clip panel with precise in/out handles
+ *                           + mini video preview that seeks to the in-frame instantly
  *
- * Covers the same core edit operations as the retired full-screen TimelineEditor
- * sheet: reorder, in-point, duration nudge, reset, undo/redo, and apply.
+ * All edits stay local (reducer draft) until the user clicks Apply.
  */
 
 import {
@@ -25,14 +26,13 @@ import {
   resetTimeline,
   TimelineApiError,
   type TimelineBase,
+  type TimelineClip,
   type TimelineResponse,
 } from "@/lib/generative-api";
 import {
   clampInPoint,
   countEdits,
-  formatInPoint,
   formatSeconds,
-  formatTimecode,
   slotWindows,
   totalDurationS,
   type DraftSlot,
@@ -54,126 +54,187 @@ const EMPTY_EDITOR_STATE: EditorState = {
   clampedKey: null,
 };
 
-const HANDLE_PX = 12;
+const MIN_BAR_PCT = 1.5; // minimum rendered bar width so tiny clips are still clickable
 
-// ── Inline in-point scrubber (ported from TimelineEditor) ────────────────────
+// ─── Drag helpers ──────────────────────────────────────────────────────────────
 
-function InPointScrubber({
-  inS,
-  windowS,
-  sourceDurationS,
-  grid,
-  offsetBeats,
-  durationBeats,
-  isSeconds,
-  onChange,
-}: {
-  inS: number;
-  windowS: number;
-  sourceDurationS: number | null;
-  grid: number[];
-  offsetBeats: number | null;
-  durationBeats: number | null;
-  isSeconds: boolean;
-  onChange: (inS: number, record: boolean) => void;
-}) {
-  const stripRef = useRef<HTMLDivElement>(null);
-  const recordedRef = useRef(false);
-  const src = sourceDurationS ?? Math.max(inS + windowS, 1);
-  const maxIn = Math.max(0, src - windowS);
+type DragKind =
+  | "bar-left"   // output bar left handle  → changes inS
+  | "bar-right"  // output bar right handle → changes durationS
+  | "src-left"   // source timeline left handle → inS
+  | "src-right"; // source timeline right handle → out-point (inS + durationS)
 
-  const posToIn = useCallback(
-    (clientX: number) => {
-      const el = stripRef.current;
-      if (!el) return inS;
-      const r = el.getBoundingClientRect();
-      const frac = Math.min(1, Math.max(0, (clientX - r.left) / r.width));
-      return Math.min(maxIn, frac * src);
-    },
-    [inS, src, maxIn],
-  );
+interface DragState {
+  key: string;
+  kind: DragKind;
+  startX: number;
+  startInS: number;
+  startDurS: number;
+  containerW: number;
+  scaleS: number; // seconds per pixel for this handle's container
+  srcDurS: number | null;
+}
 
-  const handlePointer = useCallback(
-    (e: React.PointerEvent) => {
-      e.preventDefault();
-      const record = !recordedRef.current;
-      recordedRef.current = true;
-      onChange(posToIn(e.clientX), record);
-      const onMove = (ev: PointerEvent) => onChange(posToIn(ev.clientX), false);
-      const onUp = () => {
-        recordedRef.current = false;
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-    },
-    [posToIn, onChange],
-  );
+// ─── Timeline ruler ────────────────────────────────────────────────────────────
 
+function TimeRuler({ totalS }: { totalS: number }) {
   const ticks: number[] = [];
-  if (grid.length > 0 && offsetBeats != null && durationBeats != null) {
-    const base = grid[Math.min(offsetBeats, grid.length - 1)];
-    for (let k = 1; k < durationBeats; k++) {
-      const t = grid[Math.min(offsetBeats + k, grid.length - 1)] - base;
-      ticks.push(inS + t);
-    }
-  }
-
+  const step = totalS <= 10 ? 1 : totalS <= 30 ? 2 : 5;
+  for (let t = 0; t <= totalS; t += step) ticks.push(t);
   return (
-    <div>
-      <div
-        ref={stripRef}
-        role="slider"
-        tabIndex={0}
-        aria-label="Clip in-point"
-        aria-valuemin={0}
-        aria-valuemax={Math.round(maxIn * 10) / 10}
-        aria-valuenow={Math.round(inS * 10) / 10}
-        aria-valuetext={`Starts at ${formatInPoint(inS)}`}
-        onPointerDown={handlePointer}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowLeft") onChange(Math.max(0, inS - 0.1), true);
-          if (e.key === "ArrowRight") onChange(Math.min(maxIn, inS + 0.1), true);
-        }}
-        className="relative h-9 w-full cursor-ew-resize touch-none rounded-md bg-zinc-700/40"
-      >
+    <div className="relative h-5 border-b border-zinc-700/50 select-none">
+      {ticks.map((t) => (
         <div
-          className="absolute inset-y-1 rounded"
-          style={{
-            left: `${(inS / src) * 100}%`,
-            width: `${Math.min(100, (windowS / src) * 100)}%`,
-            background: "rgba(163,230,53,0.7)",
-          }}
+          key={t}
+          className="absolute top-0 flex flex-col items-center"
+          style={{ left: `${(t / totalS) * 100}%` }}
         >
-          <div
-            className="absolute inset-y-0 left-0 rounded-l"
-            style={{ width: HANDLE_PX, background: "rgba(132,204,22,0.9)" }}
-            aria-hidden="true"
-          />
-          <div
-            className="absolute inset-y-0 right-0 rounded-r"
-            style={{ width: HANDLE_PX, background: "rgba(132,204,22,0.9)" }}
-            aria-hidden="true"
-          />
+          <div className="w-px h-2 bg-zinc-600" />
+          <span className="text-[9px] text-zinc-500 tabular-nums -translate-x-1/2">
+            {formatSeconds(t)}
+          </span>
         </div>
-        {ticks.map((t, i) => (
-          <div
-            key={i}
-            className="absolute inset-y-2 w-px bg-lime-400/60"
-            style={{ left: `${(t / src) * 100}%` }}
-            aria-hidden="true"
-          />
-        ))}
-      </div>
-      <p className="mt-0.5 text-[10px] tabular-nums text-zinc-500">
-        Starts at {formatInPoint(inS)}
-      </p>
+      ))}
     </div>
   );
 }
 
-// ── Main component ─────────────────────────────────────────────────────────────
+// ─── Source clip preview panel ─────────────────────────────────────────────────
+
+function SourcePanel({
+  slot,
+  clip,
+  windowS,
+  onSrcLeftDown,
+  onSrcRightDown,
+}: {
+  slot: DraftSlot;
+  clip: TimelineClip | undefined;
+  windowS: number;
+  onSrcLeftDown: (e: React.MouseEvent, containerW: number, srcDurS: number) => void;
+  onSrcRightDown: (e: React.MouseEvent, containerW: number, srcDurS: number) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const srcBarRef = useRef<HTMLDivElement>(null);
+  const srcDur = clip?.duration_s ?? null;
+  const url = clip?.signed_url ?? null;
+
+  // Seek video to in-point whenever inS changes — instant preview, no re-render
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !url) return;
+    if (Math.abs(v.currentTime - slot.inS) > 0.05) {
+      v.currentTime = slot.inS;
+    }
+  }, [slot.inS, url]);
+
+  function handlePreviewClick(e: React.MouseEvent) {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) {
+      v.currentTime = slot.inS;
+      v.play();
+    } else {
+      v.pause();
+    }
+  }
+
+  function handleTimeUpdate() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.currentTime >= slot.inS + windowS) {
+      v.pause();
+      v.currentTime = slot.inS;
+    }
+  }
+
+  const inFrac = srcDur ? Math.min(1, slot.inS / srcDur) : 0;
+  const outFrac = srcDur ? Math.min(1, (slot.inS + windowS) / srcDur) : 1;
+
+  return (
+    <div className="mt-2 rounded-lg border border-zinc-700/50 bg-zinc-900/60 p-3">
+      <div className="flex gap-3">
+        {/* Mini video preview */}
+        {url ? (
+          <div className="relative flex-shrink-0 cursor-pointer" onClick={handlePreviewClick}>
+            <video
+              ref={videoRef}
+              src={url}
+              className="h-24 w-16 rounded object-cover bg-black"
+              muted
+              preload="metadata"
+              onTimeUpdate={handleTimeUpdate}
+            />
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+              <div className="rounded-full bg-black/60 p-1 text-white text-xs">▶</div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex-shrink-0 h-24 w-16 rounded bg-zinc-800 flex items-center justify-center text-zinc-600 text-xs">
+            No preview
+          </div>
+        )}
+
+        {/* Source clip timeline */}
+        <div className="flex-1 min-w-0">
+          <p className="text-[10px] text-zinc-500 mb-1">
+            Source clip{srcDur ? ` — ${formatSeconds(srcDur)} total` : ""}
+          </p>
+
+          {/* Source timeline bar */}
+          <div
+            ref={srcBarRef}
+            className="relative h-7 rounded bg-zinc-800 select-none"
+          >
+            {/* Used region */}
+            <div
+              className="absolute inset-y-0 bg-lime-600/40 rounded"
+              style={{ left: `${inFrac * 100}%`, right: `${(1 - outFrac) * 100}%` }}
+            />
+            {/* Left handle (in-point) */}
+            <div
+              className="absolute inset-y-0 w-3 cursor-ew-resize flex items-center justify-center rounded-l bg-orange-500/80 hover:bg-orange-400 transition-colors"
+              style={{ left: `${inFrac * 100}%`, transform: "translateX(-50%)" }}
+              title="Drag to set in-point"
+              onMouseDown={(e) => {
+                const w = srcBarRef.current?.getBoundingClientRect().width ?? 200;
+                const s = srcDur ?? (slot.inS + windowS + 1);
+                onSrcLeftDown(e, w, s);
+              }}
+            >
+              <div className="w-px h-3 bg-white/80" />
+            </div>
+            {/* Right handle (out-point) */}
+            <div
+              className="absolute inset-y-0 w-3 cursor-ew-resize flex items-center justify-center rounded-r bg-blue-500/80 hover:bg-blue-400 transition-colors"
+              style={{ left: `${outFrac * 100}%`, transform: "translateX(-50%)" }}
+              title="Drag to set out-point"
+              onMouseDown={(e) => {
+                const w = srcBarRef.current?.getBoundingClientRect().width ?? 200;
+                const s = srcDur ?? (slot.inS + windowS + 1);
+                onSrcRightDown(e, w, s);
+              }}
+            >
+              <div className="w-px h-3 bg-white/80" />
+            </div>
+          </div>
+
+          {/* Labels */}
+          <div className="mt-1 flex justify-between text-[10px] tabular-nums text-zinc-400">
+            <span>In: {formatSeconds(slot.inS)}</span>
+            <span>Duration: {formatSeconds(windowS)}</span>
+            <span>Out: {formatSeconds(slot.inS + windowS)}</span>
+          </div>
+          {url && (
+            <p className="mt-1 text-[10px] text-zinc-600">Click video to preview · handles set in/out</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main component ────────────────────────────────────────────────────────────
 
 export function InlineClipsEditor({
   ownerId,
@@ -187,55 +248,107 @@ export function InlineClipsEditor({
   onRenderEnqueued: () => void;
 }) {
   const [loadState, setLoadState] = useState<"loading" | "error" | "ready">("loading");
-  const [timelineData, setTimelineData] = useState<TimelineResponse | null>(null);
+  const [clips, setClips] = useState<TimelineClip[]>([]);
   const [state, dispatch] = useReducer(timelineReducer, EMPTY_EDITOR_STATE);
-  const [initialized, setInitialized] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
+  const dragRef = useRef<DragState | null>(null);
+  const outputBarRef = useRef<HTMLDivElement>(null);
+
+  // ── Load ──────────────────────────────────────────────────────────────────────
   const load = useCallback(async () => {
     setLoadState("loading");
     try {
       const data = await getTimeline(ownerId, variantId, base);
-      setTimelineData(data);
+      setClips(data.clips);
       dispatch({ type: "RESET_DRAFT", timeline: data });
-      setInitialized(true);
       setLoadState("ready");
     } catch {
       setLoadState("error");
     }
   }, [ownerId, variantId, base]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { load(); }, [load]);
 
+  // ── Derived ───────────────────────────────────────────────────────────────────
+  const activeSlots = useMemo(
+    () => state.slots.filter((s) => !s.removed),
+    [state.slots],
+  );
   const windows = useMemo(
-    () => (initialized ? slotWindows(state.slots, state.grid) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [initialized, state?.slots, state?.grid],
+    () => slotWindows(state.slots, state.grid),
+    [state.slots, state.grid],
   );
-
-  const edits = useMemo(
-    () => (initialized ? countEdits(state.baseline, state.slots) : 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [initialized, state?.baseline, state?.slots],
-  );
-
   const totalS = useMemo(
-    () => (initialized ? totalDurationS(state.slots, state.grid) : 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [initialized, state?.slots, state?.grid],
+    () => totalDurationS(state.slots, state.grid),
+    [state.slots, state.grid],
+  );
+  const edits = useMemo(
+    () => countEdits(state.baseline, state.slots),
+    [state.baseline, state.slots],
   );
 
-  const dirty = edits > 0;
-  const liveSlots = initialized ? state.slots.filter((s: DraftSlot) => !s.removed) : [];
+  function clipFor(slot: DraftSlot): TimelineClip | undefined {
+    return clips.find((c) => c.clip_index === slot.clipIndex);
+  }
 
+  // ── Global drag handlers ──────────────────────────────────────────────────────
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      const d = dragRef.current;
+      if (!d) return;
+      const delta = ((e.clientX - d.startX) / d.containerW) * d.scaleS;
+
+      if (d.kind === "bar-left") {
+        // Trim in-point: shift source window start, keep output duration
+        const newIn = Math.max(0, d.startInS + delta);
+        dispatch({ type: "SET_IN", key: d.key, inS: newIn, record: false });
+      } else if (d.kind === "bar-right") {
+        // Extend/shrink output duration
+        const newDur = Math.max(0.3, d.startDurS + delta);
+        dispatch({ type: "SET_WINDOW", key: d.key, inS: d.startInS, durationS: newDur, record: false });
+      } else if (d.kind === "src-left") {
+        // Source timeline in-point handle
+        const newIn = Math.max(0, d.startInS + delta);
+        dispatch({ type: "SET_IN", key: d.key, inS: newIn, record: false });
+      } else if (d.kind === "src-right") {
+        // Source timeline out-point handle (inS fixed, change durationS)
+        const newDur = Math.max(0.3, d.startDurS + delta);
+        dispatch({ type: "SET_WINDOW", key: d.key, inS: d.startInS, durationS: newDur, record: false });
+      }
+    }
+
+    function onUp() {
+      const d = dragRef.current;
+      if (!d) return;
+      // Commit to history on mouse-up
+      const slot = state.slots.find((s) => s.key === d.key);
+      if (slot) {
+        if (d.kind === "bar-left" || d.kind === "src-left") {
+          dispatch({ type: "SET_IN", key: d.key, inS: slot.inS, record: true });
+        } else {
+          dispatch({ type: "SET_WINDOW", key: d.key, inS: slot.inS, durationS: slot.durationS ?? d.startDurS, record: true });
+        }
+      }
+      dragRef.current = null;
+    }
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [state.slots]);
+
+  // ── Apply / Reset ─────────────────────────────────────────────────────────────
   async function handleApply() {
-    if (!initialized || !dirty || liveSlots.length === 0) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const payload = state.slots.map((s: DraftSlot) => ({
+      const payload = state.slots.map((s) => ({
         slot_id: s.slotId,
         clip_index: s.clipIndex,
         in_s: s.inS,
@@ -245,57 +358,43 @@ export function InlineClipsEditor({
       }));
       await editTimeline(ownerId, variantId, payload, base);
       onRenderEnqueued();
-      const fresh = await getTimeline(ownerId, variantId, base);
-      setTimelineData(fresh);
-      dispatch({ type: "RESET_DRAFT", timeline: fresh });
     } catch (err) {
-      if (err instanceof TimelineApiError) {
-        setSubmitError(`Submit failed (${err.status})`);
-      } else {
-        setSubmitError("Submit failed — try again.");
-      }
+      setSubmitError(
+        err instanceof TimelineApiError ? err.message : "Save failed",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
   async function handleReset() {
-    if (!initialized) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
       await resetTimeline(ownerId, variantId, base);
       onRenderEnqueued();
-      const fresh = await getTimeline(ownerId, variantId, base);
-      setTimelineData(fresh);
-      dispatch({ type: "RESET_DRAFT", timeline: fresh });
-    } catch {
-      setSubmitError("Reset failed — try again.");
+    } catch (err) {
+      setSubmitError(
+        err instanceof TimelineApiError ? err.message : "Reset failed",
+      );
     } finally {
       setSubmitting(false);
     }
   }
 
-  // ── Loading / error / uneditable states ────────────────────────────────────
-
+  // ── Loading / error ───────────────────────────────────────────────────────────
   if (loadState === "loading") {
     return (
-      <div className="space-y-2 py-2">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="h-10 rounded-lg bg-zinc-700/20 animate-pulse" />
-        ))}
-      </div>
+      <div className="py-4 text-center text-xs text-zinc-500">Loading clips…</div>
     );
   }
-
   if (loadState === "error") {
     return (
-      <div className="flex flex-col items-center gap-2 py-4 text-center">
-        <p className="text-xs text-zinc-400">Couldn&apos;t load the cut.</p>
+      <div className="py-3 text-center">
+        <p className="text-xs text-red-400">Failed to load clips</p>
         <button
-          type="button"
-          onClick={() => void load()}
-          className="text-xs text-zinc-300 underline underline-offset-2"
+          className="mt-1 text-xs text-zinc-400 underline"
+          onClick={load}
         >
           Retry
         </button>
@@ -303,208 +402,245 @@ export function InlineClipsEditor({
     );
   }
 
-  if (!initialized || !timelineData) return null;
+  const selectedSlot = selectedKey
+    ? state.slots.find((s) => s.key === selectedKey && !s.removed) ?? null
+    : null;
 
-  if (!timelineData.editable) {
-    const reasonCopy: Record<string, string> = {
-      lyrics_sync: "Clips are beat-synced to lyrics and can't be reordered.",
-      voiceover_bed_fit: "Clips are locked to the voiceover timing.",
-      sources_expired: "Source clips have expired — re-upload to edit.",
-    };
-    return (
-      <p className="py-3 text-center text-xs text-zinc-400">
-        {reasonCopy[timelineData.reason ?? ""] ?? "This variant’s clips can’t be edited."}
-      </p>
-    );
-  }
-
-  // ── Editable slot list ──────────────────────────────────────────────────────
-
-  const canUndo = state.past.length > 0;
-  const canRedo = state.future.length > 0;
-  const isNoGrid = state.grid.length === 0;
-  const ctaLabel = submitting
-    ? "Applying…"
-    : dirty
-    ? `Apply ${edits} edit${edits !== 1 ? "s" : ""} · re-renders ~2 min`
-    : `${formatTimecode(totalS)} total`;
-
+  // ── Render ────────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-2">
-      {/* Slot list */}
-      <div className="space-y-1">
-        {state.slots.map((slot: DraftSlot, idx: number) => {
-          const win = windows[idx];
-          const durText = win ? formatSeconds(win.durationS) : "—";
-          const isSelected = selectedKey === slot.key;
-          const srcDur = state.clipDurations[slot.clipIndex] ?? null;
+    <div className="space-y-3 text-sm">
 
+      {/* ── Output timeline ─────────────────────────────────────────────────── */}
+      <div>
+        <TimeRuler totalS={totalS || 1} />
+        <div
+          ref={outputBarRef}
+          className="relative mt-1 h-10 rounded-md bg-zinc-800/60 select-none"
+          aria-label="Clip output timeline"
+        >
+          {state.slots.map((slot, i) => {
+            if (slot.removed) return null;
+            const win = windows[i];
+            if (!win || win.durationS <= 0) return null;
+
+            const leftPct = ((win.startS ?? 0) / (totalS || 1)) * 100;
+            const rawWidth = (win.durationS / (totalS || 1)) * 100;
+            const widthPct = Math.max(rawWidth, MIN_BAR_PCT);
+            const isSelected = selectedKey === slot.key;
+            const clip = clipFor(slot);
+            const label = `C${slot.clipIndex}`;
+
+            return (
+              <div
+                key={slot.key}
+                className="absolute inset-y-1 flex"
+                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+              >
+                {/* Left handle — trim in-point */}
+                <div
+                  title="Drag to trim in-point"
+                  className="flex-shrink-0 w-2.5 cursor-ew-resize rounded-l flex items-center justify-center hover:bg-orange-400/80 bg-orange-500/60 transition-colors"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const cw = outputBarRef.current?.getBoundingClientRect().width ?? 300;
+                    dragRef.current = {
+                      key: slot.key,
+                      kind: "bar-left",
+                      startX: e.clientX,
+                      startInS: slot.inS,
+                      startDurS: slot.durationS ?? win.durationS,
+                      containerW: cw,
+                      scaleS: totalS || 1,
+                      srcDurS: clip?.duration_s ?? null,
+                    };
+                  }}
+                >
+                  <div className="w-px h-4 bg-white/60" />
+                </div>
+
+                {/* Bar body — click to select */}
+                <button
+                  type="button"
+                  className={`flex-1 min-w-0 flex items-center justify-center gap-1 truncate text-[10px] font-medium transition-colors ${
+                    isSelected
+                      ? "bg-lime-500/80 text-black"
+                      : "bg-blue-600/70 text-white hover:bg-blue-500/80"
+                  }`}
+                  onClick={() => setSelectedKey(isSelected ? null : slot.key)}
+                  title={`Clip ${slot.clipIndex} · ${formatSeconds(win.durationS)}`}
+                >
+                  <span className="truncate">{label}</span>
+                  <span className="opacity-70">{formatSeconds(win.durationS)}</span>
+                </button>
+
+                {/* Right handle — extend / shrink duration */}
+                <div
+                  title="Drag to extend or shorten"
+                  className="flex-shrink-0 w-2.5 cursor-ew-resize rounded-r flex items-center justify-center hover:bg-blue-400/80 bg-blue-500/60 transition-colors"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    const cw = outputBarRef.current?.getBoundingClientRect().width ?? 300;
+                    dragRef.current = {
+                      key: slot.key,
+                      kind: "bar-right",
+                      startX: e.clientX,
+                      startInS: slot.inS,
+                      startDurS: slot.durationS ?? win.durationS,
+                      containerW: cw,
+                      scaleS: totalS || 1,
+                      srcDurS: clip?.duration_s ?? null,
+                    };
+                  }}
+                >
+                  <div className="w-px h-4 bg-white/60" />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="mt-1 text-[10px] text-zinc-600">
+          Orange handle = trim in-point · Blue handle = extend/shrink · Click bar to edit
+        </p>
+      </div>
+
+      {/* ── Selected clip panel ─────────────────────────────────────────────── */}
+      {selectedSlot && (() => {
+        const idx = state.slots.indexOf(selectedSlot);
+        const win = windows[idx];
+        return (
+          <SourcePanel
+            slot={selectedSlot}
+            clip={clipFor(selectedSlot)}
+            windowS={win?.durationS ?? 0}
+            onSrcLeftDown={(e, cw, srcDurS) => {
+              e.preventDefault();
+              dragRef.current = {
+                key: selectedSlot.key,
+                kind: "src-left",
+                startX: e.clientX,
+                startInS: selectedSlot.inS,
+                startDurS: selectedSlot.durationS ?? (win?.durationS ?? 1),
+                containerW: cw,
+                scaleS: srcDurS,
+                srcDurS,
+              };
+            }}
+            onSrcRightDown={(e, cw, srcDurS) => {
+              e.preventDefault();
+              dragRef.current = {
+                key: selectedSlot.key,
+                kind: "src-right",
+                startX: e.clientX,
+                startInS: selectedSlot.inS,
+                startDurS: selectedSlot.durationS ?? (win?.durationS ?? 1),
+                containerW: cw,
+                scaleS: srcDurS,
+                srcDurS,
+              };
+            }}
+          />
+        );
+      })()}
+
+      {/* ── Slot list (reorder + remove) ────────────────────────────────────── */}
+      <div className="space-y-1">
+        {activeSlots.map((slot) => {
+          const allIdx = state.slots.indexOf(slot);
+          const isSelected = selectedKey === slot.key;
           return (
             <div
               key={slot.key}
-              className={`rounded-lg border transition-colors ${
-                slot.removed
-                  ? "border-zinc-700/30 bg-zinc-800/20 opacity-50"
-                  : isSelected
-                  ? "border-lime-600/50 bg-zinc-800/60"
-                  : "border-zinc-700/30 bg-zinc-800/30"
+              className={`flex items-center gap-2 rounded px-2 py-1 text-xs transition-colors ${
+                isSelected ? "bg-lime-900/30" : "bg-zinc-800/40 hover:bg-zinc-800/60"
               }`}
             >
-              {/* Slot header row */}
-              <div className="flex items-center gap-2 px-3 py-2">
-                {/* Clip label */}
-                <button
-                  type="button"
-                  className="flex-1 text-left"
-                  onClick={() => setSelectedKey(isSelected ? null : slot.key)}
-                  disabled={slot.removed}
-                >
-                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Clip {slot.clipIndex + 1}
-                  </span>
-                  {!slot.removed && (
-                    <span className="ml-2 text-[10px] text-zinc-500 tabular-nums">{durText}</span>
-                  )}
-                </button>
-
-                {/* Reorder buttons */}
-                {!slot.removed && (
-                  <div className="flex gap-0.5">
-                    <button
-                      type="button"
-                      aria-label="Move clip up"
-                      disabled={idx === 0 || slot.removed}
-                      onClick={() => dispatch({ type: "REORDER", from: idx, to: idx - 1 })}
-                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700/50 hover:text-white disabled:opacity-25"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Move clip down"
-                      disabled={idx === state.slots.length - 1 || slot.removed}
-                      onClick={() => dispatch({ type: "REORDER", from: idx, to: idx + 1 })}
-                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700/50 hover:text-white disabled:opacity-25"
-                    >
-                      ↓
-                    </button>
-                  </div>
-                )}
-
-                {/* Duration nudge */}
-                {!slot.removed && (
-                  <div className="flex gap-0.5">
-                    <button
-                      type="button"
-                      aria-label="Shorten clip"
-                      onClick={() => dispatch({ type: "NUDGE", key: slot.key, delta: -1 })}
-                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700/50 hover:text-white"
-                    >
-                      −
-                    </button>
-                    <button
-                      type="button"
-                      aria-label="Lengthen clip"
-                      onClick={() => dispatch({ type: "NUDGE", key: slot.key, delta: 1 })}
-                      className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700/50 hover:text-white"
-                    >
-                      +
-                    </button>
-                  </div>
-                )}
-
-                {/* Remove / Restore */}
-                {slot.removed ? (
-                  <button
-                    type="button"
-                    onClick={() => dispatch({ type: "RESTORE", key: slot.key })}
-                    className="text-[10px] text-zinc-400 hover:text-white"
-                  >
-                    Restore
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    aria-label="Remove clip"
-                    onClick={() => dispatch({ type: "REMOVE", key: slot.key })}
-                    className="text-[10px] text-zinc-500 hover:text-zinc-300"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-
-              {/* In-point scrubber (expanded) */}
-              {isSelected && !slot.removed && win && (
-                <div className="px-3 pb-3">
-                  <InPointScrubber
-                    inS={slot.inS}
-                    windowS={win.durationS}
-                    sourceDurationS={srcDur}
-                    grid={state.grid}
-                    offsetBeats={win.offsetBeats}
-                    durationBeats={slot.durationBeats}
-                    isSeconds={isNoGrid || slot.durationBeats == null}
-                    onChange={(inS, record) =>
-                      dispatch({ type: "SET_IN", key: slot.key, inS, record })
-                    }
-                  />
-                </div>
-              )}
+              <button
+                type="button"
+                className="flex-1 text-left text-zinc-300"
+                onClick={() => setSelectedKey(isSelected ? null : slot.key)}
+              >
+                Clip {slot.clipIndex}
+              </button>
+              <span className="tabular-nums text-zinc-500">
+                {formatSeconds(windows[allIdx]?.durationS ?? 0)}
+              </span>
+              {/* Reorder */}
+              <button
+                type="button"
+                aria-label="Move up"
+                disabled={allIdx === 0}
+                className="text-zinc-500 hover:text-zinc-200 disabled:opacity-30"
+                onClick={() => dispatch({ type: "REORDER", from: allIdx, to: allIdx - 1 })}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                aria-label="Move down"
+                disabled={allIdx === state.slots.length - 1}
+                className="text-zinc-500 hover:text-zinc-200 disabled:opacity-30"
+                onClick={() => dispatch({ type: "REORDER", from: allIdx, to: allIdx + 1 })}
+              >
+                ↓
+              </button>
+              {/* Remove */}
+              <button
+                type="button"
+                aria-label="Remove clip"
+                className="text-zinc-600 hover:text-red-400"
+                onClick={() => {
+                  dispatch({ type: "REMOVE", key: slot.key });
+                  if (selectedKey === slot.key) setSelectedKey(null);
+                }}
+              >
+                ×
+              </button>
             </div>
           );
         })}
       </div>
 
-      {liveSlots.length === 0 && (
-        <p className="text-center text-xs text-zinc-500">
-          Restore at least one clip to re-render.
-        </p>
-      )}
-
+      {/* ── Controls ─────────────────────────────────────────────────────────── */}
       {submitError && (
-        <p className="text-center text-xs text-red-400">{submitError}</p>
+        <p className="text-xs text-red-400">{submitError}</p>
       )}
-
-      {/* Bottom bar: undo/redo + reset + apply */}
-      <div className="flex items-center justify-between gap-2 pt-1">
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            aria-label="Undo"
-            disabled={!canUndo || submitting}
-            onClick={() => dispatch({ type: "UNDO" })}
-            className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700/50 hover:text-white disabled:opacity-25"
-          >
-            ↩
-          </button>
-          <button
-            type="button"
-            aria-label="Redo"
-            disabled={!canRedo || submitting}
-            onClick={() => dispatch({ type: "REDO" })}
-            className="flex h-7 w-7 items-center justify-center rounded text-zinc-400 hover:bg-zinc-700/50 hover:text-white disabled:opacity-25"
-          >
-            ↪
-          </button>
-          {timelineData.has_user_edits && (
-            <button
-              type="button"
-              disabled={submitting}
-              onClick={() => void handleReset()}
-              className="ml-1 text-[10px] text-zinc-500 hover:text-zinc-300 disabled:opacity-40"
-            >
-              Reset to AI cut
-            </button>
-          )}
-        </div>
+      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-zinc-700/40">
         <button
           type="button"
-          disabled={submitting || !dirty || liveSlots.length === 0}
-          onClick={() => void handleApply()}
-          className="rounded-full bg-white px-4 py-1.5 text-xs font-semibold text-black hover:opacity-80 disabled:bg-zinc-700 disabled:text-zinc-400 disabled:opacity-100"
+          disabled={state.past.length === 0}
+          className="rounded px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-30"
+          onClick={() => dispatch({ type: "UNDO" })}
         >
-          {ctaLabel}
+          ↩ Undo
+        </button>
+        <button
+          type="button"
+          disabled={state.future.length === 0}
+          className="rounded px-2 py-1 text-xs text-zinc-400 hover:text-zinc-200 disabled:opacity-30"
+          onClick={() => dispatch({ type: "REDO" })}
+        >
+          ↪ Redo
+        </button>
+        <button
+          type="button"
+          disabled={submitting}
+          className="rounded px-2 py-1 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-50"
+          onClick={handleReset}
+        >
+          Reset to AI cut
+        </button>
+        <div className="flex-1" />
+        <span className="text-[10px] text-zinc-600 tabular-nums">
+          {totalS > 0 ? formatSeconds(totalS) : ""}
+          {edits > 0 ? ` · ${edits} edit${edits > 1 ? "s" : ""}` : ""}
+        </span>
+        <button
+          type="button"
+          disabled={submitting || edits === 0}
+          className="rounded-lg bg-lime-600 px-3 py-1.5 text-xs font-medium text-black hover:bg-lime-500 disabled:opacity-50 transition-colors"
+          onClick={handleApply}
+        >
+          {submitting ? "Saving…" : "Apply"}
         </button>
       </div>
     </div>
