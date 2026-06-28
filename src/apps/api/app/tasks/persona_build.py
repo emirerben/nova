@@ -68,10 +68,13 @@ def scrape_tiktok_profile(self, persona_id: str, handle: str) -> None:  # noqa: 
         session.commit()
     log.info("scrape_tiktok_profile.done", persona_id=persona_id, handle=handle)
 
-    # Chain the enriched analysis (best-effort, background). The flat profile
-    # above is written before this fires so the interviewer can proceed immediately.
+    # Chain enrichment tasks (best-effort, background). The flat profile above is
+    # written before these fire so the interviewer can proceed immediately.
     if settings.tiktok_deep_analysis_enabled:
         analyze_tiktok_profile.delay(str(persona_id), handle)
+    if settings.tiktok_style_vision_enabled:
+        from app.tasks.style_vision_build import analyze_tiktok_style  # noqa: PLC0415
+        analyze_tiktok_style.delay(str(persona_id), handle)
 
 
 @celery_app.task(
