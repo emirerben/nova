@@ -1566,14 +1566,15 @@ def check_style_observation(output: Any) -> list[str]:
     """
     failures: list[str] = []
 
-    _VALID_FONT_FEELS = frozenset(
-        {"serif_editorial", "clean_sans", "bold_display", "handwritten", "mono", "none"}
+    from app.agents.style_observation import (
+        _ANCHORS, _FONT_FEELS, _LAYOUTS, _POSITIONS, _SIZE_CLASSES, _STROKES,
     )
-    _VALID_POSITIONS = frozenset({"top", "center", "bottom", "center-above", "center-below"})
-    _VALID_SIZE_CLASSES = frozenset({"small", "medium", "large"})
-    _VALID_LAYOUTS = frozenset({"linear", "cluster"})
-    _VALID_STROKES = frozenset({"none", "thin", "thick"})
-    _VALID_ANCHORS = frozenset({"left", "center", "right"})
+    _VALID_FONT_FEELS = frozenset(_FONT_FEELS)
+    _VALID_POSITIONS = frozenset(_POSITIONS)
+    _VALID_SIZE_CLASSES = frozenset(_SIZE_CLASSES)
+    _VALID_LAYOUTS = frozenset(_LAYOUTS)
+    _VALID_STROKES = frozenset(_STROKES)
+    _VALID_ANCHORS = frozenset(_ANCHORS)
 
     has_text = getattr(output, "has_on_screen_text", None)
     if not isinstance(has_text, bool):

@@ -31,7 +31,7 @@ Called by ``app.tasks.style_vision_build`` (PR 2) which:
 from __future__ import annotations
 
 import json
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, get_args
 
 from pydantic import BaseModel
 
@@ -54,22 +54,27 @@ FontFeel = Literal[
     "mono",              # e.g. monospaced / typewriter
     "none",              # no on-screen text visible
 ]
-_FONT_FEELS = ("serif_editorial", "clean_sans", "bold_display", "handwritten", "mono", "none")
-
 Position = Literal["top", "center", "bottom", "center-above", "center-below"]
-_POSITIONS = ("top", "center", "bottom", "center-above", "center-below")
-
 SizeClass = Literal["small", "medium", "large"]
-_SIZE_CLASSES = ("small", "medium", "large")
-
 Layout = Literal["linear", "cluster"]
-_LAYOUTS = ("linear", "cluster")
-
 Stroke = Literal["none", "thin", "thick"]
-_STROKES = ("none", "thin", "thick")
-
 TextAnchor = Literal["left", "center", "right"]
-_ANCHORS = ("left", "center", "right")
+
+# Derived from the Literals so adding a value to the type is the only change needed.
+_FONT_FEELS: tuple[str, ...] = get_args(FontFeel)
+_POSITIONS: tuple[str, ...] = get_args(Position)
+_SIZE_CLASSES: tuple[str, ...] = get_args(SizeClass)
+_LAYOUTS: tuple[str, ...] = get_args(Layout)
+_STROKES: tuple[str, ...] = get_args(Stroke)
+_ANCHORS: tuple[str, ...] = get_args(TextAnchor)
+
+# render_prompt thresholds
+_CAPTION_MAX_CHARS = 300
+_TOP_PERFORMER_VIEW_INDEX = 2.0
+_UNDERPERFORMER_VIEW_INDEX = 0.5
+# Default confidence when no confidence field is returned
+_CONFIDENCE_DEFAULT_NO_TEXT = 0.9  # absence of text is unambiguous
+_CONFIDENCE_DEFAULT_HAS_TEXT = 0.7  # style observation carries perceptual ambiguity
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -119,16 +124,12 @@ class VideoStyleObservation(BaseModel):
 # ── Coercion helpers (used in parse()) ────────────────────────────────────────
 
 
-def _coerce_font_feel(v: object) -> FontFeel:
-    if isinstance(v, str) and v.strip().lower() in _FONT_FEELS:
-        return v.strip().lower()  # type: ignore[return-value]
-    return "none"
-
-
-def _coerce_optional_literal(v: object, valid: tuple[str, ...]) -> str | None:
+def _coerce_optional_literal(
+    v: object, valid: tuple[str, ...], *, default: str | None = None
+) -> str | None:
     if isinstance(v, str) and v.strip().lower() in valid:
         return v.strip().lower()
-    return None
+    return default
 
 
 def _coerce_hex_color(v: object) -> str | None:
@@ -203,18 +204,18 @@ class StyleObservationAgent(Agent[StyleObservationInput, VideoStyleObservation])
     def render_prompt(self, input: StyleObservationInput) -> str:  # noqa: A002
         caption_block = ""
         if input.caption.strip():
-            cap = input.caption.strip()[:300]  # guard against long captions
+            cap = input.caption.strip()[:_CAPTION_MAX_CHARS]
             caption_block = f'Caption (for context only — do not copy): "{cap}"'
 
         performance_block = ""
         if input.view_index is not None:
-            if input.view_index >= 2.0:
+            if input.view_index >= _TOP_PERFORMER_VIEW_INDEX:
                 performance_block = (
                     f"This video is a top performer for this creator "
                     f"({input.view_index:.1f}× their median views). "
                     "Weight its style choices more in your observation."
                 )
-            elif input.view_index < 0.5:
+            elif input.view_index < _UNDERPERFORMER_VIEW_INDEX:
                 performance_block = (
                     f"This video underperformed for this creator "
                     f"({input.view_index:.1f}× their median views)."
@@ -251,12 +252,12 @@ class StyleObservationAgent(Agent[StyleObservationInput, VideoStyleObservation])
             return VideoStyleObservation(
                 has_on_screen_text=False,
                 font_feel="none",
-                confidence=_coerce_confidence(data.get("confidence", 0.9)),
+                confidence=_coerce_confidence(data.get("confidence", _CONFIDENCE_DEFAULT_NO_TEXT)),
             )
 
         return VideoStyleObservation(
             has_on_screen_text=True,
-            font_feel=_coerce_font_feel(data.get("font_feel")),
+            font_feel=_coerce_optional_literal(data.get("font_feel"), _FONT_FEELS, default="none"),  # type: ignore[arg-type]
             text_color_hex=_coerce_hex_color(data.get("text_color_hex")),
             highlight_color_hex=_coerce_hex_color(data.get("highlight_color_hex")),
             position=_coerce_optional_literal(data.get("position"), _POSITIONS),
@@ -264,5 +265,5 @@ class StyleObservationAgent(Agent[StyleObservationInput, VideoStyleObservation])
             layout=_coerce_optional_literal(data.get("layout"), _LAYOUTS),
             stroke=_coerce_optional_literal(data.get("stroke"), _STROKES),
             text_anchor=_coerce_optional_literal(data.get("text_anchor"), _ANCHORS),
-            confidence=_coerce_confidence(data.get("confidence", 0.7)),
+            confidence=_coerce_confidence(data.get("confidence", _CONFIDENCE_DEFAULT_HAS_TEXT)),
         )

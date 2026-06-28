@@ -17,7 +17,6 @@ from app.agents.style_observation import (
     StyleObservationInput,
     VideoStyleObservation,
     _coerce_confidence,
-    _coerce_font_feel,
     _coerce_hex_color,
     _coerce_optional_literal,
     _FONT_FEELS,
@@ -43,16 +42,16 @@ def _agent() -> StyleObservationAgent:
 class TestCoercionHelpers:
     def test_coerce_font_feel_valid(self):
         for ff in _FONT_FEELS:
-            assert _coerce_font_feel(ff) == ff
+            assert _coerce_optional_literal(ff, _FONT_FEELS, default="none") == ff
 
     def test_coerce_font_feel_unknown(self):
-        assert _coerce_font_feel("Times New Roman") == "none"
-        assert _coerce_font_feel(None) == "none"
-        assert _coerce_font_feel(42) == "none"
+        assert _coerce_optional_literal("Times New Roman", _FONT_FEELS, default="none") == "none"
+        assert _coerce_optional_literal(None, _FONT_FEELS, default="none") == "none"
+        assert _coerce_optional_literal(42, _FONT_FEELS, default="none") == "none"
 
     def test_coerce_font_feel_case_insensitive(self):
-        assert _coerce_font_feel("Serif_Editorial") == "serif_editorial"
-        assert _coerce_font_feel("BOLD_DISPLAY") == "bold_display"
+        assert _coerce_optional_literal("Serif_Editorial", _FONT_FEELS, default="none") == "serif_editorial"
+        assert _coerce_optional_literal("BOLD_DISPLAY", _FONT_FEELS, default="none") == "bold_display"
 
     def test_coerce_hex_color_valid(self):
         assert _coerce_hex_color("#ffffff") == "#ffffff"
@@ -290,6 +289,17 @@ class TestStyleObservationRenderPrompt:
         prompt = self._render(view_index=0.2)
         assert "underperformed" in prompt.lower()
         assert "0.2×" in prompt
+
+    def test_view_index_top_performer(self):
+        """view_index >= 2.0 → top-performer label injected."""
+        prompt = self._render(view_index=2.5)
+        assert "top performer" in prompt.lower()
+        assert "2.5×" in prompt
+
+    def test_view_index_top_performer_boundary(self):
+        """view_index == 2.0 exactly → top-performer (>= boundary)."""
+        prompt = self._render(view_index=2.0)
+        assert "top performer" in prompt.lower()
 
     def test_view_index_neutral_no_label(self):
         """view_index in [0.5, 2.0) → no performance label."""
