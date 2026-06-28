@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-06-28",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,26 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "social-peak-moment-send-01",
+      "niche": "young social life & candid moments",
+      "pillar": "spontaneous social moments",
+      "idea": "capture a genuine social or emotional peak — a laugh that surprised you, a spontaneous outing payoff, a moment you knew you'd remember — raw and unedited-feeling, framed so the viewer immediately wants to send it to someone",
+      "hook_pattern": "this was not supposed to happen",
+      "filming_context": "handheld, natural light, 15-20s; catch the moment, don't stage it — the genuine energy IS the hook; no setup needed, no explanation needed",
+      "source": "tiktok:@izzsiomoi (2026-06)",
+      "performance": {"engagement_rate": 0.121, "view_index": 315.1, "sampled_at": "2026-06-28"}
+    },
+    {
+      "id": "visual-spectacle-ultrashort-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "extreme adventure moments",
+      "idea": "an 8-11s pure visual spectacle — a landscape, phenomenon, or moment so visually striking it needs no context; the image is the entire hook; drives algorithmic reach through pure completion rate",
+      "hook_pattern": "you haven't seen [place/thing] like this",
+      "filming_context": "single WOW angle, fill the frame, no text needed — steady or one smooth pan, let the visual breathe for the full 8-11s; don't cut early",
+      "source": "tiktok:@nermozdemir (2026-06-28)",
+      "performance": {"engagement_rate": 0.001, "view_index": 174.8, "sampled_at": "2026-06-28"}
     }
   ]
 }

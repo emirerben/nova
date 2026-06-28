@@ -222,8 +222,10 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
-    assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-06-14"
+    # Bump 2026-06-28: weekly research refresh — added social-candid-peak-01 archetype
+    #                  (izzsiomoi 315x dual-signal lane); updated adventure-humor-candid-01 perf.
+    assert archetypes_version() == "2026-06-28"
+    assert PERSONA_PROMPT_VERSION == "2026-06-28"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -245,8 +247,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
+    # 2026-06-28: weekly research refresh — added social-peak-moment-send-01
+    #             (izzsiomoi 315x dual-signal) and visual-spectacle-ultrashort-01
+    #             (nermozdemir 174.8x algorithm-reach pattern).
+    assert content_ideas_version() == "2026-06-28"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-28"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -262,10 +267,13 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
+    # Bump 2026-06-28: weekly research refresh — added 2 corpus factors
+    # (dual-signal-emotion vi=315x send-to-friend sweet spot; share-depth-narrative
+    # 1.5% share rate on 73s vs 0.003% on viral spectacle from same creator).
+    assert success_factors_version() == "2026-06-28"
+    assert PERSONA_PROMPT_VERSION == "2026-06-28"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-28"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-28"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -286,8 +294,10 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # Bump 2026-06-14: weekly research refresh — added professional-ootd-static-01
     #                  (office fashion / professional aesthetic lane).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
+    # Intro bumped to 2026-06-28: success-factors coupling chain (dual-signal-emotion +
+    #                  share-depth-narrative factors; overlay_examples.json unchanged).
     assert library_version() == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-28"
     assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-14"
 
 
