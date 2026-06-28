@@ -103,8 +103,11 @@ export interface UnifiedTimelineProps {
   textPanel?: React.ReactNode;
   /** Called when the Text lane expands or collapses — parent can use to switch hero mode. */
   onTextPanelChange?: (open: boolean) => void;
-  // Clips lane (read-only click-through) -------------------------------------
-  onOpenTab: (tab: "clips") => void;
+  // Clips lane (inline editing) ----------------------------------------------
+  /** Inline clips editor — rendered inside the Clips lane when expanded. */
+  clipsPanel?: React.ReactNode;
+  /** Called when the Clips lane expands or collapses. */
+  onClipsPanelChange?: (open: boolean) => void;
 }
 
 // ── SFX drag ─────────────────────────────────────────────────────────────────
@@ -242,14 +245,22 @@ export default function UnifiedTimeline({
   hasText,
   textPanel,
   onTextPanelChange,
-  onOpenTab,
+  clipsPanel,
+  onClipsPanelChange,
 }: UnifiedTimelineProps) {
   const [textOpen, setTextOpen] = useState(false);
+  const [clipsOpen, setClipsOpen] = useState(false);
 
   function toggleTextOpen() {
     const next = !textOpen;
     setTextOpen(next);
     onTextPanelChange?.(next);
+  }
+
+  function toggleClipsOpen() {
+    const next = !clipsOpen;
+    setClipsOpen(next);
+    onClipsPanelChange?.(next);
   }
   // ── SFX reducer (undo/redo) ─────────────────────────────────────────────────
 
@@ -606,19 +617,37 @@ export default function UnifiedTimeline({
         </div>
       </div>
 
-      {/* ── Clips lane (read-only) ── */}
-      <ReadOnlyLane
-        label="Clips"
-        totalDurationS={totalDurationS}
-        currentTimeS={currentTimeS}
-        onClick={() => onOpenTab("clips")}
-      >
-        <FullWidthBar
-          label="Edit clips ↗"
-          colorClass="bg-sky-700/30 border-sky-600/40 hover:bg-sky-700/50 text-sky-300/80"
-          onClick={() => onOpenTab("clips")}
-        />
-      </ReadOnlyLane>
+      {/* ── Clips lane (inline editing) ── */}
+      <div>
+        <div
+          role="button"
+          tabIndex={0}
+          className="flex h-10 group cursor-pointer"
+          onClick={toggleClipsOpen}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClipsOpen(); } }}
+        >
+          <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
+            <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider truncate">Clips</span>
+          </div>
+          <div className="relative flex-1 bg-zinc-800/15 border-y border-zinc-700/30 overflow-hidden group-hover:bg-zinc-800/30 transition-colors">
+            <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
+            <button
+              type="button"
+              className="absolute inset-1 rounded flex items-center px-2 border border-sky-600/40 bg-sky-700/30 hover:bg-sky-700/50 text-sky-300/80 transition-colors"
+              onClick={(e) => { e.stopPropagation(); toggleClipsOpen(); }}
+            >
+              <span className="text-[10px] truncate pointer-events-none">
+                {clipsOpen ? "Clips ▲" : "Edit clips ▼"}
+              </span>
+            </button>
+          </div>
+        </div>
+        {clipsOpen && clipsPanel && (
+          <div className="pl-14 pr-2 pb-3 pt-2 border-b border-zinc-700/30">
+            {clipsPanel}
+          </div>
+        )}
+      </div>
 
       {/* ── Text lane (inline editing) ── */}
       {hasText && (
@@ -1020,7 +1049,7 @@ export default function UnifiedTimeline({
       </div>
 
       <p className="pl-14 pt-1.5 text-[9px] text-zinc-600">
-        Clips lane — click to open editor · Text lane — click to expand inline
+        Clips lane — click to expand inline · Text lane — click to expand inline
       </p>
     </div>
   );

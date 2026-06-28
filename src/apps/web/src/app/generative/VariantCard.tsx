@@ -13,18 +13,13 @@ import {
 import type { MusicTrackSummary } from "@/lib/music-api";
 import { downloadVideo } from "@/lib/download-video";
 import { variantFailureCopy } from "@/lib/variant-failure-copy";
-import { etaLadder, formatElapsed } from "@/components/progress/logic";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
 import { LayoutPreviewCard } from "@/components/variant-editor/LayoutPreviewCard";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
-import {
-  RERENDER_BASELINE_MS,
-  type TimelineSession,
-} from "./useTimelineSession";
+export const RERENDER_BASELINE_MS = 120_000;
 
 // Re-exported from the shared module so existing `@/app/generative/VariantCard`
 // importers (and the eligibility test) keep working after the lift to
@@ -64,7 +59,8 @@ export function VariantCard({
   onChangeLayout,
   tone = "dark",
   editSession,
-  timelineSession,
+  clipsOpen,
+  onToggleClips,
   hideVideoWell = false,
 }: {
   variant: GenerativeVariant;
@@ -79,8 +75,9 @@ export function VariantCard({
   onChangeLayout?: (layout: "linear" | "cluster") => Promise<void>;
   tone?: "dark" | "light";
   editSession?: VariantEditSession;
-  /** Clip-timeline editor session (public generative page only — admin omits). */
-  timelineSession?: TimelineSession;
+  /** Whether the inline clips editor is open (managed by VariantTile). */
+  clipsOpen?: boolean;
+  onToggleClips?: () => void;
   /**
    * When true, skip the video well in both render paths. Used by the two-column
    * onboarding payoff, which renders the hero video separately on the LEFT.
@@ -88,7 +85,6 @@ export function VariantCard({
   hideVideoWell?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
-  const [pendingSwapTrackId, setPendingSwapTrackId] = useState<string | null>(null);
   const rendering = variant.render_status === "rendering" || busy;
   const failed = variant.render_status === "failed";
 
@@ -250,8 +246,6 @@ export function VariantCard({
     );
   }
 
-  const timelineWait = timelineSession?.wait.phase ?? "idle";
-
   return (
     <div className={cardClass}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -266,47 +260,11 @@ export function VariantCard({
             </span>
           )}
         </div>
-        {timelineSession?.hasUserEdits && !rendering && !failed && (
-          <span className="rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
-            Edited cut
-          </span>
-        )}
       </div>
 
-      {/* Receipt after a timeline re-render lands. */}
-      {timelineWait === "receipt" && (
-        <p className="mb-2 flex items-center gap-2 text-sm font-medium text-lime-700">
-          <span aria-hidden="true">✓</span>
-          Ready in {formatElapsed(timelineSession?.wait.elapsedMs ?? 0)}
-        </p>
-      )}
-
       {!hideVideoWell && (
-        <div
-          className={[
-            videoWellClass,
-            timelineWait === "receipt"
-              ? "motion-safe:animate-fade-up ring-2 ring-lime-600/60"
-              : "",
-          ]
-            .filter(Boolean)
-            .join(" ")}
-        >
-          {timelineWait === "rendering" ? (
-            <TimelineRenderWell startedAtMs={timelineSession?.wait.startedAtMs ?? null} />
-          ) : timelineWait === "failed" ? (
-            <div className="flex h-full flex-col items-center justify-center gap-4 rounded border border-dashed border-zinc-300 px-4 text-center">
-              <p className="text-sm text-zinc-600">
-                That edit didn&apos;t render — your previous video is untouched.
-              </p>
-              <button
-                onClick={timelineSession?.openEditor}
-                className="rounded-full border border-zinc-200 px-4 py-2 text-xs text-[#3f3f46] hover:border-zinc-400"
-              >
-                Try again
-              </button>
-            </div>
-          ) : rendering ? (
+        <div className={videoWellClass}>
+          {rendering ? (
             <div className={`flex h-full items-center justify-center text-sm ${renderingTextClass}`}>
               Rendering…
             </div>
@@ -330,18 +288,17 @@ export function VariantCard({
       )}
 
       <div className="mt-3 flex flex-wrap gap-2">
-        {timelineSession?.entryVisible && (
+        {onToggleClips && (
           <button
-            onClick={timelineSession.openEditor}
+            onClick={onToggleClips}
             disabled={rendering}
             className={
               tone === "light"
-                ? "rounded-full border border-zinc-200 px-3 py-1.5 text-xs font-medium text-[#0c0c0e] hover:border-zinc-400 disabled:opacity-40"
-                : "rounded-full border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-200 hover:border-zinc-500 disabled:opacity-40"
+                ? `rounded-full border px-3 py-1.5 text-xs font-medium disabled:opacity-40 ${clipsOpen ? "border-sky-400 bg-sky-50 text-sky-700" : "border-zinc-200 text-[#0c0c0e] hover:border-zinc-400"}`
+                : `rounded-full border px-3 py-1.5 text-xs font-medium disabled:opacity-40 ${clipsOpen ? "border-sky-500 bg-sky-900/30 text-sky-300" : "border-zinc-700 text-zinc-200 hover:border-zinc-500"}`
             }
           >
-            Edit clips
-            {timelineSession.slotCount != null ? ` · ${timelineSession.slotCount}` : ""}
+            {clipsOpen ? "Hide clips ▲" : "Edit clips ▼"}
           </button>
         )}
         {!rendering && !failed && variant.output_url && (
@@ -498,13 +455,7 @@ export function VariantCard({
             value=""
             onChange={(e) => {
               if (!e.target.value) return;
-              // A song swap rebuilds the cut server-side — if the user has
-              // clip edits, confirm before destroying them.
-              if (timelineSession?.hasUserEdits) {
-                setPendingSwapTrackId(e.target.value);
-              } else {
-                run(() => onSwap(e.target.value));
-              }
+              run(() => onSwap(e.target.value));
             }}
             className={selectClass}
           >
@@ -546,42 +497,7 @@ export function VariantCard({
         </div>
       )}
 
-      <ConfirmDialog
-        open={pendingSwapTrackId !== null}
-        question="Swap the song?"
-        detail="Swapping the song rebuilds the cut — your clip edits will be reset."
-        confirmLabel="Swap song"
-        cancelLabel="Keep this song"
-        onConfirm={() => {
-          const trackId = pendingSwapTrackId;
-          setPendingSwapTrackId(null);
-          if (trackId) run(() => onSwap(trackId));
-        }}
-        onCancel={() => setPendingSwapTrackId(null)}
-      />
     </div>
   );
 }
 
-/**
- * Minimal ETA band for the in-well clip re-render wait (per DESIGN.md §7 D18):
- * serif line + the ETA ladder ("~2 min left" → "about a minute left" →
- * "less than a minute…"), escalating to "Still working…" past 1.5× baseline.
- * Never an m:ss countdown, never bare "Rendering…".
- */
-function TimelineRenderWell({ startedAtMs }: { startedAtMs: number | null }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const elapsed = startedAtMs != null ? now - startedAtMs : 0;
-  const stalled = elapsed > RERENDER_BASELINE_MS * 1.5;
-  const eta = etaLadder(Math.max(0, RERENDER_BASELINE_MS - elapsed));
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center">
-      <p className="font-display text-lg text-[#3f3f46]">Rebuilding your cut</p>
-      <p className="text-sm text-[#71717a]">{stalled ? "Still working…" : eta}</p>
-    </div>
-  );
-}
