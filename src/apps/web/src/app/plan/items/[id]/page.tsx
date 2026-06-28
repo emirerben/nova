@@ -2645,7 +2645,7 @@ function HeroRenderingLabel({
     return (
       <div className="absolute inset-0 flex flex-col items-center justify-end pb-6 gap-1.5 text-center">
         <span className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-medium text-lime-700 leading-tight max-w-[85%] truncate">
-          Applying "{action.label}"
+          Applying &ldquo;{action.label}&rdquo;
         </span>
         <span className="rounded-full bg-white/70 px-2.5 py-0.5 text-[10px] text-[#71717a]">
           ~1–3 min
