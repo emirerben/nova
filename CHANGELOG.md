@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.6.1] — 2026-06-28
+
+### Fixed
+- **Timeline crash on open.** `UnifiedTimeline` threw `TypeError: Cannot read properties of undefined (reading 'toFixed')` when any SFX placement stored before `at_s` / `gain` fields were required hit the aria-label render path. Added `?? 0` / `?? 1` null-guards on all six `.toFixed()` call sites so old data renders gracefully. Crash path: `placements.map(p => p.at_s.toFixed(1))` ran unconditionally on every render regardless of whether the per-placement popover was open.
+- **Overlay card popover unclickable.** The overlay bar label span had `pointer-events-none` + `onClick` — the click never fired. Fixed by removing `pointer-events-none` and blocking drag-start propagation with `onMouseDown={(e) => e.stopPropagation()}` on the span, so clicking the label toggles the popover and dragging the bar still works.
+
 ## [0.5.6.0] — 2026-06-28
 
 ### Added
