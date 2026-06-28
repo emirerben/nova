@@ -18,8 +18,8 @@ export const TEXT_HISTORY_LIMIT = 50;
  * `start_s` / `end_s` are assembled-time seconds (same coordinate space as
  * SoundEffectPlacement.at_s and MediaOverlay.start_s / end_s).
  *
- * Styling fields (font_family, size_px, …) are Phase-3 territory — for now
- * TextLane passes them through unchanged; no UI is rendered for them yet.
+ * Styling fields (font_family, size_px, …) were Phase-3 pass-through only.
+ * T7 adds UI controls for all Tier 1+2 renderer-honored fields.
  */
 export interface TextElementBar {
   id: string;
@@ -27,11 +27,14 @@ export interface TextElementBar {
   start_s: number;
   end_s: number;
   role: "generative_intro" | "generative_sequence";
-  /** Phase 3 — pass-through only. */
   font_family?: string;
   size_px?: number;
   size_class?: string;
   color?: string;
+  /** Optional word highlight color (karaoke / emphasis). Renderer-honored. */
+  highlight_color?: string;
+  /** Stroke width in canvas-px units (0 = no stroke). Renderer-honored. */
+  stroke_width?: number;
   effect?: string;
   alignment?: string;
   source_params?: Record<string, unknown>;
@@ -69,7 +72,16 @@ export type TextEditorAction =
   /** Step forward one mutation. */
   | { type: "REDO" }
   /** Replace the entire state (e.g. when the parent refreshes from the API). */
-  | { type: "RESET"; bars: TextElementBar[] };
+  | { type: "RESET"; bars: TextElementBar[] }
+  /**
+   * Patch arbitrary styling fields on a single bar (T7 property panel).
+   * id and role are excluded because they are immutable identifiers.
+   */
+  | {
+      type: "PATCH_BAR";
+      id: string;
+      patch: Partial<Omit<TextElementBar, "id" | "role">>;
+    };
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -176,6 +188,13 @@ export function textReducer(
 
     case "RESET":
       return initTextEditorState(action.bars);
+
+    case "PATCH_BAR": {
+      const next = state.bars.map((b) =>
+        b.id === action.id ? { ...b, ...action.patch } : b,
+      );
+      return withHistory(state, next);
+    }
 
     default:
       return state;

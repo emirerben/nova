@@ -80,10 +80,20 @@ export interface UnifiedTimelineProps {
    */
   onTextElementsChange?: (bars: TextElementBar[]) => void;
   /**
+   * T7: Called when the user clicks "Apply" in the text property panel.
+   * Triggers an immediate API persist (bypasses the debounce in page.tsx).
+   */
+  onTextApply?: (bars: TextElementBar[]) => void;
+  /**
    * T10 State 4: called when a trim drag is clamped to the minimum bar duration.
    * Parent (page.tsx) can show a brief "Minimum 0.Xs" note.
    */
   onTextTrimClamped?: () => void;
+  /**
+   * T8: true when the variant is an Editorial (sequence) variant and the user
+   * hasn't made any text-element edits yet.  Forwarded to TextLane.
+   */
+  isFirstSequenceEdit?: boolean;
   // Clips lane (inline editing) ----------------------------------------------
   /** Inline clips editor — rendered inside the Clips lane when expanded. */
   clipsPanel?: React.ReactNode;
@@ -113,7 +123,9 @@ export default function UnifiedTimeline({
   onClearOverlays,
   textElements,
   onTextElementsChange,
+  onTextApply,
   onTextTrimClamped,
+  isFirstSequenceEdit,
   clipsPanel,
   onClipsPanelChange,
 }: UnifiedTimelineProps) {
@@ -175,7 +187,9 @@ export default function UnifiedTimeline({
         onTextElementsChange={onTextElementsChange ?? (() => {})}
         expandedBarId={textExpandedBarId}
         onBarSelect={setTextExpandedBarId}
+        onApply={onTextApply}
         onTrimClamped={onTextTrimClamped}
+        isFirstSequenceEdit={isFirstSequenceEdit}
       />
 
       {/* ── Overlays lane ── */}

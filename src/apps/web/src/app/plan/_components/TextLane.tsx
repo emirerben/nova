@@ -13,12 +13,13 @@
  * T7 will replace the placeholder panel with real property controls.
  */
 
-import { useEffect, useReducer, useRef, useState } from "react";
+import { type Dispatch, useEffect, useReducer, useRef, useState } from "react";
 import { computeBarPosition } from "@/lib/timeline/bar-position";
 import { classifyZone, clampSeconds } from "@/lib/timeline/drag-zone";
 import {
   initTextEditorState,
   textReducer,
+  type TextEditorAction,
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
@@ -66,6 +67,12 @@ export interface TextLaneProps {
   /** Called on bar click / keyboard Enter / click-outside. */
   onBarSelect: (id: string | null) => void;
   /**
+   * T7: Called when the user clicks "Apply" in the property panel. Triggers an
+   * immediate API persist (bypasses the debounce in handleTextElementsChange).
+   * Optional — falls back to the debounced path when not provided.
+   */
+  onApply?: (bars: TextElementBar[]) => void;
+  /**
    * When true: the entire lane is read-only (no drag, no add, no delete).
    * Pass true for sequence-mode variants (`intro_mode === "sequence"`).
    */
@@ -75,6 +82,12 @@ export interface TextLaneProps {
    * (MIN_DUR_S). Parent can show a "Minimum 0.Xs" note.
    */
   onTrimClamped?: () => void;
+  /**
+   * T8: true when the variant is an Editorial (sequence) variant and the user
+   * hasn't made any text-element edits yet.  Shows a one-time amber note to
+   * signal that editing the flow makes it user-owned.
+   */
+  isFirstSequenceEdit?: boolean;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -86,9 +99,31 @@ export default function TextLane({
   onTextElementsChange,
   expandedBarId,
   onBarSelect,
+  onApply,
   readOnly = false,
   onTrimClamped,
+  isFirstSequenceEdit = false,
 }: TextLaneProps) {
+  // ── T8: one-time "now user-owned" note for sequence variants ──────────────────
+  // Declared before the emit useEffect so the ref is in scope when bars change.
+  const [showSequenceNote, setShowSequenceNote] = useState(isFirstSequenceEdit);
+  // Ref mirrors the state so we can dismiss from inside the emit useEffect without
+  // adding showSequenceNote to its dependency array (which would cause re-runs).
+  const showSequenceNoteRef = useRef(isFirstSequenceEdit);
+  // Sync with prop: re-show if the parent resets to "first edit" state.
+  useEffect(() => {
+    if (isFirstSequenceEdit) {
+      setShowSequenceNote(true);
+      showSequenceNoteRef.current = true;
+    }
+  }, [isFirstSequenceEdit]);
+  // Auto-dismiss after 5 seconds.
+  useEffect(() => {
+    if (!showSequenceNote) return;
+    const timer = setTimeout(() => setShowSequenceNote(false), 5000);
+    return () => clearTimeout(timer);
+  }, [showSequenceNote]);
+
   // ── Reducer (undo/redo) ───────────────────────────────────────────────────────
 
   const lastEmitted = useRef<TextElementBar[]>(textElements);
@@ -103,6 +138,11 @@ export default function TextLane({
   useEffect(() => {
     if (editorState.bars === lastEmitted.current) return;
     lastEmitted.current = editorState.bars;
+    // T8: dismiss the sequence note on first user edit.
+    if (showSequenceNoteRef.current) {
+      showSequenceNoteRef.current = false;
+      setShowSequenceNote(false);
+    }
     onTextElementsChange(editorState.bars);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorState.bars]);
@@ -402,14 +442,16 @@ export default function TextLane({
         </div>
       </div>
 
-      {/* ── Per-bar inline panel (Phase 4 placeholder) ── */}
+      {/* ── Per-bar inline property panel (T7) ── */}
       {bars.map((bar) =>
         expandedBarId === bar.id ? (
-          <div key={`panel-${bar.id}`} className="ml-14 mr-0 mb-1">
-            <div className="bg-zinc-800 rounded-lg p-3 mt-1 text-xs text-zinc-400">
-              Text styling panel — coming in Phase 4
-            </div>
-          </div>
+          <TextPropertyPanel
+            key={`panel-${bar.id}`}
+            bar={bar}
+            bars={bars}
+            dispatch={dispatch}
+            onApply={onApply}
+          />
         ) : null,
       )}
 
@@ -436,6 +478,461 @@ export default function TextLane({
           </button>
         </div>
       )}
+
+      {/* T8: one-time "now user-owned" note for sequence (Editorial) variants. */}
+      {showSequenceNote && (
+        <div className="ml-14 mr-0 mt-1">
+          <div className="text-xs text-amber-400 bg-amber-950/40 rounded px-2 py-1">
+            Editing this flow makes it yours — Nova won&apos;t regenerate it automatically.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── TextPropertyPanel ─────────────────────────────────────────────────────────
+//
+// Inline tiered property panel rendered below the selected bar.
+//
+// Tier 1 (always visible): text content, size, color, highlight color.
+// Tier 2 (below fold, scrollable): alignment, stroke width, effect, font.
+//
+// Phase 5 fields (bg box, shadow, bold/italic, per-word color sweep) are
+// intentionally omitted — the Skia renderer does not honor them yet (A5 gate).
+//
+// Mobile (≤375px): tabbed bottom-sheet layout ("Text" / "Style").
+// Desktop (>375px): max-h-[60vh] scrollable with a sticky Apply row.
+
+interface TextPropertyPanelProps {
+  bar: TextElementBar;
+  bars: TextElementBar[];
+  dispatch: Dispatch<TextEditorAction>;
+  onApply?: (bars: TextElementBar[]) => void;
+}
+
+// ── Panel constants ───────────────────────────────────────────────────────────
+
+const PANEL_SIZE_PRESETS: Array<{ label: string; value: string }> = [
+  { label: "S",  value: "small"  },
+  { label: "M",  value: "medium" },
+  { label: "L",  value: "large"  },
+  { label: "XL", value: "xlarge" },
+  { label: "J",  value: "jumbo"  },
+];
+
+const PANEL_EFFECTS: Array<{ label: string; value: string }> = [
+  { label: "Static",   value: "static"       },
+  { label: "Fade in",  value: "fade-in"      },
+  { label: "Slide up", value: "slide-up"     },
+  { label: "Karaoke",  value: "karaoke-line" },
+];
+
+/**
+ * Curated 4-font shortlist for the property panel.
+ * Keys are canonical font-registry.json names (validated by the Skia renderer).
+ * cssFamily + weight are used for live in-button preview only.
+ */
+const PANEL_FONTS: Array<{
+  name: string;
+  label: string;
+  cssFamily: string;
+  weight: number;
+}> = [
+  {
+    name: "Playfair Display",
+    label: "Playfair Bold",
+    cssFamily: "'Playfair Display', serif",
+    weight: 700,
+  },
+  {
+    name: "Playfair Display Regular",
+    label: "Playfair Regular",
+    cssFamily: "'Playfair Display', serif",
+    weight: 400,
+  },
+  {
+    name: "Inter",
+    label: "Inter Bold",
+    cssFamily: "'Inter', sans-serif",
+    weight: 700,
+  },
+  {
+    name: "Inter Regular",
+    label: "Inter Regular",
+    cssFamily: "'Inter', sans-serif",
+    weight: 400,
+  },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function isValidHex(s: string): boolean {
+  return /^#?[0-9a-fA-F]{6}$/.test(s.trim());
+}
+function normalizeHex(s: string): string {
+  const t = s.trim();
+  return t.startsWith("#") ? t : `#${t}`;
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+function TextPropertyPanel({
+  bar,
+  bars,
+  dispatch,
+  onApply,
+}: TextPropertyPanelProps) {
+  // Mobile tab (≤375px only — on desktop both tiers are always visible)
+  const [tab, setTab] = useState<"text" | "style">("text");
+
+  // Controlled hex inputs — draft avoids dispatching on every keystroke
+  const [colorDraft, setColorDraft] = useState(bar.color ?? "");
+  const [hlDraft, setHlDraft]       = useState(bar.highlight_color ?? "");
+
+  // Sync drafts when bar changes externally (undo / redo / reset from API)
+  useEffect(() => setColorDraft(bar.color ?? ""),         [bar.color]);
+  useEffect(() => setHlDraft(bar.highlight_color ?? ""),  [bar.highlight_color]);
+
+  function patch(p: Partial<Omit<TextElementBar, "id" | "role">>) {
+    dispatch({ type: "PATCH_BAR", id: bar.id, patch: p });
+  }
+
+  function commitColor(hex: string) {
+    if (!hex.trim()) return;
+    if (isValidHex(hex)) patch({ color: normalizeHex(hex) });
+  }
+  function commitHighlight(hex: string) {
+    if (!hex.trim()) { patch({ highlight_color: undefined }); return; }
+    if (isValidHex(hex)) patch({ highlight_color: normalizeHex(hex) });
+  }
+
+  const charCount = bar.text.length;
+  const sizePx    = bar.size_px      ?? null;
+  const strokeW   = bar.stroke_width ?? 0;
+
+  // ── Tier 1 ───────────────────────────────────────────────────────────────────
+
+  const tier1 = (
+    <div className="space-y-3">
+      {/* Text content */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Text
+        </label>
+        <textarea
+          value={bar.text}
+          onChange={(e) =>
+            dispatch({ type: "EDIT_TEXT", id: bar.id, text: e.target.value })
+          }
+          maxLength={500}
+          rows={3}
+          className="w-full text-xs bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-white placeholder-zinc-600 focus:border-amber-400/60 focus:outline-none resize-none leading-relaxed"
+          placeholder="Enter text…"
+        />
+        <div
+          className={`text-[9px] text-right mt-0.5 tabular-nums ${
+            charCount >= 450 ? "text-amber-400" : "text-zinc-600"
+          }`}
+        >
+          {charCount}/500
+        </div>
+      </div>
+
+      {/* Size — numeric stepper + preset chips */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Size
+        </label>
+        <div className="flex items-center gap-2 mb-1.5">
+          <button
+            type="button"
+            onClick={() =>
+              patch({ size_px: Math.max(8, (sizePx ?? 72) - 1), size_class: undefined })
+            }
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            aria-label="Decrease font size"
+          >
+            −
+          </button>
+          <span className="w-12 text-center text-xs text-white tabular-nums">
+            {sizePx !== null ? `${sizePx}px` : "—"}
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              patch({ size_px: Math.min(300, (sizePx ?? 72) + 1), size_class: undefined })
+            }
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            aria-label="Increase font size"
+          >
+            ＋
+          </button>
+        </div>
+        {/* Preset chips */}
+        <div className="flex gap-1">
+          {PANEL_SIZE_PRESETS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              onClick={() => patch({ size_class: p.value, size_px: undefined })}
+              aria-pressed={bar.size_class === p.value}
+              className={`flex-1 text-[10px] rounded py-1 transition-colors ${
+                bar.size_class === p.value
+                  ? "bg-lime-400 text-black font-semibold"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Text color */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Color
+        </label>
+        <div className="flex items-center gap-2">
+          <div
+            className="w-6 h-6 rounded border border-zinc-600 flex-shrink-0"
+            style={{ backgroundColor: bar.color ?? "#ffffff" }}
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={colorDraft}
+            onChange={(e) => setColorDraft(e.target.value)}
+            onBlur={(e) => commitColor(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commitColor(colorDraft); }}
+            maxLength={7}
+            placeholder="#ffffff"
+            className="flex-1 text-xs bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-white placeholder-zinc-600 focus:border-amber-400/60 focus:outline-none font-mono"
+            aria-label="Text color (6-digit hex)"
+          />
+        </div>
+      </div>
+
+      {/* Highlight color (optional) */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Highlight{" "}
+          <span className="text-zinc-600 normal-case font-normal">(optional)</span>
+        </label>
+        <div className="flex items-center gap-2">
+          <div
+            className="w-6 h-6 rounded border border-zinc-600 flex-shrink-0"
+            style={{
+              backgroundColor: bar.highlight_color ?? "transparent",
+              backgroundImage: bar.highlight_color
+                ? "none"
+                : "repeating-linear-gradient(45deg,#52525b 0,#52525b 2px,transparent 0,transparent 50%)",
+              backgroundSize: "6px 6px",
+            }}
+            aria-hidden="true"
+          />
+          <input
+            type="text"
+            value={hlDraft}
+            onChange={(e) => setHlDraft(e.target.value)}
+            onBlur={(e) => commitHighlight(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commitHighlight(hlDraft); }}
+            maxLength={7}
+            placeholder="#ffee00 or empty"
+            className="flex-1 text-xs bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-white placeholder-zinc-600 focus:border-amber-400/60 focus:outline-none font-mono"
+            aria-label="Highlight color (6-digit hex, optional)"
+          />
+          {bar.highlight_color && (
+            <button
+              type="button"
+              onClick={() => { setHlDraft(""); patch({ highlight_color: undefined }); }}
+              className="text-zinc-500 hover:text-red-400 text-xs px-1 leading-none"
+              aria-label="Clear highlight color"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Tier 2 ───────────────────────────────────────────────────────────────────
+
+  const tier2 = (
+    <div className="space-y-3">
+      {/* Alignment */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Alignment
+        </label>
+        <div className="flex gap-1" role="group" aria-label="Text alignment">
+          {(["left", "center", "right"] as const).map((a) => (
+            <button
+              key={a}
+              type="button"
+              onClick={() => patch({ alignment: a })}
+              aria-pressed={bar.alignment === a}
+              aria-label={`Align ${a}`}
+              className={`flex-1 text-sm py-1 rounded transition-colors ${
+                bar.alignment === a
+                  ? "bg-lime-400 text-black font-semibold"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              {a === "left" ? "◀" : a === "center" ? "▬" : "▶"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Stroke width */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Stroke
+        </label>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              patch({
+                stroke_width: Math.max(0, parseFloat((strokeW - 0.5).toFixed(1))),
+              })
+            }
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            aria-label="Decrease stroke width"
+          >
+            −
+          </button>
+          <span className="w-10 text-center text-xs text-white tabular-nums">
+            {strokeW.toFixed(1)}
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              patch({
+                stroke_width: Math.min(20, parseFloat((strokeW + 0.5).toFixed(1))),
+              })
+            }
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            aria-label="Increase stroke width"
+          >
+            ＋
+          </button>
+        </div>
+      </div>
+
+      {/* Effect */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Effect
+        </label>
+        <div className="flex flex-wrap gap-1">
+          {PANEL_EFFECTS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => patch({ effect: opt.value })}
+              aria-pressed={bar.effect === opt.value}
+              className={`text-[10px] px-2 py-1 rounded transition-colors ${
+                bar.effect === opt.value
+                  ? "bg-lime-400 text-black font-semibold"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Font — rendered in their own typeface as preview */}
+      <div>
+        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+          Font
+        </label>
+        <div className="grid grid-cols-2 gap-1">
+          {PANEL_FONTS.map((f) => (
+            <button
+              key={f.name}
+              type="button"
+              onClick={() => patch({ font_family: f.name })}
+              aria-pressed={bar.font_family === f.name}
+              style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
+              className={`text-[11px] px-2 py-1.5 rounded transition-colors text-left truncate ${
+                bar.font_family === f.name
+                  ? "bg-lime-400 text-black"
+                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────────
+
+  return (
+    <div className="ml-14 mr-0 mb-1">
+      <div
+        className="bg-zinc-800 border border-zinc-700 rounded-lg mt-1 flex flex-col overflow-hidden"
+        style={{ maxHeight: "60vh" }}
+      >
+        {/* Mobile tabs — hidden on desktop, visible on ≤375px */}
+        <div className="hidden max-[375px]:flex border-b border-zinc-700 flex-shrink-0">
+          {(["text", "style"] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTab(t)}
+              className={`flex-1 text-xs py-2 capitalize transition-colors ${
+                tab === t
+                  ? "text-white font-semibold border-b-2 border-amber-400"
+                  : "text-zinc-400 hover:text-zinc-200"
+              }`}
+            >
+              {t === "text" ? "Text" : "Style"}
+            </button>
+          ))}
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 p-3">
+          {/* Desktop (>375px): Tier 1 + Tier 2 stacked */}
+          <div className="max-[375px]:hidden">
+            {tier1}
+            <div className="border-t border-zinc-700/60 mt-3 pt-3">
+              {tier2}
+            </div>
+          </div>
+          {/* Mobile (≤375px): one tier at a time via tabs */}
+          <div className="hidden max-[375px]:block">
+            {tab === "text" ? tier1 : tier2}
+          </div>
+        </div>
+
+        {/* Sticky Apply row — always at bottom even when content is scrolled */}
+        <div className="border-t border-zinc-700 px-3 py-2 flex items-center justify-between bg-zinc-800 flex-shrink-0">
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "UNDO" })}
+            className="text-xs text-zinc-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-zinc-700"
+          >
+            ↩ Undo
+          </button>
+          <button
+            type="button"
+            onClick={() => onApply?.(bars)}
+            className="text-xs px-4 py-1.5 rounded-full bg-lime-400 text-black font-semibold hover:bg-lime-300 active:bg-lime-500 transition-colors"
+          >
+            Apply
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

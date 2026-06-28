@@ -2260,10 +2260,12 @@ function FocusedVariantControls({
           size_px: bar.size_px ?? null,
           size_class: (bar.size_class as TextElement["size_class"]) ?? null,
           color: bar.color ?? null,
+          highlight_color: bar.highlight_color ?? null,
+          stroke_width: bar.stroke_width ?? null,
           effect: (bar.effect as TextElement["effect"]) ?? null,
           alignment: (bar.alignment as TextElement["alignment"]) ?? null,
           source_params: bar.source_params ?? null,
-          position: "middle" as const, // default; T7 will add position controls
+          position: "middle" as const,
         }));
         await putTextElements(itemId, variantId, apiElements);
         markVariantRendering(variantId, variant.render_finished_at ?? null);
@@ -2383,7 +2385,11 @@ function FocusedVariantControls({
               onClearOverlays={handleClearOverlays}
               textElements={textElements}
               onTextElementsChange={handleTextElementsChange}
+              onTextApply={(bars) => { void handleApplyTextElements(variant.variant_id, bars); }}
               onTextTrimClamped={handleTextTrimClamped}
+              isFirstSequenceEdit={
+                variant.intro_mode === "sequence" && !variant.text_elements_user_edited
+              }
               clipsPanel={
                 <InlineClipsEditor
                   ownerId={itemId}
