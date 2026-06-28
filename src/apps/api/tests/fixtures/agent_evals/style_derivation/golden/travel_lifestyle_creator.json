@@ -1,54 +1,272 @@
 {
   "agent": "nova.plan.style_derivation",
-  "prompt_version": "2026-06-07",
+  "prompt_version": "2026-06-28",
   "input": {
-    "persona_summary": "Budget travel creator showing how to explore Europe for under $50/day. Shares real hostel finds, free walking tours, and street food spots. Calm, observational voice — feels like a friend guiding you through a city.",
-    "persona_pillars": ["budget travel", "European cities", "solo travel tips", "hostel life"],
+    "persona_summary": "Budget travel creator showing how to explore Europe for under $50/day. Shares real hostel finds, free walking tours, and street food spots. Calm, observational voice \u2014 feels like a friend guiding you through a city.",
+    "persona_pillars": [
+      "budget travel",
+      "European cities",
+      "solo travel tips",
+      "hostel life"
+    ],
     "persona_tone": "calm, curious, conversational",
     "persona_audience": "20-something solo travelers on a tight budget",
     "tiktok_analysis_summary": "Top videos: slow-walk city-reveal clips with minimal text, editorial serif overlays, montage edits. Hook pattern: start mid-scene, no intro card. High performers lean cinematic not flashy. Avg engagement 4.2%. Best section types: travel tips + location reveals.",
     "available_sets": [
-      {"id": "default", "label": "Default / Editorial", "tags": ["fallback", "editorial", "neutral"]},
-      {"id": "travel_editorial", "label": "Travel — Editorial Serif", "tags": ["agentic", "generative", "travel", "editorial", "vlog", "cinematic"]},
-      {"id": "lifestyle_clean", "label": "Lifestyle — Minimal Serif", "tags": ["agentic", "generative", "lifestyle", "clean", "minimal", "modern"]},
-      {"id": "word_reveal", "label": "Kinetic Word Reveal", "tags": ["agentic", "generative", "kinetic", "statement", "story", "bold"]},
-      {"id": "high_fashion", "label": "High Fashion — Bodoni", "tags": ["agentic", "generative", "fashion", "luxury", "editorial", "magazine"]},
-      {"id": "bold_statement", "label": "Bold Statement — Fraunces", "tags": ["agentic", "generative", "bold", "punchy", "statement", "editorial"]},
-      {"id": "film_mono", "label": "Film / Indie — Mono", "tags": ["agentic", "generative", "film", "indie", "documentary", "minimal"]},
-      {"id": "typewriter", "label": "Typewriter — Letter by Letter", "tags": ["agentic", "generative", "typewriter", "retro", "mechanical", "kinetic"]},
-      {"id": "ai_answer", "label": "AI Answer — Streaming", "tags": ["agentic", "generative", "ai", "streaming", "terminal", "tech"]}
+      {
+        "id": "default",
+        "label": "Default / Editorial",
+        "tags": [
+          "fallback",
+          "editorial",
+          "neutral"
+        ]
+      },
+      {
+        "id": "travel_editorial",
+        "label": "Travel \u2014 Editorial Serif",
+        "tags": [
+          "agentic",
+          "generative",
+          "travel",
+          "editorial",
+          "vlog",
+          "cinematic"
+        ]
+      },
+      {
+        "id": "lifestyle_clean",
+        "label": "Lifestyle \u2014 Minimal Serif",
+        "tags": [
+          "agentic",
+          "generative",
+          "lifestyle",
+          "clean",
+          "minimal",
+          "modern"
+        ]
+      },
+      {
+        "id": "word_reveal",
+        "label": "Kinetic Word Reveal",
+        "tags": [
+          "agentic",
+          "generative",
+          "kinetic",
+          "statement",
+          "story",
+          "bold"
+        ]
+      },
+      {
+        "id": "high_fashion",
+        "label": "High Fashion \u2014 Bodoni",
+        "tags": [
+          "agentic",
+          "generative",
+          "fashion",
+          "luxury",
+          "editorial",
+          "magazine"
+        ]
+      },
+      {
+        "id": "bold_statement",
+        "label": "Bold Statement \u2014 Fraunces",
+        "tags": [
+          "agentic",
+          "generative",
+          "bold",
+          "punchy",
+          "statement",
+          "editorial"
+        ]
+      },
+      {
+        "id": "film_mono",
+        "label": "Film / Indie \u2014 Mono",
+        "tags": [
+          "agentic",
+          "generative",
+          "film",
+          "indie",
+          "documentary",
+          "minimal"
+        ]
+      },
+      {
+        "id": "typewriter",
+        "label": "Typewriter \u2014 Letter by Letter",
+        "tags": [
+          "agentic",
+          "generative",
+          "typewriter",
+          "retro",
+          "mechanical",
+          "kinetic"
+        ]
+      },
+      {
+        "id": "ai_answer",
+        "label": "AI Answer \u2014 Streaming",
+        "tags": [
+          "agentic",
+          "generative",
+          "ai",
+          "streaming",
+          "terminal",
+          "tech"
+        ]
+      }
     ],
     "font_vibes": [
-      {"name": "Playfair Display", "vibe": "editorial", "category": "serif"},
-      {"name": "Playfair Display Regular", "vibe": "editorial", "category": "serif"},
-      {"name": "Instrument Serif", "vibe": "editorial", "category": "serif"},
-      {"name": "Bodoni Moda", "vibe": "editorial", "category": "serif"},
-      {"name": "Fraunces", "vibe": "editorial", "category": "serif"},
-      {"name": "DM Serif Display", "vibe": "editorial", "category": "serif"},
-      {"name": "Gloock", "vibe": "editorial", "category": "serif"},
-      {"name": "Cormorant Garamond", "vibe": "editorial", "category": "serif"},
-      {"name": "Montserrat", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Space Grotesk", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "DM Sans", "vibe": "clean_captions", "category": "sans"},
-      {"name": "Inter", "vibe": "editorial", "category": "sans"},
-      {"name": "Inter Tight", "vibe": "editorial", "category": "sans"},
-      {"name": "Bebas Neue", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Anton", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Permanent Marker", "vibe": "handwritten", "category": "handwriting"},
-      {"name": "Pacifico", "vibe": "script", "category": "script"},
-      {"name": "Poppins Black", "vibe": "clean_captions", "category": "sans"},
-      {"name": "Nunito ExtraBold", "vibe": "clean_captions", "category": "sans"},
-      {"name": "Bowlby One SC", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Bangers", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "TikTok Sans", "vibe": "clean_captions", "category": "sans"},
-      {"name": "TikTok Sans Bold", "vibe": "clean_captions", "category": "sans"},
-      {"name": "Bricolage Grotesque", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Hanken Grotesk", "vibe": "clean_captions", "category": "sans"},
-      {"name": "Archivo Black", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Big Shoulders Display", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Syne", "vibe": "viral_headlines", "category": "sans"},
-      {"name": "Unbounded", "vibe": "viral_headlines", "category": "sans"}
-    ]
+      {
+        "name": "Playfair Display",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Playfair Display Regular",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Instrument Serif",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Bodoni Moda",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Fraunces",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "DM Serif Display",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Gloock",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Cormorant Garamond",
+        "vibe": "editorial",
+        "category": "serif"
+      },
+      {
+        "name": "Montserrat",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Space Grotesk",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "DM Sans",
+        "vibe": "clean_captions",
+        "category": "sans"
+      },
+      {
+        "name": "Inter",
+        "vibe": "editorial",
+        "category": "sans"
+      },
+      {
+        "name": "Inter Tight",
+        "vibe": "editorial",
+        "category": "sans"
+      },
+      {
+        "name": "Bebas Neue",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Anton",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Permanent Marker",
+        "vibe": "handwritten",
+        "category": "handwriting"
+      },
+      {
+        "name": "Pacifico",
+        "vibe": "script",
+        "category": "script"
+      },
+      {
+        "name": "Poppins Black",
+        "vibe": "clean_captions",
+        "category": "sans"
+      },
+      {
+        "name": "Nunito ExtraBold",
+        "vibe": "clean_captions",
+        "category": "sans"
+      },
+      {
+        "name": "Bowlby One SC",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Bangers",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "TikTok Sans",
+        "vibe": "clean_captions",
+        "category": "sans"
+      },
+      {
+        "name": "TikTok Sans Bold",
+        "vibe": "clean_captions",
+        "category": "sans"
+      },
+      {
+        "name": "Bricolage Grotesque",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Hanken Grotesk",
+        "vibe": "clean_captions",
+        "category": "sans"
+      },
+      {
+        "name": "Archivo Black",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Big Shoulders Display",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Syne",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      },
+      {
+        "name": "Unbounded",
+        "vibe": "viral_headlines",
+        "category": "sans"
+      }
+    ],
+    "observed_style": null
   },
   "raw_text": "{\"style_set_id\": \"travel_editorial\", \"knobs\": {\"font_family\": \"Playfair Display\", \"text_size_px\": 56, \"position\": \"center\", \"text_anchor\": \"center\"}, \"footage_type_bias\": [\"broll\", \"ambience\"], \"preferred_edit_format_mix\": {\"montage\": 0.7, \"day_vlog\": 0.3}, \"instruction_level\": \"full\", \"rationale\": \"TikTok data confirms cinematic slow-walk edits with editorial serif overlays perform best. travel_editorial matches the calm, observational tone and proven top-performer visual language.\"}",
   "output": {
@@ -66,8 +284,14 @@
         "stroke_width": null,
         "cycle_fonts": null
       },
-      "footage_type_bias": ["broll", "ambience"],
-      "preferred_edit_format_mix": {"montage": 0.7, "day_vlog": 0.3},
+      "footage_type_bias": [
+        "broll",
+        "ambience"
+      ],
+      "preferred_edit_format_mix": {
+        "montage": 0.7,
+        "day_vlog": 0.3
+      },
       "instruction_level": "full",
       "status": "ready",
       "derived_from": {},
@@ -77,6 +301,6 @@
   },
   "meta": {
     "source": "hand_authored_golden",
-    "case": "Budget travel creator with cinematic TikTok presence — strong signal from TikTok analysis toward travel_editorial set and Playfair Display serif. Montage-dominant edit format mix reflects their proven content format."
+    "case": "Budget travel creator with cinematic TikTok presence \u2014 strong signal from TikTok analysis toward travel_editorial set and Playfair Display serif. Montage-dominant edit format mix reflects their proven content format."
   }
 }
