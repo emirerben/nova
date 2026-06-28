@@ -245,3 +245,78 @@ def test_set_text_elements_render_false(client: TestClient) -> None:
     # render_status must NOT have changed when render=False
     assert variant["render_status"] == "ready"
     regen.apply_async.assert_not_called()
+
+
+# ── T8: sequence lock removed from dispatch_retext ───────────────────────────
+
+SEQUENCE_VARIANT = {
+    "variant_id": "original_text",
+    "text_mode": "agent_text",
+    "intro_mode": "sequence",
+    "render_status": "ready",
+    "rank": 3,
+    "style_set_id": "default",
+    "base_video_path": "generative-jobs/abc/base.mp4",
+    "intro_text": "A hook sentence",
+    "scenes": [{"text": "word", "start_s": 0.0, "end_s": 1.0}],
+}
+
+
+def test_retext_sequence_variant_now_succeeds(client: TestClient) -> None:
+    """T8: dispatch_retext on a sequence variant must NO LONGER return 422."""
+    user = _user()
+    job = _job([dict(SEQUENCE_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/original_text/retext",
+            json={"text": "new hook"},
+        )
+    assert resp.status_code == 200, f"Expected 200; got {resp.status_code}: {resp.text}"
+    regen.delay.assert_called_once()
+
+
+# ── T8: dispatch_edit_variant sequence lock STILL enforced ───────────────────
+
+
+def test_edit_variant_sequence_still_blocked(client: TestClient) -> None:
+    """T8: dispatch_edit_variant with text on a sequence variant must still return 422."""
+    user = _user()
+    job = _job([dict(SEQUENCE_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/original_text/edit",
+        json={"text": "overwrite attempt"},
+    )
+    assert resp.status_code == 422
+    assert "synced" in resp.json()["detail"].lower() or "editorial" in resp.json()["detail"].lower()
+
+
+# ── T8: sequence materialization on first PUT /text-elements ─────────────────
+
+
+def test_sequence_materialization_on_first_put(client: TestClient) -> None:
+    """T8: first PUT on a sequence variant (text_elements_user_edited=False) materializes
+    geometry_materialized_at_version on the variant dict."""
+    user = _user()
+    variant = {**SEQUENCE_VARIANT, "text_elements_user_edited": False}
+    job = _job([dict(variant)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        resp = client.put(
+            f"/plan-items/{item.id}/variants/original_text/text-elements",
+            json={"elements": [_VALID_ELEMENT], "render": False},
+        )
+    assert resp.status_code == 200
+    v = job.assembly_plan["variants"][0]
+    assert v["text_elements_user_edited"] is True
+    assert v.get("geometry_materialized_at_version") == "1"
+    assert v.get("text_elements_materialized_from") == "sequence"

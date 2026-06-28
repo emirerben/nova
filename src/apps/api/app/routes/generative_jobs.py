@@ -544,6 +544,8 @@ def _variants_for_response(job: Job) -> list[dict]:
                 **v,
                 "text_elements": v.get("text_elements"),
                 "text_elements_user_edited": v.get("text_elements_user_edited", False),
+                "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
+                "text_elements_materialized_from": v.get("text_elements_materialized_from"),
             }
         out.append(v)
     return out
@@ -621,16 +623,14 @@ _SEQUENCE_TEXT_LOCKED_DETAIL = (
 
 
 def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool) -> None:
-    """Validate + enqueue an intro-text edit/removal for one variant."""
-    variant = require_editable_variant(job, variant_id)
-    # Sequence-synced variants (D19): the on-screen words come from the spoken
-    # transcript, not intro_text — a text edit would silently desync or no-op.
-    # The size nudge and style/layout edits stay allowed (separate dispatchers).
-    if variant.get("intro_mode") == "sequence":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=_SEQUENCE_TEXT_LOCKED_DETAIL,
-        )
+    """Validate + enqueue an intro-text edit/removal for one variant.
+
+    T8: the sequence lock that used to 422 here is removed.  PUT /text-elements
+    handles multi-block editorial layout edits; dispatch_retext now proceeds for
+    all variant types including sequence (intro_text override on re-render).
+    """
+    # Guard: raises 404/409 when variant is unknown or already rendering.
+    require_editable_variant(job, variant_id)
     if not remove and not (text and text.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1074,6 +1074,21 @@ def dispatch_set_text_elements(
             detail="No cached base video for fast-reburn — regenerate the variant first.",
         )
 
+    # T8 — Sequence materialization: on the first PUT /text-elements for a sequence
+    # variant, seed elements from the live scenes when the user sent an empty list.
+    # This gives them the current editorial sequence as their starting point.
+    _is_first_sequence_edit = (
+        not variant.get("text_elements_user_edited")
+        and variant.get("intro_mode") == "sequence"
+    )
+    if _is_first_sequence_edit and not elements:
+        from app.agents._schemas.text_element import (  # noqa: PLC0415
+            text_elements_for_variant,
+        )
+        snapshot = text_elements_for_variant(variant)
+        if snapshot:
+            elements = [e.model_dump() for e in snapshot]
+
     # Validate + coerce elements; drop invalid entries silently (A—).
     from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
 
@@ -1102,6 +1117,10 @@ def dispatch_set_text_elements(
             v["text_elements"] = validated
             v["text_elements_user_edited"] = True
             v["render_generation_id"] = render_gen_id
+            # T8: record sequence materialization metadata on first sequence edit.
+            if _is_first_sequence_edit:
+                v["geometry_materialized_at_version"] = "1"
+                v["text_elements_materialized_from"] = "sequence"
             if render:
                 v["render_status"] = "rendering"
             break
