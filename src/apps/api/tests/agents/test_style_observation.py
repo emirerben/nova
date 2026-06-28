@@ -13,18 +13,17 @@ import pytest
 
 from app.agents._runtime import SchemaError
 from app.agents.style_observation import (
+    _ANCHORS,
+    _FONT_FEELS,
+    _LAYOUTS,
+    _POSITIONS,
+    _SIZE_CLASSES,
+    _STROKES,
     StyleObservationAgent,
     StyleObservationInput,
-    VideoStyleObservation,
     _coerce_confidence,
     _coerce_hex_color,
     _coerce_optional_literal,
-    _FONT_FEELS,
-    _POSITIONS,
-    _SIZE_CLASSES,
-    _LAYOUTS,
-    _STROKES,
-    _ANCHORS,
 )
 
 
@@ -50,8 +49,9 @@ class TestCoercionHelpers:
         assert _coerce_optional_literal(42, _FONT_FEELS, default="none") == "none"
 
     def test_coerce_font_feel_case_insensitive(self):
-        assert _coerce_optional_literal("Serif_Editorial", _FONT_FEELS, default="none") == "serif_editorial"
-        assert _coerce_optional_literal("BOLD_DISPLAY", _FONT_FEELS, default="none") == "bold_display"
+        coerce = lambda v: _coerce_optional_literal(v, _FONT_FEELS, default="none")  # noqa: E731
+        assert coerce("Serif_Editorial") == "serif_editorial"
+        assert coerce("BOLD_DISPLAY") == "bold_display"
 
     def test_coerce_hex_color_valid(self):
         assert _coerce_hex_color("#ffffff") == "#ffffff"
@@ -125,7 +125,9 @@ class TestStyleObservationParse:
         assert out.font_feel == "none"
 
     def test_unknown_position_coerced_to_none(self):
-        raw = json.dumps({"has_on_screen_text": True, "position": "middle", "font_feel": "clean_sans"})
+        raw = json.dumps({
+            "has_on_screen_text": True, "position": "middle", "font_feel": "clean_sans",
+        })
         out = _agent().parse(raw, _make_input())
         assert out.position is None
 
@@ -202,7 +204,7 @@ class TestStyleObservationParseErrors:
             _agent().parse(json.dumps({"has_on_screen_text": None}), _make_input())
 
     def test_string_false_rejected(self):
-        """String 'false' must raise — bool('false') is True, which would corrupt the observation."""
+        """String 'false' must raise — bool('false') is True, corrupting no-text observations."""
         with pytest.raises(SchemaError, match="must be a JSON boolean"):
             _agent().parse(json.dumps({"has_on_screen_text": "false"}), _make_input())
 

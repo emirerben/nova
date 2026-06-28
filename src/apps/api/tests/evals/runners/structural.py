@@ -1567,7 +1567,12 @@ def check_style_observation(output: Any) -> list[str]:
     failures: list[str] = []
 
     from app.agents.style_observation import (
-        _ANCHORS, _FONT_FEELS, _LAYOUTS, _POSITIONS, _SIZE_CLASSES, _STROKES,
+        _ANCHORS,
+        _FONT_FEELS,
+        _LAYOUTS,
+        _POSITIONS,
+        _SIZE_CLASSES,
+        _STROKES,
     )
     _VALID_FONT_FEELS = frozenset(_FONT_FEELS)
     _VALID_POSITIONS = frozenset(_POSITIONS)
@@ -1618,7 +1623,8 @@ def check_style_observation(output: Any) -> list[str]:
         size_class = getattr(output, "size_class", None)
         if size_class is not None and size_class not in _VALID_SIZE_CLASSES:
             failures.append(
-                f"size_class must be one of {sorted(_VALID_SIZE_CLASSES)} or None, got {size_class!r}"
+                f"size_class must be one of {sorted(_VALID_SIZE_CLASSES)}"
+                f" or None, got {size_class!r}"
             )
         layout = getattr(output, "layout", None)
         if layout is not None and layout not in _VALID_LAYOUTS:
