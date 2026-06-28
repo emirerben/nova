@@ -201,6 +201,42 @@ class TestStyleObservationParseErrors:
         with pytest.raises(SchemaError, match="missing required field"):
             _agent().parse(json.dumps({"has_on_screen_text": None}), _make_input())
 
+    def test_string_false_rejected(self):
+        """String 'false' must raise — bool('false') is True, which would corrupt the observation."""
+        with pytest.raises(SchemaError, match="must be a JSON boolean"):
+            _agent().parse(json.dumps({"has_on_screen_text": "false"}), _make_input())
+
+    def test_string_true_rejected(self):
+        """String 'true' must also raise — only JSON booleans are accepted."""
+        with pytest.raises(SchemaError, match="must be a JSON boolean"):
+            _agent().parse(json.dumps({"has_on_screen_text": "true"}), _make_input())
+
+
+# ── StyleObservationInput validation ──────────────────────────────────────────
+
+class TestStyleObservationInputValidation:
+    def test_view_index_nan_rejected(self):
+        import math
+        with pytest.raises(Exception):
+            StyleObservationInput(file_uri="files/x", view_index=math.nan)
+
+    def test_view_index_inf_rejected(self):
+        import math
+        with pytest.raises(Exception):
+            StyleObservationInput(file_uri="files/x", view_index=math.inf)
+
+    def test_view_index_negative_rejected(self):
+        with pytest.raises(Exception):
+            StyleObservationInput(file_uri="files/x", view_index=-0.1)
+
+    def test_view_index_zero_allowed(self):
+        inp = StyleObservationInput(file_uri="files/x", view_index=0.0)
+        assert inp.view_index == pytest.approx(0.0)
+
+    def test_view_index_none_allowed(self):
+        inp = StyleObservationInput(file_uri="files/x", view_index=None)
+        assert inp.view_index is None
+
 
 # ── Vocabulary exhaustiveness ──────────────────────────────────────────────────
 

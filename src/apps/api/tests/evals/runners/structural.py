@@ -1600,6 +1600,15 @@ def check_style_observation(output: Any) -> list[str]:
                     f"{field} must be None when has_on_screen_text=False, got {val!r}"
                 )
     else:
+        # When text IS present, font_feel="none" is semantically contradictory —
+        # it means the model returned an unrecognized font name that was coerced
+        # to the fallback. Flag as a quality warning (not a hard failure, since
+        # the observation is still usable; the aggregator discards low-confidence fields).
+        if font_feel == "none":
+            failures.append(
+                "font_feel is 'none' but has_on_screen_text=True — "
+                "likely an unrecognized font value from the model (coerced to fallback)"
+            )
         # When text IS present, validate any non-None style fields against vocabulary.
         position = getattr(output, "position", None)
         if position is not None and position not in _VALID_POSITIONS:
@@ -1644,8 +1653,11 @@ def check_style_observation(output: Any) -> list[str]:
     if not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
         failures.append(f"confidence must be float in [0, 1], got {confidence!r}")
 
-    # Parity guard: no 'effect' field allowed (mirrors StyleKnobs extra="forbid").
-    if hasattr(output, "effect"):
+    # Parity guard: VideoStyleObservation has model_config=extra="forbid", so
+    # Pydantic rejects unknown fields (incl. "effect") at construction time —
+    # they never reach this checker. The guard below is defense-in-depth for
+    # dict-based fixture replay where the model is bypassed.
+    if isinstance(output, dict) and "effect" in output:
         failures.append("'effect' field must not be present (parity guard — not renderer-safe)")
 
     return failures

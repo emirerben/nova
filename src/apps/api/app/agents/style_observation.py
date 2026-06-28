@@ -31,9 +31,10 @@ Called by ``app.tasks.style_vision_build`` (PR 2) which:
 from __future__ import annotations
 
 import json
+import math
 from typing import Any, ClassVar, Literal, get_args
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from app.agents._runtime import (
     Agent,
@@ -92,6 +93,15 @@ class StyleObservationInput(BaseModel):
     # (the deterministic mode/majority-vote aggregator is data-driven, not score-weighted).
     view_index: float | None = None
 
+    @field_validator("view_index")
+    @classmethod
+    def _validate_view_index(cls, v: float | None) -> float | None:
+        if v is None:
+            return v
+        if math.isnan(v) or math.isinf(v) or v < 0:
+            raise ValueError(f"view_index must be a finite non-negative number, got {v}")
+        return v
+
 
 class VideoStyleObservation(BaseModel):
     """Raw per-video style observation — NOT a UserStyle.
@@ -104,7 +114,12 @@ class VideoStyleObservation(BaseModel):
     This is intentionally NOT ``StyleKnobs``/``UserStyle`` — it speaks
     semantic classes that Gemini can observe visually, not Nova's internal
     pixel/font-registry vocabulary. The mapping is done by ``style_derivation``.
+
+    extra="forbid" is the renderer-parity guard: it prevents an `effect` field
+    or any other Nova-internal key from being injected (mirrors StyleKnobs).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     has_on_screen_text: bool = False
     font_feel: FontFeel = "none"
@@ -240,11 +255,21 @@ class StyleObservationAgent(Agent[StyleObservationInput, VideoStyleObservation])
         if not isinstance(data, dict):
             raise SchemaError("style_observation: response is not a JSON object")
 
-        # has_on_screen_text — the only required field; coerce to bool.
+        # has_on_screen_text — the only required field; must be a JSON boolean.
+        # required_fields() raises RefusalError before parse() when the key is
+        # absent — so the None guard below is defense-in-depth (unreachable in
+        # normal flow, but cheap insurance if the runtime behavior ever changes).
         has_text_raw = data.get("has_on_screen_text")
         if has_text_raw is None:
             raise SchemaError("style_observation: missing required field 'has_on_screen_text'")
-        has_on_screen_text = bool(has_text_raw)
+        # Reject string booleans ("false", "true") — bool("false") is True,
+        # which would silently corrupt the observation for no-text videos.
+        if not isinstance(has_text_raw, bool):
+            raise SchemaError(
+                f"style_observation: 'has_on_screen_text' must be a JSON boolean, "
+                f"got {type(has_text_raw).__name__} ({has_text_raw!r})"
+            )
+        has_on_screen_text: bool = has_text_raw
 
         # If no on-screen text, everything else is meaningless — return early.
         # We do NOT raise — "no text" is a valid, useful observation.
