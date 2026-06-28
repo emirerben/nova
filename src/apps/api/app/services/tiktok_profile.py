@@ -61,6 +61,10 @@ class TikTokVideoRecord(TypedDict):
     view_index: float | None
     duration: int | None
     upload_date: str | None  # YYYYMMDD when available
+    # Video identity — optional so existing records are backward-compatible.
+    # Populated by the enriched fetch (_to_video_record); absent from flat fetch.
+    video_id: str | None
+    webpage_url: str | None  # e.g. https://www.tiktok.com/@handle/video/<id>
 
 
 class TikTokProfileEnriched(TypedDict):
@@ -210,6 +214,8 @@ def _to_video_record(entry: dict) -> TikTokVideoRecord:
         view_index=None,  # filled in after median is computed
         duration=entry.get("duration"),
         upload_date=entry.get("upload_date"),
+        video_id=entry.get("id"),
+        webpage_url=entry.get("webpage_url"),
     )
 
 

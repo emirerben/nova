@@ -96,6 +96,9 @@ _RENDER_ORCHESTRATORS = [
     # Footage-pool ingest: downloads + Gemini-uploads + analyzes up to 40 clips,
     # so it's in the same acks_late redelivery double-run risk class.
     ("app/tasks/content_plan_build.py", "app.tasks.content_plan_build.match_pool_clips"),
+    # Vision-based style ingest: downloads + Gemini-uploads + analyzes up to 30 TikTok
+    # videos — same download+upload risk class as match_pool_clips.
+    ("app/tasks/style_vision_build.py", "app.tasks.style_vision_build.analyze_tiktok_style"),
 ]
 
 
