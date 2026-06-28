@@ -2363,6 +2363,11 @@ def _run_regenerate_variant(
                 raise
         if _used_fast_path:
             _update_variant_entry(job_id, variant_id, result)
+            # SFX is the OUTERMOST layer. A text/style reburn overwrites video_path
+            # from the cached base WITHOUT the SFX mix, so re-apply persisted effects
+            # on top (the hook also resets the stale pre_sfx_video_path). Mirrors the
+            # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
+            _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
 
@@ -2561,6 +2566,12 @@ def _run_regenerate_variant(
 
     if result.get("ok"):
         _update_variant_entry(job_id, variant_id, result)
+        # SFX is the OUTERMOST layer. A full re-render (song swap, retext, clip
+        # edit, style change) re-assembles video_path WITHOUT the SFX mix, so
+        # re-apply persisted effects onto the freshly re-rendered base (the hook
+        # also resets the now-stale pre_sfx_video_path snapshot). Mirrors the
+        # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
+        _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
     else:
         # Failure-patch hygiene: the failure record spreads the fresh `base`
         # dict, whose None values (base_video_path, intro_text, ...) would NULL
@@ -5278,6 +5289,14 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),
                     "pre_media_overlay_video_path": r.get("pre_media_overlay_video_path"),
+                    # sound-effect placements (SFX lane) — MUST survive finalization
+                    # or any later full re-render (text/song/clip edit) strips the
+                    # effects with no error: the render-sfx pass reads sound_effects
+                    # from the variant, and pre_sfx_video_path is the clean (no-SFX)
+                    # base it re-applies onto. Pinned by
+                    # test_finalize_job_preserves_sound_effects.
+                    "sound_effects": r.get("sound_effects"),
+                    "pre_sfx_video_path": r.get("pre_sfx_video_path"),
                     # narrated caption editor — MUST survive or the cues are stripped
                     # and the on-video editor has nothing to load (base survives above,
                     # but the editor needs the cues too).

@@ -66,9 +66,12 @@ log "Starting API on :8000 (uvicorn --reload)..."
 echo $! >> "$PID_FILE"
 
 # ── Worker ───────────────────────────────────────────────────────────────────
-# -Q celery,plan-jobs: drain BOTH the default queue and the content-plan render
-# queue (per-item + activation renders route to plan-jobs). Must match prod
-# fly.toml — without plan-jobs those renders never run locally (no output).
+# -Q celery,plan-jobs,overlay-jobs: drain the default queue, the content-plan
+# render queue (per-item + activation renders route to plan-jobs), AND the
+# SFX/media-overlay edit queue (sound-effects + overlay renders route to
+# overlay-jobs via dispatch_set_sound_effects / dispatch_set_media_overlays).
+# Must match prod fly.toml — without overlay-jobs, SFX/overlay edits sit
+# unconsumed and never reflect in the render locally.
 log "Starting Celery worker (watchfiles auto-restart)..."
 # CELERY_POOL: prefork (default, matches prod) | threads. On some macOS setups
 # (observed on Python 3.14 venvs) prefork children die in a SIGKILL boot loop
@@ -76,7 +79,7 @@ log "Starting Celery worker (watchfiles auto-restart)..."
 (
   cd "$REPO/src/apps/api"
   PATH="$REPO/src/apps/api/.venv/bin:$PATH" exec .venv/bin/watchfiles --filter python \
-    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs" \
+    "celery -A app.worker:celery_app worker --loglevel=info --concurrency=2 --pool=${CELERY_POOL:-prefork} -Q celery,plan-jobs,overlay-jobs" \
     app
 ) > "$DEV_DIR/worker.log" 2>&1 &
 echo $! >> "$PID_FILE"

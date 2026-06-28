@@ -72,8 +72,11 @@ function makeProps(override = {}) {
     sfxGlossaryEffects: [],
     sfxGlossaryLoading: false,
     sfxRendering: false,
+    sfxFailed: false,
     sfxUploading: false,
+    sfxDirty: false,
     onSfxChange: jest.fn(),
+    onApplySfx: jest.fn(),
     onSfxUploadRequest: jest.fn().mockResolvedValue(undefined),
     overlayCards: [],
     overlaysEnabled: true,
@@ -298,6 +301,58 @@ describe("UnifiedTimeline — placement edit row", () => {
 
     const [remaining] = onSfxChange.mock.calls[0];
     expect(remaining).toHaveLength(0);
+  });
+});
+
+describe("UnifiedTimeline — Apply SFX button", () => {
+  it("no Apply button when there are no placements", () => {
+    render(<UnifiedTimeline {...makeProps({ sfxPlacements: [] })} />);
+    expect(screen.queryByRole("button", { name: /Apply sound effects/i })).not.toBeInTheDocument();
+  });
+
+  it("shows enabled Apply when dirty and calls onApplySfx on click", async () => {
+    const p = makePlacement({ id: "p1", label: "Boom", at_s: 4 });
+    const onApplySfx = jest.fn();
+    render(<UnifiedTimeline {...makeProps({ sfxPlacements: [p], sfxDirty: true, onApplySfx })} />);
+    const btn = screen.getByRole("button", { name: /Apply sound effects to video/i });
+    expect(btn).toBeEnabled();
+    await act(async () => { fireEvent.click(btn); });
+    expect(onApplySfx).toHaveBeenCalledTimes(1);
+  });
+
+  it("Apply is disabled (and shows Applied) when not dirty", () => {
+    const p = makePlacement({ id: "p1", label: "Boom", at_s: 4 });
+    render(<UnifiedTimeline {...makeProps({ sfxPlacements: [p], sfxDirty: false })} />);
+    expect(screen.getByRole("button", { name: /Applied/i })).toBeDisabled();
+  });
+
+  it("Apply shows Applying… and is disabled while rendering", () => {
+    const p = makePlacement({ id: "p1", label: "Boom", at_s: 4 });
+    render(<UnifiedTimeline {...makeProps({ sfxPlacements: [p], sfxDirty: true, sfxRendering: true })} />);
+    expect(screen.getByRole("button", { name: /Applying sound effects/i })).toBeDisabled();
+  });
+
+  it("offers an enabled Retry when the last apply failed (not a dead-end 'Applied ✓')", async () => {
+    // Apply was issued (sfxDirty cleared optimistically) then the async render
+    // failed. Must not lock the user out — show an enabled Retry.
+    const p = makePlacement({ id: "p1", label: "Boom", at_s: 4 });
+    const onApplySfx = jest.fn();
+    render(<UnifiedTimeline {...makeProps({ sfxPlacements: [p], sfxDirty: false, sfxFailed: true, onApplySfx })} />);
+    const btn = screen.getByRole("button", { name: /Retry/i });
+    expect(btn).toBeEnabled();
+    await act(async () => { fireEvent.click(btn); });
+    expect(onApplySfx).toHaveBeenCalledTimes(1);
+  });
+
+  it("removing all effects still shows an enabled Apply (clears the render)", async () => {
+    // No placements left, but dirty (user removed the last one) → must still be
+    // applyable so the SFX gets cleared from the rendered video.
+    const onApplySfx = jest.fn();
+    render(<UnifiedTimeline {...makeProps({ sfxPlacements: [], sfxDirty: true, onApplySfx })} />);
+    const btn = screen.getByRole("button", { name: /Remove sound effects from video/i });
+    expect(btn).toBeEnabled();
+    await act(async () => { fireEvent.click(btn); });
+    expect(onApplySfx).toHaveBeenCalledTimes(1);
   });
 });
 
