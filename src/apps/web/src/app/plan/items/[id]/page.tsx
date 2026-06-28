@@ -1225,6 +1225,7 @@ export default function PlanItemPage() {
             isGenerating={isGenerating}
             refetch={refetch}
             markVariantRendering={markVariantRendering}
+            onError={setError}
             onSwap={
               focused
                 ? (trackId) => {
@@ -1362,6 +1363,7 @@ function FocusedResults({
   isGenerating,
   refetch,
   markVariantRendering,
+  onError,
   onSwap,
   onRetext,
   onRemoveText,
@@ -1382,6 +1384,8 @@ function FocusedResults({
   isGenerating: boolean;
   refetch: () => void;
   markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
+  /** Surface a user-facing error in the page-level banner (e.g. SFX save/render failures). */
+  onError: (msg: string) => void;
   onSwap: (trackId: string) => Promise<void>;
   onRetext: (text: string) => Promise<void>;
   onRemoveText: () => Promise<void>;
@@ -1513,8 +1517,13 @@ function FocusedResults({
       try {
         await renderVariantSfx(itemId, variant.variant_id);
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-      } catch {
+      } catch (err) {
         pendingDownloadRef.current = false;
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't add your sound effects to the video. Try again.",
+        );
       }
       return;
     }
@@ -1526,8 +1535,13 @@ function FocusedResults({
       try {
         await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards, { render: true });
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-      } catch {
+      } catch (err) {
         pendingDownloadRef.current = false;
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't add your overlays to the video. Try again.",
+        );
       }
       return;
     }
@@ -1539,7 +1553,7 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
-  }, [variant, editSession, instantEligible, sfxPlacements, overlayCards, itemId, downloadName, markVariantRendering]);
+  }, [variant, editSession, instantEligible, sfxPlacements, overlayCards, itemId, downloadName, markVariantRendering, onError]);
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
@@ -1777,6 +1791,7 @@ function FocusedResults({
                       setSfxAudioUrls={setSfxAudioUrls}
                       currentTimeS={currentTimeS}
                       onTextPanelChange={setTextLaneOpen}
+                      onError={onError}
                     />
                   )}
                 </div>
@@ -1858,6 +1873,7 @@ function FocusedVariantControls({
   setSfxAudioUrls,
   currentTimeS,
   onTextPanelChange,
+  onError,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -1886,6 +1902,8 @@ function FocusedVariantControls({
   currentTimeS: number;
   /** Called when the UnifiedTimeline Text panel opens/closes — parent switches hero to LiveEditPreview. */
   onTextPanelChange: (open: boolean) => void;
+  /** Surface a user-facing error in the page-level banner (e.g. SFX save failures). */
+  onError: (msg: string) => void;
 }) {
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
@@ -1919,8 +1937,15 @@ function FocusedVariantControls({
       try {
         await setVariantMediaOverlays(itemId, variant.variant_id, cards, { render: false });
         refetch();
-      } catch {
-        // Metadata save failed — silently ignore, cards are safe in local state.
+      } catch (err) {
+        // Cards are safe in local state, but the save failed (e.g. backend
+        // media_overlays_enabled off → 404). Surface it so the user knows the
+        // overlay positions won't persist / won't be in the render.
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't save your overlays — they won't be in the render.",
+        );
       }
     }, 2500);
     return () => clearTimeout(timer);
@@ -2012,6 +2037,14 @@ function FocusedVariantControls({
         }),
       );
       overlaysDirtyRef.current = true;
+    } catch (err) {
+      // Upload-URL request or GCS upload failed (e.g. backend media_overlays_enabled
+      // off → overlays-upload-urls 404). Surface it instead of throwing uncaught.
+      onError(
+        err instanceof Error
+          ? err.message
+          : "Couldn't upload that overlay. Try again.",
+      );
     } finally {
       setOverlayUploading(false);
     }
@@ -2025,8 +2058,14 @@ function FocusedVariantControls({
       return {};
     });
     setOverlayCards([]);
-    await setVariantMediaOverlays(itemId, variant.variant_id, [], { render: false });
-    refetch();
+    try {
+      await setVariantMediaOverlays(itemId, variant.variant_id, [], { render: false });
+      refetch();
+    } catch (err) {
+      onError(
+        err instanceof Error ? err.message : "Couldn't clear your overlays. Try again.",
+      );
+    }
   }
 
   function handleUpdateCard(id: string, patch: Partial<MediaOverlay>) {
@@ -2111,23 +2150,62 @@ function FocusedVariantControls({
         label: files[i].filename.replace(/\.[^.]+$/, ""),
       }));
       handleSfxChange([...sfxPlacements, ...newPlacements]);
+    } catch (err) {
+      // Upload-URL request or GCS upload failed (e.g. backend
+      // SOUND_EFFECTS_ENABLED off → sfx-upload-urls 404). Surface it.
+      onError(
+        err instanceof Error ? err.message : "Couldn't upload that sound effect. Try again.",
+      );
     } finally {
       setSfxUploading(false);
     }
   }
 
-  // Debounced save: persist placements to DB without triggering a render.
+  // Edits PERSIST (debounced) but do NOT render — the user explicitly clicks
+  // "Apply" to burn the effects into the video (handleApplySfx). This keeps the
+  // instant client-side preview snappy and avoids a render on every drag/retime.
+  // sfxDirty = there are placement changes not yet reflected in the rendered
+  // video. Seeded true when the variant has saved SFX that were never burned in
+  // (sound_effects present but pre_sfx_video_path null — the saved-but-never-
+  // rendered case that was the original bug).
+  const [sfxDirty, setSfxDirty] = useState<boolean>(
+    () => sfxPlacements.length > 0 && !variant.pre_sfx_video_path,
+  );
   const sfxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function handleSfxChange(newPlacements: SoundEffectPlacement[]) {
     setSfxPlacements(newPlacements);
+    setSfxDirty(true);
     if (sfxSaveTimer.current) clearTimeout(sfxSaveTimer.current);
     sfxSaveTimer.current = setTimeout(async () => {
       try {
         await setVariantSoundEffects(itemId, variant.variant_id, newPlacements);
-      } catch {
-        // non-fatal — preview still works
+      } catch (err) {
+        // The client-side preview still plays the effect locally, but the save
+        // failed — surface it (e.g. backend SOUND_EFFECTS_ENABLED off → 404).
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't save your sound effects.",
+        );
       }
     }, 600);
+  }
+
+  // "Apply" — flush the pending save (so the server has the latest placements),
+  // then trigger the SFX burn-in render. Clears the dirty flag optimistically;
+  // the variant flips to render_status="rendering" → "ready" via polling.
+  async function handleApplySfx() {
+    if (sfxSaveTimer.current) clearTimeout(sfxSaveTimer.current);
+    try {
+      await setVariantSoundEffects(itemId, variant.variant_id, sfxPlacements);
+      await renderVariantSfx(itemId, variant.variant_id);
+      markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+      setSfxDirty(false);
+    } catch (err) {
+      onError(
+        err instanceof Error ? err.message : "Couldn't apply your sound effects to the video.",
+      );
+    }
   }
 
   // Fetch signed playback URLs for SFX placements that don't have one yet.
@@ -2201,8 +2279,11 @@ function FocusedVariantControls({
             sfxGlossaryEffects={glossaryEffects}
             sfxGlossaryLoading={glossaryLoading}
             sfxRendering={variant.render_status === "rendering"}
+            sfxFailed={variant.render_status === "failed"}
             sfxUploading={sfxUploading}
+            sfxDirty={sfxDirty}
             onSfxChange={handleSfxChange}
+            onApplySfx={handleApplySfx}
             onSfxUploadRequest={handleSfxUpload}
             overlayCards={overlayCards}
             overlaysEnabled={MEDIA_OVERLAYS_ENABLED}

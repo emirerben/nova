@@ -100,10 +100,12 @@ def build_sound_effects_command(
         chain_parts.append(f"adelay={ms}|{ms}")
         # Per-placement volume.
         chain_parts.append(f"volume={eff.gain:.4f}")
-        # Labelled output.
-        chain_parts.append(f"[{label}]")
 
-        filter_parts.append(",".join(chain_parts))
+        # The output pad label attaches DIRECTLY to the last filter, with no
+        # separating comma — "volume=1.0[fx0]", never "volume=1.0,[fx0]". A comma
+        # makes ffmpeg parse "[fx0]" as a new (empty) filter → "Filter not found"
+        # (rc=8). Joining the label as a chain element was the bug.
+        filter_parts.append(",".join(chain_parts) + f"[{label}]")
         fx_labels.append(f"[{label}]")
 
     # Mix: base audio + all SFX streams.

@@ -50,6 +50,31 @@ def test_command_duration_first():
     assert "duration=first" in fc
 
 
+def test_fx_label_attaches_without_comma():
+    """REGRESSION: the per-effect output pad label must attach DIRECTLY to the
+    last filter ("volume=1.0[fx0]"), never comma-separated ("volume=1.0,[fx0]").
+    A comma makes ffmpeg parse "[fx0]" as an empty filter → "Filter not found"
+    (rc=8) and the whole SFX mix fails. The old code comma-joined the label as a
+    chain element. This path was never exercised in prod because the SFX render
+    was Download-gated and never triggered, so the bug stayed latent."""
+    fc = " ".join(
+        build_sound_effects_command("/base.mp4", [_make_placement(5.0)], ["/sfx.mp3"], "/out.mp4")
+    )
+    assert ",[fx0]" not in fc, f"malformed comma before output label: {fc}"
+    assert "[fx0]" in fc
+    # Two effects: both labels must attach cleanly, and amix must consume them.
+    fc2 = " ".join(
+        build_sound_effects_command(
+            "/base.mp4",
+            [_make_placement(1.0), _make_placement(2.0)],
+            ["/a.mp3", "/b.mp3"],
+            "/out.mp4",
+        )
+    )
+    assert ",[fx0]" not in fc2 and ",[fx1]" not in fc2, fc2
+    assert "[0:a][fx0][fx1]amix=inputs=3" in fc2
+
+
 def test_adelay_ms_equals_at_s_times_1000():
     """adelay delay in ms must equal round(at_s * 1000)."""
     at_s = 4.567
