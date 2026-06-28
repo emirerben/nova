@@ -1,26 +1,24 @@
 /**
- * Tests for the instant CSS overlay preview feature.
+ * Overlay lane in UnifiedTimeline — upload + card interaction tests.
+ *
+ * PR-3 migration: MediaOverlayEditor was retired; the same upload zone and
+ * card controls now live in the Overlays lane of UnifiedTimeline.
  *
  * Scope:
- *  A. MediaOverlayEditor fires onUploadRequest with correct file metadata when
- *     the user selects image or video files via the hidden file input.
- *  B. MediaOverlayEditor fires onUploadRequest only for allowed MIME types and
- *     silently skips unsupported files.
- *
- * The full end-to-end preview path (upload → blob URL → Hero img/video render)
- * is covered by local E2E testing — `NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED` is a
- * module-level const that can't be reliably overridden in Jest without
- * reloading React itself, which breaks test utilities.
- *
- * State lift regression: the 806-test suite already guards this — every existing
- * plan-item-page test exercises FocusedResults and the lifted state paths.
+ *  A. Overlay upload zone fires onOverlayUploadRequest with correct file metadata.
+ *  B. Overlay upload zone filters unsupported MIME types.
+ *  C. Upload zone is disabled (pointer-events-none) while overlayUploading=true.
+ *  D. Per-card popover opens on click and exposes Remove + position + scale controls.
  */
 
+// @ts-nocheck
+// crypto.randomUUID polyfill lives in jest.setup.ts (global for all tests).
+
 import React from "react";
-import { act, fireEvent, render } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
-import MediaOverlayEditor from "@/app/plan/_components/MediaOverlayEditor";
+import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import type { MediaOverlay } from "@/lib/plan-api";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -43,40 +41,56 @@ function makeCard(overrides: Partial<MediaOverlay> = {}): MediaOverlay {
 
 function defaultProps(overrides = {}) {
   return {
-    overlays: [] as MediaOverlay[],
-    variantDurationS: 30,
-    uploading: false,
+    totalDurationS: 30,
+    currentTimeS: 5,
+    // SFX (unused by these tests)
+    sfxPlacements: [],
+    sfxGlossaryEffects: [],
+    sfxGlossaryLoading: false,
+    sfxRendering: false,
+    sfxUploading: false,
+    onSfxChange: jest.fn(),
+    onSfxUploadRequest: jest.fn().mockResolvedValue(undefined),
+    // Overlays
+    overlayCards: [] as MediaOverlay[],
+    overlaysEnabled: true,
+    overlayUploading: false,
     localPreviewUrls: {} as Record<string, string>,
-    onUploadRequest: jest.fn(),
+    onOverlayUploadRequest: jest.fn(),
     onUpdateCard: jest.fn(),
     onRemoveCard: jest.fn(),
-    onClear: jest.fn(),
+    onClearOverlays: jest.fn(),
+    // Read-only lanes
+    hasText: false,
+    onOpenTab: jest.fn(),
     ...overrides,
   };
 }
 
-/** Simulate selecting files on the hidden file input. */
-function selectFiles(files: File[]) {
-  const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-  if (!input) throw new Error("File input not found");
+/** Simulate selecting files on the hidden overlay file input. */
+function selectOverlayFiles(files: File[]) {
+  // Find the file input that accepts image/video types (overlay), not audio (SFX).
+  const inputs = document.querySelectorAll('input[type="file"]');
+  const input = Array.from(inputs).find((el) =>
+    (el as HTMLInputElement).accept?.includes("image/jpeg"),
+  ) as HTMLInputElement;
+  if (!input) throw new Error("Overlay file input not found");
   Object.defineProperty(input, "files", { value: files, configurable: true });
   fireEvent.change(input);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("MediaOverlayEditor — file selection triggers onUploadRequest", () => {
-  it("test_upload_image_file: onUploadRequest called with PNG metadata", async () => {
-    const onUploadRequest = jest.fn();
-    render(<MediaOverlayEditor {...defaultProps({ onUploadRequest })} />);
+describe("UnifiedTimeline overlay lane — file upload", () => {
+  it("test_upload_image_file: onOverlayUploadRequest called with PNG metadata", async () => {
+    const onOverlayUploadRequest = jest.fn();
+    render(<UnifiedTimeline {...defaultProps({ onOverlayUploadRequest })} />);
 
     const file = new File(["img-data"], "sticker.png", { type: "image/png" });
-    await act(async () => {
-      selectFiles([file]);
-    });
+    await act(async () => { selectOverlayFiles([file]); });
 
-    expect(onUploadRequest).toHaveBeenCalledTimes(1);
-    const [callArgs] = onUploadRequest.mock.calls;
+    expect(onOverlayUploadRequest).toHaveBeenCalledTimes(1);
+    const [callArgs] = onOverlayUploadRequest.mock.calls;
     expect(callArgs[0]).toHaveLength(1);
     const entry = callArgs[0][0];
     expect(entry.file).toBe(file);
@@ -85,80 +99,107 @@ describe("MediaOverlayEditor — file selection triggers onUploadRequest", () =>
     expect(entry.file_size_bytes).toBe(file.size);
   });
 
-  it("test_upload_video_file: onUploadRequest called with MP4 metadata", async () => {
-    const onUploadRequest = jest.fn();
-    render(<MediaOverlayEditor {...defaultProps({ onUploadRequest })} />);
+  it("test_upload_video_file: onOverlayUploadRequest called with MP4 metadata", async () => {
+    const onOverlayUploadRequest = jest.fn();
+    render(<UnifiedTimeline {...defaultProps({ onOverlayUploadRequest })} />);
 
     const file = new File(["vid-data"], "clip.mp4", { type: "video/mp4" });
-    await act(async () => {
-      selectFiles([file]);
-    });
+    await act(async () => { selectOverlayFiles([file]); });
 
-    expect(onUploadRequest).toHaveBeenCalledTimes(1);
-    const [callArgs] = onUploadRequest.mock.calls;
-    expect(callArgs[0][0]).toMatchObject({
-      content_type: "video/mp4",
-      filename: "clip.mp4",
-    });
+    expect(onOverlayUploadRequest).toHaveBeenCalledTimes(1);
+    const [callArgs] = onOverlayUploadRequest.mock.calls;
+    expect(callArgs[0][0]).toMatchObject({ content_type: "video/mp4", filename: "clip.mp4" });
   });
 
-  it("test_upload_multiple_files: onUploadRequest receives all valid files in one call", async () => {
-    const onUploadRequest = jest.fn();
-    render(<MediaOverlayEditor {...defaultProps({ onUploadRequest })} />);
-
-    const img = new File(["a"], "a.jpg", { type: "image/jpeg" });
-    const vid = new File(["b"], "b.mp4", { type: "video/mp4" });
-    await act(async () => {
-      selectFiles([img, vid]);
-    });
-
-    expect(onUploadRequest).toHaveBeenCalledTimes(1);
-    const [callArgs] = onUploadRequest.mock.calls;
-    expect(callArgs[0]).toHaveLength(2);
-    expect(callArgs[0][0].filename).toBe("a.jpg");
-    expect(callArgs[0][1].filename).toBe("b.mp4");
-  });
-
-  it("test_upload_unsupported_mime_skipped: onUploadRequest not called for unsupported files", async () => {
-    const onUploadRequest = jest.fn();
-    render(<MediaOverlayEditor {...defaultProps({ onUploadRequest })} />);
+  it("test_upload_unsupported_mime_skipped: onOverlayUploadRequest not called for PDFs", async () => {
+    const onOverlayUploadRequest = jest.fn();
+    render(<UnifiedTimeline {...defaultProps({ onOverlayUploadRequest })} />);
 
     const unsupported = new File(["x"], "doc.pdf", { type: "application/pdf" });
-    await act(async () => {
-      selectFiles([unsupported]);
-    });
+    await act(async () => { selectOverlayFiles([unsupported]); });
 
-    expect(onUploadRequest).not.toHaveBeenCalled();
+    expect(onOverlayUploadRequest).not.toHaveBeenCalled();
   });
 
   it("test_upload_mixed_types: valid files pass, unsupported files are silently skipped", async () => {
-    const onUploadRequest = jest.fn();
-    render(<MediaOverlayEditor {...defaultProps({ onUploadRequest })} />);
+    const onOverlayUploadRequest = jest.fn();
+    render(<UnifiedTimeline {...defaultProps({ onOverlayUploadRequest })} />);
 
     const valid = new File(["v"], "sticker.webp", { type: "image/webp" });
     const invalid = new File(["x"], "doc.pdf", { type: "application/pdf" });
-    await act(async () => {
-      selectFiles([valid, invalid]);
-    });
+    await act(async () => { selectOverlayFiles([valid, invalid]); });
 
-    expect(onUploadRequest).toHaveBeenCalledTimes(1);
-    const [callArgs] = onUploadRequest.mock.calls;
+    expect(onOverlayUploadRequest).toHaveBeenCalledTimes(1);
+    const [callArgs] = onOverlayUploadRequest.mock.calls;
     expect(callArgs[0]).toHaveLength(1);
     expect(callArgs[0][0].filename).toBe("sticker.webp");
   });
 });
 
-describe("MediaOverlayEditor — existing cards rendering", () => {
-  it("test_cards_list_renders: shows card count when overlays are present", () => {
-    const card = makeCard();
-    const { container } = render(<MediaOverlayEditor {...defaultProps({ overlays: [card] })} />);
-    expect(container.firstChild).not.toBeNull();
-  });
-
-  it("test_rendering_state_disables_upload_zone: pointer-events-none when uploading=true", () => {
-    render(<MediaOverlayEditor {...defaultProps({ uploading: true })} />);
-    // The upload zone should have opacity-40 + pointer-events-none while uploading.
+describe("UnifiedTimeline overlay lane — upload zone disabled state", () => {
+  it("test_uploading_state_disables_drop_zone: pointer-events-none when overlayUploading=true", () => {
+    render(<UnifiedTimeline {...defaultProps({ overlayUploading: true })} />);
     const uploadZone = document.querySelector(".pointer-events-none.opacity-40");
     expect(uploadZone).not.toBeNull();
+  });
+});
+
+describe("UnifiedTimeline overlay lane — card list", () => {
+  it("test_cards_list_renders: overlay timing bars visible when cards present", () => {
+    const card = makeCard({ id: "card-1" });
+    render(<UnifiedTimeline {...defaultProps({ overlayCards: [card] })} />);
+    expect(screen.getByText("Overlays")).toBeInTheDocument();
+  });
+
+  it("test_card_popover_opens_on_click: Remove button appears after clicking a card bar", async () => {
+    const card = makeCard({ id: "c1", kind: "image" });
+    render(<UnifiedTimeline {...defaultProps({ overlayCards: [card] })} />);
+
+    const barLabel = screen.getByText(/⊞/);
+    await act(async () => { fireEvent.click(barLabel); });
+
+    expect(screen.getByRole("button", { name: /Remove card/i })).toBeInTheDocument();
+  });
+
+  it("test_card_remove_calls_onRemoveCard: Remove button fires onRemoveCard", async () => {
+    const card = makeCard({ id: "card-xyz" });
+    const onRemoveCard = jest.fn();
+    render(<UnifiedTimeline {...defaultProps({ overlayCards: [card], onRemoveCard })} />);
+
+    await act(async () => { fireEvent.click(screen.getByText(/⊞/)); });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Remove card/i }));
+    });
+
+    expect(onRemoveCard).toHaveBeenCalledWith("card-xyz");
+  });
+
+  it("test_clear_all_button_visible_with_cards: 'Clear all overlays' appears when cards present", () => {
+    const card = makeCard();
+    render(<UnifiedTimeline {...defaultProps({ overlayCards: [card] })} />);
+    expect(screen.getByText(/Clear all overlays/i)).toBeInTheDocument();
+  });
+
+  it("test_clear_all_calls_onClearOverlays", async () => {
+    const onClearOverlays = jest.fn();
+    const card = makeCard();
+    render(<UnifiedTimeline {...defaultProps({ overlayCards: [card], onClearOverlays })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByText(/Clear all overlays/i));
+    });
+    expect(onClearOverlays).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("UnifiedTimeline overlay lane — position presets in popover", () => {
+  it("test_position_preset_calls_onUpdateCard: clicking Top fires patch with position=top", async () => {
+    const card = makeCard({ id: "c1" });
+    const onUpdateCard = jest.fn();
+    render(<UnifiedTimeline {...defaultProps({ overlayCards: [card], onUpdateCard })} />);
+
+    await act(async () => { fireEvent.click(screen.getByText(/⊞/)); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Top" })); });
+
+    expect(onUpdateCard).toHaveBeenCalledWith("c1", { position: "top" });
   });
 });

@@ -66,7 +66,6 @@ import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import { TimelineEditor } from "../../../generative/TimelineEditor";
 import { useTimelineSession } from "../../../generative/useTimelineSession";
-import MediaOverlayEditor from "../../_components/MediaOverlayEditor";
 import SoundEffectEditor from "../../_components/SoundEffectEditor";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
@@ -1252,7 +1251,8 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
 // ── Editor panel tabs ────────────────────────────────────────────────────────
 // "timeline" replaces "sound" when UNIFIED_TIMELINE_ENABLED is true (default).
 // Both remain in the union so TypeScript narrows correctly in each branch.
-type EditorTab = "text" | "font" | "song" | "clips" | "overlays" | "sound" | "captions" | "timeline";
+// Overlays tab removed in PR-3: editing moved inline to the Timeline lane.
+type EditorTab = "text" | "font" | "song" | "clips" | "sound" | "captions" | "timeline";
 
 const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "captions", icon: "CC", label: "Captions" },
@@ -1260,7 +1260,6 @@ const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
   { id: "font", icon: "Aa", label: "Font" },
   { id: "song", icon: "♫", label: "Song" },
   { id: "clips", icon: "✂", label: "Clips" },
-  { id: "overlays", icon: "⊞", label: "Overlays" },
   // Legacy Sound list — shown only when UNIFIED_TIMELINE_ENABLED is off.
   { id: "sound", icon: "🔊", label: "Sound" },
   // Unified multi-lane Timeline — shown when UNIFIED_TIMELINE_ENABLED is on (default).
@@ -1513,7 +1512,7 @@ function FocusedResults({
                 Nova&apos;s pick
               </span>
             )}
-            {instantEligible && variant && activeTab !== "overlays" ? (
+            {instantEligible && variant && activeTab !== "timeline" ? (
               <LiveEditPreview
                 variant={variant}
                 styleSets={styleSets}
@@ -1635,8 +1634,6 @@ function FocusedResults({
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
                   // Hide Font tab for lyrics (font is locked to lyrics renderer)
                   if (tab.id === "font" && variant?.text_mode === "lyrics") return null;
-                  // Hide Overlays tab when kill-switch is off
-                  if (tab.id === "overlays" && !MEDIA_OVERLAYS_ENABLED) return null;
                   // Legacy Sound list: only when SFX enabled AND unified timeline is off.
                   if (tab.id === "sound" && (!SOUND_EFFECTS_ENABLED || UNIFIED_TIMELINE_ENABLED)) return null;
                   // Unified Timeline: only when SFX enabled AND unified timeline is on.
@@ -1965,6 +1962,28 @@ function FocusedVariantControls({
     refetch();
   }
 
+  function handleUpdateCard(id: string, patch: Partial<MediaOverlay>) {
+    // Resolve position presets to fracs so the CSS preview updates immediately.
+    const resolved: Partial<MediaOverlay> = { ...patch };
+    if (patch.position === "top") { resolved.x_frac = 0.5; resolved.y_frac = 0.18; }
+    else if (patch.position === "center") { resolved.x_frac = 0.5; resolved.y_frac = 0.5; }
+    else if (patch.position === "bottom") { resolved.x_frac = 0.5; resolved.y_frac = 0.82; }
+    overlaysDirtyRef.current = true;
+    setOverlayCards((prev) => prev.map((c) => (c.id === id ? { ...c, ...resolved } : c)));
+  }
+
+  function handleRemoveCard(id: string) {
+    overlaysDirtyRef.current = true;
+    setOverlayCards((prev) => prev.filter((c) => c.id !== id));
+    setLocalPreviewUrls((prev) => {
+      if (!prev[id]) return prev;
+      URL.revokeObjectURL(prev[id]);
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
   // For an eligible variant, re-point the text/size/layout/style handlers at the
   // session draft (synchronous → resolved promise so PlanVariantEditor's `run()`
   // busy-wrapper completes immediately). Song + Clips stay on the server paths.
@@ -2093,7 +2112,6 @@ function FocusedVariantControls({
   const showTextSection = activeTab === "text";
   const showFontSection = activeTab === "font" && instantEligible;
   const showSongSection = activeTab === "song";
-  const showOverlaysSection = activeTab === "overlays" && MEDIA_OVERLAYS_ENABLED;
   const showSoundSection = activeTab === "sound" && SOUND_EFFECTS_ENABLED && !UNIFIED_TIMELINE_ENABLED;
   const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED && UNIFIED_TIMELINE_ENABLED;
   // Clips: the TimelineEditor sheet handles itself; we just need the render.
@@ -2163,43 +2181,6 @@ function FocusedVariantControls({
         />
       )}
 
-      {/* Overlays tab: media-overlay card editor (kill-switched) */}
-      {showOverlaysSection && (
-        <div className="rounded-xl bg-[#0c0c0e] border border-white/10">
-          <MediaOverlayEditor
-            overlays={overlayCards}
-            variantDurationS={variantDurationS}
-            localPreviewUrls={localPreviewUrls}
-            uploading={overlayUploading}
-            onUploadRequest={handleOverlayUpload}
-            onUpdateCard={(id, patch) => {
-              // Resolve position presets to fracs so the CSS preview updates
-              // immediately — Python's resolved_xy_frac() does the same on render.
-              const resolved: Partial<MediaOverlay> = { ...patch };
-              if (patch.position === "top") { resolved.x_frac = 0.5; resolved.y_frac = 0.18; }
-              else if (patch.position === "center") { resolved.x_frac = 0.5; resolved.y_frac = 0.5; }
-              else if (patch.position === "bottom") { resolved.x_frac = 0.5; resolved.y_frac = 0.82; }
-              overlaysDirtyRef.current = true;
-              setOverlayCards((prev) =>
-                prev.map((c) => (c.id === id ? { ...c, ...resolved } : c)),
-              );
-            }}
-            onRemoveCard={(id) => {
-              overlaysDirtyRef.current = true;
-              setOverlayCards((prev) => prev.filter((c) => c.id !== id));
-              setLocalPreviewUrls((prev) => {
-                if (!prev[id]) return prev;
-                const next = { ...prev };
-                delete next[id];
-                return next;
-              });
-              if (localPreviewUrls[id]) URL.revokeObjectURL(localPreviewUrls[id]);
-            }}
-            onClear={handleClearOverlays}
-          />
-        </div>
-      )}
-
       {/* Sound tab: legacy sound-effect list (visible only when UNIFIED_TIMELINE_ENABLED=false) */}
       {showSoundSection && (
         <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-4">
@@ -2216,7 +2197,7 @@ function FocusedVariantControls({
         </div>
       )}
 
-      {/* Timeline tab: unified multi-lane timeline (SFX interactive + read-only Overlays/Text/Clips) */}
+      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays interactive, Text/Clips read-only) */}
       {showTimelineSection && (
         <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
           <UnifiedTimeline
@@ -2230,6 +2211,13 @@ function FocusedVariantControls({
             onSfxChange={handleSfxChange}
             onSfxUploadRequest={handleSfxUpload}
             overlayCards={overlayCards}
+            overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
+            overlayUploading={overlayUploading}
+            localPreviewUrls={localPreviewUrls}
+            onOverlayUploadRequest={handleOverlayUpload}
+            onUpdateCard={handleUpdateCard}
+            onRemoveCard={handleRemoveCard}
+            onClearOverlays={handleClearOverlays}
             hasText={variant.text_mode !== "none"}
             onOpenTab={(tab) => onSetActiveTab(tab)}
           />

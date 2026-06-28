@@ -76,6 +76,13 @@ function makeProps(override = {}) {
     onSfxChange: jest.fn(),
     onSfxUploadRequest: jest.fn().mockResolvedValue(undefined),
     overlayCards: [],
+    overlaysEnabled: true,
+    overlayUploading: false,
+    localPreviewUrls: {},
+    onOverlayUploadRequest: jest.fn(),
+    onUpdateCard: jest.fn(),
+    onRemoveCard: jest.fn(),
+    onClearOverlays: jest.fn(),
     hasText: false,
     onOpenTab: jest.fn(),
     ...override,
@@ -242,12 +249,11 @@ describe("UnifiedTimeline — read-only lane click-through", () => {
     expect(textLabels).toHaveLength(0);
   });
 
-  it("Overlays lane shown when overlayCards is non-empty; click calls onOpenTab('overlays')", () => {
-    const onOpenTab = jest.fn();
+  it("Overlays lane shown when overlayCards is non-empty (interactive — no click-through)", () => {
     const card = makeOverlayCard();
-    render(<UnifiedTimeline {...makeProps({ overlayCards: [card], onOpenTab })} />);
-    fireEvent.click(screen.getByText("Overlays").closest("[role='button']")!);
-    expect(onOpenTab).toHaveBeenCalledWith("overlays");
+    render(<UnifiedTimeline {...makeProps({ overlayCards: [card] })} />);
+    // Overlays lane label visible; it's interactive now, not a read-only click-through.
+    expect(screen.getByText("Overlays")).toBeInTheDocument();
   });
 });
 
