@@ -1,0 +1,27 @@
+{
+  "agent": "nova.video.style_observation",
+  "prompt_version": "2026-06-28",
+  "input": {
+    "file_uri": "files/no-text-fixture",
+    "file_mime": "video/mp4",
+    "caption": "morning routine vibe",
+    "view_index": 0.7
+  },
+  "raw_text": "{\"has_on_screen_text\": false, \"confidence\": 0.92}",
+  "output": {
+    "has_on_screen_text": false,
+    "font_feel": "none",
+    "text_color_hex": null,
+    "highlight_color_hex": null,
+    "position": null,
+    "size_class": null,
+    "layout": null,
+    "stroke": null,
+    "text_anchor": null,
+    "confidence": 0.92
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Video with no creator-added text overlays — only raw footage. High confidence because absence of text is unambiguous. All style fields should be null / 'none'."
+  }
+}
