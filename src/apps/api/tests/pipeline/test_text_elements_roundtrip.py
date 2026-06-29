@@ -20,8 +20,8 @@ from __future__ import annotations
 import pytest
 
 from app.agents._schemas.text_element import (
-    TextElement,
     _ADAPTER_REVEAL_WINDOW_S,
+    TextElement,
     _burn_dict_to_text_element,
     coerce_text_elements,
     text_elements_for_variant,
@@ -32,7 +32,6 @@ from app.pipeline.generative_overlays import (
     build_persistent_intro_overlays,
     build_sequence_overlays,
 )
-
 
 # ── Comparison helper ─────────────────────────────────────────────────────────────
 
@@ -66,7 +65,9 @@ def _normalize(burn_dicts: list[dict]) -> list[dict]:
 # ── Monkeypatch helper: cluster engine with allowlisted font ──────────────────────
 
 
-def _patch_cluster_engine(monkeypatch, *, blocks_per_scene: int = 1, decline_indices: set = frozenset()):
+def _patch_cluster_engine(
+    monkeypatch, *, blocks_per_scene: int = 1, decline_indices: set = frozenset()
+):
     """Stub compute_cluster_blocks with deterministic blocks using PlayfairDisplay-Bold.
 
     PlayfairDisplay-Bold is in TextElement._ALLOWED_FONTS so the adapter preserves it
@@ -239,7 +240,7 @@ class TestLinearRoundTrip:
         strict=True,
     )
     def test_pop_in_roundtrip_byte_identical(self):
-        """Known mismatch: pop-in is in _SKIA_EFFECTS but not _ALLOWED_EFFECTS → coerced to static."""
+        """Known mismatch: pop-in is in _SKIA_EFFECTS but not _ALLOWED_EFFECTS → coerced to static."""  # noqa: E501
         v = {
             "intro_text": "You need to see this",
             "intro_effect": "pop-in",
@@ -706,19 +707,29 @@ class TestSequenceRoundTrip:
         def _bad_font_blocks(
             text, *, word_roles, base_size_px, reveal_window_s, style, accent_parity=0, **kw
         ):
-            return [{
-                "text": text,
-                "role": "hero",
-                "text_size_px": base_size_px,
-                "font_family": "Great Vibes",  # NOT in _ALLOWED_FONTS
-                "position_x_frac": 0.4,
-                "position_y_frac": 0.44,
-                "start_offset_s": 0.0,
-                "reveal_s": reveal_window_s,
-            }]
+            return [
+                {
+                    "text": text,
+                    "role": "hero",
+                    "text_size_px": base_size_px,
+                    "font_family": "Great Vibes",  # NOT in _ALLOWED_FONTS
+                    "position_x_frac": 0.4,
+                    "position_y_frac": 0.44,
+                    "start_offset_s": 0.0,
+                    "reveal_s": reveal_window_s,
+                }
+            ]
 
         monkeypatch.setattr(ic, "compute_cluster_blocks", _bad_font_blocks)
-        scenes = [{"words": ["hello"], "word_roles": None, "start_s": 0.0, "end_s": 2.0, "fade_out": False}]
+        scenes = [
+            {
+                "words": ["hello"],
+                "word_roles": None,
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "fade_out": False,
+            }
+        ]
         v = {"intro_mode": "sequence", "text_mode": "agent_text", "scenes": scenes}
 
         legacy = build_sequence_overlays(scenes, base_size_px=60, text_color="#FFFFFF")
@@ -739,18 +750,21 @@ class TestSecurityGuards:
     def test_unknown_font_family_raises_validation_error(self):
         """Unknown font_family raises ValidationError (A19)."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TextElement(text="test", start_s=0, end_s=1, font_family="../../etc/passwd")
 
     def test_non_string_injection_in_font_family_rejected(self):
         """Injection attempt in font_family raises ValidationError."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TextElement(text="test", start_s=0, end_s=1, font_family="shell_inject; rm -rf /")
 
     def test_unknown_effect_raises_validation_error(self):
         """Unknown effect raises ValidationError (A19)."""
         from pydantic import ValidationError
+
         with pytest.raises(ValidationError):
             TextElement(text="test", start_s=0, end_s=1, effect="shell_inject")
 
@@ -787,7 +801,12 @@ class TestSecurityGuards:
 
     def test_valid_allowlisted_fonts_accepted(self):
         """All allowlisted font families are accepted."""
-        for font in ("PlayfairDisplay-Bold", "PlayfairDisplay-Regular", "Inter-Bold", "Inter-Regular"):
+        for font in (
+            "PlayfairDisplay-Bold",
+            "PlayfairDisplay-Regular",
+            "Inter-Bold",
+            "Inter-Regular",
+        ):
             elem = TextElement(text="test", start_s=0, end_s=1, font_family=font)
             assert elem.font_family == font
 
