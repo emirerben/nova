@@ -1046,6 +1046,8 @@ def regenerate_generative_variant(
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
     render_gen_id: str | None = None,
+    intro_start_s_override: float | None = None,
+    intro_end_s_override: float | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1098,6 +1100,8 @@ def regenerate_generative_variant(
                 media_overlays_override=media_overlays_override,
                 sfx_override=sfx_override,
                 render_gen_id=render_gen_id,
+                intro_start_s_override=intro_start_s_override,
+                intro_end_s_override=intro_end_s_override,
             )
         except OperationalError:
             raise
@@ -1589,6 +1593,8 @@ def _reburn_text_on_base(
     cluster_hero_size_px_override: int | None = None,
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
+    intro_start_s_override: float | None = None,
+    intro_end_s_override: float | None = None,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -1784,6 +1790,8 @@ def _reburn_text_on_base(
                     # Explicit opt-outs (layout/text edits) use the legacy static
                     # cluster path so Slice 3a's registry pairing owns the faces.
                     cluster_style=_reburn_cs,
+                    start_s=intro_start_s_override,
+                    end_s=intro_end_s_override,
                     **params,
                 )
                 # EFFECTIVE layout (cluster = 2 overlays per block; linear = one
@@ -2110,6 +2118,8 @@ def _run_regenerate_variant(
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
     render_gen_id: str | None = None,
+    intro_start_s_override: float | None = None,
+    intro_end_s_override: float | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -2412,6 +2422,8 @@ def _run_regenerate_variant(
                 cluster_hero_size_px_override=resolved_cluster_hero_size_override,
                 cluster_body_size_px_override=resolved_cluster_body_size_override,
                 cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+                intro_start_s_override=intro_start_s_override,
+                intro_end_s_override=intro_end_s_override,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
@@ -2444,15 +2456,9 @@ def _run_regenerate_variant(
                 with _sync_session() as _guard_db:
                     _guard_job = _guard_db.get(Job, uuid.UUID(job_id))
                     if _guard_job is not None:
-                        _guard_variants = (
-                            (_guard_job.assembly_plan or {}).get("variants") or []
-                        )
+                        _guard_variants = (_guard_job.assembly_plan or {}).get("variants") or []
                         _guard_v = next(
-                            (
-                                v
-                                for v in _guard_variants
-                                if v.get("variant_id") == variant_id
-                            ),
+                            (v for v in _guard_variants if v.get("variant_id") == variant_id),
                             None,
                         )
                         if (

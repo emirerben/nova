@@ -349,6 +349,8 @@ def build_persistent_intro_overlays(
     cluster_style: dict | None = None,
     language: str = "en",
     hook_window_s: float = _HOLD_TO_END_S,
+    start_s: float | None = None,
+    end_s: float | None = None,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -398,7 +400,9 @@ def build_persistent_intro_overlays(
             fallback=requested == "cluster",
         )
         return []
-    reveal_end = max(0.0, float(reveal_window_s))
+    effective_start_s = start_s if start_s is not None else 0.0
+    effective_hook_s = end_s if end_s is not None else hook_window_s
+    reveal_end = effective_start_s + max(0.0, float(reveal_window_s))
 
     if layout == "cluster":
         cluster_error = False
@@ -411,7 +415,7 @@ def build_persistent_intro_overlays(
                 highlight_color=highlight_color,
                 cluster_style=cluster_style,
                 language=language,
-                hook_window_s=hook_window_s,
+                hook_window_s=effective_hook_s,
                 **style_kwargs,
             )
         except Exception as exc:
@@ -454,7 +458,7 @@ def build_persistent_intro_overlays(
     reveal = build_intro_overlay(
         text,
         effect=effect,
-        start_s=0.0,
+        start_s=effective_start_s,
         end_s=reveal_end,
         beats=beats,
         text_color=text_color,
@@ -471,7 +475,7 @@ def build_persistent_intro_overlays(
         text,
         effect="static",
         start_s=reveal_end,
-        end_s=min(hook_window_s, _HOLD_TO_END_S),
+        end_s=min(effective_hook_s, _HOLD_TO_END_S),
         text_color=settled_color,
         highlight_color=highlight_color,
         **style_kwargs,
