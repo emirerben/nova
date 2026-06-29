@@ -1258,6 +1258,19 @@ def _run_media_overlay_pass(
 
         cards = coerce_media_overlays(overlays_raw)
 
+        # When SFX are persisted, the terminal SFX reapply pass (the hook at the
+        # end of both branches below) owns the final render_status. Keep THIS
+        # overlay pass non-terminal ("rendering") so the frontend download poll
+        # never observes the intermediate overlay-only "ready" before SFX are
+        # remixed on top — otherwise it can download a file missing its SFX
+        # (two-pass observability). When no SFX are persisted the reapply is a
+        # no-op, so this pass stays terminal as before.
+        from app.config import settings as _settings_ov  # noqa: PLC0415
+
+        will_reapply_sfx = (
+            bool(existing.get("sound_effects")) and _settings_ov.sound_effects_enabled
+        )
+
         # ── Clear path: remove all cards ──────────────────────────────────────
         if not cards:
             clean_path = existing.get("pre_media_overlay_video_path")
@@ -1276,8 +1289,11 @@ def _run_media_overlay_pass(
                 if v.get("variant_id") == variant_id:
                     v["media_overlays"] = None
                     v["output_url"] = signed_url
-                    v["render_status"] = "ready"
-                    v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                    if will_reapply_sfx:
+                        v["render_status"] = "rendering"  # SFX reapply sets terminal "ready"
+                    else:
+                        v["render_status"] = "ready"
+                        v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
                     break
             job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
             from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -1342,8 +1358,11 @@ def _run_media_overlay_pass(
                 v["media_overlays"] = [c.model_dump() for c in cards]
                 v["pre_media_overlay_video_path"] = pre_clean
                 v["output_url"] = new_url
-                v["render_status"] = "ready"
-                v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+                if will_reapply_sfx:
+                    v["render_status"] = "rendering"  # SFX reapply sets terminal "ready"
+                else:
+                    v["render_status"] = "ready"
+                    v["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
                 break
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -1401,12 +1420,48 @@ def _reapply_persisted_sfx_if_any(*, job_id: str, variant_id: str) -> None:
             db.commit()
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_prep_failed", job_id=job_id, error=str(exc))
+        # The overlay pass deferred its terminal state to this reapply (it left
+        # render_status="rendering"). A prep failure means _run_sfx_pass never
+        # runs, so surface it as a failed render rather than stranding the
+        # variant in "rendering" forever.
+        _mark_variant_failed(job_id=job_id, variant_id=variant_id, error=str(exc))
         return
 
     try:
         _run_sfx_pass(job_id=job_id, variant_id=variant_id, sfx_raw=sfx_raw)
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_failed", job_id=job_id, error=str(exc))
+        # _run_sfx_pass sets render_status="failed" itself on a HANDLED apply
+        # error; this catch covers UNHANDLED errors, which would otherwise leave
+        # the overlay-deferred "rendering" state stuck. Surface it.
+        _mark_variant_failed(job_id=job_id, variant_id=variant_id, error=str(exc))
+
+
+def _mark_variant_failed(*, job_id: str, variant_id: str, error: str) -> None:
+    """Best-effort flip of a variant to render_status="failed".
+
+    Used when a pass that DEFERRED its terminal render_status (e.g. an overlay
+    pass that handed off to a failing SFX reapply) would otherwise strand the
+    variant in "rendering". Never raises.
+    """
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return
+            variants = list((job.assembly_plan or {}).get("variants") or [])
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["render_status"] = "failed"
+                    v["render_error"] = error[:500]
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("mark_variant_failed_error", job_id=job_id, error=str(exc))
 
 
 def _run_sfx_pass(
