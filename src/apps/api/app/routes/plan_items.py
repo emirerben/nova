@@ -32,6 +32,7 @@ from app.routes.generative_jobs import (
     CaptionsRequest,
     ChangeStyleRequest,
     EditVariantRequest,
+    PatchSceneTimingRequest,
     RetextRequest,
     SetIntroSizeRequest,
     SetIntroTimingRequest,
@@ -44,6 +45,7 @@ from app.routes.generative_jobs import (
     dispatch_edit_timeline,
     dispatch_edit_variant,
     dispatch_get_timeline,
+    dispatch_patch_scene_timing,
     dispatch_reset_timeline,
     dispatch_retext,
     dispatch_set_intro_size,
@@ -1435,6 +1437,31 @@ async def set_item_intro_timing(
         variant_id=variant_id,
         start_s=req.start_s,
         end_s=req.end_s,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.patch("/{item_id}/variants/{variant_id}/scene-timing", response_model=PlanItemResponse)
+async def patch_item_scene_timing(
+    item_id: str,
+    variant_id: str,
+    req: PatchSceneTimingRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Persist user-pinned scene timing overrides for one of this item's variants."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_patch_scene_timing(
+        job,
+        variant_id,
+        overrides=[o.model_dump() for o in req.overrides],
+    )
+    await db.commit()
+    log.info(
+        "plan_item_patch_scene_timing",
+        item_id=item_id,
+        variant_id=variant_id,
+        override_count=len(req.overrides),
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

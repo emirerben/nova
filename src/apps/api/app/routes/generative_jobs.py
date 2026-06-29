@@ -245,6 +245,17 @@ class SetIntroTimingRequest(BaseModel):
     end_s: float = Field(..., gt=0.0)
 
 
+class SceneTimingPatch(BaseModel):
+    # Index into the variant's current scene_timings array (0-based).
+    scene_index: int = Field(..., ge=0)
+    start_s: float = Field(..., ge=0.0)
+    end_s: float = Field(..., gt=0.0)
+
+
+class PatchSceneTimingRequest(BaseModel):
+    overrides: list[SceneTimingPatch]
+
+
 class SetMixRequest(BaseModel):
     # Voice-prominence for a voiceover variant: 1.0 = bed fully ducked (voice only),
     # 0.0 = bed at full. The frontend slider sends the absolute value.
@@ -542,7 +553,12 @@ def _variants_for_response(job: Job) -> list[dict]:
         # status poll is wasted bandwidth and needless exposure of the footage
         # transcript to the client. (`v` is already a fresh copy here.)
         v.pop("transcript", None)
-        v.pop("scenes", None)
+        raw_scenes = v.pop("scenes", None) or []
+        v["scene_timings"] = [
+            {"text": s.get("text", ""), "start_s": s.get("start_s"), "end_s": s.get("end_s")}
+            for s in raw_scenes
+            if s.get("start_s") is not None and s.get("end_s") is not None
+        ]
         # TextElement overlay (plan-item-timeline feature).  Surfaced when the
         # kill switch is on so the FE can populate its timeline editor from the
         # persisted state (both the AI-snapshot and user-authored lists).
@@ -875,6 +891,26 @@ def dispatch_set_intro_timing(job: Job, variant_id: str, *, start_s: float, end_
         intro_start_s_override=start_s,
         intro_end_s_override=end_s,
     )
+
+
+def dispatch_patch_scene_timing(job: Job, variant_id: str, *, overrides: list[dict]) -> None:
+    """Store user-edited scene timing overrides; no re-render (apply-on-request)."""
+    variant = require_editable_variant(job, variant_id)
+    if variant.get("intro_mode") != "sequence":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Scene timing is only editable on sequence variants.",
+        )
+    # Persist overrides onto the variant dict; render path applies them.
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["scene_timing_overrides"] = [
+                o if isinstance(o, dict) else o.model_dump() for o in overrides
+            ]
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    # NOTE: no render enqueue here — overrides are applied at next reburn.
 
 
 def dispatch_set_media_overlays(
@@ -1985,6 +2021,31 @@ async def set_intro_timing(
         end_s=req.end_s,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.patch("/{job_id}/variants/{variant_id}/scene-timing", response_model=GenerativeJobResponse)
+async def patch_scene_timing(
+    job_id: str,
+    variant_id: str,
+    req: PatchSceneTimingRequest,
+    current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Persist user-pinned scene timing overrides (applied on next re-render)."""
+    job = await _load_generative_job(job_id, db, current_user)
+    dispatch_patch_scene_timing(
+        job,
+        variant_id,
+        overrides=[o.model_dump() for o in req.overrides],
+    )
+    await db.commit()
+    log.info(
+        "generative_patch_scene_timing",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        override_count=len(req.overrides),
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="ready")
 
 
 @router.post("/{job_id}/variants/{variant_id}/edit", response_model=GenerativeJobResponse)
