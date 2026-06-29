@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { LightCard } from "@/components/ui/LightCard";
 import { Eyebrow } from "@/components/ui/Eyebrow";
-import type { UserStyle, StyleResponse, StyleSetPreview, FontPreview } from "@/lib/plan-api";
+import type { UserStyle, StyleResponse, StyleSetPreview, FontPreview, StyleProvenance } from "@/lib/plan-api";
 
 interface StyleCardProps {
   style: UserStyle | null;
   status: StyleResponse["status"];
   styleSetPreview?: StyleSetPreview | null;
   fontPreview?: FontPreview | null;
+  provenance?: StyleProvenance | null;
 }
 
 // Map raw footage-type keys to human-readable labels
@@ -18,7 +19,7 @@ const FOOTAGE_LABELS: Record<string, string> = {
   ambience: "Ambience & mood",
 };
 
-export function StyleCard({ style, status, styleSetPreview, fontPreview }: StyleCardProps) {
+export function StyleCard({ style, status, styleSetPreview, fontPreview, provenance }: StyleCardProps) {
   if (status === "absent") {
     return (
       <LightCard className="px-6 py-5">
@@ -87,6 +88,23 @@ export function StyleCard({ style, status, styleSetPreview, fontPreview }: Style
           Edit
         </Link>
       </div>
+
+      {/* Provenance badge */}
+      {provenance && provenance.videos_seen > 0 && (
+        <div className="mt-3 flex items-center gap-1.5 rounded-md bg-lime-50 px-3 py-2 text-[11px] text-lime-800 border border-lime-200">
+          <svg className="h-3 w-3 shrink-0 text-lime-600" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+            <path fillRule="evenodd" d="M16.403 12.652a3 3 0 0 0 0-5.304 3 3 0 0 0-3.75-3.751 3 3 0 0 0-5.305 0 3 3 0 0 0-3.751 3.75 3 3 0 0 0 0 5.305 3 3 0 0 0 3.75 3.751 3 3 0 0 0 5.305 0 3 3 0 0 0 3.751-3.75Zm-2.546-4.46a.75.75 0 0 0-1.214-.883l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clipRule="evenodd" />
+          </svg>
+          <span>
+            Learned from your TikTok — seen in{" "}
+            <strong>{provenance.videos_seen}</strong>
+            {provenance.videos_total > provenance.videos_seen
+              ? `/${provenance.videos_total}`
+              : ""}{" "}
+            videos
+          </span>
+        </div>
+      )}
 
       {/* Look */}
       {styleLabel && (
