@@ -39,6 +39,13 @@ Object.defineProperty(window, "matchMedia", {
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
+// jsdom doesn't implement HTMLMediaElement playback; useSfxPreview instantiates
+// <audio> per placement and calls load()/play(). Stub them so variants carrying
+// sound_effects can render without "Not implemented" throws.
+window.HTMLMediaElement.prototype.load = jest.fn();
+window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
+window.HTMLMediaElement.prototype.pause = jest.fn();
+
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
 jest.mock("next/navigation", () => ({
@@ -66,6 +73,8 @@ jest.mock("@/lib/plan-api", () => ({
   setPlanItemIntroSize: jest.fn(),
   uploadToGcs: jest.fn(),
   editPlanItemVariant: jest.fn(),
+  renderVariantSfx: jest.fn(),
+  setVariantSoundEffects: jest.fn(),
   NotAuthenticatedError: class NotAuthenticatedError extends Error {
     constructor() {
       super("Not authenticated");
@@ -131,8 +140,12 @@ jest.mock("@/app/plan/_components/PlanVariantEditor", () => ({
 
 import PlanItemPage from "@/app/plan/items/[id]/page";
 import type { PlanItemJobStatus } from "@/lib/plan-api";
-import { swapPlanItemSong } from "@/lib/plan-api";
+import { swapPlanItemSong, renderVariantSfx, setVariantSoundEffects } from "@/lib/plan-api";
+import { downloadVideo } from "@/lib/download-video";
 const mockSwap = swapPlanItemSong as jest.MockedFunction<typeof swapPlanItemSong>;
+const mockRenderSfx = renderVariantSfx as jest.MockedFunction<typeof renderVariantSfx>;
+const mockSetSfx = setVariantSoundEffects as jest.MockedFunction<typeof setVariantSoundEffects>;
+const mockDownloadVideo = downloadVideo as jest.MockedFunction<typeof downloadVideo>;
 
 /**
  * Surface PlanVariantEditor by opening the Timeline tab and expanding its Text panel.
@@ -399,5 +412,82 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
 
     // Pin cleared on failed + new fingerprint.
     expect(spyVariant?.render_status).toBe("failed");
+  });
+});
+
+describe("download-triggered SFX bake failure (C1 regression)", () => {
+  // Regression: removing the SFX "Apply"/"Retry" button deleted the only surface
+  // for a failed SFX bake. A Download-triggered bake that fails on the backend
+  // (FFmpeg error after a successful dispatch) must surface an error — not
+  // silently re-enable the button and keep playing the stale video.
+  const ITEM = makeItem();
+  const OUTPUT_URL = "https://cdn/v1.mp4";
+
+  function variantWithUnbakedSfx(renderStatus: string, finishedAt: string) {
+    return {
+      ...makeServerVariant("v1", renderStatus, OUTPUT_URL, finishedAt),
+      // Saved but never baked (pre_sfx_video_path null) → needsSfxBake is true,
+      // so Download triggers a fresh SFX mix.
+      sound_effects: [
+        {
+          id: "sfx1",
+          sound_effect_id: null,
+          src_gcs_path: "sound-effects/boom/audio.mp3",
+          at_s: 4,
+          gain: 1,
+          trim_start_s: null,
+          trim_end_s: null,
+          duration_s: 0.5,
+          label: "Boom",
+        },
+      ],
+      pre_sfx_video_path: null,
+    };
+  }
+
+  beforeEach(() => {
+    mockRenderSfx.mockReset().mockResolvedValue(undefined);
+    mockSetSfx.mockReset().mockResolvedValue(undefined);
+    mockDownloadVideo.mockReset();
+  });
+
+  it("surfaces an error (and does not silently download) when the bake fails", async () => {
+    const TS1 = "2026-06-01T10:00:00Z";
+    const TS2 = "2026-06-01T10:01:00Z";
+
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item: ITEM, job: makeJob({ variants: [variantWithUnbakedSfx("ready", TS1)] }) },
+      error: null,
+      refetch: mockRefetch,
+    } as ReturnType<typeof usePolledJobStatus>);
+
+    const { rerender } = await act(async () => render(<PlanItemPage />));
+
+    // Click Download → triggers the SFX bake (needsSfxBake true, never baked).
+    const downloadBtn = screen.getByRole("button", { name: /^Download$/i });
+    await act(async () => {
+      fireEvent.click(downloadBtn);
+    });
+    expect(mockRenderSfx).toHaveBeenCalledTimes(1);
+
+    // Backend bake fails with a fresh fingerprint (clears the download pin).
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({
+          variants: [{ ...variantWithUnbakedSfx("failed", TS2), error_class: "RenderFailed" }],
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    } as ReturnType<typeof usePolledJobStatus>);
+    await act(async () => {
+      rerender(<PlanItemPage />);
+    });
+
+    // C1: the failure is surfaced to the user, not swallowed.
+    expect(screen.getByText(/Couldn't prepare your video for download/i)).toBeInTheDocument();
+    // And the stale video was NOT silently downloaded.
+    expect(mockDownloadVideo).not.toHaveBeenCalled();
   });
 });

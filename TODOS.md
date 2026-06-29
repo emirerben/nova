@@ -921,3 +921,19 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **How:** Extend `LiveEditPreview` props with `overlayCards?: MediaOverlay[]` + `localPreviewUrls?: Record<string,string>`. Render the same `previewableCards.map(card => <div style={{position:'absolute', ...}}>)` stack inside `LiveEditPreview`'s video container.
 **Effort:** XS (CC: ~10 min)
 **Priority:** P2 — must fix before flipping `media_overlays_enabled=true` in prod
+
+## Sound effects — follow-ups (from SFX deferred-burn / Apply-removal review, 2026-06-29)
+
+### T-SFX-1 — Unit tests for `useSfxPreview` (live-preview audio hook)
+**What:** `src/apps/web/src/app/plan/_components/useSfxPreview.ts` has zero tests, yet after the Apply-button removal it is the SOLE feedback path confirming a sound effect "works" before download.
+**Why:** A silent regression (wrong offset, effect not playing, not stopping on pause/seek) would make the feature look broken with no automated catch. Deferred here because this PR does not modify the hook itself.
+**How:** Mock `HTMLMediaElement` (`play`/`pause`/`currentTime`/`volume`). Assert: each placement's audio is positioned at `video.currentTime - at_s`; plays/pauses/seeks in lockstep with the video element; applies `gain` as volume (clamped 0–2); schedules a future-start via `setTimeout` when the playhead is before `at_s`; clears timeouts + pauses on `pause`/`ended`/unmount. File under `src/apps/web/src/__tests__/plan/`.
+**Effort:** S (CC: ~25 min)
+**Priority:** P2 — pre-existing gap; raise priority if preview bugs surface.
+
+### T-SFX-2 — Compose SFX with an uncommitted instant-text/caption edit on one Download
+**What:** `handleDownload` (`src/apps/web/src/app/plan/items/[id]/page.tsx`) bakes overlay-first, then SFX-only, then the instant-edit commit — each branch `return`s. If a variant has BOTH unbaked SFX changes AND an uncommitted instant-text/caption draft, one Download click bakes SFX and returns; the text draft isn't committed until a second click. Worse, the instant-text re-render has no SFX-reapply hook the way the overlay pass does (`_reapply_persisted_sfx_if_any`), so committing text afterward can drop the SFX layer.
+**Why:** The "Unsaved — downloads will include your changes" hint is then optimistic for that co-edit case. Same composition class we solved for overlay+SFX, applied to text+SFX.
+**How:** Either (a) order the instant-text commit FIRST and add an SFX-reapply terminal hook to the text/instant re-render path (mirror the overlay pass), or (b) detect the co-edit and chain both in one Download. Pre-existing ordering (not introduced by the Apply-removal PR), narrow (needs SFX + uncommitted instant edit simultaneously).
+**Effort:** M (CC: ~45 min) — touches handleDownload + the instant/text render path (backend reapply hook).
+**Priority:** P2 — narrow co-edit case; surface only when both lanes are dirty at once.

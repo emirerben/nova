@@ -48,11 +48,8 @@ function defaultProps(overrides = {}) {
     sfxGlossaryEffects: [],
     sfxGlossaryLoading: false,
     sfxRendering: false,
-    sfxFailed: false,
     sfxUploading: false,
-    sfxDirty: false,
     onSfxChange: jest.fn(),
-    onApplySfx: jest.fn(),
     onSfxUploadRequest: jest.fn().mockResolvedValue(undefined),
     // Overlays
     overlayCards: [] as MediaOverlay[],

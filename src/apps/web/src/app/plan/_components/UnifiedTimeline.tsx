@@ -55,15 +55,10 @@ export interface UnifiedTimelineProps {
   sfxPlacements: SoundEffectPlacement[];
   sfxGlossaryEffects: SoundEffectSummary[];
   sfxGlossaryLoading: boolean;
+  /** True while any render is in flight (shared render_status) — disables the lane. */
   sfxRendering: boolean;
-  /** True when the variant's last render failed — surface a Retry on the Apply button. */
-  sfxFailed: boolean;
   sfxUploading: boolean;
-  /** True when SFX placements have changed since the last Apply (unrendered edits). */
-  sfxDirty: boolean;
   onSfxChange: (placements: SoundEffectPlacement[]) => void;
-  /** Burn the current SFX placements into the video (explicit user action). */
-  onApplySfx: () => void;
   onSfxUploadRequest: (files: UploadFile[]) => Promise<void>;
   // Overlays (interactive) ----------------------------------------------------
   overlayCards: MediaOverlay[];
@@ -116,11 +111,8 @@ export default function UnifiedTimeline({
   sfxGlossaryEffects,
   sfxGlossaryLoading,
   sfxRendering,
-  sfxFailed,
   sfxUploading,
-  sfxDirty,
   onSfxChange,
-  onApplySfx,
   onSfxUploadRequest,
   overlayCards,
   overlaysEnabled,
@@ -225,11 +217,8 @@ export default function UnifiedTimeline({
         sfxGlossaryEffects={sfxGlossaryEffects}
         sfxGlossaryLoading={sfxGlossaryLoading}
         sfxRendering={sfxRendering}
-        sfxFailed={sfxFailed}
-        sfxDirty={sfxDirty}
         sfxUploading={sfxUploading}
         onSfxChange={onSfxChange}
-        onApplySfx={onApplySfx}
         onSfxUploadRequest={onSfxUploadRequest}
       />
 
