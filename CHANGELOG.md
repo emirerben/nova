@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.4.0] — 2026-06-29
+
+### Fixed
+- **Sound effects now actually play in the live preview.** Added glossary effects (e.g. picking "Fah" from the SFX lane dropdown) were silent during preview playback — only the Download bake had them. Root cause: the public `GET /sound-effects` API returns the signed audio URL as `preview_audio_url`, but the plan-item page read `glossaryMatch.preview_url` (always `undefined`), so no playable URL ever reached the `sfxAudioUrls` map and `useSfxPreview` had nothing to attach to its `<audio>` element. Fixed the field name in `plan/items/[id]/page.tsx` and aligned the `SoundEffectSummary` interface in `lib/sfx-api.ts` so a future mismatch is a TypeScript error. The URL-resolution step is now a pure, tested helper (`lib/sfx-preview-urls.ts`, `resolveSfxPreviewUrls`) instead of an inline loop. The bug was masked because the `unified-timeline.test.tsx` fixture used the same wrong field name. Pinned by `lib/__tests__/sfx-preview-urls.test.ts`.
+
 ## [0.6.3.0] — 2026-06-29
 
 ### Changed
