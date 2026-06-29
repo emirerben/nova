@@ -49,6 +49,7 @@ import {
   type SceneTimingPatch,
 } from "@/lib/plan-api";
 import { useSfxPreview } from "../../_components/useSfxPreview";
+import { resolveSfxPreviewUrls } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskNovaPanel from "./components/AskNovaPanel";
@@ -2334,30 +2335,17 @@ function FocusedVariantControls({
   // effects (src_gcs_path="" until server resolves it) get a URL immediately.
   useEffect(() => {
     if (!SOUND_EFFECTS_ENABLED) return;
-    const missing = sfxPlacements.filter((p) => {
-      const key = p.src_gcs_path || p.id;
-      return key && !sfxAudioUrls[key];
-    });
-    if (missing.length === 0) return;
+    const { glossaryUrls, userUploadPaths } = resolveSfxPreviewUrls(
+      sfxPlacements,
+      glossaryEffects,
+      sfxAudioUrls,
+    );
 
-    const newUrls: Record<string, string> = {};
-    const userPaths: SoundEffectPlacement[] = [];
-
-    for (const p of missing) {
-      const key = p.src_gcs_path || p.id;
-      const glossaryMatch = glossaryEffects.find((g) => g.id === p.sound_effect_id);
-      if (glossaryMatch?.preview_url) {
-        newUrls[key] = glossaryMatch.preview_url;
-      } else if (p.src_gcs_path.startsWith("users/")) {
-        userPaths.push(p);
-      }
+    if (Object.keys(glossaryUrls).length > 0) {
+      setSfxAudioUrls((prev) => ({ ...prev, ...glossaryUrls }));
     }
 
-    if (Object.keys(newUrls).length > 0) {
-      setSfxAudioUrls((prev) => ({ ...prev, ...newUrls }));
-    }
-
-    for (const p of userPaths) {
+    for (const p of userUploadPaths) {
       getSfxAudioUrl(itemId, p.src_gcs_path)
         .then((url) => setSfxAudioUrls((prev) => ({ ...prev, [p.src_gcs_path]: url })))
         .catch(() => {});
