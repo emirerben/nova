@@ -86,9 +86,8 @@ function makeProps(override = {}) {
     onUpdateCard: jest.fn(),
     onRemoveCard: jest.fn(),
     onClearOverlays: jest.fn(),
-    hasText: false,
-    textPanel: null,
-    onTextPanelChange: jest.fn(),
+    textElements: [],
+    onTextElementsChange: jest.fn(),
     clipsPanel: null,
     onClipsPanelChange: jest.fn(),
     ...override,
@@ -244,26 +243,24 @@ describe("UnifiedTimeline — expandable lanes", () => {
     expect(onClipsPanelChange).toHaveBeenCalledWith(true);
   });
 
-  it("Text lane shown when hasText=true; click expands inline panel (not a click-through)", async () => {
-    const onTextPanelChange = jest.fn();
-    const textPanel = <div data-testid="text-panel-content">Text controls</div>;
-    render(<UnifiedTimeline {...makeProps({ hasText: true, textPanel, onTextPanelChange })} />);
+  it("Text lane shown with textElements; T5 interactive lane renders bars and empty state", async () => {
+    // T5: TextLane is always rendered (no hasText gate). With empty textElements, shows empty state.
+    render(<UnifiedTimeline {...makeProps({ textElements: [] })} />);
+    // Lane label is always visible.
     expect(screen.getByText("Text")).toBeInTheDocument();
-    // Panel content hidden initially.
-    expect(screen.queryByTestId("text-panel-content")).toBeNull();
-    // Click expands the inline panel.
-    await act(async () => { fireEvent.click(screen.getByText("Text").closest("[role='button']")!); });
-    expect(screen.getByTestId("text-panel-content")).toBeInTheDocument();
-    expect(onTextPanelChange).toHaveBeenCalledWith(true);
+    // Empty state text when no bars.
+    expect(screen.getByText(/No text yet/i)).toBeInTheDocument();
   });
 
-  it("Text lane hidden when hasText=false", () => {
-    render(<UnifiedTimeline {...makeProps({ hasText: false })} />);
-    // "Text" in the lane gutter should not appear (the SFX "Text" above is not shown)
+  it("Text lane always renders in T5; shows empty state when textElements is empty", () => {
+    // T5: TextLane is always rendered regardless of textElements length.
+    // The "Text" label in the lane gutter is always visible.
+    render(<UnifiedTimeline {...makeProps({ textElements: [] })} />);
+    // Lane label visible.
     const textLabels = screen.queryAllByText("Text");
-    // All elements matching "Text" should be inside the lane if any — but with hasText=false,
-    // the Text lane is not rendered at all.
-    expect(textLabels).toHaveLength(0);
+    expect(textLabels.length).toBeGreaterThanOrEqual(1);
+    // Empty-state message visible.
+    expect(screen.getByText(/No text yet/i)).toBeInTheDocument();
   });
 
   it("Overlays lane shown when overlayCards is non-empty (interactive — no click-through)", () => {

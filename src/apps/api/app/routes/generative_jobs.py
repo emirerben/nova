@@ -18,6 +18,7 @@ in `Job.assembly_plan["variants"]`, which the status endpoint surfaces directly.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
 from typing import Literal
@@ -39,6 +40,13 @@ log = structlog.get_logger()
 router = APIRouter()
 
 _MAX_CLIPS = 20
+
+# TextElement feature flag (kill switch).  Apply:
+#   fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
+_TEXT_ELEMENTS_ENABLED = os.getenv("TEXT_ELEMENTS_ENABLED", "true").lower() != "false"
+
+# Maximum number of TextElement entries accepted per PUT (A—).
+_TEXT_ELEMENTS_MAX = 50
 
 # Variant blobs live under `generative-jobs/` which is NOT in the GCS delete rule
 # (infra/gcs-lifecycle.json) — the bytes persist indefinitely. But `output_url` is
@@ -267,6 +275,24 @@ class EditVariantRequest(BaseModel):
     cluster_hero_size_px: int | None = Field(None, gt=0)
     cluster_body_size_px: int | None = Field(None, gt=0)
     cluster_accent_size_px: int | None = Field(None, gt=0)
+
+
+class TextElementsRequest(BaseModel):
+    """Full-replace body for PUT /text-elements.
+
+    `elements` is the entire new TextElement list (raw dicts — validation is
+    performed inside `dispatch_set_text_elements` via `coerce_text_elements`).
+    Invalid entries are dropped silently; if all entries are invalid the list
+    is stored empty (clears the overlay).
+
+    `render=True` (default): persist + enqueue the fast-reburn.  The variant
+    flips to render_status="rendering".
+    `render=False`: persist only — no Celery task is dispatched.  Useful for
+    a "save draft" step before an explicit Apply.
+    """
+
+    elements: list[dict] = Field(default_factory=list)
+    render: bool = True
 
 
 # ── Timeline editor schemas ────────────────────────────────────────────────────
@@ -510,6 +536,17 @@ def _variants_for_response(job: Job) -> list[dict]:
         # transcript to the client. (`v` is already a fresh copy here.)
         v.pop("transcript", None)
         v.pop("scenes", None)
+        # TextElement overlay (plan-item-timeline feature).  Surfaced when the
+        # kill switch is on so the FE can populate its timeline editor from the
+        # persisted state (both the AI-snapshot and user-authored lists).
+        if _TEXT_ELEMENTS_ENABLED:
+            v = {
+                **v,
+                "text_elements": v.get("text_elements"),
+                "text_elements_user_edited": v.get("text_elements_user_edited", False),
+                "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
+                "text_elements_materialized_from": v.get("text_elements_materialized_from"),
+            }
         out.append(v)
     return out
 
@@ -586,16 +623,14 @@ _SEQUENCE_TEXT_LOCKED_DETAIL = (
 
 
 def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool) -> None:
-    """Validate + enqueue an intro-text edit/removal for one variant."""
-    variant = require_editable_variant(job, variant_id)
-    # Sequence-synced variants (D19): the on-screen words come from the spoken
-    # transcript, not intro_text — a text edit would silently desync or no-op.
-    # The size nudge and style/layout edits stay allowed (separate dispatchers).
-    if variant.get("intro_mode") == "sequence":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=_SEQUENCE_TEXT_LOCKED_DETAIL,
-        )
+    """Validate + enqueue an intro-text edit/removal for one variant.
+
+    T8: the sequence lock that used to 422 here is removed.  PUT /text-elements
+    handles multi-block editorial layout edits; dispatch_retext now proceeds for
+    all variant types including sequence (intro_text override on re-render).
+    """
+    # Guard: raises 404/409 when variant is unknown or already rendering.
+    require_editable_variant(job, variant_id)
     if not remove and not (text and text.strip()):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -983,6 +1018,126 @@ def dispatch_set_sound_effects(
     )
 
 
+def dispatch_set_text_elements(
+    job: Job,
+    variant_id: str,
+    *,
+    elements: list[dict],
+    render: bool = True,
+) -> None:
+    """Validate + persist TextElements on a variant; optionally enqueue fast-reburn.
+
+    Full-replace semantics: `elements` becomes the authoritative element list for
+    this variant.  An empty list clears all text overlays.
+
+    Guards (all raise HTTPException before any write):
+      - Feature flag disabled → 404
+      - Unknown / rendering variant → 404 / 409 (via require_editable_variant)
+      - text_mode='lyrics' → 422 (A16; lyric lines are beat-synced)
+      - len(elements) > _TEXT_ELEMENTS_MAX → 422 (A—)
+      - render=True + base_video_path is None → 422 (no cached base yet)
+
+    On write (all before enqueue):
+      - Coerces elements via coerce_text_elements; invalid entries dropped silently
+      - Stores as text_elements on the variant dict
+      - Sets text_elements_user_edited=True
+      - Writes render_generation_id (A20) for stale-write detection
+      - Sets render_status='rendering' when render=True
+      - Replaces job.assembly_plan (SQLAlchemy change tracking via flag_modified)
+    """
+    if not _TEXT_ELEMENTS_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Text element editing is not available.",
+        )
+
+    variant = require_editable_variant(job, variant_id)
+
+    # A16: lyrics variant is beat-synced; re-cutting the text would break sync.
+    if variant.get("text_mode") == "lyrics":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Text elements cannot be edited on a lyrics variant.",
+        )
+
+    # A—: payload size cap (50 elements comfortably covers the longest short-form edit)
+    if len(elements) > _TEXT_ELEMENTS_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Too many text elements (max {_TEXT_ELEMENTS_MAX}).",
+        )
+
+    # fast-reburn requires a pre-built text-free base; older/lyrics variants lack it.
+    if render and not variant.get("base_video_path"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No cached base video for fast-reburn — regenerate the variant first.",
+        )
+
+    # T8 — Sequence materialization: on the first PUT /text-elements for a sequence
+    # variant, seed elements from the live scenes when the user sent an empty list.
+    # This gives them the current editorial sequence as their starting point.
+    _is_first_sequence_edit = (
+        not variant.get("text_elements_user_edited")
+        and variant.get("intro_mode") == "sequence"
+    )
+    if _is_first_sequence_edit and not elements:
+        from app.agents._schemas.text_element import (  # noqa: PLC0415
+            text_elements_for_variant,
+        )
+        snapshot = text_elements_for_variant(variant)
+        if snapshot:
+            elements = [e.model_dump() for e in snapshot]
+
+    # Validate + coerce elements; drop invalid entries silently (A—).
+    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+
+    validated: list[dict] = []
+    if elements:
+        coerced = coerce_text_elements(elements)
+        if coerced:
+            # Additional cross-field check: end_s must be > start_s.
+            for elem in coerced:
+                if (elem.end_s or 0.0) <= (elem.start_s or 0.0):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Element {elem.id}: end_s must be greater than start_s.",
+                    )
+            validated = [e.model_dump() for e in coerced]
+
+    # Write render_generation_id before any DB mutation so the stale check in the
+    # worker can compare against the value that was current when we enqueued.
+    render_gen_id = uuid.uuid4().hex
+
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["text_elements"] = validated
+            v["text_elements_user_edited"] = True
+            v["render_generation_id"] = render_gen_id
+            # T8: record sequence materialization metadata on first sequence edit.
+            if _is_first_sequence_edit:
+                v["geometry_materialized_at_version"] = "1"
+                v["text_elements_materialized_from"] = "sequence"
+            if render:
+                v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
+
+    if render:
+        from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+        # Route to the overlay-jobs queue (solo worker — avoids macOS prefork CLIP fork crash).
+        regenerate_generative_variant.apply_async(
+            args=[str(job.id), variant_id],
+            kwargs={"render_gen_id": render_gen_id},
+            queue="overlay-jobs",
+        )
+
+
 def dispatch_edit_variant(
     job: Job,
     variant_id: str,
@@ -1010,6 +1165,18 @@ def dispatch_edit_variant(
     already accepts all overrides together.
     """
     variant = require_editable_variant(job, variant_id)
+
+    # A15: once the user has edited via the timeline TextElement editor, the
+    # instant-edit surface (which only understands the single-block linear intro)
+    # must not clobber their work.  Redirect to PUT /text-elements instead.
+    if variant.get("text_elements_user_edited") and _TEXT_ELEMENTS_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Text has been edited via the timeline editor. "
+                "Use PUT /text-elements to update this variant."
+            ),
+        )
 
     if (
         text is None

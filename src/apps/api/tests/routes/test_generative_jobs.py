@@ -1206,17 +1206,15 @@ def test_dispatch_edit_remove_text_rejected_on_sequence_variant(monkeypatch):
     assert calls == []
 
 
-def test_dispatch_retext_rejected_on_sequence_variant(monkeypatch):
-    from fastapi import HTTPException
-
+def test_dispatch_retext_allowed_on_sequence_variant(monkeypatch):
+    """T8: sequence lock removed from dispatch_retext — it now proceeds normally."""
     from app.routes.generative_jobs import dispatch_retext
 
     calls = _capture_delay(monkeypatch)
-    with pytest.raises(HTTPException) as exc:
-        dispatch_retext(_sequence_job(), "original_text", text="new hook", remove=False)
-    assert exc.value.status_code == 422
-    assert "synced" in str(exc.value.detail)
-    assert calls == []
+    # Should NOT raise — sequence variant is no longer blocked on retext.
+    dispatch_retext(_sequence_job(), "original_text", text="new hook", remove=False)
+    # Must have enqueued a re-render.
+    assert len(calls) == 1
 
 
 def test_dispatch_edit_size_nudge_allowed_on_sequence_variant(monkeypatch):

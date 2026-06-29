@@ -668,6 +668,36 @@ export interface CaptionCue {
   end_s: number;
 }
 
+/**
+ * One timed text block in the editorial/authoring layer.
+ * Mirrors `TextElement` in app/agents/_schemas/text_element.py — all field names,
+ * union literals, and nullability rules are kept in lockstep so round-trips are
+ * byte-identical.
+ */
+export interface TextElement {
+  id: string;
+  text: string;
+  start_s: number;
+  end_s: number;
+  role: "generative_intro" | "generative_sequence";
+  position?: "top" | "middle" | "bottom" | "custom";
+  x_frac?: number | null;
+  y_frac?: number | null;
+  font_family?: string | null;
+  size_px?: number | null;
+  size_class?: "small" | "medium" | "large" | "xlarge" | "xxlarge" | "jumbo" | null;
+  color?: string | null;
+  highlight_color?: string | null;
+  stroke_width?: number | null;
+  alignment?: "left" | "center" | "right" | null;
+  effect?: "static" | "fade-in" | "slide-up" | "karaoke-line" | null;
+  fade_out_ms?: number | null;
+  reveal_s?: number | null;
+  z?: number | null;
+  word_timings?: Record<string, unknown>[] | null;
+  source_params?: Record<string, unknown> | null;
+}
+
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
@@ -732,6 +762,19 @@ export interface PlanItemVariant {
   intro_cluster_hero_size_px?: number | null;
   intro_cluster_body_size_px?: number | null;
   intro_cluster_accent_size_px?: number | null;
+  /**
+   * T6: Synthesized (or user-edited) text elements for this variant.
+   * Null when text_mode === "lyrics" or the variant has no text layer.
+   * Populated lazily by the read adapter (`text_elements_for_variant`) on
+   * the first status read after T1 lands; absent on legacy variants until
+   * they are first fetched.
+   */
+  text_elements?: TextElement[] | null;
+  /**
+   * T6: True once the user has applied a PUT text-elements edit. The flag
+   * prevents the read adapter from overwriting user edits on re-render.
+   */
+  text_elements_user_edited?: boolean;
   /** Media-overlay cards applied on top of this variant (slice 1). */
   media_overlays?: MediaOverlay[] | null;
   /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
@@ -893,6 +936,27 @@ export function setVariantMediaOverlays(
     {
       method: "PUT",
       body: JSON.stringify({ overlays, render: options?.render ?? true }),
+    },
+  );
+}
+
+/**
+ * Full-replace the text-element list on a variant (T6).
+ * When render=true (default), triggers an async re-render via the fast-reburn path.
+ * PUT /plan-items/{planItemId}/variants/{variantId}/text-elements
+ * Returns { ok: boolean } from the backend (T4 route).
+ */
+export function putTextElements(
+  planItemId: string,
+  variantId: string,
+  elements: TextElement[],
+  render = true,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/plan-items/${planItemId}/variants/${variantId}/text-elements`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ elements, render }),
     },
   );
 }

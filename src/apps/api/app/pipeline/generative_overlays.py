@@ -22,9 +22,14 @@ loading skia/PIL/fonts. If the renderer's vocab changes, update both.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
 from app.pipeline.word_timing import synthesize_word_timings
+
+if TYPE_CHECKING:
+    from app.agents._schemas.text_element import TextElement
 
 log = structlog.get_logger()
 
@@ -697,4 +702,161 @@ def build_sequence_overlays(
     if not overlays:
         log.info("generative_sequence_no_renderable_scenes", scene_count=len(scenes or []))
         return None
+    return overlays
+
+
+# ── TextElement compiler ──────────────────────────────────────────────────────
+
+
+def build_overlays_from_text_elements(
+    elements: list[TextElement],
+    *,
+    video_duration_s: float,
+) -> list[dict]:
+    """Compile a list of TextElement objects to burn-dict format.
+
+    Byte-identical to the legacy generators for back-compat read-adapter output.
+    Reuses existing roles (generative_intro, generative_sequence) — renderer untouched.
+
+    Position mapping:  TextElement → burn-dict
+      "top"    → "top"
+      "bottom" → "bottom"
+      "middle" → "center"
+      "custom" → "center" + position_x_frac / position_y_frac
+
+    The read adapter converts each legacy burn dict into a *separate* TextElement,
+    so adapter-sourced elements never carry ``reveal_s`` — the reveal and hold arrive
+    as two independent elements already.  When ``reveal_s`` IS set (directly authored
+    elements), the compiler splits one element into a [reveal, hold] pair exactly as
+    ``build_persistent_intro_overlays`` does.
+
+    For ``karaoke-line`` elements with stored ``word_timings``, those timings are used
+    verbatim (bypassing ``synthesize_word_timings``) to reproduce the original
+    beat-snapped values without needing the song's beat list.
+    """
+    overlays: list[dict] = []
+    for elem in elements:
+        # ── position → burn-dict position + optional explicit fracs ──────────
+        if elem.position == "custom":
+            pos = _DEFAULT_POSITION
+            pos_x_frac: float | None = elem.x_frac
+            pos_y_frac: float | None = elem.y_frac
+        elif elem.position == "top":
+            pos = "top"
+            pos_x_frac = None
+            pos_y_frac = None
+        elif elem.position == "bottom":
+            pos = "bottom"
+            pos_x_frac = None
+            pos_y_frac = None
+        else:  # "middle" → "center"
+            pos = "center"
+            pos_x_frac = None
+            pos_y_frac = None
+
+        effect = elem.effect or _DEFAULT_EFFECT
+        text_color = elem.color or _DEFAULT_TEXT_COLOR
+        highlight_color_v = elem.highlight_color or _DEFAULT_HIGHLIGHT_COLOR
+        text_anchor = elem.alignment or _DEFAULT_ANCHOR
+        size_class = elem.size_class or _DEFAULT_SIZE_CLASS
+        text_size_px = int(elem.size_px) if elem.size_px is not None else None
+        stroke_w = int(elem.stroke_width) if elem.stroke_width is not None else None
+
+        # ── reveal_s: produce [reveal, hold] pair (directly authored only) ───
+        # Adapter-sourced elements never set reveal_s (legacy burn dicts don't
+        # carry it); those come back as two pre-split TextElements already.
+        if elem.reveal_s is not None and effect != "static":
+            reveal_end = min(max(0.0, float(elem.reveal_s)), elem.end_s)
+
+            reveal = build_intro_overlay(
+                elem.text,
+                effect=effect,
+                position=pos,
+                size_class=size_class,
+                text_color=text_color,
+                highlight_color=highlight_color_v,
+                text_anchor=text_anchor,
+                start_s=elem.start_s,
+                end_s=reveal_end,
+                font_family=elem.font_family,
+                stroke_width=stroke_w,
+                text_size_px=text_size_px,
+                position_x_frac=pos_x_frac,
+                position_y_frac=pos_y_frac,
+            )
+            if reveal is not None:
+                reveal["role"] = elem.role
+                if effect == "karaoke-line" and elem.word_timings:
+                    reveal["word_timings"] = elem.word_timings
+                if elem.fade_out_ms is not None:
+                    reveal["fade_out_ms"] = elem.fade_out_ms
+                if elem.z is not None:
+                    reveal["z"] = elem.z
+                overlays.append(reveal)
+
+            # Settled color matches the animated reveal's final frame:
+            # karaoke sweeps every word to highlight_color; others stay text_color.
+            settled = highlight_color_v if effect == "karaoke-line" else text_color
+            hold = build_intro_overlay(
+                elem.text,
+                effect="static",
+                position=pos,
+                size_class=size_class,
+                text_color=settled,
+                highlight_color=highlight_color_v,
+                text_anchor=text_anchor,
+                start_s=reveal_end,
+                end_s=elem.end_s,
+                font_family=elem.font_family,
+                stroke_width=stroke_w,
+                text_size_px=text_size_px,
+                position_x_frac=pos_x_frac,
+                position_y_frac=pos_y_frac,
+            )
+            if hold is not None:
+                hold["role"] = elem.role
+                if elem.fade_out_ms is not None:
+                    hold["fade_out_ms"] = elem.fade_out_ms
+                if elem.z is not None:
+                    hold["z"] = elem.z
+                overlays.append(hold)
+            continue
+
+        # ── single-dict path (adapter elements, sequence blocks, static) ─────
+        overlay = build_intro_overlay(
+            elem.text,
+            effect=effect,
+            position=pos,
+            size_class=size_class,
+            text_color=text_color,
+            highlight_color=highlight_color_v,
+            text_anchor=text_anchor,
+            start_s=elem.start_s,
+            end_s=elem.end_s,
+            font_family=elem.font_family,
+            stroke_width=stroke_w,
+            text_size_px=text_size_px,
+            position_x_frac=pos_x_frac,
+            position_y_frac=pos_y_frac,
+        )
+        if overlay is None:
+            continue
+
+        # build_intro_overlay always emits "generative_intro"; override for
+        # sequence elements (role="generative_sequence").
+        overlay["role"] = elem.role
+
+        # Use stored word_timings verbatim for karaoke-line so beat-snapped
+        # timings from the original render are reproduced exactly (A17).
+        if effect == "karaoke-line" and elem.word_timings:
+            overlay["word_timings"] = elem.word_timings
+
+        if elem.fade_out_ms is not None:
+            overlay["fade_out_ms"] = elem.fade_out_ms
+
+        if elem.z is not None:
+            overlay["z"] = elem.z
+
+        overlays.append(overlay)
+
     return overlays

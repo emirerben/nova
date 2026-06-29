@@ -38,7 +38,9 @@ import {
   setVariantSoundEffects,
   renderVariantSfx,
   getSfxAudioUrl,
+  putTextElements,
   type SoundEffectPlacement,
+  type TextElement,
 } from "@/lib/plan-api";
 import { useSfxPreview } from "../../_components/useSfxPreview";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
@@ -67,6 +69,7 @@ import SignInPrompt from "../../_components/SignInPrompt";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
 import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
+import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -76,6 +79,7 @@ import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
+import { resolveTextElementsLayout } from "@/lib/overlay-layout";
 import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 
 // How long a dispatched render may take to register its Job before we admit
@@ -1396,8 +1400,12 @@ function FocusedResults({
   updatedVariantId: string | null;
 }) {
   const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
-  // Tracks whether UnifiedTimeline's Text panel is expanded — switches the hero to LiveEditPreview.
-  const [textLaneOpen, setTextLaneOpen] = useState(false);
+  // T5: textLaneOpen is derived (not state) — true when the timeline tab is open and the variant
+  // has text. Text controls are now always visible below the timeline (not in a collapsible panel),
+  // so we show LiveEditPreview whenever the user can interact with them.
+  // Previously this was state set via onTextPanelChange from UnifiedTimeline; that callback was
+  // removed in T5 when the expandable textPanel slot was replaced by the interactive bar lane.
+  const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
 
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
@@ -1598,6 +1606,7 @@ function FocusedResults({
                 styleSets={styleSets}
                 session={editSession}
                 playToken={editSession.playToken}
+                textElements={variant.text_elements ?? undefined}
               />
             ) : (
               <Hero
@@ -1790,7 +1799,6 @@ function FocusedResults({
                       sfxAudioUrls={sfxAudioUrls}
                       setSfxAudioUrls={setSfxAudioUrls}
                       currentTimeS={currentTimeS}
-                      onTextPanelChange={setTextLaneOpen}
                       onError={onError}
                     />
                   )}
@@ -1833,6 +1841,34 @@ function FocusedResults({
   );
 }
 
+// ── T6: TextElement ↔ TextElementBar conversion helpers ──────────────────────
+
+/**
+ * Convert API TextElement[] → TextElementBar[] for the reducer initial state.
+ * Only the fields that TextElementBar carries are mapped; position / x_frac /
+ * y_frac / highlight_color / stroke_width / fade_out_ms / reveal_s / z /
+ * word_timings are API-only and will be re-applied by the compiler at render time
+ * (they're preserved in source_params).
+ */
+function convertApiTextElements(
+  apiElements: TextElement[] | null | undefined,
+): import("@/lib/timeline/text-timeline-reducer").TextElementBar[] {
+  return (apiElements ?? []).map((el) => ({
+    id: el.id,
+    text: el.text,
+    start_s: el.start_s,
+    end_s: el.end_s,
+    role: el.role,
+    font_family: el.font_family ?? undefined,
+    size_px: el.size_px ?? undefined,
+    size_class: el.size_class ?? undefined,
+    color: el.color ?? undefined,
+    effect: el.effect ?? undefined,
+    alignment: el.alignment ?? undefined,
+    source_params: el.source_params ?? undefined,
+  }));
+}
+
 /**
  * Controls-only column for the focused variant. Receives the edit session as a
  * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
@@ -1872,7 +1908,6 @@ function FocusedVariantControls({
   sfxAudioUrls,
   setSfxAudioUrls,
   currentTimeS,
-  onTextPanelChange,
   onError,
 }: {
   itemId: string;
@@ -1900,8 +1935,6 @@ function FocusedVariantControls({
   sfxAudioUrls: Record<string, string>;
   setSfxAudioUrls: Dispatch<SetStateAction<Record<string, string>>>;
   currentTimeS: number;
-  /** Called when the UnifiedTimeline Text panel opens/closes — parent switches hero to LiveEditPreview. */
-  onTextPanelChange: (open: boolean) => void;
   /** Surface a user-facing error in the page-level banner (e.g. SFX save failures). */
   onError: (msg: string) => void;
 }) {
@@ -2120,6 +2153,32 @@ function FocusedVariantControls({
   const [glossaryEffects, setGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [glossaryLoading, setGlossaryLoading] = useState(false);
 
+  // ── Text-elements state (T10 + T6) ────────────────────────────────────────
+  // Optimistic render status per variantId so the UI doesn't freeze on apply
+  // before the server round-trip returns (Part B: plan-item-edit-no-optimistic-state).
+  const [optimisticRenderStatus, setOptimisticRenderStatus] = useState<Record<string, string>>({});
+  // Transient error/retry banner shown after a save conflict (409) or failed save.
+  const [textApplyError, setTextApplyError] = useState<string | null>(null);
+  // Brief note after a TRIM_START clamp (e.g. "Minimum 0.1s") — auto-clears after 2 s.
+  const [textElementNote, setTextElementNote] = useState<string | null>(null);
+  // State 3 note: selected-bar tracking is managed internally by TextLane (onBarSelect).
+  // UnifiedTimeline's textExpandedBarId is cleared when the selected bar is deleted.
+  // Local mirror of textElements bars — seeded from variant.text_elements (T6) and
+  // updated on every reducer mutation; used to derive State 5 (text too long) warning.
+  const [textElements, setTextElements] = useState<TextElementBar[]>(() =>
+    convertApiTextElements(variant.text_elements),
+  );
+  // Re-sync from API data when a render completes (render_finished_at advances).
+  // Only resets when the server data is authoritative (user edits not in flight).
+  useEffect(() => {
+    if (!variant.text_elements_user_edited) {
+      setTextElements(convertApiTextElements(variant.text_elements));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant.render_finished_at]);
+  // Debounce timer ref for the auto-apply after text-element edits.
+  const textApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Load glossary when the Timeline tab is first opened.
   useEffect(() => {
     if (activeTab !== "timeline" || !SOUND_EFFECTS_ENABLED) return;
@@ -2244,6 +2303,95 @@ function FocusedVariantControls({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
 
+  // ── Text-element handlers (T6) ────────────────────────────────────────────
+
+  /**
+   * Apply text-element bars to the variant via PUT text-elements (T6 wiring).
+   *
+   * Part A (apply-clears-preview-layer learning): clears localPreviewUrls
+   * BEFORE triggering the render pass so the burned output takes over without
+   * double-compositing previously-uploaded overlay blob URLs.
+   *
+   * Part B (plan-item-edit-no-optimistic-state learning): sets optimistic
+   * "rendering" state synchronously so the UI reflects in-flight rendering
+   * before the server round-trip completes.
+   */
+  const handleApplyTextElements = useCallback(
+    async (variantId: string, elements: TextElementBar[]) => {
+      // Part A: clear preview layer first.
+      setLocalPreviewUrls((prev) => {
+        Object.values(prev).forEach((url) => URL.revokeObjectURL(url));
+        return {};
+      });
+      // Part B: optimistic rendering state so controls show "rendering" immediately.
+      setOptimisticRenderStatus((prev) => ({ ...prev, [variantId]: "rendering" }));
+      setTextApplyError(null);
+      try {
+        // Convert TextElementBar → TextElement for the API.
+        const apiElements: TextElement[] = elements.map((bar) => ({
+          id: bar.id,
+          text: bar.text,
+          start_s: bar.start_s,
+          end_s: bar.end_s,
+          role: bar.role,
+          font_family: bar.font_family ?? null,
+          size_px: bar.size_px ?? null,
+          size_class: (bar.size_class as TextElement["size_class"]) ?? null,
+          color: bar.color ?? null,
+          highlight_color: bar.highlight_color ?? null,
+          stroke_width: bar.stroke_width ?? null,
+          effect: (bar.effect as TextElement["effect"]) ?? null,
+          alignment: (bar.alignment as TextElement["alignment"]) ?? null,
+          source_params: bar.source_params ?? null,
+          position: "middle" as const,
+        }));
+        await putTextElements(itemId, variantId, apiElements);
+        markVariantRendering(variantId, variant.render_finished_at ?? null);
+      } catch (err) {
+        // Clear optimistic state on failure so controls re-enable.
+        setOptimisticRenderStatus((prev) => {
+          const next = { ...prev };
+          delete next[variantId];
+          return next;
+        });
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+          // State 1: save conflict — refresh to get latest server state.
+          setTextApplyError("Text updated elsewhere — refreshing");
+          refetch();
+        } else {
+          // State 2: undo after failed save — inform the user; caller should revert reducer.
+          setTextApplyError("Couldn't save text — retrying");
+        }
+      }
+    },
+    [setLocalPreviewUrls, markVariantRendering, variant.render_finished_at, refetch, itemId],
+  );
+
+  /**
+   * Handle text-element changes from the reducer: update local mirror + debounce-apply.
+   * Waits 1 s after the last edit before persisting so rapid drag/trim gestures
+   * don't flood the API.
+   */
+  const handleTextElementsChange = useCallback(
+    (bars: TextElementBar[]) => {
+      setTextElements(bars);
+      if (textApplyTimer.current) clearTimeout(textApplyTimer.current);
+      textApplyTimer.current = setTimeout(() => {
+        void handleApplyTextElements(variant.variant_id, bars);
+      }, 1000);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [variant.variant_id, handleApplyTextElements],
+  );
+
+  /** State 4: called by UnifiedTimeline when a trim drag is clamped to MIN_DUR_S. */
+  const handleTextTrimClamped = useCallback(() => {
+    setTextElementNote("Minimum 0.1s");
+    const t = setTimeout(() => setTextElementNote(null), 2000);
+    return () => clearTimeout(t);
+  }, []);
+
   const showSongSection = activeTab === "song";
   const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED;
 
@@ -2271,71 +2419,99 @@ function FocusedVariantControls({
 
       {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text + Clips inline) */}
       {showTimelineSection && (
-        <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
-          <UnifiedTimeline
-            totalDurationS={variantDurationS}
-            currentTimeS={currentTimeS}
-            sfxPlacements={sfxPlacements}
-            sfxGlossaryEffects={glossaryEffects}
-            sfxGlossaryLoading={glossaryLoading}
-            sfxRendering={variant.render_status === "rendering"}
-            sfxFailed={variant.render_status === "failed"}
-            sfxUploading={sfxUploading}
-            sfxDirty={sfxDirty}
-            onSfxChange={handleSfxChange}
-            onApplySfx={handleApplySfx}
-            onSfxUploadRequest={handleSfxUpload}
-            overlayCards={overlayCards}
-            overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
-            overlayUploading={overlayUploading}
-            localPreviewUrls={localPreviewUrls}
-            onOverlayUploadRequest={handleOverlayUpload}
-            onUpdateCard={handleUpdateCard}
-            onRemoveCard={handleRemoveCard}
-            onClearOverlays={handleClearOverlays}
-            hasText={variant.text_mode !== "none"}
-            onTextPanelChange={onTextPanelChange}
-            textPanel={
-              variant.text_mode !== "none" ? (
-                <div className="space-y-3">
-                  <PlanVariantEditor
-                    variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
-                    tracks={[]}
-                    styleSets={instantEligible ? [] : styleSets}
-                    onSwap={onSwap}
-                    onRetext={draftHandlers.onRetext}
-                    onRemoveText={draftHandlers.onRemoveText}
-                    onChangeStyle={draftHandlers.onChangeStyle}
-                    onResize={instantEligible ? undefined : draftHandlers.onResize}
-                    onChangeLayout={draftHandlers.onChangeLayout}
-                    onEditClips={undefined}
-                    showClipEditor={false}
-                    clipSlotCount={null}
-                    hasClipEdits={false}
-                  />
-                  {instantEligible && (
-                    <EditToolbar
-                      session={session}
-                      styleSets={[]}
-                      fallbackSizePx={variant.intro_text_size_px}
-                      resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
-                    />
-                  )}
-                </div>
-              ) : null
-            }
-            clipsPanel={
-              <InlineClipsEditor
-                ownerId={itemId}
-                variantId={variant.variant_id}
-                base="plan-item"
-                onRenderEnqueued={() => {
-                  markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-                  refetch();
-                }}
+        <div className="space-y-1.5">
+          {/* State 6: no base_video_path = fast reburn unavailable — inform the user. */}
+          {!variant.base_video_path && (
+            <p className="text-[11px] text-zinc-500">
+              Full re-render needed (may take a moment)
+            </p>
+          )}
+          {/* States 1+2: save conflict or failed save — amber banner. */}
+          {textApplyError && (
+            <p className="rounded bg-amber-900/30 px-2 py-1 text-[11px] text-amber-400">
+              {textApplyError}
+            </p>
+          )}
+          {/* State 4: minimum-duration clamp note — auto-clears after 2 s. */}
+          {textElementNote && (
+            <p className="px-1 text-[11px] text-zinc-500">{textElementNote}</p>
+          )}
+          {/* State 5: text too long — inline character count warning. */}
+          {textElements.some((b) => b.text.length > 500) && (
+            <p className="px-1 text-[11px] text-amber-400">
+              Text block exceeds 500 chars — may be truncated on render
+            </p>
+          )}
+          <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
+            <UnifiedTimeline
+              totalDurationS={variantDurationS}
+              currentTimeS={currentTimeS}
+              sfxPlacements={sfxPlacements}
+              sfxGlossaryEffects={glossaryEffects}
+              sfxGlossaryLoading={glossaryLoading}
+              sfxRendering={variant.render_status === "rendering"}
+              sfxFailed={variant.render_status === "failed"}
+              sfxUploading={sfxUploading}
+              sfxDirty={sfxDirty}
+              onSfxChange={handleSfxChange}
+              onApplySfx={handleApplySfx}
+              onSfxUploadRequest={handleSfxUpload}
+              overlayCards={overlayCards}
+              overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
+              overlayUploading={overlayUploading}
+              localPreviewUrls={localPreviewUrls}
+              onOverlayUploadRequest={handleOverlayUpload}
+              onUpdateCard={handleUpdateCard}
+              onRemoveCard={handleRemoveCard}
+              onClearOverlays={handleClearOverlays}
+              textElements={textElements}
+              onTextElementsChange={handleTextElementsChange}
+              onTextApply={(bars) => { void handleApplyTextElements(variant.variant_id, bars); }}
+              onTextTrimClamped={handleTextTrimClamped}
+              isFirstSequenceEdit={
+                variant.intro_mode === "sequence" && !variant.text_elements_user_edited
+              }
+              clipsPanel={
+                <InlineClipsEditor
+                  ownerId={itemId}
+                  variantId={variant.variant_id}
+                  base="plan-item"
+                  onRenderEnqueued={() => {
+                    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+                    refetch();
+                  }}
+                />
+              }
+            />
+          </div>
+          {/* Text editing controls — rendered below the timeline for text-mode variants. */}
+          {variant.text_mode !== "none" && (
+            <div className="mt-2 space-y-3">
+              <PlanVariantEditor
+                variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+                tracks={[]}
+                styleSets={instantEligible ? [] : styleSets}
+                onSwap={onSwap}
+                onRetext={draftHandlers.onRetext}
+                onRemoveText={draftHandlers.onRemoveText}
+                onChangeStyle={draftHandlers.onChangeStyle}
+                onResize={instantEligible ? undefined : draftHandlers.onResize}
+                onChangeLayout={draftHandlers.onChangeLayout}
+                onEditClips={undefined}
+                showClipEditor={false}
+                clipSlotCount={null}
+                hasClipEdits={false}
               />
-            }
-          />
+              {instantEligible && (
+                <EditToolbar
+                  session={session}
+                  styleSets={[]}
+                  fallbackSizePx={variant.intro_text_size_px}
+                  resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
+                />
+              )}
+            </div>
+          )}
         </div>
       )}
     </>
@@ -2375,11 +2551,18 @@ function LiveEditPreview({
   styleSets,
   session,
   playToken,
+  textElements,
 }: {
   variant: PlanItemVariant;
   styleSets: GenerativeStyleSet[];
   session: VariantEditSession;
   playToken?: number;
+  /**
+   * T6: Full TextElement array from the variant (API data). When non-empty,
+   * the preview renders ALL elements as CSS overlays instead of the single
+   * IntroTextPreview (which models the legacy linear/cluster intro path).
+   */
+  textElements?: TextElement[];
 }) {
   const introParams = resolveIntroParams(variant, styleSets, session.draft);
 
@@ -2398,6 +2581,14 @@ function LiveEditPreview({
   const burnedSrc: string | null =
     !session.isDirty && !session.isSaving ? (variant.output_url ?? null) : null;
   const burnedIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
+  // N-element preview: use the text_elements array when available (T6).
+  // Each element is positioned by its API-persisted x_frac/y_frac or named
+  // position preset.  Font size scales by the rendered box height via CSS.
+  const textLayouts =
+    !burnedSrc && textElements && textElements.length > 0
+      ? resolveTextElementsLayout(textElements)
+      : null;
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
@@ -2431,8 +2622,38 @@ function LiveEditPreview({
           No preview
         </div>
       )}
-      {!burnedSrc && (
-        <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
+      {/* N-element text overlay (T6): shows all text_elements from the API. */}
+      {textLayouts ? (
+        textLayouts.map((layout) => (
+          <div
+            key={layout.id}
+            className="pointer-events-none absolute"
+            style={{
+              left: `${layout.xFrac * 100}%`,
+              top: `${layout.yFrac * 100}%`,
+              transform: "translate(-50%, -50%)",
+              textAlign: layout.alignment,
+              color: layout.color,
+              // Scale from 1920-px canvas to the 9:16 preview box via vH-equivalent.
+              // The preview box is aspect-[9/16]; its height drives the font scale.
+              fontSize: `${(layout.sizePx / 1920) * 100}cqh`,
+              fontFamily: `"${layout.fontFamily}", serif`,
+              fontWeight: 700,
+              lineHeight: 1.15,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              maxWidth: "90%",
+              textShadow: "0 2px 8px rgba(0,0,0,0.7)",
+            }}
+          >
+            {layout.text}
+          </div>
+        ))
+      ) : (
+        // Legacy single-element preview: driven by the instant-editor draft.
+        !burnedSrc && (
+          <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
+        )
       )}
     </div>
   );

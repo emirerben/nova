@@ -223,14 +223,12 @@ describe("Plan item page — deferred-burn editor", () => {
     expect(screen.queryByRole("button", { name: /T Text/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /Aa Font/i })).toBeNull();
 
-    // Open the Timeline tab → expand the Text lane to reveal caption/layout/font controls.
+    // Open the Timeline tab → text controls (PlanVariantEditor) render directly below
+    // the timeline in the text-controls area (T5: "Edit text ▼" expand button removed).
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i }));
     });
-    await act(async () => {
-      fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]);
-    });
-    // PlanVariantEditor shows "Remove text" inline in the text panel.
+    // PlanVariantEditor shows "Remove text" in the text-controls area below the timeline.
     expect(screen.getAllByRole("button", { name: /^Remove text$/ }).length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
     // EditToolbar (font/size) is also inline — slider present, A+ stepper hidden.
@@ -340,9 +338,10 @@ describe("Plan item page — deferred-burn editor", () => {
     });
     expect(screen.queryByTestId("intro-text-preview")).toBeNull();
 
-    // Open Timeline → expand Text lane to expose PlanVariantEditor controls (PR-4).
+    // Open Timeline → PlanVariantEditor controls are now directly visible below the
+    // timeline (T5: the "Edit text ▼" expand button was replaced by the interactive bar lane).
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
-    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
+    // "Remove text" comes from PlanVariantEditor rendered in the text-controls area.
     expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
   });
 });

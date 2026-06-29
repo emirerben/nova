@@ -97,6 +97,12 @@ _NO_RERUN_STATUSES = frozenset(
     }
 )
 
+# Kill switch for the TextElement authoring layer (T3/T4 — plan-item-timeline).
+# When False: no text_elements snapshot is written on render, and the
+# _reburn_text_on_base early branch (user-authored text_elements) is bypassed.
+# Apply: fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
+_TEXT_ELEMENTS_ENABLED = os.getenv("TEXT_ELEMENTS_ENABLED", "true").lower() != "false"
+
 
 @celery_app.task(
     name="orchestrate_generative_job",
@@ -538,6 +544,11 @@ def _run_generative_job(job_id: str) -> None:
                 # Per-variant render_finished_at on success (D6 tile clock).
                 if result.get("ok"):
                     result["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+
+                # Non-authoritative TextElement snapshot (T3 — plan-item-timeline).
+                # Render path still reads legacy fields; text_elements is informational
+                # until Phase 1 (T4) when the user first edits the overlay.
+                _maybe_add_text_elements_snapshot(result)
 
                 # Persist immediately so a deploy/OOM after this point can't lose it,
                 # and so the status endpoint reveals variants as they finish rather
@@ -1034,6 +1045,7 @@ def regenerate_generative_variant(
     cluster_accent_size_px_override: int | None = None,
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
+    render_gen_id: str | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1085,6 +1097,7 @@ def regenerate_generative_variant(
                 cluster_accent_size_px_override=cluster_accent_size_px_override,
                 media_overlays_override=media_overlays_override,
                 sfx_override=sfx_override,
+                render_gen_id=render_gen_id,
             )
         except OperationalError:
             raise
@@ -1528,6 +1541,32 @@ def _run_sfx_pass(
         )
 
 
+def _maybe_add_text_elements_snapshot(result: dict) -> None:
+    """Attach a non-authoritative TextElement snapshot to a freshly-rendered variant.
+
+    Called immediately after each variant render succeeds (before
+    `_upsert_variant_entry`) so the snapshot is persisted alongside the other
+    variant fields.  The render path still reads the legacy ``intro_text`` /
+    ``scenes`` / etc. fields; ``text_elements`` is purely informational until
+    Phase 1 (T4) when the user first edits and sets ``text_elements_user_edited=True``.
+
+    No-op when:
+      - ``_TEXT_ELEMENTS_ENABLED`` is False (kill switch)
+      - the render failed (``ok`` is falsy)
+      - ``text_elements_for_variant`` raises or returns an empty list
+    Never raises — a snapshot failure must never block a completed render.
+    """
+    if not _TEXT_ELEMENTS_ENABLED or not result.get("ok"):
+        return
+    try:
+        from app.agents._schemas.text_element import text_elements_for_variant  # noqa: PLC0415
+
+        te_list = text_elements_for_variant(result)
+        result["text_elements"] = [e.model_dump() for e in te_list]
+    except Exception:  # noqa: BLE001 — snapshot is informational; never block the render
+        pass
+
+
 def _reburn_text_on_base(
     *,
     job_id: str,
@@ -1584,6 +1623,40 @@ def _reburn_text_on_base(
 
         # Download the cached base
         download_to_file(base_gcs_path, local_base)
+
+        # ── TextElement early branch (T3 — plan-item-timeline) ──────────────
+        # When the user has edited text via the TextElement API (T4),
+        # their explicitly-authored elements own the overlay completely.
+        # Skip the legacy size / style / intro-writer resolution path and
+        # compile the elements directly to burn dicts.
+        if _TEXT_ELEMENTS_ENABLED and existing.get("text_elements_user_edited"):
+            from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+            from app.pipeline.generative_overlays import (  # noqa: PLC0415
+                build_overlays_from_text_elements,
+            )
+
+            _te_raw = existing.get("text_elements") or []
+            _te_elements = coerce_text_elements(_te_raw) or []
+            _te_burn_dicts = build_overlays_from_text_elements(
+                _te_elements,
+                video_duration_s=float(existing.get("duration_s") or 10.0),
+            )
+            _te_final_path = os.path.join(tmpdir, "final.mp4")
+            burn_text_overlays_skia(local_base, _te_burn_dicts, _te_final_path, tmpdir)
+            _te_gcs_key = (existing.get("video_path") or "").lstrip("/")
+            _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
+            return {
+                "render_status": "ready",
+                "ok": True,
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+                "video_path": _te_gcs_key,
+                "output_url": _te_output_url,
+                "text_mode": text_mode,
+                "style_set_id": resolved_style_set_id,
+                "intro_text_size_px": existing.get("intro_text_size_px"),
+                "intro_size_source": existing.get("intro_size_source"),
+                "text_elements_user_edited": True,
+            }
 
         # Resolve size (pixel-stability rule)
         existing_size_px = existing.get("intro_text_size_px")
@@ -2036,6 +2109,7 @@ def _run_regenerate_variant(
     cluster_accent_size_px_override: int | None = None,
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
+    render_gen_id: str | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -2362,6 +2436,37 @@ def _run_regenerate_variant(
             else:
                 raise
         if _used_fast_path:
+            # A20: stale-write guard for text_elements reburns.  A subsequent
+            # PUT /text-elements overwrites `render_generation_id` in the DB; if
+            # it differs from the token we were launched with, our result is stale
+            # and the newer task will write its own — discard rather than clobber.
+            if render_gen_id is not None:
+                with _sync_session() as _guard_db:
+                    _guard_job = _guard_db.get(Job, uuid.UUID(job_id))
+                    if _guard_job is not None:
+                        _guard_variants = (
+                            (_guard_job.assembly_plan or {}).get("variants") or []
+                        )
+                        _guard_v = next(
+                            (
+                                v
+                                for v in _guard_variants
+                                if v.get("variant_id") == variant_id
+                            ),
+                            None,
+                        )
+                        if (
+                            _guard_v is not None
+                            and _guard_v.get("render_generation_id") != render_gen_id
+                        ):
+                            log.warning(
+                                "stale_text_elements_reburn_discarded",
+                                job_id=job_id,
+                                variant_id=variant_id,
+                                expected_gen_id=render_gen_id,
+                                actual_gen_id=_guard_v.get("render_generation_id"),
+                            )
+                            return
             _update_variant_entry(job_id, variant_id, result)
             # SFX is the OUTERMOST layer. A text/style reburn overwrites video_path
             # from the cached base WITHOUT the SFX mix, so re-apply persisted effects
