@@ -309,17 +309,47 @@ export function InlineClipsEditor({
   variantId,
   base,
   onRenderEnqueued,
+  // Optional controlled mode — when provided, skip internal fetch + state.
+  // Use this when a parent (e.g. ClipsLane via useClipTimeline) already owns
+  // the data so the header bars and expanded panel share one draft.
+  externalState,
+  externalDispatch,
+  externalClips,
+  onReload,
 }: {
   ownerId: string;
   variantId: string;
   base: TimelineBase;
   onRenderEnqueued: () => void;
+  /** Controlled mode: external EditorState. Skip internal useReducer + fetch. */
+  externalState?: import("../../generative/timeline-reducer").EditorState;
+  /** Controlled mode: external dispatch. */
+  externalDispatch?: import("react").Dispatch<import("../../generative/timeline-reducer").EditorAction>;
+  /** Controlled mode: external clips list. */
+  externalClips?: TimelineClip[];
+  /** Controlled mode: called after Apply/Reset so the parent can re-sync. */
+  onReload?: () => void;
 }) {
-  const [loadState, setLoadState] = useState<"loading" | "error" | "ready">(
-    "loading",
+  const isControlled = externalState !== undefined;
+
+  // ── Uncontrolled state (only used when externalState is not provided) ────────
+  const [uncontrolledLoadState, setUncontrolledLoadState] = useState<
+    "loading" | "error" | "ready"
+  >(isControlled ? "ready" : "loading");
+  const [uncontrolledClips, setUncontrolledClips] = useState<TimelineClip[]>([]);
+  const [uncontrolledState, uncontrolledDispatch] = useReducer(
+    timelineReducer,
+    EMPTY_EDITOR_STATE,
   );
-  const [clips, setClips] = useState<TimelineClip[]>([]);
-  const [state, dispatch] = useReducer(timelineReducer, EMPTY_EDITOR_STATE);
+
+  // ── Resolve state (controlled or uncontrolled) ────────────────────────────
+  const loadState = isControlled ? "ready" : uncontrolledLoadState;
+  const clips = isControlled ? (externalClips ?? []) : uncontrolledClips;
+  // When isControlled is true, externalState/externalDispatch are guaranteed
+  // to be defined (TypeScript can't infer this through the boolean, so we cast).
+  const state = (isControlled ? externalState : uncontrolledState) as import("../../generative/timeline-reducer").EditorState;
+  const dispatch = (isControlled ? externalDispatch : uncontrolledDispatch) as import("react").Dispatch<import("../../generative/timeline-reducer").EditorAction>;
+
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -327,20 +357,24 @@ export function InlineClipsEditor({
   const dragRef = useRef<ActiveDrag | null>(null);
   const outputBarRef = useRef<HTMLDivElement>(null);
 
-  // ── Load ────────────────────────────────────────────────────────────────────
+  // ── Load (uncontrolled mode only) ────────────────────────────────────────────
   const load = useCallback(async () => {
-    setLoadState("loading");
+    if (isControlled) {
+      onReload?.();
+      return;
+    }
+    setUncontrolledLoadState("loading");
     try {
       const data = await getTimeline(ownerId, variantId, base);
-      setClips(data.clips);
-      dispatch({ type: "RESET_DRAFT", timeline: data });
-      setLoadState("ready");
+      setUncontrolledClips(data.clips);
+      uncontrolledDispatch({ type: "RESET_DRAFT", timeline: data });
+      setUncontrolledLoadState("ready");
     } catch {
-      setLoadState("error");
+      setUncontrolledLoadState("error");
     }
-  }, [ownerId, variantId, base]);
+  }, [isControlled, ownerId, variantId, base, onReload]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (!isControlled) void load(); }, [load, isControlled]);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const windows = useMemo(
@@ -437,6 +471,8 @@ export function InlineClipsEditor({
       }));
       await editTimeline(ownerId, variantId, payload, base);
       onRenderEnqueued();
+      // In controlled mode, signal parent to re-fetch so header bars also update.
+      onReload?.();
     } catch (err) {
       setSubmitError(
         err instanceof TimelineApiError ? err.message : "Save failed",
@@ -452,6 +488,7 @@ export function InlineClipsEditor({
     try {
       await resetTimeline(ownerId, variantId, base);
       onRenderEnqueued();
+      onReload?.();
     } catch (err) {
       setSubmitError(
         err instanceof TimelineApiError ? err.message : "Reset failed",
