@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.3.0] — 2026-06-29
+
+### Changed
+- **Sound effects: no more "Apply" button — they bake on Download.** Placing or retiming an effect plays live in the left preview (`useSfxPreview`, unchanged) and is baked into the MP4 only when the user clicks Download. Removes the manual **Apply** button and its props from `SfxLane.tsx` / `UnifiedTimeline.tsx` (supersedes the explicit-Apply UX shipped in 0.5.9.0). Download now computes dirtiness inline (`lib/sfx-dirty.ts`, `sfxNeedsBake`/`sfxPersistDirty`) instead of a sticky flag — "nothing changed → instant download" is true by construction — flushes the debounced SFX save before any bake, and orders the overlay bake first so one Download composes both lanes. The "Unsaved — downloads will include your changes" hint now also covers unbaked SFX.
+
+### Fixed
+- **Overlay → SFX two-pass observability.** When SFX are persisted, the overlay render pass stays `render_status="rendering"` until the terminal SFX re-mix finishes, so the download poll can no longer grab a half-done (overlay-only, SFX-missing) file. A failed re-mix now surfaces as `render_status="failed"` via a new `_mark_variant_failed` helper instead of being silently swallowed (`app/tasks/generative_build.py`). Pinned by `tests/tasks/test_sfx_overlay_two_pass.py`.
+- **Failed Download-triggered bake is no longer silent.** A backend FFmpeg failure after a successful dispatch now surfaces an error in the page banner (with an implicit retry via clicking Download again) instead of silently re-enabling the button and playing the stale video. The Apply/Retry button that used to surface this is gone, so the download-completion path owns it now (`plan/items/[id]/page.tsx`). Pinned by the C1 regression test in `plan-item-pending-edits.test.tsx`.
+
 ## [0.5.9.0] — 2026-06-29
 
 ### Fixed

@@ -47,15 +47,12 @@ export interface SfxLaneProps {
   sfxPlacements: SoundEffectPlacement[];
   sfxGlossaryEffects: SoundEffectSummary[];
   sfxGlossaryLoading: boolean;
+  /** True while a render is in flight — disables lane editing. Derived from the
+      variant's shared render_status, so it also fires during overlay/text/clip
+      renders. */
   sfxRendering: boolean;
-  /** True when the last render failed — surface a Retry on the Apply button. */
-  sfxFailed: boolean;
-  /** True when SFX placements have changed since the last Apply (unrendered edits). */
-  sfxDirty: boolean;
   sfxUploading: boolean;
   onSfxChange: (placements: SoundEffectPlacement[]) => void;
-  /** Burn the current SFX placements into the video (explicit user action). */
-  onApplySfx: () => void;
   onSfxUploadRequest: (files: UploadFile[]) => Promise<void>;
 }
 
@@ -68,11 +65,8 @@ export default function SfxLane({
   sfxGlossaryEffects,
   sfxGlossaryLoading,
   sfxRendering,
-  sfxFailed,
-  sfxDirty,
   sfxUploading,
   onSfxChange,
-  onApplySfx,
   onSfxUploadRequest,
 }: SfxLaneProps) {
   // ── SFX reducer (undo/redo) ─────────────────────────────────────────────────
@@ -444,34 +438,8 @@ export default function SfxLane({
           </button>
         </div>
 
-        {/* Apply: burn the current SFX placements into the rendered video.
-            Shown when there are effects OR unapplied changes OR the last render
-            failed (so REMOVING all effects can still be applied, and a failed
-            apply offers Retry instead of a dead-end "Applied ✓"). */}
-        {(sfxPlacements.length > 0 || sfxDirty || sfxFailed) && (
-          <button
-            type="button"
-            onClick={onApplySfx}
-            disabled={sfxRendering || (!sfxDirty && !sfxFailed)}
-            className={
-              "w-full px-3 py-2 rounded text-xs font-semibold transition-colors " +
-              (sfxRendering || (!sfxDirty && !sfxFailed)
-                ? "bg-zinc-800 text-zinc-500 cursor-not-allowed"
-                : "bg-lime-600 hover:bg-lime-500 text-white")
-            }
-          >
-            {sfxRendering
-              ? "Applying sound effects…"
-              : sfxFailed && !sfxDirty
-                ? "Retry — apply sound effects"
-                : !sfxDirty
-                  ? "Applied ✓"
-                  : sfxPlacements.length > 0
-                    ? "Apply sound effects to video"
-                    : "Remove sound effects from video"}
-          </button>
-        )}
-
+        {/* No "Apply" button: SFX play live in the preview (useSfxPreview) and
+            are baked into the MP4 on Download (handleDownload in page.tsx). */}
         {uploadError && <p className="text-xs text-red-400">{uploadError}</p>}
       </div>
     </>

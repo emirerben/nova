@@ -60,6 +60,7 @@ import {
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
 import { downloadVideo } from "@/lib/download-video";
+import { sfxNeedsBake, sfxPersistDirty } from "@/lib/sfx-dirty";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
@@ -1517,37 +1518,46 @@ function FocusedResults({
       pendingDownloadRef.current = false;
       downloadVideo(variant.output_url, downloadName);
     } else if (variant?.render_status === "failed") {
+      // A download-triggered bake failed on the backend (FFmpeg error after a
+      // successful dispatch). Surface it — otherwise the button silently
+      // re-enables, no file downloads, and the stale output_url keeps playing
+      // as if it succeeded. The Apply/Retry button that used to surface this is
+      // gone; the implicit retry is to click Download again (needsSfxBake stays
+      // true after a failed bake).
       pendingDownloadRef.current = false;
+      onError("Couldn't prepare your video for download. Please click Download to try again.");
     }
-  }, [editSession.isSaving, variant?.render_status, variant?.output_url, downloadName]);
+  }, [editSession.isSaving, variant?.render_status, variant?.output_url, downloadName, onError]);
 
   const baking = (instantEligible && editSession.isSaving) || pendingDownloadRef.current;
+
+  // Inline SFX dirtiness (D5): does the download need a fresh SFX bake, and is
+  // the latest set persisted? Computed from the variant + placements — no
+  // sticky flag. See lib/sfx-dirty.ts.
+  const needsSfxBake = sfxNeedsBake(sfxPlacements, variant);
+  const sfxIsPersistDirty = sfxPersistDirty(sfxPlacements, variant);
 
   const handleDownload = useCallback(async () => {
     if (!variant) return;
 
-    // If SFX placements exist but the FFmpeg mix-pass hasn't run yet, trigger it first.
-    if (sfxPlacements.length > 0 && !variant.pre_sfx_video_path) {
-      pendingDownloadRef.current = true;
-      try {
-        await renderVariantSfx(itemId, variant.variant_id);
-        markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-      } catch (err) {
-        pendingDownloadRef.current = false;
-        onError(
-          err instanceof Error
-            ? err.message
-            : "Couldn't add your sound effects to the video. Try again.",
-        );
+    // Flush the latest SFX placements before any bake. SFX edits save on a
+    // 600ms debounce; without this, a fast Download (or the post-overlay SFX
+    // reapply, which reads persisted placements) would mix a STALE set while
+    // the live preview shows the current one.
+    const flushSfx = async () => {
+      if (sfxIsPersistDirty) {
+        await setVariantSoundEffects(itemId, variant.variant_id, sfxPlacements);
       }
-      return;
-    }
+    };
 
-    // If overlay cards exist, composite them into the video on-demand (render=true).
-    // No background render was triggered on card changes — this is the only FFmpeg pass.
+    // Overlay-first: an overlay bake re-applies persisted SFX on top (backend),
+    // composing BOTH lanes in one pass, and stays "rendering" until the SFX
+    // remix finishes (two-pass observability). Must run before the SFX-only
+    // branch so a co-edit isn't split across two Download clicks.
     if (overlayCards.length > 0) {
       pendingDownloadRef.current = true;
       try {
+        await flushSfx();
         await setVariantMediaOverlays(itemId, variant.variant_id, overlayCards, { render: true });
         markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
       } catch (err) {
@@ -1561,6 +1571,25 @@ function FocusedResults({
       return;
     }
 
+    // SFX-only: bake when placements differ from what's baked into output_url.
+    // Inline compare (not a sticky flag) → "nothing changed" downloads instantly.
+    if (needsSfxBake) {
+      pendingDownloadRef.current = true;
+      try {
+        await flushSfx();
+        await renderVariantSfx(itemId, variant.variant_id);
+        markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+      } catch (err) {
+        pendingDownloadRef.current = false;
+        onError(
+          err instanceof Error
+            ? err.message
+            : "Couldn't add your sound effects to the video. Try again.",
+        );
+      }
+      return;
+    }
+
     if (!variant.output_url && !editSession.isDirty) return;
     if (instantEligible && editSession.isDirty) {
       pendingDownloadRef.current = true;
@@ -1568,7 +1597,7 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
-  }, [variant, editSession, instantEligible, sfxPlacements, overlayCards, itemId, downloadName, markVariantRendering, onError]);
+  }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, itemId, downloadName, markVariantRendering, onError]);
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
@@ -1825,7 +1854,7 @@ function FocusedResults({
               >
                 {baking ? "Preparing your video…" : "Download"}
               </button>
-              {instantEligible && editSession.isDirty && !baking && (
+              {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
                 <p className="mt-1 text-center text-xs text-[#a1a1aa]">
                   Unsaved — downloads will include your changes
                 </p>
@@ -2276,20 +2305,14 @@ function FocusedVariantControls({
     }
   }
 
-  // Edits PERSIST (debounced) but do NOT render — the user explicitly clicks
-  // "Apply" to burn the effects into the video (handleApplySfx). This keeps the
-  // instant client-side preview snappy and avoids a render on every drag/retime.
-  // sfxDirty = there are placement changes not yet reflected in the rendered
-  // video. Seeded true when the variant has saved SFX that were never burned in
-  // (sound_effects present but pre_sfx_video_path null — the saved-but-never-
-  // rendered case that was the original bug).
-  const [sfxDirty, setSfxDirty] = useState<boolean>(
-    () => sfxPlacements.length > 0 && !variant.pre_sfx_video_path,
-  );
+  // Edits PERSIST (debounced) but do NOT render. The effects play live in the
+  // preview (useSfxPreview); the FFmpeg bake happens only on Download
+  // (handleDownload in the parent), which flushes this pending save first and
+  // computes dirtiness inline (sfxPlacements vs the baked set) — there is no
+  // sfxDirty flag and no "Apply" button.
   const sfxSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   function handleSfxChange(newPlacements: SoundEffectPlacement[]) {
     setSfxPlacements(newPlacements);
-    setSfxDirty(true);
     if (sfxSaveTimer.current) clearTimeout(sfxSaveTimer.current);
     sfxSaveTimer.current = setTimeout(async () => {
       try {
@@ -2304,23 +2327,6 @@ function FocusedVariantControls({
         );
       }
     }, 600);
-  }
-
-  // "Apply" — flush the pending save (so the server has the latest placements),
-  // then trigger the SFX burn-in render. Clears the dirty flag optimistically;
-  // the variant flips to render_status="rendering" → "ready" via polling.
-  async function handleApplySfx() {
-    if (sfxSaveTimer.current) clearTimeout(sfxSaveTimer.current);
-    try {
-      await setVariantSoundEffects(itemId, variant.variant_id, sfxPlacements);
-      await renderVariantSfx(itemId, variant.variant_id);
-      markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-      setSfxDirty(false);
-    } catch (err) {
-      onError(
-        err instanceof Error ? err.message : "Couldn't apply your sound effects to the video.",
-      );
-    }
   }
 
   // Fetch signed playback URLs for SFX placements that don't have one yet.
@@ -2540,11 +2546,8 @@ function FocusedVariantControls({
               sfxGlossaryEffects={glossaryEffects}
               sfxGlossaryLoading={glossaryLoading}
               sfxRendering={variant.render_status === "rendering"}
-              sfxFailed={variant.render_status === "failed"}
               sfxUploading={sfxUploading}
-              sfxDirty={sfxDirty}
               onSfxChange={handleSfxChange}
-              onApplySfx={handleApplySfx}
               onSfxUploadRequest={handleSfxUpload}
               overlayCards={overlayCards}
               overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
