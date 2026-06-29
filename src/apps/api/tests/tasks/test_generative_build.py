@@ -2871,6 +2871,125 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert job.status == "variants_ready"
 
 
+def test_finalize_job_preserves_sound_effects(monkeypatch):
+    """REGRESSION: _finalize_job rebuilds variants from a key whitelist that silently
+    strips anything not listed. sound_effects + pre_sfx_video_path MUST survive or a
+    later full re-render (text/song/clip edit) drops the SFX lane with no error: the
+    render-sfx pass reads sound_effects from the variant, and pre_sfx_video_path is the
+    clean (no-SFX) base it re-applies onto."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    placements = [
+        {
+            "id": "p1",
+            "sound_effect_id": "fah",
+            "src_gcs_path": "sound-effects/fah.mp3",
+            "at_s": 4.0,
+            "gain": 1.0,
+            "label": "Fah",
+        }
+    ]
+    result = {
+        "variant_id": "song_text",
+        "rank": 1,
+        "text_mode": "song_text",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/v.mp4",
+        "sound_effects": placements,
+        "pre_sfx_video_path": "generative-jobs/j/v.mp4_pre_sfx",
+    }
+    gb._finalize_job(str(uuid.uuid4()), [result])
+    v = job.assembly_plan["variants"][0]
+    assert v["sound_effects"] == placements
+    assert v["pre_sfx_video_path"] == "generative-jobs/j/v.mp4_pre_sfx"
+    assert job.status == "variants_ready"
+
+
+def test_reapply_persisted_sfx_reapplies_and_resets_pre_sfx(monkeypatch):
+    """REGRESSION: a full re-render (song-swap / retext / style / clip edit) re-assembles
+    video_path WITHOUT the SFX mix. The terminal hook (now wired into both full-re-render
+    success paths in regenerate_generative_variant, mirroring _run_media_overlay_pass) must
+    re-apply persisted effects onto the fresh base AND null the now-stale pre_sfx_video_path
+    so _run_sfx_pass re-snapshots the re-rendered video. Without it, SFX silently vanish from
+    the video while the UI still shows them (and a later clear/apply uses a stale base)."""
+    import uuid
+
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True, raising=False)
+    sfx = [
+        {
+            "id": "p1",
+            "at_s": 4.0,
+            "gain": 1.0,
+            "src_gcs_path": "sound-effects/x.mp3",
+            "label": "Fah",
+        }
+    ]
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "sound_effects": sfx,
+                    "pre_sfx_video_path": "old/stale_pre_sfx.mp4",
+                }
+            ]
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    calls = {}
+    monkeypatch.setattr(
+        gb, "_run_sfx_pass", lambda *, job_id, variant_id, sfx_raw: calls.update(sfx_raw=sfx_raw)
+    )
+
+    gb._reapply_persisted_sfx_if_any(job_id=str(uuid.uuid4()), variant_id="v1")
+
+    assert calls.get("sfx_raw") == sfx  # persisted effects re-applied onto the fresh render
+    assert job.assembly_plan["variants"][0]["pre_sfx_video_path"] is None  # stale snapshot reset
+
+
+def test_reapply_persisted_sfx_noop_without_effects(monkeypatch):
+    """No persisted SFX → no re-apply pass (a clean re-render is left untouched)."""
+    import uuid
+
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True, raising=False)
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "v1", "sound_effects": None}]})
+    _patch_job_session(monkeypatch, job)
+    called = {"n": 0}
+    monkeypatch.setattr(gb, "_run_sfx_pass", lambda **kw: called.__setitem__("n", called["n"] + 1))
+    gb._reapply_persisted_sfx_if_any(job_id=str(uuid.uuid4()), variant_id="v1")
+    assert called["n"] == 0
+
+
+def test_reapply_persisted_sfx_noop_when_disabled(monkeypatch):
+    """Kill switch off → no-op even with persisted SFX."""
+    import uuid
+
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "v1",
+                    "sound_effects": [
+                        {"id": "p", "at_s": 1.0, "gain": 1.0, "src_gcs_path": "sound-effects/x.mp3"}
+                    ],
+                }
+            ]
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    called = {"n": 0}
+    monkeypatch.setattr(gb, "_run_sfx_pass", lambda **kw: called.__setitem__("n", called["n"] + 1))
+    gb._reapply_persisted_sfx_if_any(job_id=str(uuid.uuid4()), variant_id="v1")
+    assert called["n"] == 0
+
+
 def test_specs_for_archetype_narrated_carries_caption_style():
     """The narrated spec threads voiceover_caption_style through to the render."""
     specs = gb._specs_for_archetype(

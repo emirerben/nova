@@ -423,6 +423,7 @@ class StyleResponse(BaseModel):
     status: str  # deriving | ready | edited | failed | absent
     style_set_preview: dict | None = None  # label, tags, preview_url from catalog
     font_preview: dict | None = None  # css_family, display_name for the UI typeface
+    provenance: dict | None = None  # vision-analysis provenance for the StyleCard badge
 
 
 def _style_set_preview(style_set_id: str | None) -> dict | None:
@@ -454,6 +455,35 @@ def _font_preview(font_family: str | None) -> dict | None:
         return None
 
 
+def _style_provenance(tiktok_profile: dict | None) -> dict | None:
+    """Extract vision-analysis provenance for the StyleCard badge.
+
+    Returns a compact dict: {videos_seen, videos_total, has_on_screen_text,
+    font_feel, text_color_hex, highlight_color_hex, mean_confidence,
+    confidence_per_field}. Returns None when the vision ingest hasn't run.
+    """
+    if not tiktok_profile:
+        return None
+    observations = tiktok_profile.get("style_observations") or {}
+    aggregate = observations.get("aggregate") or {}
+    videos_seen = int(observations.get("videos_seen") or 0)
+    if not aggregate or videos_seen == 0:
+        return None
+    return {
+        "videos_seen": videos_seen,
+        "videos_total": int(observations.get("videos_total") or videos_seen),
+        "observed_at": observations.get("observed_at"),
+        "has_on_screen_text": bool(aggregate.get("has_on_screen_text")),
+        "font_feel": aggregate.get("font_feel"),
+        "text_color_hex": aggregate.get("text_color_hex"),
+        "highlight_color_hex": aggregate.get("highlight_color_hex"),
+        "position": aggregate.get("position"),
+        "size_class": aggregate.get("size_class"),
+        "mean_confidence": aggregate.get("mean_confidence"),
+        "confidence_per_field": aggregate.get("confidence_per_field") or {},
+    }
+
+
 @router.get("/style", response_model=StyleResponse)
 async def get_style(
     user: CurrentUser,
@@ -483,11 +513,13 @@ async def get_style(
         return StyleResponse(style=None, status="deriving")
     pinned_set_id = raw.get("style_set_id")
     pinned_font = (raw.get("knobs") or {}).get("font_family")
+    tiktok_profile = dict(row.tiktok_profile) if row.tiktok_profile else None
     return StyleResponse(
         style=raw,
         status=raw.get("status", "ready"),
         style_set_preview=_style_set_preview(pinned_set_id),
         font_preview=_font_preview(pinned_font),
+        provenance=_style_provenance(tiktok_profile),
     )
 
 

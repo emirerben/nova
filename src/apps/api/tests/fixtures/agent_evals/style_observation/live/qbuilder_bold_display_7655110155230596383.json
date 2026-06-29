@@ -1,0 +1,32 @@
+{
+  "agent": "nova.video.style_observation",
+  "prompt_version": "2026-06-28",
+  "input": {
+    "file_uri": "https://generativelanguage.googleapis.com/v1beta/files/ld12jo7de4ux",
+    "file_mime": "video/mp4",
+    "caption": "she used claude code for a git rerun command — tech creator showing coding AI workflow",
+    "view_index": null
+  },
+  "raw_text": "{\"has_on_screen_text\":true,\"font_feel\":\"bold_display\",\"text_color_hex\":\"#ffffff\",\"highlight_color_hex\":\"#f6d895\",\"position\":\"center\",\"size_class\":\"medium\",\"layout\":\"linear\",\"stroke\":\"none\",\"text_anchor\":\"center\",\"confidence\":0.9}",
+  "output": {
+    "has_on_screen_text": true,
+    "font_feel": "bold_display",
+    "text_color_hex": "#ffffff",
+    "highlight_color_hex": "#f6d895",
+    "position": "center",
+    "size_class": "medium",
+    "layout": "linear",
+    "stroke": "none",
+    "text_anchor": "center",
+    "confidence": 0.9
+  },
+  "meta": {
+    "source": "live_capture",
+    "creator": "@qbuilder",
+    "video_id": "7655110155230596383",
+    "tiktok_url": "https://www.tiktok.com/@qbuilder/video/7655110155230596383",
+    "captured_at": "2026-06-28",
+    "gemini_file_ttl_note": "Gemini File API URIs expire ~48h after upload. Re-run run_style_observation.py to refresh.",
+    "case": "Tech creator (@qbuilder), Nova's first user. Kinetic single-word text cards — bold display font, white text (#ffffff) with a golden highlight accent (#f6d895), centered layout, no stroke. Background: vibrant pop-art mural. Talking-head format with ring mic. The 'bold_display' classification is confirmed: large, heavy sans-serif single words that appear as kinetic cards throughout the video."
+  }
+}

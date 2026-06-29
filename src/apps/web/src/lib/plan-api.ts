@@ -1140,11 +1140,26 @@ export interface FontPreview {
   css_family: string;
 }
 
+export interface StyleProvenance {
+  videos_seen: number;
+  videos_total: number;
+  observed_at?: string | null;
+  has_on_screen_text: boolean;
+  font_feel?: string | null;
+  text_color_hex?: string | null;
+  highlight_color_hex?: string | null;
+  position?: string | null;
+  size_class?: string | null;
+  mean_confidence?: number | null;
+  confidence_per_field?: Record<string, number>;
+}
+
 export interface StyleResponse {
   style: UserStyle | null;
   status: "deriving" | "ready" | "edited" | "failed" | "absent";
   style_set_preview?: StyleSetPreview | null;
   font_preview?: FontPreview | null;
+  provenance?: StyleProvenance | null;
 }
 
 export interface StyleEdit {

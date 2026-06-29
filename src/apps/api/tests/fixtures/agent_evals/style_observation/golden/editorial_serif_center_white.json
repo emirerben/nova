@@ -1,0 +1,27 @@
+{
+  "agent": "nova.video.style_observation",
+  "prompt_version": "2026-06-28",
+  "input": {
+    "file_uri": "files/editorial-serif-fixture",
+    "file_mime": "video/mp4",
+    "caption": "exploring the streets of Istanbul at golden hour",
+    "view_index": 2.8
+  },
+  "raw_text": "{\"has_on_screen_text\": true, \"font_feel\": \"serif_editorial\", \"text_color_hex\": \"#ffffff\", \"highlight_color_hex\": null, \"position\": \"center\", \"size_class\": \"medium\", \"layout\": \"linear\", \"stroke\": \"none\", \"text_anchor\": \"center\", \"confidence\": 0.88}",
+  "output": {
+    "has_on_screen_text": true,
+    "font_feel": "serif_editorial",
+    "text_color_hex": "#ffffff",
+    "highlight_color_hex": null,
+    "position": "center",
+    "size_class": "medium",
+    "layout": "linear",
+    "stroke": "none",
+    "text_anchor": "center",
+    "confidence": 0.88
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "Travel creator with editorial serif white text centered on frame — classic cinematic travel vlog style. High confidence because text is large and clear."
+  }
+}

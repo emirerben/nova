@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.9.0] — 2026-06-29
+
+### Fixed
+- **Sound effects now actually render into the video.** Three real bugs in the SFX path, all surfaced by making it work end-to-end:
+  - **ffmpeg filter graph was malformed.** `build_sound_effects_command` (`app/pipeline/sound_effects.py`) comma-joined the per-effect output pad label, producing `volume=1.0,[fx0]` instead of `volume=1.0[fx0]`. ffmpeg parses the trailing `,[fx0]` as an empty filter → `rc=8 "Filter not found"`, so the whole SFX mix aborted. The label now attaches directly to the last filter (canonical syntax, valid on every ffmpeg version). This was latent because the SFX render was Download-gated and never triggered in prod. Pinned by `test_fx_label_attaches_without_comma`.
+  - **SFX dropped on any full re-render.** A song-swap / retext / style / clip edit re-assembled the variant's video without re-applying persisted effects (the re-apply hook was only wired into the media-overlay path), so the UI kept showing effects the video no longer had. Wired `_reapply_persisted_sfx_if_any` into both full-re-render success terminals in `regenerate_generative_variant` (`app/tasks/generative_build.py`); the hook also resets the now-stale `pre_sfx_video_path`. Pinned by `test_reapply_persisted_sfx_*`.
+  - **`_finalize_job` stripped SFX state.** Added `sound_effects` + `pre_sfx_video_path` to the variant whitelist so they survive finalization. Pinned by `test_finalize_job_preserves_sound_effects`.
+
+### Changed
+- **SFX editing is now explicit-Apply instead of auto-render.** Placing / retiming / removing an effect persists (debounced) but no longer triggers a render on every edit; an **"Apply sound effects to video"** button in the timeline SFX lane burns them in (`UnifiedTimeline.tsx` + `plan/items/[id]/page.tsx`). Button surfaces Applied / Applying / Retry-on-failure / Remove-all states. Previously-swallowed SFX + overlay save/render/upload errors now surface in the page error banner.
+
+## [0.5.8.0] — 2026-06-28
+
+### Added
+- **Style Observation agent (PR 1/5 — TikTok style personalization).** `StyleObservationAgent` (`app/agents/style_observation.py`) watches a creator's TikTok MP4 via the Gemini File API and emits a `VideoStyleObservation`: `font_feel` (6-value Literal), `text_color_hex`, `highlight_color_hex`, `position`, `size_class`, `layout`, `stroke`, `text_anchor`, and `confidence`. All fields use constrained Literals — Gemini cannot emit raw font names or an `effect` field (renderer-parity guard, mirrors `StyleKnobs(extra="forbid")`). `parse()` defensively coerces every field; `has_on_screen_text=False` returns an early result without raising. Live eval on @qbuilder's video confirms `bold_display` + gold highlight at confidence 0.9. Dark behind `tiktok_style_vision_enabled=False` (no code path calls it yet). Prompt: `prompts/observe_video_style.txt`. Evals: `tests/evals/test_style_observation_evals.py` + rubric `tests/evals/rubrics/style_observation.md` + 3 fixtures (2 golden, 1 live). 62 unit tests.
+
 ## [0.5.7.0] — 2026-06-28
 
 ### Added

@@ -280,6 +280,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.conformance_feedback import ConformanceFeedbackAgent
 
         return ConformanceFeedbackAgent
+    if agent_name == "nova.video.style_observation":
+        from app.agents.style_observation import StyleObservationAgent
+
+        return StyleObservationAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

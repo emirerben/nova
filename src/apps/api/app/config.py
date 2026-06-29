@@ -330,6 +330,17 @@ class Settings(BaseSettings):
     #   + fly machine restart <id>
     tiktok_deep_analysis_enabled: bool = True
 
+    # Vision-based style ingest (Creator Agent style pipeline). When True,
+    # scrape_tiktok_profile chains analyze_tiktok_style which downloads the
+    # creator's own videos, runs StyleObservationAgent, and persists the aggregate
+    # to persona.tiktok_profile["style_observations"]. Expensive (~30 Flash vision
+    # calls + MP4 downloads per user). Ships OFF; flip after cost/latency bake:
+    #   fly secrets set TIKTOK_STYLE_VISION_ENABLED=true --app nova-video
+    #   + fly machine restart <id>
+    # Separate from user_style_enabled (render gate) so ingest and render can be
+    # dark-launched independently.
+    tiktok_style_vision_enabled: bool = False
+
     # Per-user style entity (Creator Agent M1). When True, a UserStyle is derived
     # from the persona after generation and applied to every generative render:
     # style-set pin bypasses the per-render AgenticStyleSelectorAgent; knob overrides

@@ -63,6 +63,29 @@ class FontEntry(BaseModel):
     category: str = ""
 
 
+class ObservedStyleSummary(BaseModel):
+    """Aggregate from vision analysis of the creator's own TikTok videos.
+
+    Populated by analyze_tiktok_style → _aggregate_observations; absent when
+    the vision flag is off or the ingest hasn't run yet. All categorical fields
+    may be None when agreement fell below the 0.5 threshold — the agent must
+    treat absent/None fields as "no signal" (prefer curated set defaults).
+    """
+
+    videos_seen: int = 0
+    has_on_screen_text: bool = False
+    font_feel: str | None = None      # e.g. "bold_display", "serif_editorial"
+    text_color_hex: str | None = None
+    highlight_color_hex: str | None = None
+    position: str | None = None       # e.g. "center", "bottom"
+    size_class: str | None = None     # "small" | "medium" | "large"
+    layout: str | None = None         # "linear" | "cluster"
+    stroke: str | None = None
+    text_anchor: str | None = None
+    mean_confidence: float = 0.5
+    confidence_per_field: dict[str, float] = Field(default_factory=dict)
+
+
 class StyleDerivationInput(BaseModel):
     """Inputs for the style derivation agent.
 
@@ -78,6 +101,9 @@ class StyleDerivationInput(BaseModel):
     persona_audience: str = ""
     # AI-generated (TikTok analyzer output) — treated as DATA, also sanitized.
     tiktok_analysis_summary: str = ""
+    # Vision-observed style from the creator's own TikTok videos (strongest signal).
+    # None when the vision ingest hasn't run yet or the flag is off.
+    observed_style: ObservedStyleSummary | None = None
     # Current generative-eligible style sets (id / label / tags).
     available_sets: list[StyleSetEntry] = Field(default_factory=list)
     # Non-deprecated fonts (name / vibe / category).
@@ -95,7 +121,7 @@ class StyleDerivationAgent(Agent[StyleDerivationInput, StyleDerivationOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.style_derivation",
         prompt_id="derive_user_style",
-        prompt_version="2026-06-07",
+        prompt_version="2026-06-28",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -116,6 +142,45 @@ class StyleDerivationAgent(Agent[StyleDerivationInput, StyleDerivationOutput]):
         )
         tone = _sanitize_text(input.persona_tone)[:200] or "(no tone yet)"
         audience = _sanitize_text(input.persona_audience)[:200] or "(no audience yet)"
+
+        # Observed style block — strongest signal, injected first.
+        obs = input.observed_style
+        if obs and obs.videos_seen > 0:
+            obs_fields = []
+            if obs.has_on_screen_text:
+                obs_fields.append(f"has_on_screen_text: true (seen in {obs.videos_seen} videos)")
+            if obs.font_feel:
+                conf = obs.confidence_per_field.get("font_feel", obs.mean_confidence)
+                obs_fields.append(f"font_feel: {obs.font_feel} (confidence {conf:.0%})")
+            if obs.text_color_hex:
+                conf = obs.confidence_per_field.get("text_color_hex", obs.mean_confidence)
+                obs_fields.append(f"text_color: {obs.text_color_hex} (confidence {conf:.0%})")
+            if obs.highlight_color_hex:
+                conf = obs.confidence_per_field.get("highlight_color_hex", obs.mean_confidence)
+                obs_fields.append(
+                    f"highlight_color: {obs.highlight_color_hex} (confidence {conf:.0%})"
+                )
+            if obs.position:
+                obs_fields.append(f"text_position: {obs.position}")
+            if obs.size_class:
+                obs_fields.append(f"text_size_class: {obs.size_class}")
+            if obs.layout:
+                obs_fields.append(f"text_layout: {obs.layout}")
+            if obs.stroke:
+                obs_fields.append(f"text_stroke: {obs.stroke}")
+            if obs.text_anchor:
+                obs_fields.append(f"text_anchor: {obs.text_anchor}")
+            if obs_fields:
+                observed_block = (
+                    "<<<OBSERVED FROM THEIR ACTUAL VIDEOS"
+                    f" — seen across {obs.videos_seen} videos (STRONGEST SIGNAL)\n"
+                    + "\n".join(obs_fields)
+                    + "\nOBSERVED FROM THEIR ACTUAL VIDEOS"
+                )
+            else:
+                observed_block = "(Vision analysis ran but no consistent style detected.)"
+        else:
+            observed_block = "(No vision analysis yet — derive from persona and TikTok text data.)"
 
         tiktok_summary = (input.tiktok_analysis_summary or "").strip()
         if tiktok_summary:
@@ -146,6 +211,7 @@ class StyleDerivationAgent(Agent[StyleDerivationInput, StyleDerivationOutput]):
             pillars=pillars,
             tone=tone,
             audience=audience,
+            observed_block=observed_block,
             tiktok_block=tiktok_block,
             set_lines=set_lines,
             font_lines=font_lines,
