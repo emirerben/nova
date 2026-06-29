@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-06-28",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -54,7 +54,18 @@
       "audience": "people who wish they were braver and love watching someone else be terrified-and-delighted at the same time",
       "sample_hooks": ["i was NOT ready for this", "my simplest answer", "the one that got me"],
       "source": "tiktok:@izzsiomoi (2026-06)",
-      "performance": {"engagement_rate": 0.087, "view_index": 123.6, "sampled_at": "2026-06"}
+      "performance": {"engagement_rate": 0.121, "view_index": 315.1, "sampled_at": "2026-06-28"}
+    },
+    {
+      "id": "social-candid-peak-01",
+      "niche": "young social life & candid moments",
+      "summary": "You capture the genuine emotional peaks of your social life — the unexpected laughs, the spontaneous plan coming together, the moment you realize you're living exactly right. No script, just the real thing.",
+      "tone": "warm, unfiltered, effortlessly alive",
+      "content_pillars": ["spontaneous social moments", "genuine reactions you didn't expect", "the feeling you want to send to someone", "unplanned life peaks"],
+      "audience": "peers in the same life stage who recognize the feeling immediately and want to forward it to a friend",
+      "sample_hooks": ["this was not supposed to happen", "the thing nobody warns you about", "catch me being alive"],
+      "source": "tiktok:@izzsiomoi (2026-06)",
+      "performance": {"engagement_rate": 0.121, "view_index": 315.1, "sampled_at": "2026-06-28"}
     },
     {
       "id": "gap-in-market-founder-01",

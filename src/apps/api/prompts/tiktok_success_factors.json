@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-06-28",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "dual-signal-emotion-corpus-10",
+      "factor": "A 15-20s clip capturing one genuine social or emotional peak can simultaneously drive high engagement AND strong repost rates — hit both signals at once and distribution becomes person-to-person, not just algorithmic",
+      "why": "Likes signal 'this is me' while reposts signal 'this is someone I know' — a clip that earns both creates a compounding forwarding loop that bypasses cold-start limitations",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "A 16s candid social moment indexed 315x the account median (247k views) at 12.1% engagement rate and 938 reposts (0.38% share rate) — the highest simultaneous like-and-repost signal in our entire fetched corpus to date",
+      "source": "tiktok market research 2026-06-28 (young-social account)"
+    },
+    {
+      "id": "share-depth-narrative-corpus-11",
+      "factor": "Long-form clips (60-80s) with a narrative payoff earn disproportionately higher share rates than aesthetic shorts from the same creator — go long when you have depth to give",
+      "why": "Ultra-short clips earn completion-rate signals and algorithmic reach; longer narratives earn peer-sharing because viewers feel the story is worth forwarding — these are two different distribution mechanisms on the same platform",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "A 73s narrative travel video indexed 12.1x the account median at 5.6% engagement and 1.5% share rate (1,228 reposts), while the same creator's 11s spectacle clip indexed 174.8x at near-zero engagement and 0.003% share rate — depth earns the share signal, brevity earns the algorithm signal",
+      "source": "tiktok market research 2026-06-28 (solo-travel account)"
     }
   ]
 }
