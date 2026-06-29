@@ -250,7 +250,6 @@ interface ReadOnlyLaneProps {
   children: React.ReactNode;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function ReadOnlyLane({ label, totalDurationS, currentTimeS, onClick, children }: ReadOnlyLaneProps) {
   return (
     <div
@@ -279,7 +278,6 @@ interface FullWidthBarProps {
   onClick: () => void;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function FullWidthBar({ label, colorClass, onClick }: FullWidthBarProps) {
   return (
     <button
