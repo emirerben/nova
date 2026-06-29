@@ -1046,6 +1046,8 @@ def regenerate_generative_variant(
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
     render_gen_id: str | None = None,
+    intro_start_s_override: float | None = None,
+    intro_end_s_override: float | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1098,6 +1100,8 @@ def regenerate_generative_variant(
                 media_overlays_override=media_overlays_override,
                 sfx_override=sfx_override,
                 render_gen_id=render_gen_id,
+                intro_start_s_override=intro_start_s_override,
+                intro_end_s_override=intro_end_s_override,
             )
         except OperationalError:
             raise
@@ -1644,6 +1648,8 @@ def _reburn_text_on_base(
     cluster_hero_size_px_override: int | None = None,
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
+    intro_start_s_override: float | None = None,
+    intro_end_s_override: float | None = None,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -1839,6 +1845,8 @@ def _reburn_text_on_base(
                     # Explicit opt-outs (layout/text edits) use the legacy static
                     # cluster path so Slice 3a's registry pairing owns the faces.
                     cluster_style=_reburn_cs,
+                    start_s=intro_start_s_override,
+                    end_s=intro_end_s_override,
                     **params,
                 )
                 # EFFECTIVE layout (cluster = 2 overlays per block; linear = one
@@ -2165,6 +2173,8 @@ def _run_regenerate_variant(
     media_overlays_override: list[dict] | None = None,
     sfx_override: list[dict] | None = None,
     render_gen_id: str | None = None,
+    intro_start_s_override: float | None = None,
+    intro_end_s_override: float | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -2309,6 +2319,11 @@ def _run_regenerate_variant(
         # re-render re-times the SAME quote on the new duration — deterministic
         # synthesis, zero LLM calls. Nulled below on opt-out edits.
         persisted_sequence_quote: str | None = existing.get("sequence_quote") or None
+        # User-pinned scene timing overrides (PR-D). Applied inside the sequence
+        # overlay functions so the render honors the user's drag edits.
+        persisted_scene_timing_overrides: list[dict] | None = (
+            existing.get("scene_timing_overrides") or None
+        )
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -2467,6 +2482,8 @@ def _run_regenerate_variant(
                 cluster_hero_size_px_override=resolved_cluster_hero_size_override,
                 cluster_body_size_px_override=resolved_cluster_body_size_override,
                 cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+                intro_start_s_override=intro_start_s_override,
+                intro_end_s_override=intro_end_s_override,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
@@ -2499,15 +2516,9 @@ def _run_regenerate_variant(
                 with _sync_session() as _guard_db:
                     _guard_job = _guard_db.get(Job, uuid.UUID(job_id))
                     if _guard_job is not None:
-                        _guard_variants = (
-                            (_guard_job.assembly_plan or {}).get("variants") or []
-                        )
+                        _guard_variants = (_guard_job.assembly_plan or {}).get("variants") or []
                         _guard_v = next(
-                            (
-                                v
-                                for v in _guard_variants
-                                if v.get("variant_id") == variant_id
-                            ),
+                            (v for v in _guard_variants if v.get("variant_id") == variant_id),
                             None,
                         )
                         if (
@@ -2711,6 +2722,7 @@ def _run_regenerate_variant(
             allow_sequence=allow_sequence,
             author_quote_fn=regen_author_quote_fn,
             existing_sequence_quote=persisted_sequence_quote,
+            scene_timing_overrides=persisted_scene_timing_overrides,
             language=language,
             font_family_override=resolved_font_override,
             effect_override=resolved_effect_override,
@@ -3555,6 +3567,21 @@ def _annotate_scene_roles(scenes: list[dict], *, job_id: str, variant_id: str, m
     )
 
 
+def _apply_scene_timing_overrides(scenes: list[dict], overrides: list[dict]) -> list[dict]:
+    """Apply user-pinned start_s/end_s onto re-derived scenes.
+
+    Silently drops overrides whose scene_index is out of bounds (handles transcript
+    drift where re-derivation produces a different scene count).
+    """
+    patched = [dict(s) for s in scenes]
+    for ov in overrides:
+        idx = ov.get("scene_index", -1)
+        if 0 <= idx < len(patched):
+            patched[idx]["start_s"] = ov["start_s"]
+            patched[idx]["end_s"] = ov["end_s"]
+    return patched
+
+
 def _attempt_sequence_overlays(
     *,
     job_id: str,
@@ -3563,6 +3590,7 @@ def _attempt_sequence_overlays(
     video_duration_s: float,
     base_size_px: int,
     text_color: str,
+    scene_timing_overrides: list[dict] | None = None,
 ) -> tuple[list[dict], dict[str, Any]] | None:
     """Build the transcript-synced sequence for one eligible variant.
 
@@ -3613,6 +3641,9 @@ def _attempt_sequence_overlays(
 
     _annotate_scene_roles(scenes, job_id=job_id, variant_id=variant_id, mode="transcript")
 
+    if scene_timing_overrides:
+        scenes = _apply_scene_timing_overrides(scenes, scene_timing_overrides)
+
     from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
 
     overlays = build_sequence_overlays(scenes, base_size_px=base_size_px, text_color=text_color)
@@ -3643,6 +3674,7 @@ def _attempt_rhythm_overlays(
     text_color: str,
     author_quote_fn: Any | None = None,
     persisted_quote: str | None = None,
+    scene_timing_overrides: list[dict] | None = None,
 ) -> tuple[list[dict], dict[str, Any]] | None:
     """Build the rhythm-mode sequence (authored quote, synthesized timings).
 
@@ -3702,6 +3734,9 @@ def _attempt_rhythm_overlays(
     )
 
     _annotate_scene_roles(scenes, job_id=job_id, variant_id=variant_id, mode="rhythm")
+
+    if scene_timing_overrides:
+        scenes = _apply_scene_timing_overrides(scenes, scene_timing_overrides)
 
     from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
 
@@ -3783,6 +3818,7 @@ def _render_generative_variant(
     allow_sequence: bool = True,
     author_quote_fn: Any | None = None,
     existing_sequence_quote: str | None = None,
+    scene_timing_overrides: list[dict] | None = None,
     language: str = "en",
     font_family_override: str | None = None,
     effect_override: str | None = None,
@@ -4244,6 +4280,7 @@ def _render_generative_variant(
                         video_duration_s=base_dur,
                         base_size_px=int(_agent_text_intro_px or 60),
                         text_color=str(_at_params.get("text_color") or "#FFFFFF"),
+                        scene_timing_overrides=scene_timing_overrides or None,
                     )
                 if sequence_result is None and gate_reason != "layout_not_cluster":
                     sequence_result = _attempt_rhythm_overlays(
@@ -4254,6 +4291,7 @@ def _render_generative_variant(
                         text_color=str(_at_params.get("text_color") or "#FFFFFF"),
                         author_quote_fn=author_quote_fn,
                         persisted_quote=existing_sequence_quote,
+                        scene_timing_overrides=scene_timing_overrides or None,
                     )
 
             def _static_intro_overlays() -> list[dict]:

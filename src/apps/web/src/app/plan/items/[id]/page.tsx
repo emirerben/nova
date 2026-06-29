@@ -41,6 +41,9 @@ import {
   putTextElements,
   type SoundEffectPlacement,
   type TextElement,
+  type CaptionCue,
+  setPlanItemCaptions,
+  applyPlanItemCaptions,
 } from "@/lib/plan-api";
 import { useSfxPreview } from "../../_components/useSfxPreview";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
@@ -69,6 +72,7 @@ import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
 import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
+import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
@@ -1899,6 +1903,23 @@ function convertApiTextElements(
 }
 
 /**
+ * PR-B: Convert narrated CaptionCue[] → TextElementBar[] for the Text lane.
+ * Uses stable index-based IDs ("caption-0", "caption-1", …) so re-syncs from
+ * the server don't thrash the reducer's undo/redo identity tracking.
+ */
+function convertCaptionCues(
+  cues: CaptionCue[] | null | undefined,
+): import("@/lib/timeline/text-timeline-reducer").TextElementBar[] {
+  return (cues ?? []).map((c, i) => ({
+    id: `caption-${i}`,
+    text: c.text,
+    start_s: c.start_s,
+    end_s: c.end_s,
+    role: "narrated_caption" as const,
+  }));
+}
+
+/**
  * Controls-only column for the focused variant. Receives the edit session as a
  * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
  *
@@ -1973,6 +1994,10 @@ function FocusedVariantControls({
   // Latest overlayCards value for setTimeout closures.
   const overlayCardsRef = useRef(overlayCards);
   overlayCardsRef.current = overlayCards;
+
+  // Shared clip-timeline data: owned here so ClipsLane header bars and the
+  // InlineClipsEditor expanded panel read/write one draft (no double fetch).
+  const clipTimeline = useClipTimeline(itemId, variant.variant_id, "plan-item");
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -2192,15 +2217,21 @@ function FocusedVariantControls({
   const [textElementNote, setTextElementNote] = useState<string | null>(null);
   // State 3 note: selected-bar tracking is managed internally by TextLane (onBarSelect).
   // UnifiedTimeline's textExpandedBarId is cleared when the selected bar is deleted.
-  // Local mirror of textElements bars — seeded from variant.text_elements (T6) and
-  // updated on every reducer mutation; used to derive State 5 (text too long) warning.
+  // Local mirror of textElements bars — seeded from:
+  //   • variant.caption_cues (narrated variants, PR-B) — teal "narrated_caption" bars
+  //   • variant.text_elements (generative variants, T6) — amber bars
+  // Updated on every reducer mutation; used to derive State 5 (text too long) warning.
   const [textElements, setTextElements] = useState<TextElementBar[]>(() =>
-    convertApiTextElements(variant.text_elements),
+    variant.caption_cues?.length
+      ? convertCaptionCues(variant.caption_cues)
+      : convertApiTextElements(variant.text_elements),
   );
   // Re-sync from API data when a render completes (render_finished_at advances).
-  // Only resets when the server data is authoritative (user edits not in flight).
   useEffect(() => {
-    if (!variant.text_elements_user_edited) {
+    if (variant.caption_cues?.length) {
+      // Narrated: re-sync from fresh caption data after a reburn.
+      setTextElements(convertCaptionCues(variant.caption_cues));
+    } else if (!variant.text_elements_user_edited) {
       setTextElements(convertApiTextElements(variant.text_elements));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2334,12 +2365,15 @@ function FocusedVariantControls({
       setTextApplyError(null);
       try {
         // Convert TextElementBar → TextElement for the API.
-        const apiElements: TextElement[] = elements.map((bar) => ({
+        // narrated_caption bars are handled by setPlanItemCaptions — filter them out here.
+        const apiElements: TextElement[] = elements
+          .filter((bar) => bar.role !== "narrated_caption")
+          .map((bar) => ({
           id: bar.id,
           text: bar.text,
           start_s: bar.start_s,
           end_s: bar.end_s,
-          role: bar.role,
+          role: bar.role as TextElement["role"],
           font_family: bar.font_family ?? null,
           size_px: bar.size_px ?? null,
           size_class: (bar.size_class as TextElement["size_class"]) ?? null,
@@ -2378,17 +2412,32 @@ function FocusedVariantControls({
    * Handle text-element changes from the reducer: update local mirror + debounce-apply.
    * Waits 1 s after the last edit before persisting so rapid drag/trim gestures
    * don't flood the API.
+   *
+   * PR-B: for narrated_caption bars, persists via setPlanItemCaptions (no re-render —
+   * the player overlays them instantly).  Generative bars use the existing
+   * handleApplyTextElements path (triggers a full reburn).
    */
   const handleTextElementsChange = useCallback(
     (bars: TextElementBar[]) => {
       setTextElements(bars);
       if (textApplyTimer.current) clearTimeout(textApplyTimer.current);
-      textApplyTimer.current = setTimeout(() => {
-        void handleApplyTextElements(variant.variant_id, bars);
-      }, 1000);
+      if (bars[0]?.role === "narrated_caption") {
+        textApplyTimer.current = setTimeout(() => {
+          const cues: CaptionCue[] = bars.map((b) => ({
+            text: b.text,
+            start_s: b.start_s,
+            end_s: b.end_s,
+          }));
+          void setPlanItemCaptions(itemId, variant.variant_id, cues);
+        }, 1000);
+      } else {
+        textApplyTimer.current = setTimeout(() => {
+          void handleApplyTextElements(variant.variant_id, bars);
+        }, 1000);
+      }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [variant.variant_id, handleApplyTextElements],
+    [variant.variant_id, handleApplyTextElements, itemId],
   );
 
   /** State 4: called by UnifiedTimeline when a trim drag is clamped to MIN_DUR_S. */
@@ -2469,11 +2518,26 @@ function FocusedVariantControls({
               onClearOverlays={handleClearOverlays}
               textElements={textElements}
               onTextElementsChange={handleTextElementsChange}
-              onTextApply={(bars) => { void handleApplyTextElements(variant.variant_id, bars); }}
+              onTextApply={(bars) => {
+                if (bars[0]?.role === "narrated_caption") {
+                  // Narrated captions: persist + trigger reburn via Apply endpoint.
+                  const cues: CaptionCue[] = bars.map((b) => ({
+                    text: b.text,
+                    start_s: b.start_s,
+                    end_s: b.end_s,
+                  }));
+                  void setPlanItemCaptions(itemId, variant.variant_id, cues).then(() =>
+                    applyPlanItemCaptions(itemId, variant.variant_id),
+                  );
+                } else {
+                  void handleApplyTextElements(variant.variant_id, bars);
+                }
+              }}
               onTextTrimClamped={handleTextTrimClamped}
               isFirstSequenceEdit={
                 variant.intro_mode === "sequence" && !variant.text_elements_user_edited
               }
+              clipTimelineHandle={clipTimeline}
               clipsPanel={
                 <InlineClipsEditor
                   ownerId={itemId}
@@ -2483,6 +2547,10 @@ function FocusedVariantControls({
                     markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
                     refetch();
                   }}
+                  externalState={clipTimeline.state}
+                  externalDispatch={clipTimeline.dispatch}
+                  externalClips={clipTimeline.clips}
+                  onReload={clipTimeline.reload}
                 />
               }
             />

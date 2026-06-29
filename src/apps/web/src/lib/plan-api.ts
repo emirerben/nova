@@ -783,6 +783,15 @@ export interface PlanItemVariant {
   sound_effects?: SoundEffectPlacement[] | null;
   /** GCS key of the clean (sfx-free) variant before the first SFX apply-pass. */
   pre_sfx_video_path?: string | null;
+  /**
+   * PR-D: Scene timings for sequence variants. Each entry is one synced scene
+   * with its start/end in assembled-video seconds. Absent on non-sequence variants.
+   */
+  scene_timings?: Array<{
+    text: string;
+    start_s: number | null;
+    end_s: number | null;
+  }> | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
@@ -898,6 +907,40 @@ export function setPlanItemIntroSize(
     method: "POST",
     body: JSON.stringify({ text_size_px: Math.round(textSizePx) }),
   });
+}
+
+export function setPlanItemIntroTiming(
+  itemId: string,
+  variantId: string,
+  startS: number,
+  endS: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/intro-timing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start_s: startS, end_s: endS }),
+  });
+}
+
+export interface SceneTimingPatch {
+  scene_index: number;
+  start_s: number;
+  end_s: number;
+}
+
+export function patchPlanItemSceneTiming(
+  itemId: string,
+  variantId: string,
+  overrides: SceneTimingPatch[],
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/plan-items/${itemId}/variants/${variantId}/scene-timing`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ overrides }),
+    },
+  );
 }
 
 // ── Media-overlay card upload + apply ─────────────────────────────────────────

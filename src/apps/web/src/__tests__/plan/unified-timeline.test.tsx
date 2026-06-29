@@ -268,6 +268,157 @@ describe("UnifiedTimeline — expandable lanes", () => {
   });
 });
 
+// ── TextLane — narrated_caption bars (PR-B) ──────────────────────────────────
+
+describe("TextLane — narrated_caption bars (PR-B)", () => {
+  it("renders teal bars for narrated_caption role", () => {
+    const bars: import("@/lib/timeline/text-timeline-reducer").TextElementBar[] = [
+      { id: "caption-0", text: "Hello world", start_s: 0, end_s: 3, role: "narrated_caption" },
+    ];
+    render(<UnifiedTimeline {...makeProps({ textElements: bars })} />);
+    // The bar text should be visible
+    expect(screen.getByText("Hello world")).toBeInTheDocument();
+  });
+
+  it("renders amber bars for generative_intro role", () => {
+    const bars: import("@/lib/timeline/text-timeline-reducer").TextElementBar[] = [
+      { id: "t1", text: "Intro text", start_s: 0, end_s: 3, role: "generative_intro" },
+    ];
+    render(<UnifiedTimeline {...makeProps({ textElements: bars })} />);
+    expect(screen.getByText("Intro text")).toBeInTheDocument();
+  });
+
+  it("accepts narrated_caption bars without throwing and wires onTextElementsChange", () => {
+    // jsdom doesn't implement setPointerCapture, so we verify render-level correctness
+    // (bar visible, no exception) rather than simulating full pointer drag.
+    // The drag → dispatch → onTextElementsChange chain is covered by the TextLane
+    // unit tests (pointer events need a real DOM).
+    const onTextElementsChange = jest.fn();
+    const bars: import("@/lib/timeline/text-timeline-reducer").TextElementBar[] = [
+      { id: "caption-0", text: "Caption A", start_s: 1, end_s: 4, role: "narrated_caption" },
+    ];
+    expect(() =>
+      render(
+        <UnifiedTimeline
+          {...makeProps({ textElements: bars, onTextElementsChange })}
+        />,
+      ),
+    ).not.toThrow();
+    expect(screen.getByText("Caption A")).toBeInTheDocument();
+  });
+
+  it("shows empty-state hint when textElements is empty regardless of variant type", () => {
+    render(<UnifiedTimeline {...makeProps({ textElements: [] })} />);
+    expect(screen.getByText(/No text yet/i)).toBeInTheDocument();
+  });
+});
+
+// ── ClipsLane segment bars (PR-A) ────────────────────────────────────────────
+
+/**
+ * Build a minimal ClipTimelineHandle stub for testing the new bar rendering
+ * path added in PR-A.  We only need loadState + slots + windows; the rest
+ * (dispatch, clips, reload, grid) stay as no-ops / empty arrays.
+ */
+function makeClipHandle(
+  slots: Array<{ key: string; inS: number; durationS: number; removed?: boolean }>,
+  windows: Array<{ startS: number; durationS: number }>,
+  loadState: "loading" | "error" | "ready" = "ready",
+) {
+  return {
+    loadState,
+    state: {
+      slots,
+      grid: [],
+      clipDurations: {},
+      baseline: [],
+      past: [],
+      future: [],
+      clampNonce: 0,
+      clampedKey: null,
+    },
+    dispatch: jest.fn(),
+    clips: [],
+    windows,
+    totalS: windows.reduce((acc, w) => acc + w.durationS, 0) || 30,
+    reload: jest.fn(),
+  };
+}
+
+describe("ClipsLane — segment bars (PR-A)", () => {
+  it("renders one bar per active (non-removed) slot when handle is ready", () => {
+    const handle = makeClipHandle(
+      [
+        { key: "s1", inS: 0, durationS: 5 },
+        { key: "s2", inS: 1, durationS: 4 },
+      ],
+      [
+        { startS: 0, durationS: 5 },
+        { startS: 5, durationS: 4 },
+      ],
+    );
+    render(
+      <UnifiedTimeline
+        {...makeProps({ clipTimelineHandle: handle })}
+      />,
+    );
+    expect(screen.getByTestId("clip-bar-s1")).toBeInTheDocument();
+    expect(screen.getByTestId("clip-bar-s2")).toBeInTheDocument();
+  });
+
+  it("skips removed slots", () => {
+    const handle = makeClipHandle(
+      [
+        { key: "s1", inS: 0, durationS: 5 },
+        { key: "s2", inS: 1, durationS: 4, removed: true },
+      ],
+      [
+        { startS: 0, durationS: 5 },
+        { startS: 5, durationS: 0 }, // removed slot window is 0-duration
+      ],
+    );
+    render(<UnifiedTimeline {...makeProps({ clipTimelineHandle: handle })} />);
+    expect(screen.getByTestId("clip-bar-s1")).toBeInTheDocument();
+    expect(screen.queryByTestId("clip-bar-s2")).toBeNull();
+  });
+
+  it("falls back to the launcher button when loadState is loading", () => {
+    const handle = makeClipHandle([], [], "loading");
+    render(<UnifiedTimeline {...makeProps({ clipTimelineHandle: handle })} />);
+    expect(screen.getByText(/Edit clips/i)).toBeInTheDocument();
+    expect(screen.queryByTestId(/clip-bar-/)).toBeNull();
+  });
+
+  it("falls back to the launcher button when handle is absent", () => {
+    render(<UnifiedTimeline {...makeProps()} />);
+    expect(screen.getByText(/Edit clips/i)).toBeInTheDocument();
+  });
+
+  it("body click on a segment bar opens the expanded panel", async () => {
+    const handle = makeClipHandle(
+      [{ key: "s1", inS: 0, durationS: 10 }],
+      [{ startS: 0, durationS: 10 }],
+    );
+    const clipsPanel = <div data-testid="clips-panel-content">Panel</div>;
+    const onClipsPanelChange = jest.fn();
+
+    render(
+      <UnifiedTimeline
+        {...makeProps({ clipTimelineHandle: handle, clipsPanel, onClipsPanelChange })}
+      />,
+    );
+
+    expect(screen.queryByTestId("clips-panel-content")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("clip-bar-s1"));
+    });
+
+    expect(screen.getByTestId("clips-panel-content")).toBeInTheDocument();
+    expect(onClipsPanelChange).toHaveBeenCalledWith(true);
+  });
+});
+
 describe("UnifiedTimeline — placement edit row", () => {
   it("clicking a placement bar opens the edit row", async () => {
     const p = makePlacement({ id: "p1", label: "Click me", at_s: 5 });

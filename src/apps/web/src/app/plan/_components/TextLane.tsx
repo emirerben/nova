@@ -289,12 +289,15 @@ export default function TextLane({
       ? Math.min(lastBar.end_s + 0.5, Math.max(0, durationSeconds - DEFAULT_DUR_S))
       : Math.min(currentTime, Math.max(0, durationSeconds - DEFAULT_DUR_S));
     const endAt = Math.min(startAt + DEFAULT_DUR_S, durationSeconds);
+    // New bar inherits the lane's role: caption lane → narrated_caption, else generative_intro.
+    const role: TextElementBar["role"] =
+      bars[0]?.role === "narrated_caption" ? "narrated_caption" : "generative_intro";
     const newBar: TextElementBar = {
       id: crypto.randomUUID(),
       text: "",
       start_s: Math.round(startAt * 10) / 10,
       end_s: Math.round(endAt * 10) / 10,
-      role: "generative_intro",
+      role,
     };
     dispatch({ type: "ADD_TEXT", bar: newBar });
     // Auto-open the new bar's panel so the user can see it was added.
@@ -382,7 +385,13 @@ export default function TextLane({
                   "absolute inset-y-1 rounded select-none border flex items-center overflow-hidden",
                   "transition-opacity",
                   isBeingDragged ? "opacity-60 z-10 shadow-lg" : "opacity-100",
-                  locked
+                  bar.role === "narrated_caption"
+                    ? locked
+                      ? "bg-teal-900/25 border-teal-800/30 cursor-not-allowed opacity-60"
+                      : isExpanded
+                      ? "bg-teal-400/40 border-teal-400/70 ring-1 ring-teal-400/50 cursor-grab active:cursor-grabbing"
+                      : "bg-teal-700/40 border-teal-500/50 hover:bg-teal-700/60 cursor-grab active:cursor-grabbing"
+                    : locked
                     ? "bg-amber-900/25 border-amber-800/30 cursor-not-allowed opacity-60"
                     : isExpanded
                     ? "bg-amber-400/40 border-amber-400/70 ring-1 ring-amber-400/50 cursor-grab active:cursor-grabbing"
@@ -405,12 +414,12 @@ export default function TextLane({
                     className="absolute left-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/20"
                     aria-hidden="true"
                   >
-                    <div className="w-px h-3 bg-amber-300/50 rounded-full" />
+                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-300/50" : "bg-amber-300/50"}`} />
                   </div>
                 )}
 
                 {/* Text preview */}
-                <span className="px-2 text-[9px] text-amber-100 truncate pointer-events-none leading-none">
+                <span className={`px-2 text-[9px] truncate pointer-events-none leading-none ${bar.role === "narrated_caption" ? "text-teal-100" : "text-amber-100"}`}>
                   {textPreview}
                 </span>
 
@@ -420,7 +429,7 @@ export default function TextLane({
                     className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/20"
                     aria-hidden="true"
                   >
-                    <div className="w-px h-3 bg-amber-300/50 rounded-full" />
+                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-300/50" : "bg-amber-300/50"}`} />
                   </div>
                 )}
               </div>
@@ -434,7 +443,7 @@ export default function TextLane({
               onClick={(e) => { e.stopPropagation(); handleAdd(); }}
               title="Add text block"
               aria-label="Add text block"
-              className="absolute top-0.5 right-0.5 h-5 w-5 flex items-center justify-center rounded text-amber-400/50 hover:text-amber-300 hover:bg-amber-500/10 text-xs transition-colors leading-none z-20"
+              className={`absolute top-0.5 right-0.5 h-5 w-5 flex items-center justify-center rounded text-xs transition-colors leading-none z-20 ${bars[0]?.role === "narrated_caption" ? "text-teal-400/50 hover:text-teal-300 hover:bg-teal-500/10" : "text-amber-400/50 hover:text-amber-300 hover:bg-amber-500/10"}`}
             >
               +
             </button>
