@@ -2264,6 +2264,11 @@ def _run_regenerate_variant(
         # re-render re-times the SAME quote on the new duration — deterministic
         # synthesis, zero LLM calls. Nulled below on opt-out edits.
         persisted_sequence_quote: str | None = existing.get("sequence_quote") or None
+        # User-pinned scene timing overrides (PR-D). Applied inside the sequence
+        # overlay functions so the render honors the user's drag edits.
+        persisted_scene_timing_overrides: list[dict] | None = (
+            existing.get("scene_timing_overrides") or None
+        )
         # Style precedence: explicit restyle request → the variant's persisted set →
         # any sibling variant's set (the job-level default) → "default".
         existing_style_set_id = existing.get("style_set_id")
@@ -2662,6 +2667,7 @@ def _run_regenerate_variant(
             allow_sequence=allow_sequence,
             author_quote_fn=regen_author_quote_fn,
             existing_sequence_quote=persisted_sequence_quote,
+            scene_timing_overrides=persisted_scene_timing_overrides,
             language=language,
             font_family_override=resolved_font_override,
             effect_override=resolved_effect_override,
@@ -3506,6 +3512,21 @@ def _annotate_scene_roles(scenes: list[dict], *, job_id: str, variant_id: str, m
     )
 
 
+def _apply_scene_timing_overrides(scenes: list[dict], overrides: list[dict]) -> list[dict]:
+    """Apply user-pinned start_s/end_s onto re-derived scenes.
+
+    Silently drops overrides whose scene_index is out of bounds (handles transcript
+    drift where re-derivation produces a different scene count).
+    """
+    patched = [dict(s) for s in scenes]
+    for ov in overrides:
+        idx = ov.get("scene_index", -1)
+        if 0 <= idx < len(patched):
+            patched[idx]["start_s"] = ov["start_s"]
+            patched[idx]["end_s"] = ov["end_s"]
+    return patched
+
+
 def _attempt_sequence_overlays(
     *,
     job_id: str,
@@ -3514,6 +3535,7 @@ def _attempt_sequence_overlays(
     video_duration_s: float,
     base_size_px: int,
     text_color: str,
+    scene_timing_overrides: list[dict] | None = None,
 ) -> tuple[list[dict], dict[str, Any]] | None:
     """Build the transcript-synced sequence for one eligible variant.
 
@@ -3564,6 +3586,9 @@ def _attempt_sequence_overlays(
 
     _annotate_scene_roles(scenes, job_id=job_id, variant_id=variant_id, mode="transcript")
 
+    if scene_timing_overrides:
+        scenes = _apply_scene_timing_overrides(scenes, scene_timing_overrides)
+
     from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
 
     overlays = build_sequence_overlays(scenes, base_size_px=base_size_px, text_color=text_color)
@@ -3594,6 +3619,7 @@ def _attempt_rhythm_overlays(
     text_color: str,
     author_quote_fn: Any | None = None,
     persisted_quote: str | None = None,
+    scene_timing_overrides: list[dict] | None = None,
 ) -> tuple[list[dict], dict[str, Any]] | None:
     """Build the rhythm-mode sequence (authored quote, synthesized timings).
 
@@ -3653,6 +3679,9 @@ def _attempt_rhythm_overlays(
     )
 
     _annotate_scene_roles(scenes, job_id=job_id, variant_id=variant_id, mode="rhythm")
+
+    if scene_timing_overrides:
+        scenes = _apply_scene_timing_overrides(scenes, scene_timing_overrides)
 
     from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
 
@@ -3734,6 +3763,7 @@ def _render_generative_variant(
     allow_sequence: bool = True,
     author_quote_fn: Any | None = None,
     existing_sequence_quote: str | None = None,
+    scene_timing_overrides: list[dict] | None = None,
     language: str = "en",
     font_family_override: str | None = None,
     effect_override: str | None = None,
@@ -4195,6 +4225,7 @@ def _render_generative_variant(
                         video_duration_s=base_dur,
                         base_size_px=int(_agent_text_intro_px or 60),
                         text_color=str(_at_params.get("text_color") or "#FFFFFF"),
+                        scene_timing_overrides=scene_timing_overrides or None,
                     )
                 if sequence_result is None and gate_reason != "layout_not_cluster":
                     sequence_result = _attempt_rhythm_overlays(
@@ -4205,6 +4236,7 @@ def _render_generative_variant(
                         text_color=str(_at_params.get("text_color") or "#FFFFFF"),
                         author_quote_fn=author_quote_fn,
                         persisted_quote=existing_sequence_quote,
+                        scene_timing_overrides=scene_timing_overrides or None,
                     )
 
             def _static_intro_overlays() -> list[dict]:
