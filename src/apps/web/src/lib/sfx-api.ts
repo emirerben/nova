@@ -16,7 +16,10 @@ export interface SoundEffectSummary {
   archived_at: string | null;
   status: string;           // "pending" | "ready" | "failed"
   source_filename: string | null;
-  preview_url?: string | null;
+  // Short-lived signed audio URL from GET /sound-effects. Field name MUST match
+  // the API (app/routes/sound_effects.py SoundEffectSummary.preview_audio_url) —
+  // a mismatch silently drops live SFX preview audio.
+  preview_audio_url?: string | null;
 }
 
 export interface SoundEffectListResponse {

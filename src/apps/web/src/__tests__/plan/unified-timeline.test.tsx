@@ -38,7 +38,7 @@ function makeGlossaryEffect(override: Partial<SoundEffectSummary> = {}): SoundEf
     id: "gfx-1",
     name: "Whoosh",
     duration_s: 1.5,
-    preview_url: "https://cdn.example.com/whoosh.mp3",
+    preview_audio_url: "https://cdn.example.com/whoosh.mp3",
     ...override,
   };
 }
