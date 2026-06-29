@@ -900,6 +900,19 @@ export function setPlanItemIntroSize(
   });
 }
 
+export function setPlanItemIntroTiming(
+  itemId: string,
+  variantId: string,
+  startS: number,
+  endS: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/intro-timing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start_s: startS, end_s: endS }),
+  });
+}
+
 // ── Media-overlay card upload + apply ─────────────────────────────────────────
 
 /**

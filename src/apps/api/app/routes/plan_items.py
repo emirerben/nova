@@ -34,6 +34,7 @@ from app.routes.generative_jobs import (
     EditVariantRequest,
     RetextRequest,
     SetIntroSizeRequest,
+    SetIntroTimingRequest,
     SwapSongRequest,
     TextElementsRequest,
     TimelineEditRequest,
@@ -46,6 +47,7 @@ from app.routes.generative_jobs import (
     dispatch_reset_timeline,
     dispatch_retext,
     dispatch_set_intro_size,
+    dispatch_set_intro_timing,
     dispatch_set_media_overlays,
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
@@ -1411,6 +1413,28 @@ async def set_item_intro_size(
     await db.commit()
     log.info(
         "plan_item_set_intro_size", item_id=item_id, variant_id=variant_id, px=req.text_size_px
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/intro-timing", response_model=PlanItemResponse)
+async def set_item_intro_timing(
+    item_id: str,
+    variant_id: str,
+    req: SetIntroTimingRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Re-render one of this item's variants with user-pinned intro overlay timing."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_set_intro_timing(job, variant_id, start_s=req.start_s, end_s=req.end_s)
+    await db.commit()
+    log.info(
+        "plan_item_set_intro_timing",
+        item_id=item_id,
+        variant_id=variant_id,
+        start_s=req.start_s,
+        end_s=req.end_s,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
