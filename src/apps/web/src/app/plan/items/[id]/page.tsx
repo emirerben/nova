@@ -44,6 +44,9 @@ import {
   type CaptionCue,
   setPlanItemCaptions,
   applyPlanItemCaptions,
+  setPlanItemIntroTiming,
+  patchPlanItemSceneTiming,
+  type SceneTimingPatch,
 } from "@/lib/plan-api";
 import { useSfxPreview } from "../../_components/useSfxPreview";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
@@ -1891,6 +1894,25 @@ function convertCaptionCues(
 }
 
 /**
+ * PR-E: Convert scene_timings[] → TextElementBar[] for the Text lane.
+ * Uses stable index-based IDs ("scene-0", "scene-1", …). Only scenes with
+ * non-null start_s and end_s are included (scenes lacking timing data are skipped).
+ */
+function convertSceneTimings(
+  scenes: Array<{ text: string; start_s: number | null; end_s: number | null }>,
+): import("@/lib/timeline/text-timeline-reducer").TextElementBar[] {
+  return scenes
+    .filter((s) => s.start_s != null && s.end_s != null)
+    .map((s, i) => ({
+      id: `scene-${i}`,
+      text: s.text,
+      start_s: s.start_s as number,
+      end_s: s.end_s as number,
+      role: "generative_sequence" as const,
+    }));
+}
+
+/**
  * Controls-only column for the focused variant. Receives the edit session as a
  * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
  *
@@ -2192,16 +2214,19 @@ function FocusedVariantControls({
   //   • variant.caption_cues (narrated variants, PR-B) — teal "narrated_caption" bars
   //   • variant.text_elements (generative variants, T6) — amber bars
   // Updated on every reducer mutation; used to derive State 5 (text too long) warning.
-  const [textElements, setTextElements] = useState<TextElementBar[]>(() =>
-    variant.caption_cues?.length
-      ? convertCaptionCues(variant.caption_cues)
-      : convertApiTextElements(variant.text_elements),
-  );
+  const [textElements, setTextElements] = useState<TextElementBar[]>(() => {
+    if (variant.caption_cues?.length) return convertCaptionCues(variant.caption_cues);
+    if (variant.scene_timings?.length) return convertSceneTimings(variant.scene_timings);
+    return convertApiTextElements(variant.text_elements);
+  });
   // Re-sync from API data when a render completes (render_finished_at advances).
   useEffect(() => {
     if (variant.caption_cues?.length) {
       // Narrated: re-sync from fresh caption data after a reburn.
       setTextElements(convertCaptionCues(variant.caption_cues));
+    } else if (variant.scene_timings?.length) {
+      // Sequence: re-sync from scene_timings when they update.
+      setTextElements(convertSceneTimings(variant.scene_timings));
     } else if (!variant.text_elements_user_edited) {
       setTextElements(convertApiTextElements(variant.text_elements));
     }
@@ -2424,6 +2449,22 @@ function FocusedVariantControls({
           }));
           void setPlanItemCaptions(itemId, variant.variant_id, cues);
         }, 1000);
+      } else if (bars[0]?.role === "generative_sequence" && variant.scene_timings?.length) {
+        // PR-E: sequence bars — persist via patchPlanItemSceneTiming (no re-render).
+        textApplyTimer.current = setTimeout(() => {
+          const overrides: SceneTimingPatch[] = bars.map((b, i) => ({
+            scene_index: i,
+            start_s: b.start_s,
+            end_s: b.end_s,
+          }));
+          void patchPlanItemSceneTiming(itemId, variant.variant_id, overrides);
+        }, 1000);
+      } else if (bars[0]?.role === "generative_intro" && variant.intro_start_s != null) {
+        // PR-E: intro timing bar — persist via setPlanItemIntroTiming (no re-render).
+        textApplyTimer.current = setTimeout(() => {
+          const bar = bars[0];
+          void setPlanItemIntroTiming(itemId, variant.variant_id, bar.start_s, bar.end_s);
+        }, 1000);
       } else {
         textApplyTimer.current = setTimeout(() => {
           void handleApplyTextElements(variant.variant_id, bars);
@@ -2431,7 +2472,7 @@ function FocusedVariantControls({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [variant.variant_id, handleApplyTextElements, itemId],
+    [variant.variant_id, variant.scene_timings, variant.intro_start_s, handleApplyTextElements, itemId],
   );
 
   /** State 4: called by UnifiedTimeline when a trim drag is clamped to MIN_DUR_S. */
@@ -2525,6 +2566,22 @@ function FocusedVariantControls({
                   }));
                   void setPlanItemCaptions(itemId, variant.variant_id, cues).then(() =>
                     applyPlanItemCaptions(itemId, variant.variant_id),
+                  );
+                } else if (bars[0]?.role === "generative_sequence" && variant.scene_timings?.length) {
+                  // PR-E: sequence bars — flush timing patch then re-render.
+                  const overrides: SceneTimingPatch[] = bars.map((b, i) => ({
+                    scene_index: i,
+                    start_s: b.start_s,
+                    end_s: b.end_s,
+                  }));
+                  void patchPlanItemSceneTiming(itemId, variant.variant_id, overrides).then(() =>
+                    handleApplyTextElements(variant.variant_id, bars),
+                  );
+                } else if (bars[0]?.role === "generative_intro" && variant.intro_start_s != null) {
+                  // PR-E: intro timing bar — flush timing patch then re-render.
+                  const bar = bars[0];
+                  void setPlanItemIntroTiming(itemId, variant.variant_id, bar.start_s, bar.end_s).then(() =>
+                    handleApplyTextElements(variant.variant_id, bars),
                   );
                 } else {
                   void handleApplyTextElements(variant.variant_id, bars);
