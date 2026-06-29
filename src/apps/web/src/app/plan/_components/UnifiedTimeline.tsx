@@ -35,6 +35,7 @@ import SfxLane from "./SfxLane";
 import OverlayLane from "./OverlayLane";
 import ClipsLane from "./ClipsLane";
 import TextLane from "./TextLane";
+import type { ClipTimelineHandle } from "./useClipTimeline";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -105,6 +106,13 @@ export interface UnifiedTimelineProps {
   clipsPanel?: React.ReactNode;
   /** Called when the Clips lane expands or collapses. */
   onClipsPanelChange?: (open: boolean) => void;
+  /**
+   * Clip timeline handle from useClipTimeline in the parent.
+   * When provided, the Clips lane renders per-clip segment bars with drag;
+   * the expanded panel (clipsPanel) also receives this handle so both share
+   * one draft.
+   */
+  clipTimelineHandle?: ClipTimelineHandle;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -137,6 +145,7 @@ export default function UnifiedTimeline({
   isFirstSequenceEdit,
   clipsPanel,
   onClipsPanelChange,
+  clipTimelineHandle,
 }: UnifiedTimelineProps) {
   // ── Text lane selection (controlled here so T7 can read expandedBarId) ────────
 
@@ -186,6 +195,7 @@ export default function UnifiedTimeline({
         currentTimeS={currentTimeS}
         clipsPanel={clipsPanel}
         onClipsPanelChange={onClipsPanelChange}
+        clipHandle={clipTimelineHandle}
       />
 
       {/* ── Text lane ── */}

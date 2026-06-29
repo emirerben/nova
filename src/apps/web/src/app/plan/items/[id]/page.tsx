@@ -68,6 +68,7 @@ import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
 import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
+import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
@@ -1945,6 +1946,10 @@ function FocusedVariantControls({
   const overlayCardsRef = useRef(overlayCards);
   overlayCardsRef.current = overlayCards;
 
+  // Shared clip-timeline data: owned here so ClipsLane header bars and the
+  // InlineClipsEditor expanded panel read/write one draft (no double fetch).
+  const clipTimeline = useClipTimeline(itemId, variant.variant_id, "plan-item");
+
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
   useEffect(() => {
@@ -2471,6 +2476,7 @@ function FocusedVariantControls({
               isFirstSequenceEdit={
                 variant.intro_mode === "sequence" && !variant.text_elements_user_edited
               }
+              clipTimelineHandle={clipTimeline}
               clipsPanel={
                 <InlineClipsEditor
                   ownerId={itemId}
@@ -2480,6 +2486,10 @@ function FocusedVariantControls({
                     markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
                     refetch();
                   }}
+                  externalState={clipTimeline.state}
+                  externalDispatch={clipTimeline.dispatch}
+                  externalClips={clipTimeline.clips}
+                  onReload={clipTimeline.reload}
                 />
               }
             />
