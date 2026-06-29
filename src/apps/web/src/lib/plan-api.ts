@@ -792,6 +792,14 @@ export interface PlanItemVariant {
     start_s: number | null;
     end_s: number | null;
   }> | null;
+  /**
+   * PR-E: Intro overlay timing in assembled-video seconds.
+   * Present on agent_text/agent_text variants after PR-C lands intro timing
+   * in the polled payload. Used to seed the generative_intro bar timing
+   * and gate the setPlanItemIntroTiming save path.
+   */
+  intro_start_s?: number | null;
+  intro_end_s?: number | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {

@@ -272,11 +272,12 @@ export default function TextLane({
   // ── Locked-bar predicate ──────────────────────────────────────────────────────
 
   /**
-   * Sequence bars are locked individually even in a non-readOnly lane.
-   * (readOnly locks the whole lane; sequence role locks the specific bar.)
+   * PR-E: All bar roles are now draggable; readOnly gates the entire lane.
+   * (Sequence bars were previously locked, but PR-E wires their timing to
+   * patchPlanItemSceneTiming so they can be freely dragged too.)
    */
   function isBarLocked(bar: TextElementBar): boolean {
-    return readOnly || bar.role === "generative_sequence";
+    return readOnly;
   }
 
   // ── Add ───────────────────────────────────────────────────────────────────────
