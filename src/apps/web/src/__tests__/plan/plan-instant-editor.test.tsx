@@ -133,6 +133,15 @@ jest.mock("@/components/variant-editor/IntroTextPreview", () => ({
   IntroTextPreview: () => <div data-testid="intro-text-preview" />,
 }));
 
+// Capture useSfxPreview calls so we can assert the live SFX <audio> sync is
+// wired into WHICHEVER preview renders. Instant-eligible variants render through
+// LiveEditPreview (not Hero) on the timeline, so this is the only place that
+// proves glossary sound effects reach the preview at all.
+const mockUseSfxPreview = jest.fn();
+jest.mock("@/app/plan/_components/useSfxPreview", () => ({
+  useSfxPreview: (...args: unknown[]) => mockUseSfxPreview(...args),
+}));
+
 import PlanItemPage from "@/app/plan/items/[id]/page";
 
 function makeItem(overrides = {}) {
@@ -206,6 +215,7 @@ beforeEach(() => {
   mockSetPlanItemIntroSize.mockClear();
   mockDownloadVideo.mockClear();
   mockRefetch.mockClear();
+  mockUseSfxPreview.mockClear();
 });
 
 describe("Plan item page — deferred-burn editor", () => {
@@ -343,5 +353,37 @@ describe("Plan item page — deferred-burn editor", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
     // "Remove text" comes from PlanVariantEditor rendered in the text-controls area.
     expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
+  });
+
+  // Regression for the #576 follow-up: instant-eligible variants (agent_text intro)
+  // render the live preview through LiveEditPreview, NOT Hero. #576 wired the
+  // glossary-SFX <audio> sync into Hero only, so sound effects were silent in the
+  // preview for exactly these variants while the Download bake still included them.
+  // Assert the SFX placement reaches useSfxPreview regardless of which preview renders.
+  it("instant-eligible variant feeds SFX placements into the live preview audio sync", async () => {
+    const sfxPlacement = {
+      id: "p1",
+      sound_effect_id: "fah-id",
+      src_gcs_path: "sound-effects/fah/audio.mp3",
+      at_s: 3.9,
+      gain: 1.0,
+      duration_s: 2.04,
+      label: "Fah",
+    };
+    const variantWithSfx = { ...eligibleVariant, sound_effects: [sfxPlacement] };
+    setData(makeItem(), [variantWithSfx]);
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    // The eligible variant renders LiveEditPreview (instant editor), which must
+    // call useSfxPreview with the variant's placements. Before the fix it never
+    // did, so the placement never reached an <audio> element.
+    const sawPlacement = mockUseSfxPreview.mock.calls.some(
+      ([, placements]) =>
+        Array.isArray(placements) &&
+        placements.some((p: { sound_effect_id?: string }) => p?.sound_effect_id === "fah-id"),
+    );
+    expect(sawPlacement).toBe(true);
   });
 });

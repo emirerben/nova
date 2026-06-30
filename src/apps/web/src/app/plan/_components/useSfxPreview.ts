@@ -113,17 +113,30 @@ export function useSfxPreview(
       clearTimeouts();
       entriesRef.current.forEach(({ audio }) => { audio.pause(); audio.currentTime = 0; });
     };
+    // A native <video loop> wraps to 0 WITHOUT firing `ended` or (in Chrome) a
+    // reliable `seeked`, so the one-shot SFX timers scheduled in syncAll would
+    // never re-arm — effects would play on the first pass only and stay silent on
+    // every loop after. The looping preview is exactly LiveEditPreview's case.
+    // Detect the backward jump on timeupdate and re-sync. (A manual seek-back also
+    // lands here, harmlessly redundant with onSeeked since syncAll is idempotent.)
+    let lastTime = video.currentTime;
+    const onTimeUpdate = () => {
+      if (video.currentTime + 0.25 < lastTime) syncAll(video);
+      lastTime = video.currentTime;
+    };
 
     video.addEventListener("play", onPlay);
     video.addEventListener("pause", onPause);
     video.addEventListener("seeked", onSeeked);
     video.addEventListener("ended", onEnded);
+    video.addEventListener("timeupdate", onTimeUpdate);
 
     return () => {
       video.removeEventListener("play", onPlay);
       video.removeEventListener("pause", onPause);
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("ended", onEnded);
+      video.removeEventListener("timeupdate", onTimeUpdate);
       clearTimeouts();
       entriesRef.current.forEach(({ audio }) => { audio.pause(); audio.src = ""; });
     };
