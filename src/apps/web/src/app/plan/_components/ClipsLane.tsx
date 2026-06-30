@@ -58,6 +58,12 @@ export interface ClipsLaneProps {
    * When absent, falls back to the single launcher button.
    */
   clipHandle?: ClipTimelineHandle;
+  /**
+   * Plan C fix: called when the user clicks a clip bar body (not an edge
+   * drag).  Receives the slot.key so the parent can pre-select that clip
+   * in InlineClipsEditor, showing only its trim panel on first click.
+   */
+  onClipBodyClick?: (key: string) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -68,6 +74,7 @@ export default function ClipsLane({
   clipsPanel,
   onClipsPanelChange,
   clipHandle,
+  onClipBodyClick,
 }: ClipsLaneProps) {
   const [clipsOpen, setClipsOpen] = useState(false);
   const [drag, setDrag] = useState<ClipDragState | null>(null);
@@ -191,7 +198,7 @@ export default function ClipsLane({
       >
         {/* Label gutter */}
         <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
-          <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider truncate">
+          <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider truncate">
             Clips
           </span>
         </div>
@@ -199,7 +206,7 @@ export default function ClipsLane({
         {/* Track */}
         <div
           ref={laneRef}
-          className="relative flex-1 bg-zinc-800/15 border-y border-zinc-700/30 overflow-hidden group-hover:bg-zinc-800/30 transition-colors"
+          className="relative flex-1 bg-zinc-50 border-y border-zinc-200 overflow-hidden group-hover:bg-zinc-100 transition-colors"
           onClick={(e) => e.stopPropagation()} // individual bars handle their own clicks
         >
           <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
@@ -227,10 +234,10 @@ export default function ClipsLane({
                     data-testid={`clip-bar-${slot.key}`}
                     className={[
                       "absolute inset-y-1 rounded border select-none touch-none",
-                      "border-sky-600/55 bg-sky-700/35",
+                      "border-sky-400 bg-sky-100",
                       isDragging
-                        ? "border-sky-400/80 bg-sky-600/50"
-                        : "hover:border-sky-500/70 hover:bg-sky-700/50",
+                        ? "border-sky-500 bg-sky-200"
+                        : "hover:border-sky-500 hover:bg-sky-150",
                       "cursor-default transition-colors",
                     ].join(" ")}
                     style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
@@ -241,28 +248,37 @@ export default function ClipsLane({
                     onPointerUp={(e) => handleBarPointerUp(e, slot.key)}
                     onPointerCancel={() => setDrag(null)}
                     onClick={(e) => {
-                      // Body click → open expanded panel; edge drags skip this
+                      // Body click → open panel for THIS clip; edge drags skip this.
+                      // Plan C: always OPEN (never close) on a bar click — use the ▲/▼
+                      // button to collapse.  Emit the key so the parent pre-selects it
+                      // in InlineClipsEditor and skips the "all clips" redraw.
                       const zone = classifyZone(
                         e.clientX,
                         e.currentTarget.getBoundingClientRect(),
                         HANDLE_PX,
                       );
-                      if (zone === "body") toggleClipsOpen();
+                      if (zone === "body") {
+                        if (!clipsOpen) {
+                          setClipsOpen(true);
+                          onClipsPanelChange?.(true);
+                        }
+                        onClipBodyClick?.(slot.key);
+                      }
                     }}
                   >
                     {/* Left trim handle */}
                     <div className="absolute left-0 top-0 bottom-0 w-[10px] flex items-center justify-center cursor-col-resize z-10">
-                      <div className="w-[1.5px] h-3 bg-sky-400/60 rounded-full" />
+                      <div className="w-[1.5px] h-3 bg-sky-500/70 rounded-full" />
                     </div>
 
                     {/* Label */}
-                    <span className="absolute inset-0 flex items-center justify-center text-[9px] text-sky-200/80 truncate px-3 pointer-events-none">
+                    <span className="absolute inset-0 flex items-center justify-center text-[9px] text-sky-700 truncate px-3 pointer-events-none">
                       {widthPct > 8 ? `Clip ${clipNum}` : clipNum}
                     </span>
 
                     {/* Right trim handle */}
                     <div className="absolute right-0 top-0 bottom-0 w-[10px] flex items-center justify-center cursor-col-resize z-10">
-                      <div className="w-[1.5px] h-3 bg-sky-400/60 rounded-full" />
+                      <div className="w-[1.5px] h-3 bg-sky-500/70 rounded-full" />
                     </div>
                   </div>
                 );
@@ -272,7 +288,7 @@ export default function ClipsLane({
               <button
                 type="button"
                 aria-label="Edit clips"
-                className="absolute right-1 inset-y-1 px-1.5 rounded text-[9px] text-sky-400/60 hover:text-sky-300/90 hover:bg-sky-800/30 transition-colors"
+                className="absolute right-1 inset-y-1 px-1.5 rounded text-[9px] text-sky-600/70 hover:text-sky-700 hover:bg-sky-100 transition-colors"
                 onClick={(e) => { e.stopPropagation(); toggleClipsOpen(); }}
               >
                 {clipsOpen ? "▲" : "▼"}
@@ -282,7 +298,7 @@ export default function ClipsLane({
             /* ── Fallback: single launcher button ────────────────────────────── */
             <button
               type="button"
-              className="absolute inset-1 rounded flex items-center px-2 border border-sky-600/40 bg-sky-700/30 hover:bg-sky-700/50 text-sky-300/80 transition-colors"
+              className="absolute inset-1 rounded flex items-center px-2 border border-sky-300 bg-sky-50 hover:bg-sky-100 text-sky-700 transition-colors"
               onClick={(e) => { e.stopPropagation(); toggleClipsOpen(); }}
             >
               <span className="text-[10px] truncate pointer-events-none">
@@ -295,7 +311,7 @@ export default function ClipsLane({
 
       {/* Expanded panel */}
       {clipsOpen && clipsPanel && (
-        <div className="pl-14 pr-2 pb-3 pt-2 border-b border-zinc-700/30">
+        <div className="pl-14 pr-2 pb-3 pt-2 border-b border-zinc-200">
           {clipsPanel}
         </div>
       )}

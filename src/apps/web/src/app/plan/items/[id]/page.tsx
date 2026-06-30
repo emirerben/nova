@@ -1416,6 +1416,13 @@ function FocusedResults({
   // removed in T5 when the expandable textPanel slot was replaced by the interactive bar lane.
   const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
 
+  // ── Live text elements (for bug #6: instant overlay in the preview) ──────────
+  // FocusedVariantControls calls onLiveTextChange on every reducer mutation so
+  // LiveEditPreview can immediately overlay the local bars on the base video,
+  // instead of waiting for the full reburn round-trip.
+  const [liveTextElements, setLiveTextElements] = useState<TextElement[]>([]);
+  const [liveTextEditsDirty, setLiveTextEditsDirty] = useState(false);
+
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
     variant?.media_overlays ?? [],
@@ -1625,11 +1632,11 @@ function FocusedResults({
 
   return (
     <div className="mt-8">
-      {/* Hero + rail: on desktop they are side-by-side */}
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+      {/* Hero: centered 9:16 video above full-width editor (TikTok-style stacked layout) */}
+      <div className="flex flex-col gap-4">
 
-        {/* ── HERO: large video player ── */}
-        <div className="w-full shrink-0 sm:max-w-xs lg:w-[300px]">
+        {/* ── HERO: centered 9:16 video ── */}
+        <div className="w-full max-w-[260px] mx-auto">
           <div className="relative">
             {/* "Nova's pick" badge */}
             {isNovaPick && variant?.output_url && (
@@ -1643,7 +1650,8 @@ function FocusedResults({
                 styleSets={styleSets}
                 session={editSession}
                 playToken={editSession.playToken}
-                textElements={variant.text_elements ?? undefined}
+                textElements={liveTextElements.length > 0 ? liveTextElements : (variant.text_elements ?? undefined)}
+                textEditsDirty={liveTextEditsDirty}
               />
             ) : (
               <Hero
@@ -1668,8 +1676,8 @@ function FocusedResults({
           )}
         </div>
 
-        {/* ── RAIL: rationale + alternates + editor ── */}
-        <div className="min-w-0 flex-1 space-y-5">
+        {/* ── RAIL: rationale + alternates + editor (full-width below video) ── */}
+        <div className="min-w-0 w-full space-y-5">
 
           {/* Rationale blurb */}
           {variant && !isGenerating && (
@@ -1837,6 +1845,10 @@ function FocusedResults({
                       setSfxAudioUrls={setSfxAudioUrls}
                       currentTimeS={currentTimeS}
                       onError={onError}
+                      onLiveTextChange={(apiEls, dirty) => {
+                        setLiveTextElements(apiEls);
+                        setLiveTextEditsDirty(dirty);
+                      }}
                     />
                   )}
                 </div>
@@ -1982,6 +1994,7 @@ function FocusedVariantControls({
   setSfxAudioUrls,
   currentTimeS,
   onError,
+  onLiveTextChange,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -2010,6 +2023,13 @@ function FocusedVariantControls({
   currentTimeS: number;
   /** Surface a user-facing error in the page-level banner (e.g. SFX save failures). */
   onError: (msg: string) => void;
+  /**
+   * Bug #6 fix: called on every text-element reducer mutation so FocusedResults
+   * can pass live bars to LiveEditPreview as an instant CSS overlay, before the
+   * reburn round-trip completes.  apiEls is the TextElement[] view of bars;
+   * dirty=true means local bars differ from the baked video.
+   */
+  onLiveTextChange?: (apiEls: TextElement[], dirty: boolean) => void;
 }) {
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
@@ -2021,6 +2041,9 @@ function FocusedVariantControls({
   // Shared clip-timeline data: owned here so ClipsLane header bars and the
   // InlineClipsEditor expanded panel read/write one draft (no double fetch).
   const clipTimeline = useClipTimeline(itemId, variant.variant_id, "plan-item");
+
+  // Plan C: clicking a clip bar opens InlineClipsEditor pre-selected to that clip.
+  const [focusedClipKey, setFocusedClipKey] = useState<string | null>(null);
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -2433,6 +2456,31 @@ function FocusedVariantControls({
   const handleTextElementsChange = useCallback(
     (bars: TextElementBar[]) => {
       setTextElements(bars);
+      // Bug #6: push live bars to the preview immediately as a CSS overlay.
+      // Only generative_intro bars render as text_elements in the preview;
+      // narrated_caption/sequence are handled via other overlay paths.
+      if (onLiveTextChange) {
+        const liveApiEls: TextElement[] = bars
+          .filter((b) => b.role !== "narrated_caption")
+          .map((b) => ({
+            id: b.id,
+            text: b.text,
+            start_s: b.start_s,
+            end_s: b.end_s,
+            role: b.role as TextElement["role"],
+            font_family: b.font_family ?? null,
+            size_px: b.size_px ?? null,
+            size_class: (b.size_class as TextElement["size_class"]) ?? null,
+            color: b.color ?? null,
+            highlight_color: b.highlight_color ?? null,
+            stroke_width: b.stroke_width ?? null,
+            effect: (b.effect as TextElement["effect"]) ?? null,
+            alignment: (b.alignment as TextElement["alignment"]) ?? null,
+            source_params: b.source_params ?? null,
+            position: "middle" as const,
+          }));
+        onLiveTextChange(liveApiEls, liveApiEls.length > 0);
+      }
       if (textApplyTimer.current) clearTimeout(textApplyTimer.current);
       if (bars[0]?.role === "narrated_caption") {
         textApplyTimer.current = setTimeout(() => {
@@ -2466,7 +2514,7 @@ function FocusedVariantControls({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [variant.variant_id, variant.scene_timings, variant.intro_start_s, handleApplyTextElements, itemId],
+    [variant.variant_id, variant.scene_timings, variant.intro_start_s, handleApplyTextElements, itemId, onLiveTextChange],
   );
 
   /** State 4: called by UnifiedTimeline when a trim drag is clamped to MIN_DUR_S. */
@@ -2526,7 +2574,7 @@ function FocusedVariantControls({
               Text block exceeds 500 chars — may be truncated on render
             </p>
           )}
-          <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
+          <div className="rounded-xl bg-white border border-zinc-200 p-3">
             <UnifiedTimeline
               totalDurationS={variantDurationS}
               currentTimeS={currentTimeS}
@@ -2583,6 +2631,7 @@ function FocusedVariantControls({
                 variant.intro_mode === "sequence" && !variant.text_elements_user_edited
               }
               clipTimelineHandle={clipTimeline}
+              onClipBodyClick={(key) => setFocusedClipKey(key)}
               clipsPanel={
                 <InlineClipsEditor
                   ownerId={itemId}
@@ -2596,6 +2645,7 @@ function FocusedVariantControls({
                   externalDispatch={clipTimeline.dispatch}
                   externalClips={clipTimeline.clips}
                   onReload={clipTimeline.reload}
+                  focusedKey={focusedClipKey}
                 />
               }
             />
@@ -2668,17 +2718,24 @@ function LiveEditPreview({
   session,
   playToken,
   textElements,
+  textEditsDirty,
 }: {
   variant: PlanItemVariant;
   styleSets: GenerativeStyleSet[];
   session: VariantEditSession;
   playToken?: number;
   /**
-   * T6: Full TextElement array from the variant (API data). When non-empty,
-   * the preview renders ALL elements as CSS overlays instead of the single
-   * IntroTextPreview (which models the legacy linear/cluster intro path).
+   * T6: Full TextElement array. When non-empty the preview renders ALL elements
+   * as CSS overlays. Now fed with live local bars (not server data) so edits
+   * appear instantly without waiting for a reburn round-trip.
    */
   textElements?: TextElement[];
+  /**
+   * Bug #6 fix: true when local text bars differ from the baked video (user
+   * made a text edit in the timeline).  Forces the preview to show base_video_url
+   * + CSS overlay even while the instant-editor session is clean.
+   */
+  textEditsDirty?: boolean;
 }) {
   const introParams = resolveIntroParams(variant, styleSets, session.draft);
 
@@ -2694,8 +2751,11 @@ function LiveEditPreview({
   // what they see at rest IS what they get.
   // (fireCommit already calls setBaseline(toCommit) so isDirty resets to false
   // as soon as a commit fires; it goes true again only on the next keystroke.)
+  // Show burned video only when: no instant-editor draft AND no pending text-lane edits.
+  // When textEditsDirty=true the live CSS overlay (base_video_url + textElements) is
+  // the correct WYSIWYG view; the baked output_url lags until the reburn completes.
   const burnedSrc: string | null =
-    !session.isDirty && !session.isSaving ? (variant.output_url ?? null) : null;
+    !session.isDirty && !session.isSaving && !textEditsDirty ? (variant.output_url ?? null) : null;
   const burnedIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
 
   // N-element preview: use the text_elements array when available (T6).

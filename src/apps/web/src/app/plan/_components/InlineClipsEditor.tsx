@@ -316,6 +316,7 @@ export function InlineClipsEditor({
   externalDispatch,
   externalClips,
   onReload,
+  focusedKey,
 }: {
   ownerId: string;
   variantId: string;
@@ -329,6 +330,12 @@ export function InlineClipsEditor({
   externalClips?: TimelineClip[];
   /** Controlled mode: called after Apply/Reset so the parent can re-sync. */
   onReload?: () => void;
+  /**
+   * Plan C fix: when set, auto-selects this slot key so the user sees that
+   * clip's SourcePanel immediately on first click (no second click needed).
+   * Synced via useEffect so clicking different clips updates the selection.
+   */
+  focusedKey?: string | null;
 }) {
   const isControlled = externalState !== undefined;
 
@@ -353,6 +360,14 @@ export function InlineClipsEditor({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Plan C: when the parent emits a focusedKey (because the user clicked a lane
+  // bar), auto-select that clip so its SourcePanel opens without a second click.
+  useEffect(() => {
+    if (focusedKey !== undefined && focusedKey !== null) {
+      setSelectedKey(focusedKey);
+    }
+  }, [focusedKey]);
 
   const dragRef = useRef<ActiveDrag | null>(null);
   const outputBarRef = useRef<HTMLDivElement>(null);

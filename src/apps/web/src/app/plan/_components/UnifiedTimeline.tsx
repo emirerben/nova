@@ -108,6 +108,12 @@ export interface UnifiedTimelineProps {
    * one draft.
    */
   clipTimelineHandle?: ClipTimelineHandle;
+  /**
+   * Plan C fix: called when the user clicks a clip bar body in the lane.
+   * The key is the clicked slot.key so the parent can pre-select it in
+   * InlineClipsEditor and show only that clip's trim panel.
+   */
+  onClipBodyClick?: (key: string) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -138,6 +144,7 @@ export default function UnifiedTimeline({
   clipsPanel,
   onClipsPanelChange,
   clipTimelineHandle,
+  onClipBodyClick,
 }: UnifiedTimelineProps) {
   // ── Text lane selection (controlled here so T7 can read expandedBarId) ────────
 
@@ -161,7 +168,7 @@ export default function UnifiedTimeline({
       {/* ── Ruler ── */}
       <div className="flex h-5" style={{ minWidth: "100%" }}>
         <div className="flex-shrink-0 w-14" />
-        <div className="relative flex-1 bg-zinc-900/40 border-b border-zinc-800/60">
+        <div className="relative flex-1 bg-zinc-50 border-b border-zinc-200">
           {totalDurationS > 0 &&
             ticks.map((t) => {
               const pct = (t / totalDurationS) * 100;
@@ -171,8 +178,8 @@ export default function UnifiedTimeline({
                   className="absolute top-0 h-full pointer-events-none"
                   style={{ left: `${pct}%` }}
                 >
-                  <div className="w-px h-2 bg-zinc-700" />
-                  <span className="absolute left-0.5 top-2 text-[8px] leading-none text-zinc-500 whitespace-nowrap">
+                  <div className="w-px h-2 bg-zinc-300" />
+                  <span className="absolute left-0.5 top-2 text-[8px] leading-none text-zinc-400 whitespace-nowrap">
                     {formatTimecode(t)}
                   </span>
                 </div>
@@ -188,6 +195,7 @@ export default function UnifiedTimeline({
         clipsPanel={clipsPanel}
         onClipsPanelChange={onClipsPanelChange}
         clipHandle={clipTimelineHandle}
+        onClipBodyClick={onClipBodyClick}
       />
 
       {/* ── Text lane ── */}
@@ -232,7 +240,7 @@ export default function UnifiedTimeline({
         onSfxUploadRequest={onSfxUploadRequest}
       />
 
-      <p className="pl-14 pt-1.5 text-[9px] text-zinc-600">
+      <p className="pl-14 pt-1.5 text-[9px] text-zinc-400">
         Clips lane — click to expand inline · Text lane — click to expand inline
       </p>
     </div>
@@ -259,11 +267,11 @@ function ReadOnlyLane({ label, totalDurationS, currentTimeS, onClick, children }
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
     >
       <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
-        <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider truncate">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider truncate">
           {label}
         </span>
       </div>
-      <div className="relative flex-1 bg-zinc-800/15 border-y border-zinc-700/30 overflow-hidden group-hover:bg-zinc-800/30 transition-colors">
+      <div className="relative flex-1 bg-zinc-50 border-y border-zinc-200 overflow-hidden group-hover:bg-zinc-100 transition-colors">
         <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
         {children}
       </div>
