@@ -65,6 +65,7 @@ import { sfxNeedsBake, sfxPersistDirty } from "@/lib/sfx-dirty";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
+import { createPortal } from "react-dom";
 import { ProgressTheater, ShimmerSweep } from "@/components/progress";
 import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
@@ -1422,6 +1423,9 @@ function FocusedResults({
   // instead of waiting for the full reburn round-trip.
   const [liveTextElements, setLiveTextElements] = useState<TextElement[]>([]);
   const [liveTextEditsDirty, setLiveTextEditsDirty] = useState(false);
+  // 3-column TikTok layout: DOM nodes that FocusedVariantControls portals into
+  const [rightPanelEl, setRightPanelEl] = useState<HTMLDivElement | null>(null);
+  const [timelineEl, setTimelineEl] = useState<HTMLDivElement | null>(null);
 
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
@@ -1631,20 +1635,120 @@ function FocusedResults({
   const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
 
   return (
-    <div className="mt-8">
-      {/* Hero: centered 9:16 video above full-width editor (TikTok-style stacked layout) */}
-      <div className="flex flex-col gap-4">
+    <div className="mt-8 flex flex-col gap-4">
 
-        {/* ── HERO: centered 9:16 video ── */}
-        <div className="w-full max-w-[260px] mx-auto">
-          <div className="relative">
-            {/* "Nova's pick" badge */}
+      {/* ── 3-column main area: left | center (video) | right (controls portal) ── */}
+      <div className="flex items-start gap-4 lg:gap-6">
+
+        {/* ── LEFT column: other takes, rationale, download, feedback ── */}
+        <div className="flex w-40 shrink-0 flex-col gap-4 pt-1">
+
+          {/* Rationale blurb */}
+          {variant && !isGenerating && (
+            <p className="text-xs leading-snug text-[#3f3f46]">
+              {deriveRationale(variant, variants.length)}
+            </p>
+          )}
+          {isGenerating && (
+            <p className="text-xs text-[#71717a]">
+              Edit controls unlock as soon as a variant finishes rendering.
+            </p>
+          )}
+
+          {/* Other takes — vertical stack */}
+          {alternates.length > 0 && (
+            <div>
+              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
+                Other takes
+              </p>
+              <div className="flex flex-col gap-1.5">
+                {alternates.slice(0, 3).map((v) => {
+                  const altLabel: Record<string, string> = {
+                    lyrics: "Lyrics",
+                    agent_text: "AI text",
+                    none: "Original",
+                  };
+                  const label = altLabel[v.text_mode] ?? "Edit";
+                  const rendering = v.render_status === "rendering";
+                  const failed = v.render_status === "failed";
+                  return (
+                    <button
+                      key={v.variant_id}
+                      type="button"
+                      aria-label={`Switch to ${label} — ${v.track_title ?? "original audio"}`}
+                      onClick={() => onFocus(v.variant_id)}
+                      className="group flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-left transition-colors hover:border-zinc-400"
+                    >
+                      <div className="relative aspect-[9/16] w-8 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-100">
+                        {v.output_url ? (
+                          <StableVideo
+                            src={v.output_url}
+                            identity={v.render_finished_at ?? undefined}
+                            muted
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="h-full w-full bg-zinc-200" />
+                        )}
+                        {rendering && (
+                          <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
+                            …
+                          </span>
+                        )}
+                        {failed && (
+                          <span className="absolute right-0 top-0 text-[10px]">⚠</span>
+                        )}
+                      </div>
+                      <span className="truncate text-[11px] text-zinc-600">{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Download button */}
+          {variant && (instantEligible ? variant.base_video_url : variant.output_url) && (
+            <>
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={baking}
+                className="inline-flex min-h-10 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-4 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {baking ? "Preparing…" : "Download"}
+              </button>
+              {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
+                <p className="text-center text-[10px] text-[#a1a1aa]">
+                  Changes included on download
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Feedback */}
+          {item.current_job_id && !isGenerating && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-[#a1a1aa]">
+                How&apos;s this?
+              </p>
+              <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+            </div>
+          )}
+        </div>
+
+        {/* ── CENTER column: video + mode pill + tab buttons ── */}
+        <div className="flex min-w-0 flex-1 flex-col items-center gap-2">
+
+          {/* Video */}
+          <div className="relative w-full max-w-[260px]">
             {isNovaPick && variant?.output_url && (
               <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
                 Nova&apos;s pick
               </span>
             )}
-            {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
+            {instantEligible && variant ? (
               <LiveEditPreview
                 variant={variant}
                 styleSets={styleSets}
@@ -1666,226 +1770,123 @@ function FocusedResults({
               />
             )}
           </div>
-          {/* Text-mode pill below video */}
+
+          {/* Mode pill */}
           {modePill && !isGenerating && (
-            <div className="mt-2 flex justify-center">
-              <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
-                {modePill}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* ── RAIL: rationale + alternates + editor (full-width below video) ── */}
-        <div className="min-w-0 w-full space-y-5">
-
-          {/* Rationale blurb */}
-          {variant && !isGenerating && (
-            <p className="text-sm text-[#3f3f46]">
-              {deriveRationale(variant, variants.length)}
-            </p>
-          )}
-          {isGenerating && (
-            <p className="text-sm text-[#71717a]">
-              Edit controls unlock as soon as a variant finishes rendering.
-            </p>
+            <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
+              {modePill}
+            </span>
           )}
 
-          {/* Alternates row — small thumbnails, click to swap hero */}
-          {alternates.length > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
-                Other takes
-              </p>
-              <div className="flex gap-2">
-                {alternates.slice(0, 3).map((v) => {
-                  const altLabel: Record<string, string> = {
-                    lyrics: "Lyrics",
-                    agent_text: "AI text",
-                    none: "Original",
-                  };
-                  const label = altLabel[v.text_mode] ?? "Edit";
-                  const rendering = v.render_status === "rendering";
-                  const failed = v.render_status === "failed";
-                  return (
-                    <button
-                      key={v.variant_id}
-                      type="button"
-                      aria-label={`Switch to ${label} — ${v.track_title ?? "original audio"}`}
-                      onClick={() => onFocus(v.variant_id)}
-                      className="group relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 transition-colors hover:border-zinc-400"
-                    >
-                      {v.output_url ? (
-                        <StableVideo
-                          src={v.output_url}
-                          identity={v.render_finished_at ?? undefined}
-                          muted
-                          preload="metadata"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="h-full w-full bg-zinc-200" />
-                      )}
-                      <span className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 py-0.5 text-[8px] text-white">
-                        {label}
-                      </span>
-                      {rendering && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
-                          …
-                        </span>
-                      )}
-                      {failed && (
-                        <span className="absolute right-0.5 top-0.5 text-[10px]">⚠</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* ── Unplaced shots info card ── */}
-          {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
-                Not in this take
-              </p>
-              <ul className="space-y-0.5">
-                {variant.unplaced_shots!.map((shot) => (
-                  <li key={shot.clip_id} className="text-xs text-amber-800">
-                    <span className="font-medium">Shot {shot.shot_index}</span>
-                    {" – "}
-                    {unplacedShotCopy(shot.reason)}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* ── Editor row: 4 icon+label buttons ── */}
+          {/* Editor tab buttons below the video */}
           {focusedEditable && (
-            <div>
-              <div className="flex gap-2">
-                {EDITOR_TABS.map((tab) => {
-                  const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
-                  // Captions tab only for narrated variants that carry editable cues.
-                  if (tab.id === "captions" && !hasCaptions) return null;
-                  // Narrated has no song to edit — only Captions + Clips.
-                  if (hasCaptions && tab.id === "song") return null;
-                  // Hide Song tab when no song is swappable
-                  if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                  // Timeline: only when SFX is enabled.
-                  if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
-                  const isActive = activeTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      aria-pressed={isActive}
-                      onClick={() => setActiveTab(isActive ? null : tab.id)}
-                      className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
-                        isActive
-                          ? "border-lime-600 bg-lime-50 text-lime-800"
-                          : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                      }`}
-                    >
-                      <span className="text-sm font-semibold leading-none">{tab.icon}</span>
-                      <span className="text-[10px] leading-tight">{tab.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Inline editor panel — slides open below the tab row */}
-              {activeTab !== null && variant && (
-                <div className="mt-3">
-                  {activeTab === "captions" &&
-                  variant.base_video_url &&
-                  variant.caption_cues ? (
-                    <CaptionEditor
-                      itemId={itemId}
-                      variantId={variant.variant_id}
-                      baseVideoUrl={variant.base_video_url}
-                      initialCues={variant.caption_cues}
-                      initialFont={variant.voiceover_caption_font}
-                      rendering={variant.render_status === "rendering"}
-                      onApplied={() => {
-                        markVariantRendering(
-                          variant.variant_id,
-                          variant.render_finished_at ?? null,
-                        );
-                        refetch();
-                      }}
-                    />
-                  ) : (
-                    <FocusedVariantControls
-                      itemId={itemId}
-                      variant={variant}
-                      tracks={tracks}
-                      styleSets={styleSets}
-                      session={editSession}
-                      instantEligible={instantEligible}
-                      baking={baking}
-                      activeTab={activeTab}
-                      refetch={refetch}
-                      markVariantRendering={markVariantRendering}
-                      onSwap={onSwap}
-                      onRetext={onRetext}
-                      onRemoveText={onRemoveText}
-                      onChangeStyle={onChangeStyle}
-                      onResize={onResize}
-                      onChangeLayout={onChangeLayout}
-                      overlayCards={overlayCards}
-                      setOverlayCards={setOverlayCards}
-                      localPreviewUrls={localPreviewUrls}
-                      setLocalPreviewUrls={setLocalPreviewUrls}
-                      sfxPlacements={sfxPlacements}
-                      setSfxPlacements={setSfxPlacements}
-                      sfxAudioUrls={sfxAudioUrls}
-                      setSfxAudioUrls={setSfxAudioUrls}
-                      currentTimeS={currentTimeS}
-                      onError={onError}
-                      onLiveTextChange={(apiEls, dirty) => {
-                        setLiveTextElements(apiEls);
-                        setLiveTextEditsDirty(dirty);
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Download button */}
-          {variant && (instantEligible ? variant.base_video_url : variant.output_url) && (
-            <>
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={baking}
-                className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {baking ? "Preparing your video…" : "Download"}
-              </button>
-              {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
-                <p className="mt-1 text-center text-xs text-[#a1a1aa]">
-                  Unsaved — downloads will include your changes
-                </p>
-              )}
-            </>
-          )}
-
-          {/* Feedback */}
-          {item.current_job_id && !isGenerating && (
-            <div className="border-t border-zinc-200 pt-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
-                How&apos;s this one?
-              </p>
-              <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
+            <div className="flex flex-wrap justify-center gap-2">
+              {EDITOR_TABS.map((tab) => {
+                const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
+                if (tab.id === "captions" && !hasCaptions) return null;
+                if (hasCaptions && tab.id === "song") return null;
+                if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
+                if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => setActiveTab(isActive ? null : tab.id)}
+                    className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
+                      isActive
+                        ? "border-lime-600 bg-lime-50 text-lime-800"
+                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                    }`}
+                  >
+                    <span className="text-sm font-semibold leading-none">{tab.icon}</span>
+                    <span className="text-[10px] leading-tight">{tab.label}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
+
+        {/* ── RIGHT column: portal target for property controls ── */}
+        <div ref={setRightPanelEl} className="w-64 shrink-0" />
       </div>
+
+      {/* ── Unplaced shots info card ── */}
+      {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+            Not in this take
+          </p>
+          <ul className="space-y-0.5">
+            {variant.unplaced_shots!.map((shot) => (
+              <li key={shot.clip_id} className="text-xs text-amber-800">
+                <span className="font-medium">Shot {shot.shot_index}</span>
+                {" – "}
+                {unplacedShotCopy(shot.reason)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* ── BOTTOM row: portal target for full-width timeline ── */}
+      <div ref={setTimelineEl} />
+
+      {/* Caption editor: full-width when captions tab active */}
+      {activeTab === "captions" && variant?.base_video_url && variant.caption_cues && (
+        <CaptionEditor
+          itemId={itemId}
+          variantId={variant.variant_id}
+          baseVideoUrl={variant.base_video_url}
+          initialCues={variant.caption_cues}
+          initialFont={variant.voiceover_caption_font}
+          rendering={variant.render_status === "rendering"}
+          onApplied={() => {
+            markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+            refetch();
+          }}
+        />
+      )}
+
+      {/* FocusedVariantControls: always render when editable — portals timeline + controls */}
+      {focusedEditable && activeTab !== "captions" && (
+        <FocusedVariantControls
+          itemId={itemId}
+          variant={variant}
+          tracks={tracks}
+          styleSets={styleSets}
+          session={editSession}
+          instantEligible={instantEligible}
+          baking={baking}
+          activeTab={activeTab}
+          refetch={refetch}
+          markVariantRendering={markVariantRendering}
+          onSwap={onSwap}
+          onRetext={onRetext}
+          onRemoveText={onRemoveText}
+          onChangeStyle={onChangeStyle}
+          onResize={onResize}
+          onChangeLayout={onChangeLayout}
+          overlayCards={overlayCards}
+          setOverlayCards={setOverlayCards}
+          localPreviewUrls={localPreviewUrls}
+          setLocalPreviewUrls={setLocalPreviewUrls}
+          sfxPlacements={sfxPlacements}
+          setSfxPlacements={setSfxPlacements}
+          sfxAudioUrls={sfxAudioUrls}
+          setSfxAudioUrls={setSfxAudioUrls}
+          currentTimeS={currentTimeS}
+          onError={onError}
+          timelineEl={timelineEl}
+          rightPanelEl={rightPanelEl}
+          onLiveTextChange={(apiEls, dirty) => {
+            setLiveTextElements(apiEls);
+            setLiveTextEditsDirty(dirty);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -1995,6 +1996,8 @@ function FocusedVariantControls({
   currentTimeS,
   onError,
   onLiveTextChange,
+  timelineEl,
+  rightPanelEl,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -2003,7 +2006,7 @@ function FocusedVariantControls({
   session: VariantEditSession;
   instantEligible: boolean;
   baking: boolean;
-  activeTab: EditorTab;
+  activeTab: EditorTab | null;
   refetch: () => void;
   markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
   onSwap: (trackId: string) => Promise<void>;
@@ -2030,6 +2033,9 @@ function FocusedVariantControls({
    * dirty=true means local bars differ from the baked video.
    */
   onLiveTextChange?: (apiEls: TextElement[], dirty: boolean) => void;
+  /** 3-column layout: portal targets. When set, timeline and controls render into these DOM nodes. */
+  timelineEl?: HTMLDivElement | null;
+  rightPanelEl?: HTMLDivElement | null;
 }) {
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
@@ -2525,12 +2531,108 @@ function FocusedVariantControls({
   }, []);
 
   const showSongSection = activeTab === "song";
-  const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED;
 
-  return (
-    <>
-      {/* Song tab: song picker only — a standalone SongPicker section */}
-      {showSongSection && (
+  // ── Timeline block — always visible in TikTok 3-column layout ────────────
+  const timelineBlock = (
+    <div className="space-y-1.5">
+      {!variant.base_video_path && (
+        <p className="text-[11px] text-zinc-500">
+          Full re-render needed (may take a moment)
+        </p>
+      )}
+      {textApplyError && (
+        <p className="rounded bg-amber-100 px-2 py-1 text-[11px] text-amber-700">
+          {textApplyError}
+        </p>
+      )}
+      {textElementNote && (
+        <p className="px-1 text-[11px] text-zinc-500">{textElementNote}</p>
+      )}
+      {textElements.some((b) => b.text.length > 500) && (
+        <p className="px-1 text-[11px] text-amber-600">
+          Text block exceeds 500 chars — may be truncated on render
+        </p>
+      )}
+      <div className="rounded-xl border border-zinc-200 bg-white p-3">
+        <UnifiedTimeline
+          totalDurationS={variantDurationS}
+          currentTimeS={currentTimeS}
+          sfxPlacements={sfxPlacements}
+          sfxGlossaryEffects={glossaryEffects}
+          sfxGlossaryLoading={glossaryLoading}
+          sfxRendering={variant.render_status === "rendering"}
+          sfxUploading={sfxUploading}
+          onSfxChange={handleSfxChange}
+          onSfxUploadRequest={handleSfxUpload}
+          overlayCards={overlayCards}
+          overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
+          overlayUploading={overlayUploading}
+          localPreviewUrls={localPreviewUrls}
+          onOverlayUploadRequest={handleOverlayUpload}
+          onUpdateCard={handleUpdateCard}
+          onRemoveCard={handleRemoveCard}
+          onClearOverlays={handleClearOverlays}
+          textElements={textElements}
+          onTextElementsChange={handleTextElementsChange}
+          onTextApply={(bars) => {
+            if (bars[0]?.role === "narrated_caption") {
+              const cues: CaptionCue[] = bars.map((b) => ({
+                text: b.text,
+                start_s: b.start_s,
+                end_s: b.end_s,
+              }));
+              void setPlanItemCaptions(itemId, variant.variant_id, cues).then(() =>
+                applyPlanItemCaptions(itemId, variant.variant_id),
+              );
+            } else if (bars[0]?.role === "generative_sequence" && variant.scene_timings?.length) {
+              const overrides: SceneTimingPatch[] = bars.map((b, i) => ({
+                scene_index: i,
+                start_s: b.start_s,
+                end_s: b.end_s,
+              }));
+              void patchPlanItemSceneTiming(itemId, variant.variant_id, overrides).then(() =>
+                handleApplyTextElements(variant.variant_id, bars),
+              );
+            } else if (bars[0]?.role === "generative_intro" && variant.intro_start_s != null) {
+              const bar = bars[0];
+              void setPlanItemIntroTiming(itemId, variant.variant_id, bar.start_s, bar.end_s).then(() =>
+                handleApplyTextElements(variant.variant_id, bars),
+              );
+            } else {
+              void handleApplyTextElements(variant.variant_id, bars);
+            }
+          }}
+          onTextTrimClamped={handleTextTrimClamped}
+          isFirstSequenceEdit={
+            variant.intro_mode === "sequence" && !variant.text_elements_user_edited
+          }
+          clipTimelineHandle={clipTimeline}
+          onClipBodyClick={(key) => setFocusedClipKey(key)}
+          clipsPanel={
+            <InlineClipsEditor
+              ownerId={itemId}
+              variantId={variant.variant_id}
+              base="plan-item"
+              onRenderEnqueued={() => {
+                markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+                refetch();
+              }}
+              externalState={clipTimeline.state}
+              externalDispatch={clipTimeline.dispatch}
+              externalClips={clipTimeline.clips}
+              onReload={clipTimeline.reload}
+              focusedKey={focusedClipKey}
+            />
+          }
+        />
+      </div>
+    </div>
+  );
+
+  // ── Right-panel block: song picker or text/style controls ─────────────────
+  const rightBlock = (
+    <div className="space-y-3">
+      {showSongSection ? (
         <PlanVariantEditor
           variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
           tracks={tracks}
@@ -2547,139 +2649,42 @@ function FocusedVariantControls({
           hasClipEdits={false}
           hideSections={["caption", "size", "layout", "style", "clips"]}
         />
-      )}
-
-      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text + Clips inline) */}
-      {showTimelineSection && (
-        <div className="space-y-1.5">
-          {/* State 6: no base_video_path = fast reburn unavailable — inform the user. */}
-          {!variant.base_video_path && (
-            <p className="text-[11px] text-zinc-500">
-              Full re-render needed (may take a moment)
-            </p>
-          )}
-          {/* States 1+2: save conflict or failed save — amber banner. */}
-          {textApplyError && (
-            <p className="rounded bg-amber-900/30 px-2 py-1 text-[11px] text-amber-400">
-              {textApplyError}
-            </p>
-          )}
-          {/* State 4: minimum-duration clamp note — auto-clears after 2 s. */}
-          {textElementNote && (
-            <p className="px-1 text-[11px] text-zinc-500">{textElementNote}</p>
-          )}
-          {/* State 5: text too long — inline character count warning. */}
-          {textElements.some((b) => b.text.length > 500) && (
-            <p className="px-1 text-[11px] text-amber-400">
-              Text block exceeds 500 chars — may be truncated on render
-            </p>
-          )}
-          <div className="rounded-xl bg-white border border-zinc-200 p-3">
-            <UnifiedTimeline
-              totalDurationS={variantDurationS}
-              currentTimeS={currentTimeS}
-              sfxPlacements={sfxPlacements}
-              sfxGlossaryEffects={glossaryEffects}
-              sfxGlossaryLoading={glossaryLoading}
-              sfxRendering={variant.render_status === "rendering"}
-              sfxUploading={sfxUploading}
-              onSfxChange={handleSfxChange}
-              onSfxUploadRequest={handleSfxUpload}
-              overlayCards={overlayCards}
-              overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
-              overlayUploading={overlayUploading}
-              localPreviewUrls={localPreviewUrls}
-              onOverlayUploadRequest={handleOverlayUpload}
-              onUpdateCard={handleUpdateCard}
-              onRemoveCard={handleRemoveCard}
-              onClearOverlays={handleClearOverlays}
-              textElements={textElements}
-              onTextElementsChange={handleTextElementsChange}
-              onTextApply={(bars) => {
-                if (bars[0]?.role === "narrated_caption") {
-                  // Narrated captions: persist + trigger reburn via Apply endpoint.
-                  const cues: CaptionCue[] = bars.map((b) => ({
-                    text: b.text,
-                    start_s: b.start_s,
-                    end_s: b.end_s,
-                  }));
-                  void setPlanItemCaptions(itemId, variant.variant_id, cues).then(() =>
-                    applyPlanItemCaptions(itemId, variant.variant_id),
-                  );
-                } else if (bars[0]?.role === "generative_sequence" && variant.scene_timings?.length) {
-                  // PR-E: sequence bars — flush timing patch then re-render.
-                  const overrides: SceneTimingPatch[] = bars.map((b, i) => ({
-                    scene_index: i,
-                    start_s: b.start_s,
-                    end_s: b.end_s,
-                  }));
-                  void patchPlanItemSceneTiming(itemId, variant.variant_id, overrides).then(() =>
-                    handleApplyTextElements(variant.variant_id, bars),
-                  );
-                } else if (bars[0]?.role === "generative_intro" && variant.intro_start_s != null) {
-                  // PR-E: intro timing bar — flush timing patch then re-render.
-                  const bar = bars[0];
-                  void setPlanItemIntroTiming(itemId, variant.variant_id, bar.start_s, bar.end_s).then(() =>
-                    handleApplyTextElements(variant.variant_id, bars),
-                  );
-                } else {
-                  void handleApplyTextElements(variant.variant_id, bars);
-                }
-              }}
-              onTextTrimClamped={handleTextTrimClamped}
-              isFirstSequenceEdit={
-                variant.intro_mode === "sequence" && !variant.text_elements_user_edited
-              }
-              clipTimelineHandle={clipTimeline}
-              onClipBodyClick={(key) => setFocusedClipKey(key)}
-              clipsPanel={
-                <InlineClipsEditor
-                  ownerId={itemId}
-                  variantId={variant.variant_id}
-                  base="plan-item"
-                  onRenderEnqueued={() => {
-                    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-                    refetch();
-                  }}
-                  externalState={clipTimeline.state}
-                  externalDispatch={clipTimeline.dispatch}
-                  externalClips={clipTimeline.clips}
-                  onReload={clipTimeline.reload}
-                  focusedKey={focusedClipKey}
-                />
-              }
+      ) : variant.text_mode !== "none" ? (
+        <>
+          <PlanVariantEditor
+            variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+            tracks={[]}
+            styleSets={instantEligible ? [] : styleSets}
+            onSwap={onSwap}
+            onRetext={draftHandlers.onRetext}
+            onRemoveText={draftHandlers.onRemoveText}
+            onChangeStyle={draftHandlers.onChangeStyle}
+            onResize={instantEligible ? undefined : draftHandlers.onResize}
+            onChangeLayout={draftHandlers.onChangeLayout}
+            onEditClips={undefined}
+            showClipEditor={false}
+            clipSlotCount={null}
+            hasClipEdits={false}
+          />
+          {instantEligible && (
+            <EditToolbar
+              session={session}
+              styleSets={[]}
+              fallbackSizePx={variant.intro_text_size_px}
+              resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
             />
-          </div>
-          {/* Text editing controls — rendered below the timeline for text-mode variants. */}
-          {variant.text_mode !== "none" && (
-            <div className="mt-2 space-y-3">
-              <PlanVariantEditor
-                variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
-                tracks={[]}
-                styleSets={instantEligible ? [] : styleSets}
-                onSwap={onSwap}
-                onRetext={draftHandlers.onRetext}
-                onRemoveText={draftHandlers.onRemoveText}
-                onChangeStyle={draftHandlers.onChangeStyle}
-                onResize={instantEligible ? undefined : draftHandlers.onResize}
-                onChangeLayout={draftHandlers.onChangeLayout}
-                onEditClips={undefined}
-                showClipEditor={false}
-                clipSlotCount={null}
-                hasClipEdits={false}
-              />
-              {instantEligible && (
-                <EditToolbar
-                  session={session}
-                  styleSets={[]}
-                  fallbackSizePx={variant.intro_text_size_px}
-                  resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
-                />
-              )}
-            </div>
           )}
-        </div>
-      )}
+        </>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <>
+      {/* Timeline: portal to bottom row or inline fallback */}
+      {timelineEl ? createPortal(timelineBlock, timelineEl) : timelineBlock}
+      {/* Controls: portal to right column or inline fallback */}
+      {rightPanelEl ? createPortal(rightBlock, rightPanelEl) : rightBlock}
     </>
   );
 }
