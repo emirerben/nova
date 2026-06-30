@@ -1644,6 +1644,8 @@ function FocusedResults({
                 session={editSession}
                 playToken={editSession.playToken}
                 textElements={variant.text_elements ?? undefined}
+                sfxPlacements={sfxPlacements}
+                sfxAudioUrls={sfxAudioUrls}
               />
             ) : (
               <Hero
@@ -2668,6 +2670,8 @@ function LiveEditPreview({
   session,
   playToken,
   textElements,
+  sfxPlacements = [],
+  sfxAudioUrls = {},
 }: {
   variant: PlanItemVariant;
   styleSets: GenerativeStyleSet[];
@@ -2679,7 +2683,21 @@ function LiveEditPreview({
    * IntroTextPreview (which models the legacy linear/cluster intro path).
    */
   textElements?: TextElement[];
+  /**
+   * Live SFX preview: instant-eligible variants (agent_text intro, etc.) render
+   * THROUGH this component on the Timeline tab, NOT Hero — so the sound-effect
+   * <audio> sync must live here too, or glossary effects are silent in the
+   * preview even though the Download bake includes them. Mirrors Hero's wiring.
+   */
+  sfxPlacements?: SoundEffectPlacement[];
+  sfxAudioUrls?: Record<string, string>;
 }) {
+  const sfxVideoRef = useRef<HTMLVideoElement>(null);
+  // Sync SFX audio elements to whichever preview video is active (burned output
+  // or text-free base). Both StableVideos below carry sfxVideoRef; only one
+  // mounts at a time, so the ref always points at the visible player.
+  useSfxPreview(sfxVideoRef, sfxPlacements, sfxAudioUrls);
+
   const introParams = resolveIntroParams(variant, styleSets, session.draft);
 
   // Live layout follows the draft (so toggling Classic/Editorial re-lays the
@@ -2710,6 +2728,7 @@ function LiveEditPreview({
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
       {burnedSrc ? (
         <StableVideo
+          ref={sfxVideoRef}
           src={burnedSrc}
           identity={burnedIdentity}
           controls
@@ -2724,6 +2743,7 @@ function LiveEditPreview({
         // identity → no reload) and only swaps when a new base video is rendered
         // (clip timeline edit changes base_video_path → identity changes → swap).
         <StableVideo
+          ref={sfxVideoRef}
           src={variant.base_video_url}
           identity={variant.base_video_path ?? undefined}
           controls

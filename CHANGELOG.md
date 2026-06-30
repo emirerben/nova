@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.6.0] — 2026-06-30
+
+### Fixed
+- **Sound effects now play in the live preview for variants with an intro (the common case), and on every loop.** #576 fixed the `preview_audio_url` field but wired the live SFX `<audio>` sync into `Hero` only — and instant-eligible variants (an agent-authored `agent_text` intro over a text-free base video) render the preview through `LiveEditPreview`, not `Hero`. So glossary effects (e.g. picking "Fah") stayed silent during preview playback for exactly those variants while the Download bake still had them. Wired `useSfxPreview` into `LiveEditPreview` too: a dedicated `sfxVideoRef` attached to both `StableVideo` branches (burned output + text-free base; only one mounts at a time), mirroring `Hero`'s wiring (`plan/items/[id]/page.tsx`). Pinned by a new regression in `plan-instant-editor.test.tsx`.
+- **SFX no longer go silent after the first loop.** `LiveEditPreview`'s preview video has `loop`, but `useSfxPreview` re-armed its one-shot effect timers only on `play`/`pause`/`seeked`/`ended`. A native `<video loop>` fires none of those when it wraps to 0 (Chrome), so effects played once then stayed silent on every replay — the same "silent preview" class #576 set out to kill, shifted to "plays once then stops." Added a `timeupdate` backward-jump detector that re-syncs SFX on each loop wrap (`useSfxPreview.ts`); harmless to `Hero`, which has no `loop`. Pinned by `useSfxPreview-loop.test.ts` (1 play call without the fix, 2 with it).
+
 ## [0.6.4.0] — 2026-06-29
 
 ### Fixed
