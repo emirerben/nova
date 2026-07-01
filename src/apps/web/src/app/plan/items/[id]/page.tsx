@@ -944,6 +944,17 @@ export default function PlanItemPage() {
                     Voice recorded — clips will be timed to match your narration.
                   </p>
                 )}
+                {process.env.NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED === "true" && (
+                  <p className="mt-2 text-xs text-lime-700">
+                    Not sure what to say?{" "}
+                    <Link
+                      href={`/plan/items/${item.id}/transcript`}
+                      className="underline underline-offset-2 hover:text-lime-800"
+                    >
+                      Get a transcript
+                    </Link>
+                  </p>
+                )}
               </div>
             )}
 
