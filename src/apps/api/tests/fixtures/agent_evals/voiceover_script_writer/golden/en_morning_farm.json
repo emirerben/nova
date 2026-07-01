@@ -1,0 +1,26 @@
+{
+  "agent": "nova.voiceover.script_writer",
+  "prompt_version": "2026-07-01",
+  "input": {
+    "footage_summary": "Clip 1: farm at dawn, feeding animals in the cold. Clip 2: first light over a ridge, breath visible.",
+    "brief": "my morning routine at the farm",
+    "answers": ["Calm", "The quiet before everyone wakes up"],
+    "target_duration_s": 30
+  },
+  "raw_text": "{\"text\": \"It's 5am and nobody's awake yet. Just me, the cold, and a hundred animals who don't care how tired I am. I fill the troughs while the sky is still black. The first light comes over the ridge and for a second everything is quiet. This is the part nobody sees, but it's the part I wouldn't trade for anything at all today.\"}",
+  "output": {
+    "text": "It's 5am and nobody's awake yet. Just me, the cold, and a hundred animals who don't care how tired I am. I fill the troughs while the sky is still black. The first light comes over the ridge and for a second everything is quiet. This is the part nobody sees, but it's the part I wouldn't trade for anything at all today.",
+    "lines": [
+      "It's 5am and nobody's awake yet.",
+      "Just me, the cold, and a hundred animals who don't care how tired I am.",
+      "I fill the troughs while the sky is still black.",
+      "The first light comes over the ridge and for a second everything is quiet.",
+      "This is the part nobody sees,",
+      "but it's the part I wouldn't trade for anything at all today."
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "30s footage -> ~68-word first-person voiceover script, inside the [48,97] spoken band. Hook in the opening line, grounded in the dawn-farm footage + the 'calm / quiet before everyone wakes' answers. No URLs, handles, or on-screen labels."
+  }
+}
