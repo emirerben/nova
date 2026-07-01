@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Literal
+from typing import Annotated, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -2058,3 +2058,318 @@ async def get_sfx_audio_url(
 
     url = storage.signed_url(gcs_path, expiration_minutes=60)
     return {"url": url}
+
+
+# ── "Get a transcript" voiceover helper (TRANSCRIPT_HELPER_ENABLED) ──────────────
+# Optional helper: analyze the footage → ask up to 3 questions → write a script the
+# creator reads while recording. Every route 404s when the flag is off and is
+# owner-scoped. Agents run when GEMINI_API_KEY is set; otherwise deterministic
+# heuristic fallbacks keep the flow working at localhost (no keys). See the plan at
+# plans/on-the-narrated-walkthrough-*.md.
+
+
+def _require_transcript_helper() -> None:
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.transcript_helper_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+class TranscriptAnalyzeResponse(BaseModel):
+    analyze_id: str
+
+
+class TranscriptAnalyzeStatusResponse(BaseModel):
+    status: Literal["pending", "ready", "failed"]
+    duration_s: float | None = None
+    footage_summary: str | None = None
+
+
+class TranscriptInterviewTurn(BaseModel):
+    role: Literal["agent", "user"]
+    content: str = Field(default="", max_length=4000)
+
+
+class TranscriptInterviewBody(BaseModel):
+    # Length caps on every untrusted field — bounds prompt size and blocks the
+    # amplification path into the heuristic script builder.
+    brief: str = Field(default="", max_length=2000)
+    footage_summary: str | None = Field(default=None, max_length=4000)
+    turns: list[TranscriptInterviewTurn] = Field(default_factory=list, max_length=40)
+
+
+class TranscriptInterviewResponse(BaseModel):
+    question: str
+    suggestions: list[str]
+    is_final: bool
+
+
+class TranscriptScriptBody(BaseModel):
+    brief: str = Field(default="", max_length=2000)
+    footage_summary: str | None = Field(default=None, max_length=4000)
+    answers: list[Annotated[str, Field(max_length=2000)]] = Field(
+        default_factory=list, max_length=20
+    )
+    # Bounded: the heuristic fallback sizes a word-fill loop off this, so an
+    # unbounded value is a synchronous request-thread DoS (600s ≈ 10 min, well past
+    # any real short-form clip).
+    duration_s: float = Field(default=30.0, ge=1, le=600)
+
+
+class TranscriptScriptResponse(BaseModel):
+    version: int
+    text: str
+    read_time_s: int
+    lines: list[str]
+    source: str
+
+
+class TranscriptRecordedBody(BaseModel):
+    version: int
+
+
+@router.post("/{item_id}/transcript/analyze", response_model=TranscriptAnalyzeResponse)
+async def transcript_analyze(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptAnalyzeResponse:
+    """Kick off the async analyze (probe duration + light footage summary).
+
+    Returns an opaque analyze_id the client polls. Clips must be attached first —
+    the script is grounded in the footage.
+    """
+    _require_transcript_helper()
+    item = await _load_owned_item(item_id, user.id, db)
+    clip_paths = [p for p in (item.clip_gcs_paths or []) if isinstance(p, str) and p.strip()]
+    if not clip_paths:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Add clips before getting a transcript.",
+        )
+    analyze_id = uuid.uuid4().hex
+    from app.tasks.transcript_analyze import analyze_transcript_footage  # noqa: PLC0415
+
+    # Default `celery` queue via .delay(), like every other task in Nova — prod
+    # workers already drain it, so no fly.toml -Q change is needed. (Registered in
+    # app/worker.py `include` so workers know the task.)
+    analyze_transcript_footage.delay(analyze_id, clip_paths, item_id)
+    return TranscriptAnalyzeResponse(analyze_id=analyze_id)
+
+
+@router.get(
+    "/{item_id}/transcript/analyze/{analyze_id}",
+    response_model=TranscriptAnalyzeStatusResponse,
+)
+async def transcript_analyze_status(
+    item_id: str,
+    analyze_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptAnalyzeStatusResponse:
+    """Poll the analyze result. 'pending' until the task writes it (or the id is stale)."""
+    _require_transcript_helper()
+    await _load_owned_item(item_id, user.id, db)  # ownership gate
+    from app.services.transcript_store import get_analyze  # noqa: PLC0415
+
+    payload = get_analyze(item_id, analyze_id)
+    if payload is None:
+        return TranscriptAnalyzeStatusResponse(status="pending")
+    raw_status = payload.get("status", "ready")
+    outcome: Literal["pending", "ready", "failed"] = (
+        raw_status if raw_status in ("pending", "ready", "failed") else "ready"
+    )
+    return TranscriptAnalyzeStatusResponse(
+        status=outcome,
+        duration_s=payload.get("duration_s"),
+        footage_summary=payload.get("footage_summary"),
+    )
+
+
+@router.post("/{item_id}/transcript/interview", response_model=TranscriptInterviewResponse)
+async def transcript_interview(
+    item_id: str,
+    body: TranscriptInterviewBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptInterviewResponse:
+    """Return the next clarifying question (or a final one). Hard cap 3 questions."""
+    _require_transcript_helper()
+    await _load_owned_item(item_id, user.id, db)
+    from app.config import settings  # noqa: PLC0415
+
+    # Questions already asked = agent turns in the history; this call is the next one.
+    asked = sum(1 for t in body.turns if t.role == "agent")
+
+    question: str | None = None
+    suggestions: list[str] = []
+    is_final = False
+    if settings.gemini_api_key:
+        try:
+            from app.agents._model_client import default_client  # noqa: PLC0415
+            from app.agents.voiceover_interviewer import (  # noqa: PLC0415
+                VoiceoverInterviewerAgent,
+                VoiceoverInterviewerInput,
+                VoiceoverTurn,
+            )
+
+            agent = VoiceoverInterviewerAgent(default_client())
+            inp = VoiceoverInterviewerInput(
+                footage_summary=body.footage_summary or "",
+                brief=body.brief,
+                turns=[VoiceoverTurn(role=t.role, content=t.content) for t in body.turns],
+                turn_count=asked + 1,
+            )
+            out = await asyncio.to_thread(agent.run, inp)
+            question, suggestions, is_final = out.question, out.suggestions, out.is_final
+        except Exception as exc:  # noqa: BLE001
+            log.warning("transcript_interview.agent_failed", error=str(exc)[:200])
+            question = None
+
+    if question is None:
+        from app.services.transcript_fallbacks import heuristic_question  # noqa: PLC0415
+
+        question, suggestions, is_final = heuristic_question(asked)
+
+    return TranscriptInterviewResponse(
+        question=question, suggestions=suggestions, is_final=is_final
+    )
+
+
+@router.post("/{item_id}/transcript/script", response_model=TranscriptScriptResponse)
+async def transcript_script(
+    item_id: str,
+    body: TranscriptScriptBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptScriptResponse:
+    """Generate (or rewrite) the voiceover script, persist it (bump version), return it."""
+    _require_transcript_helper()
+    item = await _load_owned_item(item_id, user.id, db)
+    from app.agents.voiceover_script_writer import split_script_lines  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
+    from app.schemas.voiceover_script import VoiceoverScript, estimate_read_time_s  # noqa: PLC0415
+
+    text: str | None = None
+    lines: list[str] = []
+    if settings.gemini_api_key:
+        try:
+            from app.agents._model_client import default_client  # noqa: PLC0415
+            from app.agents.voiceover_script_writer import (  # noqa: PLC0415
+                VoiceoverScriptWriterAgent,
+                VoiceoverScriptWriterInput,
+            )
+
+            agent = VoiceoverScriptWriterAgent(default_client())
+            inp = VoiceoverScriptWriterInput(
+                footage_summary=body.footage_summary or "",
+                brief=body.brief,
+                answers=body.answers,
+                target_duration_s=body.duration_s,
+            )
+            out = await asyncio.to_thread(agent.run, inp)
+            text, lines = out.text, out.lines
+        except Exception as exc:  # noqa: BLE001
+            log.warning("transcript_script.agent_failed", error=str(exc)[:200])
+            text = None
+
+    if text is None:
+        # The agent path sanitizes its own output; the heuristic weaves the raw
+        # brief/answers in, so run the same output sanitizer before it's persisted
+        # and read aloud (strips URLs / @handles / role-markers / control chars).
+        from app.agents.voiceover_script_writer import _sanitize_script  # noqa: PLC0415
+        from app.services.transcript_fallbacks import heuristic_script  # noqa: PLC0415
+
+        text = _sanitize_script(heuristic_script(body.brief, body.answers, body.duration_s))
+        lines = split_script_lines(text)
+
+    # Lock the row so two concurrent /script POSTs (double-click "Rewrite") can't
+    # both read the same version and each write N+1 — a lost update that would let
+    # two distinct scripts share a version and mis-point the recorded-version pin.
+    await db.refresh(item, with_for_update=True)
+    prev = item.voiceover_script if isinstance(item.voiceover_script, dict) else {}
+    version = int(prev.get("version", 0)) + 1
+    script = VoiceoverScript(
+        version=version,
+        text=text,
+        read_time_s=estimate_read_time_s(text),
+        brief=body.brief,
+        footage_summary=body.footage_summary,
+        interview_turns=[],
+        lines=lines,
+        source="generated",
+    )
+    item.voiceover_script = script.model_dump()
+    await db.commit()
+    return TranscriptScriptResponse(
+        version=version,
+        text=text,
+        read_time_s=script.read_time_s,
+        lines=lines,
+        source="generated",
+    )
+
+
+class TranscriptScriptEditBody(BaseModel):
+    text: str = Field(min_length=1, max_length=8000)
+
+
+@router.patch("/{item_id}/transcript/script", response_model=TranscriptScriptResponse)
+async def transcript_script_edit(
+    item_id: str,
+    body: TranscriptScriptEditBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> TranscriptScriptResponse:
+    """Persist an inline-edited script in place: same version, source='edited', and
+    the SAME server-side sentence/clause line split the teleprompter reads (the
+    client can only newline-split, which collapses prose to one line)."""
+    _require_transcript_helper()
+    item = await _load_owned_item(item_id, user.id, db)
+    from app.agents.voiceover_script_writer import (  # noqa: PLC0415
+        _sanitize_script,
+        split_script_lines,
+    )
+    from app.schemas.voiceover_script import VoiceoverScript, estimate_read_time_s  # noqa: PLC0415
+
+    prev = item.voiceover_script if isinstance(item.voiceover_script, dict) else None
+    if not prev:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No script to edit yet.")
+    text = _sanitize_script(body.text)
+    if not text:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Script can't be empty."
+        )
+    lines = split_script_lines(text)
+    updated = {
+        **prev,
+        "text": text,
+        "read_time_s": estimate_read_time_s(text),
+        "lines": lines,
+        "source": "edited",
+    }
+    VoiceoverScript(**updated)  # validate the merged doc before persisting
+    item.voiceover_script = updated  # new dict → SQLAlchemy detects the JSONB change
+    await db.commit()
+    return TranscriptScriptResponse(
+        version=int(updated["version"]),
+        text=text,
+        read_time_s=int(updated["read_time_s"]),
+        lines=lines,
+        source="edited",
+    )
+
+
+@router.post("/{item_id}/transcript/recorded")
+async def transcript_recorded(
+    item_id: str,
+    body: TranscriptRecordedBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Pin the script version the currently-attached take was recorded against."""
+    _require_transcript_helper()
+    item = await _load_owned_item(item_id, user.id, db)
+    item.voiceover_script_recorded_version = int(body.version)
+    await db.commit()
+    return {"ok": True}

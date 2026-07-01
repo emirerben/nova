@@ -86,6 +86,23 @@ from app.agents.transition_picker import (
     TransitionPickerInput,
     TransitionPickerOutput,
 )
+from app.agents.voiceover_interviewer import (
+    _MAX_TURNS as VOICEOVER_MAX_TURNS,
+)
+from app.agents.voiceover_interviewer import VoiceoverInterviewerOutput
+from app.agents.voiceover_script_writer import (
+    _ABS_MAX_WORDS as VOICEOVER_ABS_MAX_WORDS,
+)
+from app.agents.voiceover_script_writer import (
+    _ABS_MIN_WORDS as VOICEOVER_ABS_MIN_WORDS,
+)
+from app.agents.voiceover_script_writer import (
+    _MAX_BAND_FACTOR as VOICEOVER_MAX_BAND,
+)
+from app.agents.voiceover_script_writer import (
+    _MIN_BAND_FACTOR as VOICEOVER_MIN_BAND,
+)
+from app.agents.voiceover_script_writer import VoiceoverScriptWriterOutput
 from app.pipeline.agents.copy_writer import (
     INSTAGRAM_CAPTION_MAX,
     TIKTOK_CAPTION_MAX,
@@ -93,6 +110,7 @@ from app.pipeline.agents.copy_writer import (
     YOUTUBE_TITLE_MAX,
 )
 from app.pipeline.intro_cluster import ROLE_CLOSER, ROLE_HERO, VALID_ROLES
+from app.schemas.voiceover_script import target_word_count as voiceover_target_words
 
 # ── template_recipe ──────────────────────────────────────────────────────────
 
@@ -1574,6 +1592,7 @@ def check_style_observation(output: Any) -> list[str]:
         _SIZE_CLASSES,
         _STROKES,
     )
+
     _VALID_FONT_FEELS = frozenset(_FONT_FEELS)
     _VALID_POSITIONS = frozenset(_POSITIONS)
     _VALID_SIZE_CLASSES = frozenset(_SIZE_CLASSES)
@@ -1597,13 +1616,18 @@ def check_style_observation(output: Any) -> list[str]:
             failures.append(
                 f"font_feel must be 'none' when has_on_screen_text=False, got {font_feel!r}"
             )
-        for field in ("text_color_hex", "highlight_color_hex", "position",
-                      "size_class", "layout", "stroke", "text_anchor"):
+        for field in (
+            "text_color_hex",
+            "highlight_color_hex",
+            "position",
+            "size_class",
+            "layout",
+            "stroke",
+            "text_anchor",
+        ):
             val = getattr(output, field, None)
             if val is not None:
-                failures.append(
-                    f"{field} must be None when has_on_screen_text=False, got {val!r}"
-                )
+                failures.append(f"{field} must be None when has_on_screen_text=False, got {val!r}")
     else:
         # When text IS present, font_feel="none" is semantically contradictory —
         # it means the model returned an unrecognized font name that was coerced
@@ -1669,6 +1693,47 @@ def check_style_observation(output: Any) -> list[str]:
     return failures
 
 
+def check_voiceover_script_writer(output: Any, input: Any) -> list[str]:  # noqa: A002
+    """Structural floor for nova.voiceover.script_writer — mirrors the agent's own
+    parse() spoken-length band (word count within the clamped [0.7x, 1.4x] of the
+    footage word target), no URLs/@handles, and non-empty teleprompter lines."""
+    if not isinstance(output, VoiceoverScriptWriterOutput):
+        return [f"output is {type(output).__name__}, not VoiceoverScriptWriterOutput"]
+    failures: list[str] = []
+    text = output.text.strip()
+    if not text:
+        failures.append("text is empty")
+    words = len(text.split())
+    duration = float(getattr(input, "target_duration_s", 30.0) or 30.0)
+    target = voiceover_target_words(duration)
+    lo = max(VOICEOVER_ABS_MIN_WORDS, round(target * VOICEOVER_MIN_BAND))
+    hi = min(VOICEOVER_ABS_MAX_WORDS, round(target * VOICEOVER_MAX_BAND))
+    lo, hi = min(lo, hi), max(lo, hi)
+    if not (lo <= words <= hi):
+        failures.append(f"{words} words outside spoken band [{lo}, {hi}] for {round(duration)}s")
+    if re.search(r"https?://|www\.|[@#]\w", text):
+        failures.append("text contains a URL or @handle/#hashtag")
+    if not output.lines:
+        failures.append("lines is empty")
+    return failures
+
+
+def check_voiceover_interviewer(output: Any, input: Any) -> list[str]:  # noqa: A002
+    """Structural floor for nova.voiceover.interviewer — a real question, at most 4
+    suggestions, and is_final forced once the turn cap is reached."""
+    if not isinstance(output, VoiceoverInterviewerOutput):
+        return [f"output is {type(output).__name__}, not VoiceoverInterviewerOutput"]
+    failures: list[str] = []
+    if len(output.question.strip()) < 3:
+        failures.append("question is too short")
+    if len(output.suggestions) > 4:
+        failures.append(f"{len(output.suggestions)} suggestions exceeds the 4 cap")
+    turn_count = int(getattr(input, "turn_count", 0) or 0)
+    if turn_count >= VOICEOVER_MAX_TURNS and not output.is_final:
+        failures.append("past the turn cap but is_final is False")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1723,4 +1788,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_conformance_feedback(output)
     if agent_name == "nova.video.style_observation":
         return check_style_observation(output)
+    if agent_name == "nova.voiceover.script_writer":
+        return check_voiceover_script_writer(output, input)
+    if agent_name == "nova.voiceover.interviewer":
+        return check_voiceover_interviewer(output, input)
     raise ValueError(f"no structural checks registered for agent {agent_name!r}")

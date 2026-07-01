@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.7.0] — 2026-07-01
+
+### Added
+- **"Get a transcript" voiceover helper for narrated walkthroughs.** An optional, flag-gated flow on the plan-item editor (`/plan/items/[id]/transcript`) that writes the script a creator reads while recording: brief → a few clarifying questions → a footage-grounded script sized to the clip length → a manual-scroll teleprompter (the muted footage plays as a visual reference) → record → review. Backend adds two Gemini agents (`voiceover_script_writer`, `voiceover_interviewer`) with deterministic heuristic fallbacks so the flow completes even without keys, a light single-pass `footage_summary` service, an async `transcript.analyze` Celery task + redis-backed result store, `PlanItem.voiceover_script` (JSONB, migration `0062`), and five ownership-scoped routes on `plan_items.py`. Frontend extracts the mic/recorder/waveform mechanics into a reusable `useAudioRecorder` hook (the shipped generative voiceover bar now consumes it). Gated behind `TRANSCRIPT_HELPER_ENABLED` (Fly) + `NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED` (Vercel) — both default **off**. Hardened in review before merge: the heuristic script builder is bounded (client `duration_s` clamped `Field(ge=1, le=600)` + a 260-word cap) to close a quadratic request-thread DoS, and the analyze result is keyed on `(item_id, analyze_id)` to close a cross-user IDOR on the footage summary.
+
 ## [0.6.6.0] — 2026-06-30
 
 ### Fixed
