@@ -684,6 +684,15 @@ def dispatch_retext(job: Job, variant_id: str, *, text: str | None, remove: bool
 _MAX_CAPTION_CUES = 300
 
 
+class CaptionWord(BaseModel):
+    # Same inf/nan rejection as CaptionCue — a poisoned word time crashes the reburn.
+    model_config = {"allow_inf_nan": False}
+
+    text: str
+    start_s: float
+    end_s: float
+
+
 class CaptionCue(BaseModel):
     # Reject NaN/±Infinity at the edge — format_ass_time(inf) crashes the reburn
     # worker and leaves the cue poisoned (every Apply then fails).
@@ -692,6 +701,11 @@ class CaptionCue(BaseModel):
     text: str
     start_s: float
     end_s: float
+    # Optional per-word timings for the word-by-word subtitled style. Carried so a
+    # reburn re-pops the SAME words at their real (audio-locked) times; when the user
+    # edits a cue its stored words no longer spell the text and the burn re-synthesizes
+    # them (E3). None for sentence-style captions.
+    words: list[CaptionWord] | None = None
 
 
 class CaptionsRequest(BaseModel):
@@ -713,15 +727,37 @@ class CaptionFontRequest(BaseModel):
     caption_font: str | None = None
 
 
-def _is_narrated_caption_variant(variant: dict) -> bool:
-    """True iff this variant is an editable narrated-caption variant.
+# Languages the subtitled caption override accepts. Lockstep with the worker's
+# `_SUBTITLED_CAPTION_LANGUAGES`.
+_SUBTITLED_CAPTION_LANGUAGES = frozenset({"en", "tr"})
+
+
+class CaptionLanguageRequest(BaseModel):
+    """New caption language for a subtitled variant (D5 override). Triggers a
+    re-transcription in that language, REPLACING the current cues + any edits."""
+
+    language: Literal["en", "tr"]
+
+
+# Archetypes whose caption cues are editable + reburnable. Keep in LOCKSTEP with the
+# worker's `_CAPTION_REBURN_ARCHETYPES` (generative_build) — the route gate and the
+# reburn guard must accept exactly the same archetypes or an edit 200s here then 500s
+# in the worker.
+_CAPTION_EDIT_ARCHETYPES = frozenset({"narrated", "subtitled"})
+
+
+def _is_editable_caption_variant(variant: dict) -> bool:
+    """True iff this variant is an editable caption variant.
 
     Gates the caption endpoints. `base_video_path` alone is NOT sufficient — the
-    agent_text montage fast-reburn base sets it too; burning subtitle captions
-    over a montage's text-free base would destroy that variant. Narration is the
-    only archetype that ships `caption_cues`, so require the narrated archetype.
+    agent_text montage fast-reburn base sets it too; burning captions over a
+    montage's text-free base would destroy that variant. Only caption-capable
+    archetypes (narrated voiceover, subtitled single-clip) ship `caption_cues`, so
+    require one of those.
     """
-    return variant.get("resolved_archetype") == "narrated" and bool(variant.get("base_video_path"))
+    return variant.get("resolved_archetype") in _CAPTION_EDIT_ARCHETYPES and bool(
+        variant.get("base_video_path")
+    )
 
 
 async def _patch_narrated_variant(
@@ -744,10 +780,10 @@ async def _patch_narrated_variant(
     target = next((v for v in variants if v.get("variant_id") == variant_id), None)
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if not _is_narrated_caption_variant(target):
+    if not _is_editable_caption_variant(target):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Captions can only be edited on narrated variants.",
+            detail="Captions can only be edited on captioned variants.",
         )
     if target.get("render_status") == "rendering":
         raise HTTPException(
@@ -766,10 +802,17 @@ async def _patch_narrated_variant(
 async def persist_variant_captions(
     job_id: uuid.UUID, variant_id: str, cues: list[CaptionCue], db: AsyncSession
 ) -> None:
-    """Persist hand-edited caption cues on a narrated variant. No re-render — the
-    edit is instant (the player overlays the cues); Apply reburns them later."""
+    """Persist hand-edited caption cues on a caption variant. No re-render — the edit
+    is instant (the player overlays the cues); Apply reburns them later.
+
+    ``exclude_none`` drops the optional ``words`` when absent so sentence/narrated cues
+    stay byte-identical; word-by-word cues keep their per-word timings for the reburn.
+    """
     await _patch_narrated_variant(
-        job_id, variant_id, {"caption_cues": [c.model_dump() for c in cues]}, db
+        job_id,
+        variant_id,
+        {"caption_cues": [c.model_dump(exclude_none=True) for c in cues]},
+        db,
     )
 
 
@@ -796,14 +839,35 @@ def dispatch_apply_captions(job: Job, variant_id: str) -> None:
     """Reburn the variant's (persisted, hand-edited) caption cues onto its
     caption-free base — the Apply step of the on-video caption editor."""
     variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
-    if not _is_narrated_caption_variant(variant):
+    if not _is_editable_caption_variant(variant):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Captions can only be applied on narrated variants.",
+            detail="Captions can only be applied on captioned variants.",
         )
     from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
 
     reburn_narrated_captions.delay(str(job.id), variant_id)
+
+
+def dispatch_retranscribe_captions(job: Job, variant_id: str, *, language: str) -> None:
+    """Re-transcribe a subtitled variant's own audio in a new language and reburn (D5
+    override). Subtitled-only — narrated captions come from a separate voiceover. This
+    REPLACES the current cues + any hand-edits; the frontend confirms first."""
+    lang = (language or "").strip().lower()
+    if lang not in _SUBTITLED_CAPTION_LANGUAGES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unsupported caption language.",
+        )
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    if variant.get("resolved_archetype") != "subtitled":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Changing the caption language is only available on subtitled videos.",
+        )
+    from app.tasks.generative_build import retranscribe_subtitled_captions  # noqa: PLC0415
+
+    retranscribe_subtitled_captions.delay(str(job.id), variant_id, lang)
 
 
 def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> None:

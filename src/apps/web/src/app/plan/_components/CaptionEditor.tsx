@@ -4,11 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   applyPlanItemCaptions,
+  type CaptionCue,
+  type CaptionLanguage,
   setPlanItemCaptionFont,
   setPlanItemCaptions,
-  type CaptionCue,
 } from "../../../lib/plan-api";
 import { INTRO_FONTS } from "../../../lib/overlay-constants";
+
+const CAPTION_LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
 
 /**
  * On-video caption editor (paused "Edit captions" mode).
@@ -71,6 +74,9 @@ export default function CaptionEditor({
   initialCues,
   initialFont = null,
   rendering = false,
+  reviewFirst = false,
+  captionLanguage = null,
+  onChangeLanguage,
   onApplied,
 }: {
   itemId: string;
@@ -79,6 +85,22 @@ export default function CaptionEditor({
   initialCues: CaptionCue[];
   initialFont?: string | null;
   rendering?: boolean;
+  /**
+   * Show a persistent "check your captions before applying" notice until the user
+   * interacts with the cue list once. Set for the subtitled style, where captions
+   * are machine-transcribed from the clip's own audio (D6): prod ASR reports no
+   * per-word confidence, so a review-first nudge replaces a low-confidence badge.
+   * Off for narrated (the creator recorded and knows their own script).
+   */
+  reviewFirst?: boolean;
+  /**
+   * Current caption language ("en" | "tr") for the subtitled style. When set together
+   * with `onChangeLanguage`, the editor shows a language chip + a re-transcribe option
+   * (D5). Null hides the chip (narrated has no language override).
+   */
+  captionLanguage?: string | null;
+  /** Re-transcribe in a new language (subtitled). Replaces cues + edits — confirmed here. */
+  onChangeLanguage?: (language: CaptionLanguage) => void;
   onApplied?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -102,6 +124,13 @@ export default function CaptionEditor({
   const [error, setError] = useState<string | null>(null);
   // Caption font (font-registry key; null = default). Applies to every cue.
   const [font, setFont] = useState<string | null>(initialFont);
+  // Review-first nudge (D6): true once the user has scanned/touched the cue list,
+  // which dismisses the "check your captions" notice. Only meaningful when
+  // `reviewFirst` is set (subtitled auto-captions).
+  const [reviewed, setReviewed] = useState(false);
+  const markReviewed = useCallback(() => setReviewed(true), []);
+  // Pending language switch awaiting confirmation (re-transcribe replaces cues + edits).
+  const [pendingLang, setPendingLang] = useState<CaptionLanguage | null>(null);
 
   // The chosen font as a CSS stack (for the live preview) — falls back to the
   // default TikTok-Sans stack for null/unknown. The burn weight is bold, so the
@@ -209,12 +238,13 @@ export default function CaptionEditor({
     (i: number) => {
       const v = videoRef.current;
       if (!v || !cues[i]) return;
+      markReviewed();
       v.pause();
       v.currentTime = Math.min(cues[i].start_s + 0.02, Math.max(0, (v.duration || 0) - 0.05));
       setEditing(i);
       setEditSource("list");
     },
-    [cues],
+    [cues, markReviewed],
   );
 
   const togglePlay = useCallback(() => {
@@ -258,6 +288,57 @@ export default function CaptionEditor({
         Pause and tap a caption to fix a word. Changes save as you type; hit{" "}
         <span className="font-medium">Apply</span> to bake them into the video.
       </p>
+
+      {reviewFirst && !reviewed && (
+        <div
+          role="status"
+          className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs text-[#3f3f46]"
+        >
+          Check your captions before applying. Auto-captions can mishear a word or two.
+        </div>
+      )}
+
+      {captionLanguage && onChangeLanguage && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-lime-200 bg-lime-50 px-3 py-1 text-xs font-medium text-lime-800">
+            Captions in {CAPTION_LANGUAGE_LABELS[captionLanguage] ?? captionLanguage}
+          </span>
+          {pendingLang === null ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setPendingLang(captionLanguage === "tr" ? "en" : "tr")}
+              className="text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Change
+            </button>
+          ) : (
+            <span className="inline-flex items-center gap-2 text-xs text-[#3f3f46]">
+              Re-transcribe in {CAPTION_LANGUAGE_LABELS[pendingLang]}? This replaces your
+              captions.
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  const next = pendingLang;
+                  setPendingLang(null);
+                  onChangeLanguage(next);
+                }}
+                className="rounded-md bg-black px-2 py-1 font-medium text-white disabled:opacity-50"
+              >
+                Re-transcribe
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingLang(null)}
+                className="text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+              >
+                Cancel
+              </button>
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="mx-auto w-full max-w-[280px]">
         <div
@@ -387,7 +468,7 @@ export default function CaptionEditor({
                 disabled={busy}
                 onClick={() => chooseFont(opt.name)}
                 style={{ fontFamily: opt.cssFamily, fontWeight: opt.weight }}
-                className={`shrink-0 whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                className={`inline-flex min-h-[44px] shrink-0 items-center whitespace-nowrap rounded-lg border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
                   active
                     ? "border-lime-600 bg-lime-50 text-lime-900"
                     : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
@@ -401,14 +482,17 @@ export default function CaptionEditor({
       </div>
 
       {/* cue list — click a line to jump + edit it */}
-      <ul className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-zinc-100 bg-white p-2">
+      <ul
+        onScroll={markReviewed}
+        className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-zinc-100 bg-white p-2"
+      >
         {cues.map((c, i) =>
           // Editing row: a plain container (NOT a <button>) so the text <input>
           // isn't nested inside an interactive element, which breaks click/keys.
           editing === i ? (
             <li
               key={i}
-              className="flex w-full items-start gap-2 rounded-lg bg-lime-50 px-2 py-1.5 text-left text-sm"
+              className="flex min-h-[44px] w-full items-center gap-2 rounded-lg bg-lime-50 px-2 py-1.5 text-left text-sm"
             >
               <span className="mt-0.5 w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
                 {formatTime(c.start_s)}
@@ -434,7 +518,7 @@ export default function CaptionEditor({
               <button
                 type="button"
                 onClick={() => jumpToCue(i)}
-                className={`flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
+                className={`flex min-h-[44px] w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors ${
                   i === activeIndex ? "bg-lime-50 text-lime-900" : "hover:bg-zinc-50 text-[#3f3f46]"
                 }`}
               >

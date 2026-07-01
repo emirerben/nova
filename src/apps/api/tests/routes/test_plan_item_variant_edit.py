@@ -604,16 +604,25 @@ NARRATED_VARIANT = {
 REBURN = "app.tasks.generative_build.reburn_narrated_captions"
 
 
-def test_is_narrated_caption_variant_guard() -> None:
-    from app.routes.generative_jobs import _is_narrated_caption_variant
+def test_is_editable_caption_variant_guard() -> None:
+    from app.routes.generative_jobs import (
+        _CAPTION_EDIT_ARCHETYPES,
+        _is_editable_caption_variant,
+    )
 
-    assert _is_narrated_caption_variant(NARRATED_VARIANT) is True
+    assert _is_editable_caption_variant(NARRATED_VARIANT) is True
+    # subtitled single-clip is also an editable caption variant.
+    assert _is_editable_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "subtitled"})
     # montage agent_text base also has base_video_path — must NOT be editable.
     assert (
-        _is_narrated_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "montage"}) is False
+        _is_editable_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "montage"}) is False
     )
     # narrated but no base → not editable yet
-    assert _is_narrated_caption_variant({"resolved_archetype": "narrated"}) is False
+    assert _is_editable_caption_variant({"resolved_archetype": "narrated"}) is False
+    # subtitled but no base → not editable yet
+    assert _is_editable_caption_variant({"resolved_archetype": "subtitled"}) is False
+    # Route gate must stay in lockstep with the worker's reburn guard.
+    assert _CAPTION_EDIT_ARCHETYPES == frozenset({"narrated", "subtitled"})
 
 
 def test_caption_cue_rejects_infinity() -> None:

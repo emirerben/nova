@@ -517,6 +517,16 @@ def _run_generative_job(job_id: str) -> None:
                         variant_dir=variant_dir,
                         landscape_fit=landscape_fit,
                     )
+                elif spec.get("archetype") == "subtitled":
+                    result = _render_subtitled_variant(
+                        job_id=job_id,
+                        rank=rank,
+                        spec=spec,
+                        clip_id_to_local=clip_id_to_local,
+                        variant_dir=variant_dir,
+                        language=language,
+                        landscape_fit=landscape_fit,
+                    )
                 else:
                     result = _render_generative_variant(
                         job_id=job_id,
@@ -2953,6 +2963,19 @@ def _resolve_archetype(
         log.info("generative_archetype_selected", job_id=job_id, archetype="voiceover")
         return "voiceover", None
 
+    # Subtitled single-clip talking-head: no voiceover, no spine selection — the whole
+    # clip keeps its own audio and is captioned. Gated by the kill switch; a
+    # no-speech clip still resolves to `subtitled` (the caption layer shows the empty
+    # state) rather than silently dropping to montage. Flag OFF ⇒ montage fallback (the
+    # frontend picker also hides the card when the flag is off, so this is only reached
+    # via a stale/forced token).
+    if edit_format == "subtitled":
+        if not settings.subtitled_archetype_enabled:
+            return _fallback("flag_disabled")
+        record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
+        log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
+        return "subtitled", None
+
     if edit_format == "montage":
         # B3 soft bias: when the user's style says "talking_head", attempt the
         # talking_head path only when the flag is on AND speech actually exists.
@@ -3144,6 +3167,21 @@ def _specs_for_archetype(
                 "text_mode": "agent_text",
                 "track": None,
                 "archetype": "talking_head",
+            }
+        ]
+    if archetype == "subtitled":
+        # ONE variant: the clip's own audio (no track, no voiceover) + editable
+        # captions transcribed from that audio. text_mode="none" — captions are burned
+        # via the caption path, not the agent-intro overlay. caption_style follows the
+        # item toggle: "word" → word-by-word lime pop, anything else → sentence blocks
+        # (the safe default). Reuses the narrated voiceover_caption_style key.
+        return [
+            {
+                "variant_id": "subtitled",
+                "text_mode": "none",
+                "track": None,
+                "archetype": "subtitled",
+                "caption_style": "word" if voiceover_caption_style == "word" else "sentence",
             }
         ]
     return _variant_specs(best_track)
@@ -4874,6 +4912,208 @@ def _render_narrated_variant(
         }
 
 
+def _render_subtitled_variant(
+    *,
+    job_id: str,
+    rank: int,
+    spec: dict[str, Any],
+    clip_id_to_local: dict[str, str],
+    variant_dir: str,
+    language: str = "en",
+    landscape_fit: str = "fill",
+) -> dict[str, Any]:
+    """Render the subtitled single-clip variant.
+
+    Lean path (NOT the narrated assembler — no voiceover, no reflow): reframe the ONE
+    uploaded clip to 9:16 keeping its OWN audio (LUFS-normalized), transcribe that
+    audio (whisper-1 + `language` hint → reliable Turkish + English), and burn editable
+    sentence-block captions at the platform-safe MarginV over a cached caption-free
+    base. The clip renders 1:1 (no trim/speed) so word/cue times need no clip→assembled
+    rebasing. Never raises for a per-variant failure (matches the other render fns) —
+    a corrupt clip / empty transcript becomes a failure record, and a no-speech clip
+    still ships the clean video (the UI shows the empty-caption state).
+
+    Reuses the narrated caption keys (`voiceover_caption_style` / `voiceover_caption_font`)
+    so the finalize whitelist, the on-video CaptionEditor, and the reburn all work
+    unchanged. v1 caption style is "sentence"; word-by-word is a gated fast-follow.
+    """
+    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.captions import (  # noqa: PLC0415
+        SUBTITLED_CAPTION_MARGIN_V,
+        build_plain_cues,
+        generate_ass_from_cues,
+        generate_word_pop_ass,
+        resplit_cues_into_sentences,
+    )
+    from app.pipeline.narrated_assembler import (  # noqa: PLC0415
+        burn_captions_on_video,
+        resolve_caption_font,
+    )
+    from app.pipeline.probe import probe_video  # noqa: PLC0415
+    from app.pipeline.reframe import reframe_and_export, resolve_output_fit  # noqa: PLC0415
+    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
+    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+    from app.storage import upload_public_read  # noqa: PLC0415
+
+    variant_id = spec["variant_id"]
+    # Caption style: "word" → word-by-word lime pop (line visible, active word popped);
+    # anything else → sentence blocks (the safe default). Reuses the narrated key.
+    caption_style = "word" if spec.get("caption_style") == "word" else "sentence"
+    # v1: no font chosen at render time — the editor sets it later (None → default
+    # TikTok Sans). Reuses the narrated caption-font key so the editor/reburn work.
+    caption_font = spec.get("caption_font") or None
+    base = {
+        "variant_id": variant_id,
+        "rank": rank,
+        "text_mode": "none",
+        "music_track_id": None,
+        "track_title": None,
+        "style_set_id": None,
+        "intro_text_size_px": None,
+        "intro_size_source": None,
+        "intro_text": None,
+        "intro_highlight_word": None,
+        "intro_layout": None,
+        "intro_word_roles": None,
+        "intro_mode": None,
+        "transcript": None,
+        "scenes": None,
+        "sequence_base_size_px": None,
+        "sequence_mode": None,
+        "sequence_quote": None,
+        "mix": 1.0,
+        "user_style_knobs": None,
+        "base_video_path": None,
+        # Editable caption cues [{text, start_s, end_s}] (base/clip time). Drives the
+        # on-video caption editor; reburned onto base_video_path when the creator edits.
+        "caption_cues": None,
+        # The caption style this variant rendered with ("sentence" | "word"). The reburn
+        # reads it so edited cues re-burn in the SAME style (word-pop stays word-pop).
+        "voiceover_caption_style": caption_style,
+        "voiceover_caption_font": caption_font,
+        # Language the captions were transcribed in (ISO "en"/"tr"). Shown as the editor
+        # chip; the re-transcribe override reads + rewrites it.
+        "caption_language": (language or "en"),
+        "ai_timeline": None,
+        "resolved_archetype": "subtitled",
+        "media_overlays": None,
+        "pre_media_overlay_video_path": None,
+    }
+    try:
+        # Subtitled is single-clip: the first uploaded clip (order-preserving).
+        clip_path = next(iter(clip_id_to_local.values()), None)
+        if not clip_path:
+            raise ValueError("subtitled variant has no clip")
+
+        probe = probe_video(clip_path)
+        aspect = "16:9" if getattr(probe, "aspect_ratio", "") == "16:9" else "9:16"
+        fit = resolve_output_fit(probe, landscape_fit=landscape_fit)
+
+        # Caption-free 9:16 base with the clip's own audio (LUFS-normalized). start=0,
+        # end=duration, speed=1.0 → base timeline == clip timeline, so transcript word
+        # times map directly onto the base (no rebasing needed).
+        base_path = os.path.join(variant_dir, "final_base.mp4")
+        reframe_and_export(
+            clip_path,
+            0.0,
+            float(probe.duration_s),
+            aspect,
+            None,  # no ASS at this stage — captions are burned in a second pass
+            base_path,
+            output_fit=fit,
+            has_audio=probe.has_audio,
+        )
+        if not os.path.exists(base_path) or os.path.getsize(base_path) == 0:
+            raise RuntimeError("subtitled base render produced empty output")
+
+        # Subtitled captions the SPOKEN language of the clip: auto-detect (language=None),
+        # NOT the plan's content language — a Turkish clip must get Turkish captions even
+        # in an English plan. The user can still override the detected language via the D5
+        # chip (re-transcribe). Persist the detected language so the chip shows it.
+        transcript = transcribe_whisper(base_path, language=None)
+        detected_lang = transcript.language or (language or "en")
+        # Word mode attaches each cue's real per-word timings so the highlight (and any
+        # reburn of an UNedited cue) stays locked to the audio.
+        # Always attach real word timings: the sentence re-split lands its boundaries
+        # on word times when the correction leaves a cue untouched.
+        cues = build_plain_cues(transcript.words, attach_words=True)
+        # Fix whisper's spelling/grammar mishearings (esp. Turkish morphology) while
+        # keeping cue timing. Best-effort — a failure leaves the raw cues.
+        cues = correct_caption_cues(
+            cues,
+            detected_lang,
+            model=settings.caption_correction_model,
+            enabled=settings.subtitled_caption_correction_enabled,
+        )
+        # One SENTENCE per caption: whisper emits no punctuation (14-word chunk cues);
+        # the correction adds it — re-split so captions show one sentence at a time
+        # instead of a stacked 4-line block.
+        cues = resplit_cues_into_sentences(cues)
+
+        final_path = os.path.join(variant_dir, "final.mp4")
+        if cues:
+            ass_path = os.path.join(variant_dir, "captions.ass")
+            ass_font = resolve_caption_font(caption_font)
+            if caption_style == "word":
+                generate_word_pop_ass(
+                    cues, ass_path, font_name=ass_font, margin_v=SUBTITLED_CAPTION_MARGIN_V
+                )
+            else:
+                generate_ass_from_cues(
+                    cues,
+                    ass_path,
+                    font_name=ass_font,
+                    style="plain",
+                    margin_v=SUBTITLED_CAPTION_MARGIN_V,
+                    pop_in=True,
+                )
+            burn_captions_on_video(base_path, ass_path, FONTS_DIR, final_path)
+        else:
+            # No detectable speech → ship the clean clip; the UI shows the empty-caption
+            # state. NOT a failure — a caption-less talking clip is still valid output.
+            shutil.copy2(base_path, final_path)
+        if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
+            raise RuntimeError("subtitled variant produced empty output")
+
+        output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
+        output_url = upload_public_read(final_path, output_gcs)
+        # Persist the caption-free base ONLY when captions exist — that's what the
+        # on-video editor + reburn edit. A no-speech clip has no base (nothing to edit).
+        base_gcs: str | None = None
+        if cues and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
+            base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
+            upload_public_read(base_path, base_gcs)
+        return {
+            **base,
+            "ok": True,
+            "render_status": "ready",
+            "video_path": output_gcs,
+            "output_url": output_url,
+            "base_video_path": base_gcs,
+            "caption_cues": cues or None,
+            # The language actually spoken/detected (not the plan language).
+            "caption_language": detected_lang,
+            "media_overlays": base["media_overlays"],
+            "pre_media_overlay_video_path": base["pre_media_overlay_video_path"],
+        }
+    except Exception as exc:
+        err = str(exc)[:MAX_ERROR_DETAIL_LEN]
+        log.error(
+            "generative_subtitled_variant_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=err,
+            exc_info=True,
+        )
+        return {
+            **base,
+            "ok": False,
+            "render_status": "failed",
+            "error": err,
+            "error_class": _classify_error(exc),
+        }
+
+
 @celery_app.task(
     name="reburn_narrated_captions",
     bind=True,
@@ -4915,8 +5155,23 @@ def reburn_narrated_captions(self, job_id: str, variant_id: str) -> None:
             _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
 
 
+# Archetypes whose editable caption cues may be reburned onto a caption-free base.
+# Defense-in-depth: any OTHER archetype (e.g. an agent_text montage) also carries a
+# base_video_path, and burning subtitles over it is corruption — so the reburn hard-
+# rejects anything not in this set.
+_CAPTION_REBURN_ARCHETYPES = frozenset({"narrated", "subtitled"})
+
+# Languages the subtitled caption override accepts (whisper-1 handles both well with an
+# explicit hint). Keep in lockstep with the route + the request Literal.
+_SUBTITLED_CAPTION_LANGUAGES = frozenset({"en", "tr"})
+
+
 def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
-    from app.pipeline.captions import generate_ass_from_cues  # noqa: PLC0415
+    from app.pipeline.captions import (  # noqa: PLC0415
+        SUBTITLED_CAPTION_MARGIN_V,
+        generate_ass_from_cues,
+        generate_word_pop_ass,
+    )
     from app.pipeline.narrated_assembler import (  # noqa: PLC0415
         burn_captions_on_video,
         resolve_caption_font,
@@ -4933,20 +5188,35 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
     if variant is None:
         raise ValueError(f"variant {variant_id} not found on job {job_id}")
-    # Defense-in-depth: never caption-reburn a non-narrated variant (the agent_text
-    # montage base also has base_video_path; burning subtitles over it is corruption).
-    if variant.get("resolved_archetype") != "narrated":
-        raise ValueError(f"variant {variant_id} is not a narrated caption variant")
+    archetype = variant.get("resolved_archetype")
+    if archetype not in _CAPTION_REBURN_ARCHETYPES:
+        raise ValueError(f"variant {variant_id} is not a caption variant")
     base_path = variant.get("base_video_path")
     cues = list(variant.get("caption_cues") or [])
     rank = variant.get("rank")
-    # Re-burn edited cues in the SAME caption style the variant first rendered with,
-    # so word-by-word stays word-by-word after an edit ("word" → the big centered
-    # one-word style; anything else → the plain sentence style).
-    ass_style = "word" if variant.get("voiceover_caption_style") == "word" else "plain"
+    # Subtitled word-by-word (lime pop) is rendered by generate_word_pop_ass, not the
+    # plain/word ASS styles — flagged here and branched at burn time below.
+    subtitled_word_pop = (
+        archetype == "subtitled" and variant.get("voiceover_caption_style") == "word"
+    )
+    if archetype == "subtitled":
+        # Subtitled captions sit at the platform-safe MarginV. The first burn and this
+        # reburn MUST agree on the margin (and style) or edited captions jump. Word-pop
+        # uses the same safe margin via generate_word_pop_ass.
+        ass_style = "plain"
+        margin_v: int | None = SUBTITLED_CAPTION_MARGIN_V
+    else:
+        # narrated: re-burn edited cues in the SAME caption style the variant first
+        # rendered with, so word-by-word stays word-by-word after an edit ("word" → the
+        # big centered one-word style; anything else → the plain sentence style).
+        ass_style = "word" if variant.get("voiceover_caption_style") == "word" else "plain"
+        margin_v = None
     # Re-burn in the variant's chosen caption font (registry key → libass family;
-    # None/unknown → the default). Applies to both styles.
-    ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    # None/unknown → the default). `caption_font` (subtitled) falls back to
+    # `voiceover_caption_font` (narrated) so one resolve path serves both.
+    ass_font = resolve_caption_font(
+        variant.get("caption_font") or variant.get("voiceover_caption_font")
+    )
     if not base_path:
         raise ValueError("variant has no caption-free base — cannot reburn captions")
 
@@ -4957,7 +5227,22 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         out_local = os.path.join(tmpdir, "out.mp4")
         if cues:
             ass_path = os.path.join(tmpdir, "captions.ass")
-            generate_ass_from_cues(cues, ass_path, font_name=ass_font, style=ass_style)
+            if subtitled_word_pop:
+                # Real per-word times for cues left untouched; edited cues re-synthesize
+                # inside generate_word_pop_ass (E3). Same safe margin as the first burn.
+                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=margin_v)
+            else:
+                generate_ass_from_cues(
+                    cues,
+                    ass_path,
+                    font_name=ass_font,
+                    style=ass_style,
+                    margin_v=margin_v,
+                    # Subtitled sentence captions keep their pop-in through edits; the
+                    # user's cue set is authoritative (never re-split here). Narrated
+                    # stays un-animated (margin_v is None only for narrated).
+                    pop_in=(archetype == "subtitled"),
+                )
             burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
         else:
             # All cues cleared → caption-free video.
@@ -4982,6 +5267,145 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         },
     )
     log.info("narrated_caption_reburn_done", job_id=job_id, variant_id=variant_id, cues=len(cues))
+
+
+@celery_app.task(
+    name="retranscribe_subtitled_captions",
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
+    max_retries=7,
+    # Re-transcribe + reburn from the cached base (no clip re-assembly) — bounded like
+    # the caption reburn, well under the broker visibility_timeout.
+    soft_time_limit=600,
+    time_limit=660,
+)
+def retranscribe_subtitled_captions(self, job_id: str, variant_id: str, language: str) -> None:
+    """Re-transcribe a subtitled variant's own audio in a new language, then reburn.
+
+    The D5 language override: the creator changes the caption language (e.g. auto-detect
+    guessed wrong on a code-switched clip), and we re-run whisper-1 on the cached base's
+    audio with the new hint, rebuild the cues, and reburn — REPLACING any hand-edits
+    (the frontend confirms this first)."""
+    try:
+        _run_retranscribe_subtitled(job_id, variant_id, language)
+    except OperationalError:
+        raise
+    except Exception as exc:
+        log.error(
+            "subtitled_retranscribe_failed",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc)[:MAX_ERROR_DETAIL_LEN],
+            exc_info=True,
+        )
+        # Keep the last-good burned video; just clear the in-flight state.
+        _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+
+
+def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> None:
+    from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
+    from app.pipeline.captions import (  # noqa: PLC0415
+        SUBTITLED_CAPTION_MARGIN_V,
+        build_plain_cues,
+        generate_ass_from_cues,
+        generate_word_pop_ass,
+        resplit_cues_into_sentences,
+    )
+    from app.pipeline.narrated_assembler import (  # noqa: PLC0415
+        burn_captions_on_video,
+        resolve_caption_font,
+    )
+    from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
+    from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+
+    lang = (language or "").strip().lower()
+    if lang not in _SUBTITLED_CAPTION_LANGUAGES:
+        raise ValueError(f"unsupported caption language: {language!r}")
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("subtitled_retranscribe_job_not_found", job_id=job_id)
+            return
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if variant is None:
+        raise ValueError(f"variant {variant_id} not found on job {job_id}")
+    if variant.get("resolved_archetype") != "subtitled":
+        raise ValueError(f"variant {variant_id} is not a subtitled variant")
+    base_path = variant.get("base_video_path")
+    if not base_path:
+        raise ValueError("variant has no caption-free base — cannot re-transcribe")
+    rank = variant.get("rank")
+    word_pop = variant.get("voiceover_caption_style") == "word"
+    ass_font = resolve_caption_font(
+        variant.get("caption_font") or variant.get("voiceover_caption_font")
+    )
+
+    _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
+    with tempfile.TemporaryDirectory(prefix="nova_subtitled_retx_") as tmpdir:
+        base_local = os.path.join(tmpdir, "base.mp4")
+        download_to_file(base_path, base_local)
+        # Re-transcribe the base's OWN audio with the new language hint. base timeline ==
+        # cue timeline (the clip renders 1:1), so no rebasing.
+        transcript = transcribe_whisper(base_local, language=lang)
+        cues = build_plain_cues(transcript.words, attach_words=True)
+        cues = correct_caption_cues(
+            cues,
+            lang,
+            model=settings.caption_correction_model,
+            enabled=settings.subtitled_caption_correction_enabled,
+        )
+        # One sentence per caption (same as the first render) — see _render_subtitled.
+        cues = resplit_cues_into_sentences(cues)
+        out_local = os.path.join(tmpdir, "out.mp4")
+        if cues:
+            ass_path = os.path.join(tmpdir, "captions.ass")
+            if word_pop:
+                generate_word_pop_ass(
+                    cues, ass_path, font_name=ass_font, margin_v=SUBTITLED_CAPTION_MARGIN_V
+                )
+            else:
+                generate_ass_from_cues(
+                    cues,
+                    ass_path,
+                    font_name=ass_font,
+                    style="plain",
+                    margin_v=SUBTITLED_CAPTION_MARGIN_V,
+                    pop_in=True,
+                )
+            burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+        else:
+            # New language found no speech → clean base (the UI shows the empty state).
+            shutil.copy2(base_local, out_local)
+        new_gcs = (
+            f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_{uuid.uuid4().hex[:8]}.mp4"
+        )
+        output_url = upload_public_read(out_local, new_gcs)
+
+    _update_variant_entry(
+        job_id,
+        variant_id,
+        {
+            "video_path": new_gcs,
+            "output_url": output_url,
+            "caption_cues": cues or None,
+            "caption_language": lang,
+            "render_status": "ready",
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+        },
+    )
+    log.info(
+        "subtitled_retranscribe_done",
+        job_id=job_id,
+        variant_id=variant_id,
+        language=lang,
+        cues=len(cues),
+    )
 
 
 def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
@@ -5505,6 +5929,9 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # narrated caption font (registry key) — MUST survive or a caption
                     # edit reburns in the wrong font (the reburn reads it).
                     "voiceover_caption_font": r.get("voiceover_caption_font"),
+                    # subtitled caption language ("en"/"tr") — MUST survive so the editor
+                    # chip shows it and the re-transcribe override reads the current one.
+                    "caption_language": r.get("caption_language"),
                     # sequence + cluster persistence (D15/D19) — MUST survive
                     # finalization or every re-render loses the synced typography:
                     # intro_mode gates route behavior (sequence_synced, retext

@@ -3,7 +3,13 @@
 The content_plan agent declares an `edit_format` per day; the generative
 orchestrator resolves it against the uploaded footage and dispatches the matching
 assembler archetype (talking-head + B-roll, day-vlog temporal sequence, single
-hero, or the default beat-synced montage). See the format-aware-edit-engine plan.
+hero, subtitled single-clip auto-captions, or the default beat-synced montage).
+See the format-aware-edit-engine plan.
+
+`subtitled` is a single talk-to-camera clip whose OWN audio is transcribed into
+editable sentence-block captions (Turkish + English). Unlike the `narrated`
+family it needs NO voiceover — the spine is the clip's existing audio — so it is
+deliberately kept OUT of `NARRATED_EDIT_FORMATS`.
 
 `montage` is the safe default and the existing render path — any job without a
 declared/recognized format renders exactly as it does today. `coerce_edit_format`
@@ -23,6 +29,7 @@ EditFormat = Literal[
     "talking_head",
     "day_vlog",
     "single_hero",
+    "subtitled",
     "narrated",
     "narrated_planned",
     "narrated_ready",

@@ -129,6 +129,24 @@ class Settings(BaseSettings):
     # stays the rollback lever: set False to revert to the voiceover-montage path.
     narrated_archetype_enabled: bool = True
 
+    # Kill switch for the subtitled single-clip talking-head archetype. When False,
+    # a job whose plan declares edit_format="subtitled" falls back to montage (so an
+    # unimplemented/rolled-back token never renders half a feature). When True, a
+    # single talk-to-camera clip keeps its own audio, is transcribed (whisper-1 +
+    # language hint, Turkish + English), and renders editable sentence-block captions
+    # over a cached caption-free base. Default OFF until the render path + picker card
+    # are wired and verified end-to-end; the frontend picker card gates on this too.
+    subtitled_archetype_enabled: bool = False
+
+    # Subtitled caption correction: after whisper, an LLM fixes each cue's spelling /
+    # grammar / case-endings (whisper mishears Turkish morphology) while preserving cue
+    # timing. Best-effort — a failure leaves cues untouched. Kill switch: set False to
+    # burn the raw whisper transcript. gpt-4o is the default: gpt-4o-mini proved
+    # UNRELIABLE on Turkish contextual grammar (missed 'nereye'->'nereyi' 4/4 runs; gpt-4o
+    # fixed it 2/2). ~$0.005/render. Set to gpt-4o-mini to trade accuracy for cost.
+    subtitled_caption_correction_enabled: bool = True
+    caption_correction_model: str = "gpt-4o"
+
     # Layer-2 text-overlay extraction pipeline. When False, the existing
     # single-call `nova.compose.template_text` Gemini agent runs unchanged.
     # When True, the OCR + grouping + transcript-alignment pipeline replaces

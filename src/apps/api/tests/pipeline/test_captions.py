@@ -1,13 +1,197 @@
 from __future__ import annotations
 
 from app.pipeline.captions import (
+    _ACTIVE_WORD_ASS_COLOR,
     _ASS_HEADER,
+    _SENTENCE_POP_TAGS,
+    SUBTITLED_CAPTION_MARGIN_V,
     build_plain_cues,
     build_word_cues,
     generate_ass,
     generate_ass_from_cues,
+    generate_word_pop_ass,
+    resplit_cues_into_sentences,
 )
 from app.pipeline.transcribe import Transcript, Word
+
+
+def test_resplit_multi_sentence_cue_proportional():
+    """A corrected 4-sentence mega-cue splits into one cue per sentence, timing
+    distributed across the original window, monotonic and span-preserving."""
+    cues = [
+        {
+            "text": "Bu bizim zaten dünkü hareket. Kaçar adet yapıyoruz? "
+            "Bu nereyi çalıştırıyor? Kalça bölgesini.",
+            "start_s": 0.96,
+            "end_s": 11.14,
+        }
+    ]
+    out = resplit_cues_into_sentences(cues)
+    assert [c["text"] for c in out] == [
+        "Bu bizim zaten dünkü hareket.",
+        "Kaçar adet yapıyoruz?",
+        "Bu nereyi çalıştırıyor?",
+        "Kalça bölgesini.",
+    ]
+    assert out[0]["start_s"] == 0.96 and out[-1]["end_s"] == 11.14  # span preserved
+    for a, b in zip(out, out[1:]):
+        assert a["end_s"] <= b["start_s"] + 1e-6  # monotonic, non-overlapping
+        assert a["end_s"] > a["start_s"]
+
+
+def test_resplit_uses_word_timings_when_aligned():
+    """When the cue's words still spell its text, sentence boundaries land on the real
+    word times (audio-locked), not proportional estimates."""
+    cues = [
+        {
+            "text": "Merhaba dünya. Nasılsın bugün.",
+            "start_s": 0.0,
+            "end_s": 10.0,
+            "words": [
+                {"text": "Merhaba", "start_s": 0.0, "end_s": 0.8},
+                {"text": "dünya.", "start_s": 0.8, "end_s": 1.2},
+                {"text": "Nasılsın", "start_s": 7.0, "end_s": 7.8},  # long silence gap
+                {"text": "bugün.", "start_s": 7.8, "end_s": 8.4},
+            ],
+        }
+    ]
+    out = resplit_cues_into_sentences(cues)
+    assert len(out) == 2
+    # Sentence 1 ends at its last word's end; sentence 2 starts at ITS first word — the
+    # 6s silence between them stays caption-free (proportional would put it mid-split).
+    assert out[0]["end_s"] == 1.2
+    assert out[1]["start_s"] == 7.0
+
+
+def test_resplit_merges_dangling_fragment_into_next_cue():
+    """whisper split 'Ona / onar adet yapıyoruz.' across cues — the unpunctuated
+    ≤2-word tail merges into the next cue so the sentence displays whole."""
+    cues = [
+        {"text": "Kalça bölgesini. Ona", "start_s": 0.0, "end_s": 11.0},
+        {"text": "onar adet yapıyoruz.", "start_s": 11.0, "end_s": 12.1},
+    ]
+    out = resplit_cues_into_sentences(cues)
+    assert [c["text"] for c in out] == ["Kalça bölgesini.", "Ona onar adet yapıyoruz."]
+    assert out[1]["end_s"] == 12.1
+
+
+def test_resplit_single_sentence_cue_is_unchanged():
+    cues = [{"text": "Onar adet yapıyoruz.", "start_s": 1.0, "end_s": 2.0}]
+    assert resplit_cues_into_sentences(cues) == [
+        {"text": "Onar adet yapıyoruz.", "start_s": 1.0, "end_s": 2.0}
+    ]
+
+
+def test_pop_in_prepends_animation_tags_only_when_asked(tmp_path):
+    cues = [{"text": "Kaçar adet yapıyoruz?", "start_s": 0.0, "end_s": 1.5}]
+    pop = tmp_path / "pop.ass"
+    generate_ass_from_cues(
+        cues, str(pop), style="plain", margin_v=SUBTITLED_CAPTION_MARGIN_V, pop_in=True
+    )
+    pop_lines = pop.read_text(encoding="utf-8").splitlines()
+    (line,) = [ln for ln in pop_lines if ln.startswith("Dialogue:")]
+    assert _SENTENCE_POP_TAGS in line and "\\fad(120,0)" in line and "\\t(0,140" in line
+    # narrated default stays byte-identical: no tags without pop_in
+    plain = tmp_path / "plain.ass"
+    generate_ass_from_cues(cues, str(plain), style="plain")
+    (pline,) = [
+        ln for ln in plain.read_text(encoding="utf-8").splitlines() if ln.startswith("Dialogue:")
+    ]
+    assert "\\fad" not in pline and "\\t(" not in pline
+
+
+def _events(ass_path) -> list[str]:
+    return [
+        ln for ln in ass_path.read_text(encoding="utf-8").splitlines() if ln.startswith("Dialogue:")
+    ]
+
+
+def _style_line(ass_path) -> str:
+    lines = ass_path.read_text(encoding="utf-8").splitlines()
+    return next(ln for ln in lines if ln.startswith("Style: Default"))
+
+
+def test_word_pop_highlights_one_word_per_event_with_real_timings(tmp_path):
+    """Unedited cue: one event per spoken word, full line visible each time, the active
+    word popped lime, using the real per-word timings (locked to audio)."""
+    cue = {
+        "text": "bugün size çok",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "words": [
+            {"text": "bugün", "start_s": 0.0, "end_s": 0.5},
+            {"text": "size", "start_s": 0.5, "end_s": 0.9},
+            {"text": "çok", "start_s": 0.9, "end_s": 1.5},
+        ],
+    }
+    out = tmp_path / "pop.ass"
+    generate_word_pop_ass([cue], str(out), font_name="TikTok Sans")
+    events = _events(out)
+    tokens = ["bugün", "size", "çok"]
+    assert len(events) == 3  # one event per word
+    for i, ev in enumerate(events):
+        # every event shows the FULL line (no baseline jitter)
+        for t in tokens:
+            assert t in ev
+        # exactly the i-th word is popped lime, exactly once
+        assert ev.count(_ACTIVE_WORD_ASS_COLOR) == 1
+        assert f"{{\\c{_ACTIVE_WORD_ASS_COLOR}&}}{tokens[i]}" in ev
+    # line-visible look (plain 78px at the safe margin) — NOT the one-big-word 120px
+    style = _style_line(out)
+    assert ",78," in style
+    assert style.endswith(f"2,80,80,{SUBTITLED_CAPTION_MARGIN_V},1")
+
+
+def test_word_pop_synthesizes_for_an_edited_cue(tmp_path):
+    """Edited cue: stored words no longer spell the text, so timings are synthesized
+    across the cue window (E3 — never even-splits still-trusted real times)."""
+    cue = {
+        "text": "bugün size az",  # user changed "çok" → "az"
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "words": [
+            {"text": "bugün", "start_s": 0.0, "end_s": 0.5},
+            {"text": "size", "start_s": 0.5, "end_s": 0.9},
+            {"text": "çok", "start_s": 0.9, "end_s": 1.5},
+        ],
+    }
+    out = tmp_path / "pop_edit.ass"
+    generate_word_pop_ass([cue], str(out), font_name="TikTok Sans")
+    events = _events(out)
+    assert len(events) == 3  # three edited tokens
+    assert f"{{\\c{_ACTIVE_WORD_ASS_COLOR}&}}az" in events[2]  # new word is captioned
+
+
+def test_word_pop_empty_cue_writes_valid_empty_ass(tmp_path):
+    out = tmp_path / "pop_empty.ass"
+    generate_word_pop_ass([{"text": "   ", "start_s": 0.0, "end_s": 1.0}], str(out))
+    assert "[Events]" in out.read_text(encoding="utf-8")
+    assert _events(out) == []
+
+
+def test_subtitled_margin_v_clears_platform_ui(tmp_path):
+    """The subtitled style burns plain captions at the safe-zone MarginV so they
+    clear the TikTok/Reels UI; the narrated default (180) must stay unchanged."""
+    cues = [{"text": "merhaba arkadaslar", "start_s": 0.0, "end_s": 1.5}]
+    out = tmp_path / "safe.ass"
+    generate_ass_from_cues(
+        cues, str(out), font_name="TikTok Sans", style="plain", margin_v=SUBTITLED_CAPTION_MARGIN_V
+    )
+    style_line = next(
+        ln for ln in out.read_text(encoding="utf-8").splitlines() if ln.startswith("Style: Default")
+    )
+    # Format tail is ...,Alignment,MarginL,MarginR,MarginV,Encoding → 2,80,80,<mv>,1
+    assert style_line.endswith(f"2,80,80,{SUBTITLED_CAPTION_MARGIN_V},1")
+    assert SUBTITLED_CAPTION_MARGIN_V >= 360  # comfortably above the ~15-20% UI band
+
+    default_out = tmp_path / "default.ass"
+    generate_ass_from_cues(cues, str(default_out), font_name="TikTok Sans", style="plain")
+    default_line = next(
+        ln
+        for ln in default_out.read_text(encoding="utf-8").splitlines()
+        if ln.startswith("Style: Default")
+    )
+    assert default_line.endswith("2,80,80,180,1")  # narrated default untouched
 
 
 def _transcript() -> Transcript:

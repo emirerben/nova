@@ -2824,18 +2824,19 @@ def test_reburn_empty_cues_copies_base_no_burn(monkeypatch):
     assert job.assembly_plan["variants"][0]["render_status"] == "ready"
 
 
-def test_reburn_rejects_non_narrated_variant(monkeypatch):
+def test_reburn_rejects_non_caption_variant(monkeypatch):
     import uuid
 
     import pytest
 
     # A montage variant also carries base_video_path — reburn must refuse it.
+    # (Guard now admits narrated + subtitled; anything else is still corruption.)
     montage = _narrated_caption_variant(resolved_archetype="montage", variant_id="original_text")
     job = _FakeJob(assembly_plan={"variants": [montage]})
     _patch_job_session(monkeypatch, job)
     _patch_reburn_io(monkeypatch, {"called": False})
 
-    with pytest.raises(ValueError, match="not a narrated caption variant"):
+    with pytest.raises(ValueError, match="not a caption variant"):
         gb._run_reburn_narrated_captions(str(uuid.uuid4()), "original_text")
 
 

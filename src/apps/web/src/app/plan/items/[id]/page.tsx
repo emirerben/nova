@@ -18,6 +18,7 @@ import {
   setItemVoiceover,
   setItemVoiceoverBedLevel,
   setItemVoiceoverCaptionStyle,
+  setPlanItemCaptionLanguage,
   type VoiceoverCaptionStyle,
   updatePlanItem,
   type ClipAssignment,
@@ -104,6 +105,13 @@ const MEDIA_OVERLAYS_ENABLED =
   _mediaOverlaysRaw.toLowerCase() === "true" || _mediaOverlaysRaw === "1";
 const SOUND_EFFECTS_ENABLED =
   process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+// Kill-switch: the "Subtitled" edit-style card only appears when
+// NEXT_PUBLIC_SUBTITLED_ENABLED=true. Keep in sync with the backend
+// `subtitled_archetype_enabled` Fly secret — if the card shows but the backend
+// flag is off, a subtitled job silently falls back to montage. Same normalize as
+// MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing space) still works.
+const _subtitledRaw = (process.env.NEXT_PUBLIC_SUBTITLED_ENABLED ?? "").trim();
+const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRaw === "1";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
@@ -424,6 +432,9 @@ export default function PlanItemPage() {
     item?.edit_format === "narrated_planned" ||
     item?.edit_format === "narrated_ready";
   const isNarratedReady = item?.edit_format === "narrated_ready";
+  // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
+  // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
+  const isSubtitled = item?.edit_format === "subtitled";
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -692,6 +703,15 @@ export default function PlanItemPage() {
                     [
                       { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
                       { value: "narrated_planned", label: "Narrated walkthrough", desc: "Record your voice, clips follow along" },
+                      ...(SUBTITLED_ENABLED
+                        ? [
+                            {
+                              value: "subtitled",
+                              label: "Subtitled",
+                              desc: "Talk to camera — we caption your words, in Turkish or English",
+                            },
+                          ]
+                        : []),
                     ] as { value: string; label: string; desc: string }[]
                   ).map(({ value, label, desc }) => {
                     const active = value === "narrated_planned" ? isNarrated : (item.edit_format ?? "montage") === value;
@@ -759,8 +779,8 @@ export default function PlanItemPage() {
                 {/* Montage sub-mode picker — "Planning to film" vs "I already have footage".
                     Flips the per-item content_mode override so the user can skip shot-plan
                     generation and go straight to the pool uploader. Only shown when Montage
-                    is the active style (narrated has its own equivalent picker above). */}
-                {!isNarrated && (
+                    is the active style (narrated + subtitled have no content_mode sub-modes). */}
+                {!isNarrated && !isSubtitled && (
                   <div className="mt-3 flex gap-2">
                     {(
                       [
@@ -854,8 +874,9 @@ export default function PlanItemPage() {
               );
             })()}
 
-            {/* Expand with AI — only for planned mode; hide in ready (have-videos) mode */}
-            {!isNarratedReady && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+            {/* Expand with AI — only for planned mode; hide in ready (have-videos)
+                mode and for subtitled (single clip, no shot plan to expand). */}
+            {!isNarratedReady && !isSubtitled && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <div className="mb-4">
                 <button
                   type="button"
@@ -1046,12 +1067,82 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Uploader — four branches:
+            {/* Subtitled: caption style — sentence blocks (default) vs word-by-word,
+                where the full line stays visible and the spoken word pops in lime.
+                Consumed at generate time; editable afterward in the on-video editor. */}
+            {isSubtitled && (
+              <div className="mb-6">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Captions
+                </p>
+                <p className="mb-3 text-sm text-[#71717a]">
+                  How your words appear as on-screen text.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      {
+                        value: "sentence" as const,
+                        label: "Sentence",
+                        hint: "Full lines, like subtitles",
+                      },
+                      {
+                        value: "word" as const,
+                        label: "Word-by-word",
+                        hint: "Each word pops as you say it",
+                      },
+                    ]
+                  ).map((opt) => {
+                    const active = (captionStyle ?? "sentence") === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        aria-pressed={active}
+                        disabled={captionSaving}
+                        onClick={() => handleCaptionStyleChange(opt.value)}
+                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                          active
+                            ? "border-lime-600 bg-lime-50 text-lime-900"
+                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                        }`}
+                      >
+                        <span className="block text-sm font-semibold">{opt.label}</span>
+                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
+              </div>
+            )}
+
+            {/* Uploader — branches:
+                0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
                 1. narrated_ready: audio-first flow, pool upload, no step spine
                 2. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
                 3. isFilmThis but no guide yet → "Generate shot list" CTA
                 4. existing_footage → PoolUploadCard (use footage you already have) */}
-            {isNarratedReady ? (
+            {isSubtitled ? (
+              <div>
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Your clip
+                </p>
+                <p className="mb-4 text-sm text-[#71717a]">
+                  Upload one clip of you talking to camera. We&apos;ll transcribe what you
+                  say and add editable captions, in Turkish or English.
+                </p>
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
+                  maxClips={1}
+                />
+              </div>
+            ) : isNarratedReady ? (
               <div>
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Your clips
@@ -1762,9 +1853,11 @@ function FocusedResults({
               <div className="flex gap-2">
                 {EDITOR_TABS.map((tab) => {
                   const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
-                  // Captions tab only for narrated variants that carry editable cues.
+                  // Captions tab shows for any caption variant (narrated voiceover OR
+                  // subtitled single-clip) that carries editable cues — it's cue-driven,
+                  // not archetype-gated, so both use the same on-video CaptionEditor.
                   if (tab.id === "captions" && !hasCaptions) return null;
-                  // Narrated has no song to edit — only Captions + Clips.
+                  // Caption variants have no song to edit — only Captions + Clips.
                   if (hasCaptions && tab.id === "song") return null;
                   // Hide Song tab when no song is swappable
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
@@ -1797,12 +1890,52 @@ function FocusedResults({
                   variant.base_video_url &&
                   variant.caption_cues ? (
                     <CaptionEditor
+                      // Re-mount (re-seed cues) whenever a server render replaces them —
+                      // a language re-transcribe swaps all cues, and the editor otherwise
+                      // keeps the cue state it seeded at mount (stale English after a
+                      // switch to Türkçe). render_finished_at advances on every reburn/
+                      // re-transcribe, so this re-seeds from the fresh server cues.
+                      key={`${variant.variant_id}:${variant.render_finished_at ?? ""}`}
                       itemId={itemId}
                       variantId={variant.variant_id}
                       baseVideoUrl={variant.base_video_url}
                       initialCues={variant.caption_cues}
                       initialFont={variant.voiceover_caption_font}
                       rendering={variant.render_status === "rendering"}
+                      // Subtitled captions are machine-transcribed from the clip's own
+                      // audio — nudge review before Apply (D6). Narrated (own voiceover)
+                      // doesn't need it.
+                      reviewFirst={variant.resolved_archetype === "subtitled"}
+                      // D5 language override — chip + re-transcribe, subtitled only.
+                      captionLanguage={
+                        variant.resolved_archetype === "subtitled"
+                          ? (variant.caption_language ?? "en")
+                          : null
+                      }
+                      onChangeLanguage={
+                        variant.resolved_archetype === "subtitled"
+                          ? async (language) => {
+                              try {
+                                await setPlanItemCaptionLanguage(
+                                  itemId,
+                                  variant.variant_id,
+                                  language,
+                                );
+                                markVariantRendering(
+                                  variant.variant_id,
+                                  variant.render_finished_at ?? null,
+                                );
+                                refetch();
+                              } catch (err) {
+                                onError(
+                                  err instanceof Error
+                                    ? err.message
+                                    : "Couldn't change the caption language.",
+                                );
+                              }
+                            }
+                          : undefined
+                      }
                       onApplied={() => {
                         markVariantRendering(
                           variant.variant_id,
@@ -3307,6 +3440,7 @@ function PoolUploadCard({
   onKeep,
   onRemove,
   onNoteChange,
+  maxClips,
 }: {
   clips: ClipAssignment[];
   uploading: boolean;
@@ -3314,7 +3448,10 @@ function PoolUploadCard({
   onKeep: (a: ClipAssignment) => void;
   onRemove: (a: ClipAssignment) => void;
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
+  /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
+  maxClips?: number;
 }) {
+  const atCap = maxClips != null && clips.length >= maxClips;
   return (
     <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-5">
       {clips.length > 0 && (
@@ -3365,17 +3502,25 @@ function PoolUploadCard({
           })}
         </ul>
       )}
-      <label className="block">
-        <span className="sr-only">Upload video clips for this idea</span>
-        <input
-          type="file"
-          accept="video/mp4,video/quicktime"
-          multiple
-          disabled={uploading}
-          onChange={(e) => onFiles(e.target.files)}
-          className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
-        />
-      </label>
+      {atCap ? (
+        <p className="text-sm text-[#71717a]">
+          {maxClips === 1
+            ? "One clip added. Remove it above to swap in a different one."
+            : "You've reached the clip limit. Remove one above to add another."}
+        </p>
+      ) : (
+        <label className="block">
+          <span className="sr-only">Upload video clips for this idea</span>
+          <input
+            type="file"
+            accept="video/mp4,video/quicktime"
+            multiple={maxClips !== 1}
+            disabled={uploading}
+            onChange={(e) => onFiles(e.target.files)}
+            className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+          />
+        </label>
+      )}
       {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
     </div>
   );
