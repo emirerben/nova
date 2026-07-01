@@ -1,123 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { uploadVoiceover } from "@/lib/generative-api";
-
-type Phase = "idle" | "recording" | "review";
-
-function fmtTime(secs: number): string {
-  const m = Math.floor(secs / 60);
-  const s = Math.floor(secs % 60);
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
-}
-
-function mediaRecorderSupported(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof navigator !== "undefined" &&
-    !!navigator.mediaDevices?.getUserMedia &&
-    typeof window.MediaRecorder !== "undefined"
-  );
-}
+import { fmtTime, useAudioRecorder, type AudioTake } from "@/hooks/useAudioRecorder";
 
 /**
  * Add a voiceover to a generative edit: record in-browser (mic + live waveform)
  * OR upload an audio file. Rendered on the light editorial system.
+ *
+ * Mic capture / MediaRecorder / waveform / upload-fallback all live in the
+ * shared `useAudioRecorder` hook; this component owns the upload + display copy.
  */
 export function VoiceRecorder({
   onVoiceover,
 }: {
   onVoiceover: (gcsPath: string | null) => void;
 }) {
-  const [recordSupported, setRecordSupported] = useState(false);
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [elapsed, setElapsed] = useState(0);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadedName, setUploadedName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [micBlocked, setMicBlocked] = useState(false);
-
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const streamRef = useRef<MediaStream | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  useEffect(() => {
-    setRecordSupported(mediaRecorderSupported());
-  }, []);
-
-  const stopTracksAndAudio = useCallback(() => {
-    if (rafRef.current != null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    if (timerRef.current != null) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    streamRef.current?.getTracks().forEach((t) => t.stop());
-    streamRef.current = null;
-    if (audioCtxRef.current) {
-      audioCtxRef.current.close().catch(() => {});
-      audioCtxRef.current = null;
-    }
-    analyserRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopTracksAndAudio();
-      if (audioUrl) URL.revokeObjectURL(audioUrl);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stopTracksAndAudio]);
-
-  const drawWaveform = useCallback(() => {
-    const canvas = canvasRef.current;
-    const analyser = analyserRef.current;
-    if (!canvas || !analyser) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const bufferLength = analyser.frequencyBinCount;
-    const data = new Uint8Array(bufferLength);
-
-    const render = () => {
-      rafRef.current = requestAnimationFrame(render);
-      analyser.getByteTimeDomainData(data);
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#f4f4f5"; // zinc-100 — light canvas
-      ctx.fillRect(0, 0, w, h);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "#52525b"; // zinc-600
-      ctx.beginPath();
-      const slice = w / bufferLength;
-      let x = 0;
-      for (let i = 0; i < bufferLength; i++) {
-        const v = data[i] / 128.0;
-        const y = (v * h) / 2;
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-        x += slice;
-      }
-      ctx.lineTo(w, h / 2);
-      ctx.stroke();
-    };
-    render();
-  }, []);
 
   const doUpload = useCallback(
-    async (file: File | Blob, filename: string, displayName: string) => {
+    async (take: AudioTake, displayName: string) => {
       setUploading(true);
       setError(null);
       try {
-        const r = await uploadVoiceover(file, filename);
+        const r = await uploadVoiceover(take.blob, take.filename);
         setUploadedName(displayName);
         onVoiceover(r.gcs_path);
       } catch (e) {
@@ -130,96 +38,31 @@ export function VoiceRecorder({
     [onVoiceover],
   );
 
-  const startRecording = useCallback(async () => {
-    setError(null);
-    setMicBlocked(false);
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      const AudioCtor =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext })
-          .webkitAudioContext;
-      const audioCtx = new AudioCtor();
-      audioCtxRef.current = audioCtx;
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
-      source.connect(analyser);
-      analyserRef.current = analyser;
-
-      chunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      recorderRef.current = recorder;
-      recorder.ondataavailable = (ev) => {
-        if (ev.data.size > 0) chunksRef.current.push(ev.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, {
-          type: chunksRef.current[0]?.type || "audio/webm",
-        });
-        stopTracksAndAudio();
-        const url = URL.createObjectURL(blob);
-        setAudioUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
-        setPhase("review");
-        void doUpload(blob, "voiceover.webm", "Recorded voiceover");
-      };
-      recorder.start();
-
-      setElapsed(0);
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
-      setPhase("recording");
-      drawWaveform();
-    } catch (e) {
-      stopTracksAndAudio();
-      setMicBlocked(true);
-      setPhase("idle");
+  const onTake = useCallback(
+    (take: AudioTake) => {
       setError(null);
-      void e;
-    }
-  }, [doUpload, drawWaveform, stopTracksAndAudio]);
-
-  const stopRecording = useCallback(() => {
-    recorderRef.current?.stop();
-    recorderRef.current = null;
-  }, []);
-
-  const reset = useCallback(() => {
-    stopTracksAndAudio();
-    setAudioUrl((prev) => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    setPhase("idle");
-    setElapsed(0);
-    setUploadedName(null);
-    setError(null);
-    onVoiceover(null);
-  }, [onVoiceover, stopTracksAndAudio]);
-
-  const handleFile = useCallback(
-    (files: FileList | null) => {
-      const file = files?.[0];
-      if (!file) return;
-      const url = URL.createObjectURL(file);
-      setAudioUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
-      setPhase("review");
-      void doUpload(file, file.name, file.name);
+      void doUpload(take, take.fromFile ? take.filename : "Recorded voiceover");
     },
     [doUpload],
   );
 
+  const onClear = useCallback(() => {
+    setUploadedName(null);
+    setError(null);
+    onVoiceover(null);
+  }, [onVoiceover]);
+
+  const rec = useAudioRecorder({ onTake, onClear });
+
+  const startRecording = useCallback(() => {
+    setError(null);
+    void rec.start();
+  }, [rec]);
+
   const liveStatus =
-    phase === "recording"
-      ? `Recording, ${fmtTime(elapsed)}`
-      : phase === "review"
+    rec.phase === "recording"
+      ? `Recording, ${fmtTime(rec.elapsed)}`
+      : rec.phase === "review"
         ? uploading
           ? "Uploading voiceover"
           : uploadedName
@@ -233,7 +76,7 @@ export function VoiceRecorder({
         {liveStatus}
       </p>
 
-      {micBlocked && (
+      {rec.micBlocked && (
         <div className="rounded border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-sm text-[#3f3f46]">
           Mic blocked. Upload an audio file instead, or enable mic in your browser
           settings.
@@ -245,9 +88,9 @@ export function VoiceRecorder({
         </div>
       )}
 
-      {phase === "idle" && (
+      {rec.phase === "idle" && (
         <div className="flex flex-wrap items-center gap-3">
-          {recordSupported && (
+          {rec.recordSupported && (
             <button
               type="button"
               onClick={startRecording}
@@ -265,13 +108,16 @@ export function VoiceRecorder({
               type="file"
               accept="audio/*"
               className="sr-only"
-              onChange={(e) => handleFile(e.target.files)}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) rec.useFile(file);
+              }}
             />
           </label>
         </div>
       )}
 
-      {phase === "recording" && (
+      {rec.phase === "recording" && (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="inline-flex items-center gap-2 text-sm text-[#3f3f46]">
@@ -281,10 +127,10 @@ export function VoiceRecorder({
               />
               Recording
             </span>
-            <span className="text-sm tabular-nums text-[#71717a]">{fmtTime(elapsed)}</span>
+            <span className="text-sm tabular-nums text-[#71717a]">{fmtTime(rec.elapsed)}</span>
           </div>
           <canvas
-            ref={canvasRef}
+            ref={rec.canvasRef}
             aria-hidden
             width={640}
             height={64}
@@ -292,7 +138,7 @@ export function VoiceRecorder({
           />
           <button
             type="button"
-            onClick={stopRecording}
+            onClick={rec.stop}
             aria-label="Stop recording"
             aria-pressed
             className="inline-flex min-h-[44px] items-center gap-2 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
@@ -303,10 +149,10 @@ export function VoiceRecorder({
         </div>
       )}
 
-      {phase === "review" && (
+      {rec.phase === "review" && (
         <div className="space-y-3">
-          {audioUrl && (
-            <audio src={audioUrl} controls className="w-full">
+          {rec.audioUrl && (
+            <audio src={rec.audioUrl} controls className="w-full">
               <track kind="captions" />
             </audio>
           )}
@@ -317,11 +163,11 @@ export function VoiceRecorder({
             )}
             <button
               type="button"
-              onClick={reset}
+              onClick={rec.reset}
               aria-label="Remove voiceover"
               className="inline-flex min-h-[44px] items-center rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] hover:border-zinc-400"
             >
-              {recordSupported ? "Retake / remove" : "Remove"}
+              {rec.recordSupported ? "Retake / remove" : "Remove"}
             </button>
           </div>
         </div>

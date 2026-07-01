@@ -269,6 +269,32 @@ Four new / redesigned components shipped with the idea-centric plan redesign. Ru
 
 ---
 
+## §13 Teleprompter surface (transcript voiceover helper)
+
+The "Get a transcript" focus takeover (`/plan/items/[id]/transcript`) — full-screen
+step-rail wizard (Brief · Questions · Script · Record · Review) on the light
+editorial system. Rules supplement §2. Entry: a quiet lime line on the item
+voiceover section (narrated formats only), flag-gated by
+`NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED`.
+
+- **Reading highlight (teleprompter):** the transcript line nearest the viewport
+  center gets `bg-lime-50 border-l-[3px] border-lime-600`. It is **scroll-driven,
+  not time-driven** — a reading aid, NOT karaoke. No auto-scroll, no auto-advance,
+  no motion token: highlight moves only as the reader scrolls. Non-active lines
+  carry a transparent `border-l-[3px]` so the size never jumps.
+- **Read-time badge:** `border-lime-200 bg-lime-50 text-lime-800` soft pill
+  (`≈ M:SS to read`) — same family as the §2 soft cell. Used on the Script step
+  and derived from `read_time_s`.
+- **Muted-video visual reference:** a plain `StableVideo` with `muted` (`loop`,
+  `autoPlay`, `playsInline`). MUTED is load-bearing — footage audio would bleed
+  into the mic and corrupt take alignment, so it is never un-muted here. Pin with
+  `identity` (variant id) as elsewhere. When no render exists, the pane falls back
+  to a dashed-zinc reading-only invite (empty-state = action, not absence).
+- **Reading controls:** A−/A+ font-size buttons (a11y), 44px record targets,
+  `aria-live` recording state, space = start/stop.
+
+---
+
 ## §11 Calibration examples
 
 Quick right/wrong pairs for common review questions.

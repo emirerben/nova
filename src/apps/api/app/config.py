@@ -129,6 +129,14 @@ class Settings(BaseSettings):
     # stays the rollback lever: set False to revert to the voiceover-montage path.
     narrated_archetype_enabled: bool = True
 
+    # "Get a transcript" helper for narrated-walkthrough voiceovers. When False,
+    # the transcript routes (POST/GET /plan-items/{id}/transcript/*) return 404 and
+    # the frontend entry link is hidden (mirror flag NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED
+    # in Vercel — keep Fly + Vercel in sync). Default OFF until the flow ships behind
+    # the flag. Gates only the optional helper; the record/upload voiceover bar is
+    # unaffected. See plans/on-the-narrated-walkthrough-*.md.
+    transcript_helper_enabled: bool = False
+
     # Layer-2 text-overlay extraction pipeline. When False, the existing
     # single-call `nova.compose.template_text` Gemini agent runs unchanged.
     # When True, the OCR + grouping + transcript-alignment pipeline replaces
