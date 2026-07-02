@@ -33,6 +33,23 @@ def test_content_plan_edit_format_defaults_and_coerces():
     )
 
 
+def test_content_plan_edit_format_accepts_subtitled():
+    # "subtitled" (single-clip auto-caption style, v0.6.8.0) is a VALID vocabulary
+    # token: an LLM that emits it validates as-is instead of coercing to montage.
+    # Downstream stays safe — the archetype dispatch falls back to montage when
+    # SUBTITLED_ARCHETYPE_ENABLED is off (test_resolve_subtitled_flag_off_falls
+    # _back_to_montage), and the render uses only the first clip, recording a
+    # `subtitled_extra_clips_ignored` trace event when the item carries more.
+    assert (
+        PlanItemSpec(day_index=1, theme="t", idea="i", edit_format="subtitled").edit_format
+        == "subtitled"
+    )
+    assert (
+        PlanItemSpec(day_index=1, theme="t", idea="i", edit_format="Subtitled").edit_format
+        == "subtitled"
+    )
+
+
 def test_clip_metadata_labels_default_when_absent():
     # Additive: a model that omits the labels (or a pre-bump replay fixture) parses
     # with neutral defaults that never falsely promote a clip to the talking spine.
