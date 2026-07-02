@@ -1308,6 +1308,11 @@ async def apply_item_captions(
     """Reburn the variant's edited captions onto its caption-free base (async)."""
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_apply_captions(job, variant_id)
+    # Persist the synchronous render_status="rendering" gate-close: the dispatcher
+    # mutates job.assembly_plan, and get_db does NOT commit on exit — without this
+    # commit the write rolls back and the enqueue-window race reopens (siblings
+    # retext/swap-song commit after dispatch for the same reason).
+    await db.commit()
     log.info("plan_item_apply_captions", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1353,6 +1358,8 @@ async def set_item_caption_language(
     """
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_retranscribe_captions(job, variant_id, language=req.language)
+    # Same commit rationale as apply_item_captions above — the gate-close must persist.
+    await db.commit()
     log.info(
         "plan_item_set_caption_language",
         item_id=item_id,

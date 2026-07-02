@@ -77,6 +77,7 @@ export default function CaptionEditor({
   reviewFirst = false,
   captionLanguage = null,
   onChangeLanguage,
+  previewBottomCqh = 9.4,
   onApplied,
 }: {
   itemId: string;
@@ -101,6 +102,13 @@ export default function CaptionEditor({
   captionLanguage?: string | null;
   /** Re-transcribe in a new language (subtitled). Replaces cues + edits — confirmed here. */
   onChangeLanguage?: (language: CaptionLanguage) => void;
+  /**
+   * Vertical offset of the caption preview from the video bottom, in cqh (container
+   * height %). Must mirror the burn's ASS MarginV or the editor lies about position:
+   * narrated burns at MarginV 180/1920 → 9.4 (default); subtitled burns at the
+   * platform-safe MarginV 384/1920 → 20.
+   */
+  previewBottomCqh?: number;
   onApplied?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -299,21 +307,22 @@ export default function CaptionEditor({
       )}
 
       {captionLanguage && onChangeLanguage && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="inline-flex items-center gap-1.5 rounded-full border border-lime-200 bg-lime-50 px-3 py-1 text-xs font-medium text-lime-800">
             Captions in {CAPTION_LANGUAGE_LABELS[captionLanguage] ?? captionLanguage}
           </span>
           {pendingLang === null ? (
             <button
               type="button"
+              aria-label="Change caption language"
               disabled={busy}
               onClick={() => setPendingLang(captionLanguage === "tr" ? "en" : "tr")}
-              className="text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center px-1 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Change
             </button>
           ) : (
-            <span className="inline-flex items-center gap-2 text-xs text-[#3f3f46]">
+            <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-[#3f3f46]">
               Re-transcribe in {CAPTION_LANGUAGE_LABELS[pendingLang]}? This replaces your
               captions.
               <button
@@ -324,14 +333,14 @@ export default function CaptionEditor({
                   setPendingLang(null);
                   onChangeLanguage(next);
                 }}
-                className="rounded-md bg-black px-2 py-1 font-medium text-white disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-lg bg-black px-3 font-medium text-white disabled:opacity-50"
               >
                 Re-transcribe
               </button>
               <button
                 type="button"
                 onClick={() => setPendingLang(null)}
-                className="text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+                className="inline-flex min-h-[44px] items-center px-1 text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
               >
                 Cancel
               </button>
@@ -368,7 +377,7 @@ export default function CaptionEditor({
           {active && (
             <div
               className="absolute inset-x-0 flex justify-center"
-              style={{ bottom: "9.4cqh" }}
+              style={{ bottom: `${previewBottomCqh}cqh` }}
             >
               {paused && editing === activeIndex ? (
                 <textarea
@@ -395,6 +404,7 @@ export default function CaptionEditor({
                   aria-label={paused ? `Edit caption: ${active.text}` : undefined}
                   onClick={() => {
                     if (paused) {
+                      markReviewed(); // on-video editing counts as reviewing (D6)
                       setEditing(activeIndex);
                       setEditSource("video");
                     }
@@ -402,6 +412,7 @@ export default function CaptionEditor({
                   onKeyDown={(e) => {
                     if (paused && (e.key === "Enter" || e.key === " ")) {
                       e.preventDefault();
+                      markReviewed();
                       setEditing(activeIndex);
                       setEditSource("video");
                     }
@@ -494,7 +505,7 @@ export default function CaptionEditor({
               key={i}
               className="flex min-h-[44px] w-full items-center gap-2 rounded-lg bg-lime-50 px-2 py-1.5 text-left text-sm"
             >
-              <span className="mt-0.5 w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
+              <span className="w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
                 {formatTime(c.start_s)}
               </span>
               <input
@@ -522,7 +533,7 @@ export default function CaptionEditor({
                   i === activeIndex ? "bg-lime-50 text-lime-900" : "hover:bg-zinc-50 text-[#3f3f46]"
                 }`}
               >
-                <span className="mt-0.5 w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
+                <span className="w-10 shrink-0 text-[11px] tabular-nums text-zinc-400">
                   {formatTime(c.start_s)}
                 </span>
                 <span className="flex-1">{c.text}</span>

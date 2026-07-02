@@ -50,7 +50,21 @@ class TranscribeError(Exception):
 
 # whisper reports the detected language as a full lowercase name in verbose_json
 # ("turkish") and as an ISO code from faster-whisper ("tr"). Normalize both to ISO.
-_LANG_NAME_TO_ISO = {"english": "en", "turkish": "tr"}
+_LANG_NAME_TO_ISO = {
+    "english": "en",
+    "turkish": "tr",
+    "german": "de",
+    "spanish": "es",
+    "french": "fr",
+    "italian": "it",
+    "portuguese": "pt",
+    "dutch": "nl",
+    "russian": "ru",
+    "arabic": "ar",
+    "japanese": "ja",
+    "korean": "ko",
+    "chinese": "zh",
+}
 
 
 def _normalize_lang(value: str) -> str:

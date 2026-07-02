@@ -698,14 +698,27 @@ class CaptionCue(BaseModel):
     # worker and leaves the cue poisoned (every Apply then fails).
     model_config = {"allow_inf_nan": False}
 
-    text: str
+    # Length-capped: the word-pop burn emits one Dialogue event PER TOKEN, each
+    # carrying the full line (O(tokens²) chars per cue) — an unbounded text field
+    # would let one captions PATCH build a multi-GB ASS on the worker. Cues are
+    # ≤ ~14 words by construction, so 600 chars is generous.
+    text: str = Field(max_length=600)
     start_s: float
     end_s: float
     # Optional per-word timings for the word-by-word subtitled style. Carried so a
     # reburn re-pops the SAME words at their real (audio-locked) times; when the user
     # edits a cue its stored words no longer spell the text and the burn re-synthesizes
-    # them (E3). None for sentence-style captions.
+    # them (E3). None for sentence-style captions. Bounded: cues are ≤ ~14 words by
+    # construction (build_plain_cues), so a generous cap keeps the debounced PATCH from
+    # becoming an unbounded JSONB write surface.
     words: list[CaptionWord] | None = None
+
+    @field_validator("words")
+    @classmethod
+    def _cap_words(cls, v: list[CaptionWord] | None) -> list[CaptionWord] | None:
+        if v is not None and len(v) > 100:
+            raise ValueError("Too many words on one caption line (max 100).")
+        return v
 
 
 class CaptionsRequest(BaseModel):
@@ -835,6 +848,19 @@ async def persist_variant_caption_font(
     await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
 
 
+def _mark_variant_rendering(job: Job, variant_id: str) -> None:
+    """Persist render_status="rendering" synchronously at dispatch (the swap-song
+    pattern) so the 409 gate closes IMMEDIATELY — without it, two dispatches in the
+    enqueue→dequeue window both pass the gate and race to a last-writer-wins state
+    (e.g. a reburn of old cues landing after a re-transcribe)."""
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["render_status"] = "rendering"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+
+
 def dispatch_apply_captions(job: Job, variant_id: str) -> None:
     """Reburn the variant's (persisted, hand-edited) caption cues onto its
     caption-free base — the Apply step of the on-video caption editor."""
@@ -844,6 +870,7 @@ def dispatch_apply_captions(job: Job, variant_id: str) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Captions can only be applied on captioned variants.",
         )
+    _mark_variant_rendering(job, variant_id)
     from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
 
     reburn_narrated_captions.delay(str(job.id), variant_id)
@@ -865,6 +892,14 @@ def dispatch_retranscribe_captions(job: Job, variant_id: str, *, language: str) 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Changing the caption language is only available on subtitled videos.",
         )
+    if not variant.get("base_video_path"):
+        # A no-speech subtitled variant has no caption-free base — the worker would
+        # no-op. Surface it at the route like the sibling caption endpoints do.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This video has no captions to re-transcribe.",
+        )
+    _mark_variant_rendering(job, variant_id)
     from app.tasks.generative_build import retranscribe_subtitled_captions  # noqa: PLC0415
 
     retranscribe_subtitled_captions.delay(str(job.id), variant_id, lang)

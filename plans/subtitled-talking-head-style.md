@@ -416,6 +416,25 @@ end** and reburn + preview cleanly. Re-scoped accordingly.
 - **Subtitled cues in the Text-lane** — already works (the timeline conversion is
   `caption_cues`-driven, not archetype-gated).
 
+### Post-land TODOs (from the /review pre-landing pass, user-approved deferrals)
+
+- **P2 — Surface silent re-transcribe failures.** On whisper/gpt-4o failure or an
+  empty new-language transcript, the task keeps existing captions and resets to
+  `ready` with NO user-facing signal (spinner → unchanged captions). Persist a
+  transient `last_edit_outcome` on the variant, return it in
+  `_variants_for_response`, show a one-line toast; clear on next success.
+- **P2 — Stuck-`rendering` sweeper.** A SIGKILL past a caption task's hard
+  `time_limit` (660s) skips the except-reset and bricks the variant's editability
+  (409 forever). Pre-existing class (reburn); now 3 tasks share it. Add a sweeper or
+  startup reconciliation for stale `render_status="rendering"`.
+- **P3 — DRY refactors.** Extract the shared transcribe→correct→resplit→burn helper
+  (3 call sites), dedupe the caption-style picker into a component (narrated +
+  subtitled near-verbatim copies), move the language/archetype sets into a shared
+  constants module (lockstep is currently test-enforced only).
+- **P3 — Editing while `rendering` is discarded on remount.** Debounced cue saves
+  409 during a reburn and the remount re-seeds server cues, silently dropping
+  keystrokes typed mid-render. Gate cue editing on `!rendering`.
+
 ### Still deferred
 
 - **D5 language OVERRIDE** (change language → re-transcribe): the core Turkish case

@@ -172,14 +172,17 @@ def build_plain_cues(
             cue_end = max(cue_start + 0.01, cue_end)
             cue: dict = {"text": text, "start_s": round(cue_start, 3), "end_s": round(cue_end, 3)}
             if attach_words:
+                # SAME tokenization as `text` (_coalesce_words): a stray punctuation-only
+                # whisper token attaches to the previous word. Raw `g` words would carry
+                # one MORE entry than text.split(), silently failing the aligned check
+                # and demoting word-pop to synthesized timing.
                 cue["words"] = [
                     {
-                        "text": w.text,
-                        "start_s": round(max(0.0, float(w.start_s) - offset_s), 3),
-                        "end_s": round(max(0.0, float(w.end_s) - offset_s), 3),
+                        "text": tok_text,
+                        "start_s": round(max(0.0, tok_start - offset_s), 3),
+                        "end_s": round(max(0.0, tok_end - offset_s), 3),
                     }
-                    for w in g
-                    if str(w.text).strip()
+                    for tok_text, tok_start, tok_end in _coalesce_words(g)
                 ]
             cues.append(cue)
         sentence.clear()
@@ -248,8 +251,10 @@ _ACTIVE_WORD_ASS_COLOR = "&H0016CC84"
 # stays byte-identical for narrated.
 _SENTENCE_POP_TAGS = "{\\fad(120,0)\\fscx94\\fscy94\\t(0,140,\\fscx100\\fscy100)}"
 
-# Splits corrected text into display sentences at terminal punctuation.
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+# Splits corrected text into display sentences at terminal punctuation. The
+# negative lookbehind keeps Turkish ordinals/abbreviations together: "3. gün"
+# must not split into a dangling "3." caption.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])(?<!\d\.)\s+")
 
 
 def resplit_cues_into_sentences(cues: list[dict]) -> list[dict]:
@@ -315,10 +320,17 @@ def resplit_cues_into_sentences(cues: list[dict]) -> list[dict]:
             cursor = seg_end
             tok_i += n_toks
 
+        seg_tok_i = 0
         for s, (seg_start, seg_end) in zip(sentences, boundaries):
-            pieces.append({"text": s, "start_s": round(seg_start, 3), "end_s": round(seg_end, 3)})
-        # NOTE: per-word `words` are NOT carried onto split pieces — word-pop re-derives
-        # timing via synthesize (E3) and sentence mode never reads them.
+            piece: dict = {"text": s, "start_s": round(seg_start, 3), "end_s": round(seg_end, 3)}
+            n_toks = len(s.split())
+            if aligned:
+                # Carry the REAL per-word timings onto the piece so the word-pop burn
+                # stays audio-locked (an LLM-corrected cue already dropped its words →
+                # aligned is False there and word-pop synthesizes instead, per E3).
+                piece["words"] = [dict(w) for w in words[seg_tok_i : seg_tok_i + n_toks]]
+            pieces.append(piece)
+            seg_tok_i += n_toks
 
     # Merge short unpunctuated tail fragments into the following cue ("Ona" + "onar…").
     merged: list[dict] = []
@@ -331,25 +343,35 @@ def resplit_cues_into_sentences(cues: list[dict]) -> list[dict]:
         )
         if is_fragment:
             nxt = pieces[i + 1]
-            merged.append(
-                {
-                    "text": f"{text} {str(nxt['text']).strip()}",
-                    "start_s": p["start_s"],
-                    "end_s": nxt["end_s"],
-                }
-            )
+            merged_piece: dict = {
+                "text": f"{text} {str(nxt['text']).strip()}",
+                "start_s": p["start_s"],
+                "end_s": nxt["end_s"],
+            }
+            # Words survive a merge only when BOTH sides carry them (else the combined
+            # list wouldn't spell the text and word-pop would mis-highlight).
+            if isinstance(p.get("words"), list) and isinstance(nxt.get("words"), list):
+                merged_piece["words"] = list(p["words"]) + list(nxt["words"])
+            merged.append(merged_piece)
             i += 2
             continue
-        merged.append({"text": text, "start_s": p["start_s"], "end_s": p["end_s"]})
+        merged.append(p)
         i += 1
 
-    # Monotonic + non-overlapping guarantee.
+    # Monotonic + non-overlapping guarantee (preserves `words` — their times are the
+    # real audio times; only the cue window is clamped).
     out: list[dict] = []
     prev_end = 0.0
     for p in merged:
         s = max(float(p["start_s"]), prev_end)
         e = max(s + 0.01, float(p["end_s"]))
-        out.append({"text": p["text"], "start_s": round(s, 3), "end_s": round(e, 3)})
+        clamped = {
+            **p,
+            "text": str(p["text"]).strip(),
+            "start_s": round(s, 3),
+            "end_s": round(e, 3),
+        }
+        out.append(clamped)
         prev_end = e
     return out
 
@@ -462,6 +484,7 @@ def generate_word_pop_ass(
     """
     mv = margin_v if margin_v is not None else SUBTITLED_CAPTION_MARGIN_V
     lines: list[str] = []
+    prev_end = 0.0  # monotonic clamp across ALL events (cues included)
     for cue in cues:
         windows = _word_windows_for_cue(cue)
         if not windows:
@@ -469,9 +492,14 @@ def generate_word_pop_ass(
         tokens = [w["text"] for w in windows]
         n = len(windows)
         for i, w in enumerate(windows):
-            start = max(0.0, float(w["start_s"]))
+            # Clamp against the previous event: whisper word timestamps occasionally
+            # regress at segment boundaries, and every word-pop event draws the FULL
+            # line — an overlap would stack two complete captions (the lyric-injector
+            # stacked-text incident class). Mirrors build_word_cues' guard.
+            start = max(0.0, float(w["start_s"]), prev_end)
             nxt = float(windows[i + 1]["start_s"]) if i + 1 < n else float(w["end_s"])
             end = max(start + 0.01, nxt)
+            prev_end = end
             text = _compose_word_pop_text(tokens, i)
             lines.append(
                 f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,{text}"

@@ -698,7 +698,8 @@ export default function PlanItemPage() {
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Edit style
                 </p>
-                <div className="flex gap-2">
+                {/* Stack on mobile (3 cards don't fit a 375px row), equal columns from sm:. */}
+                <div className="grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
                   {(
                     [
                       { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
@@ -733,7 +734,7 @@ export default function PlanItemPage() {
                         <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
                           {label}
                         </span>
-                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                        <span className="mt-0.5 text-xs text-[#71717a]">{desc}</span>
                       </button>
                     );
                   })}
@@ -1917,6 +1918,9 @@ function FocusedResults({
                       // audio — nudge review before Apply (D6). Narrated (own voiceover)
                       // doesn't need it.
                       reviewFirst={variant.resolved_archetype === "subtitled"}
+                      // Preview offset mirrors the burn: subtitled burns at the
+                      // platform-safe MarginV 384/1920 (20%); narrated at 180 (9.4%).
+                      previewBottomCqh={variant.resolved_archetype === "subtitled" ? 20 : 9.4}
                       // D5 language override — chip + re-transcribe, subtitled only.
                       captionLanguage={
                         variant.resolved_archetype === "subtitled"

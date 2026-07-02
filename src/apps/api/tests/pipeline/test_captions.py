@@ -82,6 +82,123 @@ def test_resplit_single_sentence_cue_is_unchanged():
     ]
 
 
+def test_resplit_preserves_words_on_unsplit_cues():
+    """REGRESSION (specialist-found): the merge/monotonic passes used to rebuild bare
+    {text,start_s,end_s} cues, stripping `words` — so word-pop NEVER got real timings
+    in production and always fell back to the even split."""
+    cue = {
+        "text": "bugün size çok.",
+        "start_s": 0.0,
+        "end_s": 1.5,
+        "words": [
+            {"text": "bugün", "start_s": 0.0, "end_s": 0.5},
+            {"text": "size", "start_s": 0.5, "end_s": 0.9},
+            {"text": "çok.", "start_s": 0.9, "end_s": 1.5},
+        ],
+    }
+    out = resplit_cues_into_sentences([cue])
+    assert out[0].get("words"), "unsplit cue must keep real per-word timings for word-pop"
+    assert [w["text"] for w in out[0]["words"]] == ["bugün", "size", "çok."]
+
+
+def test_resplit_aligned_split_slices_words_per_sentence():
+    """A word-aligned multi-sentence cue slices its real word timings onto each piece,
+    so word-pop stays audio-locked after the sentence re-split."""
+    cue = {
+        "text": "Merhaba dünya. Nasılsın bugün.",
+        "start_s": 0.0,
+        "end_s": 10.0,
+        "words": [
+            {"text": "Merhaba", "start_s": 0.0, "end_s": 0.8},
+            {"text": "dünya.", "start_s": 0.8, "end_s": 1.2},
+            {"text": "Nasılsın", "start_s": 7.0, "end_s": 7.8},
+            {"text": "bugün.", "start_s": 7.8, "end_s": 8.4},
+        ],
+    }
+    out = resplit_cues_into_sentences([cue])
+    assert len(out) == 2
+    assert [w["text"] for w in out[0]["words"]] == ["Merhaba", "dünya."]
+    assert [w["text"] for w in out[1]["words"]] == ["Nasılsın", "bugün."]
+    assert out[1]["words"][0]["start_s"] == 7.0  # real audio time, not proportional
+
+
+def test_resplit_fragment_merge_concats_words_when_both_sides_have_them():
+    cues = [
+        {
+            "text": "Ona",
+            "start_s": 10.0,
+            "end_s": 11.0,
+            "words": [{"text": "Ona", "start_s": 10.0, "end_s": 11.0}],
+        },
+        {
+            "text": "onar adet yapıyoruz.",
+            "start_s": 11.0,
+            "end_s": 12.1,
+            "words": [
+                {"text": "onar", "start_s": 11.0, "end_s": 11.4},
+                {"text": "adet", "start_s": 11.4, "end_s": 11.7},
+                {"text": "yapıyoruz.", "start_s": 11.7, "end_s": 12.1},
+            ],
+        },
+    ]
+    out = resplit_cues_into_sentences(cues)
+    assert len(out) == 1
+    assert out[0]["text"] == "Ona onar adet yapıyoruz."
+    assert [w["text"] for w in out[0]["words"]] == ["Ona", "onar", "adet", "yapıyoruz."]
+
+
+def test_resplit_boundaries():
+    assert resplit_cues_into_sentences([]) == []
+    # empty-text cue dropped
+    assert resplit_cues_into_sentences([{"text": "  ", "start_s": 0.0, "end_s": 1.0}]) == []
+    # a final-position ≤2-word unpunctuated fragment has no next cue → stays standalone
+    out = resplit_cues_into_sentences([{"text": "Ona", "start_s": 0.0, "end_s": 1.0}])
+    assert [c["text"] for c in out] == ["Ona"]
+
+
+def test_resplit_does_not_split_after_turkish_ordinals():
+    """"3. gün böyle geçti." must NOT split into a dangling "3." caption (the
+    fragment-merge can't rescue it — "3." carries terminal punctuation)."""
+    cues = [{"text": "Bu 3. gün böyle geçti. Devam ediyoruz.", "start_s": 0.0, "end_s": 4.0}]
+    out = resplit_cues_into_sentences(cues)
+    assert [c["text"] for c in out] == ["Bu 3. gün böyle geçti.", "Devam ediyoruz."]
+
+
+def test_attach_words_tokenization_matches_text_with_stray_punct():
+    """A punctuation-only whisper token coalesces into the previous word in BOTH the
+    cue text and the attached words — otherwise the aligned check silently fails and
+    word-pop degrades to synthesized timing."""
+    words = [
+        Word(text="hello", start_s=0.0, end_s=0.5, confidence=1.0),
+        Word(text=".", start_s=0.5, end_s=0.6, confidence=1.0),  # stray token
+        Word(text="World", start_s=0.6, end_s=1.0, confidence=1.0),
+        Word(text="two.", start_s=1.0, end_s=1.4, confidence=1.0),
+    ]
+    cues = build_plain_cues(words, attach_words=True)
+    for cue in cues:
+        toks = cue["text"].split()
+        assert [w["text"] for w in cue["words"]] == toks  # 1:1, spellings match
+
+
+def test_sanitize_strips_carriage_returns():
+    from app.pipeline.ass_utils import sanitize_ass_text
+
+    assert sanitize_ass_text("a\r\nb") == "a\\Nb"
+    assert sanitize_ass_text("a\rb") == "a\\Nb"
+
+
+def test_build_plain_cues_attach_words_offset_and_default():
+    words = [
+        Word(text="hello", start_s=2.0, end_s=2.5, confidence=1.0),
+        Word(text="world.", start_s=2.5, end_s=3.0, confidence=1.0),
+    ]
+    attached = build_plain_cues(words, offset_s=2.0, attach_words=True)
+    assert attached[0]["words"][0] == {"text": "hello", "start_s": 0.0, "end_s": 0.5}
+    assert attached[0]["words"][1]["start_s"] == 0.5  # offset-shifted
+    # default stays byte-identical: no words key
+    assert "words" not in build_plain_cues(words, offset_s=2.0)[0]
+
+
 def test_pop_in_prepends_animation_tags_only_when_asked(tmp_path):
     cues = [{"text": "Kaçar adet yapıyoruz?", "start_s": 0.0, "end_s": 1.5}]
     pop = tmp_path / "pop.ass"
@@ -136,6 +253,10 @@ def test_word_pop_highlights_one_word_per_event_with_real_timings(tmp_path):
         # exactly the i-th word is popped lime, exactly once
         assert ev.count(_ACTIVE_WORD_ASS_COLOR) == 1
         assert f"{{\\c{_ACTIVE_WORD_ASS_COLOR}&}}{tokens[i]}" in ev
+    # Real word timings drive the event boundaries (an even split over [0,1.5]
+    # would put event 2 at 0.50→1.00 — assert the true 0.50→0.90 window instead).
+    assert "Dialogue: 0,0:00:00.50,0:00:00.90" in events[1]
+    assert events[2].startswith("Dialogue: 0,0:00:00.90")
     # line-visible look (plain 78px at the safe margin) — NOT the one-big-word 120px
     style = _style_line(out)
     assert ",78," in style
@@ -160,6 +281,36 @@ def test_word_pop_synthesizes_for_an_edited_cue(tmp_path):
     events = _events(out)
     assert len(events) == 3  # three edited tokens
     assert f"{{\\c{_ACTIVE_WORD_ASS_COLOR}&}}az" in events[2]  # new word is captioned
+
+
+def test_word_pop_clamps_out_of_order_word_times(tmp_path):
+    """Whisper word timestamps can regress at segment boundaries; every word-pop event
+    draws the FULL line, so an overlap would stack two complete captions (the
+    lyric-injector stacked-text incident class). Events must be monotonic."""
+    cue = {
+        "text": "bir iki üç",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "words": [
+            {"text": "bir", "start_s": 0.0, "end_s": 0.8},
+            {"text": "iki", "start_s": 0.5, "end_s": 1.2},  # regressed start (< prev end)
+            {"text": "üç", "start_s": 1.2, "end_s": 2.0},
+        ],
+    }
+    out = tmp_path / "clamp.ass"
+    generate_word_pop_ass([cue], str(out))
+    events = _events(out)
+    # Parse start/end times back out and assert non-overlap.
+    import re as _re
+
+    times = [_re.match(r"Dialogue: 0,([\d:.]+),([\d:.]+),", ev).groups() for ev in events]
+
+    def _s(t: str) -> float:
+        h, m, rest = t.split(":")
+        return int(h) * 3600 + int(m) * 60 + float(rest)
+
+    for (s1, e1), (s2, _e2) in zip(times, times[1:]):
+        assert _s(e1) <= _s(s2) + 1e-6, f"overlapping events: {e1} > {s2}"
 
 
 def test_word_pop_empty_cue_writes_valid_empty_ass(tmp_path):

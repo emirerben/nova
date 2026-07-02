@@ -159,3 +159,52 @@ describe("CaptionEditor review-first notice (D6)", () => {
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });
 });
+
+// D5: the language chip's re-transcribe destructively replaces every caption edit,
+// so it MUST be confirm-gated and must send the TOGGLED language.
+describe("CaptionEditor language chip (D5)", () => {
+  function renderChip(onChangeLanguage = jest.fn(), captionLanguage = "en") {
+    render(
+      <CaptionEditor
+        itemId="item-1"
+        variantId="var-1"
+        baseVideoUrl="https://example.com/base.mp4"
+        initialCues={CUES}
+        captionLanguage={captionLanguage}
+        onChangeLanguage={onChangeLanguage}
+      />,
+    );
+    return onChangeLanguage;
+  }
+
+  it("shows the current language and confirms before re-transcribing", () => {
+    const onChangeLanguage = renderChip();
+    expect(screen.getByText(/captions in english/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /change caption language/i }));
+    // Confirm gate: nothing fires until Re-transcribe is clicked.
+    expect(onChangeLanguage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /re-transcribe/i }));
+    expect(onChangeLanguage).toHaveBeenCalledWith("tr"); // toggled en → tr
+  });
+
+  it("cancel closes the confirm without firing", () => {
+    const onChangeLanguage = renderChip(jest.fn(), "tr");
+    expect(screen.getByText(/captions in türkçe/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /change caption language/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(onChangeLanguage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /re-transcribe/i })).not.toBeInTheDocument();
+  });
+
+  it("hides the chip entirely for narrated (no captionLanguage)", () => {
+    render(
+      <CaptionEditor
+        itemId="item-1"
+        variantId="var-1"
+        baseVideoUrl="https://example.com/base.mp4"
+        initialCues={CUES}
+      />,
+    );
+    expect(screen.queryByText(/captions in/i)).not.toBeInTheDocument();
+  });
+});

@@ -93,7 +93,9 @@ def correct_caption_cues(
     if not any(t.strip() for t in texts):
         return cues
 
-    model = (model or "").strip() or "gpt-4o-mini"
+    # Fall back to the settings default (gpt-4o) — NEVER hardcode gpt-4o-mini here;
+    # it's the model config.py documents as unreliable for Turkish grammar.
+    model = (model or "").strip() or settings.caption_correction_model or "gpt-4o"
     try:
         corrected = _llm_correct_lines(texts, language, model=model)
     except Exception as exc:  # noqa: BLE001 — correction is best-effort
@@ -106,14 +108,32 @@ def correct_caption_cues(
         return cues
 
     out: list[dict[str, Any]] = []
-    changed = 0
+    changes: list[dict[str, str]] = []
     for cue, new_text in zip(cues, corrected):
         new_text = new_text.strip()
         if new_text and new_text != str(cue.get("text", "")).strip():
+            changes.append({"before": str(cue.get("text", ""))[:300], "after": new_text[:300]})
             cue = {**cue, "text": new_text}
             # Stale per-word timings after a text change → let word-pop re-synthesize (E3).
             cue.pop("words", None)
-            changed += 1
         out.append(cue)
-    log.info("caption_correction_done", cues=len(out), changed=changed, model=model)
+    log.info("caption_correction_done", cues=len(out), changed=len(changes), model=model)
+    # Admin job-debug visibility: this is an LLM rewriting USER-FACING text, so the
+    # per-job trace must show it ran and what it changed. Silently drops when no
+    # trace scope is active (record_pipeline_event is scope-gated).
+    try:
+        from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+        record_pipeline_event(
+            "captions",
+            "caption_correction",
+            {
+                "model": model,
+                "language": language,
+                "changed": len(changes),
+                "changes": changes[:20],
+            },
+        )
+    except Exception:  # noqa: BLE001 — observability must never fail the render
+        pass
     return out

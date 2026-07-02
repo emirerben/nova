@@ -2784,6 +2784,10 @@ def _patch_reburn_io(monkeypatch, burned: dict):
 
     monkeypatch.setattr("app.storage.download_to_file", _dl)
     monkeypatch.setattr("app.storage.upload_public_read", lambda *a, **k: "https://signed/new")
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: burned.setdefault("deleted", []).append(path) or True,
+    )
     monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", lambda *a, **k: None)
 
     def _burn(*_a, **_k):
@@ -2840,6 +2844,54 @@ def test_reburn_rejects_non_caption_variant(monkeypatch):
         gb._run_reburn_narrated_captions(str(uuid.uuid4()), "original_text")
 
 
+def test_reburn_subtitled_uses_safe_margin_and_pop_in(monkeypatch):
+    """First burn and reburn MUST agree on margin + style or edited captions jump —
+    the invariant the code comments declare, pinned here."""
+    import uuid
+
+    variant = _narrated_caption_variant(
+        resolved_archetype="subtitled", variant_id="subtitled"
+    )
+    job = _FakeJob(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    burned = {"called": False}
+    _patch_reburn_io(monkeypatch, burned)
+    seen = {}
+
+    def _gen(cues, path, *, font_name, style, margin_v=None, pop_in=False):
+        seen.update(style=style, margin_v=margin_v, pop_in=pop_in)
+
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", _gen)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
+
+    from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V
+
+    assert seen == {"style": "plain", "margin_v": SUBTITLED_CAPTION_MARGIN_V, "pop_in": True}
+    assert burned["called"] is True
+
+
+def test_reburn_subtitled_word_style_routes_to_word_pop(monkeypatch):
+    import uuid
+
+    variant = _narrated_caption_variant(
+        resolved_archetype="subtitled", variant_id="subtitled", voiceover_caption_style="word"
+    )
+    job = _FakeJob(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    burned = {"called": False}
+    _patch_reburn_io(monkeypatch, burned)
+    seen = {"pop": False}
+    monkeypatch.setattr(
+        "app.pipeline.captions.generate_word_pop_ass",
+        lambda *a, **k: seen.update(pop=True),
+    )
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
+
+    assert seen["pop"] is True and burned["called"] is True
+
+
 def test_finalize_job_preserves_caption_cues(monkeypatch):
     """REGRESSION: _finalize_job rebuilds variants from a key whitelist that silently
     strips anything not listed. caption_cues MUST survive or the on-video editor (which
@@ -2861,6 +2913,7 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "caption_cues": [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}],
         "voiceover_caption_style": "word",
         "voiceover_caption_font": "Montserrat Bold",
+        "caption_language": "tr",
     }
     gb._finalize_job(str(uuid.uuid4()), [result])
     v = job.assembly_plan["variants"][0]
@@ -2869,6 +2922,8 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     # caption style + font must survive too, or a caption edit reburns wrong.
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Montserrat Bold"
+    # subtitled: the language must survive or the editor chip + re-transcribe lose it.
+    assert v["caption_language"] == "tr"
     assert job.status == "variants_ready"
 
 
