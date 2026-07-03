@@ -26,10 +26,17 @@ const PLAN_BASE = "/api/plan";
  * enforced server-side). Optional section — omitted until the timeline
  * task wires clip edits into the shell. */
 export interface EditorTimelineSlot {
-  slot_index: number;
-  in_s?: number | null;
-  duration_s?: number | null;
-  removed?: boolean;
+  slot_id: string | null;
+  clip_index: number;
+  in_s: number;
+  duration_s: number | null;
+  duration_beats: number | null;
+  removed: boolean;
+}
+
+export interface EditorCommitMix {
+  music_level?: number | null;
+  original_level?: number | null;
 }
 
 export interface EditorCommitRequest {
@@ -38,7 +45,7 @@ export interface EditorCommitRequest {
   /** Clip-slot overrides (timeline task). Omit when untouched. */
   timeline_slots?: EditorTimelineSlot[];
   /** Voice/bed mix 0..1 (gutter mutes map onto this). Omit when untouched. */
-  mix?: number | null;
+  mix?: EditorCommitMix;
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
   /**
@@ -46,19 +53,72 @@ export interface EditorCommitRequest {
    * `render_gen_id` once the GET payload exposes it; until then callers seed
    * it from `render_finished_at` (string) — the server accepts either.
    */
-  base_generation: number | string | null;
+  base_generation: string;
 }
 
 export interface EditorCommitResponse {
   ok: boolean;
   /** The new monotonic render generation stamped by this commit. */
-  generation: number;
+  generation: string;
   /** Per-section persist echo — which sections this commit actually wrote. */
   sections: {
     text_elements?: boolean;
-    timeline_slots?: boolean;
+    timeline?: boolean;
     mix?: boolean;
     title?: boolean;
+  };
+}
+
+export interface EditorCommitDraftSlot {
+  slotId: string | null;
+  clipIndex: number;
+  inS: number;
+  durationS: number | null;
+  durationBeats: number | null;
+  removed: boolean;
+}
+
+export interface EditorCommitVariantBaseline {
+  render_generation_id?: string | null;
+  render_finished_at?: string | null;
+}
+
+export function editorCommitBaseGeneration(
+  variant: EditorCommitVariantBaseline,
+): string {
+  return variant.render_generation_id ?? variant.render_finished_at ?? "";
+}
+
+export function buildEditorCommitRequest({
+  elements,
+  timelineDirty,
+  slots,
+  soundMuted,
+  title,
+  variant,
+}: {
+  elements: TextElement[];
+  timelineDirty: boolean;
+  slots: EditorCommitDraftSlot[];
+  soundMuted: boolean;
+  title: string;
+  variant: EditorCommitVariantBaseline;
+}): EditorCommitRequest {
+  return {
+    text_elements: elements,
+    timeline_slots: timelineDirty
+      ? slots.map((s) => ({
+          slot_id: s.slotId,
+          clip_index: s.clipIndex,
+          in_s: s.inS,
+          duration_s: s.durationS,
+          duration_beats: s.durationBeats,
+          removed: s.removed,
+        }))
+      : undefined,
+    mix: soundMuted ? { music_level: 0.0 } : undefined,
+    title: title.trim() !== "" ? title.trim() : null,
+    base_generation: editorCommitBaseGeneration(variant),
   };
 }
 

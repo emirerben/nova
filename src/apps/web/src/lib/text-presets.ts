@@ -13,7 +13,7 @@
  * word live, falling back to Nova-voiced samples — never "ART" (plan Pass 4).
  */
 
-import { FONT_REGISTRY } from "@/lib/overlay-constants";
+import { FONT_REGISTRY, TEXT_ELEMENT_FONT_ALIASES } from "@/lib/overlay-constants";
 import type { TextElement } from "@/lib/plan-api";
 
 /** Preset categories shown as pill chips above the grid. `favorite` is
@@ -108,35 +108,35 @@ export const TEXT_PRESETS: TextPreset[] = [
     label: "Classic serif",
     category: "basic",
     trending: false,
-    fields: { font_family: "Playfair Display", color: "#FFFFFF", stroke_width: 0, effect: "fade-in" },
+    fields: { font_family: "PlayfairDisplay-Bold", color: "#FFFFFF", stroke_width: 0, effect: "fade-in" },
   },
   {
     id: "clean-caption",
     label: "Clean caption",
     category: "basic",
     trending: false,
-    fields: { font_family: "TikTok Sans Bold", color: "#FFFFFF", stroke_width: 0, effect: "none" },
+    fields: { font_family: "Inter-Bold", color: "#FFFFFF", stroke_width: 0, effect: "static" },
   },
   {
     id: "bold-punch",
     label: "Bold punch",
     category: "trending",
     trending: true,
-    fields: { font_family: "Anton", color: "#FFFFFF", stroke_width: 4, effect: "pop-in" },
+    fields: { font_family: "Inter-Bold", color: "#FFFFFF", stroke_width: 4, effect: "slide-up" },
   },
   {
     id: "editorial-italic",
     label: "Editorial",
     category: "basic",
     trending: false,
-    fields: { font_family: "Instrument Serif", color: "#F5F5DC", stroke_width: 0, effect: "fade-in" },
+    fields: { font_family: "PlayfairDisplay-Regular", color: "#F5F5DC", stroke_width: 0, effect: "fade-in" },
   },
   {
     id: "headline-heavy",
     label: "Headline",
     category: "trending",
     trending: true,
-    fields: { font_family: "Archivo Black", color: "#FFFFFF", stroke_width: 3, effect: "slide-up" },
+    fields: { font_family: "Inter-Bold", color: "#FFFFFF", stroke_width: 3, effect: "slide-up" },
   },
   {
     id: "gold-pop",
@@ -144,11 +144,11 @@ export const TEXT_PRESETS: TextPreset[] = [
     category: "trending",
     trending: true,
     fields: {
-      font_family: "Montserrat",
+      font_family: "Inter-Bold",
       color: "#FFFFFF",
       highlight_color: "#FFD24A",
       stroke_width: 0,
-      effect: "pop-in",
+      effect: "karaoke-line",
     },
   },
   {
@@ -156,42 +156,42 @@ export const TEXT_PRESETS: TextPreset[] = [
     label: "Marker",
     category: "trending",
     trending: true,
-    fields: { font_family: "Permanent Marker", color: "#FFD24A", stroke_width: 0, effect: "bounce" },
+    fields: { font_family: "PlayfairDisplay-Bold", color: "#FFD24A", stroke_width: 0, effect: "fade-in" },
   },
   {
     id: "ink-outline",
     label: "Ink outline",
     category: "trending",
     trending: true,
-    fields: { font_family: "Bebas Neue", color: "#FFFFFF", stroke_width: 5, effect: "slide-up" },
+    fields: { font_family: "Inter-Bold", color: "#FFFFFF", stroke_width: 5, effect: "slide-up" },
   },
   {
     id: "space-clean",
     label: "Space clean",
     category: "basic",
     trending: false,
-    fields: { font_family: "Space Grotesk", color: "#FFFFFF", stroke_width: 0, effect: "slide-down" },
+    fields: { font_family: "Inter-Regular", color: "#FFFFFF", stroke_width: 0, effect: "static" },
   },
   {
     id: "cream-serif",
     label: "Cream serif",
     category: "basic",
     trending: false,
-    fields: { font_family: "Fraunces", color: "#F5F5DC", stroke_width: 0, effect: "scale-up" },
+    fields: { font_family: "PlayfairDisplay-Bold", color: "#F5F5DC", stroke_width: 0, effect: "fade-in" },
   },
   {
     id: "creator-sans",
     label: "Creator sans",
     category: "basic",
     trending: false,
-    fields: { font_family: "Plus Jakarta Sans", color: "#FFFFFF", stroke_width: 2, effect: "stream-in" },
+    fields: { font_family: "Inter-Regular", color: "#FFFFFF", stroke_width: 2, effect: "static" },
   },
   {
     id: "viral-comic",
     label: "Viral comic",
     category: "trending",
     trending: true,
-    fields: { font_family: "Bangers", color: "#FFD24A", stroke_width: 4, effect: "bounce" },
+    fields: { font_family: "Inter-Bold", color: "#FFD24A", stroke_width: 4, effect: "slide-up" },
   },
 ];
 
@@ -206,7 +206,11 @@ export const PRESET_CATEGORIES: TextPresetCategory[] = ["favorite", "trending", 
  * would silently fall back to Playfair in previews AND the burn). */
 if (process.env.NODE_ENV !== "production") {
   for (const p of TEXT_PRESETS) {
-    if (p.fields.font_family && !FONT_REGISTRY[p.fields.font_family]) {
+    if (
+      p.fields.font_family &&
+      !FONT_REGISTRY[p.fields.font_family] &&
+      !TEXT_ELEMENT_FONT_ALIASES[p.fields.font_family]
+    ) {
       // eslint-disable-next-line no-console
       console.warn(`text-presets: unknown font_family "${p.fields.font_family}" in preset ${p.id}`);
     }

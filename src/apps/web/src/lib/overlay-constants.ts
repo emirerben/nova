@@ -69,6 +69,13 @@ const _registry = fontRegistryJson as FontRegistryFile;
 export const FONT_REGISTRY: Record<string, FontRegistryEntry> = _registry.fonts;
 export const STYLE_DEFAULTS: Record<string, string> = _registry.style_defaults;
 
+export const TEXT_ELEMENT_FONT_ALIASES: Record<string, string> = {
+  "PlayfairDisplay-Bold": "Playfair Display",
+  "PlayfairDisplay-Regular": "Playfair Display Regular",
+  "Inter-Bold": "Inter",
+  "Inter-Regular": "Inter Regular",
+};
+
 /**
  * Resolve a registry font name to its CSS family + weight.
  * Mirrors the server's font fallback: an unknown/missing family lands on
@@ -79,7 +86,7 @@ export function resolveCssFont(fontFamily: string | null | undefined): {
   weight: number;
 } {
   if (fontFamily) {
-    const entry = FONT_REGISTRY[fontFamily];
+    const entry = FONT_REGISTRY[fontFamily] ?? FONT_REGISTRY[TEXT_ELEMENT_FONT_ALIASES[fontFamily]];
     if (entry) return { family: entry.css_family, weight: entry.weight };
   }
   const fallback = FONT_REGISTRY["Playfair Display"];
@@ -102,7 +109,9 @@ export function resolveClusterCssFont(fontFamily: string | null | undefined): {
   weight: number;
   style: "normal" | "italic";
 } {
-  const entry = fontFamily ? FONT_REGISTRY[fontFamily] : undefined;
+  const entry = fontFamily
+    ? (FONT_REGISTRY[fontFamily] ?? FONT_REGISTRY[TEXT_ELEMENT_FONT_ALIASES[fontFamily]])
+    : undefined;
   if (entry) {
     return {
       family: entry.css_family,

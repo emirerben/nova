@@ -123,7 +123,7 @@ def _capture_updates(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_update_variant_entry",
-        lambda jid, vid, patch: updates.append(dict(patch)),
+        lambda jid, vid, patch, **kw: updates.append(dict(patch)),
         raising=False,
     )
     return updates

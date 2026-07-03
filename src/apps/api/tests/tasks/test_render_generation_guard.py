@@ -15,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import types
 
+import pytest
+
 import app.tasks.generative_build as gb
 
 JOB_ID = "12345678-1234-5678-1234-567812345678"
@@ -69,14 +71,36 @@ def _patch_sessions(monkeypatch, job):
     monkeypatch.setattr(gb, "_sync_session", lambda: _Sess())
 
 
-def _capture_updates(monkeypatch) -> list[dict]:
+def _capture_updates(monkeypatch, job) -> list[dict]:
     updates: list[dict] = []
-    monkeypatch.setattr(
-        gb,
-        "_update_variant_entry",
-        lambda jid, vid, patch: updates.append(dict(patch)),
-        raising=False,
-    )
+
+    def _fake_update(
+        jid,
+        vid,
+        patch,
+        *,
+        expected_render_gen_id=None,
+        **_kwargs,
+    ):
+        variant = next(
+            (v for v in job.assembly_plan["variants"] if v.get("variant_id") == vid),
+            None,
+        )
+        if variant is None:
+            return False
+        current = variant.get("render_generation_id")
+        if (
+            expected_render_gen_id is not None
+            and current is not None
+            and current != expected_render_gen_id
+        ):
+            return False
+        update = {k: v for k, v in patch.items() if k != "variant_id"}
+        variant.update(update)
+        updates.append(dict(patch))
+        return True
+
+    monkeypatch.setattr(gb, "_update_variant_entry", _fake_update, raising=False)
     return updates
 
 
@@ -105,13 +129,19 @@ def test_guard_variant_without_gen_id_writes(monkeypatch):
     assert gb._stale_render_discarded(JOB_ID, "original_text", "tok-1", outcome="x") is False
 
 
+def test_lock_serialization_requires_real_concurrent_db_sessions():
+    """The unit harness fakes `_sync_session`, so it cannot exercise blocking
+    SELECT ... FOR UPDATE behavior across two live sessions."""
+    pytest.skip("requires the integration DB harness with concurrent sessions")
+
+
 # ── fast-reburn terminal write: stale discarded, current lands ────────────────
 
 
 def _arm_reburn(monkeypatch, job, result: dict):
     """Wire _run_regenerate_variant to take the fast-reburn path without IO."""
     _patch_sessions(monkeypatch, job)
-    updates = _capture_updates(monkeypatch)
+    updates = _capture_updates(monkeypatch, job)
     monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: True, raising=False)
     monkeypatch.setattr(gb, "_reburn_text_on_base", lambda **kw: dict(result), raising=False)
     sfx_calls: list = []
@@ -173,7 +203,7 @@ def _arm_failure(monkeypatch, job):
     import app.services.pipeline_trace as pt
 
     _patch_sessions(monkeypatch, job)
-    updates = _capture_updates(monkeypatch)
+    updates = _capture_updates(monkeypatch, job)
     monkeypatch.setattr(pt, "pipeline_trace_for", lambda job_id: contextlib.nullcontext())
 
     def _boom(*a, **k):
@@ -214,7 +244,7 @@ def test_full_render_success_write_guarded(monkeypatch):
     # Force the full path by making fast-reburn ineligible.
     job = _FakeJob([_variant("tok-new", user_timeline=None)])
     _patch_sessions(monkeypatch, job)
-    updates = _capture_updates(monkeypatch)
+    updates = _capture_updates(monkeypatch, job)
     monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
     sfx_calls: list = []
     monkeypatch.setattr(
@@ -258,7 +288,7 @@ def _fake_ingest() -> dict:
 def test_full_render_success_write_lands_with_current_token(monkeypatch):
     job = _FakeJob([_variant("tok-cur")])
     _patch_sessions(monkeypatch, job)
-    updates = _capture_updates(monkeypatch)
+    updates = _capture_updates(monkeypatch, job)
     monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
     monkeypatch.setattr(gb, "_reapply_persisted_sfx_if_any", lambda **kw: None, raising=False)
     monkeypatch.setattr(

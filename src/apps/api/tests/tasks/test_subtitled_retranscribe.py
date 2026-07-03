@@ -210,7 +210,9 @@ def test_retranscribe_task_failure_resets_render_status(monkeypatch):
 
     monkeypatch.setattr(gb, "_run_retranscribe_subtitled", _boom)
     patched: dict = {}
-    monkeypatch.setattr(gb, "_update_variant_entry", lambda _j, _v, patch: patched.update(patch))
+    monkeypatch.setattr(
+        gb, "_update_variant_entry", lambda _j, _v, patch, **kw: patched.update(patch)
+    )
 
     gb.retranscribe_subtitled_captions.run(str(job.id), "subtitled", "tr")
 
@@ -236,7 +238,7 @@ def test_regenerate_rejects_caption_variants(monkeypatch):
         _patch_job_session(monkeypatch, job)
         patched: dict = {}
         monkeypatch.setattr(
-            gb, "_update_variant_entry", lambda _j, _v, patch, _p=patched: _p.update(patch)
+            gb, "_update_variant_entry", lambda _j, _v, patch, _p=patched, **kw: _p.update(patch)
         )
 
         gb._run_regenerate_variant(str(job.id), "subtitled", None, None, False)

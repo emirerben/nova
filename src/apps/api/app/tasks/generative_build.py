@@ -1125,8 +1125,6 @@ def regenerate_generative_variant(
             )
             # E1: a superseded task must not flip render_status to "failed" —
             # the newer commit's task owns the variant's terminal state now.
-            if _stale_render_discarded(job_id, variant_id, render_gen_id, outcome="failed"):
-                return
             _update_variant_entry(
                 job_id,
                 variant_id,
@@ -1136,6 +1134,8 @@ def regenerate_generative_variant(
                     "error": str(exc),
                     "error_class": _classify_error(exc),
                 },
+                expected_render_gen_id=render_gen_id,
+                outcome="failed",
             )
 
 
@@ -1396,7 +1396,12 @@ def _run_media_overlay_pass(
         _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
 
 
-def _reapply_persisted_sfx_if_any(*, job_id: str, variant_id: str) -> None:
+def _reapply_persisted_sfx_if_any(
+    *,
+    job_id: str,
+    variant_id: str,
+    expected_render_gen_id: str | None = None,
+) -> None:
     """Re-apply sound effects after an overlay edit, if any SFX are persisted.
 
     SFX is the outermost layer: an overlay edit replaces video_path from the
@@ -1442,20 +1447,41 @@ def _reapply_persisted_sfx_if_any(*, job_id: str, variant_id: str) -> None:
         # render_status="rendering"). A prep failure means _run_sfx_pass never
         # runs, so surface it as a failed render rather than stranding the
         # variant in "rendering" forever.
-        _mark_variant_failed(job_id=job_id, variant_id=variant_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
         return
 
     try:
-        _run_sfx_pass(job_id=job_id, variant_id=variant_id, sfx_raw=sfx_raw)
+        _run_sfx_pass(
+            job_id=job_id,
+            variant_id=variant_id,
+            sfx_raw=sfx_raw,
+            expected_render_gen_id=expected_render_gen_id,
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_failed", job_id=job_id, error=str(exc))
         # _run_sfx_pass sets render_status="failed" itself on a HANDLED apply
         # error; this catch covers UNHANDLED errors, which would otherwise leave
         # the overlay-deferred "rendering" state stuck. Surface it.
-        _mark_variant_failed(job_id=job_id, variant_id=variant_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
 
 
-def _mark_variant_failed(*, job_id: str, variant_id: str, error: str) -> None:
+def _mark_variant_failed(
+    *,
+    job_id: str,
+    variant_id: str,
+    error: str,
+    expected_render_gen_id: str | None = None,
+) -> None:
     """Best-effort flip of a variant to render_status="failed".
 
     Used when a pass that DEFERRED its terminal render_status (e.g. an overlay
@@ -1464,12 +1490,27 @@ def _mark_variant_failed(*, job_id: str, variant_id: str, error: str) -> None:
     """
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
                 return
             variants = list((job.assembly_plan or {}).get("variants") or [])
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="sfx_failed",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["render_status"] = "failed"
                     v["render_error"] = error[:500]
                     break
@@ -1487,6 +1528,7 @@ def _run_sfx_pass(
     job_id: str,
     variant_id: str,
     sfx_raw: list[dict],
+    expected_render_gen_id: str | None = None,
 ) -> None:
     """Apply (or clear) sound-effect placements on a finished variant (fast path).
 
@@ -1510,7 +1552,7 @@ def _run_sfx_pass(
     from app.storage import copy_object  # noqa: PLC0415
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
         if job is None:
             log.error("sfx_job_not_found", job_id=job_id)
             return
@@ -1540,6 +1582,21 @@ def _run_sfx_pass(
 
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="sfx_clear",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["sound_effects"] = None
                     v["output_url"] = signed_url
                     v["render_status"] = "ready"
@@ -1596,6 +1653,21 @@ def _run_sfx_pass(
 
         for v in variants:
             if v.get("variant_id") == variant_id:
+                current = v.get("render_generation_id")
+                if (
+                    expected_render_gen_id is not None
+                    and current is not None
+                    and current != expected_render_gen_id
+                ):
+                    log.warning(
+                        "stale_render_write_discarded",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        outcome="sfx_apply",
+                        expected_gen_id=expected_render_gen_id,
+                        actual_gen_id=current,
+                    )
+                    return
                 v["sound_effects"] = [p.model_dump() for p in placements]
                 v["pre_sfx_video_path"] = pre_clean
                 v["output_url"] = new_url
@@ -2319,10 +2391,13 @@ def _run_regenerate_variant(
                 archetype=existing.get("resolved_archetype"),
             )
             # E1: terminal write ("ready") — token-checked like every other outcome.
-            if not _stale_render_discarded(
-                job_id, variant_id, render_gen_id, outcome="caption_reject"
-            ):
-                _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {"render_status": "ready"},
+                expected_render_gen_id=render_gen_id,
+                outcome="caption_reject",
+            )
             return
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
@@ -2544,14 +2619,23 @@ def _run_regenerate_variant(
             # (or PUT /text-elements) overwrites `render_generation_id` in the DB;
             # if it differs from the token we were launched with, our result is
             # stale and the newer task will write its own — discard, don't clobber.
-            if _stale_render_discarded(job_id, variant_id, render_gen_id, outcome="reburn"):
+            if not _update_variant_entry(
+                job_id,
+                variant_id,
+                result,
+                expected_render_gen_id=render_gen_id,
+                outcome="reburn",
+            ):
                 return
-            _update_variant_entry(job_id, variant_id, result)
             # SFX is the OUTERMOST layer. A text/style reburn overwrites video_path
             # from the cached base WITHOUT the SFX mix, so re-apply persisted effects
             # on top (the hook also resets the stale pre_sfx_video_path). Mirrors the
             # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
-            _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+            _reapply_persisted_sfx_if_any(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=render_gen_id,
+            )
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
 
@@ -2751,16 +2835,25 @@ def _run_regenerate_variant(
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
     # a superseded task's output/status must never clobber the newer commit's.
-    if _stale_render_discarded(job_id, variant_id, render_gen_id, outcome="full_render"):
-        return
     if result.get("ok"):
-        _update_variant_entry(job_id, variant_id, result)
+        if not _update_variant_entry(
+            job_id,
+            variant_id,
+            result,
+            expected_render_gen_id=render_gen_id,
+            outcome="full_render",
+        ):
+            return
         # SFX is the OUTERMOST layer. A full re-render (song swap, retext, clip
         # edit, style change) re-assembles video_path WITHOUT the SFX mix, so
         # re-apply persisted effects onto the freshly re-rendered base (the hook
         # also resets the now-stale pre_sfx_video_path snapshot). Mirrors the
         # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
-        _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+        _reapply_persisted_sfx_if_any(
+            job_id=job_id,
+            variant_id=variant_id,
+            expected_render_gen_id=render_gen_id,
+        )
     else:
         # Failure-patch hygiene: the failure record spreads the fresh `base`
         # dict, whose None values (base_video_path, intro_text, ...) would NULL
@@ -2772,7 +2865,13 @@ def _run_regenerate_variant(
             for k, v in result.items()
             if v is not None and k not in ("video_path", "output_url")
         }
-        _update_variant_entry(job_id, variant_id, failure_patch)
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            failure_patch,
+            expected_render_gen_id=render_gen_id,
+            outcome="full_render_failed",
+        )
 
 
 def _existing_variants(job_id: str) -> list[dict[str, Any]]:
@@ -2872,27 +2971,58 @@ def _stale_render_discarded(
     return False
 
 
-def _update_variant_entry(job_id: str, variant_id: str, patch: dict[str, Any]) -> None:
+def _update_variant_entry(
+    job_id: str,
+    variant_id: str,
+    patch: dict[str, Any],
+    *,
+    expected_render_gen_id: str | None = None,
+    outcome: str | None = None,
+) -> bool:
     """Merge `patch` into the matching entry of Job.assembly_plan['variants'].
 
     Row-locked (SELECT ... FOR UPDATE): concurrent `regenerate_generative_variant`
     tasks each do a read-modify-write of the whole `assembly_plan` JSONB, so without
     the lock one task's variant update silently clobbers another's (worker runs
     --concurrency=4). The lock serializes the RMW per Job row.
+
+    When `expected_render_gen_id` is provided, the stale-generation comparison is
+    performed under the same row lock as the merge. This makes terminal render
+    writes check-and-write atomic; legacy tokenless tasks pass None and always
+    write as before. Returns False when the patch was discarded or the row was
+    missing.
     """
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
-            return
+            return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
+                current = v.get("render_generation_id")
+                if (
+                    expected_render_gen_id is not None
+                    and current is not None
+                    and current != expected_render_gen_id
+                ):
+                    log.warning(
+                        "stale_render_write_discarded",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        outcome=outcome or "variant_update",
+                        expected_gen_id=expected_render_gen_id,
+                        actual_gen_id=current,
+                    )
+                    return False
                 variants[i] = {**v, **{k: val for k, val in patch.items() if k != "variant_id"}}
                 break
+        else:
+            return False
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
+    return True
 
 
 # ── Variant spec ──────────────────────────────────────────────────────────────

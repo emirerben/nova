@@ -250,6 +250,25 @@ def test_invalid_text_section_422_nothing_persisted(monkeypatch):
     assert job.assembly_plan == before
 
 
+def test_editor_commit_strictly_rejects_dropped_text_element(monkeypatch):
+    """editor-commit must 422 when TextElement coercion would drop user text."""
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+    bad_element = {**_VALID_ELEMENT, "font_family": "Playfair Display"}
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(text_elements=[bad_element], timeline_slots=_slot_edits()),
+        )
+
+    assert exc.value.status_code == 422
+    assert "invalid" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
 def test_mix_on_variant_without_voice_bed_422(monkeypatch):
     _arm(monkeypatch)
     job = _job(mix=None)  # song variant with no voice bed
@@ -321,11 +340,17 @@ def _owned_item(user_id, *, job):
     return item, plan
 
 
-def _db(execute_results: list, plan) -> AsyncMock:
+def _db(execute_results: list, plan, job=None) -> AsyncMock:
     db = AsyncMock()
     db.commit = AsyncMock()
     db.execute = AsyncMock(side_effect=[_result(v) for v in execute_results])
-    db.get = AsyncMock(return_value=plan)
+
+    async def _get(model, _pk, **_kwargs):
+        if model is gj.Job:
+            return job
+        return plan
+
+    db.get = AsyncMock(side_effect=_get)
     return db
 
 
@@ -343,7 +368,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     user = _user()
     job = _job()
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item], plan)
+    db = _db([item], plan, job)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     with patch(REGEN) as regen:
@@ -370,6 +395,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     assert item.theme == "Fresh title"
     assert item.user_edited is True
     db.commit.assert_awaited_once()  # ONE transaction for job-JSON + title
+    db.get.assert_any_await(gj.Job, job.id, with_for_update=True)
     regen.apply_async.assert_called_once()
 
 
@@ -378,7 +404,7 @@ def test_endpoint_stale_baseline_409(client: TestClient, monkeypatch) -> None:
     user = _user()
     job = _job()
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item], plan)
+    db = _db([item], plan, job)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     with patch(REGEN) as regen:
@@ -402,7 +428,7 @@ def test_endpoint_empty_title_422_nothing_persisted(client: TestClient, monkeypa
     job = _job()
     before = copy.deepcopy(job.assembly_plan)
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item], plan)
+    db = _db([item], plan, job)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(
@@ -467,6 +493,19 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["timeline"] is False
     assert caps["reason"] == "no_slot_timeline"
     assert caps["text_elements"] is True  # text editing is independent of the slot grid
+
+
+def test_capabilities_caption_archetype_text_elements_off(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        mix=None,
+    )
+    caps = _caps(job, "subtitled")
+    assert caps["text_elements"] is False
+    assert caps["reason"] == "captions are edited in the captions tab"
 
 
 def test_capabilities_expired_sources(monkeypatch):

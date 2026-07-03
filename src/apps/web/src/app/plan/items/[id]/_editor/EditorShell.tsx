@@ -29,6 +29,7 @@ import {
   type TextElement,
 } from "@/lib/plan-api";
 import {
+  buildEditorCommitRequest,
   commitEditorSession,
   EditorCommitConflictError,
 } from "@/lib/editor-commit";
@@ -642,24 +643,18 @@ export default function EditorShell({
     setSaveState("saving");
     setSaveMessage(null);
     try {
-      const res = await commitEditorSession(itemId, variant.variant_id, {
-        text_elements: barsToTextElements(state.bars, originalsRef.current),
-        // Clip-slot overrides only when the timeline was actually edited
-        // (split / delete / mute) — omit otherwise so an untouched section
-        // isn't rewritten.
-        timeline_slots: timelineDirty
-          ? slots.map((s, i) => ({
-              slot_index: i,
-              in_s: s.inS,
-              duration_s: s.durationS,
-              removed: s.removed,
-            }))
-          : undefined,
-        // Music mute → bed level 0.0 (the editor-commit client carries `mix`).
-        mix: soundMuted ? 0.0 : null,
-        title: title.trim() !== "" ? title.trim() : null,
-        base_generation: variant.render_finished_at ?? null,
-      });
+      const res = await commitEditorSession(
+        itemId,
+        variant.variant_id,
+        buildEditorCommitRequest({
+          elements: barsToTextElements(state.bars, originalsRef.current),
+          timelineDirty,
+          slots,
+          soundMuted,
+          title,
+          variant,
+        }),
+      );
       // Partial: persist landed (we got a 2xx) but the render kick failed —
       // the response's `ok` flag tells us. Working state stays, Retry re-kicks.
       if (res && res.ok === false) {

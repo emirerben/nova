@@ -448,7 +448,11 @@ export default function EditorCanvas({
                           fontWeight: weight,
                           color: layout.color,
                           textAlign: layout.alignment,
-                          lineHeight: 1.15,
+                          letterSpacing:
+                            layout.letterSpacingEm !== 0
+                              ? `${layout.letterSpacingEm}em`
+                              : undefined,
+                          lineHeight: layout.lineSpacing || 1.15,
                           whiteSpace: "pre-wrap",
                           wordBreak: "break-word",
                           WebkitTextStroke: strokePx > 0 ? `${strokePx}px #000000` : undefined,

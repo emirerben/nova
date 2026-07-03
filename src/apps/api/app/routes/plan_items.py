@@ -1896,7 +1896,11 @@ async def editor_commit_item(
                 detail="Title cannot be empty.",
             )
 
-    prep = prepare_editor_commit(job, variant_id, body)
+    locked_job = await db.get(Job, job.id, with_for_update=True)
+    if locked_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+
+    prep = prepare_editor_commit(locked_job, variant_id, body)
 
     if cleaned_title is not None:
         item.theme = cleaned_title

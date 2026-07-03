@@ -608,6 +608,7 @@ def _variants_for_response(job: Job) -> list[dict]:
             for s in raw_scenes
             if s.get("start_s") is not None and s.get("end_s") is not None
         ]
+        v = {**v, "render_generation_id": v.get("render_generation_id")}
         # TextElement overlay (plan-item-timeline feature).  Surfaced when the
         # kill switch is on so the FE can populate its timeline editor from the
         # persisted state (both the AI-snapshot and user-authored lists).
@@ -1245,7 +1246,11 @@ def dispatch_set_sound_effects(
 
 
 def validate_text_elements_payload(
-    variant: dict, elements: list[dict], *, require_base: bool
+    variant: dict,
+    elements: list[dict],
+    *,
+    require_base: bool,
+    strict_drop: bool = False,
 ) -> tuple[list[dict], bool]:
     """Shared text-element SECTION validation (PUT /text-elements + editor-commit E2).
 
@@ -1259,7 +1264,9 @@ def validate_text_elements_payload(
     Returns `(validated_element_dicts, materialized_from_sequence)` — the flag is
     True when an empty payload on a first-edit sequence variant was seeded from
     the live scenes (T8 materialization), so the caller records the metadata.
-    Invalid entries are dropped silently by `coerce_text_elements` (A—).
+    Invalid entries are dropped silently by `coerce_text_elements` by default
+    (legacy PUT behavior). editor-commit passes `strict_drop=True`, turning any
+    dropped entry into a 422 so Save never loses user-authored text silently.
     """
     if not _TEXT_ELEMENTS_ENABLED:
         raise HTTPException(
@@ -1309,6 +1316,11 @@ def validate_text_elements_payload(
     validated: list[dict] = []
     if elements:
         coerced = coerce_text_elements(elements)
+        if strict_drop and len(coerced or []) != len(elements):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="One or more text elements are invalid and were not saved.",
+            )
         if coerced:
             # Additional cross-field check: end_s must be > start_s.
             for elem in coerced:
@@ -1704,9 +1716,18 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     """
     timeline_reason = _timeline_ineligibility(job, variant)
     timeline_ok = timeline_reason is None
+    caption_reason = (
+        "captions are edited in the captions tab"
+        if variant.get("resolved_archetype") in {"narrated", "subtitled"}
+        else None
+    )
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
-        "text_elements": _TEXT_ELEMENTS_ENABLED and variant.get("text_mode") != "lyrics",
+        "text_elements": (
+            _TEXT_ELEMENTS_ENABLED
+            and variant.get("text_mode") != "lyrics"
+            and caption_reason is None
+        ),
         "timeline": timeline_ok,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
@@ -1715,7 +1736,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             variant.get("mix") is not None
             or str(variant.get("variant_id") or "").startswith("voiceover")
         ),
-        "reason": timeline_reason,
+        "reason": caption_reason or timeline_reason,
     }
 
 
@@ -2065,7 +2086,10 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
         # The fast-reburn base is only required when this commit will take the
         # reburn path (no timeline change → no full re-assembly).
         validated_elements, materialized_from_sequence = validate_text_elements_payload(
-            variant, payload.text_elements, require_base=payload.timeline_slots is None
+            variant,
+            payload.text_elements,
+            require_base=payload.timeline_slots is None,
+            strict_drop=True,
         )
 
     resolved_slots: list[dict] | None = None

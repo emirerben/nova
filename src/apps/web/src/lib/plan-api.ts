@@ -759,6 +759,7 @@ export interface PlanItemVariant {
   // the hero shows the burned output, so it is NOT instant-edit-eligible. Absent
   // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
   resolved_archetype?: string | null;
+  render_generation_id?: string | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;

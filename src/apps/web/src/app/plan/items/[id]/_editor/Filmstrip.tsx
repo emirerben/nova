@@ -113,6 +113,7 @@ export default function Filmstrip({
       window.clearTimeout(failTimer);
       video.removeEventListener("seeked", onSeeked);
       video.removeEventListener("error", onError);
+      video.removeEventListener("loadeddata", drawNext);
       video.removeAttribute("src");
       video.load();
     };
