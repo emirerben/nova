@@ -309,9 +309,9 @@ export default function ClipsLane({
         </div>
       </div>
 
-      {/* Expanded panel */}
+      {/* Expanded panel — max-height prevents it dominating the timeline */}
       {clipsOpen && clipsPanel && (
-        <div className="pl-14 pr-2 pb-3 pt-2 border-b border-zinc-200">
+        <div className="pl-14 pr-2 pb-3 pt-2 border-b border-zinc-200 max-h-[220px] overflow-y-auto">
           {clipsPanel}
         </div>
       )}

@@ -1635,13 +1635,13 @@ function FocusedResults({
   const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
 
   return (
-    <div className="mt-8 flex flex-col gap-4">
+    <div className="mt-4 flex flex-col gap-2">
 
-      {/* ── 3-column main area: left | center (video) | right (controls portal) ── */}
-      <div className="flex items-start gap-4 lg:gap-6">
+      {/* ── 3-column: left | video (always centered) | right panel ── */}
+      <div className="grid grid-cols-[1fr_260px_1fr] items-start gap-4 lg:gap-6">
 
-        {/* ── LEFT column: other takes, rationale, download, feedback ── */}
-        <div className="flex w-40 shrink-0 flex-col gap-4 pt-1">
+        {/* ── LEFT column ── */}
+        <div className="flex flex-col gap-3 pt-1">
 
           {/* Rationale blurb */}
           {variant && !isGenerating && (
@@ -1736,13 +1736,43 @@ function FocusedResults({
               <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
             </div>
           )}
+
+          {/* Editor mode tabs — placed in left column to keep video flush with timeline */}
+          {focusedEditable && (
+            <div className="flex flex-col gap-1.5">
+              {EDITOR_TABS.map((tab) => {
+                const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
+                if (tab.id === "captions" && !hasCaptions) return null;
+                if (hasCaptions && tab.id === "song") return null;
+                if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
+                if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
+                const isActive = activeTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    aria-pressed={isActive}
+                    onClick={() => setActiveTab(isActive ? null : tab.id)}
+                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition-colors ${
+                      isActive
+                        ? "border-lime-600 bg-lime-50 text-lime-800"
+                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                    }`}
+                  >
+                    <span className="text-sm leading-none">{tab.icon}</span>
+                    <span>{tab.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        {/* ── CENTER column: video + mode pill + tab buttons ── */}
-        <div className="flex min-w-0 flex-1 flex-col items-center gap-2">
+        {/* ── CENTER column: 260px from grid, video fills it ── */}
+        <div className="flex flex-col gap-1.5">
 
           {/* Video */}
-          <div className="relative w-full max-w-[260px]">
+          <div className="relative w-full">
             {isNovaPick && variant?.output_url && (
               <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
                 Nova&apos;s pick
@@ -1773,45 +1803,18 @@ function FocusedResults({
 
           {/* Mode pill */}
           {modePill && !isGenerating && (
-            <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
+            <span className="self-center rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
               {modePill}
             </span>
           )}
-
-          {/* Editor tab buttons below the video */}
-          {focusedEditable && (
-            <div className="flex flex-wrap justify-center gap-2">
-              {EDITOR_TABS.map((tab) => {
-                const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
-                if (tab.id === "captions" && !hasCaptions) return null;
-                if (hasCaptions && tab.id === "song") return null;
-                if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    aria-pressed={isActive}
-                    onClick={() => setActiveTab(isActive ? null : tab.id)}
-                    className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
-                      isActive
-                        ? "border-lime-600 bg-lime-50 text-lime-800"
-                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                    }`}
-                  >
-                    <span className="text-sm font-semibold leading-none">{tab.icon}</span>
-                    <span className="text-[10px] leading-tight">{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
 
-        {/* ── RIGHT column: portal target for property controls ── */}
-        <div ref={setRightPanelEl} className="w-64 shrink-0" />
+        {/* ── RIGHT column: fills 1fr, portal target for property controls ── */}
+        <div ref={setRightPanelEl} className="w-full max-h-[480px] overflow-y-auto" />
       </div>
+
+      {/* ── Timeline: full-width row below the 3-col ── */}
+      <div ref={setTimelineEl} />
 
       {/* ── Unplaced shots info card ── */}
       {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
@@ -1830,9 +1833,6 @@ function FocusedResults({
           </ul>
         </div>
       )}
-
-      {/* ── BOTTOM row: portal target for full-width timeline ── */}
-      <div ref={setTimelineEl} />
 
       {/* Caption editor: full-width when captions tab active */}
       {activeTab === "captions" && variant?.base_video_url && variant.caption_cues && (
@@ -2050,6 +2050,10 @@ function FocusedVariantControls({
 
   // Plan C: clicking a clip bar opens InlineClipsEditor pre-selected to that clip.
   const [focusedClipKey, setFocusedClipKey] = useState<string | null>(null);
+
+  // 3-column layout: track which text bar is selected so rightBlock shows nothing
+  // while TextLane portals its own panel into the right column.
+  const [textExpandedBarId, setTextExpandedBarId] = useState<string | null>(null);
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -2606,6 +2610,8 @@ function FocusedVariantControls({
           isFirstSequenceEdit={
             variant.intro_mode === "sequence" && !variant.text_elements_user_edited
           }
+          textPanelPortalTarget={rightPanelEl ?? undefined}
+          onTextBarSelect={setTextExpandedBarId}
           clipTimelineHandle={clipTimeline}
           onClipBodyClick={(key) => setFocusedClipKey(key)}
           clipsPanel={
@@ -2629,10 +2635,15 @@ function FocusedVariantControls({
     </div>
   );
 
-  // ── Right-panel block: song picker or text/style controls ─────────────────
+  // ── Right-panel block: song picker, or text panel hint, or nothing ───────────
+  // When a text bar is selected, TextLane portals TextPropertyPanel directly into
+  // rightPanelEl — so this block renders nothing to avoid double-occupancy.
   const rightBlock = (
     <div className="space-y-3">
-      {showSongSection ? (
+      {textExpandedBarId !== null ? (
+        // TextLane is portaling the property panel here — render nothing extra.
+        null
+      ) : showSongSection ? (
         <PlanVariantEditor
           variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
           tracks={tracks}
@@ -2649,32 +2660,6 @@ function FocusedVariantControls({
           hasClipEdits={false}
           hideSections={["caption", "size", "layout", "style", "clips"]}
         />
-      ) : variant.text_mode !== "none" ? (
-        <>
-          <PlanVariantEditor
-            variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
-            tracks={[]}
-            styleSets={instantEligible ? [] : styleSets}
-            onSwap={onSwap}
-            onRetext={draftHandlers.onRetext}
-            onRemoveText={draftHandlers.onRemoveText}
-            onChangeStyle={draftHandlers.onChangeStyle}
-            onResize={instantEligible ? undefined : draftHandlers.onResize}
-            onChangeLayout={draftHandlers.onChangeLayout}
-            onEditClips={undefined}
-            showClipEditor={false}
-            clipSlotCount={null}
-            hasClipEdits={false}
-          />
-          {instantEligible && (
-            <EditToolbar
-              session={session}
-              styleSets={[]}
-              fallbackSizePx={variant.intro_text_size_px}
-              resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
-            />
-          )}
-        </>
       ) : null}
     </div>
   );

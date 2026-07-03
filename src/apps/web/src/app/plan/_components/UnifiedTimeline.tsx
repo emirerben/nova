@@ -24,7 +24,7 @@
  *   ClipsLane.tsx   — Clips expand/collapse
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SoundEffectPlacement, MediaOverlay } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { Playhead } from "@/lib/timeline/Playhead";
@@ -114,6 +114,16 @@ export interface UnifiedTimelineProps {
    * InlineClipsEditor and show only that clip's trim panel.
    */
   onClipBodyClick?: (key: string) => void;
+  /**
+   * 3-column layout: when provided, the TextPropertyPanel for the selected bar
+   * is portaled into this element (forwarded to TextLane).
+   */
+  textPanelPortalTarget?: HTMLElement | null;
+  /**
+   * 3-column layout: called whenever the text bar selection changes so the
+   * parent can conditionally show/hide other right-panel content.
+   */
+  onTextBarSelect?: (id: string | null) => void;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -145,10 +155,17 @@ export default function UnifiedTimeline({
   onClipsPanelChange,
   clipTimelineHandle,
   onClipBodyClick,
+  textPanelPortalTarget,
+  onTextBarSelect,
 }: UnifiedTimelineProps) {
   // ── Text lane selection (controlled here so T7 can read expandedBarId) ────────
 
   const [textExpandedBarId, setTextExpandedBarId] = useState<string | null>(null);
+
+  // Notify parent when selection changes (for 3-column layout right-panel control).
+  useEffect(() => {
+    onTextBarSelect?.(textExpandedBarId);
+  }, [textExpandedBarId, onTextBarSelect]);
 
   // ── Ruler ─────────────────────────────────────────────────────────────────────
 
@@ -209,6 +226,7 @@ export default function UnifiedTimeline({
         onApply={onTextApply}
         onTrimClamped={onTextTrimClamped}
         isFirstSequenceEdit={isFirstSequenceEdit}
+        textPanelPortalTarget={textPanelPortalTarget}
       />
 
       {/* ── Overlays lane ── */}

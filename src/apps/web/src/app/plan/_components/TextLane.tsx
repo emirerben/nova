@@ -14,6 +14,7 @@
  */
 
 import { type Dispatch, useEffect, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { computeBarPosition } from "@/lib/timeline/bar-position";
 import { classifyZone, clampSeconds } from "@/lib/timeline/drag-zone";
 import {
@@ -89,6 +90,12 @@ export interface TextLaneProps {
    * signal that editing the flow makes it user-owned.
    */
   isFirstSequenceEdit?: boolean;
+  /**
+   * When provided, the TextPropertyPanel for the selected bar portals into this
+   * element instead of rendering inline (used by the 3-column TikTok layout to
+   * place the panel in the right column).
+   */
+  textPanelPortalTarget?: HTMLElement | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -104,6 +111,7 @@ export default function TextLane({
   readOnly = false,
   onTrimClamped,
   isFirstSequenceEdit = false,
+  textPanelPortalTarget,
 }: TextLaneProps) {
   // ── T8: one-time "now user-owned" note for sequence variants ──────────────────
   // Declared before the emit useEffect so the ref is in scope when bars change.
@@ -453,16 +461,29 @@ export default function TextLane({
         </div>
       </div>
 
-      {/* ── Per-bar inline property panel (T7) ── */}
+      {/* ── Per-bar property panel — portals to right column when target provided ── */}
       {bars.map((bar) =>
         expandedBarId === bar.id ? (
-          <TextPropertyPanel
-            key={`panel-${bar.id}`}
-            bar={bar}
-            bars={bars}
-            dispatch={dispatch}
-            onApply={onApply}
-          />
+          textPanelPortalTarget
+            ? createPortal(
+                <TextPropertyPanel
+                  key={`panel-${bar.id}`}
+                  bar={bar}
+                  bars={bars}
+                  dispatch={dispatch}
+                  onApply={onApply}
+                />,
+                textPanelPortalTarget,
+              )
+            : (
+                <TextPropertyPanel
+                  key={`panel-${bar.id}`}
+                  bar={bar}
+                  bars={bars}
+                  dispatch={dispatch}
+                  onApply={onApply}
+                />
+              )
         ) : null,
       )}
 
