@@ -2036,14 +2036,13 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
         the dispatch_set_mix voiceover rule)
       - 409 {"detail": "baseline_conflict"} when the variant moved since load
 
-    On success, mutates `job.assembly_plan` IN ONE new-dict replacement (the
-    caller owns the single db.commit) and returns the kick plan for
-    `enqueue_editor_commit_render`. Render-affecting sections bump
-    `render_generation_id` and set render_status="rendering"; a title-only
-    commit stages nothing here and kicks no render.
+    On success, mutates `job.assembly_plan` IN ONE new-dict replacement — that
+    reassignment is what marks the JSONB column dirty (same pattern as
+    `persist_user_timeline`); the caller owns the single db.commit. Render-
+    affecting sections bump `render_generation_id` and set
+    render_status="rendering"; a title-only commit stages nothing here and
+    kicks no render.
     """
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
     variant = _find_variant(job, variant_id)
     if variant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
@@ -2119,7 +2118,6 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
         variants[i] = updated
         break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
-    flag_modified(job, "assembly_plan")
 
     return {
         "generation": new_gen or payload.base_generation,
