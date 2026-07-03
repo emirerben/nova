@@ -37,6 +37,14 @@ export interface TextElementBar {
   stroke_width?: number;
   effect?: string;
   alignment?: string;
+  /** Named vertical position preset ("top" | "middle" | "bottom" | "custom").
+   * Editor canvas drags set "custom" + explicit fracs. Renderer-honored. */
+  position?: string;
+  /** Fractional X center [0,1] — explicit placement wins over `position`.
+   * Set by canvas drag-move in the editor shell. Renderer-honored. */
+  x_frac?: number | null;
+  /** Fractional Y center [0,1] — explicit placement wins over `position`. */
+  y_frac?: number | null;
   source_params?: Record<string, unknown>;
 }
 
