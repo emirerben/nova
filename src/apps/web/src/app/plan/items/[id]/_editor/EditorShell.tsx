@@ -185,6 +185,7 @@ export default function EditorShell({
   // ── Timeline view state (plan §6) ───────────────────────────────────────────
   const [playing, setPlaying] = useState(false);
   const [zoom, setZoom] = useState(1); // 1 = fit-to-width
+  const [timelineFitRequestKey, setTimelineFitRequestKey] = useState(0);
   const [videoMuted, setVideoMuted] = useState(false);
   const [soundMuted, setSoundMuted] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -1121,6 +1122,8 @@ export default function EditorShell({
     durationS: timelineDuration,
     currentTimeS: currentTime,
     zoom,
+    fitRequestKey: timelineFitRequestKey,
+    scaleResetKey: timelineVariantId,
     selection,
     onSelect: (kind, id) => {
       selectElement(kind, id);
@@ -1467,7 +1470,10 @@ export default function EditorShell({
           onDelete={deleteSelected}
           zoom={zoom}
           onZoom={setZoom}
-          onFit={() => setZoom(1)}
+          onFit={() => {
+            setZoom(1);
+            setTimelineFitRequestKey((key) => key + 1);
+          }}
           clipTimingDirty={clipDirty}
           clipPreviewMode={virtualPreviewActive ? "virtual" : "rendered"}
         />

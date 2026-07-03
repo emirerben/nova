@@ -83,6 +83,41 @@ describe("virtual timeline", () => {
     });
   });
 
+  it("keeps a later clip's playback duration stable when an earlier clip is trimmed", () => {
+    const before = buildVirtualTimeline(
+      [
+        slot({ key: "a", clipIndex: 0, durationS: 4 }),
+        slot({ key: "b", clipIndex: 1, inS: 10, durationS: 5 }),
+      ],
+      clips,
+    );
+    const after = buildVirtualTimeline(
+      [
+        slot({ key: "a", clipIndex: 0, durationS: 2 }),
+        slot({ key: "b", clipIndex: 1, inS: 10, durationS: 5 }),
+      ],
+      clips,
+    );
+
+    expect(before.entries[1]).toMatchObject({
+      slotKey: "b",
+      startS: 4,
+      durationS: 5,
+      inS: 10,
+    });
+    expect(after.entries[1]).toMatchObject({
+      slotKey: "b",
+      startS: 2,
+      durationS: 5,
+      inS: 10,
+    });
+    expect(mapVirtualTime(after, 6.5)).toMatchObject({
+      entry: { slotKey: "b" },
+      localOffsetS: 4.5,
+      sourceTimeS: 14.5,
+    });
+  });
+
   it("clamps before the start and at the final frame", () => {
     const timeline = buildVirtualTimeline(
       [slot({ key: "a", clipIndex: 0, inS: 3, durationS: 2 })],

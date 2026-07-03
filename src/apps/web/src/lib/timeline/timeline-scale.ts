@@ -49,6 +49,38 @@ export function scaledTrackWidth(durationS: number, pxPerSecond: number): number
   return Math.max(0, durationS * pxPerSecond);
 }
 
+export interface EditorTimelineScaleInput {
+  viewportWidth: number;
+  durationS: number;
+  zoom: number;
+  frozenFitPxPerSecond: number | null;
+  refit?: boolean;
+}
+
+export interface EditorTimelineScale {
+  fitPxPerSecond: number;
+  pxPerSecond: number;
+}
+
+/**
+ * Editor timelines freeze the fit baseline after initial load. Duration edits
+ * then shorten/lengthen the track instead of reactively rescaling every bar.
+ */
+export function resolveEditorTimelineScale({
+  viewportWidth,
+  durationS,
+  zoom,
+  frozenFitPxPerSecond,
+  refit = false,
+}: EditorTimelineScaleInput): EditorTimelineScale {
+  const liveFit = fitPxPerSecond(viewportWidth, durationS);
+  const fit = refit || frozenFitPxPerSecond == null ? liveFit : frozenFitPxPerSecond;
+  return {
+    fitPxPerSecond: fit,
+    pxPerSecond: clampPxPerSecond(fit * Math.max(1, zoom)),
+  };
+}
+
 /**
  * Adaptive ruler interval (seconds) for the current scale: the finest
  * candidate whose label pitch is at least `minLabelPx` on screen. Falls back

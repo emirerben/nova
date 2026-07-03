@@ -20,9 +20,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
-  clampPxPerSecond,
   fitPxPerSecond,
   pxToSeconds,
+  resolveEditorTimelineScale,
   rulerTicks,
   scaledTrackWidth,
   secondsToPx,
@@ -68,6 +68,10 @@ export interface EditorTimelineBodyProps {
   currentTimeS: number;
   /** Zoom factor: 1 = fit-to-width. */
   zoom: number;
+  /** Incremented only when the user explicitly presses Fit. */
+  fitRequestKey?: number;
+  /** Changes when a different rendered variant seeds the editor timeline. */
+  scaleResetKey?: string;
   /** Reports the fit scale up so the shell can keep "fit" meaningful. */
   onReportFit?: (fitPxPerSecond: number) => void;
 
@@ -147,6 +151,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     durationS,
     currentTimeS,
     zoom,
+    fitRequestKey,
+    scaleResetKey,
     onReportFit,
     selection,
     onSelect,
@@ -177,6 +183,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const previousScaleRef = useRef<{ pps: number; trackW: number } | null>(null);
+  const lastFitRequestKeyRef = useRef(fitRequestKey);
+  const lastScaleResetKeyRef = useRef(scaleResetKey);
   const dragRef = useRef<ActiveDrag | null>(null);
   const suppressClickRef = useRef(false);
   const [viewportW, setViewportW] = useState(0);
@@ -186,6 +194,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     text: string;
   } | null>(null);
   const [filmstripSlots, setFilmstripSlots] = useState(slots);
+  const [frozenFitPps, setFrozenFitPps] = useState<number | null>(null);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -198,13 +207,33 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }, []);
 
   const trackViewportW = Math.max(0, viewportW);
-  const fitPps = fitPxPerSecond(trackViewportW, durationS);
-  const pps = clampPxPerSecond(fitPps * Math.max(1, zoom));
+  const liveFitPps = fitPxPerSecond(trackViewportW, durationS);
+  const { fitPxPerSecond: fitPps, pxPerSecond: pps } = resolveEditorTimelineScale({
+    viewportWidth: trackViewportW,
+    durationS,
+    zoom,
+    frozenFitPxPerSecond: frozenFitPps,
+  });
   const trackW = Math.max(trackViewportW, scaledTrackWidth(durationS, pps));
+  const videoEndPx = secondsToPx(durationS, pps);
+  const showEndMarker = videoEndPx > 0 && videoEndPx < trackW - 1;
 
   useEffect(() => {
     if (fitPps > 0) onReportFit?.(fitPps);
   }, [fitPps, onReportFit]);
+
+  useLayoutEffect(() => {
+    if (trackViewportW <= 0 || durationS <= 0) return;
+    const resetRequested = lastScaleResetKeyRef.current !== scaleResetKey;
+    const fitRequested = lastFitRequestKeyRef.current !== fitRequestKey;
+
+    if (resetRequested) lastScaleResetKeyRef.current = scaleResetKey;
+    if (fitRequested) lastFitRequestKeyRef.current = fitRequestKey;
+
+    if (frozenFitPps == null || resetRequested || fitRequested) {
+      setFrozenFitPps(liveFitPps);
+    }
+  }, [durationS, fitRequestKey, frozenFitPps, liveFitPps, scaleResetKey, trackViewportW]);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -514,7 +543,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           className="w-0 min-w-0 flex-1 overflow-x-auto overflow-y-hidden"
           onWheel={onTimelineWheel}
         >
-          <div style={{ width: trackW, minWidth: trackW }}>
+          <div className="relative" style={{ width: trackW, minWidth: trackW }}>
             {/* ── Ruler ── */}
           <div
             className="relative h-6 cursor-ew-resize border-b border-zinc-200 bg-zinc-50"
@@ -743,6 +772,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
             })
           )}
           </LaneTrack>
+          {showEndMarker && <EndOfVideoMarker left={videoEndPx} />}
           </div>
         </div>
       </div>
@@ -772,6 +802,16 @@ function Playline({ px, withHead = false }: { px: number; withHead?: boolean }) 
         <div className="absolute -top-1 left-1/2 h-2 w-2 -translate-x-1/2 rounded-[2px] bg-[#0c0c0e]" />
       )}
     </div>
+  );
+}
+
+function EndOfVideoMarker({ left }: { left: number }) {
+  return (
+    <div
+      className="pointer-events-none absolute bottom-0 top-0 z-10 w-px bg-zinc-400/40"
+      style={{ left }}
+      aria-hidden
+    />
   );
 }
 
