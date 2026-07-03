@@ -1136,7 +1136,7 @@ export default function EditorShell({
     onPreviewSeek: seekPreviewToOutput,
     grid: clip.state.grid,
     clipsLoading: clip.loadState === "loading",
-    filmstripSrc: variant.base_video_url ?? variant.output_url ?? null,
+    filmstripClips: clip.clips,
     sfx: localSfx,
     onPreviewSfxTiming: previewSfxTiming,
     hasMusic: !!variant.music_track_id,

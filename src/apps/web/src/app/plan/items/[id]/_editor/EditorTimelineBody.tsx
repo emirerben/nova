@@ -29,8 +29,11 @@ import {
   tickIntervalForScale,
 } from "@/lib/timeline/timeline-scale";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import type { TimelineClip } from "@/lib/generative-api";
 import type { EditorSelection, EditorSelectionKind } from "./useEditorSelection";
-import Filmstrip from "./Filmstrip";
+import Filmstrip, {
+  allocateFilmstripSeekBudget,
+} from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
 import {
   type BarDragHandle,
@@ -89,7 +92,7 @@ export interface EditorTimelineBodyProps {
   onPreviewSeek?: (seconds: number) => void;
   grid: number[];
   clipsLoading: boolean;
-  filmstripSrc: string | null;
+  filmstripClips: Pick<TimelineClip, "clip_index" | "signed_url" | "duration_s">[];
 
   sfx: EditorSfxBar[];
   onPreviewSfxTiming?: (
@@ -158,7 +161,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onPreviewSeek,
     grid,
     clipsLoading,
-    filmstripSrc,
+    filmstripClips,
     sfx,
     onPreviewSfxTiming,
     hasMusic,
@@ -182,6 +185,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     y: number;
     text: string;
   } | null>(null);
+  const [filmstripSlots, setFilmstripSlots] = useState(slots);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -224,8 +228,51 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const playheadPx = secondsToPx(currentTimeS, pps);
   const slotLayout = sequentialSlotLayout(slots, grid);
   const windows = slotLayout.windows;
+  const filmstripLayout = sequentialSlotLayout(filmstripSlots, grid);
+  const filmstripSourceByIndex = new Map(
+    filmstripClips.map((clip) => [clip.clip_index, clip]),
+  );
+  const activeFilmstripCount = filmstripLayout.windows.reduce((count, win, i) => {
+    const slot = filmstripSlots[i];
+    return slot && !slot.removed && win.startS != null && win.durationS > 0
+      ? count + 1
+      : count;
+  }, 0);
+  const perClipSeekBudget =
+    activeFilmstripCount > 0
+      ? Math.max(1, Math.floor(24 / activeFilmstripCount))
+      : 0;
+  const zoomSeekBudget = Math.max(1, Math.round(zoom * 10));
+  const filmstripWidths = filmstripLayout.windows.map((win, i) => {
+    const slot = filmstripSlots[i];
+    if (!slot || slot.removed || win.startS == null || win.durationS <= 0) return 0;
+    return Math.max(8, secondsToPx(win.durationS, pps));
+  });
+  const filmstripSeekBudgets = allocateFilmstripSeekBudget(
+    filmstripWidths.map((width) => (width > 0 ? 1 : 0)),
+    Math.min(24, perClipSeekBudget * activeFilmstripCount, zoomSeekBudget * activeFilmstripCount),
+  ).map((budget) =>
+    budget > 0 ? Math.min(perClipSeekBudget, zoomSeekBudget) : 0,
+  );
+  const filmstripByKey = new Map(
+    filmstripSlots.map((slot, i) => [
+      slot.key,
+      {
+        slot,
+        win: filmstripLayout.windows[i],
+        widthPx: filmstripWidths[i] ?? 0,
+        maxSeekCount: filmstripSeekBudgets[i] ?? 0,
+      },
+    ]),
+  );
   const tickInterval = tickIntervalForScale(pps);
   const ticks = rulerTicks(durationS, pps);
+
+  useEffect(() => {
+    const drag = dragRef.current;
+    if (drag?.kind === "clip" && drag.active) return;
+    setFilmstripSlots(slots);
+  }, [slots]);
 
   // ── Scrub (ruler click/drag → seek; pauses playback per the contract) ────────
   const scrubbing = useRef(false);
@@ -411,11 +458,18 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       e.stopPropagation();
     }
     dragRef.current = null;
+    if (drag.kind === "clip") {
+      setFilmstripSlots(slots);
+    }
     setDragLabel(null);
   }
 
   function cancelDrag() {
+    const drag = dragRef.current;
     dragRef.current = null;
+    if (drag?.kind === "clip") {
+      setFilmstripSlots(slots);
+    }
     setDragLabel(null);
   }
 
@@ -526,16 +580,6 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           {/* ── Video lane (Clips + filmstrip) ── */}
           <LaneTrack trackW={trackW}>
           <Playline px={playheadPx} />
-          {filmstripSrc && durationS > 0 && (
-            <div className="pointer-events-none absolute inset-y-1 left-0" style={{ width: trackW }}>
-              <Filmstrip
-                src={filmstripSrc}
-                durationS={durationS}
-                widthPx={trackW}
-                sourceRangeKey={slotLayout.sourceRangeKey}
-              />
-            </div>
-          )}
           {clipsLoading ? (
             <div className="absolute inset-1 rounded bg-zinc-200/60 motion-safe:animate-pulse" />
           ) : (
@@ -545,6 +589,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               const left = secondsToPx(win.startS, pps);
               const width = Math.max(8, secondsToPx(win.durationS, pps));
               const selected = isSel("clip", slot.key);
+              const strip = filmstripByKey.get(slot.key);
+              const stripSlot = strip?.slot ?? slot;
+              const stripWin = strip?.win ?? win;
+              const source = filmstripSourceByIndex.get(stripSlot.clipIndex);
               return (
                 <button
                   key={slot.key}
@@ -566,13 +614,26 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     onSelect("clip", slot.key);
                   }}
                   className={[
-                    "group absolute inset-y-0.5 min-w-11 cursor-grab rounded border transition-colors active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                    "group absolute inset-y-0.5 min-w-11 cursor-grab overflow-hidden rounded border bg-zinc-200 transition-colors active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
                     selected
                       ? `border-transparent ${ringCls}`
                       : "border-white/50 hover:border-white",
                   ].join(" ")}
                   style={{ left, width }}
                 >
+                  <span className="pointer-events-none absolute inset-0">
+                    <Filmstrip
+                      src={source?.signed_url ?? null}
+                      clipId={stripSlot.key}
+                      sourceId={stripSlot.clipIndex}
+                      sourceStartS={stripSlot.inS}
+                      durationS={stripWin.durationS}
+                      sourceDurationS={source?.duration_s ?? clipSourceDurations?.[stripSlot.key] ?? null}
+                      widthPx={strip?.widthPx ?? width}
+                      maxSeekCount={strip?.maxSeekCount ?? 0}
+                      label=""
+                    />
+                  </span>
                   {i > 0 && <span className="absolute inset-y-0 left-0 w-px bg-white/80" />}
                   <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-[10px] font-semibold text-white drop-shadow">
                     <span className="truncate">
