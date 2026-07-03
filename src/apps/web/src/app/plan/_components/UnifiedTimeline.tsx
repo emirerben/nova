@@ -36,6 +36,9 @@ import OverlayLane from "./OverlayLane";
 import ClipsLane from "./ClipsLane";
 import TextLane from "./TextLane";
 import type { ClipTimelineHandle } from "./useClipTimeline";
+import EditorTimelineBody, {
+  type EditorTimelineBodyProps,
+} from "../items/[id]/_editor/EditorTimelineBody";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -124,6 +127,13 @@ export interface UnifiedTimelineProps {
    * parent can conditionally show/hide other right-panel content.
    */
   onTextBarSelect?: (id: string | null) => void;
+  /**
+   * Editor-shell mode (plan §6, T4). When provided, UnifiedTimeline renders the
+   * scale-driven editor timeline (Text → Video → Sound → Overlays, zoom, scrub,
+   * lime selection, mutes, filmstrip) instead of the item-page lanes. Absent =
+   * the item-page timeline is byte-identical to before (all props above only).
+   */
+  editorMode?: EditorTimelineBodyProps;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -157,7 +167,11 @@ export default function UnifiedTimeline({
   onClipBodyClick,
   textPanelPortalTarget,
   onTextBarSelect,
+  editorMode,
 }: UnifiedTimelineProps) {
+  // ── Editor-shell mode: delegate to the scale-driven editor timeline ──────────
+  // (early return so the item-page render path below is untouched.)
+
   // ── Text lane selection (controlled here so T7 can read expandedBarId) ────────
 
   const [textExpandedBarId, setTextExpandedBarId] = useState<string | null>(null);
@@ -179,6 +193,10 @@ export default function UnifiedTimeline({
       : [0];
 
   // ── Render ────────────────────────────────────────────────────────────────────
+
+  // Editor-shell mode wins the render (all hooks above still run, so hook order
+  // is stable). The item-page path below is unchanged.
+  if (editorMode) return <EditorTimelineBody {...editorMode} />;
 
   return (
     <div className="select-none overflow-x-auto" data-testid="unified-timeline">

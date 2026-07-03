@@ -41,7 +41,13 @@ import {
 } from "@/lib/timeline/text-timeline-reducer";
 import { InkButton } from "@/components/ui/InkButton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
+import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
+import { type DraftSlot } from "@/app/generative/timeline-math";
 import { barsToTextElements, seedBarsFromVariant } from "./editor-bars";
+import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
+import TransportBar from "./TransportBar";
+import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
@@ -131,7 +137,7 @@ export default function EditorShell({
     dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
   }, [variant]);
 
-  const dirty = state.past.length > 0 || title.trim() !== "";
+  const textDirty = state.past.length > 0 || title.trim() !== "";
 
   // ── View state ──────────────────────────────────────────────────────────────
   const { selection, select, clear } = useEditorSelection();
@@ -143,6 +149,44 @@ export default function EditorShell({
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const contentRef = useRef<HTMLTextAreaElement>(null);
+
+  // ── Timeline view state (plan §6) ───────────────────────────────────────────
+  const [playing, setPlaying] = useState(false);
+  const [zoom, setZoom] = useState(1); // 1 = fit-to-width
+  const [videoMuted, setVideoMuted] = useState(false);
+  const [soundMuted, setSoundMuted] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [timelineDirty, setTimelineDirty] = useState(false);
+
+  // Clip slots — the shell's local working state for split/delete (seeded from
+  // the shared clip-timeline handle, then edited locally; persisted via
+  // editor-commit `timeline_slots`).
+  const clip = useClipTimeline(itemId, variant?.variant_id ?? "", "plan-item");
+  const [localSlots, setLocalSlots] = useState<DraftSlot[] | null>(null);
+  const slotsSeededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (clip.loadState !== "ready") return;
+    if (slotsSeededRef.current === variant?.variant_id) return;
+    slotsSeededRef.current = variant?.variant_id ?? null;
+    setLocalSlots(clip.state.slots.map((s) => ({ ...s })));
+    setTimelineDirty(false);
+  }, [clip.loadState, clip.state.slots, variant]);
+  const slots = localSlots ?? clip.state.slots;
+
+  // Toast auto-clear.
+  useEffect(() => {
+    if (!toast) return;
+    const t = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(t);
+  }, [toast]);
+
+  // Live audio: mute the preview element when either channel is toggled off
+  // (the preview is a single mixed element; the render honors the split via mix).
+  useEffect(() => {
+    if (videoRef.current) videoRef.current.muted = videoMuted || soundMuted;
+  }, [videoMuted, soundMuted, variant]);
+
+  const dirty = textDirty || timelineDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   const [saving, setSaving] = useState(false);
@@ -258,11 +302,89 @@ export default function EditorShell({
     [selectedBar, patchBar, addTextAtPlayhead],
   );
 
+  // Clip-split capability gate (plan §7): missing capabilities → allowed for
+  // montage agent_text variants (song_text / original_text), disabled otherwise.
+  const caps = (variant as unknown as {
+    editor_capabilities?: { split_clips?: boolean };
+  } | null)?.editor_capabilities;
+  const splitClipsAllowed =
+    caps?.split_clips !== undefined
+      ? caps.split_clips !== false
+      : variant?.text_mode === "agent_text";
+
   const deleteSelected = useCallback(() => {
-    if (selection?.kind !== "text") return;
-    dispatch({ type: "DELETE_BAR", id: selection.id });
-    clear();
-  }, [selection, clear]);
+    if (!selection) return;
+    if (selection.kind === "text") {
+      dispatch({ type: "DELETE_BAR", id: selection.id });
+      clear();
+    } else if (selection.kind === "clip") {
+      const res = deleteSlotEnforceFloor(slots, selection.id);
+      if (res.didDelete) {
+        setLocalSlots(res.slots);
+        setTimelineDirty(true);
+        clear();
+      } else {
+        setToast("Keep at least one clip.");
+      }
+    }
+  }, [selection, clear, slots]);
+
+  const splitAtPlayhead = useCallback(() => {
+    if (!selection) return;
+    if (selection.kind === "text") {
+      dispatch({
+        type: "SPLIT_BAR",
+        id: selection.id,
+        at_s: currentTime,
+        newId: crypto.randomUUID(),
+      });
+    } else if (selection.kind === "clip") {
+      if (!splitClipsAllowed) return;
+      const res = splitSlotAt(
+        slots,
+        clip.state.grid,
+        selection.id,
+        currentTime,
+        `split-${crypto.randomUUID()}`,
+      );
+      if (res.didSplit) {
+        setLocalSlots(res.slots);
+        setTimelineDirty(true);
+      } else {
+        setToast("Move the playhead over the clip to split it.");
+      }
+    }
+  }, [selection, currentTime, slots, clip.state.grid, splitClipsAllowed]);
+
+  const togglePlay = useCallback(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play();
+    else v.pause();
+  }, []);
+
+  const seekTo = useCallback((sec: number) => {
+    const v = videoRef.current;
+    if (v) {
+      if (!v.paused) v.pause();
+      v.currentTime = sec;
+    }
+    setCurrentTime(sec);
+  }, []);
+
+  // Transport enablement (plan §6).
+  const canSplit =
+    selection?.kind === "text" ||
+    (selection?.kind === "clip" && splitClipsAllowed);
+  const splitReason =
+    selection?.kind === "music"
+      ? "Music fits the cut automatically"
+      : selection?.kind === "clip" && !splitClipsAllowed
+        ? "This variant's clips can't be split"
+        : undefined;
+  const canDelete =
+    selection?.kind === "text" ||
+    (selection?.kind === "clip" && activeSlotCount(slots) > 1);
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
@@ -301,6 +423,19 @@ export default function EditorShell({
     try {
       await commitEditorSession(itemId, variant.variant_id, {
         text_elements: barsToTextElements(state.bars, originalsRef.current),
+        // Clip-slot overrides only when the timeline was actually edited
+        // (split / delete / mute) — omit otherwise so an untouched section
+        // isn't rewritten.
+        timeline_slots: timelineDirty
+          ? slots.map((s, i) => ({
+              slot_index: i,
+              in_s: s.inS,
+              duration_s: s.durationS,
+              removed: s.removed,
+            }))
+          : undefined,
+        // Music mute → bed level 0.0 (the editor-commit client carries `mix`).
+        mix: soundMuted ? 0.0 : null,
         title: title.trim() !== "" ? title.trim() : null,
         base_generation: variant.render_finished_at ?? null,
       });
@@ -311,7 +446,7 @@ export default function EditorShell({
       if (err instanceof EditorCommitConflictError) setSaveError(err.message);
       else setSaveError(err instanceof Error ? err.message : "Couldn't save your edits.");
     }
-  }, [variant, saving, itemId, state.bars, title, router]);
+  }, [variant, saving, itemId, state.bars, title, router, timelineDirty, slots, soundMuted]);
 
   const requestLeave = useCallback(() => {
     if (dirty) setConfirmLeave(true);
@@ -383,6 +518,48 @@ export default function EditorShell({
       </Frame>
     );
   }
+
+  const editorModeProps: EditorTimelineBodyProps = {
+    durationS: duration,
+    currentTimeS: currentTime,
+    zoom,
+    selection,
+    onSelect: (kind, id) => {
+      select(kind, id);
+      if (kind === "text") setInspectorTab("basic");
+    },
+    onClear: clear,
+    textBars: state.bars,
+    slots,
+    grid: clip.state.grid,
+    clipsLoading: clip.loadState === "loading",
+    filmstripSrc: variant.base_video_url ?? variant.output_url ?? null,
+    sfx: (variant.sound_effects ?? []).map((p) => ({
+      id: p.id,
+      at_s: p.at_s ?? 0,
+      label: p.label ?? null,
+    })),
+    hasMusic: !!variant.music_track_id,
+    musicLabel: variant.track_title ?? "Music",
+    videoMuted,
+    onToggleVideoMute: () => setVideoMuted((m) => !m),
+    soundMuted,
+    onToggleSoundMute: () => {
+      setSoundMuted((m) => !m);
+      setTimelineDirty(true);
+    },
+    overlays: (variant.media_overlays ?? []).map((o) => ({
+      id: o.id,
+      start_s: o.start_s,
+      end_s: o.end_s,
+      label: o.kind === "video" ? "Video" : "Image",
+    })),
+    onScrub: seekTo,
+    onScrubStart: () => {
+      const v = videoRef.current;
+      if (v && !v.paused) v.pause();
+    },
+  };
 
   return (
     <div className="fixed inset-0 z-50 grid grid-rows-[56px_minmax(480px,1fr)_260px] overflow-hidden bg-[#fafaf8]">
@@ -522,6 +699,7 @@ export default function EditorShell({
           onFocusContent={focusContent}
           onTimeUpdate={setCurrentTime}
           onDuration={setDuration}
+          onPlayingChange={setPlaying}
         />
         <InspectorPanel
           selection={selection}
@@ -546,15 +724,56 @@ export default function EditorShell({
         />
       </div>
 
-      {/* ── Timeline region (260px) — the multi-track timeline lands with the
-             timeline task; the selection store above is what it will consume. ── */}
+      {/* ── Timeline region (260px): TransportBar + scale-driven editor
+             timeline (Text → Video → Sound → Overlays), plan §6. ── */}
       <div
         data-region="timeline"
-        className="flex items-center justify-center border-t border-zinc-200 bg-white"
+        className="relative flex min-h-0 flex-col border-t border-zinc-200 bg-white"
       >
-        <p className="text-[12px] text-[#a1a1aa]">
-          Timeline editing arrives with the next update
-        </p>
+        <TransportBar
+          playing={playing}
+          currentTime={currentTime}
+          duration={duration}
+          onPlayPause={togglePlay}
+          canSplit={canSplit}
+          splitReason={splitReason}
+          onSplit={splitAtPlayhead}
+          canDelete={canDelete}
+          onDelete={deleteSelected}
+          zoom={zoom}
+          onZoom={setZoom}
+          onFit={() => setZoom(1)}
+        />
+        <div className="min-h-0 flex-1">
+          <UnifiedTimeline
+            totalDurationS={duration}
+            currentTimeS={currentTime}
+            // Item-page-only props — unused in editor mode (UnifiedTimeline
+            // early-returns on `editorMode`); passed as inert defaults so the
+            // shared component's required contract stays satisfied.
+            sfxPlacements={[]}
+            sfxGlossaryEffects={[]}
+            sfxGlossaryLoading={false}
+            sfxRendering={false}
+            sfxUploading={false}
+            onSfxChange={() => {}}
+            onSfxUploadRequest={async () => {}}
+            overlayCards={[]}
+            overlaysEnabled={false}
+            overlayUploading={false}
+            localPreviewUrls={{}}
+            onOverlayUploadRequest={() => {}}
+            onUpdateCard={() => {}}
+            onRemoveCard={() => {}}
+            onClearOverlays={() => {}}
+            editorMode={editorModeProps}
+          />
+        </div>
+        {toast && (
+          <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-[#0c0c0e] px-3 py-1.5 text-[12px] text-white shadow-lg">
+            {toast}
+          </div>
+        )}
       </div>
 
       <ConfirmDialog

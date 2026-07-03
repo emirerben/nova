@@ -68,6 +68,7 @@ export default function EditorCanvas({
   onFocusContent,
   onTimeUpdate,
   onDuration,
+  onPlayingChange,
 }: {
   variant: PlanItemVariant;
   /** Working bars projected to API shape (barsToTextElements) — layout input. */
@@ -87,6 +88,8 @@ export default function EditorCanvas({
   onFocusContent: () => void;
   onTimeUpdate: (t: number) => void;
   onDuration: (d: number) => void;
+  /** Lifts play/pause state to the shell so the TransportBar can mirror it. */
+  onPlayingChange?: (playing: boolean) => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -96,7 +99,6 @@ export default function EditorCanvas({
 
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [playing, setPlaying] = useState(false);
   // Transient per-drag override so a gesture is ONE history entry (the
   // PATCH_BAR dispatch happens on pointerup, not per pointermove).
   const [dragOverride, setDragOverride] = useState<{
@@ -281,13 +283,6 @@ export default function EditorCanvas({
 
   // ── Video wiring ────────────────────────────────────────────────────────────
 
-  function togglePlay() {
-    const v = videoRef.current;
-    if (!v) return;
-    if (v.paused) void v.play();
-    else v.pause();
-  }
-
   function toggleFullscreen() {
     const el = stageRef.current;
     if (!el) return;
@@ -343,8 +338,8 @@ export default function EditorCanvas({
                   const d = (e.target as HTMLVideoElement).duration;
                   if (isFinite(d) && d > 0) onDuration(d);
                 }}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
+                onPlay={() => onPlayingChange?.(true)}
+                onPause={() => onPlayingChange?.(false)}
               />
             ) : (
               <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-300 text-sm text-[#71717a]">
@@ -466,18 +461,10 @@ export default function EditorCanvas({
               </div>
             )}
 
-            {/* Bottom-right corner cluster: play/pause (until the TransportBar
-                task lands) + fullscreen ONLY — "Basic mode" pill is CUT (D7). */}
+            {/* Bottom-right corner: fullscreen ONLY. Play/pause now lives in
+                the TransportBar (§6); "Basic mode" pill is CUT (D7). */}
             {src && (
               <div className="absolute bottom-3 right-3 flex items-center gap-2">
-                <button
-                  type="button"
-                  aria-label={playing ? "Pause" : "Play"}
-                  onClick={togglePlay}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-xs text-[#3f3f46] hover:bg-white"
-                >
-                  {playing ? "❚❚" : "▶"}
-                </button>
                 <button
                   type="button"
                   aria-label="Fullscreen"
