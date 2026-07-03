@@ -125,3 +125,86 @@ describe("CaptionEditor", () => {
     expect(applyPlanItemCaptions).toHaveBeenCalled();
   });
 });
+
+// D6: subtitled auto-captions are machine-transcribed, and prod ASR can't report
+// low confidence — so a review-first notice nudges the creator to scan the cues
+// before Apply. Scoped to `reviewFirst` (subtitled); narrated never shows it.
+describe("CaptionEditor review-first notice (D6)", () => {
+  const NOTICE = /check your captions before applying/i;
+
+  function renderReview(reviewFirst: boolean) {
+    return render(
+      <CaptionEditor
+        itemId="item-1"
+        variantId="var-1"
+        baseVideoUrl="https://example.com/base.mp4"
+        initialCues={CUES}
+        reviewFirst={reviewFirst}
+      />,
+    );
+  }
+
+  it("shows only when reviewFirst is set", () => {
+    const { unmount } = renderReview(true);
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    unmount();
+    renderReview(false);
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it("dismisses once the user taps a caption line", () => {
+    renderReview(true);
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /second line/ }));
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+});
+
+// D5: the language chip's re-transcribe destructively replaces every caption edit,
+// so it MUST be confirm-gated and must send the TOGGLED language.
+describe("CaptionEditor language chip (D5)", () => {
+  function renderChip(onChangeLanguage = jest.fn(), captionLanguage = "en") {
+    render(
+      <CaptionEditor
+        itemId="item-1"
+        variantId="var-1"
+        baseVideoUrl="https://example.com/base.mp4"
+        initialCues={CUES}
+        captionLanguage={captionLanguage}
+        onChangeLanguage={onChangeLanguage}
+      />,
+    );
+    return onChangeLanguage;
+  }
+
+  it("shows the current language and confirms before re-transcribing", () => {
+    const onChangeLanguage = renderChip();
+    expect(screen.getByText(/captions in english/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /change caption language/i }));
+    // Confirm gate: nothing fires until Re-transcribe is clicked.
+    expect(onChangeLanguage).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /re-transcribe/i }));
+    expect(onChangeLanguage).toHaveBeenCalledWith("tr"); // toggled en → tr
+  });
+
+  it("cancel closes the confirm without firing", () => {
+    const onChangeLanguage = renderChip(jest.fn(), "tr");
+    expect(screen.getByText(/captions in türkçe/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /change caption language/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(onChangeLanguage).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /re-transcribe/i })).not.toBeInTheDocument();
+  });
+
+  it("hides the chip entirely for narrated (no captionLanguage)", () => {
+    render(
+      <CaptionEditor
+        itemId="item-1"
+        variantId="var-1"
+        baseVideoUrl="https://example.com/base.mp4"
+        initialCues={CUES}
+      />,
+    );
+    expect(screen.queryByText(/captions in/i)).not.toBeInTheDocument();
+  });
+});

@@ -13,6 +13,7 @@ from app.agents._schemas.content_plan import ContentPlanOutput, PlanItemSpec
 from app.agents._schemas.edit_format import (
     DEFAULT_EDIT_FORMAT,
     EDIT_FORMATS,
+    NARRATED_EDIT_FORMATS,
     coerce_edit_format,
 )
 
@@ -24,10 +25,20 @@ def test_vocabulary_and_default() -> None:
         "talking_head",
         "day_vlog",
         "single_hero",
+        "subtitled",
         "narrated",
         "narrated_planned",
         "narrated_ready",
     }
+
+
+def test_subtitled_is_not_a_narrated_format() -> None:
+    # `subtitled` captions the clip's OWN audio — it needs NO voiceover, so it must
+    # stay OUT of the narrated grouping (which gates generation on a voiceover being
+    # attached). If this ever flips, subtitled jobs would be blocked for lacking a
+    # voiceover they never need. See edit_format.py lockstep note.
+    assert "subtitled" in EDIT_FORMATS
+    assert "subtitled" not in NARRATED_EDIT_FORMATS
 
 
 @pytest.mark.parametrize(
@@ -37,6 +48,8 @@ def test_vocabulary_and_default() -> None:
         ("Talking-Head", "talking_head"),
         ("DAY VLOG", "day_vlog"),
         ("single-hero", "single_hero"),
+        ("subtitled", "subtitled"),
+        ("Subtitled", "subtitled"),
         ("montage", "montage"),
         ("", "montage"),
         ("nonsense", "montage"),

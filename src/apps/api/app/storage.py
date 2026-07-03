@@ -292,6 +292,22 @@ def download_to_file(object_path: str, local_path: str) -> None:
     blob.download_to_filename(local_path)
 
 
+def delete_object_best_effort(object_path: str) -> bool:
+    """Delete a GCS object, swallowing every failure (returns False on any error).
+
+    For superseded render outputs: reburn/re-transcribe upload a NEW key and repoint
+    the variant entry, leaving the old blob unreachable — under `generative-jobs/*`
+    (lifecycle-exempt) it would otherwise persist forever. Deletion is cleanup, never
+    correctness: a failure only costs storage, so it must never fail the caller.
+    """
+    try:
+        bucket = _get_client().bucket(settings.storage_bucket)
+        bucket.blob(object_path).delete()
+        return True
+    except Exception:  # noqa: BLE001 — best-effort cleanup only
+        return False
+
+
 def signed_get_url(object_path: str, expiration_minutes: int = 5) -> str:
     """Generate a short-lived signed GET URL for the API to stream-probe a GCS
     object without downloading it. ffmpeg/ffprobe accept https:// URLs and

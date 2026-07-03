@@ -19,7 +19,9 @@ def sanitize_ass_text(text: str) -> str:
     text = re.sub(r"\{[^}]*\}", "", text)
     # Remove orphan braces
     text = text.replace("{", "").replace("}", "")
-    # Convert newlines to ASS line breaks
+    # Convert newlines to ASS line breaks; strip carriage returns (a lone \r would
+    # survive into the Dialogue line otherwise)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\n", "\\N")
     return text.strip()
 

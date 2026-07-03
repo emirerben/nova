@@ -30,6 +30,7 @@ from app.database import get_db
 from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset
 from app.routes.generative_jobs import (
     CaptionFontRequest,
+    CaptionLanguageRequest,
     CaptionsRequest,
     ChangeStyleRequest,
     EditVariantRequest,
@@ -49,6 +50,7 @@ from app.routes.generative_jobs import (
     dispatch_patch_scene_timing,
     dispatch_reset_timeline,
     dispatch_retext,
+    dispatch_retranscribe_captions,
     dispatch_set_intro_size,
     dispatch_set_intro_timing,
     dispatch_set_media_overlays,
@@ -1307,6 +1309,11 @@ async def apply_item_captions(
     """Reburn the variant's edited captions onto its caption-free base (async)."""
     job = await _owned_item_render_job(item_id, user.id, db)
     dispatch_apply_captions(job, variant_id)
+    # Persist the synchronous render_status="rendering" gate-close: the dispatcher
+    # mutates job.assembly_plan, and get_db does NOT commit on exit — without this
+    # commit the write rolls back and the enqueue-window race reopens (siblings
+    # retext/swap-song commit after dispatch for the same reason).
+    await db.commit()
     log.info("plan_item_apply_captions", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1332,6 +1339,33 @@ async def set_item_caption_font(
         item_id=item_id,
         variant_id=variant_id,
         font=req.caption_font,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/caption-language", response_model=PlanItemResponse)
+async def set_item_caption_language(
+    item_id: str,
+    variant_id: str,
+    req: CaptionLanguageRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Change a subtitled variant's caption language → re-transcribe + reburn (async).
+
+    The D5 override: re-runs whisper-1 on the cached base's audio with the new language
+    hint and rebuilds the cues, REPLACING the current captions + any hand-edits (the
+    frontend confirms first). Subtitled-only; unsupported languages are rejected (422).
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    dispatch_retranscribe_captions(job, variant_id, language=req.language)
+    # Same commit rationale as apply_item_captions above — the gate-close must persist.
+    await db.commit()
+    log.info(
+        "plan_item_set_caption_language",
+        item_id=item_id,
+        variant_id=variant_id,
+        language=req.language,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

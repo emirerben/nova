@@ -604,16 +604,25 @@ NARRATED_VARIANT = {
 REBURN = "app.tasks.generative_build.reburn_narrated_captions"
 
 
-def test_is_narrated_caption_variant_guard() -> None:
-    from app.routes.generative_jobs import _is_narrated_caption_variant
+def test_is_editable_caption_variant_guard() -> None:
+    from app.routes.generative_jobs import (
+        _CAPTION_EDIT_ARCHETYPES,
+        _is_editable_caption_variant,
+    )
 
-    assert _is_narrated_caption_variant(NARRATED_VARIANT) is True
+    assert _is_editable_caption_variant(NARRATED_VARIANT) is True
+    # subtitled single-clip is also an editable caption variant.
+    assert _is_editable_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "subtitled"})
     # montage agent_text base also has base_video_path — must NOT be editable.
     assert (
-        _is_narrated_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "montage"}) is False
+        _is_editable_caption_variant({**NARRATED_VARIANT, "resolved_archetype": "montage"}) is False
     )
     # narrated but no base → not editable yet
-    assert _is_narrated_caption_variant({"resolved_archetype": "narrated"}) is False
+    assert _is_editable_caption_variant({"resolved_archetype": "narrated"}) is False
+    # subtitled but no base → not editable yet
+    assert _is_editable_caption_variant({"resolved_archetype": "subtitled"}) is False
+    # Route gate must stay in lockstep with the worker's reburn guard.
+    assert _CAPTION_EDIT_ARCHETYPES == frozenset({"narrated", "subtitled"})
 
 
 def test_caption_cue_rejects_infinity() -> None:
@@ -637,6 +646,115 @@ def test_captions_request_caps_cue_count() -> None:
         CaptionsRequest(cues=many)
     # 300 is allowed
     CaptionsRequest(cues=many[:300])
+
+
+RETX = "app.tasks.generative_build.retranscribe_subtitled_captions"
+SUBTITLED_VARIANT = {
+    **NARRATED_VARIANT,
+    "variant_id": "subtitled",
+    "resolved_archetype": "subtitled",
+    "caption_language": "en",
+}
+
+
+def test_caption_language_happy_enqueues_retranscribe(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(RETX) as retx:
+        retx.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/caption-language",
+            json={"language": "tr"},
+        )
+    assert resp.status_code == 200
+    retx.delay.assert_called_once_with(str(job.id), "subtitled", "tr")
+
+
+def test_caption_language_marks_rendering_synchronously(client: TestClient) -> None:
+    """The 409 gate must close AT DISPATCH — otherwise two calls in the enqueue window
+    both pass and race to a last-writer-wins variant state."""
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(RETX) as retx:
+        retx.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/caption-language",
+            json={"language": "tr"},
+        )
+    assert resp.status_code == 200
+    assert job.assembly_plan["variants"][0]["render_status"] == "rendering"
+    # The mutation must be COMMITTED — get_db rolls back on exit, so without an
+    # explicit commit the gate-close silently evaporates (Red Team finding).
+    assert db.commit.await_count >= 1
+
+
+def test_apply_captions_marks_rendering_synchronously(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(f"/plan-items/{item.id}/variants/narrated/captions/apply")
+    assert resp.status_code == 200
+    assert job.assembly_plan["variants"][0]["render_status"] == "rendering"
+    assert db.commit.await_count >= 1  # persisted, not rolled back
+
+
+def test_caption_cue_caps_text_length() -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionCue
+
+    with pytest.raises(ValidationError):
+        CaptionCue(text="x" * 601, start_s=0.0, end_s=1.0)
+
+
+def test_caption_language_rejects_non_subtitled(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])  # narrated: no language override
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/narrated/caption-language",
+        json={"language": "tr"},
+    )
+    assert resp.status_code == 422
+
+
+def test_caption_language_rejects_missing_base(client: TestClient) -> None:
+    user = _user()
+    no_base = {**SUBTITLED_VARIANT, "base_video_path": None}
+    job = _job([no_base])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/subtitled/caption-language",
+        json={"language": "tr"},
+    )
+    assert resp.status_code == 422
+
+
+def test_caption_language_rejects_unknown_language(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/subtitled/caption-language",
+        json={"language": "de"},  # outside the en/tr Literal
+    )
+    assert resp.status_code == 422
 
 
 def test_apply_captions_happy(client: TestClient) -> None:

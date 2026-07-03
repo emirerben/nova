@@ -711,11 +711,18 @@ export interface SoundEffectPlacement {
 // reads (text_mode, style_set_id, intro_text_size_px, render_status,
 // base_video_url, intro_layout, intro_mode) must mirror EditableVariant's types
 // — keep them in lockstep.
-/** One editable narrated caption line: display text held over [start_s, end_s] (assembled-time). */
+/** One editable caption line: display text held over [start_s, end_s] (assembled-time). */
 export interface CaptionCue {
   text: string;
   start_s: number;
   end_s: number;
+  /**
+   * Optional real per-word timings for the word-by-word subtitled style. The editor
+   * only edits `text`, but round-trips `words` untouched so the reburn can re-pop the
+   * SAME words at their real times; when the user changes the text they no longer spell
+   * the words and the server re-synthesizes them. Absent for sentence-style captions.
+   */
+  words?: { text: string; start_s: number; end_s: number }[] | null;
 }
 
 /**
@@ -799,6 +806,10 @@ export interface PlanItemVariant {
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;
+  // Language the subtitled captions were transcribed in ("en" | "tr"). Shown as the
+  // editor chip; changing it re-transcribes (setPlanItemCaptionLanguage). Absent for
+  // narrated/montage variants.
+  caption_language?: string | null;
   // What actually rendered. "narrated" → captions are edited via CaptionEditor and
   // the hero shows the burned output, so it is NOT instant-edit-eligible. Absent
   // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
@@ -954,6 +965,26 @@ export function setPlanItemCaptionFont(
 export function applyPlanItemCaptions(itemId: string, variantId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/captions/apply`, {
     method: "POST",
+  });
+}
+
+/** Caption languages the subtitled style can transcribe into. */
+export type CaptionLanguage = "en" | "tr";
+
+/**
+ * Change a subtitled variant's caption language → re-transcribe its own audio in that
+ * language and reburn (async). REPLACES the current cues + any hand-edits — confirm
+ * with the user first. Subtitled-only (422 otherwise).
+ */
+export function setPlanItemCaptionLanguage(
+  itemId: string,
+  variantId: string,
+  language: CaptionLanguage,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/caption-language`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language }),
   });
 }
 
