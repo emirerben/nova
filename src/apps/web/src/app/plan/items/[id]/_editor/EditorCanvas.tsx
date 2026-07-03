@@ -178,9 +178,11 @@ export default function EditorCanvas({
       // to the element underneath on pointerup (Figma/TikTok convention).
       beginMove(e, selectedTextId, hits);
     } else {
+      // Fresh selection: select the topmost hit NOW and pass empty hits so
+      // this same gesture's pointerup can't immediately cycle away from it.
       const next = cycleHit(hits, null);
       if (next) onSelectText(next);
-      beginMove(e, next ?? id, hits);
+      beginMove(e, next ?? id, []);
     }
   }
 

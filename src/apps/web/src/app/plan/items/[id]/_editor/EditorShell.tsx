@@ -526,7 +526,7 @@ export default function EditorShell({
         <InspectorPanel
           selection={selection}
           bar={selectedBar}
-          tab={selection === null && inspectorTab === "basic" ? "basic" : inspectorTab}
+          tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
           contentRef={contentRef}
