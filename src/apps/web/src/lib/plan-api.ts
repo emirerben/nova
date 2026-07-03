@@ -698,6 +698,9 @@ export interface TextElement {
   stroke_width?: number | null;
   alignment?: "left" | "center" | "right" | null;
   effect?: "static" | "fade-in" | "slide-up" | "karaoke-line" | null;
+  /** Display-case transform, resolved at compile/layout time (T11 slice;
+   * parity fixture tests/fixtures/text-element-parity/text_case.json). */
+  text_case?: "none" | "upper" | "lower" | "title" | null;
   fade_out_ms?: number | null;
   reveal_s?: number | null;
   z?: number | null;

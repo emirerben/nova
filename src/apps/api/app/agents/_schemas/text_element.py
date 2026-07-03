@@ -65,6 +65,62 @@ _VALID_SIZE_CLASSES: frozenset[str] = frozenset(
 # Hex color: exactly #RRGGBB (6 hex digits).
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
+# Valid text_case transforms (mirror of TEXT_CASES in lib/overlay-layout.ts).
+_VALID_TEXT_CASES: frozenset[str] = frozenset({"none", "upper", "lower", "title"})
+
+# ---------------------------------------------------------------------------
+# Renderer-parity registry (Python mirror of PARITY_VERIFIED_FIELDS in
+# src/apps/web/src/lib/parity-verified-fields.ts — decision D9/D17).
+#
+# A style field may be added here ONLY in the same PR as its shared-fixture
+# layout-contract test (tests/fixtures/text-element-parity/<field>.json,
+# asserted by BOTH tests/pipeline/test_text_element_parity_contract.py and
+# src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts) and its
+# Skia render verification. Keep in lockstep with the TS registry.
+# ---------------------------------------------------------------------------
+
+PARITY_VERIFIED_FIELDS: frozenset[str] = frozenset(
+    {
+        # Base fields both renderers honored before the D17 gate existed:
+        "text",
+        "start_s",
+        "end_s",
+        "position",
+        "x_frac",
+        "y_frac",
+        "font_family",
+        "size_px",
+        "size_class",
+        "color",
+        "highlight_color",
+        "stroke_width",
+        "alignment",
+        "effect",
+        # Gated style fields (T11) — each has a shared parity fixture:
+        "text_case",  # tests/fixtures/text-element-parity/text_case.json
+    }
+)
+
+
+def apply_text_case(text: str, case: str | None) -> str:
+    """Apply a text_case transform. EXACT mirror of `applyTextCase` in
+    src/apps/web/src/lib/overlay-layout.ts — the CSS preview and the burn
+    must produce identical strings (parity fixture: text_case.json).
+
+    "title" uppercases the FIRST CHARACTER of each whitespace-delimited run
+    and lowercases the rest (deliberately not Python's ``str.title()``, which
+    capitalizes after apostrophes — "don't" → "Don'T").
+    """
+    if not case or case == "none":
+        return text
+    if case == "upper":
+        return text.upper()
+    if case == "lower":
+        return text.lower()
+    if case == "title":
+        return re.sub(r"\S+", lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(), text)
+    return text
+
 # Map from legacy burn-dict effects (which may include richer Skia effects)
 # to the TextElement effect enum.  Anything not listed falls back to "static".
 _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
@@ -168,6 +224,15 @@ class TextElement(BaseModel):
     effect: Literal["static", "fade-in", "slide-up", "karaoke-line"] | None = Field(
         default="static",
         description="Animation effect.",
+    )
+    text_case: Literal["none", "upper", "lower", "title"] | None = Field(
+        default=None,
+        description=(
+            "Display-case transform applied at compile time (burn dict + CSS "
+            "preview receive the TRANSFORMED text; the stored `text` keeps the "
+            "user's original casing). 'title' = first character of each "
+            "whitespace-delimited word uppercased, rest lowercased."
+        ),
     )
     fade_out_ms: int | None = Field(
         default=None,
@@ -280,6 +345,19 @@ class TextElement(BaseModel):
         if s not in _ALLOWED_EFFECTS:
             raise ValueError(f"Unknown effect {s!r}; allowed: {sorted(_ALLOWED_EFFECTS)}")
         return s
+
+    @field_validator("text_case", mode="before")
+    @classmethod
+    def _coerce_text_case(cls, v: object) -> str | None:
+        """Coerce unknown/empty text_case values to None (no transform) so a
+        drifted client value degrades to the user's own casing, never a
+        dropped element."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        if s in _VALID_TEXT_CASES:
+            return s
+        return None
 
 
 # ---------------------------------------------------------------------------

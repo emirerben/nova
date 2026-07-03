@@ -37,6 +37,9 @@ export interface TextElementBar {
   stroke_width?: number;
   effect?: string;
   alignment?: string;
+  /** Display-case transform ("none" | "upper" | "lower" | "title") — resolved
+   * at compile/layout time on both renderers (T11, parity-gated). */
+  text_case?: string;
   /** Named vertical position preset ("top" | "middle" | "bottom" | "custom").
    * Editor canvas drags set "custom" + explicit fracs. Renderer-honored. */
   position?: string;

@@ -1,0 +1,93 @@
+{
+  "field": "text_case",
+  "contract": "apply_text_case (app/agents/_schemas/text_element.py) and applyTextCase (src/apps/web/src/lib/overlay-layout.ts) must produce IDENTICAL strings. The burn dict (build_overlays_from_text_elements) and the CSS preview layout (resolveTextElementsLayout) both carry the transformed text; the stored element keeps the user's casing.",
+  "asserted_by": [
+    "src/apps/api/tests/pipeline/test_text_element_parity_contract.py",
+    "src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts"
+  ],
+  "cases": [
+    {
+      "name": "upper",
+      "element": {
+        "id": "tc-upper",
+        "text": "hello World",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "HELLO WORLD" }
+    },
+    {
+      "name": "lower",
+      "element": {
+        "id": "tc-lower",
+        "text": "HELLO World",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "lower"
+      },
+      "expected": { "text": "hello world" }
+    },
+    {
+      "name": "title-apostrophe",
+      "element": {
+        "id": "tc-title",
+        "text": "don't STOP me now",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "title"
+      },
+      "expected": { "text": "Don't Stop Me Now" }
+    },
+    {
+      "name": "title-preserves-newlines",
+      "element": {
+        "id": "tc-title-nl",
+        "text": "first line\nsecond LINE",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "title"
+      },
+      "expected": { "text": "First Line\nSecond Line" }
+    },
+    {
+      "name": "upper-diacritics",
+      "element": {
+        "id": "tc-upper-tr",
+        "text": "çağrı über",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "upper"
+      },
+      "expected": { "text": "ÇAĞRI ÜBER" }
+    },
+    {
+      "name": "none-passthrough",
+      "element": {
+        "id": "tc-none",
+        "text": "MiXeD Case",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "text_case": "none"
+      },
+      "expected": { "text": "MiXeD Case" }
+    },
+    {
+      "name": "absent-passthrough",
+      "element": {
+        "id": "tc-absent",
+        "text": "MiXeD Case",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72
+      },
+      "expected": { "text": "MiXeD Case" }
+    }
+  ]
+}

@@ -737,7 +737,14 @@ def build_overlays_from_text_elements(
     For ``karaoke-line`` elements with stored ``word_timings``, those timings are used
     verbatim (bypassing ``synthesize_word_timings``) to reproduce the original
     beat-snapped values without needing the song's beat list.
+
+    ``text_case`` is resolved HERE (compile time): the burn dict carries the
+    transformed text, so the Skia renderer, the Pillow fallback, and the CSS
+    preview (which applies the same transform in ``resolveTextElementsLayout``)
+    all agree by construction. The stored element keeps the user's casing.
     """
+    from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
+
     overlays: list[dict] = []
     for elem in elements:
         # ── position → burn-dict position + optional explicit fracs ──────────
@@ -766,6 +773,16 @@ def build_overlays_from_text_elements(
         text_size_px = int(elem.size_px) if elem.size_px is not None else None
         stroke_w = int(elem.stroke_width) if elem.stroke_width is not None else None
 
+        # text_case: transform the display text AND any stored karaoke word
+        # timings (their `text` keys are what _draw_karaoke_line burns).
+        elem_text = apply_text_case(elem.text, elem.text_case)
+        elem_word_timings = elem.word_timings
+        if elem.text_case and elem.text_case != "none" and elem_word_timings:
+            elem_word_timings = [
+                {**wt, "text": apply_text_case(str(wt.get("text", "")), elem.text_case)}
+                for wt in elem_word_timings
+            ]
+
         # ── reveal_s: produce [reveal, hold] pair (directly authored only) ───
         # Adapter-sourced elements never set reveal_s (legacy burn dicts don't
         # carry it); those come back as two pre-split TextElements already.
@@ -773,7 +790,7 @@ def build_overlays_from_text_elements(
             reveal_end = min(max(0.0, float(elem.reveal_s)), elem.end_s)
 
             reveal = build_intro_overlay(
-                elem.text,
+                elem_text,
                 effect=effect,
                 position=pos,
                 size_class=size_class,
@@ -790,8 +807,8 @@ def build_overlays_from_text_elements(
             )
             if reveal is not None:
                 reveal["role"] = elem.role
-                if effect == "karaoke-line" and elem.word_timings:
-                    reveal["word_timings"] = elem.word_timings
+                if effect == "karaoke-line" and elem_word_timings:
+                    reveal["word_timings"] = elem_word_timings
                 if elem.fade_out_ms is not None:
                     reveal["fade_out_ms"] = elem.fade_out_ms
                 if elem.z is not None:
@@ -802,7 +819,7 @@ def build_overlays_from_text_elements(
             # karaoke sweeps every word to highlight_color; others stay text_color.
             settled = highlight_color_v if effect == "karaoke-line" else text_color
             hold = build_intro_overlay(
-                elem.text,
+                elem_text,
                 effect="static",
                 position=pos,
                 size_class=size_class,
@@ -828,7 +845,7 @@ def build_overlays_from_text_elements(
 
         # ── single-dict path (adapter elements, sequence blocks, static) ─────
         overlay = build_intro_overlay(
-            elem.text,
+            elem_text,
             effect=effect,
             position=pos,
             size_class=size_class,
@@ -852,8 +869,8 @@ def build_overlays_from_text_elements(
 
         # Use stored word_timings verbatim for karaoke-line so beat-snapped
         # timings from the original render are reproduced exactly (A17).
-        if effect == "karaoke-line" and elem.word_timings:
-            overlay["word_timings"] = elem.word_timings
+        if effect == "karaoke-line" and elem_word_timings:
+            overlay["word_timings"] = elem_word_timings
 
         if elem.fade_out_ms is not None:
             overlay["fade_out_ms"] = elem.fade_out_ms

@@ -267,6 +267,34 @@ export function verticalBlockTop(
 
 export { CANVAS_H, CANVAS_W };
 
+// ── Parity-gated style-field resolvers (T11, D9/D17) ──────────────────────────
+//
+// Each resolver below is the TS half of a renderer-parity contract: an EXACT
+// mirror of a pure helper on the Python side, locked by a shared JSON fixture
+// in tests/fixtures/text-element-parity/ that both the Jest suite
+// (src/__tests__/lib/text-element-parity-contract.test.ts) and the pytest
+// suite (tests/pipeline/test_text_element_parity_contract.py) assert against.
+
+/** Valid text_case transforms — mirror of _VALID_TEXT_CASES in text_element.py. */
+export const TEXT_CASES = ["none", "upper", "lower", "title"] as const;
+export type TextCase = (typeof TEXT_CASES)[number];
+
+/**
+ * Apply a text_case transform. EXACT mirror of `apply_text_case` in
+ * app/agents/_schemas/text_element.py (parity fixture: text_case.json).
+ * "title" uppercases the FIRST CHARACTER of each whitespace-delimited run and
+ * lowercases the rest — identical to the Python regex implementation.
+ */
+export function applyTextCase(text: string, textCase: string | null | undefined): string {
+  if (!textCase || textCase === "none") return text;
+  if (textCase === "upper") return text.toUpperCase();
+  if (textCase === "lower") return text.toLowerCase();
+  if (textCase === "title") {
+    return text.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  }
+  return text;
+}
+
 // ── N-element text preview (T6) ───────────────────────────────────────────────
 
 /** Named vertical position presets for TextElement — mirrors _POSITION_Y in
@@ -315,7 +343,9 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
     const yFrac = el.y_frac ?? _TEXT_ELEMENT_Y[el.position ?? "middle"] ?? 0.45;
     return {
       id: el.id,
-      text: el.text,
+      // text_case resolves at layout time — the same compile-time transform
+      // build_overlays_from_text_elements applies to the burn dict.
+      text: applyTextCase(el.text, el.text_case),
       xFrac,
       yFrac,
       sizePx,

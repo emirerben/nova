@@ -36,6 +36,13 @@ export const PARITY_VERIFIED_FIELDS = [
   "stroke_width",
   "alignment",
   "effect",
+  // ── T11 gated style fields ──────────────────────────────────────────────
+  // Each entry below passed the D17 gate in the same PR that added it:
+  // shared fixture tests/fixtures/text-element-parity/<field>.json, asserted
+  // by test_text_element_parity_contract.py (burn dict) AND
+  // text-element-parity-contract.test.ts (TS layout), plus Skia render
+  // verification in test_text_overlay_skia_style_fields.py.
+  "text_case",
 ] as const;
 
 export type ParityVerifiedField = (typeof PARITY_VERIFIED_FIELDS)[number];
