@@ -7,9 +7,8 @@
  * borderless ghost icon-over-label buttons. Clicking the active tool toggles
  * its drawer closed.
  *
- * Sounds / Overlays / Styles drawers arrive with the timeline + presets
- * tasks; until then those tools are disabled with an honest tooltip rather
- * than opening an empty drawer.
+ * Sounds / Overlays arrive with later timeline tasks; until then those tools
+ * are disabled with an honest tooltip rather than opening an empty drawer.
  */
 
 export type EditorTool = "text" | "sounds" | "overlays" | "styles";
@@ -18,7 +17,7 @@ const TOOLS: Array<{ id: EditorTool; icon: string; label: string; enabled: boole
   { id: "text", icon: "T", label: "Text", enabled: true },
   { id: "sounds", icon: "♫", label: "Sounds", enabled: false },
   { id: "overlays", icon: "▤", label: "Overlays", enabled: false },
-  { id: "styles", icon: "✦", label: "Styles", enabled: false },
+  { id: "styles", icon: "✦", label: "Styles", enabled: true },
 ];
 
 export default function ToolRail({

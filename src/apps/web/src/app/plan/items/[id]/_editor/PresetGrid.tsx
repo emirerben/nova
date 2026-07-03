@@ -43,49 +43,75 @@ export default function PresetGrid({
   presets,
   sampleWord,
   appliedPresetId,
+  favoritePresetIds = [],
+  onToggleFavorite,
   onPick,
 }: {
   presets: TextPreset[];
   /** First word of the selected text, or null → Nova sample words. */
   sampleWord: string | null;
   appliedPresetId: string | null;
+  favoritePresetIds?: string[];
+  onToggleFavorite?: (presetId: string) => void;
   onPick: (preset: TextPreset) => void;
 }) {
+  const favoriteSet = new Set(favoritePresetIds);
+
   return (
     <div role="radiogroup" aria-label="Text presets" className="grid grid-cols-4 gap-2.5">
       {presets.map((preset, i) => {
         const word = sampleWord ?? presetSampleWord(i);
         const { family, weight } = resolveCssFont(preset.fields.font_family);
         const applied = appliedPresetId === preset.id;
+        const favorite = favoriteSet.has(preset.id);
         return (
-          <button
-            key={preset.id}
-            type="button"
-            role="radio"
-            aria-checked={applied}
-            aria-label={`Text preset: ${preset.label}`}
-            title={preset.label}
-            onClick={() => onPick(preset)}
-            className={`flex aspect-square items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-[#0c0c0e] px-1 hover:border-zinc-400 ${
-              applied ? "outline outline-2 outline-offset-1 outline-lime-500" : ""
-            }`}
-          >
-            <span
-              className="max-w-full truncate text-[15px] leading-tight"
-              style={{
-                fontFamily: family,
-                fontWeight: weight,
-                color: preset.fields.color ?? "#FFFFFF",
-                WebkitTextStroke:
-                  (preset.fields.stroke_width ?? 0) > 0 ? "0.6px #000000" : undefined,
-                backgroundColor: preset.fields.highlight_color ?? undefined,
-                padding: preset.fields.highlight_color ? "1px 5px" : undefined,
-                borderRadius: preset.fields.highlight_color ? 3 : undefined,
-              }}
+          <div key={preset.id} className="group relative aspect-square">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={applied}
+              aria-label={`Text preset: ${preset.label}`}
+              title={preset.label}
+              onClick={() => onPick(preset)}
+              className={`flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-[#0c0c0e] px-1 hover:border-zinc-400 ${
+                applied ? "outline outline-2 outline-offset-1 outline-lime-500" : ""
+              }`}
             >
-              {word}
-            </span>
-          </button>
+              <span
+                className="max-w-full truncate text-[15px] leading-tight"
+                style={{
+                  fontFamily: family,
+                  fontWeight: weight,
+                  color: preset.fields.color ?? "#FFFFFF",
+                  WebkitTextStroke:
+                    (preset.fields.stroke_width ?? 0) > 0 ? "0.6px #000000" : undefined,
+                  backgroundColor: preset.fields.highlight_color ?? undefined,
+                  padding: preset.fields.highlight_color ? "1px 5px" : undefined,
+                  borderRadius: preset.fields.highlight_color ? 3 : undefined,
+                }}
+              >
+                {word}
+              </span>
+            </button>
+            {onToggleFavorite && (
+              <button
+                type="button"
+                aria-pressed={favorite}
+                aria-label={`${favorite ? "Remove" : "Add"} ${preset.label} favorite`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onToggleFavorite(preset.id);
+                }}
+                className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[12px] transition-colors ${
+                  favorite
+                    ? "bg-white text-[#0c0c0e]"
+                    : "bg-black/35 text-white/70 group-hover:bg-white group-hover:text-[#0c0c0e]"
+                }`}
+              >
+                ★
+              </button>
+            )}
+          </div>
         );
       })}
     </div>

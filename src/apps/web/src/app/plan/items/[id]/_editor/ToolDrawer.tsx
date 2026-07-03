@@ -9,17 +9,24 @@
  * selected) above the 4-column preset grid.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { GenerativeStyleSet } from "@/lib/generative-api";
 import {
+  filterTextPresetsByCategory,
   PRESET_CATEGORIES,
+  readTextPresetFavorites,
   TEXT_PRESETS,
+  toggleTextPresetFavorite,
   type TextPreset,
   type TextPresetCategory,
+  writeTextPresetFavorites,
 } from "@/lib/text-presets";
 import PresetGrid from "./PresetGrid";
+import StylesDrawer from "./StylesDrawer";
 import type { EditorTool } from "./ToolRail";
 
 const CATEGORY_LABEL: Record<TextPresetCategory, string> = {
+  favorite: "Favorite",
   basic: "Basic",
   trending: "Trending",
 };
@@ -30,6 +37,8 @@ export default function ToolDrawer({
   appliedPresetId,
   onAddText,
   onPickPreset,
+  appliedStyleSetId = null,
+  onRestyleAll,
   onClose,
 }: {
   tool: EditorTool;
@@ -37,14 +46,36 @@ export default function ToolDrawer({
   appliedPresetId: string | null;
   onAddText: () => void;
   onPickPreset: (preset: TextPreset) => void;
+  appliedStyleSetId?: string | null;
+  onRestyleAll?: (styleSet: GenerativeStyleSet) => void;
   onClose: () => void;
 }) {
   const [category, setCategory] = useState<TextPresetCategory>("basic");
+  const [favoritePresetIds, setFavoritePresetIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setFavoritePresetIds(readTextPresetFavorites(window.localStorage));
+  }, []);
 
   const presets = useMemo(
-    () => TEXT_PRESETS.filter((p) => p.category === category),
-    [category],
+    () => filterTextPresetsByCategory(TEXT_PRESETS, category, favoritePresetIds),
+    [category, favoritePresetIds],
   );
+
+  const toggleFavorite = (presetId: string) => {
+    setFavoritePresetIds((current) => {
+      const next = toggleTextPresetFavorite(current, presetId);
+      writeTextPresetFavorites(window.localStorage, next);
+      return next;
+    });
+  };
+
+  const title =
+    tool === "text"
+      ? "Text"
+      : tool === "styles"
+        ? "Styles"
+        : tool[0].toUpperCase() + tool.slice(1);
 
   return (
     <div
@@ -53,7 +84,7 @@ export default function ToolDrawer({
     >
       <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
         <h2 className="font-display text-[18px] text-[#0c0c0e]">
-          {tool === "text" ? "Text" : tool[0].toUpperCase() + tool.slice(1)}
+          {title}
         </h2>
         <button
           type="button"
@@ -102,9 +133,19 @@ export default function ToolDrawer({
             presets={presets}
             sampleWord={sampleWord}
             appliedPresetId={appliedPresetId}
+            favoritePresetIds={favoritePresetIds}
+            onToggleFavorite={toggleFavorite}
             onPick={onPickPreset}
           />
         </div>
+      )}
+
+      {tool === "styles" && (
+        <StylesDrawer
+          sampleText={sampleWord}
+          appliedStyleSetId={appliedStyleSetId}
+          onRestyleAll={onRestyleAll}
+        />
       )}
     </div>
   );
