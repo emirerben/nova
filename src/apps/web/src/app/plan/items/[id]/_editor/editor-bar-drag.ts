@@ -1,4 +1,4 @@
-import type { DraftSlot } from "@/app/generative/timeline-math";
+import { slotWindows, type DraftSlot, type SlotWindow } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 export type BarDragHandle = "left" | "right" | "body";
@@ -17,6 +17,58 @@ function clamp(value: number, min: number, max: number): number {
 
 export function roundTiming(value: number): number {
   return Math.round(value * 1000) / 1000;
+}
+
+export interface SequentialSlotLayout {
+  windows: SlotWindow[];
+  totalDurationS: number;
+  sourceRangeKey: string;
+}
+
+export function sequentialSlotLayout(
+  slots: DraftSlot[],
+  grid: number[],
+): SequentialSlotLayout {
+  const baseWindows = slotWindows(slots, grid);
+  const windows: SlotWindow[] = [];
+  const rangeParts: string[] = [];
+  let startS = 0;
+
+  slots.forEach((slot, index) => {
+    const base = baseWindows[index] ?? {
+      startS: null,
+      durationS: 0,
+      offsetBeats: null,
+    };
+
+    if (slot.removed || base.durationS <= 0) {
+      windows.push({ ...base, startS: null, durationS: 0 });
+      rangeParts.push(`${slot.key}:removed`);
+      return;
+    }
+
+    const durationS = roundTiming(base.durationS);
+    windows.push({
+      startS: roundTiming(startS),
+      durationS,
+      offsetBeats: base.offsetBeats,
+    });
+    rangeParts.push(
+      [
+        slot.key,
+        roundTiming(slot.inS),
+        durationS,
+        slot.durationBeats ?? "s",
+      ].join(":"),
+    );
+    startS += durationS;
+  });
+
+  return {
+    windows,
+    totalDurationS: roundTiming(startS),
+    sourceRangeKey: rangeParts.join("|"),
+  };
 }
 
 export function resolveBarDragHandle({

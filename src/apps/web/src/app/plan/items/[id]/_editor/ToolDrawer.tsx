@@ -141,11 +141,13 @@ export default function ToolDrawer({
       )}
 
       {tool === "styles" && (
-        <StylesDrawer
-          sampleText={sampleWord}
-          appliedStyleSetId={appliedStyleSetId}
-          onRestyleAll={onRestyleAll}
-        />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <StylesDrawer
+            sampleText={sampleWord}
+            appliedStyleSetId={appliedStyleSetId}
+            onRestyleAll={onRestyleAll}
+          />
+        </div>
       )}
     </div>
   );

@@ -18,7 +18,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
+import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
   clampPxPerSecond,
   fitPxPerSecond,
@@ -39,6 +39,7 @@ import {
   applyTextBarDrag,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
+  sequentialSlotLayout,
   timelineXFromClient,
 } from "./editor-bar-drag";
 
@@ -213,7 +214,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }, [currentTimeS, durationS, pps, trackW, viewportW]);
 
   const playheadPx = secondsToPx(currentTimeS, pps);
-  const windows = slotWindows(slots, grid);
+  const slotLayout = sequentialSlotLayout(slots, grid);
+  const windows = slotLayout.windows;
   const tickInterval = tickIntervalForScale(pps);
   const ticks = rulerTicks(durationS, pps);
 
@@ -495,7 +497,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           <Playline px={playheadPx} />
           {filmstripSrc && durationS > 0 && (
             <div className="pointer-events-none absolute inset-y-1 left-0" style={{ width: trackW }}>
-              <Filmstrip src={filmstripSrc} durationS={durationS} widthPx={trackW} />
+              <Filmstrip
+                src={filmstripSrc}
+                durationS={durationS}
+                widthPx={trackW}
+                sourceRangeKey={slotLayout.sourceRangeKey}
+              />
             </div>
           )}
           {clipsLoading ? (

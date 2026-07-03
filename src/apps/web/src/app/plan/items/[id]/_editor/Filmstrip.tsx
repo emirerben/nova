@@ -27,12 +27,15 @@ export default function Filmstrip({
   src,
   durationS,
   widthPx,
+  sourceRangeKey,
   label,
 }: {
   src: string;
   durationS: number;
   /** Rendered track width — buckets the seek count so we re-tile per zoom. */
   widthPx: number;
+  /** Clip source ranges that should invalidate the decode cache. */
+  sourceRangeKey?: string;
   /** Fallback label (clip duration + moment description). */
   label?: string;
 }) {
@@ -117,7 +120,7 @@ export default function Filmstrip({
       video.removeAttribute("src");
       video.load();
     };
-  }, [src, durationS, tiles]);
+  }, [src, durationS, sourceRangeKey, tiles]);
 
   if (failed) {
     return (
@@ -132,6 +135,7 @@ export default function Filmstrip({
   return (
     <canvas
       ref={canvasRef}
+      data-source-range-key={sourceRangeKey}
       aria-hidden
       className="h-full w-full rounded object-cover"
       style={{ imageRendering: "auto" }}

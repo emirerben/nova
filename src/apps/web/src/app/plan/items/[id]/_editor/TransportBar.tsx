@@ -25,6 +25,7 @@ export interface TransportBarProps {
   currentTime: number;
   duration: number;
   onPlayPause: () => void;
+  clipTimingDirty?: boolean;
 
   /** Split enablement — false disables the button; `reason` fills the tooltip
    * (e.g. the music bed: "music fits the cut automatically"). */
@@ -56,6 +57,7 @@ export default function TransportBar({
   currentTime,
   duration,
   onPlayPause,
+  clipTimingDirty = false,
   canSplit,
   splitReason,
   onSplit,
@@ -116,6 +118,11 @@ export default function TransportBar({
           {formatTimecode(currentTime)}{" "}
           <span className="text-[#a1a1aa]">/ {formatTimecode(duration)}</span>
         </span>
+        {clipTimingDirty && (
+          <span className="hidden max-w-[180px] truncate text-[11px] text-[#71717a] sm:inline">
+            Clip changes preview after Save
+          </span>
+        )}
       </div>
 
       {/* ── Right: zoom ── */}

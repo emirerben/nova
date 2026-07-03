@@ -47,13 +47,14 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
-import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
+import type { DraftSlot } from "@/app/generative/timeline-math";
 import { barsToTextElements, seedBarsFromVariant } from "./editor-bars";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
   applyClipTimingInput,
   applyTextTimingInput,
   rangesDiffer,
+  sequentialSlotLayout,
 } from "./editor-bar-drag";
 import TransportBar from "./TransportBar";
 import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
@@ -331,18 +332,25 @@ export default function EditorShell({
     return out;
   }, [clip.state.clipDurations, slots]);
 
+  const slotLayout = useMemo(
+    () => sequentialSlotLayout(slots, clip.state.grid),
+    [clip.state.grid, slots],
+  );
+  const timelineDuration =
+    slotLayout.totalDurationS > 0 ? slotLayout.totalDurationS : duration;
+
   const selectedClip = useMemo(() => {
     if (selection?.kind !== "clip") return null;
     const idx = slots.findIndex((s) => s.key === selection.id);
     const slot = idx >= 0 ? slots[idx] : null;
     if (!slot) return null;
-    const windowDurationS = slotWindows(slots, clip.state.grid)[idx]?.durationS ?? 0;
+    const windowDurationS = slotLayout.windows[idx]?.durationS ?? 0;
     return {
       slot,
       durationS: slot.durationS ?? windowDurationS,
       sourceDurationS: clipSourceDurations[slot.key] ?? null,
     };
-  }, [clip.state.grid, clipSourceDurations, selection, slots]);
+  }, [clipSourceDurations, selection, slotLayout.windows, slots]);
 
   // Selection on a deleted/vanished bar clears itself.
   useEffect(() => {
@@ -485,7 +493,7 @@ export default function EditorShell({
     // Double-click contract: focus the inspector textarea with select-all.
     // Deferred a frame so the inspector has populated for a fresh selection.
     requestAnimationFrame(() => {
-      contentRef.current?.focus();
+      contentRef.current?.focus({ preventScroll: true });
       contentRef.current?.select();
     });
   }, []);
@@ -945,7 +953,7 @@ export default function EditorShell({
   }
 
   const editorModeProps: EditorTimelineBodyProps = {
-    durationS: duration,
+    durationS: timelineDuration,
     currentTimeS: currentTime,
     zoom,
     selection,
@@ -1170,7 +1178,7 @@ export default function EditorShell({
       ) : (
         <div
           className={[
-            "relative grid min-h-0",
+            "relative grid min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden",
             layoutMode === "full"
               ? "grid-cols-[auto_auto_1fr_auto_auto]"
               : "grid-cols-[auto_1fr_auto_auto]",
@@ -1209,24 +1217,29 @@ export default function EditorShell({
             />
           </div>
         )}
-        <EditorCanvas
-          variant={variant}
-          elements={elements}
-          bars={state.bars}
-          selectedTextId={selection?.kind === "text" ? selection.id : null}
-          currentTime={currentTime}
-          zoomPct={zoomPct}
-          tool={canvasTool}
-          videoRef={videoRef}
-          onSelectText={selectText}
-          onClearSelection={clear}
-          onPatchBar={patchBar}
-          onFocusContent={focusContent}
-          onTimeUpdate={setCurrentTime}
-          onDuration={setDuration}
-          onPlayingChange={setPlaying}
-          onReloadSource={() => setLoadNonce((n) => n + 1)}
-        />
+        <div
+          data-region="canvas-cell"
+          className="flex min-h-0 min-w-0 items-center justify-center overflow-hidden"
+        >
+          <EditorCanvas
+            variant={variant}
+            elements={elements}
+            bars={state.bars}
+            selectedTextId={selection?.kind === "text" ? selection.id : null}
+            currentTime={currentTime}
+            zoomPct={zoomPct}
+            tool={canvasTool}
+            videoRef={videoRef}
+            onSelectText={selectText}
+            onClearSelection={clear}
+            onPatchBar={patchBar}
+            onFocusContent={focusContent}
+            onTimeUpdate={setCurrentTime}
+            onDuration={setDuration}
+            onPlayingChange={setPlaying}
+            onReloadSource={() => setLoadNonce((n) => n + 1)}
+          />
+        </div>
         <InspectorPanel
           selection={selection}
           bar={selectedBar}
@@ -1286,10 +1299,11 @@ export default function EditorShell({
           zoom={zoom}
           onZoom={setZoom}
           onFit={() => setZoom(1)}
+          clipTimingDirty={timelineDirty}
         />
         <div className="min-h-0 flex-1">
           <UnifiedTimeline
-            totalDurationS={duration}
+            totalDurationS={timelineDuration}
             currentTimeS={currentTime}
             // Item-page-only props — unused in editor mode (UnifiedTimeline
             // early-returns on `editorMode`); passed as inert defaults so the
@@ -1549,7 +1563,7 @@ function LightEditSheet({
   useEffect(() => {
     if (!open) return;
     const id = window.requestAnimationFrame(() => {
-      textareaRef.current?.focus();
+      textareaRef.current?.focus({ preventScroll: true });
       textareaRef.current?.select();
     });
     return () => window.cancelAnimationFrame(id);

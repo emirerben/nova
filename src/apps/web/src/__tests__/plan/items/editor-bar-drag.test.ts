@@ -7,8 +7,24 @@ import {
   applyTextTimingInput,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
+  sequentialSlotLayout,
   timelineXFromClient,
 } from "@/app/plan/items/[id]/_editor/editor-bar-drag";
+import type { DraftSlot } from "@/app/generative/timeline-math";
+
+function slot(over: Partial<DraftSlot> = {}): DraftSlot {
+  return {
+    key: "s1",
+    slotId: "s1",
+    clipIndex: 0,
+    inS: 0,
+    durationBeats: null,
+    durationS: 4,
+    removed: false,
+    momentDescription: null,
+    ...over,
+  };
+}
 
 describe("editor bar drag math", () => {
   it("resolves 24px edge hit zones with a body center", () => {
@@ -161,5 +177,60 @@ describe("editor bar drag math", () => {
         videoDurationS: 10,
       }),
     ).toEqual({ at_s: 9, end_s: 10 });
+  });
+});
+
+describe("sequentialSlotLayout", () => {
+  it("ripples following slots after a trim changes duration", () => {
+    const slots = [
+      slot({ key: "a", slotId: "a", durationS: 4 }),
+      slot({ key: "b", slotId: "b", durationS: 3 }),
+      slot({ key: "c", slotId: "c", durationS: 2 }),
+    ];
+    const before = sequentialSlotLayout(slots, []);
+    const after = sequentialSlotLayout(
+      slots.map((s) => (s.key === "a" ? { ...s, durationS: 1.5 } : s)),
+      [],
+    );
+
+    expect(before.windows.map((w) => w.startS)).toEqual([0, 4, 7]);
+    expect(after.windows.map((w) => w.startS)).toEqual([0, 1.5, 4.5]);
+    expect(after.totalDurationS).toBe(6.5);
+  });
+
+  it("skips removed slots when computing downstream positions", () => {
+    const layout = sequentialSlotLayout(
+      [
+        slot({ key: "a", slotId: "a", durationS: 4 }),
+        slot({ key: "b", slotId: "b", durationS: 3, removed: true }),
+        slot({ key: "c", slotId: "c", durationS: 2 }),
+      ],
+      [],
+    );
+
+    expect(layout.windows.map((w) => w.startS)).toEqual([0, null, 4]);
+    expect(layout.windows.map((w) => w.durationS)).toEqual([4, 0, 2]);
+    expect(layout.totalDurationS).toBe(6);
+  });
+
+  it("ripples a split slot by cumulative seconds", () => {
+    const layout = sequentialSlotLayout(
+      [
+        slot({ key: "a", slotId: "a", durationS: 1.5 }),
+        slot({ key: "a2", slotId: null, inS: 1.5, durationS: 2.5 }),
+        slot({ key: "b", slotId: "b", durationS: 3 }),
+      ],
+      [],
+    );
+
+    expect(layout.windows.map((w) => w.startS)).toEqual([0, 1.5, 4]);
+    expect(layout.totalDurationS).toBe(7);
+  });
+
+  it("includes source ranges in the filmstrip invalidation key", () => {
+    const before = sequentialSlotLayout([slot({ key: "a", inS: 1, durationS: 3 })], []);
+    const after = sequentialSlotLayout([slot({ key: "a", inS: 2, durationS: 3 })], []);
+
+    expect(before.sourceRangeKey).not.toBe(after.sourceRangeKey);
   });
 });
