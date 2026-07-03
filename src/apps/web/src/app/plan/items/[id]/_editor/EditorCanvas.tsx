@@ -1,0 +1,494 @@
+"use client";
+
+/**
+ * EditorCanvas — the center 9:16 preview of the TikTok-parity editor shell.
+ *
+ * Renders the text-free base video with overlay text from the LOCAL working
+ * bars (bug #6 fix: the editor's working state feeds the overlay, never the
+ * server's variant.text_elements directly), plus the selection/manipulation
+ * layer per plan §3/§5:
+ *  - selection box (lime stroke) + 4 corner handles (white core, 1px ink halo)
+ *  - drag = move (x_frac / y_frac), corner-drag = scale (size_px)
+ *  - click video/empty = deselect; overlap hit-test topmost + click-cycling
+ *  - double-click focuses the inspector textarea (select-all) — no
+ *    contenteditable on canvas, ever
+ *  - hover: cursor pointer + 1px zinc-400/60 ghost outline
+ *  - selecting during playback never pauses
+ * Fullscreen button bottom-right ONLY — the "Basic mode" pill is CUT (D7).
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { PlanItemVariant, TextElement } from "@/lib/plan-api";
+import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import { resolveTextElementsLayout, CANVAS_W, CANVAS_H } from "@/lib/overlay-layout";
+import { resolveCssFont } from "@/lib/overlay-constants";
+import { StableVideo } from "@/components/StableVideo";
+import { cycleHit } from "./useEditorSelection";
+
+/** Min/max font size (1080×1920 canvas px) reachable via corner-drag scale.
+ * Wider than the inspector's INTRO_SIZE envelope on purpose — the canvas can
+ * host non-intro roles whose sizes exceed it; the server clamps regardless. */
+const SCALE_MIN_PX = 24;
+const SCALE_MAX_PX = 250;
+
+/** Pointer movement (px) under which a pointerdown+up counts as a CLICK
+ * (triggers overlap cycling) rather than a drag. */
+const CLICK_SLOP_PX = 3;
+
+interface DragState {
+  mode: "move" | "scale";
+  id: string;
+  startClientX: number;
+  startClientY: number;
+  /** move: starting fracs */
+  startXFrac: number;
+  startYFrac: number;
+  /** scale: starting size + distance from element center */
+  startSizePx: number;
+  startDist: number;
+  centerClientX: number;
+  centerClientY: number;
+  moved: boolean;
+  /** Hits (topmost first) captured at pointerdown — used for click-cycling. */
+  hits: string[];
+}
+
+export default function EditorCanvas({
+  variant,
+  elements,
+  bars,
+  selectedTextId,
+  currentTime,
+  zoomPct,
+  tool,
+  videoRef,
+  onSelectText,
+  onClearSelection,
+  onPatchBar,
+  onFocusContent,
+  onTimeUpdate,
+  onDuration,
+}: {
+  variant: PlanItemVariant;
+  /** Working bars projected to API shape (barsToTextElements) — layout input. */
+  elements: TextElement[];
+  /** The raw working bars, for style fields the layout doesn't carry. */
+  bars: TextElementBar[];
+  selectedTextId: string | null;
+  currentTime: number;
+  zoomPct: number;
+  tool: "select" | "pan";
+  /** Owned by the shell so the future TransportBar can drive the same video. */
+  videoRef: React.RefObject<HTMLVideoElement>;
+  onSelectText: (id: string) => void;
+  onClearSelection: () => void;
+  onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  /** Double-click contract: focus the inspector content textarea, select-all. */
+  onFocusContent: () => void;
+  onTimeUpdate: (t: number) => void;
+  onDuration: (d: number) => void;
+}) {
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const dragRef = useRef<DragState | null>(null);
+  const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+
+  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  // Transient per-drag override so a gesture is ONE history entry (the
+  // PATCH_BAR dispatch happens on pointerup, not per pointermove).
+  const [dragOverride, setDragOverride] = useState<{
+    id: string;
+    x_frac?: number;
+    y_frac?: number;
+    size_px?: number;
+  } | null>(null);
+
+  // Measure the stage so 1080×1920-scale px project onto the rendered box.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) setStageSize({ w: r.width, h: r.height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const layouts = useMemo(() => resolveTextElementsLayout(elements), [elements]);
+  const barById = useMemo(() => new Map(bars.map((b) => [b.id, b])), [bars]);
+
+  // Elements visible at the playhead (the working bars' own timing).
+  const visible = useMemo(
+    () => layouts.filter((l) => currentTime >= l.start_s && currentTime < l.end_s),
+    [layouts, currentTime],
+  );
+
+  const src = variant.base_video_url ?? variant.output_url ?? null;
+  const identity = variant.base_video_url
+    ? (variant.base_video_path ?? undefined)
+    : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
+  // ── Pointer interactions ────────────────────────────────────────────────────
+
+  function hitsAtPoint(clientX: number, clientY: number): string[] {
+    // Topmost first: render order is array order (last-in-array = top).
+    const out: Array<{ id: string; z: number }> = [];
+    visible.forEach((l, i) => {
+      const el = overlayRefs.current.get(l.id);
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+        out.push({ id: l.id, z: i });
+      }
+    });
+    return out.sort((a, b) => b.z - a.z).map((h) => h.id);
+  }
+
+  function beginMove(e: React.PointerEvent, id: string, hits: string[]) {
+    const bar = barById.get(id);
+    const layout = layouts.find((l) => l.id === id);
+    if (!layout) return;
+    dragRef.current = {
+      mode: "move",
+      id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFrac: bar?.x_frac ?? layout.xFrac,
+      startYFrac: bar?.y_frac ?? layout.yFrac,
+      startSizePx: layout.sizePx,
+      startDist: 0,
+      centerClientX: 0,
+      centerClientY: 0,
+      moved: false,
+      hits,
+    };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  }
+
+  function onOverlayPointerDown(e: React.PointerEvent, id: string) {
+    if (tool !== "select" || e.button !== 0) return;
+    e.stopPropagation();
+    const hits = hitsAtPoint(e.clientX, e.clientY);
+    if (selectedTextId && hits.includes(selectedTextId)) {
+      // Keep the current selection for dragging; a no-movement CLICK cycles
+      // to the element underneath on pointerup (Figma/TikTok convention).
+      beginMove(e, selectedTextId, hits);
+    } else {
+      const next = cycleHit(hits, null);
+      if (next) onSelectText(next);
+      beginMove(e, next ?? id, hits);
+    }
+  }
+
+  function onHandlePointerDown(e: React.PointerEvent, id: string) {
+    if (tool !== "select" || e.button !== 0) return;
+    e.stopPropagation();
+    const el = overlayRefs.current.get(id);
+    const layout = layouts.find((l) => l.id === id);
+    if (!el || !layout) return;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const dist = Math.hypot(e.clientX - cx, e.clientY - cy) || 1;
+    dragRef.current = {
+      mode: "scale",
+      id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFrac: 0,
+      startYFrac: 0,
+      startSizePx: layout.sizePx,
+      startDist: dist,
+      centerClientX: cx,
+      centerClientY: cy,
+      moved: false,
+      hits: [],
+    };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const dx = e.clientX - drag.startClientX;
+    const dy = e.clientY - drag.startClientY;
+    if (Math.hypot(dx, dy) > CLICK_SLOP_PX) drag.moved = true;
+    if (!drag.moved) return;
+    if (drag.mode === "move") {
+      if (stageSize.w === 0 || stageSize.h === 0) return;
+      const xFrac = Math.min(0.98, Math.max(0.02, drag.startXFrac + dx / stageSize.w));
+      const yFrac = Math.min(0.98, Math.max(0.02, drag.startYFrac + dy / stageSize.h));
+      setDragOverride({ id: drag.id, x_frac: xFrac, y_frac: yFrac });
+    } else {
+      const dist = Math.hypot(e.clientX - drag.centerClientX, e.clientY - drag.centerClientY);
+      const ratio = dist / drag.startDist;
+      const size = Math.min(
+        SCALE_MAX_PX,
+        Math.max(SCALE_MIN_PX, Math.round(drag.startSizePx * ratio)),
+      );
+      setDragOverride({ id: drag.id, size_px: size });
+    }
+  }
+
+  function onPointerUp() {
+    const drag = dragRef.current;
+    if (!drag) return;
+    dragRef.current = null;
+    if (drag.moved) {
+      // Commit the gesture as ONE reducer mutation (one undo step later).
+      if (drag.mode === "move" && dragOverride?.x_frac != null && dragOverride?.y_frac != null) {
+        onPatchBar(drag.id, {
+          x_frac: dragOverride.x_frac,
+          y_frac: dragOverride.y_frac,
+          position: "custom",
+        });
+      } else if (drag.mode === "scale" && dragOverride?.size_px != null) {
+        onPatchBar(drag.id, { size_px: dragOverride.size_px, size_class: undefined });
+      }
+    } else if (drag.mode === "move" && drag.hits.length > 0 && selectedTextId) {
+      // Stationary click while already selected → cycle to the element
+      // underneath at this point.
+      const next = cycleHit(drag.hits, selectedTextId);
+      if (next && next !== selectedTextId) onSelectText(next);
+    }
+    setDragOverride(null);
+  }
+
+  // Pan tool: drag scrolls the zoomed viewport.
+  function onViewportPointerDown(e: React.PointerEvent) {
+    if (tool !== "pan") return;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    panRef.current = { x: e.clientX, y: e.clientY, left: vp.scrollLeft, top: vp.scrollTop };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  }
+  function onViewportPointerMove(e: React.PointerEvent) {
+    const pan = panRef.current;
+    const vp = viewportRef.current;
+    if (!pan || !vp) return;
+    vp.scrollLeft = pan.left - (e.clientX - pan.x);
+    vp.scrollTop = pan.top - (e.clientY - pan.y);
+  }
+  function onViewportPointerUp() {
+    panRef.current = null;
+  }
+
+  // ── Video wiring ────────────────────────────────────────────────────────────
+
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play();
+    else v.pause();
+  }
+
+  function toggleFullscreen() {
+    const el = stageRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen();
+  }
+
+  const zoom = zoomPct / 100;
+
+  return (
+    <div
+      ref={viewportRef}
+      data-region="canvas"
+      className={`relative min-h-0 min-w-0 overflow-auto bg-[#fafaf8] ${
+        tool === "pan" && zoom > 1 ? "cursor-grab active:cursor-grabbing" : ""
+      }`}
+      onPointerDown={onViewportPointerDown}
+      onPointerMove={onViewportPointerMove}
+      onPointerUp={onViewportPointerUp}
+    >
+      <div
+        className="flex min-h-full items-center justify-center p-6"
+        style={zoom > 1 ? { minWidth: `${zoom * 100}%`, minHeight: `${zoom * 100}%` } : undefined}
+      >
+        {/* height-driven 9:16 stage; zoom scales it up */}
+        <div
+          className="relative"
+          style={{
+            height: `calc((100vh - 56px - 260px - 48px) * ${zoom})`,
+            aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
+            maxWidth: "100%",
+          }}
+        >
+          <div
+            ref={stageRef}
+            className="relative h-full w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100 shadow-[0_8px_28px_rgba(12,12,14,0.10)]"
+            onPointerDown={(e) => {
+              // Click on the video surface / empty stage = clear selection
+              // (plan §5 — the video surface is never a clip-selector).
+              if (tool === "select" && e.target === e.currentTarget) onClearSelection();
+            }}
+          >
+            {src ? (
+              <StableVideo
+                ref={videoRef}
+                src={src}
+                identity={identity}
+                playsInline
+                preload="auto"
+                className="pointer-events-none h-full w-full object-contain"
+                onTimeUpdate={(e) => onTimeUpdate((e.target as HTMLVideoElement).currentTime)}
+                onLoadedMetadata={(e) => {
+                  const d = (e.target as HTMLVideoElement).duration;
+                  if (isFinite(d) && d > 0) onDuration(d);
+                }}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-300 text-sm text-[#71717a]">
+                No preview for this variant yet
+              </div>
+            )}
+
+            {/* Deselect layer over the video (the <video> is pointer-events-none,
+                so clicks on footage land here). */}
+            {src && (
+              <div
+                className="absolute inset-0"
+                onPointerDown={(e) => {
+                  if (tool === "select" && e.target === e.currentTarget) onClearSelection();
+                }}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+              >
+                {visible.map((layout) => {
+                  const bar = barById.get(layout.id);
+                  const override = dragOverride?.id === layout.id ? dragOverride : null;
+                  const xFrac = override?.x_frac ?? layout.xFrac;
+                  const yFrac = override?.y_frac ?? layout.yFrac;
+                  const sizePx = override?.size_px ?? layout.sizePx;
+                  const fontPx = stageSize.h > 0 ? (sizePx / CANVAS_H) * stageSize.h : 0;
+                  const strokePx =
+                    bar?.stroke_width && stageSize.h > 0
+                      ? (bar.stroke_width / CANVAS_H) * stageSize.h
+                      : 0;
+                  const { family, weight } = resolveCssFont(layout.fontFamily);
+                  const isSelected = selectedTextId === layout.id;
+                  const isHovered = hoveredId === layout.id && !isSelected;
+                  return (
+                    <div
+                      key={layout.id}
+                      ref={(el) => {
+                        if (el) overlayRefs.current.set(layout.id, el);
+                        else overlayRefs.current.delete(layout.id);
+                      }}
+                      data-text-id={layout.id}
+                      className={`absolute select-none touch-none ${
+                        tool === "select" ? "cursor-pointer" : ""
+                      }`}
+                      style={{
+                        left: `${xFrac * 100}%`,
+                        top: `${yFrac * 100}%`,
+                        transform: "translate(-50%, -50%)",
+                        maxWidth: "90%",
+                      }}
+                      onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}
+                      onPointerMove={onPointerMove}
+                      onPointerUp={onPointerUp}
+                      onPointerEnter={() => setHoveredId(layout.id)}
+                      onPointerLeave={() => setHoveredId((h) => (h === layout.id ? null : h))}
+                      onDoubleClick={(e) => {
+                        e.stopPropagation();
+                        onSelectText(layout.id);
+                        onFocusContent();
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: `${fontPx}px`,
+                          fontFamily: family,
+                          fontWeight: weight,
+                          color: layout.color,
+                          textAlign: layout.alignment,
+                          lineHeight: 1.15,
+                          whiteSpace: "pre-wrap",
+                          wordBreak: "break-word",
+                          WebkitTextStroke: strokePx > 0 ? `${strokePx}px #000000` : undefined,
+                          textShadow: strokePx > 0 ? undefined : "0 2px 8px rgba(0,0,0,0.55)",
+                          padding: "0.08em 0.18em",
+                        }}
+                      >
+                        {layout.text}
+                      </div>
+
+                      {/* Hover ghost outline (1px zinc-400/60) */}
+                      {isHovered && (
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute inset-0 rounded-[2px]"
+                          style={{ outline: "1px solid rgba(161,161,170,0.6)" }}
+                        />
+                      )}
+
+                      {/* Selection box: lime stroke; handles white-core + 1px ink halo (D10) */}
+                      {isSelected && (
+                        <div
+                          aria-hidden={false}
+                          role="group"
+                          aria-label={`Selected text: ${layout.text.slice(0, 40)}`}
+                          className="absolute -inset-1 motion-safe:transition-opacity motion-safe:duration-150"
+                          style={{ border: "1.5px solid #84cc16" }}
+                        >
+                          {(["nw", "ne", "sw", "se"] as const).map((corner) => (
+                            <button
+                              key={corner}
+                              type="button"
+                              aria-label={`Resize text (${corner})`}
+                              onPointerDown={(e) => onHandlePointerDown(e, layout.id)}
+                              className="absolute h-2 w-2 rounded-[1px] bg-white touch-none"
+                              style={{
+                                boxShadow: "0 0 0 1px #0c0c0e",
+                                cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
+                                top: corner.startsWith("n") ? -5 : undefined,
+                                bottom: corner.startsWith("s") ? -5 : undefined,
+                                left: corner.endsWith("w") ? -5 : undefined,
+                                right: corner.endsWith("e") ? -5 : undefined,
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Bottom-right corner cluster: play/pause (until the TransportBar
+                task lands) + fullscreen ONLY — "Basic mode" pill is CUT (D7). */}
+            {src && (
+              <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label={playing ? "Pause" : "Play"}
+                  onClick={togglePlay}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-xs text-[#3f3f46] hover:bg-white"
+                >
+                  {playing ? "❚❚" : "▶"}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Fullscreen"
+                  onClick={toggleFullscreen}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-sm text-[#3f3f46] hover:bg-white"
+                >
+                  ⛶
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
