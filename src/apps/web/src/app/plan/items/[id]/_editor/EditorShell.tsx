@@ -65,7 +65,9 @@ import InspectorRail, { type InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
 import ToolRail, { type EditorTool } from "./ToolRail";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
+import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
+import { slotsDifferFromBaseline } from "./virtual-timeline";
 import {
   deleteKeyAllowed,
   escapeAction,
@@ -204,6 +206,22 @@ export default function EditorShell({
     setTimelineDirty(false);
   }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
   const slots = localSlots ?? clip.state.slots;
+  const reloadClipTimeline = clip.reload;
+  const clipDirty = useMemo(
+    () => slotsDifferFromBaseline(clip.state.baseline, slots),
+    [clip.state.baseline, slots],
+  );
+  const [virtualFallback, setVirtualFallback] = useState(false);
+  const virtualRefetchAttemptedRef = useRef(false);
+  const virtualRefetchInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!clipDirty) {
+      setVirtualFallback(false);
+      virtualRefetchAttemptedRef.current = false;
+      virtualRefetchInFlightRef.current = false;
+    }
+  }, [clipDirty]);
 
   useEffect(() => {
     if (!variant) return;
@@ -356,6 +374,111 @@ export default function EditorShell({
     };
   }, [clip.clips, clipSourceDurations, selection, slotLayout.windows, slots]);
 
+  const handleVirtualSourceError = useCallback(() => {
+    if (virtualRefetchInFlightRef.current) return;
+    if (!virtualRefetchAttemptedRef.current) {
+      virtualRefetchAttemptedRef.current = true;
+      virtualRefetchInFlightRef.current = true;
+      void Promise.resolve(reloadClipTimeline()).finally(() => {
+        virtualRefetchInFlightRef.current = false;
+      });
+      return;
+    }
+    setVirtualFallback(true);
+  }, [reloadClipTimeline]);
+
+  const virtualPreviewRequested =
+    clipDirty && !virtualFallback && clip.loadState === "ready";
+  const virtualPreview = useVirtualPreview({
+    enabled: virtualPreviewRequested,
+    slots,
+    clips: clip.clips,
+    grid: clip.state.grid,
+    currentTime,
+    muted: videoMuted,
+    onTimeUpdate: setCurrentTime,
+    onDuration: () => {},
+    onPlayingChange: setPlaying,
+    onSourceError: handleVirtualSourceError,
+  });
+  const virtualPreviewActive =
+    virtualPreviewRequested &&
+    !virtualPreview.timeline.hasMissingSource &&
+    virtualPreview.timeline.entries.length > 0;
+  const pauseVirtualPreview = virtualPreview.pause;
+  const seekVirtualPreview = virtualPreview.seekTo;
+  const toggleVirtualPreview = virtualPreview.toggle;
+  const previewDuration = virtualPreviewActive
+    ? virtualPreview.timeline.totalDurationS
+    : duration;
+
+  useEffect(() => {
+    if (!virtualPreviewRequested) return;
+    if (virtualPreview.timeline.hasMissingSource || virtualPreview.timeline.entries.length === 0) {
+      handleVirtualSourceError();
+    }
+  }, [
+    handleVirtualSourceError,
+    virtualPreview.timeline.entries.length,
+    virtualPreview.timeline.hasMissingSource,
+    virtualPreviewRequested,
+  ]);
+
+  useEffect(() => {
+    if (virtualPreviewActive) {
+      const rendered = videoRef.current;
+      if (rendered && !rendered.paused) rendered.pause();
+      if (currentTime > virtualPreview.timeline.totalDurationS) {
+        seekVirtualPreview(virtualPreview.timeline.totalDurationS);
+      }
+      return;
+    }
+    pauseVirtualPreview();
+    const rendered = videoRef.current;
+    if (!rendered) return;
+    const clamped = Math.max(0, Math.min(duration || currentTime, currentTime));
+    if (Math.abs(rendered.currentTime - clamped) > 0.15) {
+      rendered.currentTime = clamped;
+    }
+  }, [
+    currentTime,
+    duration,
+    pauseVirtualPreview,
+    seekVirtualPreview,
+    virtualPreview.timeline.totalDurationS,
+    virtualPreviewActive,
+  ]);
+
+  const pausePlayback = useCallback(() => {
+    if (virtualPreviewActive) pauseVirtualPreview();
+    else {
+      const v = videoRef.current;
+      if (v && !v.paused) v.pause();
+    }
+  }, [pauseVirtualPreview, virtualPreviewActive]);
+
+  const seekPlaybackTo = useCallback(
+    (seconds: number) => {
+      const maxDuration = virtualPreviewActive ? virtualPreview.timeline.totalDurationS : duration;
+      const clamped = Math.max(0, Math.min(maxDuration || seconds, seconds));
+      if (virtualPreviewActive) seekVirtualPreview(clamped);
+      else {
+        const v = videoRef.current;
+        if (v) {
+          if (!v.paused) v.pause();
+          v.currentTime = clamped;
+        }
+        setCurrentTime(clamped);
+      }
+    },
+    [
+      duration,
+      seekVirtualPreview,
+      virtualPreview.timeline.totalDurationS,
+      virtualPreviewActive,
+    ],
+  );
+
   // Selection on a deleted/vanished bar clears itself.
   useEffect(() => {
     if (selection?.kind === "text" && !state.bars.some((b) => b.id === selection.id)) {
@@ -403,17 +526,11 @@ export default function EditorShell({
           boundary: "start",
         });
         if (startS != null) {
-          const clamped = Math.max(0, Math.min(duration || startS, startS));
-          const v = videoRef.current;
-          if (v) {
-            if (!v.paused) v.pause();
-            v.currentTime = clamped;
-          }
-          setCurrentTime(clamped);
+          seekPlaybackTo(startS);
         }
       }
     },
-    [clip.state.grid, duration, layoutMode, select, slots],
+    [clip.state.grid, layoutMode, seekPlaybackTo, select, slots],
   );
 
   const selectText = useCallback(
@@ -447,12 +564,12 @@ export default function EditorShell({
       const next = applyTextTimingInput({
         startS: patch.start_s ?? selectedBar.start_s,
         endS: patch.end_s ?? selectedBar.end_s,
-        videoDurationS: duration,
+        videoDurationS: previewDuration,
       });
       if (!rangesDiffer(selectedBar, next)) return;
       patchBar(selectedBar.id, next);
     },
-    [duration, patchBar, readOnly, selectedBar],
+    [patchBar, previewDuration, readOnly, selectedBar],
   );
 
   const previewClipTiming = useCallback(
@@ -503,21 +620,24 @@ export default function EditorShell({
         durationS: patch.durationS,
         durationBeats: null,
       });
+      const slotIndex = slots.findIndex((s) => s.key === selectedClip.slot.key);
+      const startS = slotLayout.windows[slotIndex]?.startS;
+      if (startS != null) {
+        const boundaryS =
+          Math.abs(patch.inS - selectedClip.slot.inS) > 1e-6
+            ? startS
+            : startS + patch.durationS;
+        seekPlaybackTo(boundaryS);
+      }
     },
-    [previewClipTiming, readOnly, selectedClip],
+    [previewClipTiming, readOnly, seekPlaybackTo, selectedClip, slotLayout.windows, slots],
   );
 
   const seekPreviewToOutput = useCallback(
     (seconds: number) => {
-      const clamped = Math.max(0, Math.min(duration || seconds, seconds));
-      const v = videoRef.current;
-      if (v) {
-        if (!v.paused) v.pause();
-        v.currentTime = clamped;
-      }
-      setCurrentTime(clamped);
+      seekPlaybackTo(seconds);
     },
-    [duration],
+    [seekPlaybackTo],
   );
 
   const previewSfxTiming = useCallback(
@@ -550,8 +670,8 @@ export default function EditorShell({
       history.record();
       const start = Math.max(0, Math.round(currentTime * 10) / 10);
       const end =
-        duration > 0
-          ? Math.min(duration, start + NEW_TEXT_DURATION_S)
+        previewDuration > 0
+          ? Math.min(previewDuration, start + NEW_TEXT_DURATION_S)
           : start + NEW_TEXT_DURATION_S;
       const bar: TextElementBar = {
         id: crypto.randomUUID(),
@@ -573,7 +693,7 @@ export default function EditorShell({
       dispatch({ type: "ADD_TEXT", bar });
       selectText(bar.id);
     },
-    [currentTime, duration, selectText, readOnly, history],
+    [currentTime, previewDuration, selectText, readOnly, history],
   );
 
   // Restyle ALL text bars with a style set — ONE undoable command with instant
@@ -697,32 +817,31 @@ export default function EditorShell({
   ]);
 
   const togglePlay = useCallback(() => {
+    if (virtualPreviewActive) {
+      toggleVirtualPreview();
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) void v.play();
     else v.pause();
-  }, []);
+  }, [toggleVirtualPreview, virtualPreviewActive]);
 
   const seekTo = useCallback((sec: number) => {
-    const v = videoRef.current;
-    if (v) {
-      if (!v.paused) v.pause();
-      v.currentTime = sec;
-    }
-    setCurrentTime(sec);
-  }, []);
+    seekPlaybackTo(sec);
+  }, [seekPlaybackTo]);
 
   const nudgeSelectedText = useCallback(
     (deltaS: number) => {
       if (readOnly || selection?.kind !== "text") return;
       const bar = state.bars.find((b) => b.id === selection.id);
       if (!bar) return;
-      const start_s = nudgeBarStart(bar, deltaS, duration);
+      const start_s = nudgeBarStart(bar, deltaS, previewDuration);
       if (start_s === bar.start_s) return;
       history.record();
       dispatch({ type: "MOVE_BAR", id: bar.id, start_s });
     },
-    [duration, history, readOnly, selection, state.bars],
+    [history, previewDuration, readOnly, selection, state.bars],
   );
 
   // Transport enablement (plan §6).
@@ -1043,8 +1162,7 @@ export default function EditorShell({
     })),
     onScrub: seekTo,
     onScrubStart: () => {
-      const v = videoRef.current;
-      if (v && !v.paused) v.pause();
+      pausePlayback();
     },
   };
 
@@ -1209,6 +1327,7 @@ export default function EditorShell({
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
+            virtualPreview={virtualPreviewActive ? virtualPreview : null}
             allowManipulation={false}
             stageHeightCss="100dvh - 152px"
           />
@@ -1285,6 +1404,7 @@ export default function EditorShell({
             onDuration={setDuration}
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
+            virtualPreview={virtualPreviewActive ? virtualPreview : null}
           />
         </div>
         <InspectorPanel
@@ -1326,7 +1446,7 @@ export default function EditorShell({
         <LightTransport
           playing={playing}
           currentTime={currentTime}
-          duration={duration}
+          duration={previewDuration}
           onPlayPause={togglePlay}
           onScrub={seekTo}
         />
@@ -1338,7 +1458,7 @@ export default function EditorShell({
         <TransportBar
           playing={playing}
           currentTime={currentTime}
-          duration={duration}
+          duration={previewDuration}
           onPlayPause={togglePlay}
           canSplit={canSplit}
           splitReason={splitReason}
@@ -1348,7 +1468,8 @@ export default function EditorShell({
           zoom={zoom}
           onZoom={setZoom}
           onFit={() => setZoom(1)}
-          clipTimingDirty={timelineDirty}
+          clipTimingDirty={clipDirty}
+          clipPreviewMode={virtualPreviewActive ? "virtual" : "rendered"}
         />
         <div className="min-h-0 flex-1">
           <UnifiedTimeline

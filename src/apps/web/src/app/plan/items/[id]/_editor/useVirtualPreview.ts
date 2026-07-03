@@ -1,0 +1,338 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import type { TimelineClip } from "@/lib/generative-api";
+import type { DraftSlot } from "@/app/generative/timeline-math";
+import {
+  buildVirtualTimeline,
+  mapVirtualTime,
+  nextVirtualEntry,
+  type VirtualTimeline,
+  type VirtualTimelineEntry,
+} from "./virtual-timeline";
+
+type Deck = "a" | "b";
+
+interface PendingSeek {
+  timeS: number;
+  play: boolean;
+}
+
+export interface UseVirtualPreviewOptions {
+  enabled: boolean;
+  slots: DraftSlot[];
+  clips: Pick<TimelineClip, "clip_index" | "signed_url">[];
+  grid: number[];
+  currentTime: number;
+  muted: boolean;
+  onTimeUpdate: (timeS: number) => void;
+  onDuration: (durationS: number) => void;
+  onPlayingChange: (playing: boolean) => void;
+  onSourceError: () => void;
+}
+
+export interface VirtualPreviewVideoProps {
+  ref: RefObject<HTMLVideoElement>;
+  muted: boolean;
+  playsInline: true;
+  preload: "auto";
+  "data-virtual-preview-deck": Deck;
+  "data-active": boolean;
+  onLoadedMetadata: () => void;
+  onCanPlay: () => void;
+  onPlaying: () => void;
+  onWaiting: () => void;
+  onSeeking: () => void;
+  onSeeked: () => void;
+  onTimeUpdate: () => void;
+  onPlay: () => void;
+  onPause: () => void;
+  onError: () => void;
+}
+
+export interface VirtualPreviewController {
+  timeline: VirtualTimeline;
+  activeDeck: Deck;
+  buffering: boolean;
+  videoAProps: VirtualPreviewVideoProps;
+  videoBProps: VirtualPreviewVideoProps;
+  play: () => void;
+  pause: () => void;
+  toggle: () => void;
+  seekTo: (timeS: number) => void;
+}
+
+function otherDeck(deck: Deck): Deck {
+  return deck === "a" ? "b" : "a";
+}
+
+function safeSetCurrentTime(video: HTMLVideoElement, timeS: number) {
+  try {
+    video.currentTime = Math.max(0, timeS);
+  } catch {
+    // Some browsers reject seeking before metadata is available. The pending
+    // seek is retried from onLoadedMetadata.
+  }
+}
+
+export function useVirtualPreview({
+  enabled,
+  slots,
+  clips,
+  grid,
+  currentTime,
+  muted,
+  onTimeUpdate,
+  onDuration,
+  onPlayingChange,
+  onSourceError,
+}: UseVirtualPreviewOptions): VirtualPreviewController {
+  const timeline = useMemo(
+    () => buildVirtualTimeline(slots, clips, grid),
+    [clips, grid, slots],
+  );
+
+  const videoARef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
+  const videoBRef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
+  const [activeDeck, setActiveDeck] = useState<Deck>("a");
+  const [buffering, setBuffering] = useState(false);
+
+  const activeDeckRef = useRef<Deck>("a");
+  const currentTimeRef = useRef(currentTime);
+  const timelineRef = useRef(timeline);
+  const enabledRef = useRef(enabled);
+  const deckSlotRef = useRef<Record<Deck, number | null>>({ a: null, b: null });
+  const pendingSeekRef = useRef<Record<Deck, PendingSeek | null>>({ a: null, b: null });
+
+  currentTimeRef.current = currentTime;
+  timelineRef.current = timeline;
+  enabledRef.current = enabled;
+
+  useEffect(() => {
+    onDuration(enabled ? timeline.totalDurationS : 0);
+  }, [enabled, onDuration, timeline.totalDurationS]);
+
+  useEffect(() => {
+    for (const video of [videoARef.current, videoBRef.current]) {
+      if (video) video.muted = muted;
+    }
+  }, [muted]);
+
+  const refForDeck = useCallback((deck: Deck) => {
+    return deck === "a" ? videoARef : videoBRef;
+  }, []);
+
+  const loadDeck = useCallback(
+    (deck: Deck, entry: VirtualTimelineEntry, timeS: number | null, play: boolean) => {
+      const video = refForDeck(deck).current;
+      if (!video || !entry.sourceUrl) return;
+
+      const needsSource = deckSlotRef.current[deck] !== entry.slotIndex || video.src !== entry.sourceUrl;
+      if (needsSource) {
+        deckSlotRef.current[deck] = entry.slotIndex;
+        pendingSeekRef.current[deck] = timeS == null ? null : { timeS, play };
+        video.src = entry.sourceUrl;
+        video.preload = "auto";
+        video.load();
+        return;
+      }
+
+      if (timeS != null) safeSetCurrentTime(video, timeS);
+      if (play) {
+        void video.play().catch(() => {
+          onPlayingChange(false);
+        });
+      }
+    },
+    [onPlayingChange, refForDeck],
+  );
+
+  const preloadNext = useCallback(
+    (deck: Deck, afterEntryIndex: number) => {
+      const next = nextVirtualEntry(timelineRef.current, afterEntryIndex);
+      if (!next || !next.sourceUrl) return;
+      loadDeck(deck, next, next.inS, false);
+    },
+    [loadDeck],
+  );
+
+  const showMapping = useCallback(
+    (timeS: number, play: boolean) => {
+      const mapping = mapVirtualTime(timelineRef.current, timeS);
+      if (!mapping || !mapping.entry.sourceUrl) {
+        onSourceError();
+        return;
+      }
+
+      const deck = activeDeckRef.current;
+      loadDeck(deck, mapping.entry, mapping.sourceTimeS, play);
+      preloadNext(otherDeck(deck), mapping.entryIndex);
+      onTimeUpdate(mapping.virtualTimeS);
+    },
+    [loadDeck, onSourceError, onTimeUpdate, preloadNext],
+  );
+
+  const pause = useCallback(() => {
+    videoARef.current?.pause();
+    videoBRef.current?.pause();
+    onPlayingChange(false);
+  }, [onPlayingChange]);
+
+  const play = useCallback(() => {
+    if (!enabledRef.current) return;
+    const atEnd =
+      timelineRef.current.totalDurationS > 0 &&
+      currentTimeRef.current >= timelineRef.current.totalDurationS - 0.05;
+    showMapping(atEnd ? 0 : currentTimeRef.current, true);
+  }, [showMapping]);
+
+  const seekTo = useCallback(
+    (timeS: number) => {
+      pause();
+      showMapping(timeS, false);
+    },
+    [pause, showMapping],
+  );
+
+  const toggle = useCallback(() => {
+    const activeVideo = refForDeck(activeDeckRef.current).current;
+    if (activeVideo && !activeVideo.paused) pause();
+    else play();
+  }, [pause, play, refForDeck]);
+
+  const swapToNext = useCallback(
+    (entryIndex: number) => {
+      const next = nextVirtualEntry(timelineRef.current, entryIndex);
+      if (!next || !next.sourceUrl) {
+        pause();
+        onTimeUpdate(timelineRef.current.totalDurationS);
+        return;
+      }
+
+      const prevDeck = activeDeckRef.current;
+      const nextDeck = otherDeck(prevDeck);
+      const prevVideo = refForDeck(prevDeck).current;
+      const nextVideo = refForDeck(nextDeck).current;
+
+      prevVideo?.pause();
+      loadDeck(nextDeck, next, next.inS, true);
+      activeDeckRef.current = nextDeck;
+      setActiveDeck(nextDeck);
+      preloadNext(prevDeck, entryIndex + 1);
+      onTimeUpdate(next.startS);
+
+      if (nextVideo) {
+        safeSetCurrentTime(nextVideo, next.inS);
+        void nextVideo.play().catch(() => {
+          onPlayingChange(false);
+        });
+      }
+    },
+    [loadDeck, onPlayingChange, onTimeUpdate, pause, preloadNext, refForDeck],
+  );
+
+  const handleLoadedMetadata = useCallback(
+    (deck: Deck) => {
+      const video = refForDeck(deck).current;
+      const pending = pendingSeekRef.current[deck];
+      if (!video || !pending) return;
+      pendingSeekRef.current[deck] = null;
+      safeSetCurrentTime(video, pending.timeS);
+      if (pending.play) {
+        void video.play().catch(() => {
+          onPlayingChange(false);
+        });
+      }
+    },
+    [onPlayingChange, refForDeck],
+  );
+
+  const handleTimeUpdate = useCallback(
+    (deck: Deck) => {
+      if (!enabledRef.current || deck !== activeDeckRef.current) return;
+      const slotIndex = deckSlotRef.current[deck];
+      const video = refForDeck(deck).current;
+      if (slotIndex == null || !video) return;
+
+      const entryIndex = timelineRef.current.entries.findIndex(
+        (entry) => entry.slotIndex === slotIndex,
+      );
+      const entry = timelineRef.current.entries[entryIndex];
+      if (!entry) return;
+
+      const localOffsetS = video.currentTime - entry.inS;
+      const virtualTimeS = Math.max(
+        entry.startS,
+        Math.min(entry.startS + entry.durationS, entry.startS + localOffsetS),
+      );
+      onTimeUpdate(virtualTimeS);
+
+      if (localOffsetS >= entry.durationS - 0.05) {
+        if (entry.startS + entry.durationS >= timelineRef.current.totalDurationS - 0.05) {
+          pause();
+          onTimeUpdate(timelineRef.current.totalDurationS);
+        } else {
+          swapToNext(entryIndex);
+        }
+      }
+    },
+    [onTimeUpdate, pause, refForDeck, swapToNext],
+  );
+
+  const handleSourceError = useCallback(() => {
+    pause();
+    onSourceError();
+  }, [onSourceError, pause]);
+
+  useEffect(() => {
+    if (!enabled) {
+      pause();
+      return;
+    }
+    if (timeline.hasMissingSource || timeline.entries.length === 0) {
+      onSourceError();
+      return;
+    }
+    showMapping(currentTimeRef.current, false);
+  }, [enabled, onSourceError, pause, showMapping, timeline]);
+
+  function videoProps(deck: Deck): VirtualPreviewVideoProps {
+    return {
+      ref: refForDeck(deck),
+      muted,
+      playsInline: true,
+      preload: "auto",
+      "data-virtual-preview-deck": deck,
+      "data-active": activeDeck === deck,
+      onLoadedMetadata: () => handleLoadedMetadata(deck),
+      onCanPlay: () => setBuffering(false),
+      onPlaying: () => {
+        setBuffering(false);
+        if (deck === activeDeckRef.current) onPlayingChange(true);
+      },
+      onWaiting: () => setBuffering(true),
+      onSeeking: () => setBuffering(true),
+      onSeeked: () => setBuffering(false),
+      onTimeUpdate: () => handleTimeUpdate(deck),
+      onPlay: () => {
+        if (deck === activeDeckRef.current) onPlayingChange(true);
+      },
+      onPause: () => {
+        if (deck === activeDeckRef.current) onPlayingChange(false);
+      },
+      onError: handleSourceError,
+    };
+  }
+
+  return {
+    timeline,
+    activeDeck,
+    buffering,
+    videoAProps: videoProps("a"),
+    videoBProps: videoProps("b"),
+    play,
+    pause,
+    toggle,
+    seekTo,
+  };
+}

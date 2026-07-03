@@ -24,6 +24,7 @@ import { resolveTextElementsLayout, CANVAS_W, CANVAS_H } from "@/lib/overlay-lay
 import { resolveCssFont } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { cycleHit } from "./useEditorSelection";
+import type { VirtualPreviewController } from "./useVirtualPreview";
 
 /** Min/max font size (1080×1920 canvas px) reachable via corner-drag scale.
  * Wider than the inspector's INTRO_SIZE envelope on purpose — the canvas can
@@ -70,6 +71,7 @@ export default function EditorCanvas({
   onDuration,
   onPlayingChange,
   onReloadSource,
+  virtualPreview,
   allowManipulation = true,
   stageHeightCss,
 }: {
@@ -96,6 +98,7 @@ export default function EditorCanvas({
   /** Re-fetch the variant (re-signs an expired preview URL) on the error tile's
    * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
   onReloadSource?: () => void;
+  virtualPreview?: VirtualPreviewController | null;
   /** Light-edit mode keeps the canvas tap-only: no drag, scale, or handles. */
   allowManipulation?: boolean;
   /** Shell-specific chrome height for sizing the 9:16 stage. */
@@ -144,6 +147,15 @@ export default function EditorCanvas({
   );
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
+  const hasPreview = Boolean(src || virtualPreview);
+  const virtualVideoARef = virtualPreview?.videoAProps.ref;
+  const virtualVideoBRef = virtualPreview?.videoBProps.ref;
+  const virtualVideoAProps = virtualPreview
+    ? { ...virtualPreview.videoAProps, ref: undefined }
+    : null;
+  const virtualVideoBProps = virtualPreview
+    ? { ...virtualPreview.videoBProps, ref: undefined }
+    : null;
   const identity = variant.base_video_url
     ? (variant.base_video_path ?? undefined)
     : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
@@ -349,7 +361,26 @@ export default function EditorCanvas({
               if (tool === "select" && e.target === e.currentTarget) onClearSelection();
             }}
           >
-            {src ? (
+            {virtualPreview ? (
+              <>
+                <video
+                  {...virtualVideoAProps}
+                  ref={virtualVideoARef}
+                  className={[
+                    "pointer-events-none absolute inset-0 h-full w-full object-contain",
+                    virtualPreview.activeDeck === "a" ? "opacity-100" : "opacity-0",
+                  ].join(" ")}
+                />
+                <video
+                  {...virtualVideoBProps}
+                  ref={virtualVideoBRef}
+                  className={[
+                    "pointer-events-none absolute inset-0 h-full w-full object-contain",
+                    virtualPreview.activeDeck === "b" ? "opacity-100" : "opacity-0",
+                  ].join(" ")}
+                />
+              </>
+            ) : src ? (
               <StableVideo
                 ref={videoRef}
                 src={src}
@@ -390,7 +421,7 @@ export default function EditorCanvas({
 
             {/* Deselect layer over the video (the <video> is pointer-events-none,
                 so clicks on footage land here). */}
-            {src && (
+            {hasPreview && (
               <div
                 className="absolute inset-0"
                 onPointerDown={(e) => {
@@ -513,7 +544,7 @@ export default function EditorCanvas({
             )}
 
             {/* Scrub-buffering shimmer (readyState < HAVE_CURRENT_DATA). */}
-            {src && buffering && !videoError && (
+            {hasPreview && (virtualPreview?.buffering || buffering) && !videoError && (
               <div
                 aria-hidden
                 className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent motion-safe:animate-pulse"
@@ -522,7 +553,7 @@ export default function EditorCanvas({
 
             {/* Load-failure / expired-URL tile — plain reason + Retry (re-fetch
                 re-signs the URL). Distinct from the ineligible-variant banner. */}
-            {src && videoError && (
+            {src && !virtualPreview && videoError && (
               <div className="absolute inset-0 flex items-center justify-center p-6">
                 <div className="max-w-[280px] rounded-xl border border-dashed border-zinc-300 bg-white/95 p-5 text-center">
                   <p className="text-[13px] text-[#3f3f46]">
@@ -544,7 +575,7 @@ export default function EditorCanvas({
 
             {/* Bottom-right corner: fullscreen ONLY. Play/pause now lives in
                 the TransportBar (§6); "Basic mode" pill is CUT (D7). */}
-            {src && (
+            {hasPreview && (
               <div className="absolute bottom-3 right-3 flex items-center gap-2">
                 <button
                   type="button"
