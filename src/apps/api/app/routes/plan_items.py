@@ -63,6 +63,8 @@ from app.routes.generative_jobs import (
     persist_variant_caption_font,
     persist_variant_captions,
     prepare_editor_commit,
+    validate_media_overlays_for_user,
+    validate_sound_effects_for_user,
 )
 
 log = structlog.get_logger()
@@ -1730,36 +1732,10 @@ def _persist_overlay_metadata_only(
     """
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
-    from app.agents._schemas.media_overlay import (  # noqa: PLC0415
-        coerce_media_overlays,
-        validate_overlay_gcs_path,
+    validated = validate_media_overlays_for_user(
+        overlays_raw=overlays_raw,
+        user_id=user_id,
     )
-
-    _user_prefix = f"users/{user_id}/"
-    validated: list[dict] = []
-    if overlays_raw:
-        cards = coerce_media_overlays(overlays_raw) or []
-        for card in cards:
-            try:
-                validate_overlay_gcs_path(card.src_gcs_path)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid overlay asset path: {exc}",
-                ) from exc
-            if not card.src_gcs_path.startswith(_user_prefix):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
-                    ),
-                )
-            if card.end_s <= card.start_s:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Card {card.id}: end_s must be greater than start_s.",
-                )
-            validated.append(card.model_dump())
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
@@ -1896,11 +1872,25 @@ async def editor_commit_item(
                 detail="Title cannot be empty.",
             )
 
+    commit_body = body
+    if body.sound_effects is not None:
+        resolved_sfx = await _resolve_sound_effect_placements(
+            body.sound_effects,
+            user_id=str(user.id),
+            db=db,
+        )
+        commit_body = body.model_copy(update={"sound_effects": resolved_sfx})
+
     locked_job = await db.get(Job, job.id, with_for_update=True)
     if locked_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
 
-    prep = prepare_editor_commit(locked_job, variant_id, body)
+    prep = prepare_editor_commit(
+        locked_job,
+        variant_id,
+        commit_body,
+        user_id=str(user.id),
+    )
 
     if cleaned_title is not None:
         item.theme = cleaned_title
@@ -1927,6 +1917,8 @@ async def editor_commit_item(
             text_elements=prep["sections"]["text_elements"],
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
+            sound_effects=prep["sections"]["sound_effects"],
+            media_overlays=prep["sections"]["media_overlays"],
             title=cleaned_title is not None,
         ),
     )
@@ -1953,6 +1945,39 @@ class SetSoundEffectsBody(BaseModel):
     """Full-replace body: the entire new placement list. Send [] to clear all effects."""
 
     placements: list[dict] = Field(default_factory=list)
+
+
+async def _resolve_sound_effect_placements(
+    placements: list[dict],
+    *,
+    user_id: str,
+    db: AsyncSession,
+) -> list[dict]:
+    """Resolve curated SFX IDs server-side, then validate the full placement list."""
+    resolved_placements: list[dict] = []
+    for raw in placements:
+        placement = dict(raw)
+        sound_effect_id = placement.get("sound_effect_id")
+        if sound_effect_id:
+            from sqlalchemy import select as _select  # noqa: PLC0415
+
+            from app.models import SoundEffect  # noqa: PLC0415
+
+            effect_result = await db.execute(
+                _select(SoundEffect).where(SoundEffect.id == sound_effect_id)
+            )
+            effect = effect_result.scalar_one_or_none()
+            if effect is None or not effect.audio_gcs_path:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Sound effect {sound_effect_id!r} not found or has no audio.",
+                )
+            # Always resolve path server-side — never trust a client-supplied sound-effects/ path.
+            placement["src_gcs_path"] = effect.audio_gcs_path
+            placement["label"] = placement.get("label") or effect.name
+            placement["duration_s"] = placement.get("duration_s") or effect.duration_s
+        resolved_placements.append(placement)
+    return validate_sound_effects_for_user(sfx_raw=resolved_placements, user_id=user_id)
 
 
 @router.post("/{item_id}/sfx-upload-urls", response_model=SfxUploadUrlsResponse)
@@ -2031,30 +2056,11 @@ async def set_item_sound_effects(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
 
-    # Resolve glossary references server-side.
-    resolved_placements: list[dict] = []
-    for raw in body.placements:
-        placement = dict(raw)
-        sound_effect_id = placement.get("sound_effect_id")
-        if sound_effect_id:
-            from sqlalchemy import select as _select  # noqa: PLC0415
-
-            from app.models import SoundEffect  # noqa: PLC0415
-
-            effect_result = await db.execute(
-                _select(SoundEffect).where(SoundEffect.id == sound_effect_id)
-            )
-            effect = effect_result.scalar_one_or_none()
-            if effect is None or not effect.audio_gcs_path:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Sound effect {sound_effect_id!r} not found or has no audio.",
-                )
-            # Always resolve path server-side — never trust a client-supplied sound-effects/ path.
-            placement["src_gcs_path"] = effect.audio_gcs_path
-            placement["label"] = placement.get("label") or effect.name
-            placement["duration_s"] = placement.get("duration_s") or effect.duration_s
-        resolved_placements.append(placement)
+    resolved_placements = await _resolve_sound_effect_placements(
+        body.placements,
+        user_id=str(user.id),
+        db=db,
+    )
 
     job = await _owned_item_render_job(item_id, user.id, db)
 

@@ -37,6 +37,30 @@ describe("buildEditorCommitRequest", () => {
         },
       ],
       soundMuted: true,
+      sfxDirty: true,
+      soundEffects: [
+        {
+          id: "sfx-1",
+          src_gcs_path: "users/u/plan/i/sfx/pop.mp3",
+          at_s: 1,
+          gain: 0.8,
+        },
+      ],
+      overlaysDirty: true,
+      mediaOverlays: [
+        {
+          id: "ov-1",
+          kind: "image",
+          src_gcs_path: "users/u/plan/i/overlays/card.png",
+          position: "center",
+          x_frac: 0.5,
+          y_frac: 0.5,
+          scale: 0.35,
+          start_s: 0,
+          end_s: 2,
+          z: 0,
+        },
+      ],
       title: "  Fresh title  ",
       variant: {
         render_generation_id: "gen-current",
@@ -65,6 +89,28 @@ describe("buildEditorCommitRequest", () => {
         },
       ],
       mix: { music_level: 0.0 },
+      sound_effects: [
+        {
+          id: "sfx-1",
+          src_gcs_path: "users/u/plan/i/sfx/pop.mp3",
+          at_s: 1,
+          gain: 0.8,
+        },
+      ],
+      media_overlays: [
+        {
+          id: "ov-1",
+          kind: "image",
+          src_gcs_path: "users/u/plan/i/overlays/card.png",
+          position: "center",
+          x_frac: 0.5,
+          y_frac: 0.5,
+          scale: 0.35,
+          start_s: 0,
+          end_s: 2,
+          z: 0,
+        },
+      ],
       title: "Fresh title",
       base_generation: "gen-current",
     });
@@ -73,16 +119,21 @@ describe("buildEditorCommitRequest", () => {
   it("omits untouched optional sections and falls back to an empty baseline", () => {
     const body = buildEditorCommitRequest({
       elements: [element],
+      textDirty: false,
       timelineDirty: false,
       slots: [],
       soundMuted: false,
+      titleDirty: false,
       title: " ",
       variant: {},
     });
 
+    expect(body.text_elements).toBeUndefined();
     expect(body.timeline_slots).toBeUndefined();
     expect(body.mix).toBeUndefined();
-    expect(body.title).toBeNull();
+    expect(body.sound_effects).toBeUndefined();
+    expect(body.media_overlays).toBeUndefined();
+    expect(body.title).toBeUndefined();
     expect(body.base_generation).toBe("");
   });
 });

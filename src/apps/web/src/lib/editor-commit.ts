@@ -17,7 +17,12 @@
  * INTERNAL_API_KEY injection), exactly like lib/plan-api.ts.
  */
 
-import { NotAuthenticatedError, type TextElement } from "@/lib/plan-api";
+import {
+  NotAuthenticatedError,
+  type MediaOverlay,
+  type SoundEffectPlacement,
+  type TextElement,
+} from "@/lib/plan-api";
 
 const PLAN_BASE = "/api/plan";
 
@@ -41,11 +46,15 @@ export interface EditorCommitMix {
 
 export interface EditorCommitRequest {
   /** Full replacement text-element list (same shape putTextElements sends). */
-  text_elements: TextElement[];
+  text_elements?: TextElement[];
   /** Clip-slot overrides (timeline task). Omit when untouched. */
   timeline_slots?: EditorTimelineSlot[];
   /** Voice/bed mix 0..1 (gutter mutes map onto this). Omit when untouched. */
   mix?: EditorCommitMix;
+  /** Full replacement sound-effect placement list. Omit when untouched. */
+  sound_effects?: SoundEffectPlacement[];
+  /** Full replacement media-overlay card list. Omit when untouched. */
+  media_overlays?: MediaOverlay[];
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
   /**
@@ -65,6 +74,8 @@ export interface EditorCommitResponse {
     text_elements?: boolean;
     timeline?: boolean;
     mix?: boolean;
+    sound_effects?: boolean;
+    media_overlays?: boolean;
     title?: boolean;
   };
 }
@@ -91,21 +102,33 @@ export function editorCommitBaseGeneration(
 
 export function buildEditorCommitRequest({
   elements,
+  textDirty = true,
   timelineDirty,
   slots,
   soundMuted,
+  sfxDirty = false,
+  soundEffects = [],
+  overlaysDirty = false,
+  mediaOverlays = [],
+  titleDirty = true,
   title,
   variant,
 }: {
   elements: TextElement[];
+  textDirty?: boolean;
   timelineDirty: boolean;
   slots: EditorCommitDraftSlot[];
   soundMuted: boolean;
+  sfxDirty?: boolean;
+  soundEffects?: SoundEffectPlacement[];
+  overlaysDirty?: boolean;
+  mediaOverlays?: MediaOverlay[];
+  titleDirty?: boolean;
   title: string;
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
   return {
-    text_elements: elements,
+    text_elements: textDirty ? elements : undefined,
     timeline_slots: timelineDirty
       ? slots.map((s) => ({
           slot_id: s.slotId,
@@ -117,7 +140,9 @@ export function buildEditorCommitRequest({
         }))
       : undefined,
     mix: soundMuted ? { music_level: 0.0 } : undefined,
-    title: title.trim() !== "" ? title.trim() : null,
+    sound_effects: sfxDirty ? soundEffects : undefined,
+    media_overlays: overlaysDirty ? mediaOverlays : undefined,
+    title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     base_generation: editorCommitBaseGeneration(variant),
   };
 }

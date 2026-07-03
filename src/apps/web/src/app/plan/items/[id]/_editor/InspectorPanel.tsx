@@ -39,6 +39,7 @@ import {
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
+import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
@@ -87,6 +88,8 @@ export default function InspectorPanel({
   selection,
   bar,
   clipTiming,
+  sfx,
+  overlay,
   tab,
   sampleWord,
   appliedPresetId,
@@ -97,6 +100,10 @@ export default function InspectorPanel({
   onPatchClipTiming,
   onPreviewClipTiming,
   onRecordClipTiming,
+  onPatchSfx,
+  onDeleteSfx,
+  onPatchOverlay,
+  onDeleteOverlay,
   onClose,
   onPickPreset,
 }: {
@@ -104,6 +111,8 @@ export default function InspectorPanel({
   /** The selected text bar (null when selection is empty or non-text). */
   bar: TextElementBar | null;
   clipTiming: InspectorClipTiming | null;
+  sfx: SoundEffectPlacement | null;
+  overlay: MediaOverlay | null;
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
@@ -115,6 +124,10 @@ export default function InspectorPanel({
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPreviewClipTiming: (patch: { inS: number; durationS: number }) => void;
   onRecordClipTiming: () => void;
+  onPatchSfx: (id: string, patch: Partial<SoundEffectPlacement>) => void;
+  onDeleteSfx: (id: string) => void;
+  onPatchOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
+  onDeleteOverlay: (id: string) => void;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
@@ -152,6 +165,20 @@ export default function InspectorPanel({
           onPatchTiming={onPatchClipTiming}
           onPreviewTiming={onPreviewClipTiming}
           onRecordTimingEdit={onRecordClipTiming}
+          onClose={onClose}
+        />
+      ) : selection.kind === "sfx" && sfx ? (
+        <SfxInspector
+          placement={sfx}
+          onPatch={onPatchSfx}
+          onDelete={onDeleteSfx}
+          onClose={onClose}
+        />
+      ) : selection.kind === "overlay" && overlay ? (
+        <OverlayInspector
+          overlay={overlay}
+          onPatch={onPatchOverlay}
+          onDelete={onDeleteOverlay}
           onClose={onClose}
         />
       ) : (
@@ -207,6 +234,137 @@ function PresetsTab({
         />
       </div>
     </div>
+  );
+}
+
+function SfxInspector({
+  placement,
+  onPatch,
+  onDelete,
+  onClose,
+}: {
+  placement: SoundEffectPlacement;
+  onPatch: (id: string, patch: Partial<SoundEffectPlacement>) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">Sound</h2>
+        <CloseX onClose={onClose} />
+      </div>
+      <p className="mt-1 truncate text-[12px] text-[#71717a]">{placement.label ?? "Sound effect"}</p>
+      <FieldNumber
+        label="Start"
+        value={placement.at_s ?? 0}
+        min={0}
+        step={0.1}
+        onCommit={(value) => onPatch(placement.id, { at_s: value })}
+      />
+      <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
+        Volume
+        <input
+          type="range"
+          min={0}
+          max={2}
+          step={0.05}
+          value={placement.gain ?? 1}
+          onChange={(e) => onPatch(placement.id, { gain: Number(e.target.value) })}
+          className="mt-2 w-full accent-lime-500"
+        />
+      </label>
+      <div className="mt-1 text-right text-[12px] tabular-nums text-[#71717a]">
+        {(placement.gain ?? 1).toFixed(2)}x
+      </div>
+      <DangerButton onClick={() => onDelete(placement.id)}>Delete sound</DangerButton>
+    </div>
+  );
+}
+
+function OverlayInspector({
+  overlay,
+  onPatch,
+  onDelete,
+  onClose,
+}: {
+  overlay: MediaOverlay;
+  onPatch: (id: string, patch: Partial<MediaOverlay>) => void;
+  onDelete: (id: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">Overlay</h2>
+        <CloseX onClose={onClose} />
+      </div>
+      <p className="mt-1 text-[12px] capitalize text-[#71717a]">{overlay.kind}</p>
+      <FieldNumber
+        label="Start"
+        value={overlay.start_s}
+        min={0}
+        step={0.1}
+        onCommit={(value) => onPatch(overlay.id, { start_s: Math.min(value, overlay.end_s - 0.3) })}
+      />
+      <FieldNumber
+        label="End"
+        value={overlay.end_s}
+        min={0.3}
+        step={0.1}
+        onCommit={(value) => onPatch(overlay.id, { end_s: Math.max(value, overlay.start_s + 0.3) })}
+      />
+      <p className="mt-4 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-[12px] leading-relaxed text-[#71717a]">
+        Position and scale controls remain on the item page overlay editor.
+      </p>
+      <DangerButton onClick={() => onDelete(overlay.id)}>Delete overlay</DangerButton>
+    </div>
+  );
+}
+
+function FieldNumber({
+  label,
+  value,
+  min,
+  step,
+  onCommit,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  step: number;
+  onCommit: (value: number) => void;
+}) {
+  return (
+    <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
+      {label}
+      <input
+        type="number"
+        min={min}
+        step={step}
+        value={Number.isFinite(value) ? value : 0}
+        onChange={(e) => onCommit(Number(e.target.value))}
+        className="mt-2 min-h-10 w-full rounded-lg border border-zinc-200 px-3 text-[13px] text-[#0c0c0e] focus:border-lime-500 focus:outline-none focus:ring-2 focus:ring-lime-500/25"
+      />
+    </label>
+  );
+}
+
+function DangerButton({
+  children,
+  onClick,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-5 min-h-11 w-full rounded-lg border border-red-200 text-[13px] font-semibold text-red-600 hover:bg-red-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500"
+    >
+      {children}
+    </button>
   );
 }
 

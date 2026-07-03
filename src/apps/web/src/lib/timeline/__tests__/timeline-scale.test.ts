@@ -6,6 +6,7 @@ import {
   scaledTrackWidth,
   tickIntervalForScale,
   rulerTicks,
+  resolveEditorTimelineScale,
   MIN_PX_PER_SECOND,
   MAX_PX_PER_SECOND,
 } from "../timeline-scale";
@@ -47,6 +48,45 @@ describe("timeline-scale", () => {
     it("degenerate inputs fall back to the floor scale", () => {
       expect(fitPxPerSecond(0, 10)).toBe(MIN_PX_PER_SECOND);
       expect(fitPxPerSecond(800, 0)).toBe(MIN_PX_PER_SECOND);
+    });
+
+    it("keeps the editor scale frozen across duration-reducing edits", () => {
+      const initial = resolveEditorTimelineScale({
+        viewportWidth: 800,
+        durationS: 10,
+        zoom: 1,
+        frozenFitPxPerSecond: null,
+      });
+      const trimmed = resolveEditorTimelineScale({
+        viewportWidth: 800,
+        durationS: 6,
+        zoom: 1,
+        frozenFitPxPerSecond: initial.fitPxPerSecond,
+      });
+
+      expect(initial.pxPerSecond).toBe(80);
+      expect(trimmed.pxPerSecond).toBe(80);
+      expect(scaledTrackWidth(6, trimmed.pxPerSecond)).toBe(480);
+    });
+
+    it("recomputes editor fit only when refit is explicitly requested", () => {
+      const frozen = resolveEditorTimelineScale({
+        viewportWidth: 800,
+        durationS: 6,
+        zoom: 1,
+        frozenFitPxPerSecond: 80,
+      });
+      const refit = resolveEditorTimelineScale({
+        viewportWidth: 800,
+        durationS: 6,
+        zoom: 1,
+        frozenFitPxPerSecond: 80,
+        refit: true,
+      });
+
+      expect(frozen.pxPerSecond).toBe(80);
+      expect(refit.pxPerSecond).toBeCloseTo(800 / 6, 6);
+      expect(scaledTrackWidth(6, refit.pxPerSecond)).toBeCloseTo(800, 6);
     });
   });
 

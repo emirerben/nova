@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { GenerativeStyleSet } from "@/lib/generative-api";
+import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
   filterTextPresetsByCategory,
   PRESET_CATEGORIES,
@@ -39,6 +40,11 @@ export default function ToolDrawer({
   onPickPreset,
   appliedStyleSetId = null,
   onRestyleAll,
+  sfxEffects = [],
+  sfxLoading = false,
+  onAddSfx,
+  overlayUploading = false,
+  onOverlayUpload,
   onClose,
 }: {
   tool: EditorTool;
@@ -48,6 +54,13 @@ export default function ToolDrawer({
   onPickPreset: (preset: TextPreset) => void;
   appliedStyleSetId?: string | null;
   onRestyleAll?: (styleSet: GenerativeStyleSet) => void;
+  sfxEffects?: SoundEffectSummary[];
+  sfxLoading?: boolean;
+  onAddSfx?: (effect: SoundEffectSummary) => void;
+  overlayUploading?: boolean;
+  onOverlayUpload?: (
+    files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
+  ) => void;
   onClose: () => void;
 }) {
   const [category, setCategory] = useState<TextPresetCategory>("basic");
@@ -149,6 +162,135 @@ export default function ToolDrawer({
           />
         </div>
       )}
+
+      {tool === "sounds" && (
+        <SoundsDrawer
+          effects={sfxEffects}
+          loading={sfxLoading}
+          onAddSfx={onAddSfx}
+        />
+      )}
+
+      {tool === "overlays" && (
+        <OverlaysDrawer uploading={overlayUploading} onOverlayUpload={onOverlayUpload} />
+      )}
+    </div>
+  );
+}
+
+function SoundsDrawer({
+  effects,
+  loading,
+  onAddSfx,
+}: {
+  effects: SoundEffectSummary[];
+  loading: boolean;
+  onAddSfx?: (effect: SoundEffectSummary) => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+      <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Effects</p>
+      {loading ? (
+        <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
+          Loading effects...
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {effects.map((effect) => (
+            <button
+              key={effect.id}
+              type="button"
+              onClick={() => onAddSfx?.(effect)}
+              className="flex min-h-11 w-full items-center justify-between rounded-lg border border-zinc-200 bg-white px-3 text-left text-[13px] text-[#0c0c0e] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              <span className="truncate">{effect.name}</span>
+              <span className="ml-2 shrink-0 text-[11px] text-[#71717a]">
+                {effect.duration_s != null ? `${effect.duration_s.toFixed(1)}s` : "SFX"}
+              </span>
+            </button>
+          ))}
+          {effects.length === 0 && (
+            <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">
+              No published sound effects found.
+            </div>
+          )}
+        </div>
+      )}
+      <a
+        href="../"
+        className="mt-4 block text-[12px] text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e]"
+      >
+        Swap song on the item page
+      </a>
+    </div>
+  );
+}
+
+const OVERLAY_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "video/mp4",
+  "video/quicktime",
+];
+
+function OverlaysDrawer({
+  uploading,
+  onOverlayUpload,
+}: {
+  uploading: boolean;
+  onOverlayUpload?: (
+    files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
+  ) => void;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+
+  function handleFiles(fileList: FileList | null) {
+    if (!fileList) return;
+    const files = Array.from(fileList)
+      .filter((file) => OVERLAY_MIME_TYPES.includes(file.type))
+      .map((file) => ({
+        file,
+        filename: file.name,
+        content_type: file.type,
+        file_size_bytes: file.size,
+      }));
+    if (files.length > 0) onOverlayUpload?.(files);
+  }
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+      <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Media overlay</p>
+      <label
+        className={`flex min-h-[128px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-4 text-center text-[13px] transition-colors ${
+          dragOver
+            ? "border-[#0c0c0e] bg-zinc-100 text-[#0c0c0e]"
+            : "border-zinc-300 bg-zinc-50 text-[#71717a] hover:border-zinc-400"
+        } ${uploading ? "pointer-events-none opacity-50" : ""}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          handleFiles(e.dataTransfer.files);
+        }}
+      >
+        <input
+          type="file"
+          multiple
+          accept={OVERLAY_MIME_TYPES.join(",")}
+          className="hidden"
+          onChange={(e) => {
+            handleFiles(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        {uploading ? "Uploading..." : "Drop image/video or click to upload"}
+      </label>
     </div>
   );
 }

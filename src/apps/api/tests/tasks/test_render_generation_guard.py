@@ -157,6 +157,144 @@ def _arm_reburn(monkeypatch, job, result: dict):
 _READY_RESULT = {"render_status": "ready", "ok": True, "output_url": "https://signed/new"}
 
 
+def _sfx_placement() -> dict:
+    return {
+        "id": "sfx-1",
+        "sound_effect_id": None,
+        "src_gcs_path": "sound-effects/pop/audio.mp3",
+        "at_s": 1.0,
+        "gain": 0.8,
+        "trim_start_s": None,
+        "trim_end_s": None,
+        "duration_s": 0.5,
+        "label": "Pop",
+    }
+
+
+def _media_overlay_card() -> dict:
+    return {
+        "id": "ov-1",
+        "kind": "image",
+        "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+        "position": "center",
+        "scale": 0.35,
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "z": 0,
+    }
+
+
+def _arm_direct_passes(monkeypatch, job):
+    _patch_sessions(monkeypatch, job)
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *a, **k: None)
+    monkeypatch.setattr("app.storage.copy_object", lambda *a, **k: None)
+    monkeypatch.setattr("app.storage.signed_get_url", lambda path, **kw: f"https://signed/{path}")
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "app.pipeline.sound_effects.apply_sound_effects",
+        lambda **kw: "https://signed/sfx-new",
+    )
+    monkeypatch.setattr(
+        "app.pipeline.media_overlay.apply_media_overlays",
+        lambda **kw: "https://signed/overlay-new",
+    )
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", False, raising=False)
+
+
+def test_stale_sfx_pass_terminal_write_discarded(monkeypatch):
+    job = _FakeJob([_variant("tok-new")])
+    _arm_direct_passes(monkeypatch, job)
+
+    gb._run_sfx_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        sfx_raw=[_sfx_placement()],
+        expected_render_gen_id="tok-old",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["output_url"] == "https://signed/last-good"
+    assert "sound_effects" not in v
+
+
+def test_current_sfx_pass_terminal_write_lands(monkeypatch):
+    job = _FakeJob([_variant("tok-cur")])
+    _arm_direct_passes(monkeypatch, job)
+
+    gb._run_sfx_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        sfx_raw=[_sfx_placement()],
+        expected_render_gen_id="tok-cur",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["output_url"] == "https://signed/sfx-new"
+    assert v["sound_effects"][0]["id"] == "sfx-1"
+    assert v["render_status"] == "ready"
+
+
+def test_tokenless_sfx_pass_terminal_write_lands(monkeypatch):
+    job = _FakeJob([_variant("tok-new")])
+    _arm_direct_passes(monkeypatch, job)
+
+    gb._run_sfx_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        sfx_raw=[_sfx_placement()],
+        expected_render_gen_id=None,
+    )
+
+    assert job.assembly_plan["variants"][0]["output_url"] == "https://signed/sfx-new"
+
+
+def test_stale_media_overlay_pass_terminal_write_discarded(monkeypatch):
+    job = _FakeJob([_variant("tok-new")])
+    _arm_direct_passes(monkeypatch, job)
+
+    gb._run_media_overlay_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        overlays_raw=[_media_overlay_card()],
+        expected_render_gen_id="tok-old",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["output_url"] == "https://signed/last-good"
+    assert "media_overlays" not in v
+
+
+def test_current_media_overlay_pass_terminal_write_lands(monkeypatch):
+    job = _FakeJob([_variant("tok-cur")])
+    _arm_direct_passes(monkeypatch, job)
+
+    gb._run_media_overlay_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        overlays_raw=[_media_overlay_card()],
+        expected_render_gen_id="tok-cur",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["output_url"] == "https://signed/overlay-new"
+    assert v["media_overlays"][0]["id"] == "ov-1"
+    assert v["render_status"] == "ready"
+
+
+def test_tokenless_media_overlay_pass_terminal_write_lands(monkeypatch):
+    job = _FakeJob([_variant("tok-new")])
+    _arm_direct_passes(monkeypatch, job)
+
+    gb._run_media_overlay_pass(
+        job_id=JOB_ID,
+        variant_id="original_text",
+        overlays_raw=[_media_overlay_card()],
+        expected_render_gen_id=None,
+    )
+
+    assert job.assembly_plan["variants"][0]["output_url"] == "https://signed/overlay-new"
+
+
 def test_stale_task_terminal_write_discarded(monkeypatch):
     """Task launched with tok-old; a newer commit bumped the variant to tok-new →
     the reburn completes but neither the ready patch nor the SFX hook lands."""
@@ -301,3 +439,43 @@ def test_full_render_success_write_lands_with_current_token(monkeypatch):
     gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
 
     assert any(u.get("render_status") == "ready" for u in updates)
+
+
+def test_full_render_success_reapplies_persisted_media_overlays(monkeypatch):
+    overlays = [_media_overlay_card()]
+    job = _FakeJob([_variant("tok-cur", media_overlays=overlays)])
+    _patch_sessions(monkeypatch, job)
+    updates = _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
+    overlay_calls: list = []
+    sfx_calls: list = []
+    monkeypatch.setattr(
+        gb,
+        "_reapply_persisted_media_overlays_if_any",
+        lambda **kw: overlay_calls.append(kw) or True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb, "_reapply_persisted_sfx_if_any", lambda **kw: sfx_calls.append(kw), raising=False
+    )
+    monkeypatch.setattr(
+        gb, "_render_generative_variant", lambda **kw: dict(_READY_RESULT), raising=False
+    )
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: _fake_ingest(), raising=False)
+    monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
+
+    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
+
+    ready = [u for u in updates if u.get("render_status") == "ready"]
+    assert len(ready) == 1
+    assert ready[0]["media_overlays"] == overlays
+    assert ready[0]["pre_media_overlay_video_path"] is None
+    assert overlay_calls == [
+        {
+            "job_id": JOB_ID,
+            "variant_id": "original_text",
+            "expected_render_gen_id": "tok-cur",
+        }
+    ]
+    assert sfx_calls == []

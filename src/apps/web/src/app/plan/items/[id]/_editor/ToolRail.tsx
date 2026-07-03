@@ -7,25 +7,27 @@
  * borderless ghost icon-over-label buttons. Clicking the active tool toggles
  * its drawer closed.
  *
- * Sounds / Overlays arrive with later timeline tasks; until then those tools
- * are disabled with an honest tooltip rather than opening an empty drawer.
+ * Tool availability is driven by server capabilities so kill switches surface
+ * as disabled buttons with honest tooltips.
  */
 
 export type EditorTool = "text" | "sounds" | "overlays" | "styles";
 
-const TOOLS: Array<{ id: EditorTool; icon: string; label: string; enabled: boolean }> = [
-  { id: "text", icon: "T", label: "Text", enabled: true },
-  { id: "sounds", icon: "♫", label: "Sounds", enabled: false },
-  { id: "overlays", icon: "▤", label: "Overlays", enabled: false },
-  { id: "styles", icon: "✦", label: "Styles", enabled: true },
+const TOOLS: Array<{ id: EditorTool; icon: string; label: string }> = [
+  { id: "text", icon: "T", label: "Text" },
+  { id: "sounds", icon: "♫", label: "Sounds" },
+  { id: "overlays", icon: "▤", label: "Overlays" },
+  { id: "styles", icon: "✦", label: "Styles" },
 ];
 
 export default function ToolRail({
   activeTool,
+  disabledTools = {},
   onToggleTool,
 }: {
   /** null = drawer closed, no active tool. */
   activeTool: EditorTool | null;
+  disabledTools?: Partial<Record<EditorTool, string | null>>;
   onToggleTool: (tool: EditorTool) => void;
 }) {
   return (
@@ -35,14 +37,16 @@ export default function ToolRail({
     >
       {TOOLS.map((tool) => {
         const active = activeTool === tool.id;
+        const disabledReason = disabledTools[tool.id];
+        const enabled = !disabledReason;
         return (
           <button
             key={tool.id}
             type="button"
-            disabled={!tool.enabled}
+            disabled={!enabled}
             aria-pressed={active}
             aria-label={`${tool.label} tool`}
-            title={tool.enabled ? tool.label : `${tool.label} — arrives with a later update`}
+            title={enabled ? tool.label : `${tool.label} — ${disabledReason}`}
             onClick={() => onToggleTool(tool.id)}
             className={`flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active

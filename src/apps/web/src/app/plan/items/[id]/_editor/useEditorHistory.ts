@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
+import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 
@@ -34,17 +35,11 @@ export const EDITOR_HISTORY_DEPTH = 50;
 export interface EditorDocument {
   bars: TextElementBar[];
   slots: DraftSlot[] | null;
-  sfx?: EditorDocumentSfxBar[];
+  sfx?: SoundEffectPlacement[];
+  overlays?: MediaOverlay[];
   videoMuted: boolean;
   soundMuted: boolean;
   title: string;
-}
-
-export interface EditorDocumentSfxBar {
-  id: string;
-  at_s: number;
-  end_s?: number | null;
-  label?: string | null;
 }
 
 export interface EditorHistoryState {
@@ -152,7 +147,8 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
       doc: {
         bars: doc.bars as TextElementBar[],
         slots: Array.isArray(doc.slots) ? (doc.slots as DraftSlot[]) : null,
-        ...(Array.isArray(doc.sfx) ? { sfx: doc.sfx as EditorDocumentSfxBar[] } : {}),
+        ...(Array.isArray(doc.sfx) ? { sfx: doc.sfx as SoundEffectPlacement[] } : {}),
+        ...(Array.isArray(doc.overlays) ? { overlays: doc.overlays as MediaOverlay[] } : {}),
         videoMuted: Boolean(doc.videoMuted),
         soundMuted: Boolean(doc.soundMuted),
         title: typeof doc.title === "string" ? doc.title : "",

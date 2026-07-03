@@ -24,10 +24,15 @@ import {
   getPlanItem,
   getPlanItemJobStatus,
   NotAuthenticatedError,
+  requestOverlayUploadUrls,
+  uploadToGcs,
+  type MediaOverlay,
   type PlanItem,
   type PlanItemVariant,
+  type SoundEffectPlacement,
   type TextElement,
 } from "@/lib/plan-api";
+import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import {
   buildEditorCommitRequest,
   commitEditorSession,
@@ -81,7 +86,6 @@ import {
   serializeDraft,
   useEditorHistory,
   type EditorDocument,
-  type EditorDocumentSfxBar,
 } from "./useEditorHistory";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
@@ -158,6 +162,12 @@ export default function EditorShell({
   const [title, setTitle] = useState("");
   // Last style-set applied via restyle-all — drives the StyleChip ring.
   const [appliedStyleSetId, setAppliedStyleSetId] = useState<string | null>(null);
+  const [localSfx, setLocalSfx] = useState<SoundEffectPlacement[]>([]);
+  const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
+  const [sfxDirty, setSfxDirty] = useState(false);
+  const [overlaysDirty, setOverlaysDirty] = useState(false);
+  const [textDirty, setTextDirty] = useState(false);
+  const [titleDirty, setTitleDirty] = useState(false);
 
   useEffect(() => {
     if (!variant || seededVariantIdRef.current === variant.variant_id) return;
@@ -166,8 +176,19 @@ export default function EditorShell({
       (variant.text_elements ?? []).map((el) => [el.id, el]),
     );
     dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
+    setLocalSfx((variant.sound_effects ?? []).map((p) => ({ ...p })));
+    setLocalOverlays((variant.media_overlays ?? []).map((o) => ({ ...o })));
+    setTextDirty(false);
+    setSfxDirty(false);
+    setOverlaysDirty(false);
+    setTitleDirty(false);
     setAppliedStyleSetId(null);
   }, [variant]);
+
+  useEffect(() => {
+    if (!item || titleDirty) return;
+    setTitle(item.theme ?? "");
+  }, [item, titleDirty]);
 
   // ── View state ──────────────────────────────────────────────────────────────
   const layoutMode = useEditorLayoutMode();
@@ -190,7 +211,9 @@ export default function EditorShell({
   const [soundMuted, setSoundMuted] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [timelineDirty, setTimelineDirty] = useState(false);
-  const [localSfx, setLocalSfx] = useState<EditorDocumentSfxBar[]>([]);
+  const [sfxGlossaryEffects, setSfxGlossaryEffects] = useState<SoundEffectSummary[]>([]);
+  const [sfxGlossaryLoading, setSfxGlossaryLoading] = useState(false);
+  const [overlayUploading, setOverlayUploading] = useState(false);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
@@ -224,25 +247,6 @@ export default function EditorShell({
     }
   }, [clipDirty]);
 
-  useEffect(() => {
-    if (!variant) return;
-    setLocalSfx(
-      (variant.sound_effects ?? []).map((p) => {
-        const trimStart = p.trim_start_s ?? 0;
-        const trimEnd = p.trim_end_s ?? p.duration_s ?? null;
-        return {
-          id: p.id,
-          at_s: p.at_s ?? 0,
-          end_s:
-            trimEnd == null
-              ? null
-              : (p.at_s ?? 0) + Math.max(0, trimEnd - trimStart),
-          label: p.label ?? null,
-        };
-      }),
-    );
-  }, [variant]);
-
   // Toast auto-clear.
   useEffect(() => {
     if (!toast) return;
@@ -266,7 +270,11 @@ export default function EditorShell({
       timeline?: boolean;
       split_clips?: boolean;
       mix?: boolean;
+      sfx?: boolean;
+      overlays?: boolean;
       reason?: string;
+      sfx_reason?: string | null;
+      overlays_reason?: string | null;
     };
   } | null)?.editor_capabilities;
   const readOnly =
@@ -274,7 +282,9 @@ export default function EditorShell({
     capabilities.text_elements === false &&
     capabilities.timeline === false &&
     capabilities.split_clips === false &&
-    capabilities.mix === false;
+    capabilities.mix === false &&
+    capabilities.sfx === false &&
+    capabilities.overlays === false;
   const readOnlyReason =
     capabilities?.reason ?? "This version can't be edited.";
 
@@ -284,11 +294,12 @@ export default function EditorShell({
       bars: state.bars,
       slots: localSlots,
       sfx: localSfx,
+      overlays: localOverlays,
       videoMuted,
       soundMuted,
       title,
     }),
-    [state.bars, localSlots, localSfx, videoMuted, soundMuted, title],
+    [state.bars, localSlots, localSfx, localOverlays, videoMuted, soundMuted, title],
   );
 
   const applyDocument = useCallback(
@@ -297,9 +308,14 @@ export default function EditorShell({
       dispatch({ type: "RESET", bars: doc.bars });
       setLocalSlots(doc.slots);
       setLocalSfx(doc.sfx ?? []);
+      setLocalOverlays(doc.overlays ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
       setTitle(doc.title);
+      setTextDirty(true);
+      setSfxDirty(true);
+      setOverlaysDirty(true);
+      setTitleDirty(true);
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
       const resurrected = doc.bars.find((b) => !beforeIds.has(b.id));
@@ -374,6 +390,22 @@ export default function EditorShell({
       sourceUrl: source?.signed_url ?? null,
     };
   }, [clip.clips, clipSourceDurations, selection, slotLayout.windows, slots]);
+
+  const selectedSfx = useMemo(
+    () =>
+      selection?.kind === "sfx"
+        ? (localSfx.find((s) => s.id === selection.id) ?? null)
+        : null,
+    [localSfx, selection],
+  );
+
+  const selectedOverlay = useMemo(
+    () =>
+      selection?.kind === "overlay"
+        ? (localOverlays.find((o) => o.id === selection.id) ?? null)
+        : null,
+    [localOverlays, selection],
+  );
 
   const handleVirtualSourceError = useCallback(() => {
     if (virtualRefetchInFlightRef.current) return;
@@ -497,6 +529,27 @@ export default function EditorShell({
     }
   }, [layoutMode]);
 
+  useEffect(() => {
+    if (activeTool !== "sounds" || sfxGlossaryEffects.length > 0) {
+      return;
+    }
+    let cancelled = false;
+    setSfxGlossaryLoading(true);
+    void getSoundEffects()
+      .then((effects) => {
+        if (!cancelled) setSfxGlossaryEffects(effects);
+      })
+      .catch(() => {
+        if (!cancelled) setToast("Couldn't load sound effects.");
+      })
+      .finally(() => {
+        if (!cancelled) setSfxGlossaryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTool, sfxGlossaryEffects.length]);
+
   const sampleWord = useMemo(() => {
     const first = selectedBar?.text.trim().split(/\s+/)[0];
     return first && first.length > 0 ? first.slice(0, 8).toUpperCase() : null;
@@ -529,9 +582,17 @@ export default function EditorShell({
         if (startS != null) {
           seekPlaybackTo(startS);
         }
+      } else if (kind === "sfx") {
+        setInspectorTab("basic");
+        const sfx = localSfx.find((p) => p.id === id);
+        if (sfx) seekPlaybackTo(sfx.at_s ?? 0);
+      } else if (kind === "overlay") {
+        setInspectorTab("basic");
+        const overlay = localOverlays.find((o) => o.id === id);
+        if (overlay) seekPlaybackTo(overlay.start_s);
       }
     },
-    [clip.state.grid, layoutMode, seekPlaybackTo, select, slots],
+    [clip.state.grid, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots],
   );
 
   const selectText = useCallback(
@@ -543,6 +604,7 @@ export default function EditorShell({
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
       if (readOnly) return;
       history.record();
+      setTextDirty(true);
       dispatch({ type: "PATCH_BAR", id, patch });
     },
     [readOnly, history],
@@ -551,6 +613,7 @@ export default function EditorShell({
   const previewTextTiming = useCallback(
     (id: string, patch: Pick<TextElementBar, "start_s" | "end_s">) => {
       if (readOnly) return;
+      setTextDirty(true);
       dispatch({
         type: "RESET",
         bars: state.bars.map((b) => (b.id === id ? { ...b, ...patch } : b)),
@@ -642,13 +705,153 @@ export default function EditorShell({
   );
 
   const previewSfxTiming = useCallback(
-    (id: string, patch: Pick<EditorDocumentSfxBar, "at_s" | "end_s">) => {
+    (id: string, patch: { at_s: number; end_s?: number | null }) => {
       if (readOnly) return;
       setLocalSfx((cur) =>
-        cur.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+        cur.map((s) => {
+          if (s.id !== id) return s;
+          const trimStart = s.trim_start_s ?? 0;
+          const sourceEnd = s.duration_s ?? s.trim_end_s ?? null;
+          const next: SoundEffectPlacement = { ...s, at_s: patch.at_s };
+          if (patch.end_s != null && sourceEnd != null) {
+            next.trim_end_s = Math.max(trimStart + 0.1, patch.end_s - patch.at_s + trimStart);
+          }
+          return next;
+        }),
       );
+      setSfxDirty(true);
     },
     [readOnly],
+  );
+
+  const addSfxFromGlossary = useCallback(
+    (effect: SoundEffectSummary) => {
+      if (readOnly || capabilities?.sfx === false) return;
+      history.record();
+      const placement: SoundEffectPlacement = {
+        id: crypto.randomUUID(),
+        sound_effect_id: effect.id,
+        src_gcs_path: "",
+        at_s: Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.1)),
+        gain: 1,
+        duration_s: effect.duration_s ?? null,
+        label: effect.name,
+      };
+      setLocalSfx((cur) => [...cur, placement]);
+      setSfxDirty(true);
+      select("sfx", placement.id);
+      setInspectorTab("basic");
+    },
+    [capabilities?.sfx, currentTime, history, previewDuration, readOnly, select],
+  );
+
+  const patchSfx = useCallback(
+    (id: string, patch: Partial<SoundEffectPlacement>) => {
+      if (readOnly || capabilities?.sfx === false) return;
+      history.record();
+      setLocalSfx((cur) => cur.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+      setSfxDirty(true);
+    },
+    [capabilities?.sfx, history, readOnly],
+  );
+
+  const removeSfx = useCallback(
+    (id: string) => {
+      if (readOnly || capabilities?.sfx === false) return;
+      history.record();
+      setLocalSfx((cur) => cur.filter((s) => s.id !== id));
+      setSfxDirty(true);
+      clear();
+    },
+    [capabilities?.sfx, clear, history, readOnly],
+  );
+
+  const previewOverlayTiming = useCallback(
+    (id: string, patch: Pick<MediaOverlay, "start_s" | "end_s">) => {
+      if (readOnly) return;
+      setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+      setOverlaysDirty(true);
+    },
+    [readOnly],
+  );
+
+  const patchOverlay = useCallback(
+    (id: string, patch: Partial<MediaOverlay>) => {
+      if (readOnly || capabilities?.overlays === false) return;
+      history.record();
+      setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+      setOverlaysDirty(true);
+    },
+    [capabilities?.overlays, history, readOnly],
+  );
+
+  const removeOverlay = useCallback(
+    (id: string) => {
+      if (readOnly || capabilities?.overlays === false) return;
+      history.record();
+      setLocalOverlays((cur) => cur.filter((o) => o.id !== id));
+      setOverlaysDirty(true);
+      clear();
+    },
+    [capabilities?.overlays, clear, history, readOnly],
+  );
+
+  const handleOverlayUpload = useCallback(
+    async (
+      files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
+    ) => {
+      if (readOnly || capabilities?.overlays === false || files.length === 0) return;
+      setOverlayUploading(true);
+      try {
+        const uploadUrls = await requestOverlayUploadUrls(
+          itemId,
+          files.map((f) => ({
+            filename: f.filename,
+            content_type: f.content_type,
+            file_size_bytes: f.file_size_bytes,
+          })),
+        );
+        await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
+        const start = Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.3));
+        const cards: MediaOverlay[] = uploadUrls.map((u, i) => {
+          const file = files[i];
+          const id = crypto.randomUUID();
+          return {
+            id,
+            kind: file.content_type.startsWith("video/") ? "video" : "image",
+            src_gcs_path: u.gcs_path,
+            position: "center",
+            x_frac: 0.5,
+            y_frac: 0.5,
+            scale: 0.35,
+            start_s: start,
+            end_s: Math.min(previewDuration || start + 5, start + 5),
+            z: localOverlays.length + i,
+          };
+        });
+        history.record();
+        setLocalOverlays((cur) => [...cur, ...cards]);
+        setOverlaysDirty(true);
+        if (cards[0]) {
+          select("overlay", cards[0].id);
+          setInspectorTab("basic");
+        }
+      } catch (err) {
+        setToast(err instanceof Error ? err.message : "Couldn't upload that overlay.");
+      } finally {
+        setOverlayUploading(false);
+      }
+    },
+    [
+      capabilities?.overlays,
+      currentTime,
+      history,
+      itemId,
+      localOverlays.length,
+      previewDuration,
+      readOnly,
+      select,
+    ],
   );
 
   const recordTimelineDrag = useCallback(() => {
@@ -669,6 +872,7 @@ export default function EditorShell({
     (preset: TextPreset = DEFAULT_TEXT_PRESET) => {
       if (readOnly) return;
       history.record();
+      setTextDirty(true);
       const start = Math.max(0, Math.round(currentTime * 10) / 10);
       const end =
         previewDuration > 0
@@ -717,6 +921,7 @@ export default function EditorShell({
         effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
       };
       history.record();
+      setTextDirty(true);
       state.bars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
       setAppliedStyleSetId(styleSet.id);
     },
@@ -749,11 +954,26 @@ export default function EditorShell({
     capabilities?.split_clips !== undefined
       ? capabilities.split_clips !== false
       : variant?.text_mode === "agent_text";
+  const toolDisabledReasons = useMemo<Partial<Record<EditorTool, string>>>(() => {
+    const out: Partial<Record<EditorTool, string>> = {};
+    if (readOnly) {
+      out.text = readOnlyReason;
+      out.styles = readOnlyReason;
+    }
+    if (capabilities?.sfx === false) {
+      out.sounds = capabilities.sfx_reason ?? "Sound effects are not available";
+    }
+    if (capabilities?.overlays === false) {
+      out.overlays = capabilities.overlays_reason ?? "Media overlays are not available";
+    }
+    return out;
+  }, [capabilities, readOnly, readOnlyReason]);
 
   const deleteSelected = useCallback(() => {
     if (!selection || readOnly) return;
     if (selection.kind === "text") {
       history.record();
+      setTextDirty(true);
       dispatch({ type: "DELETE_BAR", id: selection.id });
       clear();
     } else if (selection.kind === "clip") {
@@ -766,8 +986,12 @@ export default function EditorShell({
       } else {
         setToast("Keep at least one clip.");
       }
+    } else if (selection.kind === "sfx") {
+      removeSfx(selection.id);
+    } else if (selection.kind === "overlay") {
+      removeOverlay(selection.id);
     }
-  }, [selection, clear, slots, readOnly, history]);
+  }, [selection, clear, slots, readOnly, history, removeSfx, removeOverlay]);
 
   const splitAtPlayhead = useCallback(() => {
     if (!selection || readOnly) return;
@@ -783,6 +1007,7 @@ export default function EditorShell({
         return;
       }
       history.record();
+      setTextDirty(true);
       dispatch({
         type: "SPLIT_BAR",
         id: selection.id,
@@ -840,6 +1065,7 @@ export default function EditorShell({
       const start_s = nudgeBarStart(bar, deltaS, previewDuration);
       if (start_s === bar.start_s) return;
       history.record();
+      setTextDirty(true);
       dispatch({ type: "MOVE_BAR", id: bar.id, start_s });
     },
     [history, previewDuration, readOnly, selection, state.bars],
@@ -857,7 +1083,9 @@ export default function EditorShell({
         : undefined;
   const canDelete =
     selection?.kind === "text" ||
-    (selection?.kind === "clip" && activeSlotCount(slots) > 1);
+    (selection?.kind === "clip" && activeSlotCount(slots) > 1) ||
+    selection?.kind === "sfx" ||
+    selection?.kind === "overlay";
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
@@ -911,7 +1139,7 @@ export default function EditorShell({
         else if (action === "clear-selection") clear();
       } else if (e.key === "Delete" || e.key === "Backspace") {
         if (!deleteKeyAllowed(e.target as HTMLElement | null)) return;
-        if (selection?.kind === "text") {
+        if (canDelete) {
           e.preventDefault();
           deleteSelected();
         }
@@ -924,6 +1152,7 @@ export default function EditorShell({
     selection,
     clear,
     deleteSelected,
+    canDelete,
     history,
     layoutMode,
     lightSheetOpen,
@@ -950,14 +1179,20 @@ export default function EditorShell({
       const res = await commitEditorSession(
         itemId,
         variant.variant_id,
-        buildEditorCommitRequest({
-          elements: barsToTextElements(state.bars, originalsRef.current),
-          timelineDirty,
-          slots,
-          soundMuted,
-          title,
-          variant,
-        }),
+	        buildEditorCommitRequest({
+	          elements: barsToTextElements(state.bars, originalsRef.current),
+	          textDirty,
+	          timelineDirty,
+	          slots,
+	          soundMuted,
+	          sfxDirty,
+	          soundEffects: localSfx,
+	          overlaysDirty,
+	          mediaOverlays: localOverlays,
+	          titleDirty,
+	          title,
+	          variant,
+	        }),
       );
       // Partial: persist landed (we got a 2xx) but the render kick failed —
       // the response's `ok` flag tells us. Working state stays, Retry re-kicks.
@@ -970,6 +1205,10 @@ export default function EditorShell({
       // the draft is spent, and the item-page hero shows the rendering state.
       history.clear();
       clearDraft();
+      setTextDirty(false);
+      setSfxDirty(false);
+      setOverlaysDirty(false);
+      setTitleDirty(false);
       setSaveState("idle");
       setSaveMessage("Saved — rendering your latest version");
       router.push(`/plan/items/${itemId}`);
@@ -995,6 +1234,12 @@ export default function EditorShell({
     timelineDirty,
     slots,
     soundMuted,
+    textDirty,
+    sfxDirty,
+    localSfx,
+    overlaysDirty,
+    localOverlays,
+    titleDirty,
     history,
     clearDraft,
   ]);
@@ -1012,7 +1257,18 @@ export default function EditorShell({
     } catch {
       /* quota full / privacy mode — editing continues, draft safety only */
     }
-  }, [variant, dirty, state.bars, localSlots, localSfx, videoMuted, soundMuted, title, getCurrent]);
+  }, [
+    variant,
+    dirty,
+    state.bars,
+    localSlots,
+    localSfx,
+    localOverlays,
+    videoMuted,
+    soundMuted,
+    title,
+    getCurrent,
+  ]);
 
   // On open, surface a matching unsaved draft as a quiet Resume/Discard notice
   // (once per variant, after seeding so a Resume overrides the seeded bars).
@@ -1140,7 +1396,19 @@ export default function EditorShell({
     grid: clip.state.grid,
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
-    sfx: localSfx,
+    sfx: localSfx.map((p) => {
+      const trimStart = p.trim_start_s ?? 0;
+      const trimEnd = p.trim_end_s ?? p.duration_s ?? null;
+      return {
+        id: p.id,
+        at_s: p.at_s ?? 0,
+        end_s:
+          trimEnd == null
+            ? null
+            : (p.at_s ?? 0) + Math.max(0, trimEnd - trimStart),
+        label: p.label ?? null,
+      };
+    }),
     onPreviewSfxTiming: previewSfxTiming,
     hasMusic: !!variant.music_track_id,
     musicLabel: variant.track_title ?? "Music",
@@ -1157,12 +1425,14 @@ export default function EditorShell({
       setSoundMuted((m) => !m);
       setTimelineDirty(true);
     },
-    overlays: (variant.media_overlays ?? []).map((o) => ({
+    overlays: localOverlays.map((o) => ({
       id: o.id,
       start_s: o.start_s,
       end_s: o.end_s,
       label: o.kind === "video" ? "Video" : "Image",
     })),
+    onPreviewOverlayTiming: previewOverlayTiming,
+    onOpenSounds: () => setActiveTool("sounds"),
     onScrub: seekTo,
     onScrubStart: () => {
       pausePlayback();
@@ -1207,9 +1477,10 @@ export default function EditorShell({
               value={title}
               onChange={(e) => {
                 if (readOnly) return;
-                // Coalesce typing bursts into one undo step.
-                history.record("title");
-                setTitle(e.target.value);
+                  // Coalesce typing bursts into one undo step.
+                  history.record("title");
+                  setTitleDirty(true);
+                  setTitle(e.target.value);
               }}
               readOnly={readOnly}
               placeholder="add title for your video"
@@ -1355,6 +1626,7 @@ export default function EditorShell({
         >
         <ToolRail
           activeTool={activeTool}
+          disabledTools={toolDisabledReasons}
           onToggleTool={(tool) => setActiveTool((cur) => (cur === tool ? null : tool))}
         />
         {layoutMode === "full" &&
@@ -1365,10 +1637,15 @@ export default function EditorShell({
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
               onPickPreset={pickPreset}
-              appliedStyleSetId={appliedStyleSetId}
-              onRestyleAll={restyleAll}
-              onClose={() => setActiveTool(null)}
-            />
+	              appliedStyleSetId={appliedStyleSetId}
+	              onRestyleAll={restyleAll}
+	              sfxEffects={sfxGlossaryEffects}
+	              sfxLoading={sfxGlossaryLoading}
+	              onAddSfx={addSfxFromGlossary}
+	              overlayUploading={overlayUploading}
+	              onOverlayUpload={handleOverlayUpload}
+	              onClose={() => setActiveTool(null)}
+	            />
           ) : (
             <div />
           ))}
@@ -1380,10 +1657,15 @@ export default function EditorShell({
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
               onPickPreset={pickPreset}
-              appliedStyleSetId={appliedStyleSetId}
-              onRestyleAll={restyleAll}
-              onClose={() => setActiveTool(null)}
-            />
+	              appliedStyleSetId={appliedStyleSetId}
+	              onRestyleAll={restyleAll}
+	              sfxEffects={sfxGlossaryEffects}
+	              sfxLoading={sfxGlossaryLoading}
+	              onAddSfx={addSfxFromGlossary}
+	              overlayUploading={overlayUploading}
+	              onOverlayUpload={handleOverlayUpload}
+	              onClose={() => setActiveTool(null)}
+	            />
           </div>
         )}
         <div
@@ -1411,10 +1693,12 @@ export default function EditorShell({
           />
         </div>
         <InspectorPanel
-          selection={selection}
-          bar={selectedBar}
-          clipTiming={selectedClip}
-          tab={inspectorTab}
+	          selection={selection}
+	          bar={selectedBar}
+	          clipTiming={selectedClip}
+	          sfx={selectedSfx}
+	          overlay={selectedOverlay}
+	          tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
           contentRef={contentRef}
@@ -1422,6 +1706,7 @@ export default function EditorShell({
             if (selectedBar && !readOnly) {
               // Coalesce keystrokes on one bar into a single undo step.
               history.record(`text:${selectedBar.id}`);
+              setTextDirty(true);
               dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
             }
           }}
@@ -1429,10 +1714,14 @@ export default function EditorShell({
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
           onPatchTextTiming={patchSelectedTextTiming}
-          onPatchClipTiming={patchSelectedClipTiming}
-          onPreviewClipTiming={previewSelectedClipTiming}
-          onRecordClipTiming={recordTimelineDrag}
-          onClose={clear}
+	          onPatchClipTiming={patchSelectedClipTiming}
+	          onPreviewClipTiming={previewSelectedClipTiming}
+	          onRecordClipTiming={recordTimelineDrag}
+	          onPatchSfx={patchSfx}
+	          onDeleteSfx={removeSfx}
+	          onPatchOverlay={patchOverlay}
+	          onDeleteOverlay={removeOverlay}
+	          onClose={clear}
           onPickPreset={pickPreset}
         />
         <InspectorRail
@@ -1523,6 +1812,7 @@ export default function EditorShell({
         onEditText={(text) => {
           if (selectedBar && !readOnly) {
             history.record(`text:${selectedBar.id}`);
+            setTextDirty(true);
             dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
           }
         }}

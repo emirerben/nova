@@ -1238,6 +1238,7 @@ def _run_media_overlay_pass(
     job_id: str,
     variant_id: str,
     overlays_raw: list[dict],
+    expected_render_gen_id: str | None = None,
 ) -> None:
     """Apply (or clear) media-overlay cards on a finished variant (fast path).
 
@@ -1259,7 +1260,7 @@ def _run_media_overlay_pass(
     from app.storage import copy_object  # noqa: PLC0415
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
         if job is None:
             log.error("media_overlay_job_not_found", job_id=job_id)
             return
@@ -1305,6 +1306,21 @@ def _run_media_overlay_pass(
             # Patch the variant.
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="media_overlay_clear",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["media_overlays"] = None
                     v["output_url"] = signed_url
                     if will_reapply_sfx:
@@ -1320,7 +1336,11 @@ def _run_media_overlay_pass(
             db.commit()
             record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
             # Terminal hook: re-apply persisted SFX on top of the restored clean variant.
-            _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+            _reapply_persisted_sfx_if_any(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=expected_render_gen_id,
+            )
             return
 
         # ── Apply path: composite cards onto the clean base ──────────────────
@@ -1360,6 +1380,21 @@ def _run_media_overlay_pass(
             )
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="media_overlay_failed",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["render_status"] = "failed"
                     v["render_error"] = str(exc)[:500]
                     break
@@ -1373,6 +1408,21 @@ def _run_media_overlay_pass(
 
         for v in variants:
             if v.get("variant_id") == variant_id:
+                current = v.get("render_generation_id")
+                if (
+                    expected_render_gen_id is not None
+                    and current is not None
+                    and current != expected_render_gen_id
+                ):
+                    log.warning(
+                        "stale_render_write_discarded",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        outcome="media_overlay_apply",
+                        expected_gen_id=expected_render_gen_id,
+                        actual_gen_id=current,
+                    )
+                    return
                 v["media_overlays"] = [c.model_dump() for c in cards]
                 v["pre_media_overlay_video_path"] = pre_clean
                 v["output_url"] = new_url
@@ -1393,7 +1443,80 @@ def _run_media_overlay_pass(
             {"variant_id": variant_id, "card_count": len(cards)},
         )
         # Terminal hook: re-apply persisted SFX on top of the newly composited video.
-        _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+        _reapply_persisted_sfx_if_any(
+            job_id=job_id,
+            variant_id=variant_id,
+            expected_render_gen_id=expected_render_gen_id,
+        )
+
+
+def _reapply_persisted_media_overlays_if_any(
+    *,
+    job_id: str,
+    variant_id: str,
+    expected_render_gen_id: str | None = None,
+) -> bool:
+    """Re-apply media overlays after a fresh full re-render, if any are persisted.
+
+    Full re-renders produce a fresh base video without media-overlay cards. Reset
+    stale clean-copy snapshots, then route through _run_media_overlay_pass so its
+    normal terminal behavior and SFX reapply hook stay single-sourced.
+    """
+    from app.config import settings as _settings_overlay  # noqa: PLC0415
+
+    if not _settings_overlay.media_overlays_enabled:
+        return False
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return False
+            variants = list((job.assembly_plan or {}).get("variants") or [])
+            existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+            if existing is None:
+                return False
+            overlays_raw = existing.get("media_overlays")
+            if not overlays_raw:
+                return False
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["pre_media_overlay_video_path"] = None
+                    # SFX is re-applied after overlays. Any old SFX clean copy
+                    # points at the pre-full-render video, so force a fresh one.
+                    v["pre_sfx_video_path"] = None
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("media_overlay_reapply_prep_failed", job_id=job_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
+        return True
+
+    try:
+        _run_media_overlay_pass(
+            job_id=job_id,
+            variant_id=variant_id,
+            overlays_raw=overlays_raw,
+            expected_render_gen_id=expected_render_gen_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("media_overlay_reapply_failed", job_id=job_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
+    return True
 
 
 def _reapply_persisted_sfx_if_any(
@@ -1640,6 +1763,21 @@ def _run_sfx_pass(
             )
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="sfx_failed",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["render_status"] = "failed"
                     v["render_error"] = str(exc)[:500]
                     break
@@ -2301,6 +2439,7 @@ def _run_regenerate_variant(
             job_id=job_id,
             variant_id=variant_id,
             overlays_raw=media_overlays_override or [],
+            expected_render_gen_id=render_gen_id,
         )
         return
 
@@ -2339,6 +2478,7 @@ def _run_regenerate_variant(
             job_id=job_id,
             variant_id=variant_id,
             sfx_raw=sfx_override or [],
+            expected_render_gen_id=render_gen_id,
         )
         return
 
@@ -2839,6 +2979,14 @@ def _run_regenerate_variant(
     # E1: the token check covers BOTH terminal branches (ready and failed) —
     # a superseded task's output/status must never clobber the newer commit's.
     if result.get("ok"):
+        persisted_media_overlays = existing.get("media_overlays") or None
+        if persisted_media_overlays:
+            # A fresh full render produces the clean base without user media cards.
+            # Preserve the just-persisted cards through the result merge and reset
+            # stale snapshots so the reapply pass composites onto the new base.
+            result["media_overlays"] = persisted_media_overlays
+            result["pre_media_overlay_video_path"] = None
+            result["pre_sfx_video_path"] = None
         if not _update_variant_entry(
             job_id,
             variant_id,
@@ -2847,16 +2995,20 @@ def _run_regenerate_variant(
             outcome="full_render",
         ):
             return
-        # SFX is the OUTERMOST layer. A full re-render (song swap, retext, clip
-        # edit, style change) re-assembles video_path WITHOUT the SFX mix, so
-        # re-apply persisted effects onto the freshly re-rendered base (the hook
-        # also resets the now-stale pre_sfx_video_path snapshot). Mirrors the
-        # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
-        _reapply_persisted_sfx_if_any(
+        # A full re-render re-assembles video_path without user media layers.
+        # Re-apply overlays first; that pass owns the follow-up SFX hook because
+        # SFX is the outermost audio layer. If no overlays exist (or the overlay
+        # feature is disabled), keep the pre-existing SFX-only terminal hook.
+        if not _reapply_persisted_media_overlays_if_any(
             job_id=job_id,
             variant_id=variant_id,
             expected_render_gen_id=render_gen_id,
-        )
+        ):
+            _reapply_persisted_sfx_if_any(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=render_gen_id,
+            )
     else:
         # Failure-patch hygiene: the failure record spreads the fresh `base`
         # dict, whose None values (base_video_path, intro_text, ...) would NULL

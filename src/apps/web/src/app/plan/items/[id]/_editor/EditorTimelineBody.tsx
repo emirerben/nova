@@ -126,6 +126,11 @@ export interface EditorTimelineBodyProps {
   onToggleSoundMute: () => void;
 
   overlays: EditorOverlayBar[];
+  onPreviewOverlayTiming?: (
+    id: string,
+    patch: Pick<EditorOverlayBar, "start_s" | "end_s">,
+  ) => void;
+  onOpenSounds?: () => void;
 
   onScrub: (seconds: number) => void;
   onScrubStart: () => void;
@@ -158,6 +163,15 @@ type ActiveDrag =
       startTimelineX: number;
       pxPerSecond: number;
       origin: Pick<EditorSfxBar, "at_s" | "end_s">;
+      active: boolean;
+    }
+  | {
+      kind: "overlay";
+      id: string;
+      handle: "left" | "right" | "body";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<EditorOverlayBar, "start_s" | "end_s">;
       active: boolean;
     };
 
@@ -192,6 +206,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     soundMuted,
     onToggleSoundMute,
     overlays,
+    onPreviewOverlayTiming,
+    onOpenSounds,
     onScrub,
     onScrubStart,
   } = props;
@@ -436,7 +452,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         y: window.innerHeight - 118,
         text: `${(next.durationS ?? active.origin.durationS ?? 0).toFixed(1)}s`,
       });
-    } else {
+    } else if (active.kind === "sfx") {
       const next = applySfxMove({
         atS: active.origin.at_s,
         endS: active.origin.end_s,
@@ -448,6 +464,36 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         x: clientX,
         y: window.innerHeight - 118,
         text: `${Math.max(0, (next.end_s ?? next.at_s) - next.at_s).toFixed(1)}s`,
+      });
+    } else {
+      const duration = active.origin.end_s - active.origin.start_s;
+      const minDuration = 0.3;
+      let next = active.origin;
+      if (active.handle === "body") {
+        const maxStart = Math.max(0, durationS - duration);
+        const start_s = Math.max(0, Math.min(maxStart, active.origin.start_s + deltaS));
+        next = {
+          start_s: Math.round(start_s * 10) / 10,
+          end_s: Math.round((start_s + duration) * 10) / 10,
+        };
+      } else if (active.handle === "left") {
+        const start_s = Math.max(0, Math.min(active.origin.end_s - minDuration, active.origin.start_s + deltaS));
+        next = {
+          start_s: Math.round(start_s * 10) / 10,
+          end_s: active.origin.end_s,
+        };
+      } else {
+        const end_s = Math.min(durationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
+        next = {
+          start_s: active.origin.start_s,
+          end_s: Math.round(end_s * 10) / 10,
+        };
+      }
+      onPreviewOverlayTiming?.(active.id, next);
+      setDragLabel({
+        x: clientX,
+        y: window.innerHeight - 118,
+        text: `${Math.max(0, next.end_s - next.start_s).toFixed(1)}s`,
       });
     }
   }
@@ -512,6 +558,26 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
       origin: { at_s: bar.at_s, end_s: bar.end_s },
+      active: false,
+    };
+  }
+
+  function startOverlayDrag(e: React.PointerEvent<HTMLElement>, bar: EditorOverlayBar) {
+    if (readOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      kind: "overlay",
+      id: bar.id,
+      handle: resolveBarDragHandle({
+        localX: e.clientX - rect.left,
+        width: rect.width,
+      }),
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { start_s: bar.start_s, end_s: bar.end_s },
       active: false,
     };
   }
@@ -820,9 +886,21 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               {/* ── Sound lane (SFX sub-row above the music bed) ── */}
               <LaneTrack trackW={trackW} heightPx={64}>
                 <Playline px={playheadPx} />
-                {/* SFX sub-row (top half) */}
-                <div className="absolute inset-x-0 top-0 h-1/2">
-                  {sfx.map((s) => {
+	                {/* SFX sub-row (top half) */}
+	                <div className="absolute inset-x-0 top-0 h-1/2">
+	                  {sfx.length === 0 && (
+	                    <button
+	                      type="button"
+	                      onClick={(e) => {
+	                        e.stopPropagation();
+	                        onOpenSounds?.();
+	                      }}
+	                      className="absolute left-1 top-0.5 bottom-0.5 rounded border border-dashed border-zinc-300 px-2 text-[10px] text-zinc-500 hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+	                    >
+	                      + Add sounds
+	                    </button>
+	                  )}
+	                  {sfx.map((s) => {
                     const left = secondsToPx(s.at_s, pps);
                     const end = s.end_s ?? s.at_s + 0.6;
                     const width = Math.max(6, secondsToPx(end - s.at_s, pps));
@@ -900,15 +978,20 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       <BarButton
                         key={o.id}
                         left={left}
-                        width={width}
-                        selected={selected}
-                        ringCls={ringCls}
-                        ariaLabel={`Overlay ${o.label ?? ""}, ${formatTimecode(o.start_s)}–${formatTimecode(o.end_s)}`}
-                        onSelect={() => onSelect("overlay", o.id)}
-                        dataKind="overlay"
-                        dataId={o.id}
-                        className="border border-zinc-300 bg-white text-[#0c0c0e]"
-                      >
+	                        width={width}
+	                        selected={selected}
+	                        ringCls={ringCls}
+	                        ariaLabel={`Overlay ${o.label ?? ""}, ${formatTimecode(o.start_s)}–${formatTimecode(o.end_s)}`}
+	                        onSelect={() => onSelect("overlay", o.id)}
+	                        dataKind="overlay"
+	                        dataId={o.id}
+	                        onPointerDown={(e) => startOverlayDrag(e, o)}
+	                        onPointerMove={(e) => updateDrag(e.clientX)}
+	                        onPointerUp={(e) => finishDrag(e, "overlay", o.id)}
+	                        onPointerCancel={cancelDrag}
+	                        suppressClickRef={suppressClickRef}
+	                        className="border border-zinc-300 bg-white text-[#0c0c0e]"
+	                      >
                         <span className="pointer-events-none truncate px-2 text-[10px]">
                           {o.label ?? "Overlay"}
                         </span>

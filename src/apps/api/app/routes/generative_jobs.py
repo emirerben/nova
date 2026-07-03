@@ -421,6 +421,8 @@ class EditorCommitRequest(BaseModel):
     text_elements: list[dict] | None = None
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
+    sound_effects: list[dict] | None = None
+    media_overlays: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
     base_generation: str = ""
 
@@ -438,6 +440,8 @@ class EditorCommitSections(BaseModel):
     text_elements: bool
     timeline: bool
     mix: bool
+    sound_effects: bool
+    media_overlays: bool
     title: bool
 
 
@@ -1065,40 +1069,13 @@ def dispatch_patch_scene_timing(job: Job, variant_id: str, *, overrides: list[di
     # NOTE: no render enqueue here — overrides are applied at next reburn.
 
 
-def dispatch_set_media_overlays(
-    job: Job,
-    variant_id: str,
-    *,
-    overlays_raw: list[dict],
-    user_id: str,
-) -> None:
-    """Validate + enqueue a media-overlay card apply-pass for one variant.
-
-    Full-replace semantics: the caller sends the entire new card list.
-    An empty list clears all cards (restores the clean variant from
-    pre_media_overlay_video_path if available).
-
-    Persists render_status="rendering" on the variant BEFORE enqueuing so the
-    frontend immediately reflects the in-progress state — same pattern as
-    dispatch_edit_timeline (persist first, enqueue second).
-    """
+def validate_media_overlays_for_user(*, overlays_raw: list[dict], user_id: str) -> list[dict]:
+    """Validate a full media-overlay replacement list for one user's namespace."""
     from app.agents._schemas.media_overlay import (  # noqa: PLC0415
         coerce_media_overlays,
         validate_overlay_gcs_path,
     )
-    from app.config import settings as _settings  # noqa: PLC0415
 
-    if not _settings.media_overlays_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Media overlays are not available.",
-        )
-
-    require_editable_variant(job, variant_id)
-
-    # Validate each overlay: parse schema + check GCS prefix allowlist.
-    # Path must be scoped to this user's namespace (users/{user_id}/) to
-    # prevent referencing another user's overlay assets.
     _user_prefix = f"users/{user_id}/"
     validated: list[dict] = []
     if overlays_raw:
@@ -1124,6 +1101,68 @@ def dispatch_set_media_overlays(
                     detail=f"Card {card.id}: end_s must be greater than start_s.",
                 )
             validated.append(card.model_dump())
+    return validated
+
+
+def validate_sound_effects_for_user(*, sfx_raw: list[dict], user_id: str) -> list[dict]:
+    """Validate a full sound-effect placement replacement list for one user."""
+    from app.agents._schemas.sound_effect import (  # noqa: PLC0415
+        coerce_sound_effects,
+        validate_sfx_gcs_path,
+    )
+
+    _user_prefix = f"users/{user_id}/"
+    validated: list[dict] = []
+    if sfx_raw:
+        placements = coerce_sound_effects(sfx_raw) or []
+        for placement in placements:
+            try:
+                validate_sfx_gcs_path(placement.src_gcs_path)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid SFX asset path: {exc}",
+                ) from exc
+            is_user_path = placement.src_gcs_path.startswith("users/")
+            if is_user_path and not placement.src_gcs_path.startswith(_user_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"SFX asset path must be under '{_user_prefix}': {placement.src_gcs_path!r}"
+                    ),
+                )
+            validated.append(placement.model_dump())
+    return validated
+
+
+def dispatch_set_media_overlays(
+    job: Job,
+    variant_id: str,
+    *,
+    overlays_raw: list[dict],
+    user_id: str,
+) -> None:
+    """Validate + enqueue a media-overlay card apply-pass for one variant.
+
+    Full-replace semantics: the caller sends the entire new card list.
+    An empty list clears all cards (restores the clean variant from
+    pre_media_overlay_video_path if available).
+
+    Persists render_status="rendering" on the variant BEFORE enqueuing so the
+    frontend immediately reflects the in-progress state — same pattern as
+    dispatch_edit_timeline (persist first, enqueue second).
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Media overlays are not available.",
+        )
+
+    require_editable_variant(job, variant_id)
+
+    validated = validate_media_overlays_for_user(overlays_raw=overlays_raw, user_id=user_id)
 
     # Persist render_status="rendering" first (row-locked by the DB session the
     # route holds), then enqueue — prevents a race where the worker reads "ready"
@@ -1175,10 +1214,6 @@ def dispatch_set_sound_effects(
     Routes to the overlay-jobs queue (same as media overlays — solo worker,
     no CLIP model fork hazard).
     """
-    from app.agents._schemas.sound_effect import (  # noqa: PLC0415
-        coerce_sound_effects,
-        validate_sfx_gcs_path,
-    )
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.sound_effects_enabled:
@@ -1189,41 +1224,7 @@ def dispatch_set_sound_effects(
 
     require_editable_variant(job, variant_id)
 
-    # Validate each placement.
-    _user_prefix = f"users/{user_id}/"
-    validated: list[dict] = []
-    if sfx_raw:
-        placements = coerce_sound_effects(sfx_raw) or []
-        for placement in placements:
-            # Curated paths: resolve src_gcs_path server-side from the SoundEffect row.
-            # Never trust a client-supplied sound-effects/ path.
-            if placement.sound_effect_id:
-                # We need a sync-compatible lookup here. Use the same db session
-                # pattern as other dispatchers (db is async, but we have a sync
-                # workaround — import inline and use run_sync).
-                # For simplicity, since dispatch functions in this module already
-                # call .delay() synchronously, we do a best-effort path trust check
-                # and rely on the worker-side validate_sfx_gcs_path for enforcement.
-                # The route layer (set_item_sound_effects) resolves the path server-side
-                # before calling this function.
-                pass  # src_gcs_path is already set by the route layer
-            try:
-                validate_sfx_gcs_path(placement.src_gcs_path)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid SFX asset path: {exc}",
-                ) from exc
-            # User-uploaded paths must be scoped to this user's namespace.
-            is_user_path = placement.src_gcs_path.startswith("users/")
-            if is_user_path and not placement.src_gcs_path.startswith(_user_prefix):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"SFX asset path must be under '{_user_prefix}': {placement.src_gcs_path!r}"
-                    ),
-                )
-            validated.append(placement.model_dump())
+    validated = validate_sound_effects_for_user(sfx_raw=sfx_raw, user_id=user_id)
 
     # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays).
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -1721,6 +1722,23 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         if variant.get("resolved_archetype") in {"narrated", "subtitled"}
         else None
     )
+    from app.config import settings  # noqa: PLC0415
+
+    effects_reason = None
+    if variant.get("resolved_archetype") in _CAPTION_EDIT_ARCHETYPES:
+        effects_reason = "caption_archetype"
+    elif not variant.get("video_path") and not variant.get("output_url"):
+        effects_reason = "no_video"
+    sfx_reason = (
+        "sound_effects_disabled"
+        if not settings.sound_effects_enabled
+        else effects_reason
+    )
+    overlays_reason = (
+        "media_overlays_disabled"
+        if not settings.media_overlays_enabled
+        else effects_reason
+    )
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
@@ -1736,7 +1754,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
             variant.get("mix") is not None
             or str(variant.get("variant_id") or "").startswith("voiceover")
         ),
+        "sfx": sfx_reason is None,
+        "overlays": overlays_reason is None,
         "reason": caption_reason or timeline_reason,
+        "sfx_reason": sfx_reason,
+        "overlays_reason": overlays_reason,
     }
 
 
@@ -2045,7 +2067,13 @@ def variant_render_baseline(variant: dict) -> str:
     return str(variant.get("render_generation_id") or variant.get("render_finished_at") or "")
 
 
-def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitRequest) -> dict:
+def prepare_editor_commit(
+    job: Job,
+    variant_id: str,
+    payload: EditorCommitRequest,
+    *,
+    user_id: str | None = None,
+) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
 
     Deliberately does NOT use `require_editable_variant`: saving during an
@@ -2072,6 +2100,8 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
         payload.text_elements is None
         and payload.timeline_slots is None
         and payload.mix is None
+        and payload.sound_effects is None
+        and payload.media_overlays is None
         and payload.title is None
     ):
         raise HTTPException(
@@ -2107,13 +2137,55 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
             )
         mix_override = payload.mix.music_level
 
+    validated_sfx: list[dict] | None = None
+    if payload.sound_effects is not None:
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        if not _settings.sound_effects_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sound effects are not available for this editor commit.",
+            )
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sound effects require a user-scoped asset namespace.",
+            )
+        validated_sfx = validate_sound_effects_for_user(
+            sfx_raw=payload.sound_effects,
+            user_id=user_id,
+        )
+
+    validated_overlays: list[dict] | None = None
+    if payload.media_overlays is not None:
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        if not _settings.media_overlays_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Media overlays are not available for this editor commit.",
+            )
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Media overlays require a user-scoped asset namespace.",
+            )
+        validated_overlays = validate_media_overlays_for_user(
+            overlays_raw=payload.media_overlays,
+            user_id=user_id,
+        )
+
     # ── Stale-baseline compare-and-fail (multi-tab / superseded-render safety) ─
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
 
     # ── Stage the single atomic job-JSON write ─────────────────────────────────
     has_render_section = (
-        validated_elements is not None or resolved_slots is not None or payload.mix is not None
+        validated_elements is not None
+        or resolved_slots is not None
+        or payload.mix is not None
+        or validated_sfx is not None
+        or validated_overlays is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
 
@@ -2136,6 +2208,10 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
             if payload.mix.original_level is not None:
                 # Round-trip persistence only — not yet honored by the renderer.
                 updated["original_audio_level"] = float(payload.mix.original_level)
+        if validated_sfx is not None:
+            updated["sound_effects"] = validated_sfx or None
+        if validated_overlays is not None:
+            updated["media_overlays"] = validated_overlays or None
         if new_gen is not None:
             updated["render_generation_id"] = new_gen
             updated["render_status"] = "rendering"
@@ -2148,10 +2224,14 @@ def prepare_editor_commit(job: Job, variant_id: str, payload: EditorCommitReques
         "has_render_section": has_render_section,
         "timeline_override": resolved_slots,
         "mix_override": mix_override,
+        "sfx_override": validated_sfx,
+        "media_overlays_override": validated_overlays,
         "sections": {
             "text_elements": payload.text_elements is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
+            "sound_effects": payload.sound_effects is not None,
+            "media_overlays": payload.media_overlays is not None,
         },
     }
 
@@ -2174,7 +2254,22 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         kwargs["timeline_override"] = prep["timeline_override"]
     if prep["mix_override"] is not None:
         kwargs["mix_override"] = float(prep["mix_override"])
-    is_reburn_only = prep["timeline_override"] is None and prep["mix_override"] is None
+    has_text_section = prep["sections"].get("text_elements") is True
+    full_render = prep["timeline_override"] is not None or prep["mix_override"] is not None
+    if full_render or has_text_section:
+        # Text/timeline/mix full re-renders read the just-persisted variant state.
+        # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
+        pass
+    elif prep["media_overlays_override"] is not None:
+        # Overlay pass is outer-video, then the worker's terminal hook reapplies the
+        # just-persisted SFX if this same commit also changed sound_effects.
+        kwargs["media_overlays_override"] = prep["media_overlays_override"]
+    elif prep["sfx_override"] is not None:
+        kwargs["sfx_override"] = prep["sfx_override"]
+    is_reburn_only = (
+        prep["timeline_override"] is None
+        and prep["mix_override"] is None
+    )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
     if is_reburn_only:
         # Overlay-jobs queue: solo worker — avoids macOS prefork CLIP fork crash.

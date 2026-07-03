@@ -75,6 +75,8 @@ def _job(**variant_extra):
         "text_mode": "agent_text",
         "render_status": "ready",
         "render_finished_at": "2026-07-01T00:00:00Z",
+        "video_path": f"generative-jobs/{jid}/variant.mp4",
+        "output_url": "https://signed/variant.mp4",
         "base_video_path": f"generative-jobs/{jid}/base_1.mp4",
         "ai_timeline": {"beat_grid": list(GRID), "slots": _ai_slots(prefix)},
         "mix": 0.5,  # lets the mix section validate on this fixture
@@ -93,6 +95,8 @@ def _arm(monkeypatch, *, object_exists=True):
     from app.config import settings
 
     monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True)
+    monkeypatch.setattr(settings, "sound_effects_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
     monkeypatch.setattr(gj.storage, "object_exists", lambda p: object_exists)
     # _variants_for_response re-signs base_video_path on read — keep it local.
     monkeypatch.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://signed/{p}")
@@ -135,7 +139,13 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert v["render_generation_id"] == prep["generation"]
     assert v["render_status"] == "rendering"
     assert prep["has_render_section"] is True
-    assert prep["sections"] == {"text_elements": True, "timeline": True, "mix": True}
+    assert prep["sections"] == {
+        "text_elements": True,
+        "timeline": True,
+        "mix": True,
+        "sound_effects": False,
+        "media_overlays": False,
+    }
 
     # Exactly ONE render kick, carrying the new token + the timeline override.
     calls: list[dict] = []
@@ -207,6 +217,147 @@ def test_text_only_commit_rides_overlay_jobs_queue(monkeypatch):
     gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
     assert len(calls) == 1
     assert calls[0]["queue"] == "overlay-jobs"
+
+
+def test_sfx_only_commit_persists_and_kicks_sfx_pass(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    sfx = [
+        {
+            "id": "sfx-1",
+            "sound_effect_id": None,
+            "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+            "at_s": 1.2,
+            "gain": 0.8,
+            "duration_s": 0.6,
+            "label": "Pop",
+        }
+    ]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(sound_effects=sfx),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["sound_effects"][0]["id"] == "sfx-1"
+    assert v["sound_effects"][0]["src_gcs_path"] == "users/u123/plan/item/sfx/pop.mp3"
+    assert v["sound_effects"][0]["at_s"] == 1.2
+    assert v["sound_effects"][0]["gain"] == 0.8
+    assert v["sound_effects"][0]["duration_s"] == 0.6
+    assert v["render_generation_id"] == prep["generation"]
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    assert calls[0]["queue"] == "overlay-jobs"
+    assert calls[0]["kwargs"]["render_gen_id"] == prep["generation"]
+    assert calls[0]["kwargs"]["sfx_override"][0]["id"] == "sfx-1"
+    assert calls[0]["kwargs"]["sfx_override"][0]["src_gcs_path"] == (
+        "users/u123/plan/item/sfx/pop.mp3"
+    )
+
+
+def test_overlay_only_commit_persists_and_kicks_overlay_pass(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    overlays = [
+        {
+            "id": "ov-1",
+            "kind": "image",
+            "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.35,
+            "start_s": 0.4,
+            "end_s": 2.4,
+            "z": 0,
+        }
+    ]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=overlays),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["media_overlays"][0]["id"] == "ov-1"
+    assert v["media_overlays"][0]["src_gcs_path"] == "users/u123/plan/item/overlays/card.png"
+    assert v["media_overlays"][0]["start_s"] == 0.4
+    assert v["media_overlays"][0]["end_s"] == 2.4
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    assert calls[0]["queue"] == "overlay-jobs"
+    assert calls[0]["kwargs"]["render_gen_id"] == prep["generation"]
+    assert calls[0]["kwargs"]["media_overlays_override"][0]["id"] == "ov-1"
+    assert calls[0]["kwargs"]["media_overlays_override"][0]["src_gcs_path"] == (
+        "users/u123/plan/item/overlays/card.png"
+    )
+
+
+def test_sfx_and_overlay_commit_kicks_overlay_pass_for_terminal_sfx_reapply(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    sfx = [
+        {
+            "id": "sfx-1",
+            "sound_effect_id": None,
+            "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+            "at_s": 1.2,
+            "gain": 0.8,
+        }
+    ]
+    overlays = [
+        {
+            "id": "ov-1",
+            "kind": "image",
+            "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.35,
+            "start_s": 0.4,
+            "end_s": 2.4,
+            "z": 0,
+        }
+    ]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(sound_effects=sfx, media_overlays=overlays),
+        user_id="u123",
+    )
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert calls[0]["kwargs"]["media_overlays_override"][0]["id"] == "ov-1"
+    assert calls[0]["kwargs"]["media_overlays_override"][0]["src_gcs_path"] == (
+        "users/u123/plan/item/overlays/card.png"
+    )
+    assert "sfx_override" not in calls[0]["kwargs"]
 
 
 def test_commit_succeeds_while_variant_is_rendering(monkeypatch):
@@ -426,6 +577,8 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "text_elements": True,
         "timeline": False,
         "mix": False,
+        "sound_effects": False,
+        "media_overlays": False,
         "title": True,
     }
     v = job.assembly_plan["variants"][0]
@@ -483,6 +636,72 @@ def test_endpoint_empty_title_422_nothing_persisted(client: TestClient, monkeypa
     db.commit.assert_not_awaited()
 
 
+def test_sound_effects_flag_off_rejects_editor_section(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "sound_effects_enabled", False, raising=False)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                sound_effects=[
+                    {
+                        "id": "sfx-1",
+                        "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+                        "at_s": 0.2,
+                        "gain": 1,
+                    }
+                ]
+            ),
+            user_id="u123",
+        )
+
+    assert exc.value.status_code == 422
+    assert "Sound effects are not available" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+def test_media_overlays_flag_off_rejects_editor_section(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "media_overlays_enabled", False, raising=False)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                media_overlays=[
+                    {
+                        "id": "ov-1",
+                        "kind": "image",
+                        "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+                        "position": "center",
+                        "x_frac": 0.5,
+                        "y_frac": 0.5,
+                        "scale": 0.35,
+                        "start_s": 0,
+                        "end_s": 2,
+                        "z": 0,
+                    }
+                ]
+            ),
+            user_id="u123",
+        )
+
+    assert exc.value.status_code == 422
+    assert "Media overlays are not available" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
 # ── E4: editor_capabilities per archetype ──────────────────────────────────────
 
 
@@ -499,7 +718,11 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "timeline": True,
         "split_clips": True,
         "mix": True,  # fixture carries mix=0.5
+        "sfx": True,
+        "overlays": True,
         "reason": None,
+        "sfx_reason": None,
+        "overlays_reason": None,
     }
 
 
@@ -512,6 +735,8 @@ def test_capabilities_lyrics_variant(monkeypatch):
     assert caps["split_clips"] is False
     assert caps["mix"] is False
     assert caps["reason"] == "lyrics_sync"
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
 
 
 def test_capabilities_voiceover_variant(monkeypatch):
@@ -522,6 +747,8 @@ def test_capabilities_voiceover_variant(monkeypatch):
     assert caps["split_clips"] is False
     assert caps["mix"] is True  # voiceover variants always mixable
     assert caps["reason"] == "voiceover_bed_fit"
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
 
 
 def test_capabilities_talking_head_archetype(monkeypatch):
@@ -531,6 +758,8 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["timeline"] is False
     assert caps["reason"] == "no_slot_timeline"
     assert caps["text_elements"] is True  # text editing is independent of the slot grid
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
 
 
 def test_capabilities_caption_archetype_text_elements_off(monkeypatch):
@@ -544,6 +773,10 @@ def test_capabilities_caption_archetype_text_elements_off(monkeypatch):
     caps = _caps(job, "subtitled")
     assert caps["text_elements"] is False
     assert caps["reason"] == "captions are edited in the captions tab"
+    assert caps["sfx"] is False
+    assert caps["overlays"] is False
+    assert caps["sfx_reason"] == "caption_archetype"
+    assert caps["overlays_reason"] == "caption_archetype"
 
 
 def test_capabilities_expired_sources(monkeypatch):
@@ -556,6 +789,20 @@ def test_capabilities_expired_sources(monkeypatch):
     caps = _caps(job, "song_text")
     assert caps["timeline"] is False
     assert caps["reason"] == "sources_expired"
+
+
+def test_capabilities_flags_off(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "sound_effects_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "media_overlays_enabled", False, raising=False)
+
+    caps = _caps(_job(), "song_text")
+    assert caps["sfx"] is False
+    assert caps["overlays"] is False
+    assert caps["sfx_reason"] == "sound_effects_disabled"
+    assert caps["overlays_reason"] == "media_overlays_disabled"
 
 
 def test_capabilities_timeline_flag_off(monkeypatch):
