@@ -34,6 +34,7 @@ import {
 } from "@/lib/editor-commit";
 import { FONT_FACES } from "@/lib/font-faces";
 import { type GenerativeStyleSet } from "@/lib/generative-api";
+import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
   initTextEditorState,
@@ -42,6 +43,7 @@ import {
 } from "@/lib/timeline/text-timeline-reducer";
 import { InkButton } from "@/components/ui/InkButton";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import { type DraftSlot } from "@/app/generative/timeline-math";
@@ -54,10 +56,13 @@ import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
 import ToolRail, { type EditorTool } from "./ToolRail";
-import { presetMatchesFields } from "./PresetGrid";
+import PresetGrid, { presetMatchesFields } from "./PresetGrid";
+import { useEditorLayoutMode } from "./useEditorLayoutMode";
 import {
   deleteKeyAllowed,
   escapeAction,
+  nudgeBarStart,
+  type EditorSelectionKind,
   useEditorSelection,
 } from "./useEditorSelection";
 import {
@@ -75,6 +80,11 @@ const NEW_TEXT_DURATION_S = 2.0;
 const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
+
+function spaceShortcutAllowed(target: HTMLElement | null): boolean {
+  if (!deleteKeyAllowed(target)) return false;
+  return (target?.tagName ?? "").toUpperCase() !== "BUTTON";
+}
 
 export default function EditorShell({
   itemId,
@@ -149,9 +159,11 @@ export default function EditorShell({
   }, [variant]);
 
   // ── View state ──────────────────────────────────────────────────────────────
+  const layoutMode = useEditorLayoutMode();
   const { selection, select, clear } = useEditorSelection();
   const [activeTool, setActiveTool] = useState<EditorTool | null>(null); // drawer CLOSED at first paint
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("basic");
+  const [lightSheetOpen, setLightSheetOpen] = useState(false);
   const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
   const [zoomPct, setZoomPct] = useState<number>(100);
   const [currentTime, setCurrentTime] = useState(0);
@@ -285,8 +297,18 @@ export default function EditorShell({
   useEffect(() => {
     if (selection?.kind === "text" && !state.bars.some((b) => b.id === selection.id)) {
       clear();
+      setLightSheetOpen(false);
     }
   }, [selection, state.bars, clear]);
+
+  useEffect(() => {
+    if (layoutMode === "light") {
+      setActiveTool(null);
+      setCanvasTool("select");
+    } else {
+      setLightSheetOpen(false);
+    }
+  }, [layoutMode]);
 
   const sampleWord = useMemo(() => {
     const first = selectedBar?.text.trim().split(/\s+/)[0];
@@ -302,12 +324,21 @@ export default function EditorShell({
 
   // ── Actions ─────────────────────────────────────────────────────────────────
 
-  const selectText = useCallback(
-    (id: string) => {
-      select("text", id);
-      setInspectorTab("basic"); // selecting anything activates + switches to Basic (D6)
+  const selectElement = useCallback(
+    (kind: EditorSelectionKind, id: string) => {
+      select(kind, id);
+      if (layoutMode === "overlay") setActiveTool(null);
+      if (kind === "text") {
+        setInspectorTab("basic"); // selecting anything activates + switches to Basic (D6)
+        if (layoutMode === "light") setLightSheetOpen(true);
+      }
     },
-    [select],
+    [layoutMode, select],
+  );
+
+  const selectText = useCallback(
+    (id: string) => selectElement("text", id),
+    [selectElement],
   );
 
   const patchBar = useCallback(
@@ -496,6 +527,19 @@ export default function EditorShell({
     setCurrentTime(sec);
   }, []);
 
+  const nudgeSelectedText = useCallback(
+    (deltaS: number) => {
+      if (readOnly || selection?.kind !== "text") return;
+      const bar = state.bars.find((b) => b.id === selection.id);
+      if (!bar) return;
+      const start_s = nudgeBarStart(bar, deltaS, duration);
+      if (start_s === bar.start_s) return;
+      history.record();
+      dispatch({ type: "MOVE_BAR", id: bar.id, start_s });
+    },
+    [duration, history, readOnly, selection, state.bars],
+  );
+
   // Transport enablement (plan §6).
   const canSplit =
     selection?.kind === "text" ||
@@ -528,7 +572,26 @@ export default function EditorShell({
         history.redo();
         return;
       }
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        if (!deleteKeyAllowed(e.target as HTMLElement | null)) return;
+        if (selection?.kind !== "text") return;
+        e.preventDefault();
+        const step = e.shiftKey ? 1 : 0.1;
+        nudgeSelectedText(e.key === "ArrowLeft" ? -step : step);
+        return;
+      }
+      if (e.key === " " || e.key === "Spacebar") {
+        if (!spaceShortcutAllowed(e.target as HTMLElement | null)) return;
+        e.preventDefault();
+        togglePlay();
+        return;
+      }
       if (e.key === "Escape") {
+        if (layoutMode === "light" && lightSheetOpen) {
+          e.preventDefault();
+          setLightSheetOpen(false);
+          return;
+        }
         const target = e.target as HTMLElement | null;
         // One press, one effect: leaving a text field is that effect.
         if (target && !deleteKeyAllowed(target)) {
@@ -551,7 +614,17 @@ export default function EditorShell({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [activeTool, selection, clear, deleteSelected, history]);
+  }, [
+    activeTool,
+    selection,
+    clear,
+    deleteSelected,
+    history,
+    layoutMode,
+    lightSheetOpen,
+    nudgeSelectedText,
+    togglePlay,
+  ]);
 
   // ── Save / leave ────────────────────────────────────────────────────────────
 
@@ -727,7 +800,7 @@ export default function EditorShell({
                 <button
                   type="button"
                   onClick={() => setLoadNonce((n) => n + 1)}
-                  className="rounded-full border border-zinc-200 px-4 py-1.5 text-[13px] text-[#3f3f46] hover:border-zinc-400"
+                  className="min-h-11 rounded-full border border-zinc-200 px-4 text-[13px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   Retry
                 </button>
@@ -735,7 +808,7 @@ export default function EditorShell({
               <button
                 type="button"
                 onClick={() => router.push(`/plan/items/${itemId}`)}
-                className="rounded-full bg-[#0c0c0e] px-4 py-1.5 text-[13px] font-semibold text-white hover:opacity-80"
+                className="min-h-11 rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Back to the video
               </button>
@@ -752,8 +825,7 @@ export default function EditorShell({
     zoom,
     selection,
     onSelect: (kind, id) => {
-      select(kind, id);
-      if (kind === "text") setInspectorTab("basic");
+      selectElement(kind, id);
     },
     onClear: clear,
     textBars: state.bars,
@@ -795,137 +867,200 @@ export default function EditorShell({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid grid-rows-[56px_minmax(480px,1fr)_260px] overflow-hidden bg-[#fafaf8]">
+    <div
+      className={
+        layoutMode === "light"
+          ? "fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-[#fafaf8]"
+          : "fixed inset-0 z-50 grid grid-rows-[56px_minmax(480px,1fr)_260px] overflow-hidden bg-[#fafaf8]"
+      }
+    >
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
 
       {/* ── Top bar (plan §1) ── */}
-      <header className="flex items-center border-b border-zinc-200 bg-white px-4">
-        <div className="flex flex-1 items-center gap-3">
-          <button
-            type="button"
-            aria-label="Back to the video page"
-            onClick={requestLeave}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-200 pb-0.5 text-[15px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
-          >
-            ‹
-          </button>
-          <input
-            type="text"
-            value={title}
-            onChange={(e) => {
-              if (readOnly) return;
-              // Coalesce typing bursts into one undo step.
-              history.record("title");
-              setTitle(e.target.value);
-            }}
-            readOnly={readOnly}
-            placeholder="add title for your video"
-            aria-label="Video title"
-            className="w-[240px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-zinc-200 focus:bg-white focus:outline-none"
-          />
-        </div>
+      {layoutMode !== "light" && (
+        <header className="flex items-center border-b border-zinc-200 bg-white px-4">
+          <div className="flex flex-1 items-center gap-3">
+            <button
+              type="button"
+              aria-label="Back to the video page"
+              onClick={requestLeave}
+              className="flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 pb-0.5 text-[15px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              ‹
+            </button>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => {
+                if (readOnly) return;
+                // Coalesce typing bursts into one undo step.
+                history.record("title");
+                setTitle(e.target.value);
+              }}
+              readOnly={readOnly}
+              placeholder="add title for your video"
+              aria-label="Video title"
+              className="min-h-11 w-[240px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-lime-500/25"
+            />
+          </div>
 
-        {/* Center cluster — visually quiet; ink chip only on the active tool */}
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            aria-pressed={canvasTool === "select"}
-            aria-label="Select tool"
-            title="Select"
-            onClick={() => setCanvasTool("select")}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg text-[13px] ${
-              canvasTool === "select"
-                ? "bg-[#0c0c0e] text-white"
-                : "text-[#3f3f46] hover:bg-zinc-100"
-            }`}
-          >
-            ➤
-          </button>
-          <button
-            type="button"
-            aria-pressed={canvasTool === "pan"}
-            aria-label="Pan tool"
-            title="Pan (when zoomed in)"
-            onClick={() => setCanvasTool("pan")}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg text-[13px] ${
-              canvasTool === "pan" ? "bg-[#0c0c0e] text-white" : "text-[#3f3f46] hover:bg-zinc-100"
-            }`}
-          >
-            ✋
-          </button>
-          {/* Undo/redo — unified document command stack (plan §7). */}
-          <button
-            type="button"
-            aria-label="Undo"
-            title="Undo (⌘Z)"
-            disabled={!history.canUndo}
-            onClick={history.undo}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            ↺
-          </button>
-          <button
-            type="button"
-            aria-label="Redo"
-            title="Redo (⇧⌘Z)"
-            disabled={!history.canRedo}
-            onClick={history.redo}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 disabled:hover:bg-transparent"
-          >
-            ↻
-          </button>
-          <select
-            aria-label="Canvas zoom"
-            value={zoomPct}
-            onChange={(e) => setZoomPct(Number(e.target.value))}
-            className="ml-1 h-8 rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#3f3f46] focus:border-lime-500/60 focus:outline-none"
-          >
-            {ZOOM_OPTIONS.map((z) => (
-              <option key={z} value={z}>
-                {z}%
-              </option>
-            ))}
-          </select>
-        </div>
+          {/* Center cluster — visually quiet; ink chip only on the active tool */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              aria-pressed={canvasTool === "select"}
+              aria-label="Select tool"
+              title="Select"
+              onClick={() => setCanvasTool("select")}
+              className={`flex h-11 w-11 items-center justify-center rounded-lg text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                canvasTool === "select"
+                  ? "bg-[#0c0c0e] text-white"
+                  : "text-[#3f3f46] hover:bg-zinc-100"
+              }`}
+            >
+              ➤
+            </button>
+            <button
+              type="button"
+              aria-pressed={canvasTool === "pan"}
+              aria-label="Pan tool"
+              title="Pan (when zoomed in)"
+              onClick={() => setCanvasTool("pan")}
+              className={`flex h-11 w-11 items-center justify-center rounded-lg text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                canvasTool === "pan"
+                  ? "bg-[#0c0c0e] text-white"
+                  : "text-[#3f3f46] hover:bg-zinc-100"
+              }`}
+            >
+              ✋
+            </button>
+            {/* Undo/redo — unified document command stack (plan §7). */}
+            <button
+              type="button"
+              aria-label="Undo"
+              title="Undo (⌘Z)"
+              disabled={!history.canUndo}
+              onClick={history.undo}
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              ↺
+            </button>
+            <button
+              type="button"
+              aria-label="Redo"
+              title="Redo (⇧⌘Z)"
+              disabled={!history.canRedo}
+              onClick={history.redo}
+              className="flex h-11 w-11 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40 disabled:hover:bg-transparent"
+            >
+              ↻
+            </button>
+            <select
+              aria-label="Canvas zoom"
+              value={zoomPct}
+              onChange={(e) => setZoomPct(Number(e.target.value))}
+              className="ml-1 h-11 rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#3f3f46] focus:border-lime-500 focus:outline-none focus:ring-2 focus:ring-lime-500/25"
+            >
+              {ZOOM_OPTIONS.map((z) => (
+                <option key={z} value={z}>
+                  {z}%
+                </option>
+              ))}
+            </select>
+          </div>
 
-        <div className="flex flex-1 items-center justify-end gap-2">
-          {saveState === "idle" && saveMessage && (
-            <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
-              {saveMessage}
-            </span>
-          )}
-          <InkButton variant="ghost" className="text-[13px]" onClick={requestLeave}>
-            Cancel
-          </InkButton>
-          <InkButton
-            className="px-6 py-2.5 text-[13px]"
-            disabled={!dirty || saving || readOnly}
-            onClick={() => void handleSave()}
-          >
-            {saving ? "Saving…" : "Save"}
-          </InkButton>
-        </div>
-      </header>
+          <div className="flex flex-1 items-center justify-end gap-2">
+            {saveState === "idle" && saveMessage && (
+              <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+                {saveMessage}
+              </span>
+            )}
+            <InkButton
+              variant="ghost"
+              className="min-h-11 text-[13px] focus-visible:!outline-lime-500"
+              onClick={requestLeave}
+            >
+              Cancel
+            </InkButton>
+            <InkButton
+              className="min-h-11 px-6 py-2.5 text-[13px] focus-visible:!outline-lime-500"
+              disabled={!dirty || saving || readOnly}
+              onClick={() => void handleSave()}
+            >
+              {saving ? "Saving…" : "Save"}
+            </InkButton>
+          </div>
+        </header>
+      )}
 
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}
-      <div className="grid min-h-0 grid-cols-[auto_auto_1fr_auto_auto]">
+      {layoutMode === "light" ? (
+        <div className="min-h-0">
+          <EditorCanvas
+            variant={variant}
+            elements={elements}
+            bars={state.bars}
+            selectedTextId={selection?.kind === "text" ? selection.id : null}
+            currentTime={currentTime}
+            zoomPct={100}
+            tool="select"
+            videoRef={videoRef}
+            onSelectText={selectText}
+            onClearSelection={() => {
+              clear();
+              setLightSheetOpen(false);
+            }}
+            onPatchBar={patchBar}
+            onFocusContent={() => setLightSheetOpen(true)}
+            onTimeUpdate={setCurrentTime}
+            onDuration={setDuration}
+            onPlayingChange={setPlaying}
+            onReloadSource={() => setLoadNonce((n) => n + 1)}
+            allowManipulation={false}
+            stageHeightCss="100dvh - 96px"
+          />
+        </div>
+      ) : (
+        <div
+          className={[
+            "relative grid min-h-0",
+            layoutMode === "full"
+              ? "grid-cols-[auto_auto_1fr_auto_auto]"
+              : "grid-cols-[auto_1fr_auto_auto]",
+          ].join(" ")}
+        >
         <ToolRail
           activeTool={activeTool}
           onToggleTool={(tool) => setActiveTool((cur) => (cur === tool ? null : tool))}
         />
-        {activeTool !== null ? (
-          <ToolDrawer
-            tool={activeTool}
-            sampleWord={sampleWord}
-            appliedPresetId={appliedPresetId}
-            onAddText={() => addTextAtPlayhead()}
-            onPickPreset={pickPreset}
-            appliedStyleSetId={appliedStyleSetId}
-            onRestyleAll={restyleAll}
-            onClose={() => setActiveTool(null)}
-          />
-        ) : (
-          <div />
+        {layoutMode === "full" &&
+          (activeTool !== null ? (
+            <ToolDrawer
+              tool={activeTool}
+              sampleWord={sampleWord}
+              appliedPresetId={appliedPresetId}
+              onAddText={() => addTextAtPlayhead()}
+              onPickPreset={pickPreset}
+              appliedStyleSetId={appliedStyleSetId}
+              onRestyleAll={restyleAll}
+              onClose={() => setActiveTool(null)}
+            />
+          ) : (
+            <div />
+          ))}
+        {layoutMode === "overlay" && activeTool !== null && (
+          <div className="absolute bottom-0 left-[92px] top-0 z-40 shadow-[18px_0_36px_rgba(12,12,14,0.16)]">
+            <ToolDrawer
+              tool={activeTool}
+              sampleWord={sampleWord}
+              appliedPresetId={appliedPresetId}
+              onAddText={() => addTextAtPlayhead()}
+              onPickPreset={pickPreset}
+              appliedStyleSetId={appliedStyleSetId}
+              onRestyleAll={restyleAll}
+              onClose={() => setActiveTool(null)}
+            />
+          </div>
         )}
         <EditorCanvas
           variant={variant}
@@ -971,9 +1106,19 @@ export default function EditorShell({
           onTab={setInspectorTab}
         />
       </div>
+      )}
 
       {/* ── Timeline region (260px): TransportBar + scale-driven editor
              timeline (Text → Video → Sound → Overlays), plan §6. ── */}
+      {layoutMode === "light" ? (
+        <LightTransport
+          playing={playing}
+          currentTime={currentTime}
+          duration={duration}
+          onPlayPause={togglePlay}
+          onScrub={seekTo}
+        />
+      ) : (
       <div
         data-region="timeline"
         className="relative flex min-h-0 flex-col border-t border-zinc-200 bg-white"
@@ -1023,6 +1168,27 @@ export default function EditorShell({
           </div>
         )}
       </div>
+      )}
+
+      <LightEditSheet
+        open={layoutMode === "light" && lightSheetOpen && !!selectedBar}
+        bar={selectedBar}
+        sampleWord={sampleWord}
+        appliedPresetId={appliedPresetId}
+        saveState={saveState}
+        saving={saving}
+        dirty={dirty}
+        readOnly={readOnly}
+        onClose={() => setLightSheetOpen(false)}
+        onEditText={(text) => {
+          if (selectedBar && !readOnly) {
+            history.record(`text:${selectedBar.id}`);
+            dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+          }
+        }}
+        onPickPreset={pickPreset}
+        onSave={() => void handleSave()}
+      />
 
       {/* ── Read-only banner (ineligible variant, plan §9 / E4) ── */}
       {readOnly && (
@@ -1053,7 +1219,7 @@ export default function EditorShell({
                   setSaveMessage(null);
                   setLoadNonce((n) => n + 1);
                 }}
-                className="flex-shrink-0 rounded-full bg-[#0c0c0e] px-4 py-1.5 text-[12px] font-semibold text-white hover:opacity-80"
+                className="min-h-11 flex-shrink-0 rounded-full bg-[#0c0c0e] px-4 text-[12px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Reload
               </button>
@@ -1061,7 +1227,7 @@ export default function EditorShell({
               <button
                 type="button"
                 onClick={() => void handleSave()}
-                className="flex-shrink-0 rounded-full border border-zinc-200 px-4 py-1.5 text-[12px] text-[#3f3f46] hover:border-zinc-400"
+                className="min-h-11 flex-shrink-0 rounded-full border border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Retry
               </button>
@@ -1079,14 +1245,14 @@ export default function EditorShell({
               <button
                 type="button"
                 onClick={discardDraft}
-                className="rounded-full px-3 py-1.5 text-[12px] text-[#71717a] hover:text-[#0c0c0e]"
+                className="min-h-11 rounded-full px-3 text-[12px] text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Discard
               </button>
               <button
                 type="button"
                 onClick={resumeDraft}
-                className="rounded-full bg-[#0c0c0e] px-4 py-1.5 text-[12px] font-semibold text-white hover:opacity-80"
+                className="min-h-11 rounded-full bg-[#0c0c0e] px-4 text-[12px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
               >
                 Resume
               </button>
@@ -1107,6 +1273,164 @@ export default function EditorShell({
         }}
         onCancel={() => setConfirmLeave(false)}
       />
+    </div>
+  );
+}
+
+function LightTransport({
+  playing,
+  currentTime,
+  duration,
+  onPlayPause,
+  onScrub,
+}: {
+  playing: boolean;
+  currentTime: number;
+  duration: number;
+  onPlayPause: () => void;
+  onScrub: (seconds: number) => void;
+}) {
+  const safeDuration = Math.max(0, duration);
+  const safeTime = Math.min(safeDuration || currentTime, Math.max(0, currentTime));
+  return (
+    <div className="border-t border-zinc-200 bg-white px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+      <div className="mx-auto flex max-w-[720px] items-center gap-3">
+        <button
+          type="button"
+          aria-label={playing ? "Pause video" : "Play video"}
+          aria-pressed={playing}
+          onClick={onPlayPause}
+          className="flex h-11 w-11 flex-none items-center justify-center rounded-full bg-[#0c0c0e] text-[13px] text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+        >
+          {playing ? "❚❚" : "▶"}
+        </button>
+        <input
+          type="range"
+          aria-label="Scrub video"
+          min={0}
+          max={safeDuration || 0}
+          step={0.1}
+          value={safeDuration > 0 ? safeTime : 0}
+          disabled={safeDuration <= 0}
+          onChange={(e) => onScrub(Number(e.target.value))}
+          className="h-11 min-w-0 flex-1 cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+        />
+        <span
+          aria-label="Playback position"
+          className="w-[92px] flex-none text-right text-[12px] tabular-nums text-[#3f3f46]"
+        >
+          {formatTimecode(currentTime)}{" "}
+          <span className="text-[#a1a1aa]">/ {formatTimecode(duration)}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function LightEditSheet({
+  open,
+  bar,
+  sampleWord,
+  appliedPresetId,
+  saveState,
+  saving,
+  dirty,
+  readOnly,
+  onClose,
+  onEditText,
+  onPickPreset,
+  onSave,
+}: {
+  open: boolean;
+  bar: TextElementBar | null;
+  sampleWord: string | null;
+  appliedPresetId: string | null;
+  saveState: "idle" | "saving" | "conflict" | "error" | "partial";
+  saving: boolean;
+  dirty: boolean;
+  readOnly: boolean;
+  onClose: () => void;
+  onEditText: (text: string) => void;
+  onPickPreset: (preset: TextPreset) => void;
+  onSave: () => void;
+}) {
+  const trapRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useFocusTrap(trapRef, open);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.select();
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [open, bar?.id]);
+
+  if (!open || !bar) return null;
+
+  return (
+    <div
+      ref={trapRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="light-edit-title"
+      className="fixed inset-0 z-[90] flex flex-col bg-white"
+    >
+      <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
+        <div>
+          <h2 id="light-edit-title" className="font-display text-[18px] text-[#0c0c0e]">
+            Edit text
+          </h2>
+          <p className="mt-0.5 text-[12px] text-[#71717a]">Full timeline editing on desktop</p>
+        </div>
+        <button
+          type="button"
+          aria-label="Close text editor"
+          onClick={onClose}
+          className="flex h-11 w-11 items-center justify-center rounded-lg text-[14px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5">
+        <label className="block text-[12px] font-semibold text-[#3f3f46]" htmlFor="light-edit-textarea">
+          Content
+        </label>
+        <textarea
+          id="light-edit-textarea"
+          ref={textareaRef}
+          value={bar.text}
+          readOnly={readOnly}
+          onChange={(e) => onEditText(e.target.value)}
+          rows={5}
+          className="mt-2 w-full resize-none rounded-lg border border-zinc-200 px-3 py-3 text-[15px] text-[#0c0c0e] outline-none focus:border-lime-500 focus:ring-2 focus:ring-lime-500/25"
+        />
+        <p className="mb-3 mt-6 text-[12px] font-semibold text-[#3f3f46]">Presets</p>
+        <PresetGrid
+          presets={TEXT_PRESETS}
+          sampleWord={sampleWord}
+          appliedPresetId={appliedPresetId}
+          onPick={onPickPreset}
+        />
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t border-zinc-200 px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-3">
+        <button
+          type="button"
+          onClick={onClose}
+          className="min-h-11 rounded-full px-4 text-[13px] font-semibold text-[#71717a] hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+        >
+          Close
+        </button>
+        <button
+          type="button"
+          disabled={!dirty || saving || readOnly}
+          onClick={onSave}
+          className="min-h-11 rounded-full bg-[#0c0c0e] px-6 text-[13px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40"
+        >
+          {saveState === "saving" ? "Saving..." : "Save"}
+        </button>
+      </div>
     </div>
   );
 }

@@ -41,9 +41,10 @@ export default function ToolRail({
             type="button"
             disabled={!tool.enabled}
             aria-pressed={active}
+            aria-label={`${tool.label} tool`}
             title={tool.enabled ? tool.label : `${tool.label} — arrives with a later update`}
             onClick={() => onToggleTool(tool.id)}
-            className={`flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline-2 focus-visible:outline-[#0c0c0e] ${
+            className={`flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active
                 ? "border-[#0c0c0e]"
                 : "border-transparent hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"

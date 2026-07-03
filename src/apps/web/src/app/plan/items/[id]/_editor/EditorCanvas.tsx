@@ -70,6 +70,8 @@ export default function EditorCanvas({
   onDuration,
   onPlayingChange,
   onReloadSource,
+  allowManipulation = true,
+  stageHeightCss,
 }: {
   variant: PlanItemVariant;
   /** Working bars projected to API shape (barsToTextElements) — layout input. */
@@ -94,6 +96,10 @@ export default function EditorCanvas({
   /** Re-fetch the variant (re-signs an expired preview URL) on the error tile's
    * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
   onReloadSource?: () => void;
+  /** Light-edit mode keeps the canvas tap-only: no drag, scale, or handles. */
+  allowManipulation?: boolean;
+  /** Shell-specific chrome height for sizing the 9:16 stage. */
+  stageHeightCss?: string;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -159,6 +165,7 @@ export default function EditorCanvas({
   }
 
   function beginMove(e: React.PointerEvent, id: string, hits: string[]) {
+    if (!allowManipulation) return;
     const bar = barById.get(id);
     const layout = layouts.find((l) => l.id === id);
     if (!layout) return;
@@ -183,6 +190,11 @@ export default function EditorCanvas({
     if (tool !== "select" || e.button !== 0) return;
     e.stopPropagation();
     const hits = hitsAtPoint(e.clientX, e.clientY);
+    if (!allowManipulation) {
+      const next = cycleHit(hits, selectedTextId);
+      if (next) onSelectText(next);
+      return;
+    }
     if (selectedTextId && hits.includes(selectedTextId)) {
       // Keep the current selection for dragging; a no-movement CLICK cycles
       // to the element underneath on pointerup (Figma/TikTok convention).
@@ -197,7 +209,7 @@ export default function EditorCanvas({
   }
 
   function onHandlePointerDown(e: React.PointerEvent, id: string) {
-    if (tool !== "select" || e.button !== 0) return;
+    if (!allowManipulation || tool !== "select" || e.button !== 0) return;
     e.stopPropagation();
     const el = overlayRefs.current.get(id);
     const layout = layouts.find((l) => l.id === id);
@@ -224,6 +236,7 @@ export default function EditorCanvas({
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    if (!allowManipulation) return;
     const drag = dragRef.current;
     if (!drag) return;
     const dx = e.clientX - drag.startClientX;
@@ -247,6 +260,7 @@ export default function EditorCanvas({
   }
 
   function onPointerUp() {
+    if (!allowManipulation) return;
     const drag = dragRef.current;
     if (!drag) return;
     dragRef.current = null;
@@ -319,7 +333,9 @@ export default function EditorCanvas({
         <div
           className="relative"
           style={{
-            height: `calc((100vh - 56px - 260px - 48px) * ${zoom})`,
+            height: stageHeightCss
+              ? `calc(${stageHeightCss} * ${zoom})`
+              : `calc((100vh - 56px - 260px - 48px) * ${zoom})`,
             aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
             maxWidth: "100%",
           }}
@@ -453,7 +469,7 @@ export default function EditorCanvas({
                       )}
 
                       {/* Selection box: lime stroke; handles white-core + 1px ink halo (D10) */}
-                      {isSelected && (
+                      {isSelected && allowManipulation && (
                         <div
                           aria-hidden={false}
                           role="group"
@@ -465,18 +481,24 @@ export default function EditorCanvas({
                             <button
                               key={corner}
                               type="button"
+                              tabIndex={-1}
                               aria-label={`Resize text (${corner})`}
                               onPointerDown={(e) => onHandlePointerDown(e, layout.id)}
-                              className="absolute h-2 w-2 rounded-[1px] bg-white touch-none"
+                              className="absolute flex h-6 w-6 items-center justify-center touch-none"
                               style={{
-                                boxShadow: "0 0 0 1px #0c0c0e",
                                 cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
-                                top: corner.startsWith("n") ? -5 : undefined,
-                                bottom: corner.startsWith("s") ? -5 : undefined,
-                                left: corner.endsWith("w") ? -5 : undefined,
-                                right: corner.endsWith("e") ? -5 : undefined,
+                                top: corner.startsWith("n") ? -13 : undefined,
+                                bottom: corner.startsWith("s") ? -13 : undefined,
+                                left: corner.endsWith("w") ? -13 : undefined,
+                                right: corner.endsWith("e") ? -13 : undefined,
                               }}
-                            />
+                            >
+                              <span
+                                aria-hidden
+                                className="h-2 w-2 rounded-[1px] bg-white"
+                                style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
+                              />
+                            </button>
                           ))}
                         </div>
                       )}
@@ -508,7 +530,7 @@ export default function EditorCanvas({
                       setVideoError(false);
                       onReloadSource?.();
                     }}
-                    className="mt-3 rounded-full border border-zinc-200 px-4 py-1.5 text-[12px] text-[#3f3f46] hover:border-zinc-400"
+                    className="mt-3 min-h-11 rounded-full border border-zinc-200 px-4 text-[12px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                   >
                     Retry
                   </button>
@@ -524,7 +546,7 @@ export default function EditorCanvas({
                   type="button"
                   aria-label="Fullscreen"
                   onClick={toggleFullscreen}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-sm text-[#3f3f46] hover:bg-white"
+                  className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white/90 text-sm text-[#3f3f46] hover:bg-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
                 >
                   ⛶
                 </button>

@@ -163,7 +163,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     "outline outline-2 outline-lime-500 outline-offset-[1px] motion-safe:transition-[outline-color,box-shadow] motion-safe:duration-150";
 
   return (
-    <div ref={scrollRef} className="h-full select-none overflow-x-auto" data-testid="editor-timeline">
+    <div
+      ref={scrollRef}
+      role="listbox"
+      aria-label="Editor timeline selections"
+      className="h-full select-none overflow-x-auto"
+      data-testid="editor-timeline"
+    >
       <div style={{ width: GUTTER_PX + trackW }}>
         {/* ── Ruler ── */}
         <div className="flex h-6">
@@ -255,7 +261,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     onSelect("clip", slot.key);
                   }}
                   className={[
-                    "absolute inset-y-1 rounded border transition-colors",
+                    "absolute inset-y-0.5 min-w-11 rounded border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
                     selected
                       ? `border-transparent ${ringCls}`
                       : "border-white/50 hover:border-white",
@@ -394,7 +400,7 @@ function LaneRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className={`flex ${tall ? "h-14" : "h-10"}`}>
+    <div className={`flex ${tall ? "h-16" : "h-12"}`}>
       <div
         className="sticky left-0 z-30 flex flex-shrink-0 items-center gap-1 border-b border-zinc-200 bg-white pl-1.5 pr-1"
         style={{ width: GUTTER_PX }}
@@ -406,14 +412,14 @@ function LaneRow({
             aria-pressed={muteState.muted}
             title={muteState.muted ? `${muteState.title}: muted` : `${muteState.title}: audible`}
             onClick={muteState.onToggle}
-            className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-[10px] ${
+            className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded text-[10px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               muteState.muted ? "text-zinc-300" : "text-[#3f3f46] hover:bg-zinc-100"
             }`}
           >
             {muteState.muted ? "🔇" : "🔊"}
           </button>
         ) : (
-          <span className="w-5 flex-shrink-0" />
+          <span className="w-11 flex-shrink-0" />
         )}
         <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
           {label}
@@ -463,7 +469,7 @@ function BarButton({
         onSelect();
       }}
       className={[
-        "absolute inset-y-1 flex items-center rounded transition-[filter,outline-color] hover:brightness-110",
+        "absolute inset-y-0.5 flex min-w-11 items-center rounded transition-[filter,outline-color] hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
         selected ? ringCls : "",
         className,
       ].join(" ")}
@@ -485,9 +491,11 @@ function TrimHandle({ side }: { side: "left" | "right" }) {
   return (
     <span
       aria-hidden
-      className={`absolute top-1/2 h-3 w-1 -translate-y-1/2 rounded-full bg-lime-500 motion-safe:transition-opacity motion-safe:duration-150 ${
-        side === "left" ? "left-[-2px]" : "right-[-2px]"
+      className={`absolute top-1/2 flex h-full w-6 -translate-y-1/2 items-center justify-center motion-safe:transition-opacity motion-safe:duration-150 ${
+        side === "left" ? "left-[-12px]" : "right-[-12px]"
       }`}
-    />
+    >
+      <span className="h-3 w-1 rounded-full bg-lime-500" />
+    </span>
   );
 }

@@ -39,9 +39,10 @@ export default function InspectorRail({
             type="button"
             disabled={!t.enabled}
             aria-pressed={active}
+            aria-label={`${t.label} inspector tab`}
             title={t.enabled ? t.label : "Select something to edit its properties"}
             onClick={() => onTab(t.id)}
-            className={`flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-xl border focus-visible:outline-2 focus-visible:outline-[#0c0c0e] ${
+            className={`flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active
                 ? "border-[#0c0c0e]"
                 : "border-transparent hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"

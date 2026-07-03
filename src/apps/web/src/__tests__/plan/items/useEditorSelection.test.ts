@@ -5,10 +5,12 @@
  */
 
 import { act, renderHook } from "@testing-library/react";
+import { describe, expect, it } from "@jest/globals";
 import {
   cycleHit,
   deleteKeyAllowed,
   escapeAction,
+  nudgeBarStart,
   sameSelection,
   useEditorSelection,
 } from "../../../app/plan/items/[id]/_editor/useEditorSelection";
@@ -73,6 +75,27 @@ describe("deleteKeyAllowed — focus guard", () => {
     expect(deleteKeyAllowed({ tagName: "SELECT" })).toBe(false);
     expect(deleteKeyAllowed({ tagName: "input" })).toBe(false); // case-insensitive
     expect(deleteKeyAllowed({ tagName: "DIV", isContentEditable: true })).toBe(false);
+  });
+});
+
+describe("nudgeBarStart — arrow-key timeline nudging", () => {
+  it("moves by 0.1s and rounds to the timeline grid", () => {
+    expect(nudgeBarStart({ start_s: 1.04, end_s: 2.04 }, 0.1, 10)).toBe(1.1);
+    expect(nudgeBarStart({ start_s: 1.04, end_s: 2.04 }, -0.1, 10)).toBe(0.9);
+  });
+
+  it("moves by 1s for shifted nudges", () => {
+    expect(nudgeBarStart({ start_s: 2.2, end_s: 3.7 }, 1, 10)).toBe(3.2);
+    expect(nudgeBarStart({ start_s: 2.2, end_s: 3.7 }, -1, 10)).toBe(1.2);
+  });
+
+  it("clamps at zero and preserves duration at the end of the video", () => {
+    expect(nudgeBarStart({ start_s: 0.05, end_s: 1.05 }, -1, 10)).toBe(0);
+    expect(nudgeBarStart({ start_s: 8.8, end_s: 10 }, 1, 10)).toBe(8.8);
+  });
+
+  it("only low-clamps when duration is unknown", () => {
+    expect(nudgeBarStart({ start_s: 8.8, end_s: 10 }, 1, 0)).toBe(9.8);
   });
 });
 

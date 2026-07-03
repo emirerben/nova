@@ -73,7 +73,7 @@ export default function PresetGrid({
               aria-label={`Text preset: ${preset.label}`}
               title={preset.label}
               onClick={() => onPick(preset)}
-              className={`flex h-full w-full items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-[#0c0c0e] px-1 hover:border-zinc-400 ${
+              className={`flex h-full min-h-11 w-full min-w-11 items-center justify-center overflow-hidden rounded-xl border border-zinc-200 bg-[#0c0c0e] px-1 hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                 applied ? "outline outline-2 outline-offset-1 outline-lime-500" : ""
               }`}
             >
@@ -102,7 +102,7 @@ export default function PresetGrid({
                   event.stopPropagation();
                   onToggleFavorite(preset.id);
                 }}
-                className={`absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full text-[12px] transition-colors ${
+                className={`absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-full text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                   favorite
                     ? "bg-white text-[#0c0c0e]"
                     : "bg-black/35 text-white/70 group-hover:bg-white group-hover:text-[#0c0c0e]"

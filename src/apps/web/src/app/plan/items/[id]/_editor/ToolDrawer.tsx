@@ -80,7 +80,7 @@ export default function ToolDrawer({
   return (
     <div
       data-region="tool-drawer"
-      className="flex w-[360px] flex-col border-r border-zinc-200 bg-white motion-safe:animate-fade-up"
+      className="flex h-full w-[360px] flex-col border-r border-zinc-200 bg-white motion-safe:animate-fade-up"
     >
       <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
         <h2 className="font-display text-[18px] text-[#0c0c0e]">
@@ -90,7 +90,7 @@ export default function ToolDrawer({
           type="button"
           aria-label="Close drawer"
           onClick={onClose}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
+          className="flex h-11 w-11 items-center justify-center rounded-lg text-[13px] text-[#71717a] hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           ✕
         </button>
@@ -102,7 +102,7 @@ export default function ToolDrawer({
           <button
             type="button"
             onClick={onAddText}
-            className="h-10 w-full rounded-lg bg-zinc-100 text-[13px] font-semibold text-[#0c0c0e] hover:bg-zinc-200 focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
+            className="min-h-11 w-full rounded-lg bg-zinc-100 text-[13px] font-semibold text-[#0c0c0e] hover:bg-zinc-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
           >
             Add text
           </button>
@@ -118,7 +118,7 @@ export default function ToolDrawer({
                   role="tab"
                   aria-selected={selected}
                   onClick={() => setCategory(cat)}
-                  className={`inline-flex h-7 items-center rounded-full px-3 text-[12px] ${
+                  className={`inline-flex min-h-11 items-center rounded-full px-4 text-[12px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                     selected
                       ? "bg-[#0c0c0e] font-semibold text-white"
                       : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"

@@ -43,8 +43,8 @@ export interface TransportBarProps {
 
 function iconBtn(enabled: boolean) {
   return [
-    "flex h-8 min-w-8 items-center justify-center rounded-lg px-1.5 text-[13px]",
-    "focus-visible:outline-2 focus-visible:outline-[#0c0c0e]",
+    "flex h-11 min-w-11 items-center justify-center rounded-lg px-2 text-[13px]",
+    "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
     enabled
       ? "text-[#3f3f46] hover:bg-zinc-100"
       : "cursor-not-allowed text-[#d4d4d8]",
@@ -69,7 +69,7 @@ export default function TransportBar({
   const zoomOut = () => onZoom(Math.max(MIN_ZOOM, Math.round((zoom / 1.5) * 10) / 10));
 
   return (
-    <div className="flex h-10 items-center gap-2 border-b border-zinc-200 bg-white px-3">
+    <div className="flex h-12 items-center gap-2 border-b border-zinc-200 bg-white px-3">
       {/* ── Left: split / delete ── */}
       <div className="flex flex-1 items-center gap-1">
         <button
@@ -103,8 +103,9 @@ export default function TransportBar({
         <button
           type="button"
           aria-label={playing ? "Pause" : "Play"}
+          aria-pressed={playing}
           onClick={onPlayPause}
-          className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#0c0c0e] text-[12px] text-white hover:opacity-80 focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
+          className="flex h-11 w-11 items-center justify-center rounded-lg bg-[#0c0c0e] text-[12px] text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         >
           {playing ? "❚❚" : "▶"}
         </button>
@@ -137,7 +138,7 @@ export default function TransportBar({
           step={0.1}
           value={zoom}
           onChange={(e) => onZoom(Number(e.target.value))}
-          className="h-1 w-28 cursor-pointer accent-lime-500"
+          className="h-11 w-28 cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
         />
         <button
           type="button"

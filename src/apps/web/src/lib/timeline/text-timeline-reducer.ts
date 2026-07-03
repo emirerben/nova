@@ -40,6 +40,11 @@ export interface TextElementBar {
   /** Display-case transform ("none" | "upper" | "lower" | "title") — resolved
    * at compile/layout time on both renderers (T11, parity-gated). */
   text_case?: string;
+  /** Tracking in em (× font size). Renderer-honored (T11, parity-gated). */
+  letter_spacing?: number;
+  /** Line-height multiplier (1.15 = renderer default). Renderer-honored
+   * (T11, parity-gated). */
+  line_spacing?: number;
   /** Named vertical position preset ("top" | "middle" | "bottom" | "custom").
    * Editor canvas drags set "custom" + explicit fracs. Renderer-honored. */
   position?: string;

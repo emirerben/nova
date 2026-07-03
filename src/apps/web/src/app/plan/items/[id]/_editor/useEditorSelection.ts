@@ -55,6 +55,37 @@ export function cycleHit(
   return hitsTopFirst[(idx + 1) % hitsTopFirst.length];
 }
 
+/** Round to 0.1s — the reducer's timing grid (MOVE_BAR rounds identically). */
+function round1(s: number): number {
+  return Math.round(s * 10) / 10;
+}
+
+/**
+ * Arrow-key nudge math (plan §5/§10): move the selected bar ±deltaS,
+ * PRESERVING its duration and clamping to [0, durationS]. Returns the new
+ * start_s (feed to MOVE_BAR, which re-derives end_s the same way). Pure so the
+ * timing math is unit-testable without keyboard/DOM plumbing.
+ *
+ *  - ±0.1s per arrow, ±1s with Shift (the caller picks deltaS).
+ *  - never lets the bar's start go below 0.
+ *  - never lets the bar's END exceed durationS (when a duration is known;
+ *    durationS ≤ 0 means "unknown", so only the low clamp applies).
+ */
+export function nudgeBarStart(
+  bar: { start_s: number; end_s: number },
+  deltaS: number,
+  durationS: number,
+): number {
+  const length = bar.end_s - bar.start_s;
+  let start = round1(bar.start_s + deltaS);
+  if (start < 0) start = 0;
+  if (durationS > 0) {
+    const maxStart = round1(durationS - length);
+    if (start > maxStart) start = Math.max(0, maxStart);
+  }
+  return round1(start);
+}
+
 export type EscapeAction = "close-drawer" | "clear-selection" | "none";
 
 /**
