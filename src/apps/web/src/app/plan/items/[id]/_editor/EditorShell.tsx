@@ -33,6 +33,7 @@ import {
   EditorCommitConflictError,
 } from "@/lib/editor-commit";
 import { FONT_FACES } from "@/lib/font-faces";
+import { type GenerativeStyleSet } from "@/lib/generative-api";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import {
   initTextEditorState,
@@ -59,6 +60,13 @@ import {
   escapeAction,
   useEditorSelection,
 } from "./useEditorSelection";
+import {
+  draftKey,
+  deserializeDraft,
+  serializeDraft,
+  useEditorHistory,
+  type EditorDocument,
+} from "./useEditorHistory";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -127,6 +135,8 @@ export default function EditorShell({
   const originalsRef = useRef<Map<string, TextElement>>(new Map());
   const seededVariantIdRef = useRef<string | null>(null);
   const [title, setTitle] = useState("");
+  // Last style-set applied via restyle-all — drives the StyleChip ring.
+  const [appliedStyleSetId, setAppliedStyleSetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!variant || seededVariantIdRef.current === variant.variant_id) return;
@@ -135,9 +145,8 @@ export default function EditorShell({
       (variant.text_elements ?? []).map((el) => [el.id, el]),
     );
     dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
+    setAppliedStyleSetId(null);
   }, [variant]);
-
-  const textDirty = state.past.length > 0 || title.trim() !== "";
 
   // ── View state ──────────────────────────────────────────────────────────────
   const { selection, select, clear } = useEditorSelection();
@@ -186,12 +195,77 @@ export default function EditorShell({
     if (videoRef.current) videoRef.current.muted = videoMuted || soundMuted;
   }, [videoMuted, soundMuted, variant]);
 
-  const dirty = textDirty || timelineDirty;
+  // ── Read-only capability gate (plan §9 / E4) ────────────────────────────────
+  // A variant whose editor_capabilities are ALL false is read-only: banner +
+  // Save disabled + every mutating command no-ops. The server's honest reason
+  // is surfaced verbatim.
+  const capabilities = (variant as unknown as {
+    editor_capabilities?: {
+      text_elements?: boolean;
+      timeline?: boolean;
+      split_clips?: boolean;
+      mix?: boolean;
+      reason?: string;
+    };
+  } | null)?.editor_capabilities;
+  const readOnly =
+    !!capabilities &&
+    capabilities.text_elements === false &&
+    capabilities.timeline === false &&
+    capabilities.split_clips === false &&
+    capabilities.mix === false;
+  const readOnlyReason =
+    capabilities?.reason ?? "This version can't be edited.";
+
+  // ── Unified undo/redo (plan §7, task T8) ────────────────────────────────────
+  const getCurrent = useCallback(
+    (): EditorDocument => ({
+      bars: state.bars,
+      slots: localSlots,
+      videoMuted,
+      soundMuted,
+      title,
+    }),
+    [state.bars, localSlots, videoMuted, soundMuted, title],
+  );
+
+  const applyDocument = useCallback(
+    (doc: EditorDocument) => {
+      const beforeIds = new Set(state.bars.map((b) => b.id));
+      dispatch({ type: "RESET", bars: doc.bars });
+      setLocalSlots(doc.slots);
+      setVideoMuted(doc.videoMuted);
+      setSoundMuted(doc.soundMuted);
+      setTitle(doc.title);
+      // Undo of a delete (or redo of an add) resurrects a bar → re-select it
+      // (plan §5 — the one selection rule that reaches into undo).
+      const resurrected = doc.bars.find((b) => !beforeIds.has(b.id));
+      if (resurrected) {
+        select("text", resurrected.id);
+        setInspectorTab("basic");
+      }
+    },
+    [state.bars, select],
+  );
+
+  const history = useEditorHistory({ getCurrent, apply: applyDocument });
+
+  // Every mutation (text, slots, mutes, title) records into the stack, so the
+  // stack IS the dirty signal — and Save's history.clear() makes it read clean
+  // (so the draft mirror doesn't immediately re-write the just-saved state).
+  const dirty = history.canUndo || history.canRedo;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  // saveState: idle → saving → {conflict | error | partial} (all preserve
+  // working state); full success navigates away.
+  const [saveState, setSaveState] = useState<
+    "idle" | "saving" | "conflict" | "error" | "partial"
+  >("idle");
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const saving = saveState === "saving";
   const [confirmLeave, setConfirmLeave] = useState(false);
+  // Resume-draft notice (plan §9 crash recovery). Non-null → show the notice.
+  const [draftDoc, setDraftDoc] = useState<EditorDocument | null>(null);
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const elements = useMemo(
@@ -238,9 +312,11 @@ export default function EditorShell({
 
   const patchBar = useCallback(
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
+      if (readOnly) return;
+      history.record();
       dispatch({ type: "PATCH_BAR", id, patch });
     },
-    [],
+    [readOnly, history],
   );
 
   const focusContent = useCallback(() => {
@@ -254,6 +330,8 @@ export default function EditorShell({
 
   const addTextAtPlayhead = useCallback(
     (preset: TextPreset = DEFAULT_TEXT_PRESET) => {
+      if (readOnly) return;
+      history.record();
       const start = Math.max(0, Math.round(currentTime * 10) / 10);
       const end =
         duration > 0
@@ -279,7 +357,33 @@ export default function EditorShell({
       dispatch({ type: "ADD_TEXT", bar });
       selectText(bar.id);
     },
-    [currentTime, duration, selectText],
+    [currentTime, duration, selectText, readOnly, history],
+  );
+
+  // Restyle ALL text bars with a style set — ONE undoable command with instant
+  // canvas update (plan §2 Styles v1, task wiring). record() once, then patch
+  // every bar (each PATCH_BAR is a reducer dispatch; the single record collapses
+  // them into one undo step).
+  const restyleAll = useCallback(
+    (styleSet: GenerativeStyleSet) => {
+      if (readOnly) return;
+      if (state.bars.length === 0) {
+        setToast("Add text first, then apply a style.");
+        return;
+      }
+      const patch: Partial<Omit<TextElementBar, "id" | "role">> = {
+        font_family: styleSet.font_family ?? styleSet.intro?.font_family ?? undefined,
+        color: styleSet.text_color ?? styleSet.intro?.text_color ?? undefined,
+        highlight_color:
+          styleSet.highlight_color ?? styleSet.intro?.highlight_color ?? undefined,
+        stroke_width: styleSet.intro?.stroke_width ?? undefined,
+        effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
+      };
+      history.record();
+      state.bars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
+      setAppliedStyleSetId(styleSet.id);
+    },
+    [readOnly, state.bars, history],
   );
 
   const pickPreset = useCallback(
@@ -304,22 +408,21 @@ export default function EditorShell({
 
   // Clip-split capability gate (plan §7): missing capabilities → allowed for
   // montage agent_text variants (song_text / original_text), disabled otherwise.
-  const caps = (variant as unknown as {
-    editor_capabilities?: { split_clips?: boolean };
-  } | null)?.editor_capabilities;
   const splitClipsAllowed =
-    caps?.split_clips !== undefined
-      ? caps.split_clips !== false
+    capabilities?.split_clips !== undefined
+      ? capabilities.split_clips !== false
       : variant?.text_mode === "agent_text";
 
   const deleteSelected = useCallback(() => {
-    if (!selection) return;
+    if (!selection || readOnly) return;
     if (selection.kind === "text") {
+      history.record();
       dispatch({ type: "DELETE_BAR", id: selection.id });
       clear();
     } else if (selection.kind === "clip") {
       const res = deleteSlotEnforceFloor(slots, selection.id);
       if (res.didDelete) {
+        history.record();
         setLocalSlots(res.slots);
         setTimelineDirty(true);
         clear();
@@ -327,11 +430,22 @@ export default function EditorShell({
         setToast("Keep at least one clip.");
       }
     }
-  }, [selection, clear, slots]);
+  }, [selection, clear, slots, readOnly, history]);
 
   const splitAtPlayhead = useCallback(() => {
-    if (!selection) return;
+    if (!selection || readOnly) return;
     if (selection.kind === "text") {
+      // Guard before recording so an out-of-bounds split (reducer no-op) never
+      // pushes a spurious undo step.
+      const bar = state.bars.find((b) => b.id === selection.id);
+      if (!bar) return;
+      const at = Math.round(currentTime * 10) / 10;
+      const MIN = 0.2;
+      if (at <= bar.start_s + MIN - 1e-9 || at >= bar.end_s - MIN + 1e-9) {
+        setToast("Move the playhead over the text to split it.");
+        return;
+      }
+      history.record();
       dispatch({
         type: "SPLIT_BAR",
         id: selection.id,
@@ -348,13 +462,23 @@ export default function EditorShell({
         `split-${crypto.randomUUID()}`,
       );
       if (res.didSplit) {
+        history.record();
         setLocalSlots(res.slots);
         setTimelineDirty(true);
       } else {
         setToast("Move the playhead over the clip to split it.");
       }
     }
-  }, [selection, currentTime, slots, clip.state.grid, splitClipsAllowed]);
+  }, [
+    selection,
+    currentTime,
+    slots,
+    clip.state.grid,
+    splitClipsAllowed,
+    readOnly,
+    state.bars,
+    history,
+  ]);
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
@@ -389,6 +513,21 @@ export default function EditorShell({
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // ⌘Z / ⇧⌘Z (⌃Z / ⌃⇧Z, ⌘Y) — document undo/redo. Guarded: when focus is
+      // in a text field, let the browser's native text undo win.
+      if ((e.metaKey || e.ctrlKey) && (e.key === "z" || e.key === "Z")) {
+        if (!deleteKeyAllowed(e.target as HTMLElement | null)) return;
+        e.preventDefault();
+        if (e.shiftKey) history.redo();
+        else history.undo();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && (e.key === "y" || e.key === "Y")) {
+        if (!deleteKeyAllowed(e.target as HTMLElement | null)) return;
+        e.preventDefault();
+        history.redo();
+        return;
+      }
       if (e.key === "Escape") {
         const target = e.target as HTMLElement | null;
         // One press, one effect: leaving a text field is that effect.
@@ -412,16 +551,25 @@ export default function EditorShell({
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [activeTool, selection, clear, deleteSelected]);
+  }, [activeTool, selection, clear, deleteSelected, history]);
 
   // ── Save / leave ────────────────────────────────────────────────────────────
 
-  const handleSave = useCallback(async () => {
-    if (!variant || saving) return;
-    setSaving(true);
-    setSaveError(null);
+  const clearDraft = useCallback(() => {
+    if (!variant) return;
     try {
-      await commitEditorSession(itemId, variant.variant_id, {
+      window.sessionStorage.removeItem(draftKey(variant.variant_id));
+    } catch {
+      /* privacy mode / quota — nothing to clean up */
+    }
+  }, [variant]);
+
+  const handleSave = useCallback(async () => {
+    if (!variant || saveState === "saving" || readOnly) return;
+    setSaveState("saving");
+    setSaveMessage(null);
+    try {
+      const res = await commitEditorSession(itemId, variant.variant_id, {
         text_elements: barsToTextElements(state.bars, originalsRef.current),
         // Clip-slot overrides only when the timeline was actually edited
         // (split / delete / mute) — omit otherwise so an untouched section
@@ -439,14 +587,93 @@ export default function EditorShell({
         title: title.trim() !== "" ? title.trim() : null,
         base_generation: variant.render_finished_at ?? null,
       });
-      // "Saved — rendering your latest version" lives on the item page hero.
+      // Partial: persist landed (we got a 2xx) but the render kick failed —
+      // the response's `ok` flag tells us. Working state stays, Retry re-kicks.
+      if (res && res.ok === false) {
+        setSaveState("partial");
+        setSaveMessage("Saved, but rendering didn't start.");
+        return;
+      }
+      // Full success: the stack is void (no undoing into a pre-persist world),
+      // the draft is spent, and the item-page hero shows the rendering state.
+      history.clear();
+      clearDraft();
+      setSaveState("idle");
+      setSaveMessage("Saved — rendering your latest version");
       router.push(`/plan/items/${itemId}`);
     } catch (err) {
-      setSaving(false);
-      if (err instanceof EditorCommitConflictError) setSaveError(err.message);
-      else setSaveError(err instanceof Error ? err.message : "Couldn't save your edits.");
+      if (err instanceof EditorCommitConflictError) {
+        setSaveState("conflict");
+        setSaveMessage(err.message);
+      } else {
+        setSaveState("error");
+        setSaveMessage(
+          err instanceof Error ? err.message : "Couldn't save your edits.",
+        );
+      }
     }
-  }, [variant, saving, itemId, state.bars, title, router, timelineDirty, slots, soundMuted]);
+  }, [
+    variant,
+    saveState,
+    readOnly,
+    itemId,
+    state.bars,
+    title,
+    router,
+    timelineDirty,
+    slots,
+    soundMuted,
+    history,
+    clearDraft,
+  ]);
+
+  // ── Draft recovery (plan §9) ────────────────────────────────────────────────
+  // Mirror the working document to sessionStorage on every command push (any
+  // document change while dirty). Failures degrade draft safety silently.
+  useEffect(() => {
+    if (!variant || !dirty) return;
+    try {
+      window.sessionStorage.setItem(
+        draftKey(variant.variant_id),
+        serializeDraft(variant.variant_id, getCurrent()),
+      );
+    } catch {
+      /* quota full / privacy mode — editing continues, draft safety only */
+    }
+  }, [variant, dirty, state.bars, localSlots, videoMuted, soundMuted, title, getCurrent]);
+
+  // On open, surface a matching unsaved draft as a quiet Resume/Discard notice
+  // (once per variant, after seeding so a Resume overrides the seeded bars).
+  const draftCheckedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!variant) return;
+    if (draftCheckedRef.current === variant.variant_id) return;
+    draftCheckedRef.current = variant.variant_id;
+    try {
+      const parsed = deserializeDraft(
+        window.sessionStorage.getItem(draftKey(variant.variant_id)),
+      );
+      if (parsed && parsed.variantId === variant.variant_id) {
+        setDraftDoc(parsed.doc);
+      }
+    } catch {
+      /* unreadable draft — skip the notice */
+    }
+  }, [variant]);
+
+  const resumeDraft = useCallback(() => {
+    if (!draftDoc) return;
+    // Record the seeded baseline first so Resume itself is undoable, then
+    // restore the draft as the working document.
+    history.record();
+    applyDocument(draftDoc);
+    setDraftDoc(null);
+  }, [draftDoc, history, applyDocument]);
+
+  const discardDraft = useCallback(() => {
+    clearDraft();
+    setDraftDoc(null);
+  }, [clearDraft]);
 
   const requestLeave = useCallback(() => {
     if (dirty) setConfirmLeave(true);
@@ -542,9 +769,15 @@ export default function EditorShell({
     hasMusic: !!variant.music_track_id,
     musicLabel: variant.track_title ?? "Music",
     videoMuted,
-    onToggleVideoMute: () => setVideoMuted((m) => !m),
+    onToggleVideoMute: () => {
+      if (readOnly) return;
+      history.record();
+      setVideoMuted((m) => !m);
+    },
     soundMuted,
     onToggleSoundMute: () => {
+      if (readOnly) return;
+      history.record();
       setSoundMuted((m) => !m);
       setTimelineDirty(true);
     },
@@ -579,7 +812,13 @@ export default function EditorShell({
           <input
             type="text"
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              if (readOnly) return;
+              // Coalesce typing bursts into one undo step.
+              history.record("title");
+              setTitle(e.target.value);
+            }}
+            readOnly={readOnly}
             placeholder="add title for your video"
             aria-label="Video title"
             className="w-[240px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-zinc-200 focus:bg-white focus:outline-none"
@@ -614,22 +853,24 @@ export default function EditorShell({
           >
             ✋
           </button>
-          {/* Undo/redo: no-op stubs — the unified history task wires these. */}
+          {/* Undo/redo — unified document command stack (plan §7). */}
           <button
             type="button"
             aria-label="Undo"
-            title="Undo arrives with a later update"
-            disabled
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] disabled:opacity-40"
+            title="Undo (⌘Z)"
+            disabled={!history.canUndo}
+            onClick={history.undo}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 disabled:hover:bg-transparent"
           >
             ↺
           </button>
           <button
             type="button"
             aria-label="Redo"
-            title="Redo arrives with a later update"
-            disabled
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] disabled:opacity-40"
+            title="Redo (⇧⌘Z)"
+            disabled={!history.canRedo}
+            onClick={history.redo}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[14px] text-[#3f3f46] hover:bg-zinc-100 disabled:opacity-40 disabled:hover:bg-transparent"
           >
             ↻
           </button>
@@ -648,9 +889,9 @@ export default function EditorShell({
         </div>
 
         <div className="flex flex-1 items-center justify-end gap-2">
-          {saveError && (
+          {saveState === "idle" && saveMessage && (
             <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
-              {saveError}
+              {saveMessage}
             </span>
           )}
           <InkButton variant="ghost" className="text-[13px]" onClick={requestLeave}>
@@ -658,7 +899,7 @@ export default function EditorShell({
           </InkButton>
           <InkButton
             className="px-6 py-2.5 text-[13px]"
-            disabled={!dirty || saving}
+            disabled={!dirty || saving || readOnly}
             onClick={() => void handleSave()}
           >
             {saving ? "Saving…" : "Save"}
@@ -679,6 +920,8 @@ export default function EditorShell({
             appliedPresetId={appliedPresetId}
             onAddText={() => addTextAtPlayhead()}
             onPickPreset={pickPreset}
+            appliedStyleSetId={appliedStyleSetId}
+            onRestyleAll={restyleAll}
             onClose={() => setActiveTool(null)}
           />
         ) : (
@@ -700,6 +943,7 @@ export default function EditorShell({
           onTimeUpdate={setCurrentTime}
           onDuration={setDuration}
           onPlayingChange={setPlaying}
+          onReloadSource={() => setLoadNonce((n) => n + 1)}
         />
         <InspectorPanel
           selection={selection}
@@ -709,7 +953,11 @@ export default function EditorShell({
           appliedPresetId={appliedPresetId}
           contentRef={contentRef}
           onEditText={(text) => {
-            if (selectedBar) dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+            if (selectedBar && !readOnly) {
+              // Coalesce keystrokes on one bar into a single undo step.
+              history.record(`text:${selectedBar.id}`);
+              dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
+            }
           }}
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
@@ -775,6 +1023,77 @@ export default function EditorShell({
           </div>
         )}
       </div>
+
+      {/* ── Read-only banner (ineligible variant, plan §9 / E4) ── */}
+      {readOnly && (
+        <div className="pointer-events-none absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
+          <div className="rounded-lg border border-zinc-200 bg-white/95 px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm">
+            This version can&apos;t be edited. {readOnlyReason}
+          </div>
+        </div>
+      )}
+
+      {/* ── Save micro-states (plan §9): conflict / error / partial tiles.
+             All preserve working state; only Reload/Retry act. ── */}
+      {(saveState === "conflict" || saveState === "error" || saveState === "partial") && (
+        <div className="absolute left-1/2 top-[68px] z-[70] w-[min(520px,90vw)] -translate-x-1/2">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-zinc-300 bg-white px-4 py-3 shadow-sm">
+            <p className="text-[12px] text-[#3f3f46]">
+              {saveState === "conflict"
+                ? "This video changed in another tab — reload to continue."
+                : saveState === "partial"
+                  ? "Saved, but rendering didn't start."
+                  : (saveMessage ?? "Couldn't save your edits.")}
+            </p>
+            {saveState === "conflict" ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setSaveState("idle");
+                  setSaveMessage(null);
+                  setLoadNonce((n) => n + 1);
+                }}
+                className="flex-shrink-0 rounded-full bg-[#0c0c0e] px-4 py-1.5 text-[12px] font-semibold text-white hover:opacity-80"
+              >
+                Reload
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void handleSave()}
+                className="flex-shrink-0 rounded-full border border-zinc-200 px-4 py-1.5 text-[12px] text-[#3f3f46] hover:border-zinc-400"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Resume-draft notice (plan §9): quiet, not a modal. ── */}
+      {draftDoc && saveState === "idle" && (
+        <div className="absolute left-1/2 top-[68px] z-[65] w-[min(480px,90vw)] -translate-x-1/2">
+          <div className="flex items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 shadow-sm">
+            <p className="text-[12px] text-[#3f3f46]">Resume your unsaved edits?</p>
+            <div className="flex flex-shrink-0 items-center gap-2">
+              <button
+                type="button"
+                onClick={discardDraft}
+                className="rounded-full px-3 py-1.5 text-[12px] text-[#71717a] hover:text-[#0c0c0e]"
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={resumeDraft}
+                className="rounded-full bg-[#0c0c0e] px-4 py-1.5 text-[12px] font-semibold text-white hover:opacity-80"
+              >
+                Resume
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmDialog
         open={confirmLeave}
