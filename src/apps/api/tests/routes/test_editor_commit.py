@@ -154,6 +154,44 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert "queue" not in calls[0]
 
 
+def test_sequence_text_commit_serializes_saved_elements_not_projection(monkeypatch):
+    """Regression: sequence scene_timings may still be present on read, but saved
+    text_elements must round-trip as the authored list after editor-commit.
+    """
+    _arm(monkeypatch)
+    saved = {
+        **_VALID_ELEMENT,
+        "id": "qa-live",
+        "text": "QA live text",
+        "position": "custom",
+        "x_frac": 0.5,
+        "y_frac": 0.4,
+    }
+    job = _job(
+        variant_id="original_text",
+        intro_mode="sequence",
+        scenes=[
+            {"text": "Original scene one", "start_s": 0.0, "end_s": 1.0},
+            {"text": "Original scene two", "start_s": 1.0, "end_s": 2.0},
+        ],
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "original_text",
+        _commit_req(text_elements=[saved]),
+    )
+
+    out = gj._variants_for_response(job)[0]
+    assert out["scene_timings"] == [
+        {"text": "Original scene one", "start_s": 0.0, "end_s": 1.0},
+        {"text": "Original scene two", "start_s": 1.0, "end_s": 2.0},
+    ]
+    assert out["text_elements_user_edited"] is True
+    assert [e["text"] for e in out["text_elements"]] == ["QA live text"]
+    assert out["text_elements"][0]["id"] == "qa-live"
+
+
 def test_text_only_commit_rides_overlay_jobs_queue(monkeypatch):
     _arm(monkeypatch)
     job = _job()

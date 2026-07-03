@@ -1698,10 +1698,13 @@ def _maybe_add_text_elements_snapshot(result: dict) -> None:
     No-op when:
       - ``_TEXT_ELEMENTS_ENABLED`` is False (kill switch)
       - the render failed (``ok`` is falsy)
+      - ``text_elements_user_edited`` is true (the user's saved list is authoritative)
       - ``text_elements_for_variant`` raises or returns an empty list
     Never raises — a snapshot failure must never block a completed render.
     """
     if not _TEXT_ELEMENTS_ENABLED or not result.get("ok"):
+        return
+    if result.get("text_elements_user_edited"):
         return
     try:
         from app.agents._schemas.text_element import text_elements_for_variant  # noqa: PLC0415

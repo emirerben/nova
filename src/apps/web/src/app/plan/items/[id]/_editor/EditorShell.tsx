@@ -183,16 +183,17 @@ export default function EditorShell({
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
   // editor-commit `timeline_slots`).
-  const clip = useClipTimeline(itemId, variant?.variant_id ?? "", "plan-item");
+  const timelineVariantId = variant?.variant_id ?? variantParam ?? "";
+  const clip = useClipTimeline(itemId, timelineVariantId, "plan-item");
   const [localSlots, setLocalSlots] = useState<DraftSlot[] | null>(null);
   const slotsSeededRef = useRef<string | null>(null);
   useEffect(() => {
-    if (clip.loadState !== "ready") return;
+    if (!variant || timelineVariantId !== variant.variant_id || clip.loadState !== "ready") return;
     if (slotsSeededRef.current === variant?.variant_id) return;
     slotsSeededRef.current = variant?.variant_id ?? null;
     setLocalSlots(clip.state.slots.map((s) => ({ ...s })));
     setTimelineDirty(false);
-  }, [clip.loadState, clip.state.slots, variant]);
+  }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
   const slots = localSlots ?? clip.state.slots;
 
   // Toast auto-clear.
@@ -863,16 +864,27 @@ export default function EditorShell({
 
   return (
     <div
-      className={
-        layoutMode === "light"
-          ? "fixed inset-0 z-50 grid grid-rows-[minmax(0,1fr)_auto] overflow-hidden bg-[#fafaf8]"
-          : "fixed inset-0 z-50 grid grid-rows-[56px_minmax(480px,1fr)_260px] overflow-hidden bg-[#fafaf8]"
-      }
+      className="fixed inset-0 z-50 grid overflow-hidden bg-[#fafaf8]"
+      style={{
+        gridTemplateRows:
+          layoutMode === "light"
+            ? "56px minmax(0, 1fr) auto"
+            : "56px minmax(0, 1fr) clamp(220px, 30dvh, 260px)",
+      }}
     >
       <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
 
       {/* ── Top bar (plan §1) ── */}
-      {layoutMode !== "light" && (
+      {layoutMode === "light" ? (
+        <LightTopBar
+          dirty={dirty}
+          saving={saving}
+          readOnly={readOnly}
+          saveState={saveState}
+          onBack={requestLeave}
+          onSave={() => void handleSave()}
+        />
+      ) : (
         <header className="flex items-center border-b border-zinc-200 bg-white px-4">
           <div className="flex flex-1 items-center gap-3">
             <button
@@ -990,7 +1002,7 @@ export default function EditorShell({
 
       {/* ── Middle row: rail · drawer · canvas · inspector · edge rail ── */}
       {layoutMode === "light" ? (
-        <div className="min-h-0">
+        <div className="relative min-h-0">
           <EditorCanvas
             variant={variant}
             elements={elements}
@@ -1012,8 +1024,17 @@ export default function EditorShell({
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             allowManipulation={false}
-            stageHeightCss="100dvh - 96px"
+            stageHeightCss="100dvh - 152px"
           />
+          {state.bars.length === 0 && !readOnly && (
+            <button
+              type="button"
+              onClick={() => addTextAtPlayhead()}
+              className="absolute bottom-4 left-1/2 min-h-11 -translate-x-1/2 rounded-full bg-white px-4 text-[13px] font-semibold text-[#0c0c0e] shadow-[0_8px_24px_rgba(12,12,14,0.18)] ring-1 ring-zinc-200 hover:bg-zinc-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              Add text
+            </button>
+          )}
         </div>
       ) : (
         <div
@@ -1269,6 +1290,44 @@ export default function EditorShell({
         onCancel={() => setConfirmLeave(false)}
       />
     </div>
+  );
+}
+
+function LightTopBar({
+  dirty,
+  saving,
+  readOnly,
+  saveState,
+  onBack,
+  onSave,
+}: {
+  dirty: boolean;
+  saving: boolean;
+  readOnly: boolean;
+  saveState: "idle" | "saving" | "conflict" | "error" | "partial";
+  onBack: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-3">
+      <button
+        type="button"
+        aria-label="Back to the video page"
+        onClick={onBack}
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-zinc-200 pb-0.5 text-[15px] text-[#3f3f46] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+      >
+        ‹
+      </button>
+      <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+      <button
+        type="button"
+        disabled={!dirty || saving || readOnly}
+        onClick={onSave}
+        className="min-h-11 rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:opacity-40"
+      >
+        {saveState === "saving" ? "Saving..." : "Save"}
+      </button>
+    </header>
   );
 }
 

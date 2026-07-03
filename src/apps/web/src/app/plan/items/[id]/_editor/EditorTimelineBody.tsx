@@ -31,6 +31,7 @@ import {
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { EditorSelection, EditorSelectionKind } from "./useEditorSelection";
 import Filmstrip from "./Filmstrip";
+import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
 
 /** Sticky left gutter (mute toggle + lane label). */
 const GUTTER_PX = 64;
@@ -108,6 +109,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   } = props;
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const previousScaleRef = useRef<{ pps: number; trackW: number } | null>(null);
   const [viewportW, setViewportW] = useState(0);
 
   useLayoutEffect(() => {
@@ -120,7 +122,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     return () => ro.disconnect();
   }, []);
 
-  const trackViewportW = Math.max(0, viewportW - GUTTER_PX);
+  const trackViewportW = Math.max(0, viewportW);
   const fitPps = fitPxPerSecond(trackViewportW, durationS);
   const pps = clampPxPerSecond(fitPps * Math.max(1, zoom));
   const trackW = Math.max(trackViewportW, scaledTrackWidth(durationS, pps));
@@ -128,6 +130,25 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   useEffect(() => {
     if (fitPps > 0) onReportFit?.(fitPps);
   }, [fitPps, onReportFit]);
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const previous = previousScaleRef.current;
+    if (!el || !previous || previous.pps === pps || viewportW <= 0) {
+      previousScaleRef.current = { pps, trackW };
+      return;
+    }
+
+    el.scrollLeft = anchoredTimelineScrollLeft({
+      previousScrollLeft: el.scrollLeft,
+      viewportWidth: el.clientWidth,
+      previousPxPerSecond: previous.pps,
+      nextPxPerSecond: pps,
+      durationS,
+      currentTimeS,
+    });
+    previousScaleRef.current = { pps, trackW };
+  }, [currentTimeS, durationS, pps, trackW, viewportW]);
 
   const playheadPx = secondsToPx(currentTimeS, pps);
   const windows = slotWindows(slots, grid);
@@ -156,6 +177,14 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     scrubbing.current = false;
   }
 
+  function onTimelineWheel(e: React.WheelEvent<HTMLDivElement>) {
+    const el = e.currentTarget;
+    if (el.scrollWidth <= el.clientWidth) return;
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    e.preventDefault();
+    el.scrollLeft += e.deltaY;
+  }
+
   const isSel = (kind: EditorSelectionKind, id: string) =>
     selection?.kind === kind && selection.id === id;
 
@@ -164,19 +193,35 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
   return (
     <div
-      ref={scrollRef}
       role="listbox"
       aria-label="Editor timeline selections"
-      className="h-full select-none overflow-x-auto"
+      className="h-full w-full max-w-full min-w-0 select-none overflow-hidden"
       data-testid="editor-timeline"
     >
-      <div style={{ width: GUTTER_PX + trackW }}>
-        {/* ── Ruler ── */}
-        <div className="flex h-6">
-          <div className="sticky left-0 z-30 flex-shrink-0 bg-white" style={{ width: GUTTER_PX }} />
+      <div className="flex h-full w-full max-w-full min-w-0 overflow-hidden">
+        <div className="flex flex-shrink-0 flex-col bg-white" style={{ width: GUTTER_PX }}>
+          <div className="h-6 border-b border-zinc-200 bg-white" />
+          <GutterRow label="Text" />
+          <GutterRow
+            label="Video"
+            muteState={{ muted: videoMuted, onToggle: onToggleVideoMute, title: "Original audio" }}
+          />
+          <GutterRow
+            label="Sound"
+            tall
+            muteState={{ muted: soundMuted, onToggle: onToggleSoundMute, title: "Music + effects" }}
+          />
+          <GutterRow label="Overlays" />
+        </div>
+        <div
+          ref={scrollRef}
+          className="w-0 min-w-0 flex-1 overflow-x-auto overflow-y-hidden"
+          onWheel={onTimelineWheel}
+        >
+          <div style={{ width: trackW, minWidth: trackW }}>
+            {/* ── Ruler ── */}
           <div
-            className="relative flex-1 cursor-ew-resize border-b border-zinc-200 bg-zinc-50"
-            style={{ width: trackW }}
+            className="relative h-6 cursor-ew-resize border-b border-zinc-200 bg-zinc-50"
             onPointerDown={onRulerPointerDown}
             onPointerMove={onRulerPointerMove}
             onPointerUp={onRulerPointerUp}
@@ -196,10 +241,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
             ))}
             <Playline px={playheadPx} withHead />
           </div>
-        </div>
 
-        {/* ── Text lane ── */}
-        <LaneRow label="Text" trackW={trackW}>
+          {/* ── Text lane ── */}
+          <LaneTrack trackW={trackW}>
           <Playline px={playheadPx} />
           {textBars.length === 0 ? (
             <GhostRow text="Add text from the Text tool" />
@@ -227,14 +271,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               );
             })
           )}
-        </LaneRow>
+          </LaneTrack>
 
-        {/* ── Video lane (Clips + filmstrip) ── */}
-        <LaneRow
-          label="Video"
-          trackW={trackW}
-          muteState={{ muted: videoMuted, onToggle: onToggleVideoMute, title: "Original audio" }}
-        >
+          {/* ── Video lane (Clips + filmstrip) ── */}
+          <LaneTrack trackW={trackW}>
           <Playline px={playheadPx} />
           {filmstripSrc && durationS > 0 && (
             <div className="pointer-events-none absolute inset-y-1 left-0" style={{ width: trackW }}>
@@ -273,15 +313,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               );
             })
           )}
-        </LaneRow>
+          </LaneTrack>
 
-        {/* ── Sound lane (SFX sub-row above the music bed) ── */}
-        <LaneRow
-          label="Sound"
-          trackW={trackW}
-          tall
-          muteState={{ muted: soundMuted, onToggle: onToggleSoundMute, title: "Music + effects" }}
-        >
+          {/* ── Sound lane (SFX sub-row above the music bed) ── */}
+          <LaneTrack trackW={trackW} tall>
           <Playline px={playheadPx} />
           {/* SFX sub-row (top half) */}
           <div className="absolute inset-x-0 top-0 h-1/2">
@@ -333,10 +368,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               )
             )}
           </div>
-        </LaneRow>
+          </LaneTrack>
 
-        {/* ── Overlays lane ── */}
-        <LaneRow label="Overlays" trackW={trackW}>
+          {/* ── Overlays lane ── */}
+          <LaneTrack trackW={trackW}>
           <Playline px={playheadPx} />
           {overlays.length === 0 ? (
             <GhostRow text="Overlays appear here" />
@@ -363,7 +398,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               );
             })
           )}
-        </LaneRow>
+          </LaneTrack>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -386,48 +423,61 @@ function Playline({ px, withHead = false }: { px: number; withHead?: boolean }) 
   );
 }
 
-function LaneRow({
+function GutterRow({
   label,
-  trackW,
   tall = false,
   muteState,
-  children,
 }: {
   label: string;
-  trackW: number;
   tall?: boolean;
   muteState?: { muted: boolean; onToggle: () => void; title: string };
+}) {
+  return (
+    <div
+      className={`flex items-center gap-1 border-b border-zinc-200 bg-white pl-1.5 pr-1 ${
+        tall ? "h-16" : "h-12"
+      }`}
+    >
+      {muteState ? (
+        <button
+          type="button"
+          aria-label={`${muteState.title} ${muteState.muted ? "muted" : "audible"}`}
+          aria-pressed={muteState.muted}
+          title={muteState.muted ? `${muteState.title}: muted` : `${muteState.title}: audible`}
+          onClick={muteState.onToggle}
+          className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded text-[10px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            muteState.muted ? "text-zinc-300" : "text-[#3f3f46] hover:bg-zinc-100"
+          }`}
+        >
+          {muteState.muted ? "🔇" : "🔊"}
+        </button>
+      ) : (
+        <span className="w-11 flex-shrink-0" />
+      )}
+      <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function LaneTrack({
+  trackW,
+  tall = false,
+  children,
+}: {
+  trackW: number;
+  tall?: boolean;
   children: React.ReactNode;
 }) {
   return (
-    <div className={`flex ${tall ? "h-16" : "h-12"}`}>
-      <div
-        className="sticky left-0 z-30 flex flex-shrink-0 items-center gap-1 border-b border-zinc-200 bg-white pl-1.5 pr-1"
-        style={{ width: GUTTER_PX }}
-      >
-        {muteState ? (
-          <button
-            type="button"
-            aria-label={`${muteState.title} ${muteState.muted ? "muted" : "audible"}`}
-            aria-pressed={muteState.muted}
-            title={muteState.muted ? `${muteState.title}: muted` : `${muteState.title}: audible`}
-            onClick={muteState.onToggle}
-            className={`flex h-11 w-11 flex-shrink-0 items-center justify-center rounded text-[10px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
-              muteState.muted ? "text-zinc-300" : "text-[#3f3f46] hover:bg-zinc-100"
-            }`}
-          >
-            {muteState.muted ? "🔇" : "🔊"}
-          </button>
-        ) : (
-          <span className="w-11 flex-shrink-0" />
-        )}
-        <span className="truncate text-[9px] font-semibold uppercase tracking-wider text-zinc-500">
-          {label}
-        </span>
-      </div>
-      <div className="relative flex-1 overflow-hidden border-b border-zinc-200 bg-zinc-50" style={{ width: trackW }}>
-        {children}
-      </div>
+    <div
+      className={`relative overflow-hidden border-b border-zinc-200 bg-zinc-50 ${
+        tall ? "h-16" : "h-12"
+      }`}
+      style={{ width: trackW }}
+    >
+      {children}
     </div>
   );
 }

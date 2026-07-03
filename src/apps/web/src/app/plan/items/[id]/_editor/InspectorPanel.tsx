@@ -40,6 +40,7 @@ import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
+import { normalizeEditableHex } from "./editor-color";
 import PresetGrid from "./PresetGrid";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
@@ -357,13 +358,13 @@ function TextInspector({
           <input
             type="color"
             aria-label="Fill color"
-            value={normalizeHex(bar.color) ?? "#ffffff"}
+            value={normalizeEditableHex(bar.color) ?? "#FFFFFF"}
             onChange={(e) => onPatch({ color: e.target.value.toUpperCase() })}
             className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
           />
           <HexInput
             value={bar.color ?? "#FFFFFF"}
-            onCommit={(hex) => onPatch({ color: hex })}
+            onChange={(hex) => onPatch({ color: hex })}
           />
         </span>
       </div>
@@ -428,25 +429,19 @@ function TextInspector({
 
 // ── Small controls ────────────────────────────────────────────────────────────
 
-function normalizeHex(v: string | null | undefined): string | null {
-  if (!v) return null;
-  const m = v.trim().match(/^#?([0-9a-fA-F]{6})$/);
-  return m ? `#${m[1].toLowerCase()}` : null;
-}
-
 function HexInput({
   value,
-  onCommit,
+  onChange,
 }: {
   value: string;
-  onCommit: (hex: string) => void;
+  onChange: (hex: string) => void;
 }) {
   const [draft, setDraft] = useState(value);
   // Follow external changes (e.g. the swatch or a preset).
   useEffect(() => setDraft(value), [value]);
   function commit() {
-    const hex = normalizeHex(draft);
-    if (hex) onCommit(hex.toUpperCase());
+    const hex = normalizeEditableHex(draft);
+    if (hex) onChange(hex);
     else setDraft(value);
   }
   return (
@@ -454,7 +449,12 @@ function HexInput({
       type="text"
       aria-label="Fill color hex"
       value={draft}
-      onChange={(e) => setDraft(e.target.value)}
+      onChange={(e) => {
+        const next = e.target.value;
+        setDraft(next);
+        const hex = normalizeEditableHex(next);
+        if (hex) onChange(hex);
+      }}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") commit();

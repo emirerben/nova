@@ -1,8 +1,11 @@
 /**
  * Editor working-state converters: API variant data ↔ TextElementBar[].
  *
- * Same seeding precedence as the item page (caption_cues → scene_timings →
- * text_elements), but WITHOUT dropping position / x_frac / y_frac /
+ * Same seeding precedence as the item page for untouched variants, but
+ * user-edited text_elements are authoritative over caption/scene projections.
+ * This keeps reload from resurrecting sequence-projected bars after Save.
+ *
+ * The API text-element path maps WITHOUT dropping position / x_frac / y_frac /
  * highlight_color / stroke_width (bug #6 fix — the editor canvas renders
  * overlay text from these LOCAL working bars, so every renderer-honored
  * placement field must survive the round-trip).
@@ -75,9 +78,16 @@ export function convertSceneTimings(
     }));
 }
 
-/** Seed the editor's working bars from a variant — same precedence the item
- * page uses so both surfaces agree on what "the text" is. */
+/** Seed the editor's working bars from a variant.
+ *
+ * Once the user has committed text_elements, that persisted list owns reload
+ * state.  Projection sources (caption_cues / scene_timings) are only seeds for
+ * variants that have never been user-edited.
+ */
 export function seedBarsFromVariant(variant: PlanItemVariant): TextElementBar[] {
+  if (variant.text_elements_user_edited) {
+    return convertApiTextElements(variant.text_elements);
+  }
   if (variant.caption_cues?.length) return convertCaptionCues(variant.caption_cues);
   if (variant.scene_timings?.length) return convertSceneTimings(variant.scene_timings);
   return convertApiTextElements(variant.text_elements);

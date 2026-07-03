@@ -102,7 +102,7 @@ export default function PresetGrid({
                   event.stopPropagation();
                   onToggleFavorite(preset.id);
                 }}
-                className={`absolute right-0 top-0 flex h-11 w-11 items-center justify-center rounded-full text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                className={`absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                   favorite
                     ? "bg-white text-[#0c0c0e]"
                     : "bg-black/35 text-white/70 group-hover:bg-white group-hover:text-[#0c0c0e]"
