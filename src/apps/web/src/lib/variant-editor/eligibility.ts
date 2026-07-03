@@ -20,19 +20,22 @@ import type { EditableVariant } from "@/lib/variant-editor/types";
  * the intro_mode === "sequence" guard must run AFTER (and independently of) the
  * cluster check.
  *
- * Narrated variants (resolved_archetype === "narrated") are ALSO excluded even
- * though they render with text_mode "none" and carry a base video: their text is
- * voiceover captions edited through the dedicated on-video CaptionEditor, and
+ * Caption archetypes (resolved_archetype === "narrated" | "subtitled") are ALSO
+ * excluded even though they render with text_mode "none" and carry a base video:
+ * their text is captions edited through the dedicated on-video CaptionEditor, and
  * their hero must play the BURNED, captioned output — NOT the caption-free base
- * that LiveEditPreview would show. Without this guard the narrated hero plays the
+ * that LiveEditPreview would show. Without this guard the caption hero plays the
  * base (no captions) and a right-click "Save video as" hands the user the
- * caption-free `*_base.mp4`.
+ * caption-free `*_base.mp4`. `narrated` = voiceover captions; `subtitled` =
+ * single-clip auto-captions from the clip's own audio — both use CaptionEditor.
  */
+const CAPTION_ARCHETYPES = new Set(["narrated", "subtitled"]);
+
 export function isInstantEditEligible(variant: EditableVariant): boolean {
   return (
     !!variant.base_video_url &&
     (variant.text_mode === "agent_text" || variant.text_mode === "none") &&
     variant.intro_mode !== "sequence" &&
-    variant.resolved_archetype !== "narrated"
+    !CAPTION_ARCHETYPES.has(variant.resolved_archetype ?? "")
   );
 }

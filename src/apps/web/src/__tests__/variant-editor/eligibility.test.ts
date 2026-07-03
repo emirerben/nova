@@ -46,6 +46,17 @@ describe("isInstantEditEligible", () => {
     ).toBe(false);
   });
 
+  // Subtitled single-clip is a caption archetype too: captions are edited via the
+  // on-video CaptionEditor and the hero must play the burned, captioned output —
+  // NOT the caption-free base. Same exclusion as narrated.
+  it("is NOT eligible for subtitled variants (captions edited via CaptionEditor)", () => {
+    expect(
+      isInstantEditEligible(
+        variant({ text_mode: "none", resolved_archetype: "subtitled" }),
+      ),
+    ).toBe(false);
+  });
+
   it("stays eligible for montage variants whose archetype is not narrated", () => {
     expect(
       isInstantEditEligible(

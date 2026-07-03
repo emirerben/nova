@@ -284,6 +284,14 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.style_observation import StyleObservationAgent
 
         return StyleObservationAgent
+    if agent_name == "nova.voiceover.script_writer":
+        from app.agents.voiceover_script_writer import VoiceoverScriptWriterAgent
+
+        return VoiceoverScriptWriterAgent
+    if agent_name == "nova.voiceover.interviewer":
+        from app.agents.voiceover_interviewer import VoiceoverInterviewerAgent
+
+        return VoiceoverInterviewerAgent
     raise ValueError(f"no Agent class registered for {agent_name!r}")
 
 

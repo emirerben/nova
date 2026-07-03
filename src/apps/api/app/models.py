@@ -750,6 +750,17 @@ class PlanItem(Base):
     # "sentence". Set via PATCH /plan-items/{id}/voiceover-caption-style; threaded to
     # build_generative_job so the narrated render burns the chosen caption style.
     voiceover_caption_style: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Optional AI-authored voiceover *script* the creator reads aloud while recording
+    # (the "Get a transcript" helper — TRANSCRIPT_HELPER_ENABLED). Raw JSONB (no side
+    # table), validated by app.schemas.voiceover_script.VoiceoverScript on read/write:
+    #   {version, text, read_time_s, brief, footage_summary?, interview_turns, lines[], source}.
+    # NULL until the creator generates a transcript. `version` bumps on every Rewrite.
+    voiceover_script: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # The `voiceover_script.version` the currently-attached voiceover take was recorded
+    # against. Lets the Script step warn "your take was for the previous script" when a
+    # Rewrite bumps the version after a take was captured (soft, never blocks). NULL until
+    # a take is recorded through the transcript flow.
+    voiceover_script_recorded_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Optional date the user wants to post this idea (distinct from plan-level start_date).
     scheduled_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     # Freeform notes the user adds to flesh out the idea.

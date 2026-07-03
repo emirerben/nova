@@ -1,0 +1,20 @@
+{
+  "agent": "nova.voiceover.interviewer",
+  "prompt_version": "2026-07-01",
+  "input": {
+    "footage_summary": "Clip 1: farm at dawn, feeding animals. Clip 2: first light over a ridge.",
+    "brief": "my morning routine at the farm",
+    "turns": [],
+    "turn_count": 1
+  },
+  "raw_text": "{\"question\": \"What's the one thing you want people to feel watching this?\", \"suggestions\": [\"Calm\", \"Nostalgic\", \"Hyped\"], \"is_final\": false}",
+  "output": {
+    "question": "What's the one thing you want people to feel watching this?",
+    "suggestions": ["Calm", "Nostalgic", "Hyped"],
+    "is_final": false
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "First question (turn_count=1, below the 3-turn cap) -> one warm clarifying question about the feeling, with 3 tappable suggestions, is_final=false. Not past the cap, so is_final is not force-set."
+  }
+}

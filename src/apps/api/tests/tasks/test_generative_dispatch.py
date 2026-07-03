@@ -67,6 +67,62 @@ def test_specs_for_narrated_is_single_voiceover_variant():
     assert spec["voiceover_gcs_path"] == "gcs/voice.m4a"
 
 
+def test_render_subtitled_variant_never_raises_without_clip():
+    """No clip → a failure RECORD (never-raise contract), carrying the subtitled
+    finalize shape the whitelist + on-video editor + reburn rely on."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        result = gb._render_subtitled_variant(
+            job_id="j",
+            rank=1,
+            spec={"variant_id": "subtitled", "archetype": "subtitled", "caption_style": "sentence"},
+            clip_id_to_local={},
+            variant_dir=d,
+            language="tr",
+        )
+    assert result["ok"] is False
+    assert result["render_status"] == "failed"
+    assert result["resolved_archetype"] == "subtitled"
+    assert result["variant_id"] == "subtitled"
+    assert result["text_mode"] == "none"
+    # Reuses the narrated caption keys so finalize/editor/reburn work unchanged.
+    assert result["voiceover_caption_style"] == "sentence"
+    assert "voiceover_caption_font" in result
+    assert result.get("error")
+
+
+def test_caption_reburn_archetypes_lockstep():
+    # The worker reburn guard must accept exactly narrated + subtitled (and nothing
+    # else — a montage agent_text base must never be caption-reburned). Kept in
+    # lockstep with the route gate's _CAPTION_EDIT_ARCHETYPES.
+    assert gb._CAPTION_REBURN_ARCHETYPES == frozenset({"narrated", "subtitled"})
+    assert "montage" not in gb._CAPTION_REBURN_ARCHETYPES
+
+
+def test_specs_for_subtitled_is_single_own_audio_caption_variant():
+    specs = gb._specs_for_archetype("subtitled", None)
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec["variant_id"] == "subtitled"
+    assert spec["text_mode"] == "none"  # captions burn via the caption path, not agent intro
+    assert spec["track"] is None  # keeps the clip's own audio; no music bed
+    assert spec["archetype"] == "subtitled"
+    assert spec["caption_style"] == "sentence"  # default when no toggle set
+
+
+def test_specs_for_subtitled_word_style_follows_toggle():
+    specs = gb._specs_for_archetype("subtitled", None, voiceover_caption_style="word")
+    assert specs[0]["caption_style"] == "word"  # word-by-word lime pop
+    # anything else falls back to the safe sentence default
+    assert (
+        gb._specs_for_archetype("subtitled", None, voiceover_caption_style="nonsense")[0][
+            "caption_style"
+        ]
+        == "sentence"
+    )
+
+
 # ── _resolve_archetype matrix ─────────────────────────────────────────────────
 
 
@@ -87,6 +143,38 @@ def test_resolve_unimplemented_format_falls_back(monkeypatch):
         e[1] == "archetype_fallback" and e[2]["reason"] == "archetype_not_implemented"
         for e in events
     )
+
+
+def test_resolve_subtitled_flag_off_falls_back_to_montage(monkeypatch):
+    monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", False, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "subtitled", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
+    )
+    assert (archetype, spine) == ("montage", None)
+    assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "flag_disabled" for e in events)
+
+
+def test_resolve_subtitled_flag_on_selects_subtitled(monkeypatch):
+    monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", True, raising=False)
+    events = _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "subtitled", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
+    )
+    assert (archetype, spine) == ("subtitled", None)
+    assert any(e[1] == "archetype_selected" and e[2]["archetype"] == "subtitled" for e in events)
+
+
+def test_resolve_subtitled_no_speech_still_selects(monkeypatch):
+    """Subtitled has NO speech-coverage gate — a quiet clip still resolves to subtitled
+    (the caption layer shows the empty state), never a silent montage fallback."""
+    monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(clip_speech, "speech_coverage", lambda *_a, **_k: 0.0, raising=False)
+    _trace_capture(monkeypatch)
+    archetype, spine = gb._resolve_archetype(
+        "subtitled", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
+    )
+    assert (archetype, spine) == ("subtitled", None)
 
 
 def test_resolve_narrated_flag_off_falls_through_to_voiceover(monkeypatch):

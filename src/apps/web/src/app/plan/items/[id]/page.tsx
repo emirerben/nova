@@ -18,6 +18,7 @@ import {
   setItemVoiceover,
   setItemVoiceoverBedLevel,
   setItemVoiceoverCaptionStyle,
+  setPlanItemCaptionLanguage,
   type VoiceoverCaptionStyle,
   updatePlanItem,
   type ClipAssignment,
@@ -65,7 +66,6 @@ import { sfxNeedsBake, sfxPersistDirty } from "@/lib/sfx-dirty";
 import { variantFailureCopy, unplacedShotCopy } from "@/lib/variant-failure-copy";
 import { stripRationalePrefix } from "@/lib/plan-text";
 import { GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL } from "@/lib/job-phases";
-import { createPortal } from "react-dom";
 import { ProgressTheater, ShimmerSweep } from "@/components/progress";
 import { StableVideo } from "@/components/StableVideo";
 import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
@@ -105,6 +105,13 @@ const MEDIA_OVERLAYS_ENABLED =
   _mediaOverlaysRaw.toLowerCase() === "true" || _mediaOverlaysRaw === "1";
 const SOUND_EFFECTS_ENABLED =
   process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+// Kill-switch: the "Subtitled" edit-style card only appears when
+// NEXT_PUBLIC_SUBTITLED_ENABLED=true. Keep in sync with the backend
+// `subtitled_archetype_enabled` Fly secret — if the card shows but the backend
+// flag is off, a subtitled job silently falls back to montage. Same normalize as
+// MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing space) still works.
+const _subtitledRaw = (process.env.NEXT_PUBLIC_SUBTITLED_ENABLED ?? "").trim();
+const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRaw === "1";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
@@ -425,6 +432,9 @@ export default function PlanItemPage() {
     item?.edit_format === "narrated_planned" ||
     item?.edit_format === "narrated_ready";
   const isNarratedReady = item?.edit_format === "narrated_ready";
+  // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
+  // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
+  const isSubtitled = item?.edit_format === "subtitled";
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -688,11 +698,21 @@ export default function PlanItemPage() {
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Edit style
                 </p>
-                <div className="flex gap-2">
+                {/* Stack on mobile (3 cards don't fit a 375px row), equal columns from sm:. */}
+                <div className="grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
                   {(
                     [
                       { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
                       { value: "narrated_planned", label: "Narrated walkthrough", desc: "Record your voice, clips follow along" },
+                      ...(SUBTITLED_ENABLED
+                        ? [
+                            {
+                              value: "subtitled",
+                              label: "Subtitled",
+                              desc: "Talk to camera — we caption your words, in Turkish or English",
+                            },
+                          ]
+                        : []),
                     ] as { value: string; label: string; desc: string }[]
                   ).map(({ value, label, desc }) => {
                     const active = value === "narrated_planned" ? isNarrated : (item.edit_format ?? "montage") === value;
@@ -714,7 +734,7 @@ export default function PlanItemPage() {
                         <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
                           {label}
                         </span>
-                        <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                        <span className="mt-0.5 text-xs text-[#71717a]">{desc}</span>
                       </button>
                     );
                   })}
@@ -760,8 +780,8 @@ export default function PlanItemPage() {
                 {/* Montage sub-mode picker — "Planning to film" vs "I already have footage".
                     Flips the per-item content_mode override so the user can skip shot-plan
                     generation and go straight to the pool uploader. Only shown when Montage
-                    is the active style (narrated has its own equivalent picker above). */}
-                {!isNarrated && (
+                    is the active style (narrated + subtitled have no content_mode sub-modes). */}
+                {!isNarrated && !isSubtitled && (
                   <div className="mt-3 flex gap-2">
                     {(
                       [
@@ -855,8 +875,9 @@ export default function PlanItemPage() {
               );
             })()}
 
-            {/* Expand with AI — only for planned mode; hide in ready (have-videos) mode */}
-            {!isNarratedReady && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+            {/* Expand with AI — only for planned mode; hide in ready (have-videos)
+                mode and for subtitled (single clip, no shot plan to expand). */}
+            {!isNarratedReady && !isSubtitled && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
               <div className="mb-4">
                 <button
                   type="button"
@@ -943,6 +964,17 @@ export default function PlanItemPage() {
                 {voiceoverGcsPath && !voiceoverSaving && (
                   <p className="mt-1 text-xs text-lime-700">
                     Voice recorded — clips will be timed to match your narration.
+                  </p>
+                )}
+                {process.env.NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED === "true" && (
+                  <p className="mt-2 text-xs text-lime-700">
+                    Not sure what to say?{" "}
+                    <Link
+                      href={`/plan/items/${item.id}/transcript`}
+                      className="underline underline-offset-2 hover:text-lime-800"
+                    >
+                      Get a transcript
+                    </Link>
                   </p>
                 )}
               </div>
@@ -1047,12 +1079,82 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Uploader — four branches:
+            {/* Subtitled: caption style — sentence blocks (default) vs word-by-word,
+                where the full line stays visible and the spoken word pops in lime.
+                Consumed at generate time; editable afterward in the on-video editor. */}
+            {isSubtitled && (
+              <div className="mb-6">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Captions
+                </p>
+                <p className="mb-3 text-sm text-[#71717a]">
+                  How your words appear as on-screen text.
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      {
+                        value: "sentence" as const,
+                        label: "Sentence",
+                        hint: "Full lines, like subtitles",
+                      },
+                      {
+                        value: "word" as const,
+                        label: "Word-by-word",
+                        hint: "Each word pops as you say it",
+                      },
+                    ]
+                  ).map((opt) => {
+                    const active = (captionStyle ?? "sentence") === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        aria-pressed={active}
+                        disabled={captionSaving}
+                        onClick={() => handleCaptionStyleChange(opt.value)}
+                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                          active
+                            ? "border-lime-600 bg-lime-50 text-lime-900"
+                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                        }`}
+                      >
+                        <span className="block text-sm font-semibold">{opt.label}</span>
+                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
+              </div>
+            )}
+
+            {/* Uploader — branches:
+                0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
                 1. narrated_ready: audio-first flow, pool upload, no step spine
                 2. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
                 3. isFilmThis but no guide yet → "Generate shot list" CTA
                 4. existing_footage → PoolUploadCard (use footage you already have) */}
-            {isNarratedReady ? (
+            {isSubtitled ? (
+              <div>
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Your clip
+                </p>
+                <p className="mb-4 text-sm text-[#71717a]">
+                  Upload one clip of you talking to camera. We&apos;ll transcribe what you
+                  say and add editable captions, in Turkish or English.
+                </p>
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
+                  maxClips={1}
+                />
+              </div>
+            ) : isNarratedReady ? (
               <div>
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Your clips
@@ -1417,16 +1519,6 @@ function FocusedResults({
   // removed in T5 when the expandable textPanel slot was replaced by the interactive bar lane.
   const textLaneOpen = activeTab === "timeline" && !!variant && variant.text_mode !== "none";
 
-  // ── Live text elements (for bug #6: instant overlay in the preview) ──────────
-  // FocusedVariantControls calls onLiveTextChange on every reducer mutation so
-  // LiveEditPreview can immediately overlay the local bars on the base video,
-  // instead of waiting for the full reburn round-trip.
-  const [liveTextElements, setLiveTextElements] = useState<TextElement[]>([]);
-  const [liveTextEditsDirty, setLiveTextEditsDirty] = useState(false);
-  // 3-column TikTok layout: DOM nodes that FocusedVariantControls portals into
-  const [rightPanelEl, setRightPanelEl] = useState<HTMLDivElement | null>(null);
-  const [timelineEl, setTimelineEl] = useState<HTMLDivElement | null>(null);
-
   // ── Overlay-card state (lifted here so Hero can render the instant preview) ─
   const [overlayCards, setOverlayCards] = useState<MediaOverlay[]>(
     variant?.media_overlays ?? [],
@@ -1635,33 +1727,74 @@ function FocusedResults({
   const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
 
   return (
-    <div className="mt-4 flex flex-col gap-2">
+    <div className="mt-8">
+      {/* Hero + rail: on desktop they are side-by-side */}
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
 
-      {/* ── 3-column: left | video (always centered) | right panel ── */}
-      <div className="grid grid-cols-[1fr_260px_1fr] items-start gap-4 lg:gap-6">
+        {/* ── HERO: large video player ── */}
+        <div className="w-full shrink-0 sm:max-w-xs lg:w-[300px]">
+          <div className="relative">
+            {/* "Nova's pick" badge */}
+            {isNovaPick && variant?.output_url && (
+              <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
+                Nova&apos;s pick
+              </span>
+            )}
+            {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
+              <LiveEditPreview
+                variant={variant}
+                styleSets={styleSets}
+                session={editSession}
+                playToken={editSession.playToken}
+                textElements={variant.text_elements ?? undefined}
+                sfxPlacements={sfxPlacements}
+                sfxAudioUrls={sfxAudioUrls}
+              />
+            ) : (
+              <Hero
+                variant={variant}
+                generating={isGenerating}
+                overlayCards={overlayCards}
+                localPreviewUrls={localPreviewUrls}
+                sfxPlacements={sfxPlacements}
+                sfxAudioUrls={sfxAudioUrls}
+                renderingAction={renderingAction}
+                showUpdatedCue={updatedVariantId === variant?.variant_id}
+              />
+            )}
+          </div>
+          {/* Text-mode pill below video */}
+          {modePill && !isGenerating && (
+            <div className="mt-2 flex justify-center">
+              <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
+                {modePill}
+              </span>
+            </div>
+          )}
+        </div>
 
-        {/* ── LEFT column ── */}
-        <div className="flex flex-col gap-3 pt-1">
+        {/* ── RAIL: rationale + alternates + editor ── */}
+        <div className="min-w-0 flex-1 space-y-5">
 
           {/* Rationale blurb */}
           {variant && !isGenerating && (
-            <p className="text-xs leading-snug text-[#3f3f46]">
+            <p className="text-sm text-[#3f3f46]">
               {deriveRationale(variant, variants.length)}
             </p>
           )}
           {isGenerating && (
-            <p className="text-xs text-[#71717a]">
+            <p className="text-sm text-[#71717a]">
               Edit controls unlock as soon as a variant finishes rendering.
             </p>
           )}
 
-          {/* Other takes — vertical stack */}
+          {/* Alternates row — small thumbnails, click to swap hero */}
           {alternates.length > 0 && (
             <div>
-              <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
+              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
                 Other takes
               </p>
-              <div className="flex flex-col gap-1.5">
+              <div className="flex gap-2">
                 {alternates.slice(0, 3).map((v) => {
                   const altLabel: Record<string, string> = {
                     lyrics: "Lyrics",
@@ -1677,34 +1810,187 @@ function FocusedResults({
                       type="button"
                       aria-label={`Switch to ${label} — ${v.track_title ?? "original audio"}`}
                       onClick={() => onFocus(v.variant_id)}
-                      className="group flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-left transition-colors hover:border-zinc-400"
+                      className="group relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 transition-colors hover:border-zinc-400"
                     >
-                      <div className="relative aspect-[9/16] w-8 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-100">
-                        {v.output_url ? (
-                          <StableVideo
-                            src={v.output_url}
-                            identity={v.render_finished_at ?? undefined}
-                            muted
-                            preload="metadata"
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <div className="h-full w-full bg-zinc-200" />
-                        )}
-                        {rendering && (
-                          <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
-                            …
-                          </span>
-                        )}
-                        {failed && (
-                          <span className="absolute right-0 top-0 text-[10px]">⚠</span>
-                        )}
-                      </div>
-                      <span className="truncate text-[11px] text-zinc-600">{label}</span>
+                      {v.output_url ? (
+                        <StableVideo
+                          src={v.output_url}
+                          identity={v.render_finished_at ?? undefined}
+                          muted
+                          preload="metadata"
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-full w-full bg-zinc-200" />
+                      )}
+                      <span className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 py-0.5 text-[8px] text-white">
+                        {label}
+                      </span>
+                      {rendering && (
+                        <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
+                          …
+                        </span>
+                      )}
+                      {failed && (
+                        <span className="absolute right-0.5 top-0.5 text-[10px]">⚠</span>
+                      )}
                     </button>
                   );
                 })}
               </div>
+            </div>
+          )}
+
+          {/* ── Unplaced shots info card ── */}
+          {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
+              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
+                Not in this take
+              </p>
+              <ul className="space-y-0.5">
+                {variant.unplaced_shots!.map((shot) => (
+                  <li key={shot.clip_id} className="text-xs text-amber-800">
+                    <span className="font-medium">Shot {shot.shot_index}</span>
+                    {" – "}
+                    {unplacedShotCopy(shot.reason)}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* ── Editor row: 4 icon+label buttons ── */}
+          {focusedEditable && (
+            <div>
+              <div className="flex gap-2">
+                {EDITOR_TABS.map((tab) => {
+                  const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
+                  // Captions tab shows for any caption variant (narrated voiceover OR
+                  // subtitled single-clip) that carries editable cues — it's cue-driven,
+                  // not archetype-gated, so both use the same on-video CaptionEditor.
+                  if (tab.id === "captions" && !hasCaptions) return null;
+                  // Caption variants have no song to edit — only Captions + Clips.
+                  if (hasCaptions && tab.id === "song") return null;
+                  // Hide Song tab when no song is swappable
+                  if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
+                  // Timeline: only when SFX is enabled.
+                  if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
+                  const isActive = activeTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      aria-pressed={isActive}
+                      onClick={() => setActiveTab(isActive ? null : tab.id)}
+                      className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
+                        isActive
+                          ? "border-lime-600 bg-lime-50 text-lime-800"
+                          : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                      }`}
+                    >
+                      <span className="text-sm font-semibold leading-none">{tab.icon}</span>
+                      <span className="text-[10px] leading-tight">{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Inline editor panel — slides open below the tab row */}
+              {activeTab !== null && variant && (
+                <div className="mt-3">
+                  {activeTab === "captions" &&
+                  variant.base_video_url &&
+                  variant.caption_cues ? (
+                    <CaptionEditor
+                      // Re-mount (re-seed cues) whenever a server render replaces them —
+                      // a language re-transcribe swaps all cues, and the editor otherwise
+                      // keeps the cue state it seeded at mount (stale English after a
+                      // switch to Türkçe). render_finished_at advances on every reburn/
+                      // re-transcribe, so this re-seeds from the fresh server cues.
+                      key={`${variant.variant_id}:${variant.render_finished_at ?? ""}`}
+                      itemId={itemId}
+                      variantId={variant.variant_id}
+                      baseVideoUrl={variant.base_video_url}
+                      initialCues={variant.caption_cues}
+                      initialFont={variant.voiceover_caption_font}
+                      rendering={variant.render_status === "rendering"}
+                      // Subtitled captions are machine-transcribed from the clip's own
+                      // audio — nudge review before Apply (D6). Narrated (own voiceover)
+                      // doesn't need it.
+                      reviewFirst={variant.resolved_archetype === "subtitled"}
+                      // Preview offset mirrors the burn: subtitled burns at the
+                      // platform-safe MarginV 384/1920 (20%); narrated at 180 (9.4%).
+                      previewBottomCqh={variant.resolved_archetype === "subtitled" ? 20 : 9.4}
+                      // D5 language override — chip + re-transcribe, subtitled only.
+                      captionLanguage={
+                        variant.resolved_archetype === "subtitled"
+                          ? (variant.caption_language ?? "en")
+                          : null
+                      }
+                      onChangeLanguage={
+                        variant.resolved_archetype === "subtitled"
+                          ? async (language) => {
+                              try {
+                                await setPlanItemCaptionLanguage(
+                                  itemId,
+                                  variant.variant_id,
+                                  language,
+                                );
+                                markVariantRendering(
+                                  variant.variant_id,
+                                  variant.render_finished_at ?? null,
+                                );
+                                refetch();
+                              } catch (err) {
+                                onError(
+                                  err instanceof Error
+                                    ? err.message
+                                    : "Couldn't change the caption language.",
+                                );
+                              }
+                            }
+                          : undefined
+                      }
+                      onApplied={() => {
+                        markVariantRendering(
+                          variant.variant_id,
+                          variant.render_finished_at ?? null,
+                        );
+                        refetch();
+                      }}
+                    />
+                  ) : (
+                    <FocusedVariantControls
+                      itemId={itemId}
+                      variant={variant}
+                      tracks={tracks}
+                      styleSets={styleSets}
+                      session={editSession}
+                      instantEligible={instantEligible}
+                      baking={baking}
+                      activeTab={activeTab}
+                      refetch={refetch}
+                      markVariantRendering={markVariantRendering}
+                      onSwap={onSwap}
+                      onRetext={onRetext}
+                      onRemoveText={onRemoveText}
+                      onChangeStyle={onChangeStyle}
+                      onResize={onResize}
+                      onChangeLayout={onChangeLayout}
+                      overlayCards={overlayCards}
+                      setOverlayCards={setOverlayCards}
+                      localPreviewUrls={localPreviewUrls}
+                      setLocalPreviewUrls={setLocalPreviewUrls}
+                      sfxPlacements={sfxPlacements}
+                      setSfxPlacements={setSfxPlacements}
+                      sfxAudioUrls={sfxAudioUrls}
+                      setSfxAudioUrls={setSfxAudioUrls}
+                      currentTimeS={currentTimeS}
+                      onError={onError}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -1715,13 +2001,13 @@ function FocusedResults({
                 type="button"
                 onClick={handleDownload}
                 disabled={baking}
-                className="inline-flex min-h-10 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-4 py-2 text-xs font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {baking ? "Preparing…" : "Download"}
+                {baking ? "Preparing your video…" : "Download"}
               </button>
               {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
-                <p className="text-center text-[10px] text-[#a1a1aa]">
-                  Changes included on download
+                <p className="mt-1 text-center text-xs text-[#a1a1aa]">
+                  Unsaved — downloads will include your changes
                 </p>
               )}
             </>
@@ -1729,164 +2015,15 @@ function FocusedResults({
 
           {/* Feedback */}
           {item.current_job_id && !isGenerating && (
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-[#a1a1aa]">
-                How&apos;s this?
+            <div className="border-t border-zinc-200 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#a1a1aa]">
+                How&apos;s this one?
               </p>
               <FeedbackButtons jobId={item.current_job_id} initialSignal={null} />
             </div>
           )}
-
-          {/* Editor mode tabs — placed in left column to keep video flush with timeline */}
-          {focusedEditable && (
-            <div className="flex flex-col gap-1.5">
-              {EDITOR_TABS.map((tab) => {
-                const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
-                if (tab.id === "captions" && !hasCaptions) return null;
-                if (hasCaptions && tab.id === "song") return null;
-                if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
-                const isActive = activeTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    aria-pressed={isActive}
-                    onClick={() => setActiveTab(isActive ? null : tab.id)}
-                    className={`flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-left text-[11px] transition-colors ${
-                      isActive
-                        ? "border-lime-600 bg-lime-50 text-lime-800"
-                        : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                    }`}
-                  >
-                    <span className="text-sm leading-none">{tab.icon}</span>
-                    <span>{tab.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
-
-        {/* ── CENTER column: 260px from grid, video fills it ── */}
-        <div className="flex flex-col gap-1.5">
-
-          {/* Video */}
-          <div className="relative w-full">
-            {isNovaPick && variant?.output_url && (
-              <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
-                Nova&apos;s pick
-              </span>
-            )}
-            {instantEligible && variant ? (
-              <LiveEditPreview
-                variant={variant}
-                styleSets={styleSets}
-                session={editSession}
-                playToken={editSession.playToken}
-                textElements={liveTextElements.length > 0 ? liveTextElements : (variant.text_elements ?? undefined)}
-                textEditsDirty={liveTextEditsDirty}
-              />
-            ) : (
-              <Hero
-                variant={variant}
-                generating={isGenerating}
-                overlayCards={overlayCards}
-                localPreviewUrls={localPreviewUrls}
-                sfxPlacements={sfxPlacements}
-                sfxAudioUrls={sfxAudioUrls}
-                renderingAction={renderingAction}
-                showUpdatedCue={updatedVariantId === variant?.variant_id}
-              />
-            )}
-          </div>
-
-          {/* Mode pill */}
-          {modePill && !isGenerating && (
-            <span className="self-center rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
-              {modePill}
-            </span>
-          )}
-        </div>
-
-        {/* ── RIGHT column: fills 1fr, portal target for property controls ── */}
-        <div ref={setRightPanelEl} className="w-full max-h-[480px] overflow-y-auto" />
       </div>
-
-      {/* ── Timeline: full-width row below the 3-col ── */}
-      <div ref={setTimelineEl} />
-
-      {/* ── Unplaced shots info card ── */}
-      {variant && (variant.unplaced_shots?.length ?? 0) > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3">
-          <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-amber-700">
-            Not in this take
-          </p>
-          <ul className="space-y-0.5">
-            {variant.unplaced_shots!.map((shot) => (
-              <li key={shot.clip_id} className="text-xs text-amber-800">
-                <span className="font-medium">Shot {shot.shot_index}</span>
-                {" – "}
-                {unplacedShotCopy(shot.reason)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Caption editor: full-width when captions tab active */}
-      {activeTab === "captions" && variant?.base_video_url && variant.caption_cues && (
-        <CaptionEditor
-          itemId={itemId}
-          variantId={variant.variant_id}
-          baseVideoUrl={variant.base_video_url}
-          initialCues={variant.caption_cues}
-          initialFont={variant.voiceover_caption_font}
-          rendering={variant.render_status === "rendering"}
-          onApplied={() => {
-            markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-            refetch();
-          }}
-        />
-      )}
-
-      {/* FocusedVariantControls: always render when editable — portals timeline + controls */}
-      {focusedEditable && activeTab !== "captions" && (
-        <FocusedVariantControls
-          itemId={itemId}
-          variant={variant}
-          tracks={tracks}
-          styleSets={styleSets}
-          session={editSession}
-          instantEligible={instantEligible}
-          baking={baking}
-          activeTab={activeTab}
-          refetch={refetch}
-          markVariantRendering={markVariantRendering}
-          onSwap={onSwap}
-          onRetext={onRetext}
-          onRemoveText={onRemoveText}
-          onChangeStyle={onChangeStyle}
-          onResize={onResize}
-          onChangeLayout={onChangeLayout}
-          overlayCards={overlayCards}
-          setOverlayCards={setOverlayCards}
-          localPreviewUrls={localPreviewUrls}
-          setLocalPreviewUrls={setLocalPreviewUrls}
-          sfxPlacements={sfxPlacements}
-          setSfxPlacements={setSfxPlacements}
-          sfxAudioUrls={sfxAudioUrls}
-          setSfxAudioUrls={setSfxAudioUrls}
-          currentTimeS={currentTimeS}
-          onError={onError}
-          timelineEl={timelineEl}
-          rightPanelEl={rightPanelEl}
-          onLiveTextChange={(apiEls, dirty) => {
-            setLiveTextElements(apiEls);
-            setLiveTextEditsDirty(dirty);
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -1995,9 +2132,6 @@ function FocusedVariantControls({
   setSfxAudioUrls,
   currentTimeS,
   onError,
-  onLiveTextChange,
-  timelineEl,
-  rightPanelEl,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -2006,7 +2140,7 @@ function FocusedVariantControls({
   session: VariantEditSession;
   instantEligible: boolean;
   baking: boolean;
-  activeTab: EditorTab | null;
+  activeTab: EditorTab;
   refetch: () => void;
   markVariantRendering: (variantId: string, priorFinishedAt: string | null) => void;
   onSwap: (trackId: string) => Promise<void>;
@@ -2026,16 +2160,6 @@ function FocusedVariantControls({
   currentTimeS: number;
   /** Surface a user-facing error in the page-level banner (e.g. SFX save failures). */
   onError: (msg: string) => void;
-  /**
-   * Bug #6 fix: called on every text-element reducer mutation so FocusedResults
-   * can pass live bars to LiveEditPreview as an instant CSS overlay, before the
-   * reburn round-trip completes.  apiEls is the TextElement[] view of bars;
-   * dirty=true means local bars differ from the baked video.
-   */
-  onLiveTextChange?: (apiEls: TextElement[], dirty: boolean) => void;
-  /** 3-column layout: portal targets. When set, timeline and controls render into these DOM nodes. */
-  timelineEl?: HTMLDivElement | null;
-  rightPanelEl?: HTMLDivElement | null;
 }) {
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
@@ -2047,13 +2171,6 @@ function FocusedVariantControls({
   // Shared clip-timeline data: owned here so ClipsLane header bars and the
   // InlineClipsEditor expanded panel read/write one draft (no double fetch).
   const clipTimeline = useClipTimeline(itemId, variant.variant_id, "plan-item");
-
-  // Plan C: clicking a clip bar opens InlineClipsEditor pre-selected to that clip.
-  const [focusedClipKey, setFocusedClipKey] = useState<string | null>(null);
-
-  // 3-column layout: track which text bar is selected so rightBlock shows nothing
-  // while TextLane portals its own panel into the right column.
-  const [textExpandedBarId, setTextExpandedBarId] = useState<string | null>(null);
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -2466,31 +2583,6 @@ function FocusedVariantControls({
   const handleTextElementsChange = useCallback(
     (bars: TextElementBar[]) => {
       setTextElements(bars);
-      // Bug #6: push live bars to the preview immediately as a CSS overlay.
-      // Only generative_intro bars render as text_elements in the preview;
-      // narrated_caption/sequence are handled via other overlay paths.
-      if (onLiveTextChange) {
-        const liveApiEls: TextElement[] = bars
-          .filter((b) => b.role !== "narrated_caption")
-          .map((b) => ({
-            id: b.id,
-            text: b.text,
-            start_s: b.start_s,
-            end_s: b.end_s,
-            role: b.role as TextElement["role"],
-            font_family: b.font_family ?? null,
-            size_px: b.size_px ?? null,
-            size_class: (b.size_class as TextElement["size_class"]) ?? null,
-            color: b.color ?? null,
-            highlight_color: b.highlight_color ?? null,
-            stroke_width: b.stroke_width ?? null,
-            effect: (b.effect as TextElement["effect"]) ?? null,
-            alignment: (b.alignment as TextElement["alignment"]) ?? null,
-            source_params: b.source_params ?? null,
-            position: "middle" as const,
-          }));
-        onLiveTextChange(liveApiEls, liveApiEls.length > 0);
-      }
       if (textApplyTimer.current) clearTimeout(textApplyTimer.current);
       if (bars[0]?.role === "narrated_caption") {
         textApplyTimer.current = setTimeout(() => {
@@ -2524,7 +2616,7 @@ function FocusedVariantControls({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [variant.variant_id, variant.scene_timings, variant.intro_start_s, handleApplyTextElements, itemId, onLiveTextChange],
+    [variant.variant_id, variant.scene_timings, variant.intro_start_s, handleApplyTextElements, itemId],
   );
 
   /** State 4: called by UnifiedTimeline when a trim drag is clamped to MIN_DUR_S. */
@@ -2535,115 +2627,12 @@ function FocusedVariantControls({
   }, []);
 
   const showSongSection = activeTab === "song";
+  const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED;
 
-  // ── Timeline block — always visible in TikTok 3-column layout ────────────
-  const timelineBlock = (
-    <div className="space-y-1.5">
-      {!variant.base_video_path && (
-        <p className="text-[11px] text-zinc-500">
-          Full re-render needed (may take a moment)
-        </p>
-      )}
-      {textApplyError && (
-        <p className="rounded bg-amber-100 px-2 py-1 text-[11px] text-amber-700">
-          {textApplyError}
-        </p>
-      )}
-      {textElementNote && (
-        <p className="px-1 text-[11px] text-zinc-500">{textElementNote}</p>
-      )}
-      {textElements.some((b) => b.text.length > 500) && (
-        <p className="px-1 text-[11px] text-amber-600">
-          Text block exceeds 500 chars — may be truncated on render
-        </p>
-      )}
-      <div className="rounded-xl border border-zinc-200 bg-white p-3">
-        <UnifiedTimeline
-          totalDurationS={variantDurationS}
-          currentTimeS={currentTimeS}
-          sfxPlacements={sfxPlacements}
-          sfxGlossaryEffects={glossaryEffects}
-          sfxGlossaryLoading={glossaryLoading}
-          sfxRendering={variant.render_status === "rendering"}
-          sfxUploading={sfxUploading}
-          onSfxChange={handleSfxChange}
-          onSfxUploadRequest={handleSfxUpload}
-          overlayCards={overlayCards}
-          overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
-          overlayUploading={overlayUploading}
-          localPreviewUrls={localPreviewUrls}
-          onOverlayUploadRequest={handleOverlayUpload}
-          onUpdateCard={handleUpdateCard}
-          onRemoveCard={handleRemoveCard}
-          onClearOverlays={handleClearOverlays}
-          textElements={textElements}
-          onTextElementsChange={handleTextElementsChange}
-          onTextApply={(bars) => {
-            if (bars[0]?.role === "narrated_caption") {
-              const cues: CaptionCue[] = bars.map((b) => ({
-                text: b.text,
-                start_s: b.start_s,
-                end_s: b.end_s,
-              }));
-              void setPlanItemCaptions(itemId, variant.variant_id, cues).then(() =>
-                applyPlanItemCaptions(itemId, variant.variant_id),
-              );
-            } else if (bars[0]?.role === "generative_sequence" && variant.scene_timings?.length) {
-              const overrides: SceneTimingPatch[] = bars.map((b, i) => ({
-                scene_index: i,
-                start_s: b.start_s,
-                end_s: b.end_s,
-              }));
-              void patchPlanItemSceneTiming(itemId, variant.variant_id, overrides).then(() =>
-                handleApplyTextElements(variant.variant_id, bars),
-              );
-            } else if (bars[0]?.role === "generative_intro" && variant.intro_start_s != null) {
-              const bar = bars[0];
-              void setPlanItemIntroTiming(itemId, variant.variant_id, bar.start_s, bar.end_s).then(() =>
-                handleApplyTextElements(variant.variant_id, bars),
-              );
-            } else {
-              void handleApplyTextElements(variant.variant_id, bars);
-            }
-          }}
-          onTextTrimClamped={handleTextTrimClamped}
-          isFirstSequenceEdit={
-            variant.intro_mode === "sequence" && !variant.text_elements_user_edited
-          }
-          textPanelPortalTarget={rightPanelEl ?? undefined}
-          onTextBarSelect={setTextExpandedBarId}
-          clipTimelineHandle={clipTimeline}
-          onClipBodyClick={(key) => setFocusedClipKey(key)}
-          clipsPanel={
-            <InlineClipsEditor
-              ownerId={itemId}
-              variantId={variant.variant_id}
-              base="plan-item"
-              onRenderEnqueued={() => {
-                markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-                refetch();
-              }}
-              externalState={clipTimeline.state}
-              externalDispatch={clipTimeline.dispatch}
-              externalClips={clipTimeline.clips}
-              onReload={clipTimeline.reload}
-              focusedKey={focusedClipKey}
-            />
-          }
-        />
-      </div>
-    </div>
-  );
-
-  // ── Right-panel block: song picker, or text panel hint, or nothing ───────────
-  // When a text bar is selected, TextLane portals TextPropertyPanel directly into
-  // rightPanelEl — so this block renders nothing to avoid double-occupancy.
-  const rightBlock = (
-    <div className="space-y-3">
-      {textExpandedBarId !== null ? (
-        // TextLane is portaling the property panel here — render nothing extra.
-        null
-      ) : showSongSection ? (
+  return (
+    <>
+      {/* Song tab: song picker only — a standalone SongPicker section */}
+      {showSongSection && (
         <PlanVariantEditor
           variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
           tracks={tracks}
@@ -2660,16 +2649,137 @@ function FocusedVariantControls({
           hasClipEdits={false}
           hideSections={["caption", "size", "layout", "style", "clips"]}
         />
-      ) : null}
-    </div>
-  );
+      )}
 
-  return (
-    <>
-      {/* Timeline: portal to bottom row or inline fallback */}
-      {timelineEl ? createPortal(timelineBlock, timelineEl) : timelineBlock}
-      {/* Controls: portal to right column or inline fallback */}
-      {rightPanelEl ? createPortal(rightBlock, rightPanelEl) : rightBlock}
+      {/* Timeline tab: unified multi-lane timeline (SFX + Overlays + Text + Clips inline) */}
+      {showTimelineSection && (
+        <div className="space-y-1.5">
+          {/* State 6: no base_video_path = fast reburn unavailable — inform the user. */}
+          {!variant.base_video_path && (
+            <p className="text-[11px] text-zinc-500">
+              Full re-render needed (may take a moment)
+            </p>
+          )}
+          {/* States 1+2: save conflict or failed save — amber banner. */}
+          {textApplyError && (
+            <p className="rounded bg-amber-900/30 px-2 py-1 text-[11px] text-amber-400">
+              {textApplyError}
+            </p>
+          )}
+          {/* State 4: minimum-duration clamp note — auto-clears after 2 s. */}
+          {textElementNote && (
+            <p className="px-1 text-[11px] text-zinc-500">{textElementNote}</p>
+          )}
+          {/* State 5: text too long — inline character count warning. */}
+          {textElements.some((b) => b.text.length > 500) && (
+            <p className="px-1 text-[11px] text-amber-400">
+              Text block exceeds 500 chars — may be truncated on render
+            </p>
+          )}
+          <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
+            <UnifiedTimeline
+              totalDurationS={variantDurationS}
+              currentTimeS={currentTimeS}
+              sfxPlacements={sfxPlacements}
+              sfxGlossaryEffects={glossaryEffects}
+              sfxGlossaryLoading={glossaryLoading}
+              sfxRendering={variant.render_status === "rendering"}
+              sfxUploading={sfxUploading}
+              onSfxChange={handleSfxChange}
+              onSfxUploadRequest={handleSfxUpload}
+              overlayCards={overlayCards}
+              overlaysEnabled={MEDIA_OVERLAYS_ENABLED}
+              overlayUploading={overlayUploading}
+              localPreviewUrls={localPreviewUrls}
+              onOverlayUploadRequest={handleOverlayUpload}
+              onUpdateCard={handleUpdateCard}
+              onRemoveCard={handleRemoveCard}
+              onClearOverlays={handleClearOverlays}
+              textElements={textElements}
+              onTextElementsChange={handleTextElementsChange}
+              onTextApply={(bars) => {
+                if (bars[0]?.role === "narrated_caption") {
+                  // Narrated captions: persist + trigger reburn via Apply endpoint.
+                  const cues: CaptionCue[] = bars.map((b) => ({
+                    text: b.text,
+                    start_s: b.start_s,
+                    end_s: b.end_s,
+                  }));
+                  void setPlanItemCaptions(itemId, variant.variant_id, cues).then(() =>
+                    applyPlanItemCaptions(itemId, variant.variant_id),
+                  );
+                } else if (bars[0]?.role === "generative_sequence" && variant.scene_timings?.length) {
+                  // PR-E: sequence bars — flush timing patch then re-render.
+                  const overrides: SceneTimingPatch[] = bars.map((b, i) => ({
+                    scene_index: i,
+                    start_s: b.start_s,
+                    end_s: b.end_s,
+                  }));
+                  void patchPlanItemSceneTiming(itemId, variant.variant_id, overrides).then(() =>
+                    handleApplyTextElements(variant.variant_id, bars),
+                  );
+                } else if (bars[0]?.role === "generative_intro" && variant.intro_start_s != null) {
+                  // PR-E: intro timing bar — flush timing patch then re-render.
+                  const bar = bars[0];
+                  void setPlanItemIntroTiming(itemId, variant.variant_id, bar.start_s, bar.end_s).then(() =>
+                    handleApplyTextElements(variant.variant_id, bars),
+                  );
+                } else {
+                  void handleApplyTextElements(variant.variant_id, bars);
+                }
+              }}
+              onTextTrimClamped={handleTextTrimClamped}
+              isFirstSequenceEdit={
+                variant.intro_mode === "sequence" && !variant.text_elements_user_edited
+              }
+              clipTimelineHandle={clipTimeline}
+              clipsPanel={
+                <InlineClipsEditor
+                  ownerId={itemId}
+                  variantId={variant.variant_id}
+                  base="plan-item"
+                  onRenderEnqueued={() => {
+                    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+                    refetch();
+                  }}
+                  externalState={clipTimeline.state}
+                  externalDispatch={clipTimeline.dispatch}
+                  externalClips={clipTimeline.clips}
+                  onReload={clipTimeline.reload}
+                />
+              }
+            />
+          </div>
+          {/* Text editing controls — rendered below the timeline for text-mode variants. */}
+          {variant.text_mode !== "none" && (
+            <div className="mt-2 space-y-3">
+              <PlanVariantEditor
+                variant={baking ? { ...editorVariant, render_status: "rendering" } : editorVariant}
+                tracks={[]}
+                styleSets={instantEligible ? [] : styleSets}
+                onSwap={onSwap}
+                onRetext={draftHandlers.onRetext}
+                onRemoveText={draftHandlers.onRemoveText}
+                onChangeStyle={draftHandlers.onChangeStyle}
+                onResize={instantEligible ? undefined : draftHandlers.onResize}
+                onChangeLayout={draftHandlers.onChangeLayout}
+                onEditClips={undefined}
+                showClipEditor={false}
+                clipSlotCount={null}
+                hasClipEdits={false}
+              />
+              {instantEligible && (
+                <EditToolbar
+                  session={session}
+                  styleSets={[]}
+                  fallbackSizePx={variant.intro_text_size_px}
+                  resolvedParams={resolveIntroParams(variant, styleSets, session.draft)}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </>
   );
 }
@@ -2708,25 +2818,34 @@ function LiveEditPreview({
   session,
   playToken,
   textElements,
-  textEditsDirty,
+  sfxPlacements = [],
+  sfxAudioUrls = {},
 }: {
   variant: PlanItemVariant;
   styleSets: GenerativeStyleSet[];
   session: VariantEditSession;
   playToken?: number;
   /**
-   * T6: Full TextElement array. When non-empty the preview renders ALL elements
-   * as CSS overlays. Now fed with live local bars (not server data) so edits
-   * appear instantly without waiting for a reburn round-trip.
+   * T6: Full TextElement array from the variant (API data). When non-empty,
+   * the preview renders ALL elements as CSS overlays instead of the single
+   * IntroTextPreview (which models the legacy linear/cluster intro path).
    */
   textElements?: TextElement[];
   /**
-   * Bug #6 fix: true when local text bars differ from the baked video (user
-   * made a text edit in the timeline).  Forces the preview to show base_video_url
-   * + CSS overlay even while the instant-editor session is clean.
+   * Live SFX preview: instant-eligible variants (agent_text intro, etc.) render
+   * THROUGH this component on the Timeline tab, NOT Hero — so the sound-effect
+   * <audio> sync must live here too, or glossary effects are silent in the
+   * preview even though the Download bake includes them. Mirrors Hero's wiring.
    */
-  textEditsDirty?: boolean;
+  sfxPlacements?: SoundEffectPlacement[];
+  sfxAudioUrls?: Record<string, string>;
 }) {
+  const sfxVideoRef = useRef<HTMLVideoElement>(null);
+  // Sync SFX audio elements to whichever preview video is active (burned output
+  // or text-free base). Both StableVideos below carry sfxVideoRef; only one
+  // mounts at a time, so the ref always points at the visible player.
+  useSfxPreview(sfxVideoRef, sfxPlacements, sfxAudioUrls);
+
   const introParams = resolveIntroParams(variant, styleSets, session.draft);
 
   // Live layout follows the draft (so toggling Classic/Editorial re-lays the
@@ -2741,11 +2860,8 @@ function LiveEditPreview({
   // what they see at rest IS what they get.
   // (fireCommit already calls setBaseline(toCommit) so isDirty resets to false
   // as soon as a commit fires; it goes true again only on the next keystroke.)
-  // Show burned video only when: no instant-editor draft AND no pending text-lane edits.
-  // When textEditsDirty=true the live CSS overlay (base_video_url + textElements) is
-  // the correct WYSIWYG view; the baked output_url lags until the reburn completes.
   const burnedSrc: string | null =
-    !session.isDirty && !session.isSaving && !textEditsDirty ? (variant.output_url ?? null) : null;
+    !session.isDirty && !session.isSaving ? (variant.output_url ?? null) : null;
   const burnedIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
 
   // N-element preview: use the text_elements array when available (T6).
@@ -2760,6 +2876,7 @@ function LiveEditPreview({
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
       {burnedSrc ? (
         <StableVideo
+          ref={sfxVideoRef}
           src={burnedSrc}
           identity={burnedIdentity}
           controls
@@ -2774,6 +2891,7 @@ function LiveEditPreview({
         // identity → no reload) and only swaps when a new base video is rendered
         // (clip timeline edit changes base_video_path → identity changes → swap).
         <StableVideo
+          ref={sfxVideoRef}
           src={variant.base_video_url}
           identity={variant.base_video_path ?? undefined}
           controls
@@ -3337,6 +3455,7 @@ function PoolUploadCard({
   onKeep,
   onRemove,
   onNoteChange,
+  maxClips,
 }: {
   clips: ClipAssignment[];
   uploading: boolean;
@@ -3344,7 +3463,10 @@ function PoolUploadCard({
   onKeep: (a: ClipAssignment) => void;
   onRemove: (a: ClipAssignment) => void;
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
+  /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
+  maxClips?: number;
 }) {
+  const atCap = maxClips != null && clips.length >= maxClips;
   return (
     <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-5">
       {clips.length > 0 && (
@@ -3395,17 +3517,25 @@ function PoolUploadCard({
           })}
         </ul>
       )}
-      <label className="block">
-        <span className="sr-only">Upload video clips for this idea</span>
-        <input
-          type="file"
-          accept="video/mp4,video/quicktime"
-          multiple
-          disabled={uploading}
-          onChange={(e) => onFiles(e.target.files)}
-          className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
-        />
-      </label>
+      {atCap ? (
+        <p className="text-sm text-[#71717a]">
+          {maxClips === 1
+            ? "One clip added. Remove it above to swap in a different one."
+            : "You've reached the clip limit. Remove one above to add another."}
+        </p>
+      ) : (
+        <label className="block">
+          <span className="sr-only">Upload video clips for this idea</span>
+          <input
+            type="file"
+            accept="video/mp4,video/quicktime"
+            multiple={maxClips !== 1}
+            disabled={uploading}
+            onChange={(e) => onFiles(e.target.files)}
+            className="block w-full text-sm text-[#71717a] file:mr-3 file:rounded-full file:border-0 file:bg-[#0c0c0e] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-80"
+          />
+        </label>
+      )}
       {uploading && <p className="mt-3 text-sm text-lime-700">Uploading…</p>}
     </div>
   );
