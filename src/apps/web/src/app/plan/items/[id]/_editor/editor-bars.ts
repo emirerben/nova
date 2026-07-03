@@ -18,6 +18,50 @@
 import type { CaptionCue, PlanItemVariant, TextElement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
+export const TEXT_LANE_BASE_HEIGHT_PX = 48;
+export const TEXT_LANE_ROW_GAP_PX = 2;
+export const TEXT_LANE_EXPANDED_ROW_HEIGHT_PX = 26;
+
+export interface TextLaneRow {
+  bar: TextElementBar;
+  rowIndex: number;
+  topPx: number;
+  heightPx: number;
+}
+
+export interface TextLaneRows {
+  rows: TextLaneRow[];
+  rowCount: number;
+  rowHeightPx: number;
+  totalHeightPx: number;
+}
+
+/** UI-only row assignment: current ordered bars map to compacted rows. */
+export function deriveTextLaneRows(bars: TextElementBar[]): TextLaneRows {
+  const rowCount = Math.max(1, bars.length);
+  const rowHeightPx =
+    rowCount <= 2
+      ? (TEXT_LANE_BASE_HEIGHT_PX - TEXT_LANE_ROW_GAP_PX * (rowCount - 1)) /
+        rowCount
+      : TEXT_LANE_EXPANDED_ROW_HEIGHT_PX;
+  const totalHeightPx =
+    rowCount <= 2
+      ? TEXT_LANE_BASE_HEIGHT_PX
+      : rowCount * rowHeightPx + (rowCount - 1) * TEXT_LANE_ROW_GAP_PX;
+
+  return {
+    rows: bars.map((bar, rowIndex) => ({
+      bar,
+      rowIndex,
+      topPx: rowIndex * (rowHeightPx + TEXT_LANE_ROW_GAP_PX),
+      heightPx: rowHeightPx,
+    })),
+    rowCount,
+    rowHeightPx,
+    totalHeightPx,
+  };
+}
+
 /** Convert API TextElement[] → working bars, keeping all placement + style
  * fields the canvas/inspector edit. */
 export function convertApiTextElements(
@@ -84,12 +128,16 @@ export function convertSceneTimings(
  * state.  Projection sources (caption_cues / scene_timings) are only seeds for
  * variants that have never been user-edited.
  */
-export function seedBarsFromVariant(variant: PlanItemVariant): TextElementBar[] {
+export function seedBarsFromVariant(
+  variant: PlanItemVariant,
+): TextElementBar[] {
   if (variant.text_elements_user_edited) {
     return convertApiTextElements(variant.text_elements);
   }
-  if (variant.caption_cues?.length) return convertCaptionCues(variant.caption_cues);
-  if (variant.scene_timings?.length) return convertSceneTimings(variant.scene_timings);
+  if (variant.caption_cues?.length)
+    return convertCaptionCues(variant.caption_cues);
+  if (variant.scene_timings?.length)
+    return convertSceneTimings(variant.scene_timings);
   return convertApiTextElements(variant.text_elements);
 }
 
@@ -127,7 +175,8 @@ export function barsToTextElements(
         text_case: (bar.text_case as TextElement["text_case"]) ?? null,
         letter_spacing: bar.letter_spacing ?? null,
         line_spacing: bar.line_spacing ?? null,
-        position: (bar.position as TextElement["position"]) ?? original?.position,
+        position:
+          (bar.position as TextElement["position"]) ?? original?.position,
         x_frac: bar.x_frac ?? null,
         y_frac: bar.y_frac ?? null,
         source_params: bar.source_params ?? null,
