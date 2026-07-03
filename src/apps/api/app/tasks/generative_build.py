@@ -682,6 +682,91 @@ def _run_generative_job(job_id: str) -> None:
     record_phase(job_id, "render_variants", next_phase="finalize")
     record_phase(job_id, "finalize")
     _finalize_job(job_id, results)
+    # Overlay autoplace chain (plan 007, D2-B). MUST run AFTER _finalize_job —
+    # finalize rebuilds every variant entry from the in-memory results whitelist,
+    # so anything the match/apply tasks wrote mid-render would be stripped
+    # (007 CRITICAL-1). Best-effort: render success never depends on it.
+    try:
+        _maybe_autoplace_after_finalize(job_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("autoplace_chain_dispatch_failed", job_id=job_id, error=str(exc)[:200])
+
+
+def _maybe_autoplace_after_finalize(job_id: str) -> None:
+    """Zero-click visual placement after a plan-item generate (plan 007, D2-B).
+
+    Guards, in order (each traced/skipped, never raised to the caller):
+      - OVERLAY_AUTOPLACE_ENABLED off ⇒ no-op (byte-identical behavior).
+      - Public generative jobs (no content_plan_item_id) ⇒ no-op — the pool is
+        a plan-item concept (finalize also serves /generative, 007 CRITICAL-1).
+      - Pool has zero READY assets ⇒ no-op.
+      - Per variant: only speech-bearing (music_track_id is None — Whisper on a
+        song track yields garbage anchors, 007 G2-A), only rendered
+        (video_path + ready), and only ONCE per render generation
+        (`autoplace_attempted` marker, 007 CRITICAL-3: the overlay burn's own
+        completion and acks_late re-deliveries never re-fire the chain).
+
+    `auto_apply` follows OVERLAY_AUTOAPPLY_ENABLED (G3-A kill switch): off ⇒
+    the chain still matches and the suggestions await review (suggest-only).
+    """
+    from sqlalchemy import func as _sql_func  # noqa: PLC0415
+    from sqlalchemy import select as _select  # noqa: PLC0415
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.config import settings as _settings  # noqa: PLC0415
+    from app.models import PlanItemAsset  # noqa: PLC0415
+    from app.tasks.autoplace import match_overlay_suggestions  # noqa: PLC0415
+
+    if not _settings.overlay_autoplace_enabled:
+        return
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or job.content_plan_item_id is None:
+            return
+        ready_assets = int(
+            db.execute(
+                _select(_sql_func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == job.content_plan_item_id,
+                    PlanItemAsset.status == "ready",
+                )
+            ).scalar_one()
+        )
+        if ready_assets == 0:
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        eligible: list[str] = []
+        for v in variants:
+            if (
+                v.get("render_status") == "ready"
+                and v.get("video_path")
+                and v.get("music_track_id") is None
+                and not v.get("autoplace_attempted")
+            ):
+                v["autoplace_attempted"] = True
+                eligible.append(str(v.get("variant_id")))
+        if not eligible:
+            return
+        user_id = str(job.user_id)
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+
+    auto_apply = bool(_settings.overlay_autoapply_enabled)
+    for variant_id in eligible:
+        match_overlay_suggestions.apply_async(
+            args=[job_id, variant_id, user_id],
+            kwargs={"auto_apply": auto_apply},
+            queue=_settings.autoplace_queue,
+        )
+    log.info(
+        "autoplace_chain_dispatched",
+        job_id=job_id,
+        variants=eligible,
+        auto_apply=auto_apply,
+    )
 
 
 # ── Ingest (shared by the full job + the single-variant re-render) ──────────────
@@ -1262,6 +1347,20 @@ def _run_media_overlay_pass(
 
         cards = coerce_media_overlays(overlays_raw)
 
+        # Stale-bake detection baseline (plan 009 E5): snapshot the PERSISTED
+        # card list before the long ffmpeg run. If the user autosaves an edit
+        # (e.g. a PiP↔fullscreen toggle) while the bake runs, the write-back
+        # below must NOT clobber it with this task's older list.
+        import json as _json_e5  # noqa: PLC0415
+
+        def _canon_cards(raw: object) -> str:
+            try:
+                return _json_e5.dumps(raw or [], sort_keys=True)
+            except (TypeError, ValueError):
+                return "[]"
+
+        overlays_at_start = _canon_cards(existing.get("media_overlays"))
+
         # When SFX are persisted, the terminal SFX reapply pass (the hook at the
         # end of both branches below) owns the final render_status. Keep THIS
         # overlay pass non-terminal ("rendering") so the frontend download poll
@@ -1357,9 +1456,23 @@ def _run_media_overlay_pass(
             record_pipeline_event("media_overlay", "apply_failed", {"error": str(exc)[:200]})
             return
 
+        # Re-read FRESH under a row lock before writing back (plan 009 E5): the
+        # ffmpeg run above took minutes; autosaves may have landed since. The
+        # variants list loaded at task start is stale — never write it back.
+        db.expire_all()
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        stale_write_skipped = False
         for v in variants:
             if v.get("variant_id") == variant_id:
-                v["media_overlays"] = [c.model_dump() for c in cards]
+                if _canon_cards(v.get("media_overlays")) == overlays_at_start:
+                    v["media_overlays"] = [c.model_dump() for c in cards]
+                else:
+                    # User edited during the bake — their metadata wins; the
+                    # video shows this bake's cards until the next Download.
+                    stale_write_skipped = True
                 v["pre_media_overlay_video_path"] = pre_clean
                 v["output_url"] = new_url
                 if will_reapply_sfx:
@@ -1376,7 +1489,11 @@ def _run_media_overlay_pass(
         record_pipeline_event(
             "media_overlay",
             "cards_applied",
-            {"variant_id": variant_id, "card_count": len(cards)},
+            {
+                "variant_id": variant_id,
+                "card_count": len(cards),
+                "stale_write_skipped": stale_write_skipped,
+            },
         )
         # Terminal hook: re-apply persisted SFX on top of the newly composited video.
         _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)

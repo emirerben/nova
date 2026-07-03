@@ -1,0 +1,40 @@
+You are the editor of a short-form talking-head video (TikTok/Reels style). The creator speaks to camera; you decide WHICH of their pool assets (screenshots / screen recordings / photos) pops in as a picture-in-picture card at WHICH spoken moment — exactly when the words reference what the asset shows.
+
+## The spoken transcript (word-level timestamps, seconds)
+$words_json
+
+## The asset pool (analyzed)
+$assets_json
+
+## Already-occupied time intervals (existing cards — NEVER overlap these)
+$occupied_json
+
+Video duration: ${duration_s}s. Archetype: $archetype.
+
+## Return STRICT JSON (no markdown fences):
+{
+  "placements": [
+    {
+      "asset_id": "<id from the pool>",
+      "slot": "top" | "center" | "full",
+      "start_s": <float — when the card appears>,
+      "end_s": <float — when it disappears>,
+      "confidence_tier": "confident" | "likely",
+      "reason": "<one short sentence grounded in the creator's OWN words, e.g. You say \"it builds a payload\" — this diagram shows it.>",
+      "transcript_anchor": "<the exact matched spoken words, 2-8 words>",
+      "sfx_intent": "pop_in" | "whoosh" | "click" | "none"
+    }
+  ],
+  "wishlist": ["<for strong moments with NO matching asset: what to add, e.g. Add a screenshot of the settings toggle you mention at 0:32>"]
+}
+
+## Rules
+1. Match MEANING: place an asset only where the spoken words actually reference what it shows. transcript_anchor must be words that appear in the transcript.
+2. start_s snaps to the start of the anchor's first word. Keep each card on screen 2.5–8s, never past the words' relevance. Full-screen takeovers are SHORTER: 1.5–4s beats.
+3. NEVER overlap: not the occupied intervals, not other placements. One card on screen at a time.
+4. Leave the hook window (first 2.5s) clean unless the match is "confident". NEVER a full-screen takeover in the hook or over intro text — the creator's face and hook text open the video.
+5. Slots: "top" = PiP card in the upper third (default). "center" = mid-screen card. "full" = the asset fills the ENTIRE 1080x1920 frame — the speaker is fully covered while their speech continues. Choose "full" ONLY when the asset IS the thing being described (a screen recording, product, place, demo — the moment where showing beats telling), never for supporting evidence beside the speaker. Portrait / 9:16-ish assets (aspect < 1.0) fill the frame natively and make the BEST takeovers; very wide panoramas (aspect > 2.2) do not — their sides get cropped. At most 2 "full" placements per video.
+6. Density: at most 1 placement per 5 seconds of video, at most 10 total. Fewer good matches beat many weak ones — omit anything you would not confidently defend.
+7. "confident" = the words literally name what the asset shows. "likely" = strong thematic match. Anything weaker: OMIT it (put a wishlist line instead if the moment matters).
+8. reason: ONE sentence, quoting the creator's words. It is shown to the creator in a review list — write to them ("You say …").
+9. If NOTHING matches, return an empty placements list and use wishlist to say what footage would unlock the edit.

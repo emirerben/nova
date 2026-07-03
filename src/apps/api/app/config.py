@@ -389,6 +389,35 @@ class Settings(BaseSettings):
     # routes return 404; the render apply-pass branch never fires.
     sound_effects_enabled: bool = False
 
+    # Overlay auto-placement (plan 005, PR0+). Gates the plan-item asset-pool
+    # routes (upload-urls / register / list / delete) and, in later PRs, the
+    # matcher + suggestion routes. Frontend twin: NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED
+    # in Vercel — keep in sync (dual-flag trap, see CLAUDE.md).
+    # Kill switch: OVERLAY_AUTOPLACE_ENABLED=false → all pool/suggestion routes 404.
+    overlay_autoplace_enabled: bool = False
+
+    # Queue for the light autoplace tasks (analysis + matcher — LLM calls, no
+    # ffmpeg). Default "celery" (the default queue) in prod; local dev sets a
+    # DEDICATED queue (e.g. "autoplace-jobs") because sibling worktree workers
+    # share one redis and would grab tasks they don't have registered.
+    autoplace_queue: str = "celery"
+
+    # Zero-click auto-apply (plan 007, decision D2-B + G3-A): after a plan-item
+    # generate render finalizes, matched visuals are burned in WITHOUT review on
+    # speech-bearing variants. Dedicated kill switch — turning THIS off in prod
+    # never kills manual suggest (OVERLAY_AUTOPLACE_ENABLED). When
+    # MEDIA_OVERLAYS_ENABLED is off, auto-apply degrades to suggest-only + trace.
+    overlay_autoapply_enabled: bool = False
+
+    # Full-screen cutaway takeovers (plan 009). Gates ONLY the AI suggestion
+    # branch (build_suggestions slot "full" → display_mode="fullscreen"); the
+    # manual popover toggle is ungated, and render rollback is covered by
+    # MEDIA_OVERLAYS_ENABLED. Default False per the family rollout pattern
+    # (eng review E2): flip on Fly only AFTER the T4/T5 web surfaces are live
+    # on Vercel — otherwise auto-applied takeovers preview as small pip tiles
+    # (the #296/#297 parity incident class).
+    fullscreen_cutaways_enabled: bool = False
+
     # Per-item "Ask Nova" advisor (plan dogfood feedback #2): conversational,
     # read-only advice about which clip fits which shot. Additive + auth'd; it
     # never writes state (the re-read offer goes through the clip-note PATCH).

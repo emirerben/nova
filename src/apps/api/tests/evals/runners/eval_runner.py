@@ -240,6 +240,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.overlay_format_matcher import OverlayFormatMatcherAgent
 
         return OverlayFormatMatcherAgent
+    if agent_name == "nova.compose.overlay_placement":
+        from app.agents.overlay_placement import OverlayPlacementAgent
+
+        return OverlayPlacementAgent
     if agent_name == "nova.compose.intro_writer":
         from app.agents.intro_writer import IntroTextWriterAgent
 

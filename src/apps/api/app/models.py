@@ -784,6 +784,54 @@ class PlanItem(Base):
     )
 
 
+class PlanItemAsset(Base):
+    """One visual asset in a plan item's pool (auto-placement PR0, plan 005).
+
+    The pool feeds the overlay auto-placement matcher: creators drop screenshots /
+    screen recordings here; each row carries the upload location plus (later, PR1a)
+    the persisted analysis output. Rows live under the PERSISTENT
+    `users/{user_id}/plan/{plan_item_id}/pool/` GCS prefix — never a 24h-swept path,
+    because suggestions must never reference sweepable objects.
+
+    status lifecycle: uploaded → analyzing → ready | failed  (analysis wiring lands
+    in PR1a; PR0 rows stay "uploaded"). `content_hash` powers upload dedupe — identical
+    bytes reuse the existing row instead of re-analyzing.
+    """
+
+    __tablename__ = "plan_item_assets"
+    __table_args__ = (
+        # List query: WHERE plan_item_id ORDER BY created_at.
+        Index("idx_plan_item_assets_item_created", "plan_item_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_item_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plan_items.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    # "image" | "video" — derived from the upload content type in the route layer.
+    # Plain Text (no DB CHECK) so the vocabulary can grow without a migration.
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # SHA-256 hex of the file bytes, computed client-side and verified cheap-path
+    # server-side on register. Dedupe key within one plan item.
+    content_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Server-side ffprobe results (PR1a wires probing for video assets). The matcher
+    # never trusts client-probed values.
+    duration_s: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # width / height of the source — drives aspect-aware slot resolution (plan 005,
+    # outside-voice finding 4). NULL until analysis runs.
+    aspect: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Persisted analysis output (image_metadata / clip_metadata agents, PR1a).
+    analysis: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # uploaded | analyzing | ready | failed
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="uploaded")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+
+
 # Allowed signals — kept in lockstep with the CHECK constraint in migration 0043
 # and the Literal on the POST /me/feedback body. 'note' carries free text; the
 # three thumb-class signals (up/down/more_like_this) are mutually exclusive per

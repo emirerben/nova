@@ -491,3 +491,234 @@ describe("UnifiedTimeline — disabled state", () => {
     expect(screen.getByRole("button", { name: /\+ Add/i })).toBeDisabled();
   });
 });
+
+// ── Suggestion provenance cards in the lanes (006 T3 / 005-4A) ───────────────
+
+/** One pending AI suggestion as the lanes receive it (SuggestionLaneEntry). */
+function makeSuggestionEntry(override: Record<string, unknown> = {}) {
+  return {
+    id: "sug-1",
+    overlay: makeOverlayCard({
+      id: "ov-sug-1",
+      kind: "video",
+      start_s: 5,
+      end_s: 9,
+      clip_trim_start_s: 0,
+      clip_trim_end_s: 4,
+      clip_duration_s: 6,
+    }),
+    sfx: null,
+    staged: false,
+    ...override,
+  };
+}
+
+describe("OverlayLane — suggestion provenance cards (006 T3)", () => {
+  it("renders a suggestion card with dashed lime-600 provenance + ✦ badge", () => {
+    render(
+      <UnifiedTimeline {...makeProps({ overlaySuggestions: [makeSuggestionEntry()] })} />,
+    );
+    const bar = screen.getByRole("button", { name: /suggested overlay/i });
+    expect(bar.className).toMatch(/border-dashed/);
+    expect(bar.className).toMatch(/border-lime-600/);
+    // ✦ badge visible while pending; card is keyboard-focusable.
+    expect(screen.getByTestId("suggestion-badge-sug-1").className).toMatch(/opacity-100/);
+    expect(bar).toHaveAttribute("tabindex", "0");
+  });
+
+  it("staged suggestion flips dashed→solid and fades the ✦ (005-6A accept)", () => {
+    render(
+      <UnifiedTimeline
+        {...makeProps({ overlaySuggestions: [makeSuggestionEntry({ staged: true })] })}
+      />,
+    );
+    const bar = screen.getByRole("button", { name: /suggested overlay/i });
+    expect(bar.className).toMatch(/border-solid/);
+    expect(bar.className).not.toMatch(/border-dashed/);
+    expect(screen.getByTestId("suggestion-badge-sug-1").className).toMatch(/opacity-0/);
+  });
+
+  it("scale-slider edit fires onSuggestionEdit with the patch — no fetch, no manual mutation", async () => {
+    const fetchSpy = jest.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    const onSuggestionEdit = jest.fn();
+    const onUpdateCard = jest.fn();
+    render(
+      <UnifiedTimeline
+        {...makeProps({
+          overlaySuggestions: [makeSuggestionEntry()],
+          onSuggestionEdit,
+          onUpdateCard,
+        })}
+      />,
+    );
+
+    // Open the suggestion card's popover via its bar label, then drag the slider.
+    await act(async () => { fireEvent.click(screen.getByText(/▶ ov-sug/)); });
+    const slider = screen.getByRole("slider");
+    fireEvent.change(slider, { target: { value: "80" } });
+
+    expect(onSuggestionEdit).toHaveBeenCalledWith("sug-1", { scale: 0.8 });
+    expect(onUpdateCard).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("position preset edit routes to onSuggestionEdit, never onUpdateCard", async () => {
+    const onSuggestionEdit = jest.fn();
+    const onUpdateCard = jest.fn();
+    render(
+      <UnifiedTimeline
+        {...makeProps({
+          overlaySuggestions: [makeSuggestionEntry()],
+          onSuggestionEdit,
+          onUpdateCard,
+        })}
+      />,
+    );
+    await act(async () => { fireEvent.click(screen.getByText(/▶ ov-sug/)); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Top" })); });
+    expect(onSuggestionEdit).toHaveBeenCalledWith("sug-1", { position: "top" });
+    expect(onUpdateCard).not.toHaveBeenCalled();
+  });
+
+  it("drag-move fires onSuggestionEdit with start_s/end_s — no fetch, no manual mutation", () => {
+    const fetchSpy = jest.fn();
+    global.fetch = fetchSpy as unknown as typeof fetch;
+    const onSuggestionEdit = jest.fn();
+    const onUpdateCard = jest.fn();
+    render(
+      <UnifiedTimeline
+        {...makeProps({
+          overlaySuggestions: [makeSuggestionEntry()],
+          onSuggestionEdit,
+          onUpdateCard,
+        })}
+      />,
+    );
+
+    const bar = screen.getByRole("button", { name: /suggested overlay/i });
+    fireEvent.mouseDown(bar, { clientX: 0 });
+    fireEvent.mouseMove(window, { clientX: 40 });
+    fireEvent.mouseUp(window);
+
+    expect(onSuggestionEdit).toHaveBeenCalledWith(
+      "sug-1",
+      expect.objectContaining({ start_s: expect.any(Number), end_s: expect.any(Number) }),
+    );
+    expect(onUpdateCard).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("TrimLane clip-trim drag fires onSuggestionEdit with clip_trim fields", () => {
+    // Give drag math a real width (jsdom rects are all zero by default).
+    const rectSpy = jest
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({
+        width: 100, height: 10, top: 0, left: 0, bottom: 10, right: 100, x: 0, y: 0,
+        toJSON: () => ({}),
+      } as DOMRect);
+    const onSuggestionEdit = jest.fn();
+    const onUpdateCard = jest.fn();
+    render(
+      <UnifiedTimeline
+        {...makeProps({
+          overlaySuggestions: [makeSuggestionEntry()],
+          onSuggestionEdit,
+          onUpdateCard,
+        })}
+      />,
+    );
+
+    const handle = document.querySelector('[data-trim-handle="left-ov-sug-1"]')!;
+    expect(handle).toBeTruthy();
+    fireEvent.mouseDown(handle, { clientX: 0 });
+    // 50px over a 100px strip on a 6s clip → +3s trim-in.
+    fireEvent.mouseMove(window, { clientX: 50 });
+    fireEvent.mouseUp(window);
+
+    expect(onSuggestionEdit).toHaveBeenCalledWith(
+      "sug-1",
+      expect.objectContaining({ clip_trim_start_s: 3 }),
+    );
+    expect(onUpdateCard).not.toHaveBeenCalled();
+    rectSpy.mockRestore();
+  });
+
+  it("suggestion popover has no remove button (removal stays in the rail)", async () => {
+    render(
+      <UnifiedTimeline {...makeProps({ overlaySuggestions: [makeSuggestionEntry()] })} />,
+    );
+    await act(async () => { fireEvent.click(screen.getByText(/▶ ov-sug/)); });
+    expect(screen.queryByRole("button", { name: "Remove card" })).toBeNull();
+  });
+
+  it("manual cards alongside suggestions keep their plain styling and onUpdateCard routing", async () => {
+    const onSuggestionEdit = jest.fn();
+    const onUpdateCard = jest.fn();
+    const manual = makeOverlayCard({ id: "ov-manual", kind: "image" });
+    render(
+      <UnifiedTimeline
+        {...makeProps({
+          overlayCards: [manual],
+          overlaySuggestions: [makeSuggestionEntry()],
+          onSuggestionEdit,
+          onUpdateCard,
+        })}
+      />,
+    );
+
+    // Manual bar: no provenance classes, not a suggestion card.
+    const manualLabel = screen.getByText(/ov-man/);
+    const manualBar = manualLabel.parentElement!;
+    expect(manualBar.className).not.toMatch(/border-dashed|border-lime-600/);
+    expect(manualBar).not.toHaveAttribute("data-suggestion-card");
+
+    // Manual scale edit still routes to onUpdateCard.
+    await act(async () => { fireEvent.click(manualLabel); });
+    fireEvent.change(screen.getByRole("slider"), { target: { value: "50" } });
+    expect(onUpdateCard).toHaveBeenCalledWith("ov-manual", { scale: 0.5 });
+    expect(onSuggestionEdit).not.toHaveBeenCalled();
+  });
+});
+
+describe("SfxLane — suggestion sfx diamonds (006 T3)", () => {
+  const sfx = {
+    id: "sfx-1",
+    src_gcs_path: "sound-effects/pop.mp3",
+    at_s: 5,
+    gain: 1.0,
+    duration_s: 0.4,
+    label: "pop",
+  };
+
+  it("renders a read-only diamond with dashed-lime provenance for a suggestion's sfx", () => {
+    render(
+      <UnifiedTimeline
+        {...makeProps({ overlaySuggestions: [makeSuggestionEntry({ sfx })] })}
+      />,
+    );
+    const diamond = screen.getByTestId("sfx-suggestion-sug-1");
+    expect(diamond.className).toMatch(/border-dashed/);
+    expect(diamond.className).toMatch(/border-lime-600/);
+    // Read-only: no pointer surface.
+    expect(diamond.className).toMatch(/pointer-events-none/);
+  });
+
+  it("staged suggestion sfx flips to a solid border", () => {
+    render(
+      <UnifiedTimeline
+        {...makeProps({ overlaySuggestions: [makeSuggestionEntry({ sfx, staged: true })] })}
+      />,
+    );
+    const diamond = screen.getByTestId("sfx-suggestion-sug-1");
+    expect(diamond.className).toMatch(/border-solid/);
+    expect(diamond.className).not.toMatch(/border-dashed/);
+  });
+
+  it("renders no diamond when the suggestion has no sfx", () => {
+    render(
+      <UnifiedTimeline {...makeProps({ overlaySuggestions: [makeSuggestionEntry()] })} />,
+    );
+    expect(screen.queryByTestId("sfx-suggestion-sug-1")).toBeNull();
+  });
+});

@@ -54,6 +54,9 @@ export interface SfxLaneProps {
   sfxUploading: boolean;
   onSfxChange: (placements: SoundEffectPlacement[]) => void;
   onSfxUploadRequest: (files: UploadFile[]) => Promise<void>;
+  /** Child SFX of pending AI overlay suggestions (006 T3) — rendered as
+      read-only dashed-lime ✦ diamonds. Removal stays in the rail ("× sound"). */
+  suggestionSfx?: { id: string; sfx: SoundEffectPlacement; staged: boolean }[];
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -68,6 +71,7 @@ export default function SfxLane({
   sfxUploading,
   onSfxChange,
   onSfxUploadRequest,
+  suggestionSfx,
 }: SfxLaneProps) {
   // ── SFX reducer (undo/redo) ─────────────────────────────────────────────────
 
@@ -276,11 +280,41 @@ export default function SfxLane({
         >
           <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
 
-          {placements.length === 0 && !sfxRendering && (
+          {placements.length === 0 && (suggestionSfx?.length ?? 0) === 0 && !sfxRendering && (
             <p className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 pointer-events-none">
               Add a sound effect below
             </p>
           )}
+
+          {/* Suggested-sfx diamonds (006 T3) — read-only provenance markers.
+              Dashed lime-600 + ✦ while pending; staged → solid + ✦ fade
+              (005-6A). Audio removal stays in the rail's "× sound" strip. */}
+          {(suggestionSfx ?? []).map(({ id, sfx, staged }) => {
+            const { leftPct, widthPct } = sfxBarGeometry(sfx);
+            return (
+              <div
+                key={`sug-${id}`}
+                data-testid={`sfx-suggestion-${id}`}
+                aria-label={`Suggested sound ${sfx.label ?? formatTimecode(sfx.at_s)}`}
+                className={`absolute inset-y-1 rounded border-[1.5px] border-lime-600 ${
+                  staged ? "border-solid" : "border-dashed"
+                } bg-lime-500/15 flex items-center overflow-hidden pointer-events-none select-none`}
+                style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+              >
+                <span className="px-1 text-[9px] text-lime-200 truncate leading-none">
+                  <span
+                    aria-hidden
+                    className={`motion-safe:transition-opacity motion-safe:duration-300 ${
+                      staged ? "opacity-0" : "opacity-100"
+                    }`}
+                  >
+                    ✦{" "}
+                  </span>
+                  {sfx.label ?? formatTimecode(sfx.at_s)}
+                </span>
+              </div>
+            );
+          })}
 
           {placements.map((p) => {
             const { leftPct, widthPct } = sfxBarGeometry(p);
