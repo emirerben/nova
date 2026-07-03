@@ -164,6 +164,8 @@ export default function EditorShell({
   const [appliedStyleSetId, setAppliedStyleSetId] = useState<string | null>(null);
   const [localSfx, setLocalSfx] = useState<SoundEffectPlacement[]>([]);
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
+  const [localOverlayPreviewUrls, setLocalOverlayPreviewUrls] = useState<Record<string, string>>({});
+  const localOverlayPreviewUrlsRef = useRef<Record<string, string>>({});
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
@@ -178,12 +180,26 @@ export default function EditorShell({
     dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
     setLocalSfx((variant.sound_effects ?? []).map((p) => ({ ...p })));
     setLocalOverlays((variant.media_overlays ?? []).map((o) => ({ ...o })));
+    setLocalOverlayPreviewUrls((current) => {
+      Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+      return {};
+    });
     setTextDirty(false);
     setSfxDirty(false);
     setOverlaysDirty(false);
     setTitleDirty(false);
     setAppliedStyleSetId(null);
   }, [variant]);
+
+  useEffect(() => {
+    localOverlayPreviewUrlsRef.current = localOverlayPreviewUrls;
+  }, [localOverlayPreviewUrls]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(localOverlayPreviewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
 
   useEffect(() => {
     if (!item || titleDirty) return;
@@ -812,10 +828,12 @@ export default function EditorShell({
           })),
         );
         await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
+        const previewUrls: Record<string, string> = {};
         const start = Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.3));
         const cards: MediaOverlay[] = uploadUrls.map((u, i) => {
           const file = files[i];
           const id = crypto.randomUUID();
+          previewUrls[id] = URL.createObjectURL(file.file);
           return {
             id,
             kind: file.content_type.startsWith("video/") ? "video" : "image",
@@ -831,6 +849,7 @@ export default function EditorShell({
         });
         history.record();
         setLocalOverlays((cur) => [...cur, ...cards]);
+        setLocalOverlayPreviewUrls((cur) => ({ ...cur, ...previewUrls }));
         setOverlaysDirty(true);
         if (cards[0]) {
           select("overlay", cards[0].id);
@@ -1585,12 +1604,16 @@ export default function EditorShell({
             variant={variant}
             elements={elements}
             bars={state.bars}
+            mediaOverlays={localOverlays}
+            overlayPreviewUrls={localOverlayPreviewUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
+            selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
             currentTime={currentTime}
             zoomPct={100}
             tool="select"
             videoRef={videoRef}
             onSelectText={selectText}
+            onSelectOverlay={(id) => selectElement("overlay", id)}
             onClearSelection={() => {
               clear();
               setLightSheetOpen(false);
@@ -1676,12 +1699,16 @@ export default function EditorShell({
             variant={variant}
             elements={elements}
             bars={state.bars}
+            mediaOverlays={localOverlays}
+            overlayPreviewUrls={localOverlayPreviewUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
+            selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
             currentTime={currentTime}
             zoomPct={zoomPct}
             tool={canvasTool}
             videoRef={videoRef}
             onSelectText={selectText}
+            onSelectOverlay={(id) => selectElement("overlay", id)}
             onClearSelection={clear}
             onPatchBar={patchBar}
             onFocusContent={focusContent}
@@ -1780,14 +1807,24 @@ export default function EditorShell({
             sfxUploading={false}
             onSfxChange={() => {}}
             onSfxUploadRequest={async () => {}}
-            overlayCards={[]}
-            overlaysEnabled={false}
-            overlayUploading={false}
-            localPreviewUrls={{}}
-            onOverlayUploadRequest={() => {}}
-            onUpdateCard={() => {}}
-            onRemoveCard={() => {}}
-            onClearOverlays={() => {}}
+            overlayCards={localOverlays}
+            overlaysEnabled={capabilities?.overlays !== false && !readOnly}
+            overlayUploading={overlayUploading}
+            localPreviewUrls={localOverlayPreviewUrls}
+            onOverlayUploadRequest={handleOverlayUpload}
+            onUpdateCard={patchOverlay}
+            onRemoveCard={removeOverlay}
+            onClearOverlays={() => {
+              if (readOnly || capabilities?.overlays === false) return;
+              history.record();
+              setLocalOverlays([]);
+              setLocalOverlayPreviewUrls((current) => {
+                Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+                return {};
+              });
+              setOverlaysDirty(true);
+              clear();
+            }}
             editorMode={editorModeProps}
           />
         </div>

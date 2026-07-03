@@ -18,11 +18,15 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { PlanItemVariant, TextElement } from "@/lib/plan-api";
+import type { MediaOverlay, PlanItemVariant, TextElement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { resolveTextElementsLayout, CANVAS_W, CANVAS_H } from "@/lib/overlay-layout";
 import { resolveCssFont } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
+import {
+  visibleMediaOverlaysAtTime,
+  type VisibleMediaOverlay,
+} from "./editor-media-overlays";
 import { cycleHit } from "./useEditorSelection";
 import type { VirtualPreviewController } from "./useVirtualPreview";
 
@@ -58,12 +62,16 @@ export default function EditorCanvas({
   variant,
   elements,
   bars,
+  mediaOverlays = [],
+  overlayPreviewUrls = {},
   selectedTextId,
+  selectedOverlayId,
   currentTime,
   zoomPct,
   tool,
   videoRef,
   onSelectText,
+  onSelectOverlay,
   onClearSelection,
   onPatchBar,
   onFocusContent,
@@ -80,13 +88,17 @@ export default function EditorCanvas({
   elements: TextElement[];
   /** The raw working bars, for style fields the layout doesn't carry. */
   bars: TextElementBar[];
+  mediaOverlays?: MediaOverlay[];
+  overlayPreviewUrls?: Record<string, string>;
   selectedTextId: string | null;
+  selectedOverlayId?: string | null;
   currentTime: number;
   zoomPct: number;
   tool: "select" | "pan";
   /** Owned by the shell so the future TransportBar can drive the same video. */
   videoRef: React.RefObject<HTMLVideoElement>;
   onSelectText: (id: string) => void;
+  onSelectOverlay?: (id: string) => void;
   onClearSelection: () => void;
   onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
   /** Double-click contract: focus the inspector content textarea, select-all. */
@@ -144,6 +156,10 @@ export default function EditorCanvas({
   const visible = useMemo(
     () => layouts.filter((l) => currentTime >= l.start_s && currentTime < l.end_s),
     [layouts, currentTime],
+  );
+  const visibleMediaOverlays = useMemo(
+    () => visibleMediaOverlaysAtTime(mediaOverlays, currentTime, overlayPreviewUrls),
+    [currentTime, mediaOverlays, overlayPreviewUrls],
   );
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
@@ -430,6 +446,15 @@ export default function EditorCanvas({
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
               >
+                {visibleMediaOverlays.map((overlay) => (
+                  <MediaOverlayCard
+                    key={overlay.card.id}
+                    overlay={overlay}
+                    currentTimeS={currentTime}
+                    selected={selectedOverlayId === overlay.card.id}
+                    onSelect={onSelectOverlay}
+                  />
+                ))}
                 {visible.map((layout) => {
                   const bar = barById.get(layout.id);
                   const override = dragOverride?.id === layout.id ? dragOverride : null;
@@ -591,5 +616,93 @@ export default function EditorCanvas({
         </div>
       </div>
     </div>
+  );
+}
+
+function MediaOverlayCard({
+  overlay,
+  currentTimeS,
+  selected,
+  onSelect,
+}: {
+  overlay: VisibleMediaOverlay;
+  currentTimeS: number;
+  selected: boolean;
+  onSelect?: (id: string) => void;
+}) {
+  const { card, displayUrl } = overlay;
+  return (
+    <div
+      data-overlay-id={card.id}
+      className="absolute select-none touch-none"
+      style={{
+        left: `${card.x_frac * 100}%`,
+        top: `${card.y_frac * 100}%`,
+        transform: "translate(-50%, -50%)",
+        width: `${card.scale * 100}%`,
+      }}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        onSelect?.(card.id);
+      }}
+    >
+      {card.kind === "image" ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={displayUrl} alt="" className="h-auto w-full rounded" draggable={false} />
+      ) : (
+        <EditorVideoOverlayPreview
+          src={displayUrl}
+          trimStart={card.clip_trim_start_s ?? 0}
+          trimEnd={card.clip_trim_end_s ?? null}
+          cardStartS={card.start_s}
+          currentTimeS={currentTimeS}
+        />
+      )}
+      {selected && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -inset-1 rounded"
+          style={{ boxShadow: "0 0 0 2px #84cc16" }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditorVideoOverlayPreview({
+  src,
+  trimStart,
+  trimEnd,
+  cardStartS,
+  currentTimeS,
+}: {
+  src: string;
+  trimStart: number;
+  trimEnd: number | null;
+  cardStartS: number;
+  currentTimeS: number;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    const overlayTime = trimStart + Math.max(0, currentTimeS - cardStartS);
+    const cappedTime = trimEnd !== null ? Math.min(overlayTime, trimEnd) : overlayTime;
+    if (Number.isFinite(cappedTime) && Math.abs(video.currentTime - cappedTime) > 0.15) {
+      video.currentTime = cappedTime;
+    }
+  }, [cardStartS, currentTimeS, trimEnd, trimStart]);
+
+  return (
+    <video
+      ref={ref}
+      src={src}
+      autoPlay
+      muted
+      loop
+      playsInline
+      className="h-auto w-full rounded"
+    />
   );
 }
