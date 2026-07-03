@@ -26,13 +26,19 @@ from app.agents._schemas.text_element import (
     TextElement,
     apply_text_case,
 )
-from app.pipeline.generative_overlays import build_overlays_from_text_elements
+from app.pipeline.generative_overlays import (
+    build_overlays_from_text_elements,
+    resolve_letter_spacing_em,
+    resolve_letter_spacing_px,
+    resolve_line_spacing,
+)
 
 # repo_root/tests/fixtures/text-element-parity — shared with the Jest suite.
 FIXTURES_DIR = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "text-element-parity"
 
 # Fields whose gate is THIS suite (base fields predate the D17 mechanism).
-GATED_STYLE_FIELDS = {"text_case"}
+GATED_STYLE_FIELDS = {"text_case", "letter_spacing", "line_spacing"}
+NUMERIC_TOLERANCE = 1e-9
 
 
 def _load_fixture(field: str) -> dict:
@@ -140,3 +146,107 @@ def test_unknown_text_case_coerces_to_none() -> None:
     assert elem.text_case is None
     overlay = build_overlays_from_text_elements([elem], video_duration_s=10.0)[0]
     assert overlay["text"] == "AbC"
+
+
+# ── letter_spacing ────────────────────────────────────────────────────────────
+
+
+def _letter_spacing_cases() -> list[dict]:
+    return _load_fixture("letter_spacing")["cases"]
+
+
+@pytest.mark.parametrize("case", _letter_spacing_cases(), ids=lambda c: c["name"])
+def test_letter_spacing_burn_dict_matches_fixture(case: dict) -> None:
+    """The compiled burn dict carries the clamped em value only when authored."""
+    overlay = _compile_one(case["element"])
+    expected = case["expected"]
+    if expected["burn_dict_has_field"]:
+        assert overlay["letter_spacing"] == pytest.approx(
+            expected["letter_spacing_em"], abs=NUMERIC_TOLERANCE
+        )
+    else:
+        assert "letter_spacing" not in overlay
+
+
+@pytest.mark.parametrize("case", _letter_spacing_cases(), ids=lambda c: c["name"])
+def test_letter_spacing_helpers_match_fixture(case: dict) -> None:
+    """Pure resolvers mirror resolveLetterSpacingEm/Px in overlay-layout.ts."""
+    el = case["element"]
+    expected = case["expected"]
+    assert resolve_letter_spacing_em(el.get("letter_spacing")) == pytest.approx(
+        expected["letter_spacing_em"], abs=NUMERIC_TOLERANCE
+    )
+    assert resolve_letter_spacing_px(el.get("letter_spacing"), el["size_px"]) == pytest.approx(
+        expected["letter_spacing_px"], abs=NUMERIC_TOLERANCE
+    )
+
+
+@pytest.mark.parametrize("case", _letter_spacing_cases(), ids=lambda c: c["name"])
+def test_letter_spacing_schema_clamp_matches_fixture(case: dict) -> None:
+    """TextElement validation uses the same clamp as the burn/layout resolvers."""
+    elem = TextElement.model_validate(case["element"])
+    expected = case["expected"]
+    if expected["burn_dict_has_field"]:
+        assert elem.letter_spacing == pytest.approx(
+            expected["letter_spacing_em"], abs=NUMERIC_TOLERANCE
+        )
+    else:
+        assert elem.letter_spacing is None
+
+
+# ── line_spacing ──────────────────────────────────────────────────────────────
+
+
+def _line_spacing_cases() -> list[dict]:
+    return _load_fixture("line_spacing")["cases"]
+
+
+def _block_metrics(line_count: int, line_height_px: float, line_spacing: float) -> dict[str, int]:
+    """Mirror the renderer's _measure_block height math."""
+    line_step = int(line_height_px * line_spacing)
+    block_h = line_step * (line_count - 1) + int(line_height_px) if line_count > 0 else 0
+    return {"line_step": line_step, "block_h": block_h}
+
+
+@pytest.mark.parametrize("case", _line_spacing_cases(), ids=lambda c: c["name"])
+def test_line_spacing_burn_dict_matches_fixture(case: dict) -> None:
+    """The compiled burn dict carries the clamped multiplier only when authored."""
+    overlay = _compile_one(case["element"])
+    expected = case["expected"]
+    if expected["burn_dict_has_field"]:
+        assert overlay["line_spacing"] == pytest.approx(
+            expected["line_spacing"], abs=NUMERIC_TOLERANCE
+        )
+    else:
+        assert "line_spacing" not in overlay
+
+
+@pytest.mark.parametrize("case", _line_spacing_cases(), ids=lambda c: c["name"])
+def test_line_spacing_helper_and_geometry_match_fixture(case: dict) -> None:
+    """resolve_line_spacing + block-height math mirror the TS layout helper."""
+    el = case["element"]
+    expected = case["expected"]
+    resolved = resolve_line_spacing(el.get("line_spacing"))
+    assert resolved == pytest.approx(expected["line_spacing"], abs=NUMERIC_TOLERANCE)
+
+    geometry = case["geometry"]
+    metrics = _block_metrics(
+        int(geometry["line_count"]),
+        float(geometry["line_height_px"]),
+        resolved,
+    )
+    assert metrics["line_step"] == expected["line_step"]
+    assert metrics["block_h"] == expected["block_h"]
+
+
+@pytest.mark.parametrize("case", _line_spacing_cases(), ids=lambda c: c["name"])
+def test_line_spacing_schema_clamp_matches_fixture(case: dict) -> None:
+    """TextElement validation uses the same clamp as the burn/layout resolvers."""
+    elem = TextElement.model_validate(case["element"])
+    expected = case["expected"]
+    if expected["burn_dict_has_field"]:
+        assert elem.line_spacing == pytest.approx(
+            expected["line_spacing"], abs=NUMERIC_TOLERANCE
+        )
+    else:
+        assert elem.line_spacing is None

@@ -1,0 +1,89 @@
+{
+  "field": "letter_spacing",
+  "contract": "letter_spacing is authored in em units, clamped identically by TextElement, resolve_letter_spacing_em, and resolveLetterSpacingEm, carried in the Python burn dict, and exposed to the CSS layout as letterSpacingEm. Pixel tracking is resolved at the final rendered font size on both sides.",
+  "asserted_by": [
+    "src/apps/api/tests/pipeline/test_text_element_parity_contract.py",
+    "src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts"
+  ],
+  "cases": [
+    {
+      "name": "positive-em",
+      "element": {
+        "id": "ls-positive",
+        "text": "Track me",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "letter_spacing": 0.12
+      },
+      "expected": {
+        "letter_spacing_em": 0.12,
+        "letter_spacing_px": 8.64,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "negative-em",
+      "element": {
+        "id": "ls-negative",
+        "text": "Tighter",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "letter_spacing": -0.03
+      },
+      "expected": {
+        "letter_spacing_em": -0.03,
+        "letter_spacing_px": -2.16,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "clamps-high",
+      "element": {
+        "id": "ls-high",
+        "text": "Wide",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "letter_spacing": 1.25
+      },
+      "expected": {
+        "letter_spacing_em": 0.5,
+        "letter_spacing_px": 36.0,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "clamps-low",
+      "element": {
+        "id": "ls-low",
+        "text": "Tight",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "letter_spacing": -0.2
+      },
+      "expected": {
+        "letter_spacing_em": -0.05,
+        "letter_spacing_px": -3.6,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "absent-defaults-to-zero",
+      "element": {
+        "id": "ls-absent",
+        "text": "Default",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72
+      },
+      "expected": {
+        "letter_spacing_em": 0.0,
+        "letter_spacing_px": 0.0,
+        "burn_dict_has_field": false
+      }
+    }
+  ]
+}

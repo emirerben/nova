@@ -701,6 +701,12 @@ export interface TextElement {
   /** Display-case transform, resolved at compile/layout time (T11 slice;
    * parity fixture tests/fixtures/text-element-parity/text_case.json). */
   text_case?: "none" | "upper" | "lower" | "title" | null;
+  /** Tracking in em (× font size), clamped [-0.05, 0.5] server-side (T11;
+   * parity fixture letter_spacing.json). */
+  letter_spacing?: number | null;
+  /** Line-height multiplier, clamped [0.5, 3.0]; null = renderer default 1.15
+   * (T11; parity fixture line_spacing.json). */
+  line_spacing?: number | null;
   fade_out_ms?: number | null;
   reveal_s?: number | null;
   z?: number | null;

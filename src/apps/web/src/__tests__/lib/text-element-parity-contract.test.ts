@@ -12,7 +12,13 @@
 
 import fs from "fs";
 import path from "path";
-import { applyTextCase, resolveTextElementsLayout } from "@/lib/overlay-layout";
+import {
+  applyTextCase,
+  blockMetrics,
+  resolveLetterSpacingPx,
+  resolveLineSpacing,
+  resolveTextElementsLayout,
+} from "@/lib/overlay-layout";
 import { PARITY_VERIFIED_FIELDS } from "@/lib/parity-verified-fields";
 import type { TextElement } from "@/lib/plan-api";
 
@@ -24,11 +30,12 @@ const FIXTURES_DIR = path.resolve(
 
 /** Fields whose gate is THIS suite (base fields predate the D17 mechanism).
  * Must mirror GATED_STYLE_FIELDS in test_text_element_parity_contract.py. */
-const GATED_STYLE_FIELDS = ["text_case"];
+const GATED_STYLE_FIELDS = ["text_case", "letter_spacing", "line_spacing"];
 
 interface FixtureCase {
   name: string;
   element: Record<string, unknown>;
+  geometry?: Record<string, unknown>;
   expected: Record<string, unknown>;
 }
 
@@ -68,7 +75,7 @@ describe("text_case contract (fixture: text_case.json)", () => {
 
   it.each(cases.map((c) => [c.name, c] as const))(
     "layout text matches the burn dict: %s",
-    (_name, c) => {
+    (_name: string, c: FixtureCase) => {
       // Same string the Python compiler writes into the burn dict.
       expect(layoutOne(c.element).text).toBe(c.expected.text);
     },
@@ -76,7 +83,7 @@ describe("text_case contract (fixture: text_case.json)", () => {
 
   it.each(cases.map((c) => [c.name, c] as const))(
     "applyTextCase mirrors apply_text_case: %s",
-    (_name, c) => {
+    (_name: string, c: FixtureCase) => {
       expect(
         applyTextCase(c.element.text as string, c.element.text_case as string | undefined),
       ).toBe(c.expected.text);
@@ -86,4 +93,59 @@ describe("text_case contract (fixture: text_case.json)", () => {
   it("coerces unknown case values to passthrough (mirrors the schema coercion)", () => {
     expect(applyTextCase("AbC", "sTuDlY")).toBe("AbC");
   });
+});
+
+describe("letter_spacing contract (fixture: letter_spacing.json)", () => {
+  const { cases } = loadFixture("letter_spacing");
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "layout em value matches the burn dict: %s",
+    (_name: string, c: FixtureCase) => {
+      expect(layoutOne(c.element).letterSpacingEm).toBeCloseTo(
+        c.expected.letter_spacing_em as number,
+        9,
+      );
+    },
+  );
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "resolveLetterSpacingPx mirrors resolve_letter_spacing_px: %s",
+    (_name: string, c: FixtureCase) => {
+      expect(
+        resolveLetterSpacingPx(
+          c.element.letter_spacing as number | null | undefined,
+          c.element.size_px as number,
+        ),
+      ).toBeCloseTo(c.expected.letter_spacing_px as number, 9);
+    },
+  );
+});
+
+describe("line_spacing contract (fixture: line_spacing.json)", () => {
+  const { cases } = loadFixture("line_spacing");
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "layout multiplier matches the burn dict: %s",
+    (_name: string, c: FixtureCase) => {
+      expect(layoutOne(c.element).lineSpacing).toBeCloseTo(
+        c.expected.line_spacing as number,
+        9,
+      );
+    },
+  );
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "resolveLineSpacing + blockMetrics mirror Python geometry: %s",
+    (_name: string, c: FixtureCase) => {
+      const lineSpacing = resolveLineSpacing(c.element.line_spacing as number | null | undefined);
+      expect(lineSpacing).toBeCloseTo(c.expected.line_spacing as number, 9);
+      const { lineStep, blockH } = blockMetrics(
+        c.geometry?.line_count as number,
+        c.geometry?.line_height_px as number,
+        lineSpacing,
+      );
+      expect(lineStep).toBe(c.expected.line_step as number);
+      expect(blockH).toBe(c.expected.block_h as number);
+    },
+  );
 });

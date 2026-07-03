@@ -66,6 +66,52 @@ _DEFAULT_HIGHLIGHT_COLOR = "#FFD24A"
 _HEX_LEN = (4, 7)  # "#RGB" or "#RRGGBB"
 
 
+# ── Parity-gated style-field resolvers (T11, D9/D17) ─────────────────────────
+#
+# Pure, import-light helpers shared by the Skia renderer and the parity
+# contract tests. Each has an EXACT TS mirror in
+# src/apps/web/src/lib/overlay-layout.ts, locked by a shared JSON fixture in
+# tests/fixtures/text-element-parity/ (see
+# tests/pipeline/test_text_element_parity_contract.py).
+
+# Mirrors LETTER_SPACING_* / LINE_SPACING_* in text_element.py + overlay-layout.ts.
+_LETTER_SPACING_MIN_EM = -0.05
+_LETTER_SPACING_MAX_EM = 0.5
+_LINE_SPACING_MIN = 0.5
+_LINE_SPACING_MAX = 3.0
+# Renderer default line-height multiplier (Skia _LINE_SPACING / CSS preview).
+DEFAULT_LINE_SPACING = 1.15
+
+
+def resolve_letter_spacing_em(value: object) -> float:
+    """Clamped letter-spacing in em; 0.0 (no tracking) for absent/invalid.
+    TS mirror: resolveLetterSpacingEm (overlay-layout.ts)."""
+    if value is None:
+        return 0.0
+    try:
+        return max(_LETTER_SPACING_MIN_EM, min(_LETTER_SPACING_MAX_EM, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def resolve_letter_spacing_px(value: object, font_size_px: float) -> float:
+    """em → px at the FINAL drawn font size (both renderers scale tracking with
+    the size the text actually renders at, including shrink-to-fit).
+    TS mirror: resolveLetterSpacingPx (overlay-layout.ts)."""
+    return resolve_letter_spacing_em(value) * float(font_size_px)
+
+
+def resolve_line_spacing(value: object) -> float:
+    """Clamped line-height multiplier; DEFAULT_LINE_SPACING for absent/invalid.
+    TS mirror: resolveLineSpacing (overlay-layout.ts)."""
+    if value is None:
+        return DEFAULT_LINE_SPACING
+    try:
+        return max(_LINE_SPACING_MIN, min(_LINE_SPACING_MAX, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_LINE_SPACING
+
+
 def _coerce_hex(value: object, default: str) -> str:
     """Accept only a valid #RGB/#RRGGBB hex; anything else → default. Self-defending so
     a caller passing user-controlled colors can't push junk to the renderer."""
@@ -97,6 +143,8 @@ def build_intro_overlay(
     text_size_px: int | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
+    letter_spacing: float | None = None,
+    line_spacing: float | None = None,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -153,6 +201,13 @@ def build_intro_overlay(
         overlay["position_x_frac"] = float(position_x_frac)
     if position_y_frac is not None:
         overlay["position_y_frac"] = float(position_y_frac)
+
+    # Parity-gated spacing fields (T11): clamped here so the burn dict always
+    # carries renderer-safe values (same clamps as the schema + the TS layout).
+    if letter_spacing is not None:
+        overlay["letter_spacing"] = resolve_letter_spacing_em(letter_spacing)
+    if line_spacing is not None:
+        overlay["line_spacing"] = resolve_line_spacing(line_spacing)
 
     # Only the karaoke-line effect consumes per-word timings. Synthesize them from the
     # overlay window (even split, beat-snapped when a song is present).
@@ -804,6 +859,8 @@ def build_overlays_from_text_elements(
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
+                letter_spacing=elem.letter_spacing,
+                line_spacing=elem.line_spacing,
             )
             if reveal is not None:
                 reveal["role"] = elem.role
@@ -833,6 +890,8 @@ def build_overlays_from_text_elements(
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
+                letter_spacing=elem.letter_spacing,
+                line_spacing=elem.line_spacing,
             )
             if hold is not None:
                 hold["role"] = elem.role
@@ -859,6 +918,8 @@ def build_overlays_from_text_elements(
             text_size_px=text_size_px,
             position_x_frac=pos_x_frac,
             position_y_frac=pos_y_frac,
+            letter_spacing=elem.letter_spacing,
+            line_spacing=elem.line_spacing,
         )
         if overlay is None:
             continue

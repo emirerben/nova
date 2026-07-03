@@ -249,8 +249,9 @@ export function layoutIntroHold(
 export function blockMetrics(
   lineCount: number,
   lineHeightPx: number,
+  lineSpacing: number = LINE_SPACING,
 ): { lineStep: number; blockH: number } {
-  const lineStep = Math.trunc(lineHeightPx * LINE_SPACING);
+  const lineStep = Math.trunc(lineHeightPx * lineSpacing);
   const blockH = lineCount > 0 ? lineStep * (lineCount - 1) + Math.trunc(lineHeightPx) : 0;
   return { lineStep, blockH };
 }
@@ -278,6 +279,41 @@ export { CANVAS_H, CANVAS_W };
 /** Valid text_case transforms — mirror of _VALID_TEXT_CASES in text_element.py. */
 export const TEXT_CASES = ["none", "upper", "lower", "title"] as const;
 export type TextCase = (typeof TEXT_CASES)[number];
+
+/** Spacing clamps — mirror of LETTER_SPACING_* / LINE_SPACING_* in
+ * text_element.py and the resolver clamps in generative_overlays.py. */
+export const LETTER_SPACING_MIN_EM = -0.05;
+export const LETTER_SPACING_MAX_EM = 0.5;
+export const LINE_SPACING_MIN = 0.5;
+export const LINE_SPACING_MAX = 3.0;
+
+/**
+ * Clamped letter-spacing in em; 0 (no tracking) for absent/invalid.
+ * EXACT mirror of resolve_letter_spacing_em (generative_overlays.py);
+ * parity fixture: letter_spacing.json.
+ */
+export function resolveLetterSpacingEm(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 0;
+  return Math.max(LETTER_SPACING_MIN_EM, Math.min(LETTER_SPACING_MAX_EM, value));
+}
+
+/** em → px at the FINAL rendered font size — mirror of resolve_letter_spacing_px. */
+export function resolveLetterSpacingPx(
+  value: number | null | undefined,
+  fontSizePx: number,
+): number {
+  return resolveLetterSpacingEm(value) * fontSizePx;
+}
+
+/**
+ * Clamped line-height multiplier; the renderer default (LINE_SPACING = 1.15)
+ * for absent/invalid. EXACT mirror of resolve_line_spacing
+ * (generative_overlays.py); parity fixture: line_spacing.json.
+ */
+export function resolveLineSpacing(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return LINE_SPACING;
+  return Math.max(LINE_SPACING_MIN, Math.min(LINE_SPACING_MAX, value));
+}
 
 /**
  * Apply a text_case transform. EXACT mirror of `apply_text_case` in
@@ -323,6 +359,12 @@ export interface TextElementLayout {
   fontFamily: string;
   color: string;
   alignment: "left" | "center" | "right";
+  /** Extra tracking in em (× font size); 0 = none. Parity-gated (T11).
+   * CSS: `letter-spacing: ${letterSpacingEm}em`. */
+  letterSpacingEm: number;
+  /** Line-height multiplier (default 1.15 = the renderer constant).
+   * CSS: `line-height: ${lineSpacing}`. Parity-gated (T11). */
+  lineSpacing: number;
   start_s: number;
   end_s: number;
 }
@@ -352,6 +394,8 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       fontFamily: el.font_family ?? "PlayfairDisplay-Bold",
       color: el.color ?? "#FFFFFF",
       alignment: (el.alignment ?? "center") as "left" | "center" | "right",
+      letterSpacingEm: resolveLetterSpacingEm(el.letter_spacing),
+      lineSpacing: resolveLineSpacing(el.line_spacing),
       start_s: el.start_s,
       end_s: el.end_s,
     };

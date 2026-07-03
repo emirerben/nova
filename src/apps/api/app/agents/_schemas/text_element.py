@@ -68,6 +68,13 @@ _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 # Valid text_case transforms (mirror of TEXT_CASES in lib/overlay-layout.ts).
 _VALID_TEXT_CASES: frozenset[str] = frozenset({"none", "upper", "lower", "title"})
 
+# Spacing clamps — mirrors LETTER_SPACING_MIN/MAX + LINE_SPACING_MIN/MAX in
+# lib/overlay-layout.ts and the resolver clamps in generative_overlays.py.
+LETTER_SPACING_MIN_EM = -0.05
+LETTER_SPACING_MAX_EM = 0.5
+LINE_SPACING_MIN = 0.5
+LINE_SPACING_MAX = 3.0
+
 # ---------------------------------------------------------------------------
 # Renderer-parity registry (Python mirror of PARITY_VERIFIED_FIELDS in
 # src/apps/web/src/lib/parity-verified-fields.ts — decision D9/D17).
@@ -98,6 +105,8 @@ PARITY_VERIFIED_FIELDS: frozenset[str] = frozenset(
         "effect",
         # Gated style fields (T11) — each has a shared parity fixture:
         "text_case",  # tests/fixtures/text-element-parity/text_case.json
+        "letter_spacing",  # tests/fixtures/text-element-parity/letter_spacing.json
+        "line_spacing",  # tests/fixtures/text-element-parity/line_spacing.json
     }
 )
 
@@ -234,6 +243,23 @@ class TextElement(BaseModel):
             "whitespace-delimited word uppercased, rest lowercased."
         ),
     )
+    letter_spacing: float | None = Field(
+        default=None,
+        description=(
+            "Extra tracking between characters in EM units (× font size). "
+            "Silently clamped to [-0.05, 0.5]. Honored by the Skia renderer "
+            "(per-character advance) and the CSS preview (letter-spacing); "
+            "px resolution = em × final font size on both sides."
+        ),
+    )
+    line_spacing: float | None = Field(
+        default=None,
+        description=(
+            "Line-height multiplier over the face's natural line height "
+            "(ascent+descent). Silently clamped to [0.5, 3.0]; None = the "
+            "renderer default 1.15 (Skia _LINE_SPACING / CSS preview)."
+        ),
+    )
     fade_out_ms: int | None = Field(
         default=None,
         ge=0,
@@ -297,6 +323,28 @@ class TextElement(BaseModel):
             return None
         try:
             return max(0.0, min(20.0, float(v)))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("letter_spacing", mode="before")
+    @classmethod
+    def _clamp_letter_spacing(cls, v: object) -> float | None:
+        """Silently clamp to [-0.05, 0.5] em (mirrors the TS clamp)."""
+        if v is None:
+            return None
+        try:
+            return max(LETTER_SPACING_MIN_EM, min(LETTER_SPACING_MAX_EM, float(v)))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("line_spacing", mode="before")
+    @classmethod
+    def _clamp_line_spacing(cls, v: object) -> float | None:
+        """Silently clamp to [0.5, 3.0] (mirrors the TS clamp)."""
+        if v is None:
+            return None
+        try:
+            return max(LINE_SPACING_MIN, min(LINE_SPACING_MAX, float(v)))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
 
@@ -481,6 +529,14 @@ def _burn_dict_to_text_element(
     stroke_raw = burn_dict.get("stroke_width")
     stroke_width: float | None = float(stroke_raw) if stroke_raw is not None else None
 
+    # Parity-gated spacing fields (already clamped by TextElement validators).
+    letter_spacing_raw = burn_dict.get("letter_spacing")
+    letter_spacing: float | None = (
+        float(letter_spacing_raw) if letter_spacing_raw is not None else None
+    )
+    line_spacing_raw = burn_dict.get("line_spacing")
+    line_spacing: float | None = float(line_spacing_raw) if line_spacing_raw is not None else None
+
     # alignment from text_anchor
     text_anchor = str(burn_dict.get("text_anchor") or "center")
     alignment = _ANCHOR_TO_ALIGNMENT.get(text_anchor, "center")
@@ -516,6 +572,8 @@ def _burn_dict_to_text_element(
             color=color,
             highlight_color=highlight_color,
             stroke_width=stroke_width,
+            letter_spacing=letter_spacing,
+            line_spacing=line_spacing,
             alignment=alignment,  # type: ignore[arg-type]
             effect=effect,  # type: ignore[arg-type]
             fade_out_ms=fade_out_ms,

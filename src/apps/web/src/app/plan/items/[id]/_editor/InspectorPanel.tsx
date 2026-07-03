@@ -24,6 +24,13 @@ import {
   INTRO_FONTS,
   resolveCssFont,
 } from "@/lib/overlay-constants";
+import {
+  LETTER_SPACING_MAX_EM,
+  LETTER_SPACING_MIN_EM,
+  LINE_SPACING,
+  LINE_SPACING_MAX,
+  LINE_SPACING_MIN,
+} from "@/lib/overlay-layout";
 import { INTRO_SIZE_MAX, INTRO_SIZE_MIN, INTRO_SIZE_STEP } from "@/lib/generative-api";
 import {
   INSPECTOR_INTERNAL_FIELDS,
@@ -43,6 +50,9 @@ const EDITABLE_ROW_FIELDS = new Set([
   "effect",
   "color",
   "stroke_width",
+  "text_case",
+  "letter_spacing",
+  "line_spacing",
 ]);
 
 const SIZE_OPTIONS = (() => {
@@ -184,6 +194,9 @@ function TextInspector({
 
   const sizeValue = Math.round(bar.size_px ?? 64);
   const clampedSlider = Math.min(INTRO_SIZE_MAX, Math.max(INTRO_SIZE_MIN, sizeValue));
+  const canEditTextCase = isParityVerified("text_case");
+  const canEditLetterSpacing = isParityVerified("letter_spacing");
+  const canEditLineSpacing = isParityVerified("line_spacing");
 
   // Read-only rows: any bar field carrying a value that has no editable row
   // here and isn't plumbing. Unverified fields (future server data) also land
@@ -284,6 +297,58 @@ function TextInspector({
       <div className="mt-6 flex items-center justify-between border-b border-zinc-100 pb-2">
         <span className="text-[13px] font-bold text-[#0c0c0e]">Style</span>
       </div>
+
+      {canEditTextCase && (
+        <label className="flex h-11 items-center justify-between border-b border-zinc-100">
+          <span className="text-[13px] text-[#3f3f46]">Aa case</span>
+          <select
+            aria-label="Text case"
+            value={bar.text_case ?? "none"}
+            onChange={(e) => onPatch({ text_case: e.target.value })}
+            className="h-8 w-[116px] rounded-lg border border-zinc-200 bg-white px-2 text-[12px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+          >
+            <option value="none">None</option>
+            <option value="upper">Upper</option>
+            <option value="lower">Lower</option>
+            <option value="title">Title</option>
+          </select>
+        </label>
+      )}
+
+      {(canEditLetterSpacing || canEditLineSpacing) && (
+        <div className="flex min-h-11 items-center justify-between gap-3 border-b border-zinc-100 py-2">
+          {canEditLetterSpacing && (
+            <label className="min-w-0 flex-1 text-[12px] text-[#3f3f46]">
+              Letter
+              <input
+                type="number"
+                aria-label="Letter spacing"
+                min={LETTER_SPACING_MIN_EM}
+                max={LETTER_SPACING_MAX_EM}
+                step={0.01}
+                value={bar.letter_spacing ?? 0}
+                onChange={(e) => onPatch({ letter_spacing: Number(e.target.value) })}
+                className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+              />
+            </label>
+          )}
+          {canEditLineSpacing && (
+            <label className="min-w-0 flex-1 text-[12px] text-[#3f3f46]">
+              Line
+              <input
+                type="number"
+                aria-label="Line spacing"
+                min={LINE_SPACING_MIN}
+                max={LINE_SPACING_MAX}
+                step={0.05}
+                value={bar.line_spacing ?? LINE_SPACING}
+                onChange={(e) => onPatch({ line_spacing: Number(e.target.value) })}
+                className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+              />
+            </label>
+          )}
+        </div>
+      )}
 
       {/* Fill — visible by default (progressive disclosure) */}
       <div className="flex h-11 items-center justify-between border-b border-zinc-100">

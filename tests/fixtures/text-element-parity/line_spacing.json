@@ -1,0 +1,93 @@
+{
+  "field": "line_spacing",
+  "contract": "line_spacing is a line-height multiplier, clamped identically by TextElement, resolve_line_spacing, and resolveLineSpacing, carried in the Python burn dict, and exposed to the CSS layout as lineSpacing. Block-height math remains lineStep = trunc(lineHeightPx * lineSpacing), blockH = lineStep * (lineCount - 1) + trunc(lineHeightPx).",
+  "asserted_by": [
+    "src/apps/api/tests/pipeline/test_text_element_parity_contract.py",
+    "src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts"
+  ],
+  "cases": [
+    {
+      "name": "custom-multiplier",
+      "element": {
+        "id": "ln-custom",
+        "text": "Line one\nLine two\nLine three",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "line_spacing": 1.4
+      },
+      "geometry": {
+        "line_count": 3,
+        "line_height_px": 69.4
+      },
+      "expected": {
+        "line_spacing": 1.4,
+        "line_step": 97,
+        "block_h": 263,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "clamps-low",
+      "element": {
+        "id": "ln-low",
+        "text": "Line one\nLine two\nLine three\nLine four",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "line_spacing": 0.1
+      },
+      "geometry": {
+        "line_count": 4,
+        "line_height_px": 69.4
+      },
+      "expected": {
+        "line_spacing": 0.5,
+        "line_step": 34,
+        "block_h": 171,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "clamps-high",
+      "element": {
+        "id": "ln-high",
+        "text": "Line one\nLine two",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "line_spacing": 9.0
+      },
+      "geometry": {
+        "line_count": 2,
+        "line_height_px": 69.4
+      },
+      "expected": {
+        "line_spacing": 3.0,
+        "line_step": 208,
+        "block_h": 277,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "absent-defaults-to-renderer-line-spacing",
+      "element": {
+        "id": "ln-absent",
+        "text": "Line one\nLine two\nLine three",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72
+      },
+      "geometry": {
+        "line_count": 3,
+        "line_height_px": 69.4
+      },
+      "expected": {
+        "line_spacing": 1.15,
+        "line_step": 79,
+        "block_h": 227,
+        "burn_dict_has_field": false
+      }
+    }
+  ]
+}
