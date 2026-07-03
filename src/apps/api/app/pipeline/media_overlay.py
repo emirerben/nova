@@ -17,14 +17,19 @@ Audio: card audio is always dropped (`0:a?` maps base audio only). The base
 variant already carries the authored audio bed (song / original / voiceover);
 random card audio mixed in would be a defect.
 
-Encoder policy: `_encoding_args(out, preset="veryfast")` — intentionally one step
-faster than the `"fast"` rule for primary renders. The base video is already CRF 18
-H.264 (not raw HDR footage), so mb-tree and psy-rd are still engaged (veryfast keeps
-both; only trellis is dropped). The smooth-gradient macroblock risk described in
-CLAUDE.md is specific to raw/HDR input; re-encoding already-compressed content has a
-quality floor set by the input, not this pass. Using "fast" here caused ~10-minute
-render times on shared Fly CPUs; "veryfast" cuts that to ~3-5 min. If banding
-complaints arise, switch back to "fast" and live with the latency.
+Encoder policy (mode-dependent, plan 009 E3):
+- PIP-ONLY passes: `_encoding_args(out, preset="veryfast")` — intentionally one
+  step faster than the `"fast"` rule for primary renders. The base video is
+  already CRF 18 H.264 (not raw HDR footage), so mb-tree and psy-rd are still
+  engaged (veryfast keeps both; only trellis is dropped). Using "fast" here
+  caused ~10-minute render times on shared Fly CPUs (commit 2c560363 removed it
+  after 603s renders vs the then-600s subprocess timeout).
+- Passes containing ANY FULLSCREEN card: `preset="fast"`. A fullscreen card is
+  raw user footage filling the whole frame — the smooth-gradient macroblock
+  risk the encoder policy exists for. The speed cost is paired with a raised
+  subprocess timeout (_TIMEOUT_FULLSCREEN_S) and a ONE-SHOT retry at veryfast
+  on TimeoutExpired in `apply_media_overlays`, so no render ever dies on the
+  preset choice; worst case quality degrades to today's veryfast.
 
 CLAUDE.md anti-pattern guard: subprocess FFmpeg only, never MoviePy.
 """
@@ -34,6 +39,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import time
 
 import structlog
 
@@ -51,9 +57,27 @@ log = structlog.get_logger()
 _CANVAS_W = 1080
 _CANVAS_H = 1920
 
+# Subprocess timeouts (plan 009 E3). Fullscreen passes run preset=fast, whose
+# documented worst case (~10 min) exceeded the old 600s ceiling.
+# Review C6/C25: the fast attempt AND the one-shot veryfast retry must share a
+# SINGLE wall-clock budget — two independent 1200s ceilings summed to 2400s,
+# past the render task's soft_time_limit=1740s / visibility_timeout=1900s, which
+# with task_acks_late would SIGKILL → redeliver → loop (the documented Celery
+# time-limit incident class). The budget below bounds attempt+retry total.
+_TIMEOUT_PIP_S = 600
+_TIMEOUT_FULLSCREEN_S = 900
+# Hard ceiling on attempt+retry combined, kept under soft_time_limit(1740) minus
+# the download/normalise/upload overhead around the ffmpeg call.
+_FULLSCREEN_TOTAL_BUDGET_S = 1500
+
 
 class MediaOverlayError(Exception):
     """Raised when the overlay apply-pass fails unrecoverably."""
+
+
+def _has_fullscreen(cards: list[MediaOverlay]) -> bool:
+    """True when any card is a full-frame takeover (drives preset + timeout)."""
+    return any(c.display_mode == "fullscreen" for c in cards)
 
 
 def build_media_overlay_command(
@@ -62,6 +86,7 @@ def build_media_overlay_command(
     card_local_paths: list[str],
     card_widths_px: list[int],
     output_path: str,
+    force_veryfast: bool = False,
 ) -> list[str]:
     """Build the ffmpeg command to composite media-overlay cards on top of a video.
 
@@ -71,15 +96,19 @@ def build_media_overlay_command(
 
     The filter chain:
     1. One input node per card (after the base video at input 0).
-    2. Per card: scale to `card_width_px:-1` (preserve aspect), tpad clone for
-       video cards so short clips don't flicker at window end, PTS shift so the
-       card plays from t=0 during its window, overlay at the computed top-left.
+    2. Per card: pip → scale to `card_width_px:-2` (preserve aspect) + centered
+       overlay; fullscreen → cover-crop to the full 1080x1920 canvas + overlay
+       at 0:0. tpad clone for video cards so short clips don't flicker at
+       window end, PTS shift so the card plays from t=0 during its window.
     3. Chain in z-order (ascending z, then list order).
     4. Map final composite video + base audio only (0:a?).
-    5. Encode with `preset="veryfast"` (see module docstring for rationale).
+    5. Encode veryfast for pip-only passes, fast when any fullscreen card is
+       present (see module docstring). `force_veryfast=True` is the
+       timeout-retry escape hatch — it wins over the fullscreen escalation.
 
-    The `_encoding_args` call here is intentionally direct (not via a helper) so
-    the encoder-policy AST gate can attribute it to this module.
+    The `_encoding_args` calls here are intentionally direct (not via a helper)
+    with LITERAL preset constants so the encoder-policy AST gate can attribute
+    both branches to this module.
     """
     assert len(cards) == len(card_local_paths) == len(card_widths_px)
 
@@ -116,6 +145,7 @@ def build_media_overlay_command(
         shifted = f"c{filter_idx}"
         out_label = f"ov{filter_idx}"
         local = card_local_paths[orig_idx]
+        is_fullscreen = card.display_mode == "fullscreen"
 
         # Build the per-card filter chain.
         card_filter_parts: list[str] = []
@@ -138,11 +168,21 @@ def build_media_overlay_command(
             # No trim — enter the scale step directly.
             card_filter_parts.append(f"[{in_idx}:v]null")
 
-        # Scale to card width; -2 rounds height to nearest even number so
-        # yuv420p chroma subsampling doesn't misinterpret odd dimensions.
-        # format=yuv420p normalises pixel format before the overlay compositor
-        # to prevent implicit BT.601/709 colour-space conversions.
-        card_filter_parts.append(f"scale={cw}:-2,format=yuv420p")
+        if is_fullscreen:
+            # Full-frame takeover (plan 009): cover-crop to exactly the canvas.
+            # force_original_aspect_ratio=increase scales the SHORT side to fit,
+            # crop center-cuts the overflow; setsar=1 guards odd input SARs.
+            # Static dims — no runtime overlay_h expression needed.
+            card_filter_parts.append(
+                f"scale={_CANVAS_W}:{_CANVAS_H}:force_original_aspect_ratio=increase"
+                f",crop={_CANVAS_W}:{_CANVAS_H},setsar=1,format=yuv420p"
+            )
+        else:
+            # Scale to card width; -2 rounds height to nearest even number so
+            # yuv420p chroma subsampling doesn't misinterpret odd dimensions.
+            # format=yuv420p normalises pixel format before the overlay compositor
+            # to prevent implicit BT.601/709 colour-space conversions.
+            card_filter_parts.append(f"scale={cw}:-2,format=yuv420p")
 
         # For video cards: freeze last frame to fill any gap between trim duration
         # and the overlay window. Use a bounded `stop_duration` instead of `stop=-1`
@@ -171,12 +211,24 @@ def build_media_overlay_command(
 
         filter_parts.append(",".join(card_filter_parts))
 
-        # Overlay with time-gate.
+        # Overlay with time-gate. Fullscreen composites at the origin (static
+        # dims); pip centers via the runtime overlay_h expression.
+        overlay_xy = "0:0" if is_fullscreen else f"{ox}:{oy_expr}"
         filter_parts.append(
-            f"{prev}[{shifted}]overlay={ox}:{oy_expr}:"
+            f"{prev}[{shifted}]overlay={overlay_xy}:"
             f"enable='between(t,{card.start_s:.3f},{card.end_s:.3f})':eof_action=pass[{out_label}]"
         )
         prev = f"[{out_label}]"
+
+    # Mode-dependent encoder policy (module docstring). Two LITERAL call sites
+    # on purpose — the encoder-policy AST gate reads constant presets only.
+    if _has_fullscreen(cards) and not force_veryfast:
+        # Full-frame user footage: final-output quality tier.
+        encoding = _encoding_args(output_path, preset="fast", include_audio=False)
+    else:
+        # Pip-only (or fullscreen timeout-retry): re-encoding already-CRF18
+        # content; mb-tree+psy-rd still active at veryfast.
+        encoding = _encoding_args(output_path, preset="veryfast", include_audio=False)
 
     cmd = [
         "ffmpeg",
@@ -192,9 +244,7 @@ def build_media_overlay_command(
         "aac",
         "-b:a",
         "192k",
-        # veryfast: re-encoding already-CRF18 content; mb-tree+psy-rd still active.
-        # See module docstring for the quality/speed tradeoff rationale.
-        *_encoding_args(output_path, preset="veryfast", include_audio=False),
+        *encoding,
     ]
     return cmd
 
@@ -297,6 +347,13 @@ def apply_media_overlays(
         final_cards, final_paths, final_widths = zip(*valid)  # type: ignore[misc]
 
         output_local = os.path.join(tmpdir, "output.mp4")
+        fullscreen_pass = _has_fullscreen(list(final_cards))
+        # Shared wall-clock budget (review C6): fast attempt + veryfast retry must
+        # together stay under the render task's soft_time_limit. The retry gets
+        # only the time left, so worst-case ffmpeg wall time is _FULLSCREEN_TOTAL
+        # _BUDGET_S, not 2× the per-attempt ceiling.
+        deadline = time.monotonic() + _FULLSCREEN_TOTAL_BUDGET_S
+        timeout_s = _TIMEOUT_FULLSCREEN_S if fullscreen_pass else _TIMEOUT_PIP_S
         cmd = build_media_overlay_command(
             base_local,
             list(final_cards),
@@ -308,9 +365,37 @@ def apply_media_overlays(
             "media_overlay_applying",
             job_id=job_id,
             card_count=len(final_cards),
+            fullscreen=fullscreen_pass,
+            timeout_s=timeout_s,
             cmd_len=len(cmd),
         )
-        result = subprocess.run(cmd, capture_output=True, timeout=600, check=False)
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=timeout_s, check=False)
+        except subprocess.TimeoutExpired:
+            if not fullscreen_pass:
+                raise
+            # ONE-SHOT retry at veryfast (plan 009 E3): a fullscreen pass that
+            # outruns the fast ceiling degrades to today's quality tier instead
+            # of failing the variant. The retry only gets the remaining shared
+            # budget (review C6) — if none is left, the timeout propagates as a
+            # failed render rather than blowing the Celery task limit.
+            retry_timeout = min(_TIMEOUT_PIP_S, int(deadline - time.monotonic()))
+            if retry_timeout <= 0:
+                raise
+            log.warning(
+                "media_overlay_fast_timeout_retry_veryfast",
+                job_id=job_id,
+                retry_timeout_s=retry_timeout,
+            )
+            cmd = build_media_overlay_command(
+                base_local,
+                list(final_cards),
+                list(final_paths),
+                list(final_widths),
+                output_local,
+                force_veryfast=True,
+            )
+            result = subprocess.run(cmd, capture_output=True, timeout=retry_timeout, check=False)
         if result.returncode != 0:
             stderr_tail = result.stderr.decode("utf-8", errors="replace")[-800:]
             raise MediaOverlayError(

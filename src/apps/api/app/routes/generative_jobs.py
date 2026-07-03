@@ -521,6 +521,26 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # no base_video_url key → the instant editor simply stays hidden
+        # Overlay-clean base (plan 008 live edit): the un-carded video captured
+        # before the first overlay burn. When present, the hero can play THIS
+        # and render every card as a live CSS layer — timeline edits reflect
+        # instantly and the burn waits for Download. Same graceful-skip contract.
+        pre_overlay_path = v.get("pre_media_overlay_video_path")
+        if pre_overlay_path:
+            try:
+                v = {
+                    **v,
+                    "pre_overlay_video_url": signed_get_url(pre_overlay_path, PLAYBACK_URL_TTL_MIN),
+                }
+            except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
+                log.warning(
+                    "variant_pre_overlay_resign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    pre_overlay_path=pre_overlay_path,
+                    exc_info=True,
+                )
+                # no pre_overlay_video_url → live-edit mode stays off (baked playback)
         # Media-overlay cards: sign each card's src_gcs_path into a preview_url so
         # the browser can show existing applied cards as a live CSS overlay without
         # re-uploading them. Signing failure skips the key on that card (graceful).
@@ -1071,6 +1091,27 @@ def dispatch_set_media_overlays(
                     detail=f"Card {card.id}: end_s must be greater than start_s.",
                 )
             validated.append(card.model_dump())
+        # Plan 009 E4+E9: fullscreen contract — shared with the render:false
+        # autosave path (validate_fullscreen_constraints docstring names all
+        # four coupled overlap sites).
+        from app.services.overlay_apply import (  # noqa: PLC0415
+            validate_fullscreen_constraints,
+        )
+
+        _variant_for_check = next(
+            (
+                v
+                for v in (job.assembly_plan or {}).get("variants") or []
+                if v.get("variant_id") == variant_id
+            ),
+            {},
+        )
+        try:
+            validate_fullscreen_constraints(cards, _variant_for_check)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     # Persist render_status="rendering" first (row-locked by the DB session the
     # route holds), then enqueue — prevents a race where the worker reads "ready"

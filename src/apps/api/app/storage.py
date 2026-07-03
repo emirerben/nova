@@ -190,6 +190,41 @@ def presigned_put_url_for_media_overlay(
     return url, object_path
 
 
+def upload_local_file(local_path: str, object_path: str, content_type: str) -> None:
+    """Server-side upload of a local file to an exact GCS object path.
+
+    Used by the pool-asset proxy upload (plans/005): the API streams the browser's
+    multipart file to disk, then pushes it here — no browser↔GCS CORS involved.
+    """
+    bucket = _get_client().bucket(settings.storage_bucket)
+    bucket.blob(object_path).upload_from_filename(local_path, content_type=content_type)
+
+
+def presigned_put_url_for_pool_asset(
+    user_id: str,
+    plan_item_id: str,
+    filename: str,
+    content_type: str = "image/png",
+) -> tuple[str, str]:
+    """Signed PUT URL for a plan-item pool asset (auto-placement PR0, plan 005).
+
+    Lands under `users/{user_id}/plan/{plan_item_id}/pool/...` — the PERSISTENT
+    `users/` namespace (NOT swept by the 24h GCS delete rule). Overlay suggestions
+    reference these objects long after upload, so they must never live on a
+    sweepable path.
+    """
+    object_path = f"users/{user_id}/plan/{plan_item_id}/pool/{filename}"
+    bucket = _get_client().bucket(settings.storage_bucket)
+    blob = bucket.blob(object_path)
+    url = blob.generate_signed_url(
+        version="v4",
+        expiration=datetime.timedelta(minutes=15),
+        method="PUT",
+        content_type=content_type,
+    )
+    return url, object_path
+
+
 def presigned_put_url_for_sfx(
     user_id: str,
     plan_item_id: str,

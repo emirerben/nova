@@ -459,12 +459,43 @@ export async function requestUploadUrls(
 
 /** PUT a file straight to GCS (direct, not through the proxy — avoids buffering bytes). */
 export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> {
-  const res = await fetch(uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type },
-    body: file,
-  });
-  if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  try {
+    const res = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": file.type },
+      body: file,
+    });
+    if (!res.ok) throw new Error(`Upload failed (${res.status})`);
+  } catch (err) {
+    // "Failed to fetch" (TypeError) = the bucket's CORS config doesn't list this
+    // origin (any localhost) — the request never left the browser. Relay the
+    // SAME signed URL through the API, where CORS doesn't apply.
+    if (err instanceof TypeError) {
+      await relaySignedUpload(uploadUrl, file);
+      return;
+    }
+    throw err;
+  }
+}
+
+/** Server-side PUT of `file` to `signedUrl` via the API relay (bucket-CORS bypass). */
+async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  form.append("signed_url", signedUrl);
+  form.append("content_type", file.type || "application/octet-stream");
+  const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form });
+  if (res.status === 401) throw new NotAuthenticatedError();
+  if (!res.ok) {
+    let detail = `Upload failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body; keep the generic message
+    }
+    throw new Error(detail);
+  }
 }
 
 /**
@@ -490,7 +521,22 @@ export function uploadToGcsWithProgress(
       if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`Upload failed (${xhr.status})`));
     });
-    xhr.addEventListener("error", () => reject(new Error("Upload network error")));
+    // Network-level failure = bucket CORS blocked this origin (any localhost).
+    // Fall back to the API relay; progress becomes indeterminate (0.5) since
+    // fetch-multipart has no upload progress events, then jumps to done.
+    xhr.addEventListener("error", () => {
+      if (signal?.aborted) {
+        reject(new DOMException("Upload cancelled", "AbortError"));
+        return;
+      }
+      onProgress(0.5);
+      relaySignedUpload(uploadUrl, file)
+        .then(() => {
+          onProgress(1);
+          resolve();
+        })
+        .catch(reject);
+    });
     xhr.addEventListener("abort", () => reject(new DOMException("Upload cancelled", "AbortError")));
 
     if (signal) {
@@ -621,6 +667,10 @@ export interface MediaOverlay {
   x_frac: number;
   y_frac: number;
   scale: number;
+  /** Plan 009: "fullscreen" = cover-crop takeover of the whole frame for the
+   *  card's window (position/scale ignored at render but preserved for
+   *  toggle-back). Absent/unknown coerces to "pip" on the server. */
+  display_mode?: "pip" | "fullscreen";
   /** When the overlay is visible on the main video timeline. */
   start_s: number;
   end_s: number;
@@ -703,6 +753,20 @@ export interface TextElement {
   z?: number | null;
   word_timings?: Record<string, unknown>[] | null;
   source_params?: Record<string, unknown> | null;
+}
+
+/**
+ * Plan 009 ARCH-4: variant-level apply receipt — mirrors the dict written by
+ * `overlay_apply.py` / the zero-click autoplace task into
+ * `variants[i]["overlay_apply_receipt"]`. All fields optional (the two writers
+ * populate different subsets); `reason` is "hook"/"intro" for intro-protection
+ * demotions, other strings (e.g. "overlap") otherwise.
+ */
+export interface OverlayApplyReceipt {
+  dropped?: number;
+  demoted?: number;
+  reason?: string;
+  at?: string;
 }
 
 export interface PlanItemVariant {
@@ -790,10 +854,29 @@ export interface PlanItemVariant {
   media_overlays?: MediaOverlay[] | null;
   /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
   pre_media_overlay_video_path?: string | null;
+  /** Fresh-signed playback URL for `pre_media_overlay_video_path`, added by
+   *  `_variants_for_response` on every status read. Present only once a card
+   *  burn has captured the clean base (absent when no burn ever happened).
+   *  Drives the hero's live-edit mode: the base plays under a live CSS card
+   *  layer so timeline edits preview instantly without an FFmpeg re-burn. */
+  pre_overlay_video_url?: string | null;
   /** Sound-effect placements applied as the outermost audio layer. */
   sound_effects?: SoundEffectPlacement[] | null;
   /** GCS key of the clean (sfx-free) variant before the first SFX apply-pass. */
   pre_sfx_video_path?: string | null;
+  /**
+   * Plan 007: autoplace suggestion-run state on this variant.
+   * "matching" keeps the page polling (the zero-click chain runs server-side
+   * after variants_ready); "ready"/"zero"/"failed" are rail states.
+   */
+  overlay_suggest_status?: "matching" | "ready" | "zero" | "failed" | null;
+  /**
+   * Plan 009 ARCH-4 ("never silent"): apply-time guardrail receipt. Written by
+   * the apply path / zero-click task when suggestions were demoted to pip or
+   * dropped for overlap; cleared (null) on the next apply/clear. T5 renders it
+   * as a quiet zinc line; it must disappear when null.
+   */
+  overlay_apply_receipt?: OverlayApplyReceipt | null;
   /**
    * PR-D: Scene timings for sequence variants. Each entry is one synced scene
    * with its start/end in assembled-video seconds. Absent on non-sequence variants.
@@ -1458,6 +1541,215 @@ export function attachPoolClips(planId: string, clipGcsPaths: string[]): Promise
 /** "Match again" — re-run pool matching (e.g. after new items freed up). */
 export function rematchPoolClips(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/pool/match`, { method: "POST" });
+}
+
+// ── Visuals pool (overlay auto-placement PR0) ────────────────────────────────
+//
+// Per-item asset pool that feeds AI overlay auto-placement (plans/005).
+// All routes 404 when the backend OVERLAY_AUTOPLACE_ENABLED flag is off — the
+// frontend twin is NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED (dual-flag trap:
+// keep Fly + Vercel in sync; callers must surface the 404, never swallow it).
+
+export interface PoolAsset {
+  id: string;
+  kind: "image" | "video";
+  status: string; // "uploaded" | "analyzing" | "ready" | "failed"
+  source_filename: string | null;
+  duration_s: number | null;
+  aspect: number | null;
+  /** Pixel dims (plan 009 E1) — null on legacy assets until the backfill
+   *  re-analyzes them. Feed the fullscreen low-res warning; never faked. */
+  width?: number | null;
+  height?: number | null;
+  subject: string | null;
+  display_url: string | null;
+  deduped: boolean;
+}
+
+/** Signed PUT URLs for pool assets (users/{uid}/plan/{itemId}/pool/, persistent). */
+export async function requestPoolAssetUploadUrls(
+  itemId: string,
+  files: { filename: string; content_type: string; file_size_bytes: number }[],
+): Promise<UploadUrl[]> {
+  const res = await request<{ urls: UploadUrl[] }>(`/plan-items/${itemId}/assets/upload-urls`, {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+  return res.urls;
+}
+
+/**
+ * Hex SHA-256 of a file's bytes — the pool dedupe key. Mirrors the backend's
+ * `hashlib.sha256(bytes).hexdigest()` in the multipart path (routes/plan_items.py
+ * upload_pool_asset) so `registerPoolAsset` dedupes identical uploads whether they
+ * arrived via the presigned direct-PUT path or the legacy proxy. Returns null when
+ * SubtleCrypto is unavailable (non-secure context) — register then skips dedupe,
+ * which is a safe degradation (an extra analysis, never a data-loss).
+ */
+export async function sha256HexOfFile(file: File): Promise<string | null> {
+  try {
+    if (typeof crypto === "undefined" || !crypto.subtle) return null;
+    const buf = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Register an uploaded pool asset. `deduped=true` on the response means the
+ * bytes already existed in this pool — the existing asset is returned as-is.
+ */
+export function registerPoolAsset(
+  itemId: string,
+  body: {
+    gcs_path: string;
+    content_type: string;
+    content_hash: string | null;
+    source_filename: string | null;
+  },
+): Promise<PoolAsset> {
+  return request<PoolAsset>(`/plan-items/${itemId}/assets`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * One-shot pool upload through the API proxy (browser → Next → FastAPI → GCS).
+ * Sidesteps bucket CORS entirely (a direct browser PUT to storage.googleapis.com
+ * fails for origins the bucket doesn't list — e.g. any localhost). The server
+ * computes the dedupe hash; `deduped=true` means the bytes already existed.
+ *
+ * NOT the primary pool-upload path anymore (R1 / review C9+C14): this multipart
+ * body buffers through the Next api-proxy and hits Vercel's ~4.5MB serverless
+ * request-body cap, so screen recordings fail in prod. AssetPool now uploads via
+ * requestPoolAssetUploadUrls → uploadToGcs (direct PUT, relay fallback) →
+ * registerPoolAsset. Kept for any caller that still wants the one-shot proxy.
+ */
+export async function uploadPoolAsset(itemId: string, file: File): Promise<PoolAsset> {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  // No Content-Type header — the browser must set the multipart boundary.
+  const res = await fetch(`${PLAN_BASE}/plan-items/${itemId}/assets/upload`, {
+    method: "POST",
+    body: form,
+  });
+  if (res.status === 401) throw new NotAuthenticatedError();
+  if (!res.ok) {
+    let detail = `Upload failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body; keep the generic message
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as PoolAsset;
+}
+
+/** List the item's pool assets + the per-item cap. */
+export function listPoolAssets(
+  itemId: string,
+): Promise<{ assets: PoolAsset[]; max_assets: number }> {
+  return request<{ assets: PoolAsset[]; max_assets: number }>(`/plan-items/${itemId}/assets`);
+}
+
+/** Remove an asset from the pool. */
+export function deletePoolAsset(itemId: string, assetId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(`/plan-items/${itemId}/assets/${assetId}`, {
+    method: "DELETE",
+  });
+}
+
+// ── Overlay auto-placement suggestions (plans/005 PR2) ──────────────────────
+//
+// Per-variant AI suggestion flow: suggest-overlays kicks off the matcher,
+// overlay-suggestions is polled while it runs, apply copies the kept envelopes
+// into the variant's real media_overlays/sound_effects through the validated
+// dispatch path (the variant flips to render_status="rendering"), dismiss
+// clears the pending set. All routes 404 when OVERLAY_AUTOPLACE_ENABLED is off.
+
+export type OverlaySuggestionStatus = "matching" | "ready" | "zero" | "failed";
+
+/**
+ * One AI-suggested placement — an ENVELOPE (plans/005 decision 5A) that embeds
+ * the existing MediaOverlay + SoundEffectPlacement models verbatim. Accept =
+ * unwrap + copy through the existing dispatch; no parallel field copies.
+ */
+export interface OverlaySuggestion {
+  id: string;
+  /** Pool asset this suggestion places (thumbnail via listPoolAssets). */
+  asset_id: string;
+  /** Language carries confidence (10A): "likely" rows ship hedged reason copy. */
+  confidence_tier: "confident" | "likely";
+  /** One-line reason grounded in the transcript. */
+  reason: string;
+  transcript_anchor: string;
+  overlay: MediaOverlay;
+  sfx: SoundEffectPlacement | null;
+}
+
+export interface OverlaySuggestionsResponse {
+  /** null = never matched for this variant (no pending suggestion set). */
+  status: OverlaySuggestionStatus | null;
+  suggestions: OverlaySuggestion[];
+  /** Zero/partial-match asset wishlist lines, shown verbatim. */
+  wishlist: string[];
+  /** True when a transcript/duration change just cleared pending suggestions. */
+  stale_cleared: boolean;
+}
+
+/** Kick off the overlay matcher. 400 with detail when no analyzed assets. */
+export function suggestVariantOverlays(
+  itemId: string,
+  variantId: string,
+): Promise<{ status: "matching" }> {
+  return request<{ status: "matching" }>(
+    `/plan-items/${itemId}/variants/${variantId}/suggest-overlays`,
+    { method: "POST" },
+  );
+}
+
+/** Read the current suggestion set (polled every 2.5s while status="matching"). */
+export function getOverlaySuggestions(
+  itemId: string,
+  variantId: string,
+): Promise<OverlaySuggestionsResponse> {
+  return request<OverlaySuggestionsResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/overlay-suggestions`,
+  );
+}
+
+/**
+ * Apply the kept suggestions (send ONLY the staged ones, with any user edits —
+ * e.g. sfx stripped to null). Returns the updated plan item; the variant flips
+ * to render_status="rendering" while the burn runs in the background.
+ */
+export function applyOverlaySuggestions(
+  itemId: string,
+  variantId: string,
+  suggestions: OverlaySuggestion[],
+): Promise<PlanItem> {
+  return request<PlanItem>(
+    `/plan-items/${itemId}/variants/${variantId}/overlay-suggestions/apply`,
+    { method: "POST", body: JSON.stringify({ suggestions }) },
+  );
+}
+
+/** Dismiss the pending suggestion set without applying anything. */
+export function dismissOverlaySuggestions(
+  itemId: string,
+  variantId: string,
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/plan-items/${itemId}/variants/${variantId}/overlay-suggestions/dismiss`,
+    { method: "POST" },
+  );
 }
 
 // ── Edits-first onboarding fork (append-only rule) ────────────────────────────

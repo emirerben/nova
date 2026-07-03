@@ -50,6 +50,7 @@ _EXPECTED_CHAIN = {
     "0059": "0058",
     "0061": "0060",
     "0062": "0061",
+    "0063": "0062",
 }
 
 
@@ -61,7 +62,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0062"], f"expected a single head 0062, got {heads}"
+    assert heads == ["0063"], f"expected a single head 0063, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -124,6 +125,26 @@ def test_new_tables_registered() -> None:
         "scenes",
         "content_mode",
     } <= item_cols
+
+
+def test_plan_item_assets_registered() -> None:
+    """Auto-placement PR0 (plans/005): the asset-pool table + expected columns."""
+    tables = models.Base.metadata.tables
+    assert "plan_item_assets" in tables
+    asset_cols = set(tables["plan_item_assets"].columns.keys())
+    assert {
+        "plan_item_id",
+        "user_id",
+        "gcs_path",
+        "kind",
+        "content_hash",
+        "source_filename",
+        "duration_s",
+        "aspect",
+        "analysis",
+        "status",
+        "created_at",
+    } <= asset_cols
 
 
 def test_jobs_has_content_plan_item_fk() -> None:
