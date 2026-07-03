@@ -937,3 +937,29 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **How:** Either (a) order the instant-text commit FIRST and add an SFX-reapply terminal hook to the text/instant re-render path (mirror the overlay pass), or (b) detect the co-edit and chain both in one Download. Pre-existing ordering (not introduced by the Apply-removal PR), narrow (needs SFX + uncommitted instant edit simultaneously).
 **Effort:** M (CC: ~45 min) — touches handleDownload + the instant/text render path (backend reapply hook).
 **Priority:** P2 — narrow co-edit case; surface only when both lanes are dirty at once.
+
+## TikTok-style variant editor — deferred follow-ups (from `/plan-design-review`, D13–D15, 2026-07-03)
+
+### Full video-templates system
+**What:** Whole-variant style-recipe application in one tap (TikTok Templates proper) — apply a complete look (fonts, colors, animation, layout) across a variant in a single action, rather than restyling text alone.
+**Why:** Deferred from D11, which ships Styles v1 as restyle-all-text only. TikTok's Templates feature applies a full aesthetic recipe, not just text style — that's a bigger surface than the editor shell's first cut and deserves its own scoping.
+**How:** Not designed yet. Needs its own `/plan-design-review` pass once the editor shell + style-set system have shipped and soaked.
+**Effort:** L (human: ~2wks / CC: ~2d) — needs its own design review before implementation estimate firms up.
+**Priority:** P3
+**Depends on:** Editor shell shipped (T1–T11, `our-timeline-editor-should-graceful-comet.md`), existing style-set system (`getGenerativeStyleSets`, `page.tsx:191`).
+
+### Mobile-native timeline editor
+**What:** A thumb-first, vertically-designed timeline editor for <1024px — not the desktop 5-column shell squeezed into a phone viewport.
+**Why:** D12 ships light-edit mode for <1024px (canvas + transport + tap-text-to-edit sheet only; no timeline/trim/split/zoom UI). Codex's review flagged that a squeezed desktop shell would be unusable on mobile, so a real mobile timeline is intentionally out of scope for the first ship and left as a separate design effort.
+**How:** Not designed yet. Trigger: light-edit mode usage data shows real demand for full mobile timeline editing (trim/split/zoom) before investing in a bespoke mobile IA.
+**Effort:** Unscoped — gated on usage data; needs its own design pass once triggered.
+**Priority:** P3
+**Depends on:** Editor shell shipped + light-edit mode (D12) live long enough to gather usage analytics.
+
+### Preset favorites server-side persistence
+**What:** Move the text-preset drawer's "Favorite" category from localStorage (v1) to the existing user-prefs endpoint, so favorited presets sync cross-device.
+**Why:** D15 confirms no user-prefs model exists yet (`models.py:47`), so Favorites ship as localStorage-only in v1. Flagged during design review as a likely near-term promotion once the preset registry (T7) is stable — eng review may even pull it into v1 if it turns out trivial.
+**How:** Extend the user-prefs endpoint (once it exists) to store favorited preset IDs; swap the drawer's localStorage read/write (`_editor/ToolDrawer.tsx`, `lib/text-presets.ts`) for the API call, falling back to localStorage when signed out or offline.
+**Effort:** S (human: ~half day / CC: ~20min)
+**Priority:** P3
+**Depends on:** T7 preset registry (`lib/text-presets.ts`) shipped; a user-prefs model/endpoint existing.

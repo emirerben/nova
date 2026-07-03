@@ -112,6 +112,22 @@ const SOUND_EFFECTS_ENABLED =
 // MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing space) still works.
 const _subtitledRaw = (process.env.NEXT_PUBLIC_SUBTITLED_ENABLED ?? "").trim();
 const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRaw === "1";
+// Kill-switch: the item-page "Edit" entry into the full-screen TikTok-style
+// editor shell (/plan/items/[id]/edit) only appears when
+// NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED=true. Frontend-only gate — the shell route
+// and the server's editor_capabilities are unconditionally present; this flag
+// only controls whether the entry point is shown.
+const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
+// Server-derived per-variant capability map (routes/generative_jobs.py
+// `_editor_capabilities`). Not yet in the shared PlanItemVariant type — declared
+// locally here since only the Edit-entry gate reads it.
+type EditorCapabilities = {
+  text_elements: boolean;
+  timeline: boolean;
+  split_clips: boolean;
+  mix: boolean;
+  reason: string | null;
+};
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
@@ -1722,6 +1738,28 @@ function FocusedResults({
       : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
     : null;
 
+  // Flag-gated Edit entry into the full-screen TikTok-style editor shell.
+  // Eligible = rendered (output_url present) and not mid-render. If the
+  // server's editor_capabilities map is present and every capability is
+  // false, the button still shows but disabled, with the server's reason
+  // as the tooltip (kills FE 404-probing on a genuinely ineligible variant).
+  const editorEntryEligible =
+    TIKTOK_EDITOR_ENABLED &&
+    !!variant &&
+    !!variant.output_url &&
+    variant.render_status !== "rendering";
+  const editorCapabilities = (
+    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
+  )?.editor_capabilities;
+  const editorEntryDisabledReason =
+    editorCapabilities &&
+    !editorCapabilities.text_elements &&
+    !editorCapabilities.timeline &&
+    !editorCapabilities.split_clips &&
+    !editorCapabilities.mix
+      ? (editorCapabilities.reason ?? "Editing isn't available for this variant.")
+      : null;
+
   // The editor panel reveals PlanVariantEditor filtered to the active tab.
   // We keep one PlanVariantEditor instance and use the tab to scroll/focus.
   const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
@@ -1769,6 +1807,22 @@ function FocusedResults({
               <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
                 {modePill}
               </span>
+            </div>
+          )}
+          {/* Edit entry: full-screen TikTok-style editor shell (flag-gated) */}
+          {editorEntryEligible && (
+            <div className="mt-2 flex justify-center">
+              {editorEntryDisabledReason ? (
+                <InkButton type="button" variant="ghost" disabled title={editorEntryDisabledReason}>
+                  Edit
+                </InkButton>
+              ) : (
+                <Link href={`/plan/items/${itemId}/edit?variant=${variant!.variant_id}`}>
+                  <InkButton type="button" variant="ghost">
+                    Edit
+                  </InkButton>
+                </Link>
+              )}
             </div>
           )}
         </div>
