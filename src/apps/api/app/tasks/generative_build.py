@@ -1123,6 +1123,10 @@ def regenerate_generative_variant(
                 error=str(exc),
                 exc_info=True,
             )
+            # E1: a superseded task must not flip render_status to "failed" —
+            # the newer commit's task owns the variant's terminal state now.
+            if _stale_render_discarded(job_id, variant_id, render_gen_id, outcome="failed"):
+                return
             _update_variant_entry(
                 job_id,
                 variant_id,
@@ -2314,7 +2318,11 @@ def _run_regenerate_variant(
                 variant_id=variant_id,
                 archetype=existing.get("resolved_archetype"),
             )
-            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+            # E1: terminal write ("ready") — token-checked like every other outcome.
+            if not _stale_render_discarded(
+                job_id, variant_id, render_gen_id, outcome="caption_reject"
+            ):
+                _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
             return
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
@@ -2532,31 +2540,12 @@ def _run_regenerate_variant(
             else:
                 raise
         if _used_fast_path:
-            # A20: stale-write guard for text_elements reburns.  A subsequent
-            # PUT /text-elements overwrites `render_generation_id` in the DB; if
-            # it differs from the token we were launched with, our result is stale
-            # and the newer task will write its own — discard rather than clobber.
-            if render_gen_id is not None:
-                with _sync_session() as _guard_db:
-                    _guard_job = _guard_db.get(Job, uuid.UUID(job_id))
-                    if _guard_job is not None:
-                        _guard_variants = (_guard_job.assembly_plan or {}).get("variants") or []
-                        _guard_v = next(
-                            (v for v in _guard_variants if v.get("variant_id") == variant_id),
-                            None,
-                        )
-                        if (
-                            _guard_v is not None
-                            and _guard_v.get("render_generation_id") != render_gen_id
-                        ):
-                            log.warning(
-                                "stale_text_elements_reburn_discarded",
-                                job_id=job_id,
-                                variant_id=variant_id,
-                                expected_gen_id=render_gen_id,
-                                actual_gen_id=_guard_v.get("render_generation_id"),
-                            )
-                            return
+            # A20/E1: stale-write guard for reburns.  A subsequent editor commit
+            # (or PUT /text-elements) overwrites `render_generation_id` in the DB;
+            # if it differs from the token we were launched with, our result is
+            # stale and the newer task will write its own — discard, don't clobber.
+            if _stale_render_discarded(job_id, variant_id, render_gen_id, outcome="reburn"):
+                return
             _update_variant_entry(job_id, variant_id, result)
             # SFX is the OUTERMOST layer. A text/style reburn overwrites video_path
             # from the cached base WITHOUT the SFX mix, so re-apply persisted effects
@@ -2760,6 +2749,10 @@ def _run_regenerate_variant(
             landscape_fit=landscape_fit_regen,
         )
 
+    # E1: the token check covers BOTH terminal branches (ready and failed) —
+    # a superseded task's output/status must never clobber the newer commit's.
+    if _stale_render_discarded(job_id, variant_id, render_gen_id, outcome="full_render"):
+        return
     if result.get("ok"):
         _update_variant_entry(job_id, variant_id, result)
         # SFX is the OUTERMOST layer. A full re-render (song swap, retext, clip
@@ -2840,6 +2833,43 @@ def _clear_user_timeline(job_id: str, variant_id: str) -> None:
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
+
+
+def _stale_render_discarded(
+    job_id: str, variant_id: str, render_gen_id: str | None, *, outcome: str
+) -> bool:
+    """Render-intent guard (E1): True → this task's terminal DB write must be skipped.
+
+    A render task launched with a `render_gen_id` token owns the variant's
+    DB-visible outcome only while the variant's persisted `render_generation_id`
+    still equals that token. Every editor commit bumps the token BEFORE
+    enqueueing its own render, so an older task that finishes late must finish
+    its compute but DISCARD its patch — the newest committed state is the one
+    whose render lands (D8 queue/supersede). Tasks launched without a token
+    (legacy per-field dispatchers) always write — flag-off surfaces unchanged.
+    """
+    if render_gen_id is None:
+        return False
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return False
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if variant is None:
+        return False
+    current = variant.get("render_generation_id")
+    if current is not None and current != render_gen_id:
+        log.warning(
+            "stale_render_write_discarded",
+            job_id=job_id,
+            variant_id=variant_id,
+            outcome=outcome,
+            expected_gen_id=render_gen_id,
+            actual_gen_id=current,
+        )
+        return True
+    return False
 
 
 def _update_variant_entry(job_id: str, variant_id: str, patch: dict[str, Any]) -> None:

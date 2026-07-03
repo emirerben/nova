@@ -32,6 +32,9 @@ from app.routes.generative_jobs import (
     CaptionLanguageRequest,
     CaptionsRequest,
     ChangeStyleRequest,
+    EditorCommitRequest,
+    EditorCommitResponse,
+    EditorCommitSections,
     EditVariantRequest,
     PatchSceneTimingRequest,
     RetextRequest,
@@ -56,8 +59,10 @@ from app.routes.generative_jobs import (
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
     dispatch_swap_song,
+    enqueue_editor_commit_render,
     persist_variant_caption_font,
     persist_variant_captions,
+    prepare_editor_commit,
 )
 
 log = structlog.get_logger()
@@ -1846,6 +1851,81 @@ async def set_item_text_elements(
         render=body.render,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/editor-commit",
+    response_model=EditorCommitResponse,
+)
+async def editor_commit_item(
+    item_id: str,
+    variant_id: str,
+    body: EditorCommitRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> EditorCommitResponse:
+    """Transactional editor Save (E2): all sections in ONE commit + ONE render kick.
+
+    Validates every provided section first (nothing persists on ANY failure),
+    compares `base_generation` against the variant's current baseline (409
+    `baseline_conflict` when another tab/render moved it), then persists all
+    job-JSON sections atomically in a single commit, bumps the render
+    generation, and enqueues exactly one re-render.
+
+    Deliberately NOT guarded by `require_editable_variant` — saving during an
+    in-flight render is the point; the E1 generation guard makes the superseded
+    task discard its terminal write (D8 queue/supersede).
+
+    `title` updates the plan item's display title (`PlanItem.theme`). It lives
+    on a different table than the variant job-JSON, but both rows are written in
+    the SAME database transaction here, so the commit stays all-or-nothing.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+    job = item.current_job
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+
+    # Validate the title section BEFORE the job-JSON staging so a bad title
+    # fails the whole commit with nothing persisted (validation-first contract).
+    cleaned_title: str | None = None
+    if body.title is not None:
+        cleaned_title = _sanitize_text(body.title.strip())
+        if not cleaned_title:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Title cannot be empty.",
+            )
+
+    prep = prepare_editor_commit(job, variant_id, body)
+
+    if cleaned_title is not None:
+        item.theme = cleaned_title
+        item.user_edited = True
+
+    await db.commit()
+    # Kick AFTER the commit so a worker that grabs the task instantly always
+    # observes the committed sections + generation token. If the kick fails the
+    # persist stands — the honest partial state ("saved, rendering didn't
+    # start") the plan's §9 table describes.
+    enqueue_editor_commit_render(str(job.id), variant_id, prep)
+
+    log.info(
+        "plan_item_editor_commit",
+        item_id=item_id,
+        variant_id=variant_id,
+        generation=prep["generation"],
+        sections={**prep["sections"], "title": cleaned_title is not None},
+    )
+    return EditorCommitResponse(
+        ok=True,
+        generation=prep["generation"],
+        sections=EditorCommitSections(
+            text_elements=prep["sections"]["text_elements"],
+            timeline=prep["sections"]["timeline"],
+            mix=prep["sections"]["mix"],
+            title=cleaned_title is not None,
+        ),
+    )
 
 
 # ── Sound-effects routes ──────────────────────────────────────────────────────
