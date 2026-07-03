@@ -116,7 +116,10 @@ def _asset_row(item_id, user_id, *, content_hash="abc123") -> MagicMock:
             {"gcs_path": "users/u/plan/i/pool/f.png", "content_type": "image/png"},
         ),
         ("get", "/assets", None),
-        ("delete", f"/assets/{uuid.uuid4()}", None),
+        # FIXED uuid, NOT uuid.uuid4(): a fresh uuid per import makes the
+        # parametrize id differ across pytest-xdist workers → "Different tests
+        # were collected between gw1 and gw3" collection error on CI (-n auto).
+        ("delete", "/assets/00000000-0000-0000-0000-0000000000aa", None),
     ],
 )
 def test_all_pool_routes_404_when_flag_off(
