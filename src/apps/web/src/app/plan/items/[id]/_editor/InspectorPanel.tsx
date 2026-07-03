@@ -38,10 +38,15 @@ import {
 } from "@/lib/parity-verified-fields";
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import { formatTimecode } from "@/lib/timeline/time-format";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
+import {
+  applyClipSourceWindowDrag,
+  type BarDragHandle,
+} from "./editor-bar-drag";
 import PresetGrid from "./PresetGrid";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
@@ -61,8 +66,10 @@ const EDITABLE_ROW_FIELDS = new Set([
 
 export interface InspectorClipTiming {
   slot: DraftSlot;
+  clipNumber: number;
   durationS: number;
   sourceDurationS: number | null;
+  sourceUrl: string | null;
 }
 
 const SIZE_OPTIONS = (() => {
@@ -88,6 +95,8 @@ export default function InspectorPanel({
   onPatch,
   onPatchTextTiming,
   onPatchClipTiming,
+  onPreviewClipTiming,
+  onRecordClipTiming,
   onClose,
   onPickPreset,
 }: {
@@ -104,6 +113,8 @@ export default function InspectorPanel({
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
+  onPreviewClipTiming: (patch: { inS: number; durationS: number }) => void;
+  onRecordClipTiming: () => void;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
@@ -139,6 +150,8 @@ export default function InspectorPanel({
         <ClipInspector
           timing={clipTiming}
           onPatchTiming={onPatchClipTiming}
+          onPreviewTiming={onPreviewClipTiming}
+          onRecordTimingEdit={onRecordClipTiming}
           onClose={onClose}
         />
       ) : (
@@ -469,20 +482,182 @@ function TextInspector({
 function ClipInspector({
   timing,
   onPatchTiming,
+  onPreviewTiming,
+  onRecordTimingEdit,
   onClose,
 }: {
   timing: InspectorClipTiming;
   onPatchTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
+  onPreviewTiming: (patch: { inS: number; durationS: number }) => void;
+  onRecordTimingEdit: () => void;
   onClose: () => void;
 }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const dragRef = useRef<{
+    handle: BarDragHandle;
+    startClientX: number;
+    barWidth: number;
+    origin: { inS: number; durationS: number };
+  } | null>(null);
   const inS = timing.slot.inS;
   const durationS = timing.durationS;
   const outS = inS + durationS;
+  const sourceDurationS =
+    timing.sourceDurationS == null
+      ? Math.max(outS, 0.6)
+      : Math.max(timing.sourceDurationS, 0.6);
+  const rangeLeftPct = sourceDurationS > 0 ? (inS / sourceDurationS) * 100 : 0;
+  const rangeWidthPct =
+    sourceDurationS > 0 ? (durationS / sourceDurationS) * 100 : 100;
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.max(0, Math.min(inS, sourceDurationS));
+  }, [inS, sourceDurationS, timing.sourceUrl]);
+
+  function seekSource(seconds: number) {
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = Math.max(0, Math.min(seconds, sourceDurationS));
+  }
+
+  function startRangeDrag(
+    e: React.PointerEvent<HTMLElement>,
+    handle: BarDragHandle,
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    const bar = e.currentTarget.closest<HTMLElement>("[data-source-range-bar]");
+    if (!bar) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      handle,
+      startClientX: e.clientX,
+      barWidth: Math.max(1, bar.getBoundingClientRect().width),
+      origin: { inS, durationS },
+    };
+    onRecordTimingEdit();
+    seekSource(handle === "right" ? outS : inS);
+  }
+
+  function updateRangeDrag(e: React.PointerEvent<HTMLElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const deltaS = ((e.clientX - drag.startClientX) / drag.barWidth) * sourceDurationS;
+    const next = applyClipSourceWindowDrag({
+      slot: drag.origin,
+      handle: drag.handle,
+      deltaS,
+      sourceDurationS,
+    });
+    onPreviewTiming({
+      inS: next.inS,
+      durationS: next.durationS ?? drag.origin.durationS,
+    });
+    const edge =
+      drag.handle === "right"
+        ? next.inS + (next.durationS ?? drag.origin.durationS)
+        : next.inS;
+    seekSource(edge);
+  }
+
+  function finishRangeDrag(e: React.PointerEvent<HTMLElement>) {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragRef.current = null;
+  }
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-4 motion-safe:animate-fade-up motion-safe:[animation-duration:150ms]">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-[18px] text-[#0c0c0e]">Clip</h2>
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">
+          Clip {timing.clipNumber}
+        </h2>
         <CloseX onClose={onClose} />
+      </div>
+      <p className="mt-1 text-[12px] font-medium text-[#3f3f46]">
+        {durationS.toFixed(1)}s of {sourceDurationS.toFixed(1)}s used · changes
+        render on Save
+      </p>
+
+      <div className="mt-4">
+        <div className="overflow-hidden rounded-lg border border-zinc-200 bg-black">
+          {timing.sourceUrl ? (
+            <video
+              key={timing.sourceUrl}
+              ref={videoRef}
+              src={timing.sourceUrl}
+              muted
+              playsInline
+              controls
+              preload="metadata"
+              className="aspect-video w-full bg-black object-contain"
+              aria-label={`Clip ${timing.clipNumber} source preview`}
+            />
+          ) : (
+            <div className="flex aspect-video items-center justify-center px-4 text-center text-[12px] text-zinc-300">
+              Source preview unavailable
+            </div>
+          )}
+        </div>
+
+        <div className="mt-3">
+          <div className="mb-1 flex items-center justify-between text-[11px] tabular-nums text-[#71717a]">
+            <span>{formatTimecode(0)}</span>
+            <span>{formatTimecode(sourceDurationS)}</span>
+          </div>
+          <div
+            data-source-range-bar
+            className="relative h-11 rounded-lg border border-zinc-200 bg-zinc-100 px-0"
+            aria-label="Source range"
+          >
+            <div
+              className="absolute top-1/2 h-7 -translate-y-1/2 rounded-md bg-[#0c0c0e] shadow-sm"
+              style={{
+                left: `${Math.max(0, Math.min(100, rangeLeftPct))}%`,
+                width: `${Math.max(2, Math.min(100, rangeWidthPct))}%`,
+              }}
+            >
+              <button
+                type="button"
+                aria-label="Slide source window"
+                onPointerDown={(e) => startRangeDrag(e, "body")}
+                onPointerMove={updateRangeDrag}
+                onPointerUp={finishRangeDrag}
+                onPointerCancel={finishRangeDrag}
+                className="absolute inset-0 cursor-grab rounded-md active:cursor-grabbing"
+              />
+              <RangeHandle
+                side="left"
+                onPointerDown={(e) => startRangeDrag(e, "left")}
+                onPointerMove={updateRangeDrag}
+                onPointerUp={finishRangeDrag}
+                onPointerCancel={finishRangeDrag}
+              />
+              <RangeHandle
+                side="right"
+                onPointerDown={(e) => startRangeDrag(e, "right")}
+                onPointerMove={updateRangeDrag}
+                onPointerUp={finishRangeDrag}
+                onPointerCancel={finishRangeDrag}
+              />
+            </div>
+            <div
+              className="pointer-events-none absolute top-1/2 h-7 -translate-y-1/2 rounded-md border-2 border-lime-500"
+              style={{
+                left: `${Math.max(0, Math.min(100, rangeLeftPct))}%`,
+                width: `${Math.max(2, Math.min(100, rangeWidthPct))}%`,
+              }}
+              aria-hidden
+            />
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[11px] tabular-nums text-[#3f3f46]">
+            <span>In {inS.toFixed(1)}s</span>
+            <span>Out {outS.toFixed(1)}s</span>
+          </div>
+        </div>
       </div>
 
       <TimingSection label="Timing">
@@ -508,6 +683,40 @@ function ClipInspector({
         />
       </TimingSection>
     </div>
+  );
+}
+
+function RangeHandle({
+  side,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+}: {
+  side: "left" | "right";
+  onPointerDown: (e: React.PointerEvent<HTMLElement>) => void;
+  onPointerMove: (e: React.PointerEvent<HTMLElement>) => void;
+  onPointerUp: (e: React.PointerEvent<HTMLElement>) => void;
+  onPointerCancel: (e: React.PointerEvent<HTMLElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={side === "left" ? "Trim source in" : "Trim source out"}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      className={`absolute top-1/2 flex h-8 w-3 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded bg-white text-[#0c0c0e] shadow-sm ${
+        side === "left" ? "-left-1.5" : "-right-1.5"
+      }`}
+    >
+      <span className="flex flex-col gap-0.5" aria-hidden>
+        <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
+        <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
+        <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
+      </span>
+    </button>
   );
 }
 

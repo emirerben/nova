@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   applyClipEdgeDrag,
+  applyClipSourceWindowDrag,
   applyClipTimingInput,
   applySfxMove,
   applyTextBarDrag,
   applyTextTimingInput,
+  outputTimeForSlotBoundary,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
   sequentialSlotLayout,
@@ -168,6 +170,37 @@ describe("editor bar drag math", () => {
     ).toEqual({ inS: 5, durationS: 0.6, durationBeats: null });
   });
 
+  it("slides a source window while preserving duration and clamping to source bounds", () => {
+    expect(
+      applyClipSourceWindowDrag({
+        slot: { inS: 2, durationS: 3 },
+        handle: "body",
+        deltaS: 4,
+        sourceDurationS: 8,
+      }),
+    ).toEqual({ inS: 5, durationS: 3, durationBeats: null });
+
+    expect(
+      applyClipSourceWindowDrag({
+        slot: { inS: 2, durationS: 3 },
+        handle: "body",
+        deltaS: -9,
+        sourceDurationS: 8,
+      }),
+    ).toEqual({ inS: 0, durationS: 3, durationBeats: null });
+  });
+
+  it("uses the 0.6s floor for source-window edge trims", () => {
+    expect(
+      applyClipSourceWindowDrag({
+        slot: { inS: 2, durationS: 3 },
+        handle: "right",
+        deltaS: -9,
+        sourceDurationS: 8,
+      }),
+    ).toEqual({ inS: 2, durationS: 0.6, durationBeats: null });
+  });
+
   it("moves SFX starts while keeping duration inside the video", () => {
     expect(
       applySfxMove({
@@ -211,6 +244,24 @@ describe("sequentialSlotLayout", () => {
     expect(layout.windows.map((w) => w.startS)).toEqual([0, null, 4]);
     expect(layout.windows.map((w) => w.durationS)).toEqual([4, 0, 2]);
     expect(layout.totalDurationS).toBe(6);
+  });
+
+  it("maps slot output offsets while skipping removed slots", () => {
+    const slots = [
+      slot({ key: "a", slotId: "a", durationS: 4 }),
+      slot({ key: "b", slotId: "b", durationS: 3, removed: true }),
+      slot({ key: "c", slotId: "c", durationS: 2 }),
+    ];
+
+    expect(
+      outputTimeForSlotBoundary({ slots, grid: [], key: "c", boundary: "start" }),
+    ).toBe(4);
+    expect(
+      outputTimeForSlotBoundary({ slots, grid: [], key: "c", boundary: "end" }),
+    ).toBe(6);
+    expect(
+      outputTimeForSlotBoundary({ slots, grid: [], key: "b", boundary: "start" }),
+    ).toBeNull();
   });
 
   it("ripples a split slot by cumulative seconds", () => {

@@ -53,6 +53,7 @@ import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-spl
 import {
   applyClipTimingInput,
   applyTextTimingInput,
+  outputTimeForSlotBoundary,
   rangesDiffer,
   sequentialSlotLayout,
 } from "./editor-bar-drag";
@@ -344,13 +345,16 @@ export default function EditorShell({
     const idx = slots.findIndex((s) => s.key === selection.id);
     const slot = idx >= 0 ? slots[idx] : null;
     if (!slot) return null;
+    const source = clip.clips.find((c) => c.clip_index === slot.clipIndex) ?? null;
     const windowDurationS = slotLayout.windows[idx]?.durationS ?? 0;
     return {
       slot,
+      clipNumber: idx + 1,
       durationS: slot.durationS ?? windowDurationS,
-      sourceDurationS: clipSourceDurations[slot.key] ?? null,
+      sourceDurationS: source?.duration_s ?? clipSourceDurations[slot.key] ?? null,
+      sourceUrl: source?.signed_url ?? null,
     };
-  }, [clipSourceDurations, selection, slotLayout.windows, slots]);
+  }, [clip.clips, clipSourceDurations, selection, slotLayout.windows, slots]);
 
   // Selection on a deleted/vanished bar clears itself.
   useEffect(() => {
@@ -390,9 +394,26 @@ export default function EditorShell({
       if (kind === "text") {
         setInspectorTab("basic"); // selecting anything activates + switches to Basic (D6)
         if (layoutMode === "light") setLightSheetOpen(true);
+      } else if (kind === "clip") {
+        setInspectorTab("basic");
+        const startS = outputTimeForSlotBoundary({
+          slots,
+          grid: clip.state.grid,
+          key: id,
+          boundary: "start",
+        });
+        if (startS != null) {
+          const clamped = Math.max(0, Math.min(duration || startS, startS));
+          const v = videoRef.current;
+          if (v) {
+            if (!v.paused) v.pause();
+            v.currentTime = clamped;
+          }
+          setCurrentTime(clamped);
+        }
       }
     },
-    [layoutMode, select],
+    [clip.state.grid, duration, layoutMode, select, slots],
   );
 
   const selectText = useCallback(
@@ -472,6 +493,31 @@ export default function EditorShell({
       previewClipTiming(current.key, next);
     },
     [history, previewClipTiming, readOnly, selectedClip],
+  );
+
+  const previewSelectedClipTiming = useCallback(
+    (patch: { inS: number; durationS: number }) => {
+      if (!selectedClip || readOnly) return;
+      previewClipTiming(selectedClip.slot.key, {
+        inS: patch.inS,
+        durationS: patch.durationS,
+        durationBeats: null,
+      });
+    },
+    [previewClipTiming, readOnly, selectedClip],
+  );
+
+  const seekPreviewToOutput = useCallback(
+    (seconds: number) => {
+      const clamped = Math.max(0, Math.min(duration || seconds, seconds));
+      const v = videoRef.current;
+      if (v) {
+        if (!v.paused) v.pause();
+        v.currentTime = clamped;
+      }
+      setCurrentTime(clamped);
+    },
+    [duration],
   );
 
   const previewSfxTiming = useCallback(
@@ -968,6 +1014,7 @@ export default function EditorShell({
     slots,
     clipSourceDurations,
     onPreviewClipTiming: previewClipTiming,
+    onPreviewSeek: seekPreviewToOutput,
     grid: clip.state.grid,
     clipsLoading: clip.loadState === "loading",
     filmstripSrc: variant.base_video_url ?? variant.output_url ?? null,
@@ -1260,6 +1307,8 @@ export default function EditorShell({
           }}
           onPatchTextTiming={patchSelectedTextTiming}
           onPatchClipTiming={patchSelectedClipTiming}
+          onPreviewClipTiming={previewSelectedClipTiming}
+          onRecordClipTiming={recordTimelineDrag}
           onClose={clear}
           onPickPreset={pickPreset}
         />

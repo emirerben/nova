@@ -33,8 +33,9 @@ import type { EditorSelection, EditorSelectionKind } from "./useEditorSelection"
 import Filmstrip from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
 import {
+  type BarDragHandle,
   CLICK_DRAG_THRESHOLD_PX,
-  applyClipEdgeDrag,
+  applyClipSourceWindowDrag,
   applySfxMove,
   applyTextBarDrag,
   resolveBarDragHandle,
@@ -85,6 +86,7 @@ export interface EditorTimelineBodyProps {
     key: string,
     patch: Pick<DraftSlot, "inS" | "durationS" | "durationBeats">,
   ) => void;
+  onPreviewSeek?: (seconds: number) => void;
   grid: number[];
   clipsLoading: boolean;
   filmstripSrc: string | null;
@@ -120,7 +122,7 @@ type ActiveDrag =
   | {
       kind: "clip";
       id: string;
-      handle: "left" | "right";
+      handle: BarDragHandle;
       startTimelineX: number;
       pxPerSecond: number;
       origin: Pick<DraftSlot, "inS" | "durationS">;
@@ -153,6 +155,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     slots,
     clipSourceDurations,
     onPreviewClipTiming,
+    onPreviewSeek,
     grid,
     clipsLoading,
     filmstripSrc,
@@ -174,6 +177,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const dragRef = useRef<ActiveDrag | null>(null);
   const suppressClickRef = useRef(false);
   const [viewportW, setViewportW] = useState(0);
+  const [dragLabel, setDragLabel] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -276,35 +284,53 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     });
 
     if (active.kind === "text") {
-      onPreviewTextTiming?.(
-        active.id,
-        applyTextBarDrag({
-          bar: active.origin,
-          handle: active.handle,
-          deltaS,
-          videoDurationS: durationS,
-        }),
-      );
+      const next = applyTextBarDrag({
+        bar: active.origin,
+        handle: active.handle,
+        deltaS,
+        videoDurationS: durationS,
+      });
+      onPreviewTextTiming?.(active.id, next);
+      setDragLabel({
+        x: clientX,
+        y: window.innerHeight - 118,
+        text: `${Math.max(0, next.end_s - next.start_s).toFixed(1)}s`,
+      });
     } else if (active.kind === "clip") {
-      onPreviewClipTiming?.(
-        active.id,
-        applyClipEdgeDrag({
-          slot: active.origin,
-          handle: active.handle,
-          deltaS,
-          sourceDurationS: active.sourceDurationS,
-        }),
-      );
+      const next = applyClipSourceWindowDrag({
+        slot: active.origin,
+        handle: active.handle,
+        deltaS,
+        sourceDurationS: active.sourceDurationS,
+      });
+      onPreviewClipTiming?.(active.id, next);
+      const idx = slots.findIndex((slot) => slot.key === active.id);
+      const win = windows[idx];
+      if (win?.startS != null) {
+        onPreviewSeek?.(
+          active.handle === "right"
+            ? win.startS + (next.durationS ?? active.origin.durationS ?? win.durationS)
+            : win.startS,
+        );
+      }
+      setDragLabel({
+        x: clientX,
+        y: window.innerHeight - 118,
+        text: `${(next.durationS ?? active.origin.durationS ?? 0).toFixed(1)}s`,
+      });
     } else {
-      onPreviewSfxTiming?.(
-        active.id,
-        applySfxMove({
-          atS: active.origin.at_s,
-          endS: active.origin.end_s,
-          deltaS,
-          videoDurationS: durationS,
-        }),
-      );
+      const next = applySfxMove({
+        atS: active.origin.at_s,
+        endS: active.origin.end_s,
+        deltaS,
+        videoDurationS: durationS,
+      });
+      onPreviewSfxTiming?.(active.id, next);
+      setDragLabel({
+        x: clientX,
+        y: window.innerHeight - 118,
+        text: `${Math.max(0, (next.end_s ?? next.at_s) - next.at_s).toFixed(1)}s`,
+      });
     }
   }
 
@@ -335,17 +361,19 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       localX: e.clientX - rect.left,
       width: rect.width,
     });
-    if (handle === "body") return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
+    const slotIndex = slots.findIndex((s) => s.key === slot.key);
+    const effectiveDurationS =
+      slot.durationS ?? windows[slotIndex]?.durationS ?? 0.6;
     dragRef.current = {
       kind: "clip",
       id: slot.key,
       handle,
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
-      origin: { inS: slot.inS, durationS: slot.durationS },
+      origin: { inS: slot.inS, durationS: effectiveDurationS },
       sourceDurationS: clipSourceDurations?.[slot.key] ?? null,
       active: false,
     };
@@ -383,10 +411,12 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       e.stopPropagation();
     }
     dragRef.current = null;
+    setDragLabel(null);
   }
 
   function cancelDrag() {
     dragRef.current = null;
+    setDragLabel(null);
   }
 
   function onTimelineWheel(e: React.WheelEvent<HTMLDivElement>) {
@@ -480,6 +510,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   onPointerUp={(e) => finishDrag(e, "text", b.id)}
                   onPointerCancel={cancelDrag}
                   suppressClickRef={suppressClickRef}
+                  showTrimHandles
                   className="bg-[#0c0c0e] text-white"
                 >
                   <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
@@ -535,7 +566,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     onSelect("clip", slot.key);
                   }}
                   className={[
-                    "absolute inset-y-0.5 min-w-11 rounded border transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                    "group absolute inset-y-0.5 min-w-11 cursor-grab rounded border transition-colors active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
                     selected
                       ? `border-transparent ${ringCls}`
                       : "border-white/50 hover:border-white",
@@ -543,6 +574,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   style={{ left, width }}
                 >
                   {i > 0 && <span className="absolute inset-y-0 left-0 w-px bg-white/80" />}
+                  <span className="pointer-events-none absolute inset-0 flex items-center px-2 text-[10px] font-semibold text-white drop-shadow">
+                    <span className="truncate">
+                      Clip {i + 1} · {win.durationS.toFixed(1)}s
+                    </span>
+                  </span>
+                  <TimelineTrimHandle side="left" selected={selected} />
+                  <TimelineTrimHandle side="right" selected={selected} />
                 </button>
               );
             })
@@ -647,6 +685,14 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           </div>
         </div>
       </div>
+      {dragLabel && (
+        <div
+          className="pointer-events-none fixed z-[80] -translate-x-1/2 rounded-md bg-[#0c0c0e] px-2 py-1 text-[11px] font-semibold tabular-nums text-white shadow-lg"
+          style={{ left: dragLabel.x, top: dragLabel.y }}
+        >
+          {dragLabel.text}
+        </div>
+      )}
     </div>
   );
 }
@@ -747,6 +793,7 @@ function BarButton({
   onPointerUp,
   onPointerCancel,
   suppressClickRef,
+  showTrimHandles = false,
   dataKind,
   dataId,
   className,
@@ -763,6 +810,7 @@ function BarButton({
   onPointerUp?: (e: React.PointerEvent<HTMLButtonElement>) => void;
   onPointerCancel?: (e: React.PointerEvent<HTMLButtonElement>) => void;
   suppressClickRef?: React.MutableRefObject<boolean>;
+  showTrimHandles?: boolean;
   dataKind?: string;
   dataId?: string;
   className: string;
@@ -788,17 +836,17 @@ function BarButton({
         onSelect();
       }}
       className={[
-        "absolute inset-y-0.5 flex min-w-11 items-center rounded transition-[filter,outline-color] hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+        "group absolute inset-y-0.5 flex min-w-11 cursor-grab items-center rounded transition-[filter,outline-color] hover:brightness-110 active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
         selected ? ringCls : "",
         className,
       ].join(" ")}
       style={{ left, width }}
     >
       {children}
-      {selected && (
+      {showTrimHandles && (
         <>
-          <TrimHandle side="left" />
-          <TrimHandle side="right" />
+          <TimelineTrimHandle side="left" selected={selected} />
+          <TimelineTrimHandle side="right" selected={selected} />
         </>
       )}
     </button>
@@ -806,15 +854,25 @@ function BarButton({
 }
 
 /** End-trim handle (visual affordance; transitions in with the ring). */
-function TrimHandle({ side }: { side: "left" | "right" }) {
+function TimelineTrimHandle({
+  side,
+  selected,
+}: {
+  side: "left" | "right";
+  selected: boolean;
+}) {
   return (
     <span
       aria-hidden
-      className={`absolute top-1/2 flex h-full w-6 -translate-y-1/2 items-center justify-center motion-safe:transition-opacity motion-safe:duration-150 ${
-        side === "left" ? "left-[-12px]" : "right-[-12px]"
-      }`}
+      className={`absolute top-1/2 z-10 flex h-8 w-2 -translate-y-1/2 cursor-ew-resize items-center justify-center rounded-sm bg-white/95 shadow-sm ring-1 ring-black/10 motion-safe:transition-opacity motion-safe:duration-150 ${
+        selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+      } ${side === "left" ? "left-0" : "right-0"}`}
     >
-      <span className="h-3 w-1 rounded-full bg-lime-500" />
+      <span className="flex flex-col gap-0.5" aria-hidden>
+        <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
+        <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
+        <span className="h-0.5 w-0.5 rounded-full bg-[#0c0c0e]" />
+      </span>
     </span>
   );
 }

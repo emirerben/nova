@@ -211,6 +211,43 @@ export function applyClipEdgeDrag({
   };
 }
 
+export function applyClipSourceWindowDrag({
+  slot,
+  handle,
+  deltaS,
+  sourceDurationS,
+  minDurationS = CLIP_MIN_DURATION_S,
+}: {
+  slot: Pick<DraftSlot, "inS" | "durationS">;
+  handle: BarDragHandle;
+  deltaS: number;
+  sourceDurationS: number | null;
+  minDurationS?: number;
+}): Pick<DraftSlot, "inS" | "durationS" | "durationBeats"> {
+  if (handle === "left" || handle === "right") {
+    return applyClipEdgeDrag({
+      slot,
+      handle,
+      deltaS,
+      sourceDurationS,
+      minDurationS,
+    });
+  }
+
+  const startIn = Math.max(0, slot.inS);
+  const duration = Math.max(minDurationS, slot.durationS ?? minDurationS);
+  const maxIn =
+    sourceDurationS == null
+      ? Number.POSITIVE_INFINITY
+      : Math.max(0, sourceDurationS - duration);
+
+  return {
+    inS: roundTiming(clamp(startIn + deltaS, 0, maxIn)),
+    durationS: roundTiming(duration),
+    durationBeats: null,
+  };
+}
+
 export function applyClipTimingInput({
   inS,
   outS,
@@ -254,6 +291,26 @@ export function applySfxMove({
     at_s: roundTiming(nextStart),
     end_s: endS == null ? endS : roundTiming(nextStart + duration),
   };
+}
+
+export function outputTimeForSlotBoundary({
+  slots,
+  grid,
+  key,
+  boundary = "start",
+}: {
+  slots: DraftSlot[];
+  grid: number[];
+  key: string;
+  boundary?: "start" | "end";
+}): number | null {
+  const idx = slots.findIndex((s) => s.key === key);
+  if (idx < 0) return null;
+  const win = sequentialSlotLayout(slots, grid).windows[idx];
+  if (!win || win.startS == null) return null;
+  return roundTiming(
+    boundary === "end" ? win.startS + win.durationS : win.startS,
+  );
 }
 
 export function rangesDiffer(
