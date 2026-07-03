@@ -73,6 +73,13 @@ export type TextEditorAction =
   | { type: "TRIM_END"; id: string; end_s: number }
   /** Remove a bar. */
   | { type: "DELETE_BAR"; id: string }
+  /**
+   * Split a bar at the playhead (plan §6). The original bar becomes
+   * [start_s, at_s]; a new bar `newId` covers [at_s, end_s] sharing every
+   * style field. No-op (no history push) when `at_s` is not strictly inside
+   * the bar with room for both halves.
+   */
+  | { type: "SPLIT_BAR"; id: string; at_s: number; newId: string }
   /** Reorder a bar up or down in z-index stacking order. */
   | { type: "REORDER"; id: string; direction: "up" | "down" }
   /** Step back one mutation. */
@@ -159,6 +166,23 @@ export function textReducer(
         state,
         state.bars.filter((b) => b.id !== action.id),
       );
+
+    case "SPLIT_BAR": {
+      const bar = state.bars.find((b) => b.id === action.id);
+      if (!bar) return state;
+      const at = Math.round(action.at_s * 10) / 10;
+      // Need at least MIN duration on BOTH halves, else the split is a no-op.
+      const MIN = 0.2;
+      if (at <= bar.start_s + MIN - 1e-9 || at >= bar.end_s - MIN + 1e-9) {
+        return state;
+      }
+      const left: TextElementBar = { ...bar, end_s: at };
+      const right: TextElementBar = { ...bar, id: action.newId, start_s: at };
+      const next = state.bars.flatMap((b) =>
+        b.id === action.id ? [left, right] : [b],
+      );
+      return withHistory(state, next);
+    }
 
     case "REORDER": {
       const idx = state.bars.findIndex((b) => b.id === action.id);
