@@ -38,6 +38,7 @@ import {
 } from "@/lib/parity-verified-fields";
 import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
 import { normalizeEditableHex } from "./editor-color";
@@ -46,6 +47,8 @@ import PresetGrid from "./PresetGrid";
 /** Fields with dedicated (potentially editable) rows in this panel. */
 const EDITABLE_ROW_FIELDS = new Set([
   "text",
+  "start_s",
+  "end_s",
   "font_family",
   "size_px",
   "effect",
@@ -55,6 +58,12 @@ const EDITABLE_ROW_FIELDS = new Set([
   "letter_spacing",
   "line_spacing",
 ]);
+
+export interface InspectorClipTiming {
+  slot: DraftSlot;
+  durationS: number;
+  sourceDurationS: number | null;
+}
 
 const SIZE_OPTIONS = (() => {
   const out: number[] = [];
@@ -70,18 +79,22 @@ function fieldLabel(key: string): string {
 export default function InspectorPanel({
   selection,
   bar,
+  clipTiming,
   tab,
   sampleWord,
   appliedPresetId,
   contentRef,
   onEditText,
   onPatch,
+  onPatchTextTiming,
+  onPatchClipTiming,
   onClose,
   onPickPreset,
 }: {
   selection: EditorSelection | null;
   /** The selected text bar (null when selection is empty or non-text). */
   bar: TextElementBar | null;
+  clipTiming: InspectorClipTiming | null;
   tab: InspectorTab;
   sampleWord: string | null;
   appliedPresetId: string | null;
@@ -89,6 +102,8 @@ export default function InspectorPanel({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
+  onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
@@ -117,6 +132,13 @@ export default function InspectorPanel({
           contentRef={contentRef}
           onEditText={onEditText}
           onPatch={onPatch}
+          onPatchTiming={onPatchTextTiming}
+          onClose={onClose}
+        />
+      ) : selection.kind === "clip" && clipTiming ? (
+        <ClipInspector
+          timing={clipTiming}
+          onPatchTiming={onPatchClipTiming}
           onClose={onClose}
         />
       ) : (
@@ -182,12 +204,14 @@ function TextInspector({
   contentRef,
   onEditText,
   onPatch,
+  onPatchTiming,
   onClose,
 }: {
   bar: TextElementBar;
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPatchTiming: (patch: { start_s?: number; end_s?: number }) => void;
   onClose: () => void;
 }) {
   // Stroke row starts expanded when the bar already carries a stroke.
@@ -236,6 +260,21 @@ function TextInspector({
         aria-label="Text content"
         className="mt-3 w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
       />
+
+      <TimingSection label="Timing">
+        <TimingNumberInput
+          label="Start"
+          value={bar.start_s}
+          min={0}
+          onChange={(value) => onPatchTiming({ start_s: value })}
+        />
+        <TimingNumberInput
+          label="End"
+          value={bar.end_s}
+          min={0}
+          onChange={(value) => onPatchTiming({ end_s: value })}
+        />
+      </TimingSection>
 
       {/* Font + size */}
       <div className="mt-3">
@@ -427,7 +466,102 @@ function TextInspector({
   );
 }
 
+function ClipInspector({
+  timing,
+  onPatchTiming,
+  onClose,
+}: {
+  timing: InspectorClipTiming;
+  onPatchTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
+  onClose: () => void;
+}) {
+  const inS = timing.slot.inS;
+  const durationS = timing.durationS;
+  const outS = inS + durationS;
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-4 motion-safe:animate-fade-up motion-safe:[animation-duration:150ms]">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">Clip</h2>
+        <CloseX onClose={onClose} />
+      </div>
+
+      <TimingSection label="Timing">
+        <TimingNumberInput
+          label="In"
+          value={inS}
+          min={0}
+          max={timing.sourceDurationS ?? undefined}
+          onChange={(value) => onPatchTiming({ inS: value })}
+        />
+        <TimingNumberInput
+          label="Out"
+          value={outS}
+          min={0}
+          max={timing.sourceDurationS ?? undefined}
+          onChange={(value) => onPatchTiming({ outS: value })}
+        />
+        <TimingNumberInput
+          label="Dur"
+          value={durationS}
+          min={0.6}
+          onChange={(value) => onPatchTiming({ durationS: value })}
+        />
+      </TimingSection>
+    </div>
+  );
+}
+
 // ── Small controls ────────────────────────────────────────────────────────────
+
+function TimingSection({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="mt-3 border-b border-zinc-100 pb-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[13px] font-bold text-[#0c0c0e]">{label}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2">{children}</div>
+    </div>
+  );
+}
+
+function TimingNumberInput({
+  label,
+  value,
+  min,
+  max,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  max?: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="min-w-0 text-[12px] text-[#3f3f46]">
+      {label}
+      <input
+        type="number"
+        aria-label={`${label} seconds`}
+        min={min}
+        max={max}
+        step={0.1}
+        value={Number.isFinite(value) ? value.toFixed(1) : "0.0"}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (Number.isFinite(next)) onChange(next);
+        }}
+        className="mt-1 h-8 w-full rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+      />
+    </label>
+  );
+}
 
 function HexInput({
   value,

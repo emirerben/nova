@@ -47,9 +47,14 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
-import { type DraftSlot } from "@/app/generative/timeline-math";
+import { slotWindows, type DraftSlot } from "@/app/generative/timeline-math";
 import { barsToTextElements, seedBarsFromVariant } from "./editor-bars";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
+import {
+  applyClipTimingInput,
+  applyTextTimingInput,
+  rangesDiffer,
+} from "./editor-bar-drag";
 import TransportBar from "./TransportBar";
 import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
@@ -72,6 +77,7 @@ import {
   serializeDraft,
   useEditorHistory,
   type EditorDocument,
+  type EditorDocumentSfxBar,
 } from "./useEditorHistory";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
@@ -179,6 +185,7 @@ export default function EditorShell({
   const [soundMuted, setSoundMuted] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [timelineDirty, setTimelineDirty] = useState(false);
+  const [localSfx, setLocalSfx] = useState<EditorDocumentSfxBar[]>([]);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
@@ -195,6 +202,25 @@ export default function EditorShell({
     setTimelineDirty(false);
   }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
   const slots = localSlots ?? clip.state.slots;
+
+  useEffect(() => {
+    if (!variant) return;
+    setLocalSfx(
+      (variant.sound_effects ?? []).map((p) => {
+        const trimStart = p.trim_start_s ?? 0;
+        const trimEnd = p.trim_end_s ?? p.duration_s ?? null;
+        return {
+          id: p.id,
+          at_s: p.at_s ?? 0,
+          end_s:
+            trimEnd == null
+              ? null
+              : (p.at_s ?? 0) + Math.max(0, trimEnd - trimStart),
+          label: p.label ?? null,
+        };
+      }),
+    );
+  }, [variant]);
 
   // Toast auto-clear.
   useEffect(() => {
@@ -236,11 +262,12 @@ export default function EditorShell({
     (): EditorDocument => ({
       bars: state.bars,
       slots: localSlots,
+      sfx: localSfx,
       videoMuted,
       soundMuted,
       title,
     }),
-    [state.bars, localSlots, videoMuted, soundMuted, title],
+    [state.bars, localSlots, localSfx, videoMuted, soundMuted, title],
   );
 
   const applyDocument = useCallback(
@@ -248,6 +275,7 @@ export default function EditorShell({
       const beforeIds = new Set(state.bars.map((b) => b.id));
       dispatch({ type: "RESET", bars: doc.bars });
       setLocalSlots(doc.slots);
+      setLocalSfx(doc.sfx ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
       setTitle(doc.title);
@@ -294,6 +322,27 @@ export default function EditorShell({
         : null,
     [selection, state.bars],
   );
+
+  const clipSourceDurations = useMemo(() => {
+    const out: Record<string, number | null> = {};
+    for (const slot of slots) {
+      out[slot.key] = clip.state.clipDurations[slot.clipIndex] ?? null;
+    }
+    return out;
+  }, [clip.state.clipDurations, slots]);
+
+  const selectedClip = useMemo(() => {
+    if (selection?.kind !== "clip") return null;
+    const idx = slots.findIndex((s) => s.key === selection.id);
+    const slot = idx >= 0 ? slots[idx] : null;
+    if (!slot) return null;
+    const windowDurationS = slotWindows(slots, clip.state.grid)[idx]?.durationS ?? 0;
+    return {
+      slot,
+      durationS: slot.durationS ?? windowDurationS,
+      sourceDurationS: clipSourceDurations[slot.key] ?? null,
+    };
+  }, [clip.state.grid, clipSourceDurations, selection, slots]);
 
   // Selection on a deleted/vanished bar clears itself.
   useEffect(() => {
@@ -351,6 +400,86 @@ export default function EditorShell({
     },
     [readOnly, history],
   );
+
+  const previewTextTiming = useCallback(
+    (id: string, patch: Pick<TextElementBar, "start_s" | "end_s">) => {
+      if (readOnly) return;
+      dispatch({
+        type: "RESET",
+        bars: state.bars.map((b) => (b.id === id ? { ...b, ...patch } : b)),
+      });
+    },
+    [readOnly, state.bars],
+  );
+
+  const patchSelectedTextTiming = useCallback(
+    (patch: { start_s?: number; end_s?: number }) => {
+      if (!selectedBar || readOnly) return;
+      const next = applyTextTimingInput({
+        startS: patch.start_s ?? selectedBar.start_s,
+        endS: patch.end_s ?? selectedBar.end_s,
+        videoDurationS: duration,
+      });
+      if (!rangesDiffer(selectedBar, next)) return;
+      patchBar(selectedBar.id, next);
+    },
+    [duration, patchBar, readOnly, selectedBar],
+  );
+
+  const previewClipTiming = useCallback(
+    (
+      key: string,
+      patch: Pick<DraftSlot, "inS" | "durationS" | "durationBeats">,
+    ) => {
+      if (readOnly) return;
+      setLocalSlots((cur) =>
+        (cur ?? slots).map((s) => (s.key === key ? { ...s, ...patch } : s)),
+      );
+      setTimelineDirty(true);
+    },
+    [readOnly, slots],
+  );
+
+  const patchSelectedClipTiming = useCallback(
+    (patch: { inS?: number; outS?: number; durationS?: number }) => {
+      if (!selectedClip || readOnly) return;
+      const current = selectedClip.slot;
+      const currentDuration = selectedClip.durationS;
+      const next = applyClipTimingInput({
+        inS: patch.inS ?? current.inS,
+        outS: patch.outS,
+        durationS:
+          patch.durationS ??
+          (patch.outS == null ? currentDuration : undefined),
+        sourceDurationS: selectedClip.sourceDurationS,
+      });
+      if (
+        current.inS === next.inS &&
+        current.durationS === next.durationS &&
+        current.durationBeats === next.durationBeats
+      ) {
+        return;
+      }
+      history.record();
+      previewClipTiming(current.key, next);
+    },
+    [history, previewClipTiming, readOnly, selectedClip],
+  );
+
+  const previewSfxTiming = useCallback(
+    (id: string, patch: Pick<EditorDocumentSfxBar, "at_s" | "end_s">) => {
+      if (readOnly) return;
+      setLocalSfx((cur) =>
+        cur.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      );
+    },
+    [readOnly],
+  );
+
+  const recordTimelineDrag = useCallback(() => {
+    if (readOnly) return;
+    history.record();
+  }, [history, readOnly]);
 
   const focusContent = useCallback(() => {
     // Double-click contract: focus the inspector textarea with select-all.
@@ -709,7 +838,7 @@ export default function EditorShell({
     } catch {
       /* quota full / privacy mode — editing continues, draft safety only */
     }
-  }, [variant, dirty, state.bars, localSlots, videoMuted, soundMuted, title, getCurrent]);
+  }, [variant, dirty, state.bars, localSlots, localSfx, videoMuted, soundMuted, title, getCurrent]);
 
   // On open, surface a matching unsaved draft as a quiet Resume/Discard notice
   // (once per variant, after seeding so a Resume overrides the seeded bars).
@@ -825,15 +954,17 @@ export default function EditorShell({
     },
     onClear: clear,
     textBars: state.bars,
+    readOnly,
+    onRecordTimelineEdit: recordTimelineDrag,
+    onPreviewTextTiming: previewTextTiming,
     slots,
+    clipSourceDurations,
+    onPreviewClipTiming: previewClipTiming,
     grid: clip.state.grid,
     clipsLoading: clip.loadState === "loading",
     filmstripSrc: variant.base_video_url ?? variant.output_url ?? null,
-    sfx: (variant.sound_effects ?? []).map((p) => ({
-      id: p.id,
-      at_s: p.at_s ?? 0,
-      label: p.label ?? null,
-    })),
+    sfx: localSfx,
+    onPreviewSfxTiming: previewSfxTiming,
     hasMusic: !!variant.music_track_id,
     musicLabel: variant.track_title ?? "Music",
     videoMuted,
@@ -1099,6 +1230,7 @@ export default function EditorShell({
         <InspectorPanel
           selection={selection}
           bar={selectedBar}
+          clipTiming={selectedClip}
           tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
@@ -1113,6 +1245,8 @@ export default function EditorShell({
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
+          onPatchTextTiming={patchSelectedTextTiming}
+          onPatchClipTiming={patchSelectedClipTiming}
           onClose={clear}
           onPickPreset={pickPreset}
         />

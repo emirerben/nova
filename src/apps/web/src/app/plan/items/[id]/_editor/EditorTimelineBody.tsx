@@ -32,6 +32,15 @@ import { formatTimecode } from "@/lib/timeline/time-format";
 import type { EditorSelection, EditorSelectionKind } from "./useEditorSelection";
 import Filmstrip from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
+import {
+  CLICK_DRAG_THRESHOLD_PX,
+  applyClipEdgeDrag,
+  applySfxMove,
+  applyTextBarDrag,
+  resolveBarDragHandle,
+  secondsDeltaFromTimelineX,
+  timelineXFromClient,
+} from "./editor-bar-drag";
 
 /** Sticky left gutter (mute toggle + lane label). */
 const GUTTER_PX = 64;
@@ -62,13 +71,28 @@ export interface EditorTimelineBodyProps {
   onClear: () => void;
 
   textBars: TextElementBar[];
+  readOnly?: boolean;
+  onRecordTimelineEdit?: () => void;
+  onPreviewTextTiming?: (
+    id: string,
+    patch: Pick<TextElementBar, "start_s" | "end_s">,
+  ) => void;
 
   slots: DraftSlot[];
+  clipSourceDurations?: Record<string, number | null>;
+  onPreviewClipTiming?: (
+    key: string,
+    patch: Pick<DraftSlot, "inS" | "durationS" | "durationBeats">,
+  ) => void;
   grid: number[];
   clipsLoading: boolean;
   filmstripSrc: string | null;
 
   sfx: EditorSfxBar[];
+  onPreviewSfxTiming?: (
+    id: string,
+    patch: Pick<EditorSfxBar, "at_s" | "end_s">,
+  ) => void;
   hasMusic: boolean;
   musicLabel?: string;
   videoMuted: boolean;
@@ -82,6 +106,36 @@ export interface EditorTimelineBodyProps {
   onScrubStart: () => void;
 }
 
+type ActiveDrag =
+  | {
+      kind: "text";
+      id: string;
+      handle: "left" | "right" | "body";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<TextElementBar, "start_s" | "end_s">;
+      active: boolean;
+    }
+  | {
+      kind: "clip";
+      id: string;
+      handle: "left" | "right";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<DraftSlot, "inS" | "durationS">;
+      sourceDurationS: number | null;
+      active: boolean;
+    }
+  | {
+      kind: "sfx";
+      id: string;
+      handle: "body";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<EditorSfxBar, "at_s" | "end_s">;
+      active: boolean;
+    };
+
 export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const {
     durationS,
@@ -92,11 +146,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onSelect,
     onClear,
     textBars,
+    readOnly = false,
+    onRecordTimelineEdit,
+    onPreviewTextTiming,
     slots,
+    clipSourceDurations,
+    onPreviewClipTiming,
     grid,
     clipsLoading,
     filmstripSrc,
     sfx,
+    onPreviewSfxTiming,
     hasMusic,
     musicLabel,
     videoMuted,
@@ -110,6 +170,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const previousScaleRef = useRef<{ pps: number; trackW: number } | null>(null);
+  const dragRef = useRef<ActiveDrag | null>(null);
+  const suppressClickRef = useRef(false);
   const [viewportW, setViewportW] = useState(0);
 
   useLayoutEffect(() => {
@@ -175,6 +237,154 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }
   function onRulerPointerUp() {
     scrubbing.current = false;
+  }
+
+  function pointerTimelineX(clientX: number): number {
+    const el = scrollRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    return timelineXFromClient({
+      clientX,
+      scrollRectLeft: rect.left,
+      scrollLeft: el.scrollLeft,
+    });
+  }
+
+  function activateDrag(drag: ActiveDrag) {
+    if (drag.active) return drag;
+    drag.active = true;
+    suppressClickRef.current = true;
+    onScrubStart();
+    onRecordTimelineEdit?.();
+    onSelect(drag.kind, drag.id);
+    return drag;
+  }
+
+  function updateDrag(clientX: number) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const currentTimelineX = pointerTimelineX(clientX);
+    const deltaPx = currentTimelineX - drag.startTimelineX;
+    if (!drag.active && Math.abs(deltaPx) < CLICK_DRAG_THRESHOLD_PX) return;
+    const active = activateDrag(drag);
+    const deltaS = secondsDeltaFromTimelineX({
+      currentTimelineX,
+      startTimelineX: active.startTimelineX,
+      pxPerSecond: active.pxPerSecond,
+    });
+
+    if (active.kind === "text") {
+      onPreviewTextTiming?.(
+        active.id,
+        applyTextBarDrag({
+          bar: active.origin,
+          handle: active.handle,
+          deltaS,
+          videoDurationS: durationS,
+        }),
+      );
+    } else if (active.kind === "clip") {
+      onPreviewClipTiming?.(
+        active.id,
+        applyClipEdgeDrag({
+          slot: active.origin,
+          handle: active.handle,
+          deltaS,
+          sourceDurationS: active.sourceDurationS,
+        }),
+      );
+    } else {
+      onPreviewSfxTiming?.(
+        active.id,
+        applySfxMove({
+          atS: active.origin.at_s,
+          endS: active.origin.end_s,
+          deltaS,
+          videoDurationS: durationS,
+        }),
+      );
+    }
+  }
+
+  function startTextDrag(e: React.PointerEvent<HTMLElement>, bar: TextElementBar) {
+    if (readOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      kind: "text",
+      id: bar.id,
+      handle: resolveBarDragHandle({
+        localX: e.clientX - rect.left,
+        width: rect.width,
+      }),
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { start_s: bar.start_s, end_s: bar.end_s },
+      active: false,
+    };
+  }
+
+  function startClipDrag(e: React.PointerEvent<HTMLElement>, slot: DraftSlot) {
+    if (readOnly || slot.removed) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const handle = resolveBarDragHandle({
+      localX: e.clientX - rect.left,
+      width: rect.width,
+    });
+    if (handle === "body") return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind: "clip",
+      id: slot.key,
+      handle,
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { inS: slot.inS, durationS: slot.durationS },
+      sourceDurationS: clipSourceDurations?.[slot.key] ?? null,
+      active: false,
+    };
+  }
+
+  function startSfxDrag(e: React.PointerEvent<HTMLElement>, bar: EditorSfxBar) {
+    if (readOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      kind: "sfx",
+      id: bar.id,
+      handle: "body",
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { at_s: bar.at_s, end_s: bar.end_s },
+      active: false,
+    };
+  }
+
+  function finishDrag(e: React.PointerEvent<HTMLElement>, kind: EditorSelectionKind, id: string) {
+    const drag = dragRef.current;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (!drag || drag.id !== id) {
+      onSelect(kind, id);
+      return;
+    }
+    if (!drag.active) {
+      onSelect(kind, id);
+    } else {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    dragRef.current = null;
+  }
+
+  function cancelDrag() {
+    dragRef.current = null;
   }
 
   function onTimelineWheel(e: React.WheelEvent<HTMLDivElement>) {
@@ -261,6 +471,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   ringCls={ringCls}
                   ariaLabel={`Text ${b.text.slice(0, 24)}, ${formatTimecode(b.start_s)}–${formatTimecode(b.end_s)}`}
                   onSelect={() => onSelect("text", b.id)}
+                  dataKind="text"
+                  dataId={b.id}
+                  onPointerDown={(e) => startTextDrag(e, b)}
+                  onPointerMove={(e) => updateDrag(e.clientX)}
+                  onPointerUp={(e) => finishDrag(e, "text", b.id)}
+                  onPointerCancel={cancelDrag}
+                  suppressClickRef={suppressClickRef}
                   className="bg-[#0c0c0e] text-white"
                 >
                   <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
@@ -294,10 +511,20 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 <button
                   key={slot.key}
                   type="button"
-                  aria-label={`Clip ${i + 1}, ${formatTimecode(win.startS)}`}
+                  aria-label={`Clip ${i + 1}, timeline ${formatTimecode(win.startS)}–${formatTimecode(win.startS + win.durationS)}, source ${slot.inS.toFixed(1)}–${(slot.inS + win.durationS).toFixed(1)}`}
                   aria-pressed={selected}
+                  data-editor-bar-kind="clip"
+                  data-editor-bar-id={slot.key}
+                  onPointerDown={(e) => startClipDrag(e, slot)}
+                  onPointerMove={(e) => updateDrag(e.clientX)}
+                  onPointerUp={(e) => finishDrag(e, "clip", slot.key)}
+                  onPointerCancel={cancelDrag}
                   onClick={(e) => {
                     e.stopPropagation();
+                    if (suppressClickRef.current) {
+                      suppressClickRef.current = false;
+                      return;
+                    }
                     onSelect("clip", slot.key);
                   }}
                   className={[
@@ -334,6 +561,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   ringCls={ringCls}
                   ariaLabel={`Sound effect ${s.label ?? ""} at ${formatTimecode(s.at_s)}`}
                   onSelect={() => onSelect("sfx", s.id)}
+                  dataKind="sfx"
+                  dataId={s.id}
+                  onPointerDown={(e) => startSfxDrag(e, s)}
+                  onPointerMove={(e) => updateDrag(e.clientX)}
+                  onPointerUp={(e) => finishDrag(e, "sfx", s.id)}
+                  onPointerCancel={cancelDrag}
+                  suppressClickRef={suppressClickRef}
                   className="inset-y-0.5 bg-zinc-300 text-[#0c0c0e]"
                 >
                   <span className="pointer-events-none truncate px-1.5 text-[9px]">
@@ -353,6 +587,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 ringCls={ringCls}
                 ariaLabel={`Music bed ${musicLabel ?? ""}`}
                 onSelect={() => onSelect("music", "bed")}
+                dataKind="music"
+                dataId="bed"
                 className="inset-y-0.5 bg-zinc-200 text-[#0c0c0e]"
               >
                 <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
@@ -389,6 +625,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   ringCls={ringCls}
                   ariaLabel={`Overlay ${o.label ?? ""}, ${formatTimecode(o.start_s)}–${formatTimecode(o.end_s)}`}
                   onSelect={() => onSelect("overlay", o.id)}
+                  dataKind="overlay"
+                  dataId={o.id}
                   className="border border-zinc-300 bg-white text-[#0c0c0e]"
                 >
                   <span className="pointer-events-none truncate px-2 text-[10px]">
@@ -497,6 +735,13 @@ function BarButton({
   ringCls,
   ariaLabel,
   onSelect,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  onPointerCancel,
+  suppressClickRef,
+  dataKind,
+  dataId,
   className,
   children,
 }: {
@@ -506,6 +751,13 @@ function BarButton({
   ringCls: string;
   ariaLabel: string;
   onSelect: () => void;
+  onPointerDown?: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerMove?: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerUp?: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerCancel?: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  suppressClickRef?: React.MutableRefObject<boolean>;
+  dataKind?: string;
+  dataId?: string;
   className: string;
   children: React.ReactNode;
 }) {
@@ -514,8 +766,18 @@ function BarButton({
       type="button"
       aria-label={ariaLabel}
       aria-pressed={selected}
+      data-editor-bar-kind={dataKind}
+      data-editor-bar-id={dataId}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onClick={(e) => {
         e.stopPropagation();
+        if (suppressClickRef?.current) {
+          suppressClickRef.current = false;
+          return;
+        }
         onSelect();
       }}
       className={[

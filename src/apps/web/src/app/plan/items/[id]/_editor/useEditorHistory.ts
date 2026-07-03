@@ -34,9 +34,17 @@ export const EDITOR_HISTORY_DEPTH = 50;
 export interface EditorDocument {
   bars: TextElementBar[];
   slots: DraftSlot[] | null;
+  sfx?: EditorDocumentSfxBar[];
   videoMuted: boolean;
   soundMuted: boolean;
   title: string;
+}
+
+export interface EditorDocumentSfxBar {
+  id: string;
+  at_s: number;
+  end_s?: number | null;
+  label?: string | null;
 }
 
 export interface EditorHistoryState {
@@ -144,6 +152,7 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
       doc: {
         bars: doc.bars as TextElementBar[],
         slots: Array.isArray(doc.slots) ? (doc.slots as DraftSlot[]) : null,
+        ...(Array.isArray(doc.sfx) ? { sfx: doc.sfx as EditorDocumentSfxBar[] } : {}),
         videoMuted: Boolean(doc.videoMuted),
         soundMuted: Boolean(doc.soundMuted),
         title: typeof doc.title === "string" ? doc.title : "",
