@@ -69,6 +69,7 @@ export default function EditorCanvas({
   onTimeUpdate,
   onDuration,
   onPlayingChange,
+  onReloadSource,
 }: {
   variant: PlanItemVariant;
   /** Working bars projected to API shape (barsToTextElements) — layout input. */
@@ -90,6 +91,9 @@ export default function EditorCanvas({
   onDuration: (d: number) => void;
   /** Lifts play/pause state to the shell so the TransportBar can mirror it. */
   onPlayingChange?: (playing: boolean) => void;
+  /** Re-fetch the variant (re-signs an expired preview URL) on the error tile's
+   * Retry — the shell re-runs getPlanItem (plan §9 canvas error state). */
+  onReloadSource?: () => void;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -99,6 +103,10 @@ export default function EditorCanvas({
 
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  // Canvas video states (plan §9): shimmer while the frame under the playhead
+  // isn't decoded yet (scrub buffering); error tile on a load/expiry failure.
+  const [buffering, setBuffering] = useState(false);
+  const [videoError, setVideoError] = useState(false);
   // Transient per-drag override so a gesture is ONE history entry (the
   // PATCH_BAR dispatch happens on pointerup, not per pointermove).
   const [dragOverride, setDragOverride] = useState<{
@@ -340,6 +348,23 @@ export default function EditorCanvas({
                 }}
                 onPlay={() => onPlayingChange?.(true)}
                 onPause={() => onPlayingChange?.(false)}
+                // Frame under the playhead not yet decoded → shimmer (never move
+                // the playhead against a silently frozen frame).
+                onWaiting={() => setBuffering(true)}
+                onSeeking={() => setBuffering(true)}
+                onSeeked={() => setBuffering(false)}
+                onCanPlay={() => {
+                  setBuffering(false);
+                  setVideoError(false);
+                }}
+                onPlaying={() => setBuffering(false)}
+                onLoadedData={() => {
+                  setBuffering(false);
+                  setVideoError(false);
+                }}
+                // StableVideo already falls forward to the freshest signed URL;
+                // a surfaced error means the fall-forward didn't recover.
+                onError={() => setVideoError(true)}
               />
             ) : (
               <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-300 text-sm text-[#71717a]">
@@ -458,6 +483,36 @@ export default function EditorCanvas({
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Scrub-buffering shimmer (readyState < HAVE_CURRENT_DATA). */}
+            {src && buffering && !videoError && (
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent motion-safe:animate-pulse"
+              />
+            )}
+
+            {/* Load-failure / expired-URL tile — plain reason + Retry (re-fetch
+                re-signs the URL). Distinct from the ineligible-variant banner. */}
+            {src && videoError && (
+              <div className="absolute inset-0 flex items-center justify-center p-6">
+                <div className="max-w-[280px] rounded-xl border border-dashed border-zinc-300 bg-white/95 p-5 text-center">
+                  <p className="text-[13px] text-[#3f3f46]">
+                    This preview couldn&apos;t load — the link may have expired.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVideoError(false);
+                      onReloadSource?.();
+                    }}
+                    className="mt-3 rounded-full border border-zinc-200 px-4 py-1.5 text-[12px] text-[#3f3f46] hover:border-zinc-400"
+                  >
+                    Retry
+                  </button>
+                </div>
               </div>
             )}
 
