@@ -11,6 +11,7 @@ import {
   useEditorHistory,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
+import type { MediaOverlay } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 function bar(id: string, text = "hi"): TextElementBar {
@@ -19,6 +20,22 @@ function bar(id: string, text = "hi"): TextElementBar {
 
 function doc(bars: TextElementBar[], over: Partial<EditorDocument> = {}): EditorDocument {
   return { bars, slots: null, videoMuted: false, soundMuted: false, title: "", ...over };
+}
+
+function overlay(overrides: Partial<MediaOverlay> = {}): MediaOverlay {
+  return {
+    id: "ov-1",
+    kind: "image",
+    src_gcs_path: "users/u/plan/i/overlays/card.png",
+    position: "custom",
+    x_frac: 0.24,
+    y_frac: 0.68,
+    scale: 0.72,
+    start_s: 0.4,
+    end_s: 2.4,
+    z: 0,
+    ...overrides,
+  };
 }
 
 // ── Pure stack ────────────────────────────────────────────────────────────────
@@ -108,6 +125,7 @@ describe("serializeDraft / deserializeDraft", () => {
   it("round-trips a full document", () => {
     const d = doc([bar("a"), bar("b")], {
       slots: [{ key: "s0", inS: 0, durationS: 3, removed: false } as never],
+      overlays: [overlay({ x_frac: 0.8, y_frac: 0.2, scale: 0.55 })],
       videoMuted: true,
       soundMuted: true,
       title: "My clip",
@@ -138,6 +156,19 @@ describe("serializeDraft / deserializeDraft", () => {
       soundMuted: false,
       title: "",
     });
+  });
+
+  it("preserves overlay move and scale fields in draft recovery", () => {
+    const moved = overlay({
+      position: "custom",
+      x_frac: 0.12,
+      y_frac: 0.88,
+      scale: 0.91,
+      start_s: 1.2,
+      end_s: 4.8,
+    });
+    const parsed = deserializeDraft(serializeDraft("v1", doc([], { overlays: [moved] })));
+    expect(parsed?.doc.overlays?.[0]).toEqual(moved);
   });
 
   it("keys drafts per variant id", () => {

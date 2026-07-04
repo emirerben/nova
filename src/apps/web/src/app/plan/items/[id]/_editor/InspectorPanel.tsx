@@ -48,6 +48,12 @@ import {
   applyClipSourceWindowDrag,
   type BarDragHandle,
 } from "./editor-bar-drag";
+import {
+  applyMediaOverlaySourceWindowInput,
+  clampMediaOverlayScale,
+  MEDIA_OVERLAY_MIN_SCALE,
+  MEDIA_OVERLAY_MAX_SCALE,
+} from "./editor-media-overlays";
 import PresetGrid from "./PresetGrid";
 
 /** Fields with dedicated (potentially editable) rows in this panel. */
@@ -103,6 +109,8 @@ export default function InspectorPanel({
   onPatchSfx,
   onDeleteSfx,
   onPatchOverlay,
+  onPreviewOverlay,
+  onRecordOverlay,
   onDeleteOverlay,
   onClose,
   onPickPreset,
@@ -127,6 +135,8 @@ export default function InspectorPanel({
   onPatchSfx: (id: string, patch: Partial<SoundEffectPlacement>) => void;
   onDeleteSfx: (id: string) => void;
   onPatchOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
+  onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
+  onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
@@ -178,6 +188,8 @@ export default function InspectorPanel({
         <OverlayInspector
           overlay={overlay}
           onPatch={onPatchOverlay}
+          onPreview={onPreviewOverlay}
+          onRecord={onRecordOverlay}
           onDelete={onDeleteOverlay}
           onClose={onClose}
         />
@@ -285,14 +297,22 @@ function SfxInspector({
 function OverlayInspector({
   overlay,
   onPatch,
+  onPreview,
+  onRecord,
   onDelete,
   onClose,
 }: {
   overlay: MediaOverlay;
   onPatch: (id: string, patch: Partial<MediaOverlay>) => void;
+  onPreview: (id: string, patch: Partial<MediaOverlay>) => void;
+  onRecord: () => void;
   onDelete: (id: string) => void;
   onClose: () => void;
 }) {
+  const scalePct = Math.round(clampMediaOverlayScale(overlay.scale ?? 0.35) * 100);
+  const xPct = Math.round((overlay.x_frac ?? 0.5) * 100);
+  const yPct = Math.round((overlay.y_frac ?? 0.5) * 100);
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
       <div className="flex items-center justify-between">
@@ -300,24 +320,280 @@ function OverlayInspector({
         <CloseX onClose={onClose} />
       </div>
       <p className="mt-1 text-[12px] capitalize text-[#71717a]">{overlay.kind}</p>
-      <FieldNumber
-        label="Start"
-        value={overlay.start_s}
-        min={0}
-        step={0.1}
-        onCommit={(value) => onPatch(overlay.id, { start_s: Math.min(value, overlay.end_s - 0.3) })}
-      />
-      <FieldNumber
-        label="End"
-        value={overlay.end_s}
-        min={0.3}
-        step={0.1}
-        onCommit={(value) => onPatch(overlay.id, { end_s: Math.max(value, overlay.start_s + 0.3) })}
-      />
-      <p className="mt-4 rounded-lg border border-dashed border-zinc-300 px-3 py-2 text-[12px] leading-relaxed text-[#71717a]">
-        Position and scale controls remain on the item page overlay editor.
-      </p>
+
+      <TimingSection label="Timing">
+        <TimingNumberInput
+          label="Start"
+          value={overlay.start_s}
+          min={0}
+          onChange={(value) =>
+            onPatch(overlay.id, { start_s: Math.min(value, overlay.end_s - 0.3) })
+          }
+        />
+        <TimingNumberInput
+          label="End"
+          value={overlay.end_s}
+          min={0.3}
+          onChange={(value) =>
+            onPatch(overlay.id, { end_s: Math.max(value, overlay.start_s + 0.3) })
+          }
+        />
+      </TimingSection>
+
+      <TimingSection label="Position">
+        <PercentNumberInput
+          label="X"
+          value={xPct}
+          onChange={(value) =>
+            onPatch(overlay.id, {
+              x_frac: Math.min(100, Math.max(0, value)) / 100,
+              position: "custom",
+            })
+          }
+        />
+        <PercentNumberInput
+          label="Y"
+          value={yPct}
+          onChange={(value) =>
+            onPatch(overlay.id, {
+              y_frac: Math.min(100, Math.max(0, value)) / 100,
+              position: "custom",
+            })
+          }
+        />
+      </TimingSection>
+
+      <div className="mt-3 border-b border-zinc-100 pb-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[13px] font-bold text-[#0c0c0e]">Size</span>
+          <span className="text-[12px] tabular-nums text-[#71717a]">{scalePct}%</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            aria-label="Overlay scale"
+            min={Math.round(MEDIA_OVERLAY_MIN_SCALE * 100)}
+            max={Math.round(MEDIA_OVERLAY_MAX_SCALE * 100)}
+            step={1}
+            value={scalePct}
+            onChange={(e) =>
+              onPatch(overlay.id, { scale: clampMediaOverlayScale(Number(e.target.value) / 100) })
+            }
+            className="min-w-0 flex-1 accent-[#0c0c0e]"
+          />
+          <input
+            type="number"
+            aria-label="Overlay scale percent"
+            min={Math.round(MEDIA_OVERLAY_MIN_SCALE * 100)}
+            max={Math.round(MEDIA_OVERLAY_MAX_SCALE * 100)}
+            step={1}
+            value={scalePct}
+            onChange={(e) =>
+              onPatch(overlay.id, { scale: clampMediaOverlayScale(Number(e.target.value) / 100) })
+            }
+            className="h-8 w-16 rounded-lg border border-zinc-200 px-2 text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+          />
+        </div>
+      </div>
+
+      {overlay.kind === "video" && overlay.clip_duration_s != null && overlay.clip_duration_s > 0 && (
+        <VideoOverlaySourceWindow
+          overlay={overlay}
+          onPatch={onPatch}
+          onPreview={onPreview}
+          onRecord={onRecord}
+        />
+      )}
       <DangerButton onClick={() => onDelete(overlay.id)}>Delete overlay</DangerButton>
+    </div>
+  );
+}
+
+function PercentNumberInput({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="min-w-0 text-[12px] text-[#3f3f46]">
+      {label}
+      <div className="mt-1 flex h-8 items-center rounded-lg border border-zinc-200 px-2 focus-within:border-lime-500/60">
+        <input
+          type="number"
+          aria-label={`Overlay ${label} percent`}
+          min={0}
+          max={100}
+          step={1}
+          value={Number.isFinite(value) ? value : 0}
+          onChange={(e) => onChange(Number(e.target.value))}
+          className="min-w-0 flex-1 border-0 bg-transparent p-0 text-[12px] tabular-nums text-[#0c0c0e] outline-none"
+        />
+        <span className="pl-1 text-[11px] text-[#71717a]">%</span>
+      </div>
+    </label>
+  );
+}
+
+function VideoOverlaySourceWindow({
+  overlay,
+  onPatch,
+  onPreview,
+  onRecord,
+}: {
+  overlay: MediaOverlay;
+  onPatch: (id: string, patch: Partial<MediaOverlay>) => void;
+  onPreview: (id: string, patch: Partial<MediaOverlay>) => void;
+  onRecord: () => void;
+}) {
+  const dragRef = useRef<{
+    handle: BarDragHandle;
+    startClientX: number;
+    barWidth: number;
+    origin: { inS: number; durationS: number };
+  } | null>(null);
+  const sourceDurationS = Math.max(overlay.clip_duration_s ?? 0, 0.3);
+  const inS = overlay.clip_trim_start_s ?? 0;
+  const outS = overlay.clip_trim_end_s ?? sourceDurationS;
+  const durationS = Math.max(0.3, outS - inS);
+  const rangeLeftPct = sourceDurationS > 0 ? (inS / sourceDurationS) * 100 : 0;
+  const rangeWidthPct = sourceDurationS > 0 ? (durationS / sourceDurationS) * 100 : 100;
+
+  function patchWindow(trimStartS: number, trimEndS: number, preview: boolean) {
+    const next = applyMediaOverlaySourceWindowInput({
+      trimStartS,
+      trimEndS,
+      clipDurationS: sourceDurationS,
+    });
+    const nextDuration = Math.max(
+      0.3,
+      (next.clip_trim_end_s ?? sourceDurationS) - (next.clip_trim_start_s ?? 0),
+    );
+    const patch = {
+      ...next,
+      end_s: Math.round((overlay.start_s + nextDuration) * 10) / 10,
+    };
+    if (preview) onPreview(overlay.id, patch);
+    else onPatch(overlay.id, patch);
+  }
+
+  function startRangeDrag(
+    e: React.PointerEvent<HTMLElement>,
+    handle: BarDragHandle,
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    const bar = e.currentTarget.closest<HTMLElement>("[data-overlay-source-range]");
+    if (!bar) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = {
+      handle,
+      startClientX: e.clientX,
+      barWidth: Math.max(1, bar.getBoundingClientRect().width),
+      origin: { inS, durationS },
+    };
+    onRecord();
+  }
+
+  function updateRangeDrag(e: React.PointerEvent<HTMLElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const deltaS = ((e.clientX - drag.startClientX) / drag.barWidth) * sourceDurationS;
+    const next = applyClipSourceWindowDrag({
+      slot: drag.origin,
+      handle: drag.handle,
+      deltaS,
+      sourceDurationS,
+      minDurationS: 0.3,
+    });
+    const nextIn = next.inS;
+    const nextOut = next.inS + (next.durationS ?? drag.origin.durationS);
+    patchWindow(nextIn, nextOut, true);
+  }
+
+  function finishRangeDrag(e: React.PointerEvent<HTMLElement>) {
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    dragRef.current = null;
+  }
+
+  return (
+    <div className="mt-3 border-b border-zinc-100 pb-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[13px] font-bold text-[#0c0c0e]">Source crop</span>
+        <span className="text-[11px] tabular-nums text-[#71717a]">
+          {durationS.toFixed(1)}s of {sourceDurationS.toFixed(1)}s
+        </span>
+      </div>
+      <div className="mb-1 flex items-center justify-between text-[11px] tabular-nums text-[#71717a]">
+        <span>{formatTimecode(0)}</span>
+        <span>{formatTimecode(sourceDurationS)}</span>
+      </div>
+      <div
+        data-overlay-source-range
+        className="relative h-11 rounded-lg border border-zinc-200 bg-zinc-100"
+        aria-label="Overlay source range"
+      >
+        <div
+          className="absolute top-1/2 h-7 -translate-y-1/2 rounded-md bg-[#0c0c0e] shadow-sm"
+          style={{
+            left: `${Math.max(0, Math.min(100, rangeLeftPct))}%`,
+            width: `${Math.max(2, Math.min(100, rangeWidthPct))}%`,
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Slide overlay source window"
+            onPointerDown={(e) => startRangeDrag(e, "body")}
+            onPointerMove={updateRangeDrag}
+            onPointerUp={finishRangeDrag}
+            onPointerCancel={finishRangeDrag}
+            className="absolute inset-0 cursor-grab rounded-md active:cursor-grabbing"
+          />
+          <RangeHandle
+            side="left"
+            onPointerDown={(e) => startRangeDrag(e, "left")}
+            onPointerMove={updateRangeDrag}
+            onPointerUp={finishRangeDrag}
+            onPointerCancel={finishRangeDrag}
+          />
+          <RangeHandle
+            side="right"
+            onPointerDown={(e) => startRangeDrag(e, "right")}
+            onPointerMove={updateRangeDrag}
+            onPointerUp={finishRangeDrag}
+            onPointerCancel={finishRangeDrag}
+          />
+        </div>
+        <div
+          className="pointer-events-none absolute top-1/2 h-7 -translate-y-1/2 rounded-md border-2 border-lime-500"
+          style={{
+            left: `${Math.max(0, Math.min(100, rangeLeftPct))}%`,
+            width: `${Math.max(2, Math.min(100, rangeWidthPct))}%`,
+          }}
+          aria-hidden
+        />
+      </div>
+      <TimingSection label="Source">
+        <TimingNumberInput
+          label="In"
+          value={inS}
+          min={0}
+          max={sourceDurationS}
+          onChange={(value) => patchWindow(value, outS, false)}
+        />
+        <TimingNumberInput
+          label="Out"
+          value={outS}
+          min={0}
+          max={sourceDurationS}
+          onChange={(value) => patchWindow(inS, value, false)}
+        />
+      </TimingSection>
     </div>
   );
 }

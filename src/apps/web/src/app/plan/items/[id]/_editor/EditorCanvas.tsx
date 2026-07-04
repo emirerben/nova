@@ -24,6 +24,8 @@ import { resolveTextElementsLayout, CANVAS_W, CANVAS_H } from "@/lib/overlay-lay
 import { resolveCssFont } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import {
+  clampMediaOverlayPosition,
+  clampMediaOverlayScale,
   visibleMediaOverlaysAtTime,
   type VisibleMediaOverlay,
 } from "./editor-media-overlays";
@@ -41,6 +43,7 @@ const SCALE_MAX_PX = 250;
 const CLICK_SLOP_PX = 3;
 
 interface DragState {
+  target: "text" | "overlay";
   mode: "move" | "scale";
   id: string;
   startClientX: number;
@@ -50,13 +53,32 @@ interface DragState {
   startYFrac: number;
   /** scale: starting size + distance from element center */
   startSizePx: number;
+  startScale: number;
   startDist: number;
   centerClientX: number;
   centerClientY: number;
+  startWidthFrac: number;
+  startHeightFrac: number;
   moved: boolean;
   /** Hits (topmost first) captured at pointerdown — used for click-cycling. */
   hits: string[];
 }
+
+type DragOverride =
+  | {
+      target: "text";
+      id: string;
+      x_frac?: number;
+      y_frac?: number;
+      size_px?: number;
+    }
+  | {
+      target: "overlay";
+      id: string;
+      x_frac?: number;
+      y_frac?: number;
+      scale?: number;
+    };
 
 export default function EditorCanvas({
   variant,
@@ -74,6 +96,7 @@ export default function EditorCanvas({
   onSelectOverlay,
   onClearSelection,
   onPatchBar,
+  onPatchOverlay,
   onFocusContent,
   onTimeUpdate,
   onDuration,
@@ -101,6 +124,7 @@ export default function EditorCanvas({
   onSelectOverlay?: (id: string) => void;
   onClearSelection: () => void;
   onPatchBar: (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onPatchOverlay?: (id: string, patch: Partial<MediaOverlay>) => void;
   /** Double-click contract: focus the inspector content textarea, select-all. */
   onFocusContent: () => void;
   onTimeUpdate: (t: number) => void;
@@ -119,23 +143,20 @@ export default function EditorCanvas({
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const mediaOverlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const dragRef = useRef<DragState | null>(null);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredOverlayId, setHoveredOverlayId] = useState<string | null>(null);
   // Canvas video states (plan §9): shimmer while the frame under the playhead
   // isn't decoded yet (scrub buffering); error tile on a load/expiry failure.
   const [buffering, setBuffering] = useState(false);
   const [videoError, setVideoError] = useState(false);
   // Transient per-drag override so a gesture is ONE history entry (the
   // PATCH_BAR dispatch happens on pointerup, not per pointermove).
-  const [dragOverride, setDragOverride] = useState<{
-    id: string;
-    x_frac?: number;
-    y_frac?: number;
-    size_px?: number;
-  } | null>(null);
+  const [dragOverride, setDragOverride] = useState<DragOverride | null>(null);
 
   // Measure the stage so 1080×1920-scale px project onto the rendered box.
   useEffect(() => {
@@ -198,6 +219,7 @@ export default function EditorCanvas({
     const layout = layouts.find((l) => l.id === id);
     if (!layout) return;
     dragRef.current = {
+      target: "text",
       mode: "move",
       id,
       startClientX: e.clientX,
@@ -205,9 +227,12 @@ export default function EditorCanvas({
       startXFrac: bar?.x_frac ?? layout.xFrac,
       startYFrac: bar?.y_frac ?? layout.yFrac,
       startSizePx: layout.sizePx,
+      startScale: 0,
       startDist: 0,
       centerClientX: 0,
       centerClientY: 0,
+      startWidthFrac: 0,
+      startHeightFrac: 0,
       moved: false,
       hits,
     };
@@ -247,6 +272,7 @@ export default function EditorCanvas({
     const cy = r.top + r.height / 2;
     const dist = Math.hypot(e.clientX - cx, e.clientY - cy) || 1;
     dragRef.current = {
+      target: "text",
       mode: "scale",
       id,
       startClientX: e.clientX,
@@ -254,13 +280,73 @@ export default function EditorCanvas({
       startXFrac: 0,
       startYFrac: 0,
       startSizePx: layout.sizePx,
+      startScale: 0,
       startDist: dist,
       centerClientX: cx,
       centerClientY: cy,
+      startWidthFrac: 0,
+      startHeightFrac: 0,
       moved: false,
       hits: [],
     };
     (e.target as Element).setPointerCapture?.(e.pointerId);
+  }
+
+  function beginMediaOverlayMove(e: React.PointerEvent<HTMLElement>, card: MediaOverlay) {
+    if (!allowManipulation || tool !== "select" || e.button !== 0) return;
+    e.stopPropagation();
+    onSelectOverlay?.(card.id);
+    const r = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      target: "overlay",
+      mode: "move",
+      id: card.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFrac: card.x_frac,
+      startYFrac: card.y_frac,
+      startSizePx: 0,
+      startScale: card.scale,
+      startDist: 0,
+      centerClientX: 0,
+      centerClientY: 0,
+      startWidthFrac: stageSize.w > 0 ? r.width / stageSize.w : card.scale,
+      startHeightFrac: stageSize.h > 0 ? r.height / stageSize.h : card.scale,
+      moved: false,
+      hits: [],
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  function beginMediaOverlayScale(e: React.PointerEvent<HTMLElement>, card: MediaOverlay) {
+    if (!allowManipulation || tool !== "select" || e.button !== 0) return;
+    e.stopPropagation();
+    onSelectOverlay?.(card.id);
+    const el = mediaOverlayRefs.current.get(card.id);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const dist = Math.hypot(e.clientX - cx, e.clientY - cy) || 1;
+    dragRef.current = {
+      target: "overlay",
+      mode: "scale",
+      id: card.id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFrac: card.x_frac,
+      startYFrac: card.y_frac,
+      startSizePx: 0,
+      startScale: card.scale,
+      startDist: dist,
+      centerClientX: cx,
+      centerClientY: cy,
+      startWidthFrac: stageSize.w > 0 ? r.width / stageSize.w : card.scale,
+      startHeightFrac: stageSize.h > 0 ? r.height / stageSize.h : card.scale,
+      moved: false,
+      hits: [],
+    };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
   }
 
   function onPointerMove(e: React.PointerEvent) {
@@ -273,17 +359,35 @@ export default function EditorCanvas({
     if (!drag.moved) return;
     if (drag.mode === "move") {
       if (stageSize.w === 0 || stageSize.h === 0) return;
-      const xFrac = Math.min(0.98, Math.max(0.02, drag.startXFrac + dx / stageSize.w));
-      const yFrac = Math.min(0.98, Math.max(0.02, drag.startYFrac + dy / stageSize.h));
-      setDragOverride({ id: drag.id, x_frac: xFrac, y_frac: yFrac });
+      if (drag.target === "overlay") {
+        const next = clampMediaOverlayPosition({
+          xFrac: drag.startXFrac + dx / stageSize.w,
+          yFrac: drag.startYFrac + dy / stageSize.h,
+          widthFrac: drag.startWidthFrac,
+          heightFrac: drag.startHeightFrac,
+        });
+        setDragOverride({ target: "overlay", id: drag.id, ...next });
+      } else {
+        const xFrac = Math.min(0.98, Math.max(0.02, drag.startXFrac + dx / stageSize.w));
+        const yFrac = Math.min(0.98, Math.max(0.02, drag.startYFrac + dy / stageSize.h));
+        setDragOverride({ target: "text", id: drag.id, x_frac: xFrac, y_frac: yFrac });
+      }
     } else {
       const dist = Math.hypot(e.clientX - drag.centerClientX, e.clientY - drag.centerClientY);
       const ratio = dist / drag.startDist;
-      const size = Math.min(
-        SCALE_MAX_PX,
-        Math.max(SCALE_MIN_PX, Math.round(drag.startSizePx * ratio)),
-      );
-      setDragOverride({ id: drag.id, size_px: size });
+      if (drag.target === "overlay") {
+        setDragOverride({
+          target: "overlay",
+          id: drag.id,
+          scale: clampMediaOverlayScale(drag.startScale * ratio),
+        });
+      } else {
+        const size = Math.min(
+          SCALE_MAX_PX,
+          Math.max(SCALE_MIN_PX, Math.round(drag.startSizePx * ratio)),
+        );
+        setDragOverride({ target: "text", id: drag.id, size_px: size });
+      }
     }
   }
 
@@ -294,16 +398,46 @@ export default function EditorCanvas({
     dragRef.current = null;
     if (drag.moved) {
       // Commit the gesture as ONE reducer mutation (one undo step later).
-      if (drag.mode === "move" && dragOverride?.x_frac != null && dragOverride?.y_frac != null) {
+      if (
+        drag.target === "text" &&
+        drag.mode === "move" &&
+        dragOverride?.target === "text" &&
+        dragOverride.x_frac != null &&
+        dragOverride.y_frac != null
+      ) {
         onPatchBar(drag.id, {
           x_frac: dragOverride.x_frac,
           y_frac: dragOverride.y_frac,
           position: "custom",
         });
-      } else if (drag.mode === "scale" && dragOverride?.size_px != null) {
+      } else if (
+        drag.target === "text" &&
+        drag.mode === "scale" &&
+        dragOverride?.target === "text" &&
+        dragOverride.size_px != null
+      ) {
         onPatchBar(drag.id, { size_px: dragOverride.size_px, size_class: undefined });
+      } else if (
+        drag.target === "overlay" &&
+        drag.mode === "move" &&
+        dragOverride?.target === "overlay" &&
+        dragOverride.x_frac != null &&
+        dragOverride.y_frac != null
+      ) {
+        onPatchOverlay?.(drag.id, {
+          x_frac: dragOverride.x_frac,
+          y_frac: dragOverride.y_frac,
+          position: "custom",
+        });
+      } else if (
+        drag.target === "overlay" &&
+        drag.mode === "scale" &&
+        dragOverride?.target === "overlay" &&
+        dragOverride.scale != null
+      ) {
+        onPatchOverlay?.(drag.id, { scale: dragOverride.scale });
       }
-    } else if (drag.mode === "move" && drag.hits.length > 0 && selectedTextId) {
+    } else if (drag.target === "text" && drag.mode === "move" && drag.hits.length > 0 && selectedTextId) {
       // Stationary click while already selected → cycle to the element
       // underneath at this point.
       const next = cycleHit(drag.hits, selectedTextId);
@@ -452,12 +586,35 @@ export default function EditorCanvas({
                     overlay={overlay}
                     currentTimeS={currentTime}
                     selected={selectedOverlayId === overlay.card.id}
+                    hovered={hoveredOverlayId === overlay.card.id}
+                    dragOverride={
+                      dragOverride?.target === "overlay" && dragOverride.id === overlay.card.id
+                        ? dragOverride
+                        : null
+                    }
+                    allowManipulation={allowManipulation}
+                    setRef={(el) => {
+                      if (el) mediaOverlayRefs.current.set(overlay.card.id, el);
+                      else mediaOverlayRefs.current.delete(overlay.card.id);
+                    }}
                     onSelect={onSelectOverlay}
+                    onPointerDown={beginMediaOverlayMove}
+                    onHandlePointerDown={beginMediaOverlayScale}
+                    onPointerMove={onPointerMove}
+                    onPointerUp={onPointerUp}
+                    onHoverChange={(hovered) =>
+                      setHoveredOverlayId((current) =>
+                        hovered ? overlay.card.id : current === overlay.card.id ? null : current,
+                      )
+                    }
                   />
                 ))}
                 {visible.map((layout) => {
                   const bar = barById.get(layout.id);
-                  const override = dragOverride?.id === layout.id ? dragOverride : null;
+                  const override =
+                    dragOverride?.target === "text" && dragOverride.id === layout.id
+                      ? dragOverride
+                      : null;
                   const xFrac = override?.x_frac ?? layout.xFrac;
                   const yFrac = override?.y_frac ?? layout.yFrac;
                   const sizePx = override?.size_px ?? layout.sizePx;
@@ -623,28 +780,58 @@ function MediaOverlayCard({
   overlay,
   currentTimeS,
   selected,
+  hovered,
+  dragOverride,
+  allowManipulation,
+  setRef,
   onSelect,
+  onPointerDown,
+  onHandlePointerDown,
+  onPointerMove,
+  onPointerUp,
+  onHoverChange,
 }: {
   overlay: VisibleMediaOverlay;
   currentTimeS: number;
   selected: boolean;
+  hovered: boolean;
+  dragOverride: Extract<DragOverride, { target: "overlay" }> | null;
+  allowManipulation: boolean;
+  setRef: (el: HTMLDivElement | null) => void;
   onSelect?: (id: string) => void;
+  onPointerDown: (e: React.PointerEvent<HTMLElement>, card: MediaOverlay) => void;
+  onHandlePointerDown: (e: React.PointerEvent<HTMLElement>, card: MediaOverlay) => void;
+  onPointerMove: (e: React.PointerEvent) => void;
+  onPointerUp: () => void;
+  onHoverChange: (hovered: boolean) => void;
 }) {
   const { card, displayUrl } = overlay;
+  const xFrac = dragOverride?.x_frac ?? card.x_frac;
+  const yFrac = dragOverride?.y_frac ?? card.y_frac;
+  const scale = dragOverride?.scale ?? card.scale;
   return (
     <div
+      ref={setRef}
       data-overlay-id={card.id}
-      className="absolute select-none touch-none"
+      className={`absolute select-none touch-none ${allowManipulation ? "cursor-pointer" : ""}`}
       style={{
-        left: `${card.x_frac * 100}%`,
-        top: `${card.y_frac * 100}%`,
+        left: `${xFrac * 100}%`,
+        top: `${yFrac * 100}%`,
         transform: "translate(-50%, -50%)",
-        width: `${card.scale * 100}%`,
+        width: `${scale * 100}%`,
       }}
       onPointerDown={(e) => {
-        e.stopPropagation();
-        onSelect?.(card.id);
+        if (!allowManipulation) {
+          e.stopPropagation();
+          onSelect?.(card.id);
+          return;
+        }
+        onPointerDown(e, card);
       }}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerEnter={() => onHoverChange(true)}
+      onPointerLeave={() => onHoverChange(false)}
     >
       {card.kind === "image" ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -658,12 +845,46 @@ function MediaOverlayCard({
           currentTimeS={currentTimeS}
         />
       )}
-      {selected && (
+      {hovered && !selected && (
         <div
           aria-hidden
-          className="pointer-events-none absolute -inset-1 rounded"
-          style={{ boxShadow: "0 0 0 2px #84cc16" }}
+          className="pointer-events-none absolute inset-0 rounded-[2px]"
+          style={{ outline: "1px solid rgba(161,161,170,0.6)" }}
         />
+      )}
+      {selected && (
+        <div
+          aria-hidden={false}
+          role="group"
+          aria-label={`Selected ${card.kind} overlay`}
+          className="absolute -inset-1 rounded motion-safe:transition-opacity motion-safe:duration-150"
+          style={{ border: "1.5px solid #84cc16" }}
+        >
+          {allowManipulation &&
+            (["nw", "ne", "sw", "se"] as const).map((corner) => (
+              <button
+                key={corner}
+                type="button"
+                tabIndex={-1}
+                aria-label={`Resize overlay (${corner})`}
+                onPointerDown={(e) => onHandlePointerDown(e, card)}
+                className="absolute flex h-6 w-6 items-center justify-center touch-none"
+                style={{
+                  cursor: corner === "nw" || corner === "se" ? "nwse-resize" : "nesw-resize",
+                  top: corner.startsWith("n") ? -13 : undefined,
+                  bottom: corner.startsWith("s") ? -13 : undefined,
+                  left: corner.endsWith("w") ? -13 : undefined,
+                  right: corner.endsWith("e") ? -13 : undefined,
+                }}
+              >
+                <span
+                  aria-hidden
+                  className="h-2 w-2 rounded-[1px] bg-white"
+                  style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
+                />
+              </button>
+            ))}
+        </div>
       )}
     </div>
   );

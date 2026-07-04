@@ -791,6 +791,15 @@ export default function EditorShell({
     [readOnly],
   );
 
+  const previewOverlayPatch = useCallback(
+    (id: string, patch: Partial<MediaOverlay>) => {
+      if (readOnly) return;
+      setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+      setOverlaysDirty(true);
+    },
+    [readOnly],
+  );
+
   const patchOverlay = useCallback(
     (id: string, patch: Partial<MediaOverlay>) => {
       if (readOnly || capabilities?.overlays === false) return;
@@ -1711,6 +1720,7 @@ export default function EditorShell({
             onSelectOverlay={(id) => selectElement("overlay", id)}
             onClearSelection={clear}
             onPatchBar={patchBar}
+            onPatchOverlay={patchOverlay}
             onFocusContent={focusContent}
             onTimeUpdate={setCurrentTime}
             onDuration={setDuration}
@@ -1747,6 +1757,8 @@ export default function EditorShell({
 	          onPatchSfx={patchSfx}
 	          onDeleteSfx={removeSfx}
 	          onPatchOverlay={patchOverlay}
+	          onPreviewOverlay={previewOverlayPatch}
+	          onRecordOverlay={recordTimelineDrag}
 	          onDeleteOverlay={removeOverlay}
 	          onClose={clear}
           onPickPreset={pickPreset}

@@ -1,8 +1,65 @@
 import type { MediaOverlay } from "@/lib/plan-api";
 
+export const MEDIA_OVERLAY_MIN_SCALE = 0.05;
+export const MEDIA_OVERLAY_MAX_SCALE = 1.0;
+export const MEDIA_OVERLAY_MIN_DURATION_S = 0.3;
+
 export interface VisibleMediaOverlay {
   card: MediaOverlay;
   displayUrl: string;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return (min + max) / 2;
+  return Math.min(max, Math.max(min, value));
+}
+
+function round(value: number): number {
+  return Math.round(value * 1000) / 1000;
+}
+
+export function clampMediaOverlayScale(scale: number): number {
+  if (!Number.isFinite(scale)) return 0.35;
+  return round(clamp(scale, MEDIA_OVERLAY_MIN_SCALE, MEDIA_OVERLAY_MAX_SCALE));
+}
+
+export function clampMediaOverlayPosition({
+  xFrac,
+  yFrac,
+  widthFrac,
+  heightFrac,
+}: {
+  xFrac: number;
+  yFrac: number;
+  widthFrac: number;
+  heightFrac: number;
+}): Pick<MediaOverlay, "x_frac" | "y_frac"> {
+  const halfW = Math.max(0.02, Math.min(0.5, widthFrac / 2));
+  const halfH = Math.max(0.02, Math.min(0.5, heightFrac / 2));
+  return {
+    x_frac: round(clamp(xFrac, halfW, 1 - halfW)),
+    y_frac: round(clamp(yFrac, halfH, 1 - halfH)),
+  };
+}
+
+export function applyMediaOverlaySourceWindowInput({
+  trimStartS,
+  trimEndS,
+  clipDurationS,
+  minDurationS = MEDIA_OVERLAY_MIN_DURATION_S,
+}: {
+  trimStartS: number;
+  trimEndS: number;
+  clipDurationS: number;
+  minDurationS?: number;
+}): Pick<MediaOverlay, "clip_trim_start_s" | "clip_trim_end_s"> {
+  const sourceDuration = Math.max(minDurationS, clipDurationS);
+  const start = clamp(trimStartS, 0, Math.max(0, sourceDuration - minDurationS));
+  const end = clamp(trimEndS, start + minDurationS, sourceDuration);
+  return {
+    clip_trim_start_s: Math.round(start * 10) / 10,
+    clip_trim_end_s: Math.round(end * 10) / 10,
+  };
 }
 
 export function mediaOverlayDisplayUrl(
