@@ -617,6 +617,8 @@ export interface MediaOverlay {
    *  status read so the browser can show existing applied cards as a live CSS overlay
    *  without re-uploading. Absent on legacy/unsigned cards. */
   preview_url?: string | null;
+  /** Optional browser-displayable preview object, e.g. JPEG converted from HEIC. */
+  preview_gcs_path?: string | null;
   position: "top" | "center" | "bottom" | "custom";
   x_frac: number;
   y_frac: number;
@@ -712,6 +714,7 @@ export interface TextElement {
   z?: number | null;
   word_timings?: Record<string, unknown>[] | null;
   source_params?: Record<string, unknown> | null;
+  removed?: boolean;
 }
 
 export interface PlanItemVariant {
@@ -1010,6 +1013,26 @@ export async function requestOverlayUploadUrls(
     },
   );
   return res.urls;
+}
+
+export interface OverlayUploadConfirmResult {
+  gcs_path: string;
+  preview_gcs_path?: string | null;
+  preview_url?: string | null;
+}
+
+export async function confirmOverlayUploads(
+  itemId: string,
+  files: { gcs_path: string; content_type: string }[],
+): Promise<OverlayUploadConfirmResult[]> {
+  const res = await request<{ files: OverlayUploadConfirmResult[] }>(
+    `/plan-items/${itemId}/overlay-upload-confirm`,
+    {
+      method: "POST",
+      body: JSON.stringify({ files }),
+    },
+  );
+  return res.files;
 }
 
 /**

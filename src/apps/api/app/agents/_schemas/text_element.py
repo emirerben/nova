@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from copy import deepcopy
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -149,6 +150,7 @@ _ANCHOR_TO_ALIGNMENT: dict[str, str] = {
 # Default reveal window when the real video duration isn't available.
 # Matches MAX_INTRO_S in generative_build.py.
 _ADAPTER_REVEAL_WINDOW_S: float = 3.0
+_ADAPTER_HOLD_TO_END_S: float = 3600.0
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +291,13 @@ class TextElement(BaseModel):
         description=(
             "Raw params blob from the original generator; stored for round-trip "
             "safety so the compiler can reconstruct byte-identical burn dicts (A2)."
+        ),
+    )
+    removed: bool = Field(
+        default=False,
+        description=(
+            "Explicit tombstone for a generated AI text source the user deleted. "
+            "Hidden on GET and skipped by the renderer so projection does not resurrect it."
         ),
     )
 
@@ -589,6 +598,160 @@ def _burn_dict_to_text_element(
         return None
 
 
+def _text_window(v: dict, *, default_end: float = _ADAPTER_HOLD_TO_END_S) -> tuple[float, float]:
+    start_s = float(v.get("intro_start_s") or 0.0)
+    end_raw = v.get("intro_end_s")
+    if end_raw is not None:
+        end_s = float(end_raw)
+    else:
+        duration = v.get("duration_s")
+        end_s = float(duration) if duration else default_end
+    if end_s <= start_s:
+        end_s = start_s + _ADAPTER_REVEAL_WINDOW_S
+    return start_s, end_s
+
+
+def _identity_for_source(source: str, key: str) -> str:
+    return f"{source}:{key}"
+
+
+def text_element_source_identity(raw: TextElement | dict) -> str | None:
+    """Stable identity for generated AI text bars.
+
+    User-created bars do not carry a source identity. Generated bars do; the
+    serializer uses it to merge newly projected AI text into an already user-edited
+    element list without clobbering the user's saved element ids or edits.
+    """
+    role = raw.role if isinstance(raw, TextElement) else raw.get("role")
+    params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
+    if not isinstance(params, dict):
+        return None
+    identity = params.get("identity")
+    if identity:
+        return f"{role}:{identity}"
+    source = params.get("source")
+    key = params.get("key")
+    if source and key:
+        return f"{role}:{source}:{key}"
+    return None
+
+
+def _tombstone_for(projected: TextElement) -> dict:
+    identity = text_element_source_identity(projected)
+    params = dict(projected.source_params or {})
+    return {
+        "id": uuid.uuid5(uuid.NAMESPACE_URL, identity or projected.id).hex,
+        "text": "",
+        "start_s": projected.start_s,
+        "end_s": projected.end_s,
+        "role": projected.role,
+        "source_params": params,
+        "removed": True,
+    }
+
+
+def append_ai_text_tombstones(variant: dict, elements: list[dict]) -> list[dict]:
+    """Append removed=true tombstones for generated bars omitted by a save payload."""
+    projected = text_elements_for_variant(variant)
+    if not projected:
+        return elements
+    incoming_ids = {
+        ident
+        for raw in elements
+        if (ident := text_element_source_identity(raw)) is not None
+    }
+    out = list(elements)
+    for projected_elem in projected:
+        ident = text_element_source_identity(projected_elem)
+        if ident and ident not in incoming_ids:
+            out.append(_tombstone_for(projected_elem))
+            incoming_ids.add(ident)
+    return out
+
+
+def merge_projected_text_elements_for_variant(variant: dict) -> list[dict] | None:
+    """GET adapter: saved user elements win, missing generated bars are appended.
+
+    This is the read-side single source of truth. It fixes legacy user-edited rows
+    that only stored hand-created bars by appending any generated AI bar whose
+    source identity has no saved counterpart. Saved tombstones suppress projection.
+    """
+    projected = text_elements_for_variant(variant)
+    saved = coerce_text_elements(variant.get("text_elements") or []) or []
+    if not variant.get("text_elements_user_edited"):
+        visible_projected = [e.model_dump() for e in projected if not e.removed]
+        if visible_projected:
+            return visible_projected
+        visible_saved = [e.model_dump() for e in saved if not e.removed]
+        return visible_saved or None
+
+    seen: set[str] = set()
+    tombstoned: set[str] = set()
+    out: list[dict] = []
+    for elem in saved:
+        ident = text_element_source_identity(elem)
+        if ident:
+            seen.add(ident)
+            if elem.removed:
+                tombstoned.add(ident)
+        if not elem.removed:
+            out.append(elem.model_dump())
+
+    for elem in projected:
+        ident = text_element_source_identity(elem)
+        if ident and ident not in seen and ident not in tombstoned:
+            out.append(elem.model_dump())
+            seen.add(ident)
+    return out or None
+
+
+def _element_from_burn_group(
+    burn_dicts: list[dict],
+    *,
+    text: str,
+    start_s: float,
+    end_s: float,
+    source: str,
+    key: str,
+    intro_mode: str | None,
+    intro_layout: str | None,
+    intro_text_size_px: int | None,
+) -> TextElement | None:
+    if not burn_dicts:
+        return None
+    first = burn_dicts[0]
+    # Grouped reveal+hold bars should expose the animated reveal style in the
+    # editor. The hold dict may carry the settled karaoke highlight color, which
+    # would make the inspector lie about the authored text color.
+    style = first if first.get("effect") != "static" else burn_dicts[-1]
+    style = {**style, "text": text, "start_s": start_s, "end_s": end_s}
+    elem = _burn_dict_to_text_element(
+        style,
+        intro_mode=intro_mode,
+        intro_layout=intro_layout,
+        intro_text_size_px=intro_text_size_px,
+    )
+    if elem is None:
+        return None
+    params = dict(elem.source_params or {})
+    params.update(
+        {
+            "source": source,
+            "key": key,
+            "identity": _identity_for_source(source, key),
+            "source_text": text,
+            "burn_dicts": deepcopy(burn_dicts),
+        }
+    )
+    elem.source_params = params
+    if len(burn_dicts) > 1:
+        if first.get("effect") != "static":
+            elem.effect = _BURN_EFFECT_TO_TEXT_ELEMENT.get(str(first.get("effect")), elem.effect)
+            elem.reveal_s = max(0.0, float(first.get("end_s") or start_s) - start_s)
+            elem.word_timings = first.get("word_timings")
+    return elem
+
+
 # ---------------------------------------------------------------------------
 # Read adapter: legacy variant dict → list[TextElement]
 # ---------------------------------------------------------------------------
@@ -602,9 +765,10 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
     Returns ``[]`` when:
       - ``text_mode == "none"`` (text removed from this variant)
       - ``text_mode == "lyrics"`` (lyric injector owns the overlays)
-      - no ``intro_text`` and no ``scenes`` (footage-only render)
+      - no AI text source is present (footage-only render)
 
     Shape dispatch:
+      - ``caption_cues`` → one bar per cue
       - ``intro_mode == "sequence"`` + ``scenes`` → ``build_sequence_overlays``
       - all other ``intro_mode`` values + ``intro_text`` → ``build_persistent_intro_overlays``
 
@@ -626,8 +790,9 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
     intro_mode: str | None = v.get("intro_mode")
     intro_text: str | None = v.get("intro_text") or None
     scenes: list[dict] | None = v.get("scenes") or None
+    caption_cues: list[dict] | None = v.get("caption_cues") or None
 
-    if not intro_text and not scenes:
+    if not intro_text and not scenes and not caption_cues:
         return []
 
     intro_layout: str | None = v.get("intro_layout")
@@ -635,6 +800,54 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
     intro_text_size_px: int | None = v.get("intro_text_size_px")
     intro_effect: str = v.get("intro_effect") or "karaoke-line"
     intro_text_color: str = v.get("intro_text_color") or "#FFFFFF"
+    intro_start_s, intro_end_s = _text_window(v)
+
+    # ------------------------------------------------------------------
+    # CAPTION path (narrated/subtitled caption cues)
+    # ------------------------------------------------------------------
+    if caption_cues:
+        result_captions: list[TextElement] = []
+        caption_font = v.get("voiceover_caption_font") or v.get("caption_font")
+        for i, cue in enumerate(caption_cues):
+            if not isinstance(cue, dict):
+                continue
+            text = str(cue.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                start_s = float(cue.get("start_s") or 0.0)
+                end_s = float(cue.get("end_s") or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if end_s <= start_s:
+                continue
+            try:
+                result_captions.append(
+                    TextElement(
+                        text=text,
+                        start_s=start_s,
+                        end_s=end_s,
+                        role="generative_sequence",
+                        position="bottom",
+                        font_family=caption_font if caption_font in _ALLOWED_FONTS else None,
+                        size_px=float(v.get("caption_size_px") or 58),
+                        color=v.get("caption_text_color") or "#FFFFFF",
+                        stroke_width=float(v.get("caption_stroke_width") or 6),
+                        alignment="center",
+                        effect="static",
+                        word_timings=cue.get("words"),
+                        source_params={
+                            "source": "caption_cue",
+                            "key": str(i),
+                            "identity": _identity_for_source("caption_cue", str(i)),
+                            "source_text": text,
+                        },
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("text_elements_adapter_caption_failed", error=str(exc))
+        if result_captions:
+            return result_captions
 
     # ------------------------------------------------------------------
     # SEQUENCE path (transcript-synced editorial / rhythm mode)
@@ -659,14 +872,40 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
             return []
 
         result: list[TextElement] = []
-        for bd in burn_dicts:
-            elem = _burn_dict_to_text_element(
-                bd,
+        remaining = list(burn_dicts)
+        for i, scene in enumerate(scenes):
+            start_s = scene.get("start_s")
+            end_s = scene.get("end_s")
+            if start_s is None or end_s is None:
+                continue
+            try:
+                scene_start = float(start_s)
+                scene_end = float(end_s)
+            except (TypeError, ValueError):
+                continue
+            scene_burns = [
+                bd
+                for bd in remaining
+                if float(bd.get("start_s") or 0.0) >= scene_start
+                and float(bd.get("end_s") or 0.0) <= scene_end + 0.001
+            ]
+            if not scene_burns:
+                continue
+            remaining = [bd for bd in remaining if bd not in scene_burns]
+            scene_text = (scene.get("text") or " ".join(scene.get("words") or [])).strip()
+            elem = _element_from_burn_group(
+                scene_burns,
+                text=scene_text or str(scene_burns[0].get("text") or "").strip(),
+                start_s=scene_start,
+                end_s=scene_end,
+                source="sequence_scene",
+                key=str(i),
                 intro_mode="sequence",
                 intro_layout=intro_layout,
                 intro_text_size_px=intro_text_size_px,
             )
             if elem is not None:
+                elem.role = "generative_sequence"
                 result.append(elem)
         return result
 
@@ -690,10 +929,12 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
         burn_dicts_list = build_persistent_intro_overlays(
             text=intro_text,
             effect=intro_effect,
-            reveal_window_s=_ADAPTER_REVEAL_WINDOW_S,
+            reveal_window_s=min(_ADAPTER_REVEAL_WINDOW_S, max(0.1, intro_end_s - intro_start_s)),
             text_color=intro_text_color,
             layout=layout,
             word_roles=intro_word_roles,
+            start_s=intro_start_s,
+            end_s=intro_end_s,
             **style_kwargs,
         )
     except Exception as exc:  # noqa: BLE001
@@ -703,14 +944,41 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
     if not burn_dicts_list:
         return []
 
-    result_linear: list[TextElement] = []
-    for bd in burn_dicts_list:
-        elem = _burn_dict_to_text_element(
-            bd,
-            intro_mode=intro_mode or layout,
-            intro_layout=intro_layout,
-            intro_text_size_px=intro_text_size_px,
-        )
-        if elem is not None:
-            result_linear.append(elem)
-    return result_linear
+    if layout == "cluster":
+        grouped: list[TextElement] = []
+        by_block: dict[tuple[str, float | None, float | None], list[dict]] = {}
+        for bd in burn_dicts_list:
+            key = (
+                str(bd.get("text") or ""),
+                bd.get("position_x_frac"),
+                bd.get("position_y_frac"),
+            )
+            by_block.setdefault(key, []).append(bd)
+        for i, group in enumerate(by_block.values()):
+            elem = _element_from_burn_group(
+                group,
+                text=str(group[0].get("text") or "").strip(),
+                start_s=min(float(bd.get("start_s") or 0.0) for bd in group),
+                end_s=max(float(bd.get("end_s") or intro_end_s) for bd in group),
+                source="intro_cluster",
+                key=str(i),
+                intro_mode=intro_mode or layout,
+                intro_layout=intro_layout,
+                intro_text_size_px=intro_text_size_px,
+            )
+            if elem is not None:
+                grouped.append(elem)
+        return grouped
+
+    elem = _element_from_burn_group(
+        burn_dicts_list,
+        text=intro_text,
+        start_s=intro_start_s,
+        end_s=intro_end_s,
+        source="intro",
+        key="intro",
+        intro_mode=intro_mode or layout,
+        intro_layout=intro_layout,
+        intro_text_size_px=intro_text_size_px,
+    )
+    return [elem] if elem is not None else []

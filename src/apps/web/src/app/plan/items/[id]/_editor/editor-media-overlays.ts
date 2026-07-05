@@ -17,7 +17,7 @@ const MEDIA_OVERLAY_Z_MAX_OFFSET = EDITOR_STAGE_Z.textOverlay - EDITOR_STAGE_Z.m
 
 export interface VisibleMediaOverlay {
   card: MediaOverlay;
-  displayUrl: string;
+  displayUrl: string | null;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -102,8 +102,7 @@ export function visibleMediaOverlaysAtTime(
     .filter((card) => isMediaOverlayVisibleAtTime(card, currentTimeS))
     .map((card) => {
       const displayUrl = mediaOverlayDisplayUrl(card, localPreviewUrls);
-      return displayUrl ? { card, displayUrl } : null;
+      return { card, displayUrl };
     })
-    .filter((card): card is VisibleMediaOverlay => card !== null)
     .sort((a, b) => a.card.z - b.card.z);
 }

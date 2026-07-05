@@ -49,7 +49,7 @@ describe("editor media overlays", () => {
     expect(mediaOverlayDisplayUrl(card(), {})).toBe("https://signed.example/overlay-1.png");
   });
 
-  it("returns only renderable cards at the playhead sorted by z", () => {
+  it("returns visible cards at the playhead sorted by z, including placeholders", () => {
     const visibleHigh = card({ id: "high", z: 2, preview_url: "https://signed.example/high.png" });
     const visibleLow = card({ id: "low", z: 1, preview_url: "https://signed.example/low.png" });
     const hidden = card({ id: "hidden", start_s: 4, end_s: 5 });
@@ -58,6 +58,7 @@ describe("editor media overlays", () => {
     expect(
       visibleMediaOverlaysAtTime([visibleHigh, hidden, missingUrl, visibleLow], 2, {}),
     ).toEqual([
+      { card: missingUrl, displayUrl: null },
       { card: visibleLow, displayUrl: "https://signed.example/low.png" },
       { card: visibleHigh, displayUrl: "https://signed.example/high.png" },
     ]);

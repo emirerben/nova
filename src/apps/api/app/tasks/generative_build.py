@@ -2984,6 +2984,41 @@ def _run_regenerate_variant(
     # E1: the token check covers BOTH terminal branches (ready and failed) —
     # a superseded task's output/status must never clobber the newer commit's.
     if result.get("ok"):
+        if (
+            _TEXT_ELEMENTS_ENABLED
+            and existing.get("text_elements_user_edited")
+            and result.get("base_video_path")
+        ):
+            result = {
+                **result,
+                **_reburn_text_on_base(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    existing={
+                        **existing,
+                        **result,
+                        "text_elements": existing.get("text_elements") or [],
+                        "text_elements_user_edited": True,
+                    },
+                    agent_text=agent_text,
+                    agent_form=agent_form,
+                    text_mode=text_mode,
+                    resolved_style_set_id=resolved_style_set_id,
+                    size_override_px=resolved_size_override_px,
+                    settings=settings,
+                    sequence_allowed=allow_sequence,
+                    language=language,
+                    font_family_override=resolved_font_override,
+                    effect_override=resolved_effect_override,
+                    text_color_override=resolved_color_override,
+                    cluster_hero_font_override=resolved_cluster_hero_override,
+                    cluster_body_font_override=resolved_cluster_body_override,
+                    cluster_accent_font_override=resolved_cluster_accent_override,
+                    cluster_hero_size_px_override=resolved_cluster_hero_size_override,
+                    cluster_body_size_px_override=resolved_cluster_body_size_override,
+                    cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+                ),
+            }
         persisted_media_overlays = existing.get("media_overlays") or None
         if persisted_media_overlays:
             # A fresh full render produces the clean base without user media cards.

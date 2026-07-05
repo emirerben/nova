@@ -24,6 +24,7 @@ import {
   getPlanItem,
   getPlanItemJobStatus,
   NotAuthenticatedError,
+  confirmOverlayUploads,
   requestOverlayUploadUrls,
   uploadToGcs,
   type MediaOverlay,
@@ -837,16 +838,27 @@ export default function EditorShell({
           })),
         );
         await Promise.all(uploadUrls.map((u, i) => uploadToGcs(u.upload_url, files[i].file)));
+        const confirmed = await confirmOverlayUploads(
+          itemId,
+          uploadUrls.map((u, i) => ({
+            gcs_path: u.gcs_path,
+            content_type: files[i].content_type,
+          })),
+        );
+        const confirmedByPath = new Map(confirmed.map((c) => [c.gcs_path, c]));
         const previewUrls: Record<string, string> = {};
         const start = Math.min(Math.max(0, currentTime), Math.max(0, previewDuration - 0.3));
         const cards: MediaOverlay[] = uploadUrls.map((u, i) => {
           const file = files[i];
           const id = crypto.randomUUID();
           previewUrls[id] = URL.createObjectURL(file.file);
+          const confirmedUpload = confirmedByPath.get(u.gcs_path);
           return {
             id,
             kind: file.content_type.startsWith("video/") ? "video" : "image",
             src_gcs_path: u.gcs_path,
+            preview_gcs_path: confirmedUpload?.preview_gcs_path ?? null,
+            preview_url: confirmedUpload?.preview_url ?? null,
             position: "center",
             x_frac: 0.5,
             y_frac: 0.5,

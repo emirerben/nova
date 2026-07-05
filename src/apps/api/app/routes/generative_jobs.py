@@ -30,6 +30,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
+from app.agents._schemas.text_element import (
+    append_ai_text_tombstones,
+    merge_projected_text_elements_for_variant,
+)
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import get_db
 from app.models import Job, MusicTrack, User
@@ -584,7 +588,7 @@ def _variants_for_response(job: Job) -> list[dict]:
                 if not isinstance(card, dict):
                     signed_overlays.append(card)
                     continue
-                src = card.get("src_gcs_path")
+                src = card.get("preview_gcs_path") or card.get("src_gcs_path")
                 if src:
                     try:
                         signed_overlays.append(
@@ -619,7 +623,7 @@ def _variants_for_response(job: Job) -> list[dict]:
         if _TEXT_ELEMENTS_ENABLED:
             v = {
                 **v,
-                "text_elements": v.get("text_elements"),
+                "text_elements": merge_projected_text_elements_for_variant(v),
                 "text_elements_user_edited": v.get("text_elements_user_edited", False),
                 "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
                 "text_elements_materialized_from": v.get("text_elements_materialized_from"),
@@ -1095,6 +1099,22 @@ def validate_media_overlays_for_user(*, overlays_raw: list[dict], user_id: str) 
                         f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
                     ),
                 )
+            if card.preview_gcs_path:
+                try:
+                    validate_overlay_gcs_path(card.preview_gcs_path)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid overlay preview path: {exc}",
+                    ) from exc
+                if not card.preview_gcs_path.startswith(_user_prefix):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Overlay preview path must be under '{_user_prefix}': "
+                            f"{card.preview_gcs_path!r}"
+                        ),
+                    )
             if card.end_s <= card.start_s:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1331,6 +1351,11 @@ def validate_text_elements_payload(
                         detail=f"Element {elem.id}: end_s must be greater than start_s.",
                     )
             validated = [e.model_dump() for e in coerced]
+            validated = append_ai_text_tombstones(variant, validated)
+        elif variant.get("text_elements_user_edited"):
+            # Explicit empty list = delete all generated AI text. Persist tombstones
+            # so the read adapter does not resurrect projected bars on reload.
+            validated = append_ai_text_tombstones(variant, [])
     return validated, _is_first_sequence_edit
 
 
@@ -2112,13 +2137,17 @@ def prepare_editor_commit(
     # ── Validate every provided section BEFORE any write ──────────────────────
     validated_elements: list[dict] | None = None
     materialized_from_sequence = False
+    text_requires_full_render = False
     if payload.text_elements is not None:
         # The fast-reburn base is only required when this commit will take the
         # reburn path (no timeline change → no full re-assembly).
+        text_requires_full_render = payload.timeline_slots is None and not bool(
+            variant.get("base_video_path")
+        )
         validated_elements, materialized_from_sequence = validate_text_elements_payload(
             variant,
             payload.text_elements,
-            require_base=payload.timeline_slots is None,
+            require_base=payload.timeline_slots is None and not text_requires_full_render,
             strict_drop=True,
         )
 
@@ -2226,6 +2255,7 @@ def prepare_editor_commit(
         "mix_override": mix_override,
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
+        "text_requires_full_render": text_requires_full_render,
         "sections": {
             "text_elements": payload.text_elements is not None,
             "timeline": payload.timeline_slots is not None,
@@ -2255,7 +2285,11 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     if prep["mix_override"] is not None:
         kwargs["mix_override"] = float(prep["mix_override"])
     has_text_section = prep["sections"].get("text_elements") is True
-    full_render = prep["timeline_override"] is not None or prep["mix_override"] is not None
+    full_render = (
+        prep["timeline_override"] is not None
+        or prep["mix_override"] is not None
+        or prep.get("text_requires_full_render") is True
+    )
     if full_render or has_text_section:
         # Text/timeline/mix full re-renders read the just-persisted variant state.
         # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
@@ -2269,6 +2303,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     is_reburn_only = (
         prep["timeline_override"] is None
         and prep["mix_override"] is None
+        and prep.get("text_requires_full_render") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
     if is_reburn_only:

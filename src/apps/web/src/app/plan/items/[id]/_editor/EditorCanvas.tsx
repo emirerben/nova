@@ -829,6 +829,10 @@ function MediaOverlayCard({
   onHoverChange: (hovered: boolean) => void;
 }) {
   const { card, displayUrl } = overlay;
+  const [previewFailed, setPreviewFailed] = useState(false);
+  useEffect(() => {
+    setPreviewFailed(false);
+  }, [displayUrl]);
   const xFrac = dragOverride?.x_frac ?? card.x_frac;
   const yFrac = dragOverride?.y_frac ?? card.y_frac;
   const scale = dragOverride?.scale ?? card.scale;
@@ -857,10 +861,16 @@ function MediaOverlayCard({
       onPointerEnter={() => onHoverChange(true)}
       onPointerLeave={() => onHoverChange(false)}
     >
-      {card.kind === "image" ? (
+      {card.kind === "image" && displayUrl && !previewFailed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={displayUrl} alt="" className="h-auto w-full rounded" draggable={false} />
-      ) : (
+        <img
+          src={displayUrl}
+          alt=""
+          className="h-auto w-full rounded"
+          draggable={false}
+          onError={() => setPreviewFailed(true)}
+        />
+      ) : card.kind === "video" && displayUrl ? (
         <EditorVideoOverlayPreview
           src={displayUrl}
           trimStart={card.clip_trim_start_s ?? 0}
@@ -868,6 +878,10 @@ function MediaOverlayCard({
           cardStartS={card.start_s}
           currentTimeS={currentTimeS}
         />
+      ) : (
+        <div className="flex aspect-[4/3] w-full items-center justify-center rounded border border-dashed border-zinc-300 bg-white/90 px-3 text-center text-[11px] font-medium text-[#3f3f46] shadow-sm">
+          Preview unavailable
+        </div>
       )}
       {hovered && !selected && (
         <div

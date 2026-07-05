@@ -58,6 +58,9 @@ class MediaOverlay(BaseModel):
     )
     # GCS object path — validated against _OVERLAY_GCS_PREFIX in the dispatch layer.
     src_gcs_path: str
+    # Optional browser-displayable preview object. HEIC/HEIF uploads keep
+    # src_gcs_path for the renderer, while preview_gcs_path points at a JPEG.
+    preview_gcs_path: str | None = None
 
     # Position: preset OR custom frac pair. On parse, presets resolve to their
     # canonical y_frac / x_frac defaults; custom uses the literal values.

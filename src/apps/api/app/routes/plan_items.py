@@ -12,6 +12,8 @@ leave an item stuck "generating" forever.
 from __future__ import annotations
 
 import asyncio
+import os
+import tempfile
 import uuid
 from typing import Annotated, Literal
 
@@ -82,6 +84,7 @@ _OVERLAY_ALLOWED_CONTENT_TYPES = {
     "image/png",
     "image/webp",
     "image/heic",
+    "image/heif",
     "video/mp4",
     "video/quicktime",
 }
@@ -1656,6 +1659,59 @@ class OverlayUploadUrlsResponse(BaseModel):
     urls: list[UploadUrlItem]
 
 
+class OverlayUploadConfirmFile(BaseModel):
+    gcs_path: str
+    content_type: str
+
+
+class OverlayUploadConfirmBody(BaseModel):
+    files: list[OverlayUploadConfirmFile]
+
+
+class OverlayUploadConfirmItem(BaseModel):
+    gcs_path: str
+    preview_gcs_path: str | None = None
+    preview_url: str | None = None
+
+
+class OverlayUploadConfirmResponse(BaseModel):
+    files: list[OverlayUploadConfirmItem]
+
+
+def _is_heif_overlay(path: str, content_type: str) -> bool:
+    ext = os.path.splitext(path)[1].lower()
+    return content_type in {"image/heic", "image/heif"} or ext in {".heic", ".heif"}
+
+
+def _convert_heif_overlay_preview(gcs_path: str) -> tuple[str | None, str | None]:
+    try:
+        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
+        from PIL import Image, ImageOps  # noqa: PLC0415
+
+        pillow_heif.register_heif_opener()
+        with tempfile.TemporaryDirectory(prefix="nova_overlay_preview_") as tmpdir:
+            raw_path = os.path.join(tmpdir, "overlay")
+            preview_path = os.path.join(tmpdir, "preview.jpg")
+            storage.download_to_file(gcs_path, raw_path)
+            with Image.open(raw_path) as img:
+                ImageOps.exif_transpose(img).convert("RGB").save(
+                    preview_path,
+                    format="JPEG",
+                    quality=92,
+                    optimize=True,
+                )
+            preview_gcs_path = f"{gcs_path}.preview.jpg"
+            preview_url = storage.upload_public_read(
+                preview_path,
+                preview_gcs_path,
+                content_type="image/jpeg",
+            )
+            return preview_gcs_path, preview_url
+    except Exception as exc:  # noqa: BLE001
+        log.warning("overlay_heif_preview_convert_failed", gcs_path=gcs_path, error=str(exc))
+        return None, None
+
+
 @router.post("/{item_id}/overlay-upload-urls", response_model=OverlayUploadUrlsResponse)
 async def create_overlay_upload_urls(
     item_id: str,
@@ -1700,6 +1756,51 @@ async def create_overlay_upload_urls(
         )
         urls.append(UploadUrlItem(upload_url=upload_url, gcs_path=gcs_path))
     return OverlayUploadUrlsResponse(urls=urls)
+
+
+@router.post(
+    "/{item_id}/overlay-upload-confirm",
+    response_model=OverlayUploadConfirmResponse,
+)
+async def confirm_overlay_uploads(
+    item_id: str,
+    body: OverlayUploadConfirmBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OverlayUploadConfirmResponse:
+    """Post-upload hook for browser previews.
+
+    HEIC/HEIF stays as the renderer source, but the browser needs a JPEG preview
+    because Chromium cannot decode HEIC. Non-HEIF uploads return no preview path.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
+        )
+
+    item = await _load_owned_item(item_id, user.id, db)
+    prefix = f"users/{user.id}/plan/{item.id}/overlays/"
+    confirmed: list[OverlayUploadConfirmItem] = []
+    for f in body.files:
+        if not f.gcs_path.startswith(prefix):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Overlay asset path must be under '{prefix}'.",
+            )
+        preview_gcs_path: str | None = None
+        preview_url: str | None = None
+        if _is_heif_overlay(f.gcs_path, f.content_type):
+            preview_gcs_path, preview_url = _convert_heif_overlay_preview(f.gcs_path)
+        confirmed.append(
+            OverlayUploadConfirmItem(
+                gcs_path=f.gcs_path,
+                preview_gcs_path=preview_gcs_path,
+                preview_url=preview_url,
+            )
+        )
+    return OverlayUploadConfirmResponse(files=confirmed)
 
 
 class SetMediaOverlaysBody(BaseModel):

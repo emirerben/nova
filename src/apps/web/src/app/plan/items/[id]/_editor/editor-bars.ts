@@ -105,7 +105,7 @@ export function convertApiTextElements(
     x_frac: el.x_frac ?? undefined,
     y_frac: el.y_frac ?? undefined,
     source_params: el.source_params ?? undefined,
-  }));
+  })).filter((bar, i) => !apiElements?.[i]?.removed);
 }
 
 /** Narrated CaptionCue[] → bars (stable index ids, same as the item page). */

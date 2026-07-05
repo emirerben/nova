@@ -540,3 +540,55 @@ def test_full_render_success_reapplies_persisted_media_overlays(monkeypatch):
         }
     ]
     assert sfx_calls == []
+
+
+def test_full_render_success_reburns_persisted_text_elements_after_new_base(monkeypatch):
+    elements = [
+        {
+            "id": "edited-intro",
+            "text": "Edited intro",
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "role": "generative_intro",
+        }
+    ]
+    job = _FakeJob(
+        [_variant("tok-cur", text_elements=elements, text_elements_user_edited=True)]
+    )
+    _patch_sessions(monkeypatch, job)
+    updates = _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(gb, "_reapply_persisted_sfx_if_any", lambda **kw: None, raising=False)
+    render_result = {
+        **_READY_RESULT,
+        "base_video_path": f"generative-jobs/{JOB_ID}/base_new.mp4",
+        "video_path": f"generative-jobs/{JOB_ID}/variant_new.mp4",
+    }
+    monkeypatch.setattr(
+        gb, "_render_generative_variant", lambda **kw: dict(render_result), raising=False
+    )
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: _fake_ingest(), raising=False)
+    monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
+    reburn_calls: list[dict] = []
+
+    def _fake_reburn_text_on_base(**kwargs):
+        reburn_calls.append(kwargs)
+        return {
+            "render_status": "ready",
+            "ok": True,
+            "video_path": "generative-jobs/reburned.mp4",
+            "output_url": "https://signed/reburned",
+            "text_elements_user_edited": True,
+        }
+
+    monkeypatch.setattr(gb, "_reburn_text_on_base", _fake_reburn_text_on_base, raising=False)
+
+    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
+
+    assert reburn_calls
+    assert reburn_calls[0]["existing"]["base_video_path"] == render_result["base_video_path"]
+    assert reburn_calls[0]["existing"]["text_elements"] == elements
+    ready = [u for u in updates if u.get("render_status") == "ready"]
+    assert ready[-1]["video_path"] == "generative-jobs/reburned.mp4"
+    assert ready[-1]["output_url"] == "https://signed/reburned"

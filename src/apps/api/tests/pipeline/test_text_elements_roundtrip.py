@@ -174,9 +174,10 @@ class TestLinearRoundTrip:
     """Linear intro: adapter → compiler == build_persistent_intro_overlays(layout="linear").
 
     The adapter calls build_persistent_intro_overlays(reveal_window_s=_ADAPTER_REVEAL_WINDOW_S=3.0)
-    and splits each resulting burn dict into a TextElement.  The compiler calls
-    build_intro_overlay() for each element (single-dict path — no reveal_s set) and
-    overwrites karaoke word_timings with the stored value (A17).
+    and groups each generated intro into one editable TextElement.  Animated
+    intros carry reveal_s so the compiler can emit the old reveal+hold burn pair;
+    static intros compile to one persistent static burn dict with identical visual
+    output.
     """
 
     def _direct(self, text: str, effect: str, text_color: str = "#FFFFFF", **kwargs) -> list[dict]:
@@ -254,27 +255,43 @@ class TestLinearRoundTrip:
         assert _normalize(roundtrip) == _normalize(legacy)
 
     def test_static_roundtrip_byte_identical(self):
-        """Static effect — no word_timings, just [reveal, hold] both static."""
+        """Static effect groups to one persistent editor/render bar."""
         v = {
             "intro_text": "Open with this",
             "intro_effect": "static",
             "text_mode": "agent_text",
         }
-        legacy = self._direct("Open with this", effect="static")
         roundtrip = self._roundtrip(v)
-        assert _normalize(roundtrip) == _normalize(legacy)
+        assert _normalize(roundtrip) == [
+            {
+                "effect": "static",
+                "end_s": _HOLD_TO_END_S,
+                "highlight_color": "#FFD24A",
+                "position": "center",
+                "role": "generative_intro",
+                "start_s": 0.0,
+                "subject_substitute": False,
+                "text": "Open with this",
+                "text_anchor": "center",
+                "text_color": "#FFFFFF",
+                "text_size": "jumbo",
+            }
+        ]
 
-    def test_adapter_produces_reveal_plus_hold_pair(self):
-        """Linear intro always produces exactly 2 TextElements: [reveal, hold]."""
-        v = {"intro_text": "Two elements expected", "intro_effect": "karaoke-line"}
+    def test_adapter_produces_one_grouped_intro_bar(self):
+        """Linear intro produces one editable TextElement with reveal metadata."""
+        v = {"intro_text": "One grouped bar expected", "intro_effect": "karaoke-line"}
         elements = text_elements_for_variant(v)
-        assert len(elements) == 2
-        reveal = next(e for e in elements if e.effect == "karaoke-line")
-        hold = next(e for e in elements if e.effect == "static")
-        assert reveal.start_s == 0.0
-        assert reveal.end_s == _ADAPTER_REVEAL_WINDOW_S
-        assert hold.start_s == _ADAPTER_REVEAL_WINDOW_S
-        assert hold.end_s == _HOLD_TO_END_S
+        assert len(elements) == 1
+        intro = elements[0]
+        assert intro.text == "One grouped bar expected"
+        assert intro.effect == "karaoke-line"
+        assert intro.start_s == 0.0
+        assert intro.end_s == _HOLD_TO_END_S
+        assert intro.reveal_s == _ADAPTER_REVEAL_WINDOW_S
+        assert intro.color == "#FFFFFF"
+        assert intro.highlight_color == "#FFD24A"
+        assert intro.source_params["identity"] == "intro:intro"
 
     def test_karaoke_word_timings_preserved_verbatim(self):
         """A17: stored word_timings survive the round-trip without re-synthesis."""
@@ -337,16 +354,19 @@ class TestLinearRoundTrip:
         assert _normalize(roundtrip) == _normalize(legacy)
 
     def test_intro_text_size_px_roundtrip_byte_identical(self):
-        """When intro_text_size_px is set, burn dict carries text_size_px (no text_size)."""
+        """When intro_text_size_px is set, grouped bar carries text_size_px."""
         v = {
             "intro_text": "Large text overlay",
             "intro_effect": "static",
             "intro_text_size_px": 80,
             "text_mode": "agent_text",
         }
-        legacy = self._direct("Large text overlay", effect="static", text_size_px=80)
         roundtrip = self._roundtrip(v)
-        assert _normalize(roundtrip) == _normalize(legacy)
+        assert len(roundtrip) == 1
+        assert roundtrip[0]["text_size_px"] == 80
+        assert "text_size" not in roundtrip[0]
+        assert roundtrip[0]["start_s"] == 0.0
+        assert roundtrip[0]["end_s"] == _HOLD_TO_END_S
         # Both should carry text_size_px, not text_size
         for o in roundtrip:
             assert "text_size_px" in o

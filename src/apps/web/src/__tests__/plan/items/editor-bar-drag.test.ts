@@ -3,9 +3,11 @@ import {
   applyClipEdgeDrag,
   applyClipSourceWindowDrag,
   applyClipTimingInput,
+  applySfxBarDrag,
   applySfxMove,
   applyTextBarDrag,
   applyTextTimingInput,
+  effectiveBarEdgeHitPx,
   outputTimeForSlotBoundary,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
@@ -33,6 +35,13 @@ describe("editor bar drag math", () => {
     expect(resolveBarDragHandle({ localX: 10, width: 120 })).toBe("left");
     expect(resolveBarDragHandle({ localX: 96, width: 120 })).toBe("right");
     expect(resolveBarDragHandle({ localX: 60, width: 120 })).toBe("body");
+  });
+
+  it("keeps a grab body zone on narrow bars", () => {
+    expect(effectiveBarEdgeHitPx(45)).toBe(15);
+    expect(resolveBarDragHandle({ localX: 4, width: 45 })).toBe("left");
+    expect(resolveBarDragHandle({ localX: 22.5, width: 45 })).toBe("body");
+    expect(resolveBarDragHandle({ localX: 41, width: 45 })).toBe("right");
   });
 
   it("converts pointer coordinates through horizontal scroll", () => {
@@ -210,6 +219,26 @@ describe("editor bar drag math", () => {
         videoDurationS: 10,
       }),
     ).toEqual({ at_s: 9, end_s: 10 });
+  });
+
+  it("trims SFX bars from the edge hit zones", () => {
+    expect(
+      applySfxBarDrag({
+        bar: { at_s: 2, end_s: 4 },
+        handle: "left",
+        deltaS: 1.5,
+        videoDurationS: 10,
+      }),
+    ).toEqual({ at_s: 3.5, end_s: 4 });
+
+    expect(
+      applySfxBarDrag({
+        bar: { at_s: 2, end_s: 4 },
+        handle: "right",
+        deltaS: -5,
+        videoDurationS: 10,
+      }),
+    ).toEqual({ at_s: 2, end_s: 2.3 });
   });
 });
 

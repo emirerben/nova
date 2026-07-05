@@ -802,6 +802,8 @@ def build_overlays_from_text_elements(
 
     overlays: list[dict] = []
     for elem in elements:
+        if getattr(elem, "removed", False):
+            continue
         # ── position → burn-dict position + optional explicit fracs ──────────
         if elem.position == "custom":
             pos = _DEFAULT_POSITION
