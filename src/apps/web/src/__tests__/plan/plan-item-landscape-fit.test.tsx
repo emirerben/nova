@@ -194,14 +194,121 @@ beforeEach(() => {
   mockRefetch.mockClear();
 });
 
+// ── Landscape-clip detection helpers ────────────────────────────────────────
+// detectLandscapeClip() (page.tsx) creates a detached <video>, sets .src, and
+// resolves off .onloadedmetadata/.onerror. jsdom doesn't decode real video, so
+// we stub document.createElement("video") to synchronously fire the callback
+// the component assigned, using a queued width/height per created element.
+
+let nextVideoDims: Array<{ width: number; height: number } | "error"> = [];
+
+function mockNextUpload(dims: Array<{ width: number; height: number } | "error">) {
+  nextVideoDims = [...dims];
+}
+
+beforeAll(() => {
+  if (!("createObjectURL" in URL)) {
+    Object.defineProperty(URL, "createObjectURL", {
+      value: jest.fn(() => "blob:mock"),
+      writable: true,
+    });
+  }
+  if (!("revokeObjectURL" in URL)) {
+    Object.defineProperty(URL, "revokeObjectURL", { value: jest.fn(), writable: true });
+  }
+  const realCreateElement = document.createElement.bind(document);
+  jest.spyOn(document, "createElement").mockImplementation((tag: string, ...rest: unknown[]) => {
+    if (tag !== "video") return realCreateElement(tag, ...(rest as []));
+    const dims = nextVideoDims.shift();
+    const el = realCreateElement("video") as HTMLVideoElement;
+    Object.defineProperty(el, "src", {
+      set() {
+        // Fire on next tick, mirroring real async metadata loading.
+        setTimeout(() => {
+          if (dims === "error") {
+            el.onerror?.(new Event("error"));
+          } else if (dims) {
+            Object.defineProperty(el, "videoWidth", { value: dims.width, configurable: true });
+            Object.defineProperty(el, "videoHeight", { value: dims.height, configurable: true });
+            el.onloadedmetadata?.(new Event("loadedmetadata"));
+          }
+        }, 0);
+      },
+      get() {
+        return "";
+      },
+    });
+    return el;
+  });
+});
+
+function uploadFile() {
+  const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+  const file = new File(["x"], "clip.mp4", { type: "video/mp4" });
+  Object.defineProperty(input, "files", { value: [file] });
+  fireEvent.change(input);
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("Fit/Fill landscape-clip toggle", () => {
-  it("1. pre-render: shows both Fit and Fill buttons when variants is empty", async () => {
+  // Shared setup: render with an "existing_footage" item (reaches PoolUploadCard,
+  // not ShotSlotUploader — see detectLandscapeClip's doc comment for the scope),
+  // then upload a landscape clip so hasLandscapeClip flips true.
+  async function renderWithLandscapeDetected(overrides: Record<string, unknown> = {}) {
+    setData(makeItem({ status: "draft", landscape_fit: "fit", content_mode: "existing_footage", ...overrides }));
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    mockNextUpload([{ width: 1920, height: 1080 }]);
+    await act(async () => {
+      uploadFile();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+  }
+
+  it("0. pre-render, no landscape clip detected: Fit/Fill toggle is hidden", async () => {
     setData(makeItem({ status: "draft", landscape_fit: "fit" }));
     await act(async () => {
       render(<PlanItemPage />);
     });
+
+    expect(screen.queryByRole("button", { name: /^Fit/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Fill/i })).toBeNull();
+  });
+
+  it("0b. uploading a portrait clip does not reveal the toggle", async () => {
+    setData(makeItem({ status: "draft", landscape_fit: "fit", content_mode: "existing_footage" }));
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    mockNextUpload([{ width: 1080, height: 1920 }]);
+    await act(async () => {
+      uploadFile();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(screen.queryByRole("button", { name: /^Fit/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Fill/i })).toBeNull();
+  });
+
+  it("0c. metadata-load failure fails safe — toggle stays hidden, no crash", async () => {
+    setData(makeItem({ status: "draft", landscape_fit: "fit", content_mode: "existing_footage" }));
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    mockNextUpload(["error"]);
+    await act(async () => {
+      uploadFile();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(screen.queryByRole("button", { name: /^Fit/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Fill/i })).toBeNull();
+  });
+
+  it("1. pre-render: shows both Fit and Fill buttons once a landscape clip is detected", async () => {
+    await renderWithLandscapeDetected();
 
     // Accessible name = label + desc concatenated: "FitKeep horizontal…"
     // Use prefix match so the description text doesn't break the query.
@@ -210,10 +317,7 @@ describe("Fit/Fill landscape-clip toggle", () => {
   });
 
   it("2a. click dispatches updatePlanItem with the new value", async () => {
-    setData(makeItem({ status: "draft", landscape_fit: "fit" }));
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
+    await renderWithLandscapeDetected();
 
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /^Fill/i }));
@@ -225,10 +329,7 @@ describe("Fit/Fill landscape-clip toggle", () => {
   });
 
   it("2b. clicking the already-active option is a no-op", async () => {
-    setData(makeItem({ status: "draft", landscape_fit: "fit" }));
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
+    await renderWithLandscapeDetected();
 
     // "Fit" is already active — clicking it should not call updatePlanItem.
     await act(async () => {
@@ -239,10 +340,7 @@ describe("Fit/Fill landscape-clip toggle", () => {
   });
 
   it("3. active-state: the active button carries lime classes, inactive does not", async () => {
-    setData(makeItem({ status: "draft", landscape_fit: "fit" }));
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
+    await renderWithLandscapeDetected();
 
     const fitBtn = screen.getByRole("button", { name: /^Fit/i });
     const fillBtn = screen.getByRole("button", { name: /^Fill/i });
