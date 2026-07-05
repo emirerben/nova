@@ -27,6 +27,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from app.services.media_overlay_preview import nonblank_str
+
 # Canvas dimensions (portrait 9:16) — must match text_overlay_skia.CANVAS_{W,H}.
 _CANVAS_W = 1080
 _CANVAS_H = 1920
@@ -96,6 +98,11 @@ class MediaOverlay(BaseModel):
             return max(0.0, min(1.0, float(v)))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return _DEFAULT_X_FRAC
+
+    @field_validator("preview_gcs_path", mode="before")
+    @classmethod
+    def _blank_preview_path_to_none(cls, v: object) -> str | None:
+        return nonblank_str(v)
 
     @field_validator("scale", mode="before")
     @classmethod

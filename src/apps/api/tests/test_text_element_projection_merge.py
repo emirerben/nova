@@ -12,7 +12,9 @@ from app.agents._schemas.text_element import (
     text_elements_for_variant,
 )
 from app.routes.generative_jobs import (
+    _HEIF_PREVIEW_BACKFILL_ATTEMPTED,
     EditorCommitRequest,
+    _lazy_backfill_media_overlay_previews,
     _variants_for_response,
     enqueue_editor_commit_render,
     prepare_editor_commit,
@@ -259,6 +261,89 @@ def test_variants_for_response_merges_ai_intro_and_signs_media_preview(monkeypat
     assert variant["media_overlays"][0]["preview_url"] == (
         "https://signed/users/u1/plan/p1/overlays/card.heic.preview.jpg"
     )
+
+
+def test_variants_for_response_lazy_backfills_legacy_heic_preview(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.convert_heif_overlay_preview",
+        lambda path: calls.append(path) or (f"{path}.preview.jpg", f"https://signed/{path}.preview.jpg"),
+    )
+    monkeypatch.setattr(
+        "app.routes.generative_jobs.signed_get_url",
+        lambda path, ttl=None: f"https://signed/{path}",
+    )
+    _HEIF_PREVIEW_BACKFILL_ATTEMPTED.clear()
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        mode="content_plan",
+        all_candidates={"clip_paths": []},
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "render_status": "ready",
+                    "media_overlays": [
+                        {
+                            "id": "ov-1",
+                            "kind": "image",
+                            "src_gcs_path": "users/u1/plan/p1/overlays/card.HEIC",
+                            "preview_gcs_path": " ",
+                            "start_s": 0,
+                            "end_s": 3,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    [variant] = _variants_for_response(job)
+
+    assert calls == ["users/u1/plan/p1/overlays/card.HEIC"]
+    assert getattr(job, "_media_overlay_preview_backfilled") is True
+    stored = job.assembly_plan["variants"][0]["media_overlays"][0]
+    assert stored["preview_gcs_path"] == "users/u1/plan/p1/overlays/card.HEIC.preview.jpg"
+    assert variant["media_overlays"][0]["preview_url"] == (
+        "https://signed/users/u1/plan/p1/overlays/card.HEIC.preview.jpg"
+    )
+
+
+def test_lazy_backfill_failure_does_not_retry_same_overlay(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def _fail(path: str) -> tuple[None, None]:
+        calls.append(path)
+        return None, None
+
+    monkeypatch.setattr("app.routes.generative_jobs.convert_heif_overlay_preview", _fail)
+    _HEIF_PREVIEW_BACKFILL_ATTEMPTED.clear()
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "media_overlays": [
+                        {
+                            "id": "ov-1",
+                            "kind": "image",
+                            "src_gcs_path": "users/u1/plan/p1/overlays/card.heif",
+                            "preview_gcs_path": None,
+                            "start_s": 0,
+                            "end_s": 3,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert _lazy_backfill_media_overlay_previews(job) is False
+    assert _lazy_backfill_media_overlay_previews(job) is False
+
+    assert calls == ["users/u1/plan/p1/overlays/card.heif"]
+    assert job.assembly_plan["variants"][0]["media_overlays"][0]["preview_gcs_path"] is None
 
 
 def test_editor_commit_text_without_base_routes_to_full_render(monkeypatch) -> None:

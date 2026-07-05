@@ -38,6 +38,11 @@ from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import get_db
 from app.models import Job, MusicTrack, User
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.services.media_overlay_preview import (
+    convert_heif_overlay_preview,
+    is_heif_overlay,
+    nonblank_str,
+)
 from app.storage import signed_get_url
 
 log = structlog.get_logger()
@@ -60,6 +65,7 @@ _TEXT_ELEMENTS_MAX = 50
 # read from the persisted relative key (`video_path`) so playback URLs are always
 # fresh. 6h comfortably covers a viewing session; the page re-polls to refresh.
 PLAYBACK_URL_TTL_MIN = 360
+_HEIF_PREVIEW_BACKFILL_ATTEMPTED: set[str] = set()
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -530,6 +536,83 @@ def _variants_of(job: Job) -> list[dict]:
     return ((job.assembly_plan or {}).get("variants")) or []
 
 
+def _lazy_backfill_media_overlay_previews(job: Job) -> bool:
+    """Generate missing JPEG previews for legacy HEIC overlay cards.
+
+    Upload-confirm handles new HEIC/HEIF cards, but rows created before that
+    feature can have only the original HEIC source. Chromium cannot preview that
+    source, so the status read does one best-effort conversion and stamps the
+    preview path back onto the variant JSON. Failed conversions are guarded per
+    process and per overlay source path to avoid repeating slow reads on every
+    poll.
+    """
+    variants = _variants_of(job)
+    if not variants:
+        return False
+
+    changed = False
+    next_variants: list[dict] = []
+    for v in variants:
+        if not isinstance(v, dict):
+            next_variants.append(v)
+            continue
+        raw_overlays = v.get("media_overlays")
+        if not raw_overlays:
+            next_variants.append(v)
+            continue
+
+        next_overlays: list[object] = []
+        variant_changed = False
+        for card in raw_overlays:
+            if not isinstance(card, dict):
+                next_overlays.append(card)
+                continue
+
+            src_gcs_path = nonblank_str(card.get("src_gcs_path"))
+            preview_gcs_path = nonblank_str(card.get("preview_gcs_path"))
+            if (
+                src_gcs_path
+                and not preview_gcs_path
+                and is_heif_overlay(src_gcs_path)
+                and src_gcs_path not in _HEIF_PREVIEW_BACKFILL_ATTEMPTED
+            ):
+                _HEIF_PREVIEW_BACKFILL_ATTEMPTED.add(src_gcs_path)
+                preview_gcs_path, preview_url = convert_heif_overlay_preview(src_gcs_path)
+                preview_gcs_path = nonblank_str(preview_gcs_path)
+                preview_url = nonblank_str(preview_url)
+                if preview_gcs_path:
+                    card = {**card, "preview_gcs_path": preview_gcs_path}
+                    variant_changed = True
+                    log.info(
+                        "overlay_heif_preview_lazy_backfilled",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        src_gcs_path=src_gcs_path,
+                        preview_gcs_path=preview_gcs_path,
+                    )
+                else:
+                    log.error(
+                        "overlay_heif_preview_lazy_backfill_failed",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        src_gcs_path=src_gcs_path,
+                    )
+            elif "preview_gcs_path" in card and card.get("preview_gcs_path") != preview_gcs_path:
+                card = {**card, "preview_gcs_path": preview_gcs_path}
+                variant_changed = True
+
+            next_overlays.append(card)
+
+        if variant_changed:
+            v = {**v, "media_overlays": next_overlays}
+            changed = True
+        next_variants.append(v)
+
+    if changed:
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": next_variants}
+    return changed
+
+
 def _variants_for_response(job: Job) -> list[dict]:
     """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
@@ -545,6 +628,10 @@ def _variants_for_response(job: Job) -> list[dict]:
     playing the base while a committed re-render is in flight. A signing failure just
     omits the key (the editor degrades to the legacy controls).
     """
+    changed = _lazy_backfill_media_overlay_previews(job)
+    if changed:
+        setattr(job, "_media_overlay_preview_backfilled", True)
+
     out: list[dict] = []
     for v in _variants_of(job):
         video_path = v.get("video_path")
@@ -588,7 +675,9 @@ def _variants_for_response(job: Job) -> list[dict]:
                 if not isinstance(card, dict):
                     signed_overlays.append(card)
                     continue
-                src = card.get("preview_gcs_path") or card.get("src_gcs_path")
+                src = nonblank_str(card.get("preview_gcs_path")) or nonblank_str(
+                    card.get("src_gcs_path")
+                )
                 if src:
                     try:
                         signed_overlays.append(
@@ -2423,10 +2512,12 @@ async def get_generative_job_status(
     if baselines and pending_count > 0:
         baselines = scale_render_variants(baselines, pending_count)
 
-    return GenerativeJobStatusResponse(
+    variants = _variants_for_response(job)
+
+    response = GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
-        variants=_variants_for_response(job),
+        variants=variants,
         error_detail=job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
@@ -2437,6 +2528,9 @@ async def get_generative_job_status(
         finished_at=job.finished_at,
         expected_phase_durations=baselines,
     )
+    if getattr(job, "_media_overlay_preview_backfilled", False):
+        await db.commit()
+    return response
 
 
 @router.post("/{job_id}/variants/{variant_id}/swap-song", response_model=GenerativeJobResponse)

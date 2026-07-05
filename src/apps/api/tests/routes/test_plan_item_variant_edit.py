@@ -152,6 +152,32 @@ def test_overlay_upload_confirm_converts_heic_preview(client: TestClient, monkey
     ]
 
 
+def test_overlay_upload_confirm_treats_blank_preview_stamp_as_absent(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([item], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    monkeypatch.setattr(
+        "app.routes.plan_items._convert_heif_overlay_preview",
+        lambda path: ("   ", ""),
+    )
+    gcs_path = f"users/{user.id}/plan/{item.id}/overlays/card.heic"
+
+    resp = client.post(
+        f"/plan-items/{item.id}/overlay-upload-confirm",
+        json={"files": [{"gcs_path": gcs_path, "content_type": "image/heic"}]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["files"][0]["preview_gcs_path"] is None
+    assert resp.json()["files"][0]["preview_url"] is None
+
+
 def test_overlay_upload_confirm_non_heic_keeps_no_preview(client: TestClient, monkeypatch) -> None:
     from app.config import settings
 

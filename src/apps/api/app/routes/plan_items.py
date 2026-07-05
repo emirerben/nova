@@ -12,8 +12,6 @@ leave an item stuck "generating" forever.
 from __future__ import annotations
 
 import asyncio
-import os
-import tempfile
 import uuid
 from typing import Annotated, Literal
 
@@ -67,6 +65,11 @@ from app.routes.generative_jobs import (
     prepare_editor_commit,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
+)
+from app.services.media_overlay_preview import (
+    convert_heif_overlay_preview,
+    is_heif_overlay,
+    nonblank_str,
 )
 
 log = structlog.get_logger()
@@ -1679,37 +1682,11 @@ class OverlayUploadConfirmResponse(BaseModel):
 
 
 def _is_heif_overlay(path: str, content_type: str) -> bool:
-    ext = os.path.splitext(path)[1].lower()
-    return content_type in {"image/heic", "image/heif"} or ext in {".heic", ".heif"}
+    return is_heif_overlay(path, content_type)
 
 
 def _convert_heif_overlay_preview(gcs_path: str) -> tuple[str | None, str | None]:
-    try:
-        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
-        from PIL import Image, ImageOps  # noqa: PLC0415
-
-        pillow_heif.register_heif_opener()
-        with tempfile.TemporaryDirectory(prefix="nova_overlay_preview_") as tmpdir:
-            raw_path = os.path.join(tmpdir, "overlay")
-            preview_path = os.path.join(tmpdir, "preview.jpg")
-            storage.download_to_file(gcs_path, raw_path)
-            with Image.open(raw_path) as img:
-                ImageOps.exif_transpose(img).convert("RGB").save(
-                    preview_path,
-                    format="JPEG",
-                    quality=92,
-                    optimize=True,
-                )
-            preview_gcs_path = f"{gcs_path}.preview.jpg"
-            preview_url = storage.upload_public_read(
-                preview_path,
-                preview_gcs_path,
-                content_type="image/jpeg",
-            )
-            return preview_gcs_path, preview_url
-    except Exception as exc:  # noqa: BLE001
-        log.warning("overlay_heif_preview_convert_failed", gcs_path=gcs_path, error=str(exc))
-        return None, None
+    return convert_heif_overlay_preview(gcs_path)
 
 
 @router.post("/{item_id}/overlay-upload-urls", response_model=OverlayUploadUrlsResponse)
@@ -1793,6 +1770,8 @@ async def confirm_overlay_uploads(
         preview_url: str | None = None
         if _is_heif_overlay(f.gcs_path, f.content_type):
             preview_gcs_path, preview_url = _convert_heif_overlay_preview(f.gcs_path)
+            preview_gcs_path = nonblank_str(preview_gcs_path)
+            preview_url = nonblank_str(preview_url)
         confirmed.append(
             OverlayUploadConfirmItem(
                 gcs_path=f.gcs_path,

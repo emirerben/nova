@@ -40,6 +40,10 @@ class TestMediaOverlayValidation:
         assert card.scale == pytest.approx(0.35)
         assert card.end_s == pytest.approx(3.0)
 
+    def test_blank_preview_path_is_absent(self):
+        card = MediaOverlay.model_validate(_card(preview_gcs_path="   "))
+        assert card.preview_gcs_path is None
+
     def test_x_frac_clamped_above_1(self):
         card = MediaOverlay.model_validate(_card(x_frac=1.5))
         assert card.x_frac == pytest.approx(1.0)
