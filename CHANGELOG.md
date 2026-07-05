@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1.1] — 2026-07-05
+
+### Fixed
+- **Editor saves on song variants work again.** Saves were sending a music-mix value for variants that don't support mixing (the server rightly refused); the mix section is now omitted when the variant's capabilities say so. Untouched song clips with no stored beat count also no longer get re-timed on save.
+- **Save errors are readable.** Structured validation errors render as clear messages naming the element and field, instead of "[object Object]"; rejects of Nova's own generated text are now loudly logged server-side (shape only, never your text).
+
 ## [0.7.1.0] — 2026-07-05
 
 ### Fixed

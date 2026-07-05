@@ -92,6 +92,9 @@ export interface EditorCommitDraftSlot {
 export interface EditorCommitVariantBaseline {
   render_generation_id?: string | null;
   render_finished_at?: string | null;
+  editor_capabilities?: {
+    mix?: boolean;
+  } | null;
 }
 
 export function editorCommitBaseGeneration(
@@ -127,6 +130,7 @@ export function buildEditorCommitRequest({
   title: string;
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
+  const mixEditable = variant.editor_capabilities?.mix !== false;
   return {
     text_elements: textDirty ? elements : undefined,
     timeline_slots: timelineDirty
@@ -139,12 +143,67 @@ export function buildEditorCommitRequest({
           removed: s.removed,
         }))
       : undefined,
-    mix: soundMuted ? { music_level: 0.0 } : undefined,
+    mix: soundMuted && mixEditable ? { music_level: 0.0 } : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     base_generation: editorCommitBaseGeneration(variant),
   };
+}
+
+function formatLoc(loc: unknown): string {
+  if (Array.isArray(loc)) {
+    return loc
+      .filter((part) => part !== "body")
+      .map(String)
+      .join(".");
+  }
+  return typeof loc === "string" ? loc : "detail";
+}
+
+function formatDetailValue(detail: unknown, fallback: string): string {
+  if (typeof detail === "string") {
+    const match = detail.match(
+      /^Text element ([^:]+): field ([^ ]+) has invalid value [\s\S]*: (.+)$/,
+    );
+    if (match) return `Text ${match[1]}: field ${match[2]} — ${match[3]}`;
+    return detail;
+  }
+  if (Array.isArray(detail)) {
+    const lines = detail.map((entry) => {
+      if (typeof entry === "string") return entry;
+      if (entry && typeof entry === "object") {
+        const record = entry as { loc?: unknown; msg?: unknown };
+        const loc = formatLoc(record.loc);
+        const msg =
+          typeof record.msg === "string" ? record.msg : JSON.stringify(entry);
+        return `${loc}: ${msg}`;
+      }
+      return String(entry);
+    });
+    return lines.join("\n");
+  }
+  if (detail && typeof detail === "object") {
+    const record = detail as { detail?: unknown; code?: unknown; msg?: unknown };
+    if (record.detail !== undefined) {
+      return formatDetailValue(record.detail, fallback);
+    }
+    if (typeof record.code === "string") return record.code;
+    if (typeof record.msg === "string") return record.msg;
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+export function formatEditorCommitError(
+  payload: unknown,
+  status: number,
+): string {
+  return formatDetailValue(payload, `Save failed (${status})`);
 }
 
 /** Thrown on a 409: the variant changed under this session (another tab
@@ -182,8 +241,7 @@ export async function commitEditorSession(
   if (!res.ok) {
     let detail = `Save failed (${res.status})`;
     try {
-      const parsed = (await res.json()) as { detail?: string };
-      if (parsed?.detail) detail = parsed.detail;
+      detail = formatEditorCommitError(await res.json(), res.status);
     } catch {
       /* non-JSON body — keep the generic message */
     }

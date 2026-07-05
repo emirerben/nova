@@ -57,6 +57,31 @@ _TEXT_ELEMENTS_ENABLED = os.getenv("TEXT_ELEMENTS_ENABLED", "true").lower() != "
 # Maximum number of TextElement entries accepted per PUT (A—).
 _TEXT_ELEMENTS_MAX = 50
 
+_TEXT_ELEMENT_LOG_SAFE_FIELDS = frozenset(
+    {
+        "alignment",
+        "effect",
+        "end_s",
+        "fade_out_ms",
+        "font_family",
+        "highlight_color",
+        "letter_spacing",
+        "line_spacing",
+        "max_width_frac",
+        "position",
+        "reveal_s",
+        "role",
+        "size_class",
+        "size_px",
+        "start_s",
+        "stroke_width",
+        "text_case",
+        "x_frac",
+        "y_frac",
+        "z",
+    }
+)
+
 # Variant blobs live under `generative-jobs/` which is NOT in the GCS delete rule
 # (infra/gcs-lifecycle.json) — the bytes persist indefinitely. But `output_url` is
 # persisted at render time as a 1-day-TTL signed URL (storage.upload_public_read),
@@ -66,6 +91,31 @@ _TEXT_ELEMENTS_MAX = 50
 # fresh. 6h comfortably covers a viewing session; the page re-polls to refresh.
 PLAYBACK_URL_TTL_MIN = 360
 _HEIF_PREVIEW_BACKFILL_ATTEMPTED: set[str] = set()
+
+
+def _text_element_shape_for_log(raw: object) -> dict:
+    """Redact user text while keeping enum/numeric shape useful in prod logs."""
+    if not isinstance(raw, dict):
+        return {"type": type(raw).__name__}
+    return {
+        "id": raw.get("id"),
+        "keys": sorted(str(k) for k in raw),
+        "safe_fields": {
+            k: raw.get(k)
+            for k in sorted(_TEXT_ELEMENT_LOG_SAFE_FIELDS)
+            if k in raw
+        },
+        "word_timings_len": (
+            len(raw.get("word_timings"))
+            if isinstance(raw.get("word_timings"), list)
+            else None
+        ),
+        "source_params_keys": (
+            sorted(str(k) for k in raw.get("source_params"))
+            if isinstance(raw.get("source_params"), dict)
+            else None
+        ),
+    }
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -1542,6 +1592,15 @@ def validate_text_elements_payload(
                         field = ".".join(str(part) for part in loc)
                         value = raw.get(field) if "." not in field else None
                         msg = first.get("msg") or str(exc)
+                        if not variant.get("text_elements_user_edited"):
+                            log.warning(
+                                "projected_text_element_strict_rejected",
+                                variant_id=variant.get("variant_id"),
+                                element_index=idx,
+                                field=field,
+                                message=msg,
+                                shape=_text_element_shape_for_log(raw),
+                            )
                         raise HTTPException(
                             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                             detail=(
@@ -2233,7 +2292,19 @@ def resolve_timeline_slots_for_edit(
         duration_s = e.duration_s
         duration_beats = e.duration_beats
         if not e.removed:
-            if beat_grid and duration_beats is not None and duration_beats >= 1:
+            if (
+                beat_grid
+                and duration_beats is None
+                and not _window_changed(e)
+                and e.duration_s is not None
+                and e.duration_s > 0
+            ):
+                # Some AI song timelines contain footage-trimmed seconds slots
+                # inside a beat-gridded edit. An untouched round-trip must keep
+                # those exact windows and must not consume beat cursor.
+                duration_s = float(e.duration_s)
+                duration_beats = None
+            elif beat_grid and duration_beats is not None and duration_beats >= 1:
                 # Explicit beat slot: walk the REAL grid cumulatively. Slot i's
                 # duration is grid[offset+beats] - grid[offset]; the offset then
                 # advances, so the same beat count can yield different seconds at

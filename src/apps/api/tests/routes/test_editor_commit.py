@@ -658,6 +658,161 @@ def test_mix_on_variant_without_voice_bed_422(monkeypatch):
     assert exc.value.status_code == 422
 
 
+def test_prod_song_text_empty_text_and_mixed_beat_slots_round_trip(monkeypatch):
+    """Regression for prod item a170f347 (job 45a2bf6c).
+
+    The actual rejected field was not text or timeline: it was the frontend
+    adding mix.music_level=0.0 to this non-voiceover song_text variant. Keep the
+    real text/timeline shape here so future fixes do not regress the round-trip.
+    """
+    _arm(monkeypatch)
+    job_id = uuid.UUID("45a2bf6c-9b07-44c2-923d-6126c3dd7db1")
+    prefix = f"generative-jobs/{job_id}/sources/"
+    clips = [f"{prefix}{i:03d}_clip.mp4" for i in range(17)]
+    raw_slots = [
+        (0, 1.25, 0.5, 1, 4.705),
+        (3, 0.0, 0.5, 1, 7.774),
+        (1, 0.0, 0.939, 2, 3.513),
+        (11, 0.0, 0.512, 1, 5.239),
+        (13, 0.0, 0.5, None, 1.14),
+        (2, 0.0, 0.5, 1, 3.637),
+        (5, 0.0, 0.5, 1, 3.134),
+        (15, 1.77, 0.5, 1, 15.882),
+        (14, 0.01, 0.938, 2, 6.974),
+        (6, 0.0, 2.859, 4, 4.067),
+        (7, 1.0, 0.5, 1, 3.537),
+        (10, 0.0, 1.967, None, 1.967),
+        (16, 0.0, 0.5, 1, 4.133),
+        (8, 2.2, 0.5, None, 5.644),
+        (4, 0.0, 0.5, 1, 3.303),
+        (12, 0.0, 0.5, 1, 6.206),
+        (9, 0.0, 0.5, None, 29.667),
+    ]
+    slots = [
+        {
+            "slot_id": f"prod-slot-{order}",
+            "clip_index": clip_index,
+            "source_gcs_path": clips[clip_index],
+            "source_duration_s": source_duration_s,
+            "in_s": in_s,
+            "duration_s": duration_s,
+            "duration_beats": duration_beats,
+            "order": order,
+        }
+        for order, (clip_index, in_s, duration_s, duration_beats, source_duration_s) in enumerate(
+            raw_slots
+        )
+    ]
+    variant = {
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "intro_mode": "linear",
+        "intro_text": "pov: you finally balance the cup",
+        "intro_text_size_px": 58,
+        "intro_highlight_word": "balance",
+        "text_elements": [],
+        "text_elements_user_edited": True,
+        "base_video_path": f"generative-jobs/{job_id}/base_1_song_text.mp4",
+        "music_track_id": "c1180879-592c-48b2-bdcc-6f14f48f1160",
+        "track_title": "Waka Waka",
+        "render_generation_id": "0398dae9402548b2aad878e80ee035f8",
+        "render_finished_at": "2026-06-30T05:48:39.313921Z",
+        "mix": None,
+        "ai_timeline": {
+            "slots": slots,
+            "beat_grid": [
+                0.34,
+                0.809,
+                1.278,
+                1.748,
+                2.26,
+                2.729,
+                3.177,
+                3.646,
+                4.116,
+                4.585,
+                5.054,
+                5.566,
+                6.036,
+                7.913,
+                8.084,
+                8.382,
+                8.852,
+                9.321,
+                9.812,
+                10.132,
+                10.75,
+                11.241,
+                11.689,
+                12.158,
+                12.649,
+                13.097,
+                13.566,
+            ],
+        },
+    }
+    job = types.SimpleNamespace(
+        id=job_id,
+        assembly_plan={"variants": [variant]},
+        all_candidates={"clip_paths": clips},
+        status="variants_ready",
+        mode="content_plan",
+    )
+    posted_slots = [
+        gj.TimelineSlotEdit(
+            slot_id=s["slot_id"],
+            clip_index=s["clip_index"],
+            in_s=s["in_s"],
+            duration_s=s["duration_s"],
+            duration_beats=s["duration_beats"],
+            removed=False,
+        )
+        for s in slots
+    ]
+
+    text, _materialized = gj.validate_text_elements_payload(
+        variant,
+        [],
+        require_base=False,
+        strict_drop=True,
+    )
+    resolved = gj.resolve_timeline_slots_for_edit(job, variant, posted_slots)
+
+    assert text == []
+    assert len(resolved) == 17
+    assert [
+        (idx, slot.duration_beats)
+        for idx, slot in enumerate(posted_slots)
+        if slot.duration_beats is None
+    ] == [(4, None), (11, None), (13, None), (16, None)]
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(
+            text_elements=[],
+            timeline_slots=posted_slots,
+            base_generation="0398dae9402548b2aad878e80ee035f8",
+        ),
+    )
+    assert prep["sections"]["text_elements"] is True
+    assert prep["sections"]["timeline"] is True
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(
+                text_elements=[],
+                timeline_slots=posted_slots,
+                mix=gj.EditorCommitMix(music_level=0.0),
+                base_generation=prep["generation"],
+            ),
+        )
+    assert exc.value.status_code == 422
+    assert exc.value.detail == "This edit has no voiceover to mix."
+
+
 def test_no_sections_422(monkeypatch):
     _arm(monkeypatch)
     with pytest.raises(HTTPException) as exc:
