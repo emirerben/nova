@@ -73,6 +73,7 @@ def _job(**variant_extra):
     variant = {
         "variant_id": "song_text",
         "text_mode": "agent_text",
+        "music_track_id": "t1",
         "render_status": "ready",
         "render_finished_at": "2026-07-01T00:00:00Z",
         "video_path": f"generative-jobs/{jid}/variant.mp4",
@@ -471,6 +472,43 @@ def test_invalid_timeline_section_422_nothing_persisted(monkeypatch):
     assert job.assembly_plan == before
 
 
+def test_song_timeline_seconds_snap_to_beat_grid(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    slots = [
+        gj.TimelineSlotEdit(slot_id="s1", clip_index=0, in_s=0.0, duration_s=0.9),
+        gj.TimelineSlotEdit(slot_id="s2", clip_index=1, in_s=1.0, duration_s=1.4),
+    ]
+
+    resolved = gj.resolve_timeline_slots_for_edit(job, job.assembly_plan["variants"][0], slots)
+
+    assert resolved[0]["duration_beats"] == 2
+    assert resolved[0]["duration_s"] == 1.1
+    assert resolved[1]["duration_beats"] == 2
+    assert resolved[1]["duration_s"] == 1.3
+
+
+def test_no_music_timeline_seconds_snap_to_half_second(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="original_text",
+        music_track_id=None,
+    )
+    prefix = f"generative-jobs/{job.id}/sources/"
+    job.assembly_plan["variants"][0]["ai_timeline"] = {
+        "beat_grid": [],
+        "slots": [{**_ai_slots(prefix)[0], "duration_s": 1.0, "duration_beats": None}],
+    }
+    slots = [
+        gj.TimelineSlotEdit(slot_id="s1", clip_index=0, in_s=0.0, duration_s=1.24),
+    ]
+
+    resolved = gj.resolve_timeline_slots_for_edit(job, job.assembly_plan["variants"][0], slots)
+
+    assert resolved[0]["duration_beats"] is None
+    assert resolved[0]["duration_s"] == 1.0
+
+
 def test_invalid_text_section_422_nothing_persisted(monkeypatch):
     """end_s <= start_s in the text section fails the whole commit."""
     _arm(monkeypatch)
@@ -489,7 +527,7 @@ def test_editor_commit_strictly_rejects_dropped_text_element(monkeypatch):
     _arm(monkeypatch)
     job = _job()
     before = copy.deepcopy(job.assembly_plan)
-    bad_element = {**_VALID_ELEMENT, "font_family": "Playfair Display"}
+    bad_element = {**_VALID_ELEMENT, "id": "bad-font", "font_family": "illegal font"}
 
     with pytest.raises(HTTPException) as exc:
         gj.prepare_editor_commit(
@@ -499,8 +537,115 @@ def test_editor_commit_strictly_rejects_dropped_text_element(monkeypatch):
         )
 
     assert exc.value.status_code == 422
-    assert "invalid" in str(exc.value.detail)
+    assert "bad-font" in str(exc.value.detail)
+    assert "font_family" in str(exc.value.detail)
+    assert "'illegal font'" in str(exc.value.detail)
     assert job.assembly_plan == before
+
+
+@pytest.mark.parametrize(
+    ("name", "variant"),
+    [
+        (
+            "song_text_linear_karaoke",
+            {
+                "variant_id": "song_text",
+                "text_mode": "agent_text",
+                "music_track_id": "t1",
+                "intro_text": "This changed my life",
+                "intro_layout": "linear",
+                "intro_effect": "karaoke-line",
+                "intro_text_color": "#FFFFFF",
+                "intro_text_size_px": 72,
+                "duration_s": 12.0,
+                "base_video_path": "generative-jobs/j/base.mp4",
+            },
+        ),
+        (
+            "song_text_registry_font",
+            {
+                "variant_id": "song_text",
+                "text_mode": "agent_text",
+                "music_track_id": "t1",
+                "intro_text": "Registry font round trip",
+                "intro_layout": "linear",
+                "intro_effect": "fade-in",
+                "intro_font_family": "Playfair Display",
+                "duration_s": 12.0,
+                "base_video_path": "generative-jobs/j/base.mp4",
+            },
+        ),
+        (
+            "original_text_sequence",
+            {
+                "variant_id": "original_text",
+                "text_mode": "agent_text",
+                "music_track_id": None,
+                "intro_mode": "sequence",
+                "intro_layout": "cluster",
+                "sequence_base_size_px": 64,
+                "scenes": [
+                    {
+                        "text": "First words here",
+                        "words": ["First", "words", "here"],
+                        "start_s": 0.0,
+                        "end_s": 1.2,
+                    },
+                    {
+                        "text": "Second words",
+                        "words": ["Second", "words"],
+                        "start_s": 1.2,
+                        "end_s": 2.6,
+                    },
+                ],
+                "duration_s": 12.0,
+                "base_video_path": "generative-jobs/j/base.mp4",
+            },
+        ),
+        (
+            "subtitled_captions",
+            {
+                "variant_id": "subtitled",
+                "text_mode": "agent_text",
+                "caption_cues": [
+                    {"text": "Caption one", "start_s": 0.0, "end_s": 1.0},
+                    {"text": "Caption two", "start_s": 1.0, "end_s": 2.0},
+                ],
+                "voiceover_caption_font": "Playfair Display",
+                "base_video_path": "generative-jobs/j/base.mp4",
+            },
+        ),
+    ],
+)
+def test_projected_text_elements_strict_validate_for_editor_commit(name, variant):
+    from app.agents._schemas.text_element import text_elements_for_variant
+
+    projected = [e.model_dump() for e in text_elements_for_variant(variant)]
+    assert projected, name
+
+    validated, _materialized = gj.validate_text_elements_payload(
+        variant,
+        projected,
+        require_base=False,
+        strict_drop=True,
+    )
+
+    assert len(validated) == len(projected), name
+
+
+def test_editor_commit_accepts_registry_font_names(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    element = {**_VALID_ELEMENT, "font_family": "Playfair Display"}
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(text_elements=[element], timeline_slots=_slot_edits()),
+    )
+
+    assert prep["has_render_section"] is True
+    assert job.assembly_plan["variants"][0]["text_elements"][0]["font_family"] == "Playfair Display"
 
 
 def test_mix_on_variant_without_voice_bed_422(monkeypatch):

@@ -4729,6 +4729,7 @@ def _render_generative_variant(
                 audio_mixed_path,
                 variant_dir,
                 audio_start_offset_s=float(cfg.get("best_start_s", 0.0)),
+                require_audio=True,
             )
         else:
             # Original-audio variant: KEEP the clips' source audio — skip the mix.

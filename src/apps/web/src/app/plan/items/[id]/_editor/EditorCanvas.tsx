@@ -18,7 +18,12 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { MediaOverlay, PlanItemVariant, TextElement } from "@/lib/plan-api";
+import type {
+  MediaOverlay,
+  PlanItemVariant,
+  SoundEffectPlacement,
+  TextElement,
+} from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import {
   resolveTextElementsLayout,
@@ -30,6 +35,7 @@ import {
 } from "@/lib/overlay-layout";
 import { resolveCssFont } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
+import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
   clampMediaOverlayPosition,
   clampMediaOverlayScale,
@@ -98,6 +104,8 @@ export default function EditorCanvas({
   bars,
   mediaOverlays = [],
   overlayPreviewUrls = {},
+  sfxPlacements = [],
+  sfxAudioUrls = {},
   selectedTextId,
   selectedOverlayId,
   currentTime,
@@ -125,6 +133,8 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   overlayPreviewUrls?: Record<string, string>;
+  sfxPlacements?: SoundEffectPlacement[];
+  sfxAudioUrls?: Record<string, string>;
   selectedTextId: string | null;
   selectedOverlayId?: string | null;
   currentTime: number;
@@ -158,6 +168,7 @@ export default function EditorCanvas({
   const mediaOverlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const dragRef = useRef<DragState | null>(null);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const emptyVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -208,6 +219,22 @@ export default function EditorCanvas({
   const identity = variant.base_video_url
     ? (variant.base_video_path ?? undefined)
     : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
+  useSfxPreview(
+    videoRef,
+    virtualPreview ? [] : sfxPlacements,
+    sfxAudioUrls,
+  );
+  useSfxPreview(
+    virtualVideoARef ?? emptyVideoRef,
+    virtualPreview?.activeDeck === "a" ? sfxPlacements : [],
+    sfxAudioUrls,
+  );
+  useSfxPreview(
+    virtualVideoBRef ?? emptyVideoRef,
+    virtualPreview?.activeDeck === "b" ? sfxPlacements : [],
+    sfxAudioUrls,
+  );
 
   // ── Pointer interactions ────────────────────────────────────────────────────
 

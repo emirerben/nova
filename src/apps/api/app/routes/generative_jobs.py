@@ -1520,12 +1520,43 @@ def validate_text_elements_payload(
             elements = [e.model_dump() for e in snapshot]
 
     # Validate + coerce elements; drop invalid entries silently (A—).
-    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+    from app.agents._schemas.text_element import (  # noqa: PLC0415
+        TextElement,
+        coerce_text_elements,
+    )
 
     validated: list[dict] = []
     if elements:
         coerced = coerce_text_elements(elements)
         if strict_drop and len(coerced or []) != len(elements):
+            for idx, raw in enumerate(elements):
+                elem_label = f"#{idx}"
+                if isinstance(raw, dict):
+                    elem_label = str(raw.get("id") or elem_label)
+                    try:
+                        TextElement.model_validate(raw)
+                    except Exception as exc:  # noqa: BLE001
+                        errors = getattr(exc, "errors", lambda: [])()
+                        first = errors[0] if errors else {}
+                        loc = first.get("loc") or ("element",)
+                        field = ".".join(str(part) for part in loc)
+                        value = raw.get(field) if "." not in field else None
+                        msg = first.get("msg") or str(exc)
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail=(
+                                f"Text element {elem_label}: field {field} has invalid value "
+                                f"{value!r}: {msg}"
+                            ),
+                        ) from exc
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Text element {elem_label}: expected an object, "
+                            f"got {type(raw).__name__}."
+                        ),
+                    )
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="One or more text elements are invalid and were not saved.",
@@ -2180,15 +2211,47 @@ def resolve_timeline_slots_for_edit(
     resolved: list[dict] = []
     grid_offset = 0  # cumulative beat cursor — grids are NOT uniform
     total = 0.0
+    is_song_variant = bool(beat_grid) and bool(variant.get("music_track_id"))
+
+    def _nearest_beat_count(offset: int, target_s: float | None) -> int:
+        max_beats = len(beat_grid) - 1 - offset
+        if max_beats < 1:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED")
+        if target_s is None or target_s <= 0:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION")
+        return min(
+            range(1, max_beats + 1),
+            key=lambda beats: abs((beat_grid[offset + beats] - beat_grid[offset]) - target_s),
+        )
+
+    def _snap_half_second(duration_s: float | None) -> float:
+        if duration_s is None or duration_s <= 0:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION")
+        return round(max(0.5, round(float(duration_s) * 2) / 2), 3)
+
     for order, e in enumerate(slots):
         duration_s = e.duration_s
+        duration_beats = e.duration_beats
         if not e.removed:
-            if beat_grid and e.duration_beats is not None and e.duration_beats >= 1:
+            if beat_grid and duration_beats is not None and duration_beats >= 1:
+                # Explicit beat slot: walk the REAL grid cumulatively. Slot i's
+                # duration is grid[offset+beats] - grid[offset]; the offset then
+                # advances, so the same beat count can yield different seconds at
+                # different positions (non-uniform grids).
+                end = grid_offset + duration_beats
+                if end > len(beat_grid) - 1:
+                    raise _timeline_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
+                    )
+                duration_s = beat_grid[end] - beat_grid[grid_offset]
+                grid_offset = end
+            elif is_song_variant:
+                duration_beats = _nearest_beat_count(grid_offset, duration_s)
                 # Beat slot: walk the REAL grid cumulatively. Slot i's duration is
                 # grid[offset+beats] - grid[offset]; the offset then advances, so the
                 # same `duration_beats` can yield different seconds at different
                 # positions (non-uniform grids).
-                end = grid_offset + e.duration_beats
+                end = grid_offset + duration_beats
                 if end > len(beat_grid) - 1:
                     raise _timeline_error(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
@@ -2196,13 +2259,17 @@ def resolve_timeline_slots_for_edit(
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
             elif e.duration_s is not None and e.duration_s > 0:
-                # Seconds slot: `duration_s` is the authoritative exact window. This
-                # covers no-grid variants AND footage-trimmed slots on grid variants
-                # (the worker's `duration_beats: null` slots) — those never walk the
-                # grid and don't advance the cursor. No step-multiple requirement:
-                # the worker emits round(x, 3) durations and the render is an exact
-                # window either way (quantization is a frontend nudge concern).
-                duration_s = float(e.duration_s)
+                # No-music variants snap to 0.5s steps server-side. The editor may
+                # send drag-derived floats; persisted/rendered state is the snapped
+                # value so the next GET mirrors what will bake. A raw GET -> POST
+                # round-trip can carry the AI's original non-stepped timings; keep
+                # unchanged slots byte-stable so Save does not dirty a baseline.
+                duration_s = (
+                    _snap_half_second(e.duration_s)
+                    if _window_changed(e)
+                    else float(e.duration_s)
+                )
+                duration_beats = None
             else:
                 # Neither a usable beat count nor a usable duration.
                 raise _timeline_error(
@@ -2229,7 +2296,7 @@ def resolve_timeline_slots_for_edit(
                 "source_duration_s": src_dur_by_idx.get(e.clip_index),
                 "in_s": float(e.in_s),
                 "duration_s": round(float(duration_s), 3) if duration_s is not None else None,
-                "duration_beats": e.duration_beats,
+                "duration_beats": duration_beats,
                 "order": order,
                 "moment_energy": meta.get("moment_energy"),
                 "moment_description": meta.get("moment_description"),

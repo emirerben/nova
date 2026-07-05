@@ -963,6 +963,13 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** S (human: ~half day / CC: ~20min)
 **Priority:** P3
 **Depends on:** T7 preset registry (`lib/text-presets.ts`) shipped; a user-prefs model/endpoint existing.
+
+### Editable music-bed trims
+**What:** Let creators trim or reposition the song bed independently of clip length in the post-generation editor.
+**Why:** Hotfix 2026-07-05 deliberately makes the music bar honestly non-editable: the song auto-fits the cut, and users change where it ends by trimming clips. Real music-bed handles need a product/rendering pass so song, lyric, and beat-sync variants do not drift.
+**How:** Design the beat-grid contract first, then expose handles only once the renderer can preserve whole-beat sync and lyric timing through independent song-bed edits.
+**Effort:** M
+**Priority:** P3
 ## Plan-item redesign — follow-ups (from /autoship eng review, 2026-07-05)
 
 ### T-PLAN-1 — Verify T-SFX-2 doesn't gain a third racing edit type

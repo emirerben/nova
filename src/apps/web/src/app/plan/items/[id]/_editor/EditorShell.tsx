@@ -215,6 +215,7 @@ export default function EditorShell({
   // Last style-set applied via restyle-all — drives the StyleChip ring.
   const [appliedStyleSetId, setAppliedStyleSetId] = useState<string | null>(null);
   const [localSfx, setLocalSfx] = useState<SoundEffectPlacement[]>([]);
+  const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
   const [localOverlayPreviewUrls, setLocalOverlayPreviewUrls] = useState<Record<string, string>>({});
   const localOverlayPreviewUrlsRef = useRef<Record<string, string>>({});
@@ -231,6 +232,7 @@ export default function EditorShell({
     );
     dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
     setLocalSfx((variant.sound_effects ?? []).map((p) => ({ ...p })));
+    setLocalSfxAudioUrls({});
     setLocalOverlays((variant.media_overlays ?? []).map((o) => ({ ...o })));
     setLocalOverlayPreviewUrls((current) => {
       Object.values(current).forEach((url) => URL.revokeObjectURL(url));
@@ -468,6 +470,11 @@ export default function EditorShell({
     [localSfx, selection],
   );
 
+  const previewSfxPlacements = useMemo(
+    () => (soundMuted ? [] : localSfx),
+    [localSfx, soundMuted],
+  );
+
   const selectedOverlay = useMemo(
     () =>
       selection?.kind === "overlay"
@@ -624,6 +631,30 @@ export default function EditorShell({
       cancelled = true;
     };
   }, [activeTool, sfxGlossaryEffects.length]);
+
+  useEffect(() => {
+    if (localSfx.length === 0 || sfxGlossaryEffects.length === 0) return;
+    setLocalSfxAudioUrls((current) => {
+      const next = { ...current };
+      let changed = false;
+      const effectsById = new Map(sfxGlossaryEffects.map((effect) => [effect.id, effect]));
+      for (const placement of localSfx) {
+        const effectId = placement.sound_effect_id ?? null;
+        if (!effectId) continue;
+        const url = effectsById.get(effectId)?.preview_audio_url;
+        if (!url) continue;
+        if (next[placement.id] !== url) {
+          next[placement.id] = url;
+          changed = true;
+        }
+        if (placement.src_gcs_path && next[placement.src_gcs_path] !== url) {
+          next[placement.src_gcs_path] = url;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [localSfx, sfxGlossaryEffects]);
 
   const sampleWord = useMemo(() => {
     const first = selectedBar?.text.trim().split(/\s+/)[0];
@@ -813,6 +844,12 @@ export default function EditorShell({
         label: effect.name,
       };
       setLocalSfx((cur) => [...cur, placement]);
+      if (effect.preview_audio_url) {
+        setLocalSfxAudioUrls((cur) => ({
+          ...cur,
+          [placement.id]: effect.preview_audio_url as string,
+        }));
+      }
       setSfxDirty(true);
       select("sfx", placement.id);
       setInspectorTab("basic");
@@ -1698,6 +1735,8 @@ export default function EditorShell({
             bars={state.bars}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
+            sfxPlacements={previewSfxPlacements}
+            sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
             currentTime={currentTime}
@@ -1793,6 +1832,8 @@ export default function EditorShell({
             bars={state.bars}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
+            sfxPlacements={previewSfxPlacements}
+            sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
             currentTime={currentTime}

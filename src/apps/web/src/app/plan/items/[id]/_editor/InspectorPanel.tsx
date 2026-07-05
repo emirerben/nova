@@ -197,6 +197,16 @@ export default function InspectorPanel({
           onDelete={onDeleteOverlay}
           onClose={onClose}
         />
+      ) : selection.kind === "music" ? (
+        <div className="px-5 pt-5">
+          <div className="flex items-center justify-between">
+            <h2 className="font-display text-[18px] text-[#0c0c0e]">Music</h2>
+            <CloseX onClose={onClose} />
+          </div>
+          <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
+            The song auto-fits your cut — trim clips to change where it ends
+          </p>
+        </div>
       ) : (
         // sfx / clip / overlay selections get their minimal inspectors with
         // the timeline task — never a dead end, but nothing to edit yet here.

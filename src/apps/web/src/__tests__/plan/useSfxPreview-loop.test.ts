@@ -1,13 +1,14 @@
 import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
 
 // jsdom doesn't implement media playback. Stub the methods useSfxPreview calls on
 // each <audio> element it creates via `new Audio()`.
 beforeAll(() => {
-  window.HTMLMediaElement.prototype.load = jest.fn();
-  window.HTMLMediaElement.prototype.pause = jest.fn();
-  window.HTMLMediaElement.prototype.play = jest.fn().mockResolvedValue(undefined);
+  window.HTMLMediaElement.prototype.load = jest.fn<() => void>();
+  window.HTMLMediaElement.prototype.pause = jest.fn<() => void>();
+  window.HTMLMediaElement.prototype.play = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
 });
 
 type Listener = () => void;
@@ -45,7 +46,7 @@ const AUDIO_URLS = { "sound-effects/fah/audio.mp3": "blob:fake-audio" };
 describe("useSfxPreview — loop re-arm", () => {
   beforeEach(() => {
     jest.useFakeTimers();
-    (window.HTMLMediaElement.prototype.play as jest.Mock).mockClear();
+    (window.HTMLMediaElement.prototype.play as jest.MockedFunction<() => Promise<void>>).mockClear();
   });
   afterEach(() => {
     jest.useRealTimers();
@@ -57,7 +58,7 @@ describe("useSfxPreview — loop re-arm", () => {
   it("re-schedules SFX on a native loop wrap (backward time jump), not just the first pass", () => {
     const video = makeFakeVideo();
     const videoRef = { current: video as unknown as HTMLVideoElement };
-    const play = window.HTMLMediaElement.prototype.play as jest.Mock;
+    const play = window.HTMLMediaElement.prototype.play as jest.MockedFunction<() => Promise<void>>;
 
     renderHook(() => useSfxPreview(videoRef, [PLACEMENT], AUDIO_URLS));
 

@@ -5546,10 +5546,14 @@ def _mix_template_audio(
     output_path: str,
     tmpdir: str,
     audio_start_offset_s: float = 0.0,
+    *,
+    require_audio: bool = False,
 ) -> None:
     """Replace assembled video's audio with template music track.
 
-    Non-fatal if anything fails — falls back to copying video_path → output_path.
+    Non-fatal by default if anything fails — falls back to copying video_path →
+    output_path. Set require_audio=True for song variants where shipping a
+    songless "ready" render would be worse than a failed render.
 
     audio_start_offset_s seeks into the source audio before mixing — used to
     align playback with the auto-detected "best section" of the track instead
@@ -5560,6 +5564,8 @@ def _mix_template_audio(
         download_to_file(audio_gcs_path, audio_local)
     except Exception as exc:
         log.warning("template_audio_download_failed", error=str(exc))
+        if require_audio:
+            raise RuntimeError(f"template audio download failed for {audio_gcs_path}") from exc
         shutil.copy2(video_path, output_path)
         return
 
@@ -5653,7 +5659,10 @@ def _mix_template_audio(
     ]
     result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
     if result.returncode != 0:
-        log.warning("template_audio_mix_failed", stderr=result.stderr.decode()[:200])
+        stderr = result.stderr.decode()[:200]
+        log.warning("template_audio_mix_failed", stderr=stderr)
+        if require_audio:
+            raise RuntimeError(f"template audio mix failed: {stderr}")
         shutil.copy2(video_path, output_path)
 
 
