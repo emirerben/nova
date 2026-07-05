@@ -26,6 +26,8 @@ import { StableVideo } from "@/components/StableVideo";
 import {
   clampMediaOverlayPosition,
   clampMediaOverlayScale,
+  EDITOR_STAGE_Z,
+  mediaOverlayStackZIndex,
   visibleMediaOverlaysAtTime,
   type VisibleMediaOverlay,
 } from "./editor-media-overlays";
@@ -520,6 +522,7 @@ export default function EditorCanvas({
                     "pointer-events-none absolute inset-0 h-full w-full object-contain",
                     virtualPreview.activeDeck === "a" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
+                  style={{ zIndex: EDITOR_STAGE_Z.video }}
                 />
                 <video
                   {...virtualVideoBProps}
@@ -528,6 +531,7 @@ export default function EditorCanvas({
                     "pointer-events-none absolute inset-0 h-full w-full object-contain",
                     virtualPreview.activeDeck === "b" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
+                  style={{ zIndex: EDITOR_STAGE_Z.video }}
                 />
               </>
             ) : src ? (
@@ -537,7 +541,8 @@ export default function EditorCanvas({
                 identity={identity}
                 playsInline
                 preload="auto"
-                className="pointer-events-none h-full w-full object-contain"
+                className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+                style={{ zIndex: EDITOR_STAGE_Z.video }}
                 onTimeUpdate={(e) => onTimeUpdate((e.target as HTMLVideoElement).currentTime)}
                 onLoadedMetadata={(e) => {
                   const d = (e.target as HTMLVideoElement).duration;
@@ -564,7 +569,10 @@ export default function EditorCanvas({
                 onError={() => setVideoError(true)}
               />
             ) : (
-              <div className="flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-300 text-sm text-[#71717a]">
+              <div
+                className="absolute inset-0 flex h-full items-center justify-center rounded-xl border border-dashed border-zinc-300 text-sm text-[#71717a]"
+                style={{ zIndex: EDITOR_STAGE_Z.video }}
+              >
                 No preview for this variant yet
               </div>
             )}
@@ -574,6 +582,7 @@ export default function EditorCanvas({
             {hasPreview && (
               <div
                 className="absolute inset-0"
+                style={{ zIndex: EDITOR_STAGE_Z.mediaOverlay }}
                 onPointerDown={(e) => {
                   if (tool === "select" && e.target === e.currentTarget) onClearSelection();
                 }}
@@ -642,6 +651,10 @@ export default function EditorCanvas({
                         top: `${yFrac * 100}%`,
                         transform: "translate(-50%, -50%)",
                         maxWidth: "90%",
+                        zIndex:
+                          isSelected && allowManipulation
+                            ? EDITOR_STAGE_Z.selectionHandle
+                            : EDITOR_STAGE_Z.textOverlay,
                       }}
                       onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}
                       onPointerMove={onPointerMove}
@@ -692,7 +705,10 @@ export default function EditorCanvas({
                           role="group"
                           aria-label={`Selected text: ${layout.text.slice(0, 40)}`}
                           className="absolute -inset-1 motion-safe:transition-opacity motion-safe:duration-150"
-                          style={{ border: "1.5px solid #84cc16" }}
+                          style={{
+                            border: "1.5px solid #84cc16",
+                            zIndex: EDITOR_STAGE_Z.selectionHandle,
+                          }}
                         >
                           {(["nw", "ne", "sw", "se"] as const).map((corner) => (
                             <button
@@ -730,13 +746,17 @@ export default function EditorCanvas({
               <div
                 aria-hidden
                 className="pointer-events-none absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent motion-safe:animate-pulse"
+                style={{ zIndex: EDITOR_STAGE_Z.chrome }}
               />
             )}
 
             {/* Load-failure / expired-URL tile — plain reason + Retry (re-fetch
                 re-signs the URL). Distinct from the ineligible-variant banner. */}
             {src && !virtualPreview && videoError && (
-              <div className="absolute inset-0 flex items-center justify-center p-6">
+              <div
+                className="absolute inset-0 flex items-center justify-center p-6"
+                style={{ zIndex: EDITOR_STAGE_Z.error }}
+              >
                 <div className="max-w-[280px] rounded-xl border border-dashed border-zinc-300 bg-white/95 p-5 text-center">
                   <p className="text-[13px] text-[#3f3f46]">
                     This preview couldn&apos;t load — the link may have expired.
@@ -758,7 +778,10 @@ export default function EditorCanvas({
             {/* Bottom-right corner: fullscreen ONLY. Play/pause now lives in
                 the TransportBar (§6); "Basic mode" pill is CUT (D7). */}
             {hasPreview && (
-              <div className="absolute bottom-3 right-3 flex items-center gap-2">
+              <div
+                className="absolute bottom-3 right-3 flex items-center gap-2"
+                style={{ zIndex: EDITOR_STAGE_Z.chrome }}
+              >
                 <button
                   type="button"
                   aria-label="Fullscreen"
@@ -819,6 +842,7 @@ function MediaOverlayCard({
         top: `${yFrac * 100}%`,
         transform: "translate(-50%, -50%)",
         width: `${scale * 100}%`,
+        zIndex: mediaOverlayStackZIndex(card.z, selected),
       }}
       onPointerDown={(e) => {
         if (!allowManipulation) {
@@ -858,7 +882,10 @@ function MediaOverlayCard({
           role="group"
           aria-label={`Selected ${card.kind} overlay`}
           className="absolute -inset-1 rounded motion-safe:transition-opacity motion-safe:duration-150"
-          style={{ border: "1.5px solid #84cc16" }}
+          style={{
+            border: "1.5px solid #84cc16",
+            zIndex: EDITOR_STAGE_Z.selectionHandle,
+          }}
         >
           {allowManipulation &&
             (["nw", "ne", "sw", "se"] as const).map((corner) => (

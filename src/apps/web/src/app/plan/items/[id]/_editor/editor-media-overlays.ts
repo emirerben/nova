@@ -4,6 +4,17 @@ export const MEDIA_OVERLAY_MIN_SCALE = 0.05;
 export const MEDIA_OVERLAY_MAX_SCALE = 1.0;
 export const MEDIA_OVERLAY_MIN_DURATION_S = 0.3;
 
+export const EDITOR_STAGE_Z = {
+  video: 0,
+  mediaOverlay: 20,
+  textOverlay: 40,
+  selectionHandle: 60,
+  chrome: 80,
+  error: 90,
+} as const;
+
+const MEDIA_OVERLAY_Z_MAX_OFFSET = EDITOR_STAGE_Z.textOverlay - EDITOR_STAGE_Z.mediaOverlay - 1;
+
 export interface VisibleMediaOverlay {
   card: MediaOverlay;
   displayUrl: string;
@@ -67,6 +78,12 @@ export function mediaOverlayDisplayUrl(
   localPreviewUrls: Record<string, string>,
 ): string | null {
   return localPreviewUrls[card.id] ?? card.preview_url ?? null;
+}
+
+export function mediaOverlayStackZIndex(cardZ: number, selected: boolean): number {
+  if (selected) return EDITOR_STAGE_Z.selectionHandle;
+  const normalized = Number.isFinite(cardZ) ? Math.trunc(cardZ) : 0;
+  return EDITOR_STAGE_Z.mediaOverlay + clamp(normalized, 0, MEDIA_OVERLAY_Z_MAX_OFFSET);
 }
 
 export function isMediaOverlayVisibleAtTime(

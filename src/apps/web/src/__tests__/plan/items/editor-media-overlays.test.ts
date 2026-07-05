@@ -4,8 +4,10 @@ import {
   applyMediaOverlaySourceWindowInput,
   clampMediaOverlayPosition,
   clampMediaOverlayScale,
+  EDITOR_STAGE_Z,
   isMediaOverlayVisibleAtTime,
   mediaOverlayDisplayUrl,
+  mediaOverlayStackZIndex,
   visibleMediaOverlaysAtTime,
 } from "@/app/plan/items/[id]/_editor/editor-media-overlays";
 
@@ -59,6 +61,13 @@ describe("editor media overlays", () => {
       { card: visibleLow, displayUrl: "https://signed.example/low.png" },
       { card: visibleHigh, displayUrl: "https://signed.example/high.png" },
     ]);
+  });
+
+  it("keeps media card z-indexes between the video and text tiers", () => {
+    expect(mediaOverlayStackZIndex(0, false)).toBe(EDITOR_STAGE_Z.mediaOverlay);
+    expect(mediaOverlayStackZIndex(999, false)).toBeLessThan(EDITOR_STAGE_Z.textOverlay);
+    expect(mediaOverlayStackZIndex(Number.NaN, false)).toBe(EDITOR_STAGE_Z.mediaOverlay);
+    expect(mediaOverlayStackZIndex(0, true)).toBe(EDITOR_STAGE_Z.selectionHandle);
   });
 
   it("clamps canvas movement by the rendered card bounds", () => {
