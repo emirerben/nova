@@ -25,6 +25,8 @@ import type { TextElement } from "@/lib/plan-api";
 export const MAX_LINE_W_FRAC = 0.9;
 export const LINE_SPACING = 1.15;
 export const MIN_FONT_SIZE = 24;
+export const MAX_WIDTH_FRAC_MIN = 0.2;
+export const MAX_WIDTH_FRAC_MAX = 1.0;
 
 /** Width of `text` in px at an implicit font size (the factory binds the size). */
 export type MeasureText = (text: string) => number;
@@ -46,6 +48,7 @@ export interface IntroOverlayParams {
   positionXFrac: number | null;
   positionYFrac: number | null;
   textAnchor: "left" | "right" | "center";
+  maxWidthFrac?: number | null;
   strokeWidth: number | null;
   /** Per-role font overrides for the editorial cluster layout. */
   clusterHeroFont?: string | null;
@@ -228,7 +231,7 @@ export function layoutIntroHold(
   const text = (p.text ?? "").trim();
   if (!text) return null;
 
-  const maxWidth = CANVAS_W * MAX_LINE_W_FRAC;
+  const maxWidth = CANVAS_W * resolveMaxWidthFrac(p.maxWidthFrac);
   const { sizePx, lines } = shrinkToFit(text, measureAt, resolveFontSizePx(p), maxWidth);
   const { xFrac, yFrac } = resolveAnchorFrac(p);
 
@@ -316,6 +319,17 @@ export function resolveLineSpacing(value: number | null | undefined): number {
 }
 
 /**
+ * Clamped max wrap width as a fraction of frame width; the renderer default
+ * (MAX_LINE_W_FRAC = 0.9) for absent/invalid. EXACT mirror of
+ * resolve_max_width_frac (generative_overlays.py); parity fixture:
+ * max_width_frac.json.
+ */
+export function resolveMaxWidthFrac(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return MAX_LINE_W_FRAC;
+  return Math.max(MAX_WIDTH_FRAC_MIN, Math.min(MAX_WIDTH_FRAC_MAX, value));
+}
+
+/**
  * Apply a text_case transform. EXACT mirror of `apply_text_case` in
  * app/agents/_schemas/text_element.py (parity fixture: text_case.json).
  * "title" uppercases the FIRST CHARACTER of each whitespace-delimited run and
@@ -365,6 +379,11 @@ export interface TextElementLayout {
   /** Line-height multiplier (default 1.15 = the renderer constant).
    * CSS: `line-height: ${lineSpacing}`. Parity-gated (T11). */
   lineSpacing: number;
+  /** Maximum wrap-box width as a frame-width fraction. Null/absent resolves
+   * to the renderer default 0.9. Parity-gated. */
+  maxWidthFrac: number;
+  /** Maximum wrap-box width in 1080px-canvas coordinates. */
+  maxWidthPx: number;
   start_s: number;
   end_s: number;
 }
@@ -396,6 +415,8 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       alignment: (el.alignment ?? "center") as "left" | "center" | "right",
       letterSpacingEm: resolveLetterSpacingEm(el.letter_spacing),
       lineSpacing: resolveLineSpacing(el.line_spacing),
+      maxWidthFrac: resolveMaxWidthFrac(el.max_width_frac),
+      maxWidthPx: CANVAS_W * resolveMaxWidthFrac(el.max_width_frac),
       start_s: el.start_s,
       end_s: el.end_s,
     };

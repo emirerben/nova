@@ -101,6 +101,7 @@ export function convertApiTextElements(
     text_case: el.text_case ?? undefined,
     letter_spacing: el.letter_spacing ?? undefined,
     line_spacing: el.line_spacing ?? undefined,
+    max_width_frac: el.max_width_frac ?? undefined,
     position: el.position ?? undefined,
     x_frac: el.x_frac ?? undefined,
     y_frac: el.y_frac ?? undefined,
@@ -192,6 +193,7 @@ export function barsToTextElements(
         text_case: (bar.text_case as TextElement["text_case"]) ?? null,
         letter_spacing: bar.letter_spacing ?? null,
         line_spacing: bar.line_spacing ?? null,
+        max_width_frac: bar.max_width_frac ?? null,
         position:
           (bar.position as TextElement["position"]) ?? original?.position,
         x_frac: bar.x_frac ?? null,

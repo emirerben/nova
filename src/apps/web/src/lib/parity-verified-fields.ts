@@ -45,6 +45,7 @@ export const PARITY_VERIFIED_FIELDS = [
   "text_case", // tests/fixtures/text-element-parity/text_case.json
   "letter_spacing", // tests/fixtures/text-element-parity/letter_spacing.json
   "line_spacing", // tests/fixtures/text-element-parity/line_spacing.json
+  "max_width_frac", // tests/fixtures/text-element-parity/max_width_frac.json
 ] as const;
 
 export type ParityVerifiedField = (typeof PARITY_VERIFIED_FIELDS)[number];

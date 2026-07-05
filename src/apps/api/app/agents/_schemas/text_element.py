@@ -75,6 +75,8 @@ LETTER_SPACING_MIN_EM = -0.05
 LETTER_SPACING_MAX_EM = 0.5
 LINE_SPACING_MIN = 0.5
 LINE_SPACING_MAX = 3.0
+MAX_WIDTH_FRAC_MIN = 0.2
+MAX_WIDTH_FRAC_MAX = 1.0
 
 # ---------------------------------------------------------------------------
 # Renderer-parity registry (Python mirror of PARITY_VERIFIED_FIELDS in
@@ -108,6 +110,7 @@ PARITY_VERIFIED_FIELDS: frozenset[str] = frozenset(
         "text_case",  # tests/fixtures/text-element-parity/text_case.json
         "letter_spacing",  # tests/fixtures/text-element-parity/letter_spacing.json
         "line_spacing",  # tests/fixtures/text-element-parity/line_spacing.json
+        "max_width_frac",  # tests/fixtures/text-element-parity/max_width_frac.json
     }
 )
 
@@ -262,6 +265,13 @@ class TextElement(BaseModel):
             "renderer default 1.15 (Skia _LINE_SPACING / CSS preview)."
         ),
     )
+    max_width_frac: float | None = Field(
+        default=None,
+        description=(
+            "Maximum text wrap width as a fraction of frame width. Silently "
+            "clamped to [0.2, 1.0]; None = renderer default 0.9."
+        ),
+    )
     fade_out_ms: int | None = Field(
         default=None,
         ge=0,
@@ -354,6 +364,17 @@ class TextElement(BaseModel):
             return None
         try:
             return max(LINE_SPACING_MIN, min(LINE_SPACING_MAX, float(v)))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("max_width_frac", mode="before")
+    @classmethod
+    def _clamp_max_width_frac(cls, v: object) -> float | None:
+        """Silently clamp to [0.2, 1.0] (mirrors the TS clamp)."""
+        if v is None:
+            return None
+        try:
+            return max(MAX_WIDTH_FRAC_MIN, min(MAX_WIDTH_FRAC_MAX, float(v)))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
 
@@ -545,6 +566,10 @@ def _burn_dict_to_text_element(
     )
     line_spacing_raw = burn_dict.get("line_spacing")
     line_spacing: float | None = float(line_spacing_raw) if line_spacing_raw is not None else None
+    max_width_frac_raw = burn_dict.get("max_width_frac")
+    max_width_frac: float | None = (
+        float(max_width_frac_raw) if max_width_frac_raw is not None else None
+    )
 
     # alignment from text_anchor
     text_anchor = str(burn_dict.get("text_anchor") or "center")
@@ -583,6 +608,7 @@ def _burn_dict_to_text_element(
             stroke_width=stroke_width,
             letter_spacing=letter_spacing,
             line_spacing=line_spacing,
+            max_width_frac=max_width_frac,
             alignment=alignment,  # type: ignore[arg-type]
             effect=effect,  # type: ignore[arg-type]
             fade_out_ms=fade_out_ms,

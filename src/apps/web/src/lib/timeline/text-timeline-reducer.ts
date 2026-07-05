@@ -45,6 +45,9 @@ export interface TextElementBar {
   /** Line-height multiplier (1.15 = renderer default). Renderer-honored
    * (T11, parity-gated). */
   line_spacing?: number;
+  /** Maximum wrap-box width as a fraction of frame width. Renderer-honored
+   * and parity-gated; undefined = renderer default 0.9. */
+  max_width_frac?: number;
   /** Named vertical position preset ("top" | "middle" | "bottom" | "custom").
    * Editor canvas drags set "custom" + explicit fracs. Renderer-honored. */
   position?: string;

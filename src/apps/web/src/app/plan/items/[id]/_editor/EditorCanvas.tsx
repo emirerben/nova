@@ -20,7 +20,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { MediaOverlay, PlanItemVariant, TextElement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import { resolveTextElementsLayout, CANVAS_W, CANVAS_H } from "@/lib/overlay-layout";
+import {
+  resolveTextElementsLayout,
+  CANVAS_W,
+  CANVAS_H,
+  MAX_LINE_W_FRAC,
+  MAX_WIDTH_FRAC_MAX,
+  MAX_WIDTH_FRAC_MIN,
+} from "@/lib/overlay-layout";
 import { resolveCssFont } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import {
@@ -46,7 +53,7 @@ const CLICK_SLOP_PX = 3;
 
 interface DragState {
   target: "text" | "overlay";
-  mode: "move" | "scale";
+  mode: "move" | "scale" | "width";
   id: string;
   startClientX: number;
   startClientY: number;
@@ -61,6 +68,8 @@ interface DragState {
   centerClientY: number;
   startWidthFrac: number;
   startHeightFrac: number;
+  startMaxWidthFrac: number;
+  widthSide: "left" | "right" | null;
   moved: boolean;
   /** Hits (topmost first) captured at pointerdown — used for click-cycling. */
   hits: string[];
@@ -73,6 +82,7 @@ type DragOverride =
       x_frac?: number;
       y_frac?: number;
       size_px?: number;
+      max_width_frac?: number;
     }
   | {
       target: "overlay";
@@ -235,6 +245,8 @@ export default function EditorCanvas({
       centerClientY: 0,
       startWidthFrac: 0,
       startHeightFrac: 0,
+      startMaxWidthFrac: bar?.max_width_frac ?? layout.maxWidthFrac,
+      widthSide: null,
       moved: false,
       hits,
     };
@@ -288,6 +300,41 @@ export default function EditorCanvas({
       centerClientY: cy,
       startWidthFrac: 0,
       startHeightFrac: 0,
+      startMaxWidthFrac: barById.get(id)?.max_width_frac ?? layout.maxWidthFrac,
+      widthSide: null,
+      moved: false,
+      hits: [],
+    };
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+  }
+
+  function onWidthHandlePointerDown(
+    e: React.PointerEvent,
+    id: string,
+    side: "left" | "right",
+  ) {
+    if (!allowManipulation || tool !== "select" || e.button !== 0) return;
+    e.stopPropagation();
+    const layout = layouts.find((l) => l.id === id);
+    if (!layout) return;
+    const bar = barById.get(id);
+    dragRef.current = {
+      target: "text",
+      mode: "width",
+      id,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startXFrac: 0,
+      startYFrac: 0,
+      startSizePx: layout.sizePx,
+      startScale: 0,
+      startDist: 0,
+      centerClientX: 0,
+      centerClientY: 0,
+      startWidthFrac: 0,
+      startHeightFrac: 0,
+      startMaxWidthFrac: bar?.max_width_frac ?? layout.maxWidthFrac,
+      widthSide: side,
       moved: false,
       hits: [],
     };
@@ -314,6 +361,8 @@ export default function EditorCanvas({
       centerClientY: 0,
       startWidthFrac: stageSize.w > 0 ? r.width / stageSize.w : card.scale,
       startHeightFrac: stageSize.h > 0 ? r.height / stageSize.h : card.scale,
+      startMaxWidthFrac: MAX_LINE_W_FRAC,
+      widthSide: null,
       moved: false,
       hits: [],
     };
@@ -345,6 +394,8 @@ export default function EditorCanvas({
       centerClientY: cy,
       startWidthFrac: stageSize.w > 0 ? r.width / stageSize.w : card.scale,
       startHeightFrac: stageSize.h > 0 ? r.height / stageSize.h : card.scale,
+      startMaxWidthFrac: MAX_LINE_W_FRAC,
+      widthSide: null,
       moved: false,
       hits: [],
     };
@@ -374,7 +425,7 @@ export default function EditorCanvas({
         const yFrac = Math.min(0.98, Math.max(0.02, drag.startYFrac + dy / stageSize.h));
         setDragOverride({ target: "text", id: drag.id, x_frac: xFrac, y_frac: yFrac });
       }
-    } else {
+    } else if (drag.mode === "scale") {
       const dist = Math.hypot(e.clientX - drag.centerClientX, e.clientY - drag.centerClientY);
       const ratio = dist / drag.startDist;
       if (drag.target === "overlay") {
@@ -390,6 +441,14 @@ export default function EditorCanvas({
         );
         setDragOverride({ target: "text", id: drag.id, size_px: size });
       }
+    } else if (drag.target === "text" && drag.mode === "width") {
+      if (stageSize.w === 0) return;
+      const signedDelta = drag.widthSide === "left" ? -dx : dx;
+      const maxWidthFrac = Math.min(
+        MAX_WIDTH_FRAC_MAX,
+        Math.max(MAX_WIDTH_FRAC_MIN, drag.startMaxWidthFrac + signedDelta / stageSize.w),
+      );
+      setDragOverride({ target: "text", id: drag.id, max_width_frac: maxWidthFrac });
     }
   }
 
@@ -419,6 +478,13 @@ export default function EditorCanvas({
         dragOverride.size_px != null
       ) {
         onPatchBar(drag.id, { size_px: dragOverride.size_px, size_class: undefined });
+      } else if (
+        drag.target === "text" &&
+        drag.mode === "width" &&
+        dragOverride?.target === "text" &&
+        dragOverride.max_width_frac != null
+      ) {
+        onPatchBar(drag.id, { max_width_frac: dragOverride.max_width_frac });
       } else if (
         drag.target === "overlay" &&
         drag.mode === "move" &&
@@ -627,6 +693,7 @@ export default function EditorCanvas({
                   const xFrac = override?.x_frac ?? layout.xFrac;
                   const yFrac = override?.y_frac ?? layout.yFrac;
                   const sizePx = override?.size_px ?? layout.sizePx;
+                  const maxWidthFrac = override?.max_width_frac ?? layout.maxWidthFrac;
                   const fontPx = stageSize.h > 0 ? (sizePx / CANVAS_H) * stageSize.h : 0;
                   const strokePx =
                     bar?.stroke_width && stageSize.h > 0
@@ -635,6 +702,12 @@ export default function EditorCanvas({
                   const { family, weight } = resolveCssFont(layout.fontFamily);
                   const isSelected = selectedTextId === layout.id;
                   const isHovered = hoveredId === layout.id && !isSelected;
+                  const anchorTransform =
+                    layout.alignment === "left"
+                      ? "translate(0, -50%)"
+                      : layout.alignment === "right"
+                        ? "translate(-100%, -50%)"
+                        : "translate(-50%, -50%)";
                   return (
                     <div
                       key={layout.id}
@@ -643,14 +716,15 @@ export default function EditorCanvas({
                         else overlayRefs.current.delete(layout.id);
                       }}
                       data-text-id={layout.id}
+                      data-max-width-frac={maxWidthFrac}
                       className={`absolute select-none touch-none ${
                         tool === "select" ? "cursor-pointer" : ""
                       }`}
                       style={{
                         left: `${xFrac * 100}%`,
                         top: `${yFrac * 100}%`,
-                        transform: "translate(-50%, -50%)",
-                        maxWidth: "90%",
+                        transform: anchorTransform,
+                        width: `${maxWidthFrac * 100}%`,
                         zIndex:
                           isSelected && allowManipulation
                             ? EDITOR_STAGE_Z.selectionHandle
@@ -729,6 +803,29 @@ export default function EditorCanvas({
                               <span
                                 aria-hidden
                                 className="h-2 w-2 rounded-[1px] bg-white"
+                                style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
+                              />
+                            </button>
+                          ))}
+                          {(["left", "right"] as const).map((side) => (
+                            <button
+                              key={side}
+                              type="button"
+                              tabIndex={-1}
+                              aria-label={`Adjust text width (${side})`}
+                              onPointerDown={(e) => onWidthHandlePointerDown(e, layout.id, side)}
+                              className="absolute flex h-7 w-7 items-center justify-center touch-none"
+                              style={{
+                                cursor: "ew-resize",
+                                top: "50%",
+                                transform: "translateY(-50%)",
+                                left: side === "left" ? -15 : undefined,
+                                right: side === "right" ? -15 : undefined,
+                              }}
+                            >
+                              <span
+                                aria-hidden
+                                className="h-3 w-1.5 rounded-[1px] bg-white"
                                 style={{ boxShadow: "0 0 0 1px #0c0c0e" }}
                               />
                             </button>

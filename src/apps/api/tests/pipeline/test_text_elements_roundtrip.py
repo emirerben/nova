@@ -466,7 +466,7 @@ class TestSizeClassRoundTrip:
         assert elem.size_px == 72.0
 
     def test_adapter_preserves_spacing_fields_from_burn_dict(self):
-        """Spacing fields survive legacy burn dict → TextElement → compiler."""
+        """Parity-gated layout fields survive legacy burn dict → TextElement → compiler."""
         burn_dict = {
             "text": "Spaced text",
             "start_s": 0.0,
@@ -479,15 +479,18 @@ class TestSizeClassRoundTrip:
             "effect": "static",
             "letter_spacing": 0.12,
             "line_spacing": 1.4,
+            "max_width_frac": 0.4,
         }
         elem = _burn_dict_to_text_element(burn_dict)
         assert elem is not None
         assert elem.letter_spacing == 0.12
         assert elem.line_spacing == 1.4
+        assert elem.max_width_frac == 0.4
 
         compiled = build_overlays_from_text_elements([elem], video_duration_s=10.0)
         assert compiled[0]["letter_spacing"] == 0.12
         assert compiled[0]["line_spacing"] == 1.4
+        assert compiled[0]["max_width_frac"] == 0.4
 
     def test_size_class_roundtrip_via_adapter_xlarge(self):
         """A14 end-to-end: a burn dict with text_size='xlarge' round-trips to 'xlarge'."""

@@ -30,6 +30,9 @@ import {
   LINE_SPACING,
   LINE_SPACING_MAX,
   LINE_SPACING_MIN,
+  MAX_LINE_W_FRAC,
+  MAX_WIDTH_FRAC_MAX,
+  MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
 import { INTRO_SIZE_MAX, INTRO_SIZE_MIN, INTRO_SIZE_STEP } from "@/lib/generative-api";
 import {
@@ -69,6 +72,7 @@ const EDITABLE_ROW_FIELDS = new Set([
   "text_case",
   "letter_spacing",
   "line_spacing",
+  "max_width_frac",
 ]);
 
 export interface InspectorClipTiming {
@@ -669,6 +673,8 @@ function TextInspector({
   const canEditTextCase = isParityVerified("text_case");
   const canEditLetterSpacing = isParityVerified("letter_spacing");
   const canEditLineSpacing = isParityVerified("line_spacing");
+  const canEditMaxWidth = isParityVerified("max_width_frac");
+  const widthPct = Math.round((bar.max_width_frac ?? MAX_LINE_W_FRAC) * 100);
 
   // Read-only rows: any bar field carrying a value that has no editable row
   // here and isn't plumbing. Unverified fields (future server data) also land
@@ -758,6 +764,32 @@ function TextInspector({
           className="min-w-0 flex-1 accent-[#0c0c0e]"
         />
       </div>
+
+      {canEditMaxWidth && (
+        <div className="mt-2 flex items-center gap-2">
+          <span className="w-[44px] text-[12px] font-semibold text-[#3f3f46]">Width</span>
+          <input
+            type="range"
+            aria-label="Text width"
+            min={MAX_WIDTH_FRAC_MIN * 100}
+            max={MAX_WIDTH_FRAC_MAX * 100}
+            step={1}
+            value={widthPct}
+            onChange={(e) => onPatch({ max_width_frac: Number(e.target.value) / 100 })}
+            className="min-w-0 flex-1 accent-[#0c0c0e]"
+          />
+          <input
+            type="number"
+            aria-label="Text width percent"
+            min={MAX_WIDTH_FRAC_MIN * 100}
+            max={MAX_WIDTH_FRAC_MAX * 100}
+            step={1}
+            value={widthPct}
+            onChange={(e) => onPatch({ max_width_frac: Number(e.target.value) / 100 })}
+            className="h-9 w-[64px] rounded-lg border border-zinc-200 px-2 text-right text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+          />
+        </div>
+      )}
 
       {/* Animation */}
       <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">

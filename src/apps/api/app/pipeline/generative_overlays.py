@@ -79,6 +79,9 @@ _LETTER_SPACING_MIN_EM = -0.05
 _LETTER_SPACING_MAX_EM = 0.5
 _LINE_SPACING_MIN = 0.5
 _LINE_SPACING_MAX = 3.0
+_MAX_WIDTH_FRAC_MIN = 0.2
+_MAX_WIDTH_FRAC_MAX = 1.0
+DEFAULT_MAX_WIDTH_FRAC = 0.9
 # Renderer default line-height multiplier (Skia _LINE_SPACING / CSS preview).
 DEFAULT_LINE_SPACING = 1.15
 
@@ -110,6 +113,18 @@ def resolve_line_spacing(value: object) -> float:
         return max(_LINE_SPACING_MIN, min(_LINE_SPACING_MAX, float(value)))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return DEFAULT_LINE_SPACING
+
+
+def resolve_max_width_frac(value: object) -> float:
+    """Clamped max wrap width as a fraction of frame width; renderer default
+    (0.9) for absent/invalid. TS mirror: resolveMaxWidthFrac
+    (overlay-layout.ts)."""
+    if value is None:
+        return DEFAULT_MAX_WIDTH_FRAC
+    try:
+        return max(_MAX_WIDTH_FRAC_MIN, min(_MAX_WIDTH_FRAC_MAX, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_WIDTH_FRAC
 
 
 def _coerce_hex(value: object, default: str) -> str:
@@ -145,6 +160,7 @@ def build_intro_overlay(
     position_y_frac: float | None = None,
     letter_spacing: float | None = None,
     line_spacing: float | None = None,
+    max_width_frac: float | None = None,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -208,6 +224,8 @@ def build_intro_overlay(
         overlay["letter_spacing"] = resolve_letter_spacing_em(letter_spacing)
     if line_spacing is not None:
         overlay["line_spacing"] = resolve_line_spacing(line_spacing)
+    if max_width_frac is not None:
+        overlay["max_width_frac"] = resolve_max_width_frac(max_width_frac)
 
     # Only the karaoke-line effect consumes per-word timings. Synthesize them from the
     # overlay window (even split, beat-snapped when a song is present).
@@ -863,6 +881,7 @@ def build_overlays_from_text_elements(
                 position_y_frac=pos_y_frac,
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
+                max_width_frac=elem.max_width_frac,
             )
             if reveal is not None:
                 reveal["role"] = elem.role
@@ -894,6 +913,7 @@ def build_overlays_from_text_elements(
                 position_y_frac=pos_y_frac,
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
+                max_width_frac=elem.max_width_frac,
             )
             if hold is not None:
                 hold["role"] = elem.role
@@ -922,6 +942,7 @@ def build_overlays_from_text_elements(
             position_y_frac=pos_y_frac,
             letter_spacing=elem.letter_spacing,
             line_spacing=elem.line_spacing,
+            max_width_frac=elem.max_width_frac,
         )
         if overlay is None:
             continue

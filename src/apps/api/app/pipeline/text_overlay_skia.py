@@ -54,6 +54,7 @@ from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
     resolve_line_spacing,
+    resolve_max_width_frac,
 )
 from app.pipeline.text_overlay import (
     _FONT_REGISTRY,
@@ -110,6 +111,11 @@ _POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
 _POP_IN_SCALES = (0.30, 1.15, 1.00)
 _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 _POP_SUFFIX_MAX_LINES = 2
+
+
+def _overlay_max_width_px(overlay: dict) -> float:
+    """Per-overlay wrap budget. Missing field preserves the legacy 0.9 width."""
+    return CANVAS_W * resolve_max_width_frac(overlay.get("max_width_frac"))
 
 
 # -- Typeface cache (load once at import) -------------------------------------
@@ -838,21 +844,20 @@ def _draw_centered_text(
 
     typeface = _typeface_for_overlay(overlay)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    max_width = _overlay_max_width_px(overlay)
     if font_override is not None:
         font = font_override
         size = int(font.getSize())
-        lines = _wrap_text_to_lines(
-            text, font, CANVAS_W * _MAX_LINE_W_FRAC, letter_spacing_em * size
-        )
+        lines = _wrap_text_to_lines(text, font, max_width, letter_spacing_em * size)
     else:
         initial_size = _resolve_font_size_px(overlay)
         if overlay.get("preserve_font_size"):
             font, size, lines = _wrap_at_fixed_size(
-                text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC, letter_spacing_em
+                text, typeface, initial_size, max_width, letter_spacing_em
             )
         else:
             font, size, lines = _shrink_to_fit(
-                text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC, letter_spacing_em
+                text, typeface, initial_size, max_width, letter_spacing_em
             )
 
     if not lines:
@@ -1137,21 +1142,21 @@ def _draw_pop_in_with_suffix(
             text,
             typeface,
             initial_size,
-            CANVAS_W * _MAX_LINE_W_FRAC,
+            _overlay_max_width_px(overlay),
         )
     elif anchor == "left":
         full_font, _full_size, full_lines = _shrink_to_fit(
             text,
             typeface,
             initial_size,
-            CANVAS_W * _MAX_LINE_W_FRAC,
+            _overlay_max_width_px(overlay),
         )
     else:
         full_font, _full_size, full_lines = _shrink_to_fit_max_lines(
             text,
             typeface,
             initial_size,
-            CANVAS_W * _MAX_LINE_W_FRAC,
+            _overlay_max_width_px(overlay),
             _POP_SUFFIX_MAX_LINES,
         )
     if not full_lines:
@@ -1262,7 +1267,7 @@ def _draw_karaoke_line(
     initial_size = _resolve_font_size_px(overlay)
     font = skia.Font(typeface, initial_size)
     font.setSubpixel(True)
-    max_width = CANVAS_W * _MAX_LINE_W_FRAC
+    max_width = _overlay_max_width_px(overlay)
     spacing_px = _overlay_letter_spacing_px(overlay, initial_size)
     line_word_indices = _wrap_word_indices(words, font, max_width, spacing_px)
     if not line_word_indices:

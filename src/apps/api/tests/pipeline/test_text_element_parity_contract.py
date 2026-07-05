@@ -31,14 +31,25 @@ from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
     resolve_line_spacing,
+    resolve_max_width_frac,
 )
+from app.pipeline.text_overlay import CANVAS_W
+from app.pipeline.text_overlay_skia import _wrap_text_to_lines
 
 # repo_root/tests/fixtures/text-element-parity — shared with the Jest suite.
 FIXTURES_DIR = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "text-element-parity"
 
 # Fields whose gate is THIS suite (base fields predate the D17 mechanism).
-GATED_STYLE_FIELDS = {"text_case", "letter_spacing", "line_spacing"}
+GATED_STYLE_FIELDS = {"text_case", "letter_spacing", "line_spacing", "max_width_frac"}
 NUMERIC_TOLERANCE = 1e-9
+
+
+class _FakeFont:
+    def __init__(self, char_width_px: float) -> None:
+        self.char_width_px = char_width_px
+
+    def measureText(self, text: str) -> float:  # noqa: N802 - mirrors skia.Font
+        return len(text) * self.char_width_px
 
 
 def _load_fixture(field: str) -> dict:
@@ -250,3 +261,58 @@ def test_line_spacing_schema_clamp_matches_fixture(case: dict) -> None:
         )
     else:
         assert elem.line_spacing is None
+
+
+# ── max_width_frac ───────────────────────────────────────────────────────────
+
+
+def _max_width_frac_cases() -> list[dict]:
+    return _load_fixture("max_width_frac")["cases"]
+
+
+@pytest.mark.parametrize("case", _max_width_frac_cases(), ids=lambda c: c["name"])
+def test_max_width_frac_burn_dict_matches_fixture(case: dict) -> None:
+    """The compiled burn dict carries the clamped wrap width only when authored."""
+    overlay = _compile_one(case["element"])
+    expected = case["expected"]
+    if expected["burn_dict_has_field"]:
+        assert overlay["max_width_frac"] == pytest.approx(
+            expected["max_width_frac"], abs=NUMERIC_TOLERANCE
+        )
+    else:
+        assert "max_width_frac" not in overlay
+
+
+@pytest.mark.parametrize("case", _max_width_frac_cases(), ids=lambda c: c["name"])
+def test_max_width_frac_helper_and_wrap_geometry_match_fixture(case: dict) -> None:
+    """resolve_max_width_frac + Skia wrap helper mirror the TS layout contract."""
+    el = case["element"]
+    geometry = case["geometry"]
+    expected = case["expected"]
+    resolved = resolve_max_width_frac(el.get("max_width_frac"))
+    max_width_px = CANVAS_W * resolved
+    lines = _wrap_text_to_lines(
+        str(el["text"]),
+        _FakeFont(float(geometry["char_width_px"])),
+        max_width_px,
+    )
+
+    assert resolved == pytest.approx(expected["max_width_frac"], abs=NUMERIC_TOLERANCE)
+    assert max_width_px == pytest.approx(expected["max_width_px"], abs=NUMERIC_TOLERANCE)
+    assert len(lines) == expected["line_count"]
+    assert max((len(line) * float(geometry["char_width_px"]) for line in lines), default=0) <= (
+        max_width_px + NUMERIC_TOLERANCE
+    )
+
+
+@pytest.mark.parametrize("case", _max_width_frac_cases(), ids=lambda c: c["name"])
+def test_max_width_frac_schema_clamp_matches_fixture(case: dict) -> None:
+    """TextElement validation uses the same clamp as the burn/layout resolvers."""
+    elem = TextElement.model_validate(case["element"])
+    expected = case["expected"]
+    if expected["burn_dict_has_field"]:
+        assert elem.max_width_frac == pytest.approx(
+            expected["max_width_frac"], abs=NUMERIC_TOLERANCE
+        )
+    else:
+        assert elem.max_width_frac is None

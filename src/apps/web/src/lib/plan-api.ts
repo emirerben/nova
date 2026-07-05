@@ -713,6 +713,9 @@ export interface TextElement {
   /** Line-height multiplier, clamped [0.5, 3.0]; null = renderer default 1.15
    * (T11; parity fixture line_spacing.json). */
   line_spacing?: number | null;
+  /** Maximum wrap-box width as a frame-width fraction, clamped [0.2, 1.0];
+   * null = renderer default 0.9 (parity fixture max_width_frac.json). */
+  max_width_frac?: number | null;
   fade_out_ms?: number | null;
   reveal_s?: number | null;
   z?: number | null;

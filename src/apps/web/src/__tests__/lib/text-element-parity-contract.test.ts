@@ -15,8 +15,11 @@ import path from "path";
 import {
   applyTextCase,
   blockMetrics,
+  CANVAS_W,
+  greedyWrapLines,
   resolveLetterSpacingPx,
   resolveLineSpacing,
+  resolveMaxWidthFrac,
   resolveTextElementsLayout,
 } from "@/lib/overlay-layout";
 import { PARITY_VERIFIED_FIELDS } from "@/lib/parity-verified-fields";
@@ -30,7 +33,7 @@ const FIXTURES_DIR = path.resolve(
 
 /** Fields whose gate is THIS suite (base fields predate the D17 mechanism).
  * Must mirror GATED_STYLE_FIELDS in test_text_element_parity_contract.py. */
-const GATED_STYLE_FIELDS = ["text_case", "letter_spacing", "line_spacing"];
+const GATED_STYLE_FIELDS = ["text_case", "letter_spacing", "line_spacing", "max_width_frac"];
 
 interface FixtureCase {
   name: string;
@@ -146,6 +149,38 @@ describe("line_spacing contract (fixture: line_spacing.json)", () => {
       );
       expect(lineStep).toBe(c.expected.line_step as number);
       expect(blockH).toBe(c.expected.block_h as number);
+    },
+  );
+});
+
+describe("max_width_frac contract (fixture: max_width_frac.json)", () => {
+  const { cases } = loadFixture("max_width_frac");
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "layout width matches the burn dict: %s",
+    (_name: string, c: FixtureCase) => {
+      const layout = layoutOne(c.element);
+      expect(layout.maxWidthFrac).toBeCloseTo(c.expected.max_width_frac as number, 9);
+      expect(layout.maxWidthPx).toBeCloseTo(c.expected.max_width_px as number, 9);
+    },
+  );
+
+  it.each(cases.map((c) => [c.name, c] as const))(
+    "resolveMaxWidthFrac + greedyWrapLines mirror Python geometry: %s",
+    (_name: string, c: FixtureCase) => {
+      const maxWidthFrac = resolveMaxWidthFrac(
+        c.element.max_width_frac as number | null | undefined,
+      );
+      const maxWidthPx = CANVAS_W * maxWidthFrac;
+      const charWidth = c.geometry?.char_width_px as number;
+      const lines = greedyWrapLines(c.element.text as string, (text) => text.length * charWidth, maxWidthPx);
+
+      expect(maxWidthFrac).toBeCloseTo(c.expected.max_width_frac as number, 9);
+      expect(maxWidthPx).toBeCloseTo(c.expected.max_width_px as number, 9);
+      expect(lines).toHaveLength(c.expected.line_count as number);
+      expect(Math.max(...lines.map((line) => line.length * charWidth))).toBeLessThanOrEqual(
+        maxWidthPx,
+      );
     },
   );
 });
