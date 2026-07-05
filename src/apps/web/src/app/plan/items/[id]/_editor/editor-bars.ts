@@ -22,36 +22,44 @@ export const TEXT_LANE_BASE_HEIGHT_PX = 48;
 export const TEXT_LANE_ROW_GAP_PX = 2;
 export const TEXT_LANE_EXPANDED_ROW_HEIGHT_PX = 26;
 
-export interface TextLaneRow {
-  bar: TextElementBar;
+export interface LaneRow<T> {
+  item: T;
   rowIndex: number;
   topPx: number;
   heightPx: number;
 }
 
-export interface TextLaneRows {
-  rows: TextLaneRow[];
+export interface LaneRows<T> {
+  rows: LaneRow<T>[];
   rowCount: number;
   rowHeightPx: number;
   totalHeightPx: number;
 }
 
+export type TextLaneRow = LaneRow<TextElementBar> & { bar: TextElementBar };
+export interface TextLaneRows extends Omit<LaneRows<TextElementBar>, "rows"> {
+  rows: TextLaneRow[];
+}
+
 /** UI-only row assignment: current ordered bars map to compacted rows. */
-export function deriveTextLaneRows(bars: TextElementBar[]): TextLaneRows {
-  const rowCount = Math.max(1, bars.length);
+export function deriveLaneRows<T>(
+  orderedItems: T[],
+  opts: { baseHeightPx: number },
+): LaneRows<T> {
+  const rowCount = Math.max(1, orderedItems.length);
   const rowHeightPx =
     rowCount <= 2
-      ? (TEXT_LANE_BASE_HEIGHT_PX - TEXT_LANE_ROW_GAP_PX * (rowCount - 1)) /
+      ? (opts.baseHeightPx - TEXT_LANE_ROW_GAP_PX * (rowCount - 1)) /
         rowCount
       : TEXT_LANE_EXPANDED_ROW_HEIGHT_PX;
   const totalHeightPx =
     rowCount <= 2
-      ? TEXT_LANE_BASE_HEIGHT_PX
+      ? opts.baseHeightPx
       : rowCount * rowHeightPx + (rowCount - 1) * TEXT_LANE_ROW_GAP_PX;
 
   return {
-    rows: bars.map((bar, rowIndex) => ({
-      bar,
+    rows: orderedItems.map((item, rowIndex) => ({
+      item,
       rowIndex,
       topPx: rowIndex * (rowHeightPx + TEXT_LANE_ROW_GAP_PX),
       heightPx: rowHeightPx,
@@ -59,6 +67,15 @@ export function deriveTextLaneRows(bars: TextElementBar[]): TextLaneRows {
     rowCount,
     rowHeightPx,
     totalHeightPx,
+  };
+}
+
+/** UI-only row assignment: current ordered text bars map to compacted rows. */
+export function deriveTextLaneRows(bars: TextElementBar[]): TextLaneRows {
+  const lane = deriveLaneRows(bars, { baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX });
+  return {
+    ...lane,
+    rows: lane.rows.map((row) => ({ ...row, bar: row.item })),
   };
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import {
+  deriveLaneRows,
   deriveTextLaneRows,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
@@ -8,7 +9,10 @@ import {
   undoSnapshot,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
+import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+
+const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
 
 function bar(id: string): TextElementBar {
   return {
@@ -28,6 +32,41 @@ function doc(bars: TextElementBar[]): EditorDocument {
     soundMuted: false,
     title: "",
   };
+}
+
+function sfx(id: string): SoundEffectPlacement {
+  return {
+    id,
+    src_gcs_path: `sound-effects/${id}.wav`,
+    at_s: 0,
+    gain: 1,
+  };
+}
+
+function overlay(id: string): MediaOverlay {
+  return {
+    id,
+    kind: "image",
+    src_gcs_path: `media-uploads/${id}.png`,
+    preview_url: `https://signed.example/${id}.png`,
+    position: "center",
+    x_frac: 0.5,
+    y_frac: 0.5,
+    scale: 0.35,
+    start_s: 0,
+    end_s: 2,
+    z: 0,
+  };
+}
+
+function rowIds<T extends { id: string }>(
+  items: T[],
+  baseHeightPx: number,
+): Array<[string, number]> {
+  return deriveLaneRows(items, { baseHeightPx }).rows.map((row) => [
+    row.item.id,
+    row.rowIndex,
+  ]);
 }
 
 describe("deriveTextLaneRows", () => {
@@ -72,6 +111,107 @@ describe("deriveTextLaneRows", () => {
         row.rowIndex,
       ]),
     ).toEqual([
+      ["first", 0],
+      ["second", 1],
+      ["third", 2],
+    ]);
+  });
+});
+
+describe("deriveLaneRows", () => {
+  it("assigns appended SFX to the next compacted row", () => {
+    const rows = deriveLaneRows([sfx("first"), sfx("second"), sfx("third")], {
+      baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
+    });
+
+    expect(rows.rows.map((row) => [row.item.id, row.rowIndex])).toEqual([
+      ["first", 0],
+      ["second", 1],
+      ["third", 2],
+    ]);
+  });
+
+  it("compacts SFX rows after a middle effect is deleted", () => {
+    const rows = deriveLaneRows([sfx("first"), sfx("third")], {
+      baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
+    });
+
+    expect(rows.totalHeightPx).toBe(SFX_SUB_LANE_BASE_HEIGHT_PX);
+    expect(rows.rows.map((row) => [row.item.id, row.rowIndex])).toEqual([
+      ["first", 0],
+      ["third", 1],
+    ]);
+  });
+
+  it("restores the former SFX row order when undo brings back a deleted effect", () => {
+    const beforeDelete: EditorDocument = {
+      ...doc([]),
+      sfx: [sfx("first"), sfx("second"), sfx("third")],
+    };
+    const afterDelete: EditorDocument = {
+      ...beforeDelete,
+      sfx: [beforeDelete.sfx![0], beforeDelete.sfx![2]],
+    };
+    const history = recordSnapshot(
+      { past: [], future: [], lastTag: null },
+      beforeDelete,
+    );
+
+    const undo = undoSnapshot(history, afterDelete);
+
+    expect(undo).not.toBeNull();
+    expect(
+      rowIds(undo?.doc.sfx ?? [], SFX_SUB_LANE_BASE_HEIGHT_PX),
+    ).toEqual([
+      ["first", 0],
+      ["second", 1],
+      ["third", 2],
+    ]);
+  });
+
+  it("assigns appended overlays to the next compacted row", () => {
+    expect(
+      rowIds(
+        [overlay("first"), overlay("second"), overlay("third")],
+        TEXT_LANE_BASE_HEIGHT_PX,
+      ),
+    ).toEqual([
+      ["first", 0],
+      ["second", 1],
+      ["third", 2],
+    ]);
+  });
+
+  it("compacts overlay rows after a middle overlay is deleted", () => {
+    const rows = deriveLaneRows([overlay("first"), overlay("third")], {
+      baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
+    });
+
+    expect(rows.totalHeightPx).toBe(TEXT_LANE_BASE_HEIGHT_PX);
+    expect(rows.rows.map((row) => [row.item.id, row.rowIndex])).toEqual([
+      ["first", 0],
+      ["third", 1],
+    ]);
+  });
+
+  it("restores the former overlay row order when undo brings back a deleted overlay", () => {
+    const beforeDelete: EditorDocument = {
+      ...doc([]),
+      overlays: [overlay("first"), overlay("second"), overlay("third")],
+    };
+    const afterDelete: EditorDocument = {
+      ...beforeDelete,
+      overlays: [beforeDelete.overlays![0], beforeDelete.overlays![2]],
+    };
+    const history = recordSnapshot(
+      { past: [], future: [], lastTag: null },
+      beforeDelete,
+    );
+
+    const undo = undoSnapshot(history, afterDelete);
+
+    expect(undo).not.toBeNull();
+    expect(rowIds(undo?.doc.overlays ?? [], TEXT_LANE_BASE_HEIGHT_PX)).toEqual([
       ["first", 0],
       ["second", 1],
       ["third", 2],

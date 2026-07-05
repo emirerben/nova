@@ -43,6 +43,7 @@ import type {
 import Filmstrip, { allocateFilmstripSeekBudget } from "./Filmstrip";
 import { anchoredTimelineScrollLeft } from "./editor-timeline-scroll";
 import {
+  deriveLaneRows,
   deriveTextLaneRows,
   TEXT_LANE_ROW_GAP_PX,
   TEXT_LANE_BASE_HEIGHT_PX,
@@ -61,6 +62,8 @@ import {
 
 /** Sticky left gutter (mute toggle + lane label). */
 const GUTTER_PX = 64;
+const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
+const MUSIC_BED_HEIGHT_PX = 32;
 
 export interface EditorSfxBar {
   id: string;
@@ -346,11 +349,18 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const tickInterval = tickIntervalForScale(pps);
   const ticks = rulerTicks(durationS, pps);
   const textLane = deriveTextLaneRows(textBars);
+  const sfxLane = deriveLaneRows(sfx, {
+    baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
+  });
+  const soundLaneHeight = sfxLane.totalHeightPx + MUSIC_BED_HEIGHT_PX;
+  const overlayLane = deriveLaneRows(overlays, {
+    baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
+  });
   const laneRows = [
     { label: "Text", heightPx: textLane.totalHeightPx },
     { label: "Video", heightPx: 48 },
-    { label: "Sound", heightPx: 64 },
-    { label: "Overlays", heightPx: 48 },
+    { label: "Sound", heightPx: soundLaneHeight },
+    { label: "Overlays", heightPx: overlayLane.totalHeightPx },
   ];
   const lanesHeight = laneRows.reduce((total, row) => total + row.heightPx, 0);
 
@@ -678,14 +688,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               />
               <GutterRow
                 label="Sound"
-                heightPx={64}
+                heightPx={soundLaneHeight}
                 muteState={{
                   muted: soundMuted,
                   onToggle: onToggleSoundMute,
                   title: "Music + effects",
                 }}
               />
-              <GutterRow label="Overlays" heightPx={48} />
+              <GutterRow
+                label="Overlays"
+                heightPx={overlayLane.totalHeightPx}
+              />
             </div>
           </div>
         </div>
@@ -884,54 +897,85 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               </LaneTrack>
 
               {/* ── Sound lane (SFX sub-row above the music bed) ── */}
-              <LaneTrack trackW={trackW} heightPx={64}>
+              <LaneTrack trackW={trackW} heightPx={soundLaneHeight}>
                 <Playline px={playheadPx} />
-	                {/* SFX sub-row (top half) */}
-	                <div className="absolute inset-x-0 top-0 h-1/2">
-	                  {sfx.length === 0 && (
-	                    <button
-	                      type="button"
-	                      onClick={(e) => {
-	                        e.stopPropagation();
-	                        onOpenSounds?.();
-	                      }}
-	                      className="absolute left-1 top-0.5 bottom-0.5 rounded border border-dashed border-zinc-300 px-2 text-[10px] text-zinc-500 hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-	                    >
-	                      + Add sounds
-	                    </button>
-	                  )}
-	                  {sfx.map((s) => {
-                    const left = secondsToPx(s.at_s, pps);
-                    const end = s.end_s ?? s.at_s + 0.6;
-                    const width = Math.max(6, secondsToPx(end - s.at_s, pps));
-                    const selected = isSel("sfx", s.id);
-                    return (
-                      <BarButton
-                        key={s.id}
-                        left={left}
-                        width={width}
-                        selected={selected}
-                        ringCls={ringCls}
-                        ariaLabel={`Sound effect ${s.label ?? ""} at ${formatTimecode(s.at_s)}`}
-                        onSelect={() => onSelect("sfx", s.id)}
-                        dataKind="sfx"
-                        dataId={s.id}
-                        onPointerDown={(e) => startSfxDrag(e, s)}
-                        onPointerMove={(e) => updateDrag(e.clientX)}
-                        onPointerUp={(e) => finishDrag(e, "sfx", s.id)}
-                        onPointerCancel={cancelDrag}
-                        suppressClickRef={suppressClickRef}
-                        className="inset-y-0.5 bg-zinc-300 text-[#0c0c0e]"
-                      >
-                        <span className="pointer-events-none truncate px-1.5 text-[9px]">
-                          {s.label ?? "sfx"}
-                        </span>
-                      </BarButton>
-                    );
-                  })}
+                {/* SFX rows above the fixed music bed. */}
+                <div
+                  className="absolute inset-x-0 top-0"
+                  style={{ height: sfxLane.totalHeightPx }}
+                  data-testid="editor-sfx-lane"
+                >
+                  {Array.from(
+                    { length: Math.max(0, sfxLane.rowCount - 1) },
+                    (_, i) => (
+                      <div
+                        key={`sfx-row-separator-${i}`}
+                        className="pointer-events-none absolute inset-x-0 border-t border-zinc-200/80"
+                        style={{
+                          top:
+                            (i + 1) * sfxLane.rowHeightPx +
+                            i * TEXT_LANE_ROW_GAP_PX +
+                            TEXT_LANE_ROW_GAP_PX / 2,
+                        }}
+                        aria-hidden
+                      />
+                    ),
+                  )}
+                  {sfx.length === 0 && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenSounds?.();
+                      }}
+                      className="absolute left-1 bottom-0.5 top-0.5 rounded border border-dashed border-zinc-300 px-2 text-[10px] text-zinc-500 hover:border-zinc-400 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                    >
+                      + Add sounds
+                    </button>
+                  )}
+                  {sfxLane.rows.map(
+                    ({ item: s, rowIndex, topPx, heightPx }) => {
+                      const left = secondsToPx(s.at_s, pps);
+                      const end = s.end_s ?? s.at_s + 0.6;
+                      const width = Math.max(
+                        6,
+                        secondsToPx(end - s.at_s, pps),
+                      );
+                      const selected = isSel("sfx", s.id);
+                      return (
+                        <BarButton
+                          key={s.id}
+                          left={left}
+                          width={width}
+                          top={topPx}
+                          height={heightPx}
+                          selected={selected}
+                          ringCls={ringCls}
+                          ariaLabel={`Sound effect row ${rowIndex + 1}, ${s.label ?? ""} at ${formatTimecode(s.at_s)}`}
+                          onSelect={() => onSelect("sfx", s.id)}
+                          dataKind="sfx"
+                          dataId={s.id}
+                          dataRowIndex={rowIndex}
+                          onPointerDown={(e) => startSfxDrag(e, s)}
+                          onPointerMove={(e) => updateDrag(e.clientX)}
+                          onPointerUp={(e) => finishDrag(e, "sfx", s.id)}
+                          onPointerCancel={cancelDrag}
+                          suppressClickRef={suppressClickRef}
+                          className="bg-zinc-300 text-[#0c0c0e]"
+                        >
+                          <span className="pointer-events-none truncate px-1.5 text-[9px]">
+                            {s.label ?? "sfx"}
+                          </span>
+                        </BarButton>
+                      );
+                    },
+                  )}
                 </div>
                 {/* Music bed (bottom half) — full-width; split disabled on it */}
-                <div className="absolute inset-x-0 bottom-0 h-1/2">
+                <div
+                  className="absolute inset-x-0 bottom-0"
+                  style={{ height: MUSIC_BED_HEIGHT_PX }}
+                >
                   {hasMusic ? (
                     <BarButton
                       left={0}
@@ -962,42 +1006,69 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               </LaneTrack>
 
               {/* ── Overlays lane ── */}
-              <LaneTrack trackW={trackW} heightPx={TEXT_LANE_BASE_HEIGHT_PX}>
+              <LaneTrack
+                trackW={trackW}
+                heightPx={overlayLane.totalHeightPx}
+                testId="editor-overlays-lane"
+              >
                 <Playline px={playheadPx} />
                 {overlays.length === 0 ? (
                   <GhostRow text="Overlays appear here" />
                 ) : (
-                  overlays.map((o) => {
-                    const left = secondsToPx(o.start_s, pps);
-                    const width = Math.max(
-                      8,
-                      secondsToPx(o.end_s - o.start_s, pps),
-                    );
-                    const selected = isSel("overlay", o.id);
-                    return (
-                      <BarButton
-                        key={o.id}
-                        left={left}
-	                        width={width}
-	                        selected={selected}
-	                        ringCls={ringCls}
-	                        ariaLabel={`Overlay ${o.label ?? ""}, ${formatTimecode(o.start_s)}–${formatTimecode(o.end_s)}`}
-	                        onSelect={() => onSelect("overlay", o.id)}
-	                        dataKind="overlay"
-	                        dataId={o.id}
-	                        onPointerDown={(e) => startOverlayDrag(e, o)}
-	                        onPointerMove={(e) => updateDrag(e.clientX)}
-	                        onPointerUp={(e) => finishDrag(e, "overlay", o.id)}
-	                        onPointerCancel={cancelDrag}
-	                        suppressClickRef={suppressClickRef}
-	                        className="border border-zinc-300 bg-white text-[#0c0c0e]"
-	                      >
-                        <span className="pointer-events-none truncate px-2 text-[10px]">
-                          {o.label ?? "Overlay"}
-                        </span>
-                      </BarButton>
-                    );
-                  })
+                  <>
+                    {Array.from(
+                      { length: Math.max(0, overlayLane.rowCount - 1) },
+                      (_, i) => (
+                        <div
+                          key={`overlay-row-separator-${i}`}
+                          className="pointer-events-none absolute inset-x-0 border-t border-zinc-200/80"
+                          style={{
+                            top:
+                              (i + 1) * overlayLane.rowHeightPx +
+                              i * TEXT_LANE_ROW_GAP_PX +
+                              TEXT_LANE_ROW_GAP_PX / 2,
+                          }}
+                          aria-hidden
+                        />
+                      ),
+                    )}
+                    {overlayLane.rows.map(
+                      ({ item: o, rowIndex, topPx, heightPx }) => {
+                        const left = secondsToPx(o.start_s, pps);
+                        const width = Math.max(
+                          8,
+                          secondsToPx(o.end_s - o.start_s, pps),
+                        );
+                        const selected = isSel("overlay", o.id);
+                        return (
+                          <BarButton
+                            key={o.id}
+                            left={left}
+                            width={width}
+                            top={topPx}
+                            height={heightPx}
+                            selected={selected}
+                            ringCls={ringCls}
+                            ariaLabel={`Overlay row ${rowIndex + 1}, ${o.label ?? ""}, ${formatTimecode(o.start_s)}–${formatTimecode(o.end_s)}`}
+                            onSelect={() => onSelect("overlay", o.id)}
+                            dataKind="overlay"
+                            dataId={o.id}
+                            dataRowIndex={rowIndex}
+                            onPointerDown={(e) => startOverlayDrag(e, o)}
+                            onPointerMove={(e) => updateDrag(e.clientX)}
+                            onPointerUp={(e) => finishDrag(e, "overlay", o.id)}
+                            onPointerCancel={cancelDrag}
+                            suppressClickRef={suppressClickRef}
+                            className="border border-zinc-300 bg-white text-[#0c0c0e]"
+                          >
+                            <span className="pointer-events-none truncate px-2 text-[10px]">
+                              {o.label ?? "Overlay"}
+                            </span>
+                          </BarButton>
+                        );
+                      },
+                    )}
+                  </>
                 )}
               </LaneTrack>
               {showEndMarker && <EndOfVideoMarker left={videoEndPx} />}
@@ -1172,7 +1243,8 @@ function BarButton({
       aria-pressed={selected}
       data-editor-bar-kind={dataKind}
       data-editor-bar-id={dataId}
-      data-editor-text-row-index={dataRowIndex}
+      data-editor-row-index={dataRowIndex}
+      data-editor-text-row-index={dataKind === "text" ? dataRowIndex : undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
