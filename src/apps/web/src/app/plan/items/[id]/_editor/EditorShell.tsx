@@ -102,6 +102,53 @@ function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   return (target?.tagName ?? "").toUpperCase() !== "BUTTON";
 }
 
+function SelectCursorIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M4 3l8 18 2.2-7.2L21 11 4 3z" />
+      <path d="M13.5 13.5 19 19" />
+    </svg>
+  );
+}
+
+function PanHandIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-[18px] w-[18px]"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M8 11V6.5a2 2 0 0 1 4 0V11" />
+      <path d="M12 11V5.5a2 2 0 0 1 4 0V12" />
+      <path d="M16 12V8.5a2 2 0 0 1 4 0V15" />
+      <path d="M8 12.5V10a2 2 0 0 0-4 0v4.5C4 19 7 22 12 22h1c4 0 7-3 7-7" />
+    </svg>
+  );
+}
+
+function SaveSpinner() {
+  return (
+    <span
+      aria-hidden="true"
+      className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+    />
+  );
+}
+
 export default function EditorShell({
   itemId,
   variantParam,
@@ -215,6 +262,7 @@ export default function EditorShell({
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
   const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
   const [zoomPct, setZoomPct] = useState<number>(100);
+  const panEnabled = zoomPct > 100;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -545,6 +593,12 @@ export default function EditorShell({
       setLightSheetOpen(false);
     }
   }, [layoutMode]);
+
+  useEffect(() => {
+    if (!panEnabled && canvasTool === "pan") {
+      setCanvasTool("select");
+    }
+  }, [canvasTool, panEnabled]);
 
   useEffect(() => {
     if (activeTool !== "sounds" || sfxGlossaryEffects.length > 0) {
@@ -1534,7 +1588,7 @@ export default function EditorShell({
             <button
               type="button"
               aria-pressed={canvasTool === "select"}
-              aria-label="Select tool"
+              aria-label="Select"
               title="Select"
               onClick={() => setCanvasTool("select")}
               className={`flex h-11 w-11 items-center justify-center rounded-lg text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
@@ -1543,21 +1597,22 @@ export default function EditorShell({
                   : "text-[#3f3f46] hover:bg-zinc-100"
               }`}
             >
-              ➤
+              <SelectCursorIcon />
             </button>
             <button
               type="button"
               aria-pressed={canvasTool === "pan"}
-              aria-label="Pan tool"
-              title="Pan (when zoomed in)"
+              aria-label="Pan — drag to move around the canvas when zoomed in"
+              title={panEnabled ? "Pan — drag to move around the canvas when zoomed in" : "Zoom in to pan"}
+              disabled={!panEnabled}
               onClick={() => setCanvasTool("pan")}
               className={`flex h-11 w-11 items-center justify-center rounded-lg text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
                 canvasTool === "pan"
                   ? "bg-[#0c0c0e] text-white"
-                  : "text-[#3f3f46] hover:bg-zinc-100"
+                  : "text-[#3f3f46] hover:bg-zinc-100 disabled:text-[#a1a1aa] disabled:hover:bg-transparent"
               }`}
             >
-              ✋
+              <PanHandIcon />
             </button>
             {/* Undo/redo — unified document command stack (plan §7). */}
             <button
@@ -1602,17 +1657,20 @@ export default function EditorShell({
             )}
             <InkButton
               variant="ghost"
-              className="min-h-11 text-[13px] focus-visible:!outline-lime-500"
+              size="compact"
+              className="focus-visible:!outline-lime-500"
               onClick={requestLeave}
             >
               Cancel
             </InkButton>
             <InkButton
-              className="min-h-11 px-6 py-2.5 text-[13px] focus-visible:!outline-lime-500"
+              size="compact"
+              className="gap-2 focus-visible:!outline-lime-500"
               disabled={!dirty || saving || readOnly}
               onClick={() => void handleSave()}
             >
-              {saving ? "Saving…" : "Save"}
+              {saving && <SaveSpinner />}
+              {saving ? "Saving" : "Save"}
             </InkButton>
           </div>
         </header>
