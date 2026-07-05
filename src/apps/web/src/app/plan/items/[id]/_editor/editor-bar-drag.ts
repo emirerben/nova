@@ -80,9 +80,14 @@ export function resolveBarDragHandle({
   width: number;
   edgePx?: number;
 }): BarDragHandle {
-  if (localX <= edgePx) return "left";
-  if (localX >= width - edgePx) return "right";
+  const effectiveEdgePx = effectiveBarEdgeHitPx(width, edgePx);
+  if (localX <= effectiveEdgePx) return "left";
+  if (localX >= width - effectiveEdgePx) return "right";
   return "body";
+}
+
+export function effectiveBarEdgeHitPx(width: number, edgePx = BAR_EDGE_HIT_PX): number {
+  return Math.min(edgePx, Math.max(1, width / 3));
 }
 
 export function timelineXFromClient({
@@ -291,6 +296,38 @@ export function applySfxMove({
     at_s: roundTiming(nextStart),
     end_s: endS == null ? endS : roundTiming(nextStart + duration),
   };
+}
+
+export function applySfxBarDrag({
+  bar,
+  handle,
+  deltaS,
+  videoDurationS,
+  minDurationS = TEXT_MIN_DURATION_S,
+}: {
+  bar: { at_s: number; end_s?: number | null };
+  handle: BarDragHandle;
+  deltaS: number;
+  videoDurationS: number;
+  minDurationS?: number;
+}): { at_s: number; end_s?: number | null } {
+  if (handle === "body") {
+    return applySfxMove({
+      atS: bar.at_s,
+      endS: bar.end_s,
+      deltaS,
+      videoDurationS,
+    });
+  }
+
+  const currentEnd = bar.end_s ?? bar.at_s + minDurationS;
+  if (handle === "left") {
+    const at_s = clamp(bar.at_s + deltaS, 0, currentEnd - minDurationS);
+    return { at_s: roundTiming(at_s), end_s: roundTiming(currentEnd) };
+  }
+
+  const end_s = clamp(currentEnd + deltaS, bar.at_s + minDurationS, videoDurationS);
+  return { at_s: roundTiming(bar.at_s), end_s: roundTiming(end_s) };
 }
 
 export function outputTimeForSlotBoundary({

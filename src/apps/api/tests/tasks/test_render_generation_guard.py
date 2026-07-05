@@ -144,14 +144,21 @@ def _arm_reburn(monkeypatch, job, result: dict):
     updates = _capture_updates(monkeypatch, job)
     monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: True, raising=False)
     monkeypatch.setattr(gb, "_reburn_text_on_base", lambda **kw: dict(result), raising=False)
+    overlay_calls: list = []
     sfx_calls: list = []
+    monkeypatch.setattr(
+        gb,
+        "_reapply_persisted_media_overlays_if_any",
+        lambda **kw: overlay_calls.append(kw) or False,
+        raising=False,
+    )
     monkeypatch.setattr(
         gb,
         "_reapply_persisted_sfx_if_any",
         lambda **kw: sfx_calls.append(kw),
         raising=False,
     )
-    return updates, sfx_calls
+    return updates, overlay_calls, sfx_calls
 
 
 _READY_RESULT = {"render_status": "ready", "ok": True, "output_url": "https://signed/new"}
@@ -299,20 +306,21 @@ def test_stale_task_terminal_write_discarded(monkeypatch):
     """Task launched with tok-old; a newer commit bumped the variant to tok-new →
     the reburn completes but neither the ready patch nor the SFX hook lands."""
     job = _FakeJob([_variant("tok-new")])
-    updates, sfx_calls = _arm_reburn(monkeypatch, job, _READY_RESULT)
+    updates, overlay_calls, sfx_calls = _arm_reburn(monkeypatch, job, _READY_RESULT)
 
     gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-old")
 
     # Only the non-terminal "rendering" marker may have been written.
     assert all(u.get("render_status") == "rendering" for u in updates)
     assert not any(u.get("render_status") == "ready" for u in updates)
+    assert overlay_calls == []
     assert sfx_calls == []
 
 
 def test_current_task_terminal_write_lands(monkeypatch):
-    """Same run with the CURRENT token → the ready patch + SFX hook both land."""
+    """Same run with the CURRENT token → ready patch + layer reapply hooks land."""
     job = _FakeJob([_variant("tok-current")])
-    updates, sfx_calls = _arm_reburn(monkeypatch, job, _READY_RESULT)
+    updates, overlay_calls, sfx_calls = _arm_reburn(monkeypatch, job, _READY_RESULT)
 
     gb._run_regenerate_variant(
         JOB_ID, "original_text", None, None, False, render_gen_id="tok-current"
@@ -321,17 +329,70 @@ def test_current_task_terminal_write_lands(monkeypatch):
     ready = [u for u in updates if u.get("render_status") == "ready"]
     assert len(ready) == 1
     assert ready[0]["output_url"] == "https://signed/new"
+    assert len(overlay_calls) == 1
     assert len(sfx_calls) == 1
 
 
 def test_tokenless_task_terminal_write_lands(monkeypatch):
     """Regression rule: a legacy task (no token) writes even on a stamped variant."""
     job = _FakeJob([_variant("tok-any")])
-    updates, _ = _arm_reburn(monkeypatch, job, _READY_RESULT)
+    updates, _, _ = _arm_reburn(monkeypatch, job, _READY_RESULT)
 
     gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id=None)
 
     assert any(u.get("render_status") == "ready" for u in updates)
+
+
+def test_reburn_reapplies_persisted_media_overlays_before_sfx(monkeypatch):
+    overlays = [_media_overlay_card()]
+    job = _FakeJob([_variant("tok-cur", media_overlays=overlays, sound_effects=[_sfx_placement()])])
+    _patch_sessions(monkeypatch, job)
+    updates = _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: True, raising=False)
+    monkeypatch.setattr(gb, "_reburn_text_on_base", lambda **kw: dict(_READY_RESULT), raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reapply_persisted_media_overlays_if_any",
+        lambda **kw: calls.append("overlay") or True,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_reapply_persisted_sfx_if_any",
+        lambda **kw: calls.append("sfx"),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
+
+    assert any(u.get("render_status") == "ready" for u in updates)
+    assert calls == ["overlay"]
+
+
+def test_reburn_falls_back_to_sfx_when_no_persisted_media_overlays(monkeypatch):
+    job = _FakeJob([_variant("tok-cur", sound_effects=[_sfx_placement()])])
+    _patch_sessions(monkeypatch, job)
+    _capture_updates(monkeypatch, job)
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: True, raising=False)
+    monkeypatch.setattr(gb, "_reburn_text_on_base", lambda **kw: dict(_READY_RESULT), raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        gb,
+        "_reapply_persisted_media_overlays_if_any",
+        lambda **kw: calls.append("overlay") or False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_reapply_persisted_sfx_if_any",
+        lambda **kw: calls.append("sfx"),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
+
+    assert calls == ["overlay", "sfx"]
 
 
 # ── failure terminal write (task exception handler) ───────────────────────────

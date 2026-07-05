@@ -2770,15 +2770,20 @@ def _run_regenerate_variant(
                 outcome="reburn",
             ):
                 return
-            # SFX is the OUTERMOST layer. A text/style reburn overwrites video_path
-            # from the cached base WITHOUT the SFX mix, so re-apply persisted effects
-            # on top (the hook also resets the stale pre_sfx_video_path). Mirrors the
-            # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
-            _reapply_persisted_sfx_if_any(
+            # A text/style reburn overwrites video_path from the cached text-free
+            # base, so any persisted user media layers must be rebuilt. Re-apply
+            # overlays first; that pass owns the SFX hook because SFX is the
+            # outermost audio layer. If no overlays exist, keep the SFX-only hook.
+            if not _reapply_persisted_media_overlays_if_any(
                 job_id=job_id,
                 variant_id=variant_id,
                 expected_render_gen_id=render_gen_id,
-            )
+            ):
+                _reapply_persisted_sfx_if_any(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    expected_render_gen_id=render_gen_id,
+                )
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
 

@@ -50,10 +50,12 @@ import {
 } from "./editor-bars";
 import {
   type BarDragHandle,
+  BAR_EDGE_HIT_PX,
   CLICK_DRAG_THRESHOLD_PX,
   applyClipSourceWindowDrag,
-  applySfxMove,
+  applySfxBarDrag,
   applyTextBarDrag,
+  effectiveBarEdgeHitPx,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
   sequentialSlotLayout,
@@ -162,7 +164,7 @@ type ActiveDrag =
   | {
       kind: "sfx";
       id: string;
-      handle: "body";
+      handle: BarDragHandle;
       startTimelineX: number;
       pxPerSecond: number;
       origin: Pick<EditorSfxBar, "at_s" | "end_s">;
@@ -463,9 +465,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         text: `${(next.durationS ?? active.origin.durationS ?? 0).toFixed(1)}s`,
       });
     } else if (active.kind === "sfx") {
-      const next = applySfxMove({
-        atS: active.origin.at_s,
-        endS: active.origin.end_s,
+      const next = applySfxBarDrag({
+        bar: active.origin,
+        handle: active.handle,
         deltaS,
         videoDurationS: durationS,
       });
@@ -558,13 +560,17 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
 
   function startSfxDrag(e: React.PointerEvent<HTMLElement>, bar: EditorSfxBar) {
     if (readOnly) return;
+    const rect = e.currentTarget.getBoundingClientRect();
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
     dragRef.current = {
       kind: "sfx",
       id: bar.id,
-      handle: "body",
+      handle: resolveBarDragHandle({
+        localX: e.clientX - rect.left,
+        width: rect.width,
+      }),
       startTimelineX: pointerTimelineX(e.clientX),
       pxPerSecond: pps,
       origin: { at_s: bar.at_s, end_s: bar.end_s },
@@ -888,6 +894,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             Clip {i + 1} · {win.durationS.toFixed(1)}s
                           </span>
                         </span>
+                        <TimelineEdgeHitZones width={width} />
                         <TimelineTrimHandle side="left" selected={selected} />
                         <TimelineTrimHandle side="right" selected={selected} />
                       </button>
@@ -961,6 +968,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onPointerUp={(e) => finishDrag(e, "sfx", s.id)}
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
+                          showTrimHandles
                           className="bg-zinc-300 text-[#0c0c0e]"
                         >
                           <span className="pointer-events-none truncate px-1.5 text-[9px]">
@@ -1059,6 +1067,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             onPointerUp={(e) => finishDrag(e, "overlay", o.id)}
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
+                            showTrimHandles
                             className="border border-zinc-300 bg-white text-[#0c0c0e]"
                           >
                             <span className="pointer-events-none truncate px-2 text-[10px]">
@@ -1270,6 +1279,7 @@ function BarButton({
       }}
     >
       {children}
+      {showTrimHandles && <TimelineEdgeHitZones width={width} />}
       {showTrimHandles && (
         <>
           <TimelineTrimHandle side="left" selected={selected} />
@@ -1277,6 +1287,24 @@ function BarButton({
         </>
       )}
     </button>
+  );
+}
+
+function TimelineEdgeHitZones({ width }: { width: number }) {
+  const edgeWidth = effectiveBarEdgeHitPx(width, BAR_EDGE_HIT_PX);
+  return (
+    <>
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 z-[9] cursor-ew-resize"
+        style={{ width: edgeWidth }}
+      />
+      <span
+        aria-hidden
+        className="absolute inset-y-0 right-0 z-[9] cursor-ew-resize"
+        style={{ width: edgeWidth }}
+      />
+    </>
   );
 }
 
