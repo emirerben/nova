@@ -4853,6 +4853,11 @@ def _render_narrated_variant(
         # Editable caption cues [{text, start_s, end_s}] (assembled-time). Drives the
         # on-video caption editor; reburned onto base_video_path when the creator edits.
         "caption_cues": None,
+        # On/off toggle, independent of cue count — toggling off must never destroy
+        # the transcript-derived cues (so toggling back on needs no re-transcription).
+        # Defaults true; the editor's Captions tab visibility gates on archetype, not
+        # this flag or cue count (see _is_editable_caption_variant).
+        "captions_enabled": True,
         # Caption style this variant renders with ("sentence" | "word"). The reburn
         # reads it so edited cues re-burn in the SAME style as the first render.
         "voiceover_caption_style": caption_style,
@@ -4861,6 +4866,10 @@ def _render_narrated_variant(
         "voiceover_caption_font": caption_font,
         "ai_timeline": None,
         "resolved_archetype": "narrated",
+        # Background-sound level this variant rendered with (None → Nova's
+        # default). Editable post-gen via the BackgroundSoundControl reburn —
+        # persisted here so the editor shows the TRUE current value, not a guess.
+        "voiceover_bed_level": bed_level,
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
@@ -5119,6 +5128,9 @@ def _render_subtitled_variant(
         # Editable caption cues [{text, start_s, end_s}] (base/clip time). Drives the
         # on-video caption editor; reburned onto base_video_path when the creator edits.
         "caption_cues": None,
+        # On/off toggle, independent of cue count — see the narrated base dict above
+        # for the full rationale (same field, same semantics for subtitled).
+        "captions_enabled": True,
         # The caption style this variant rendered with ("sentence" | "word"). The reburn
         # reads it so edited cues re-burn in the SAME style (word-pop stays word-pop).
         "voiceover_caption_style": caption_style,
@@ -5324,7 +5336,18 @@ _CAPTION_REBURN_ARCHETYPES = frozenset({"narrated", "subtitled"})
 _SUBTITLED_CAPTION_LANGUAGES = frozenset({"en", "tr"})
 
 
-def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
+def _burn_persisted_captions_onto_base(
+    base_local: str, out_local: str, variant: dict, tmpdir: str
+) -> None:
+    """Burn (or skip) a variant's persisted caption cues onto its caption-free base.
+
+    Shared by `_run_reburn_narrated_captions` (Apply after a hand-edit) and
+    `_run_reburn_narrated_bed_level` (background-sound change — the base changes,
+    the cues don't, so the SAME burn-or-copy logic re-applies onto the new base).
+    Gates on BOTH `captions_enabled` (the on/off toggle — off always yields the
+    caption-free copy regardless of stored cue count, so toggling back on needs no
+    re-transcription) AND the presence of cues.
+    """
     from app.pipeline.captions import (  # noqa: PLC0415
         SUBTITLED_CAPTION_MARGIN_V,
         generate_ass_from_cues,
@@ -5335,23 +5358,14 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         resolve_caption_font,
     )
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
-    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
-    with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
-        if job is None:
-            log.error("narrated_caption_reburn_job_not_found", job_id=job_id)
-            return
-        variants = (job.assembly_plan or {}).get("variants") or []
-        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
-    if variant is None:
-        raise ValueError(f"variant {variant_id} not found on job {job_id}")
     archetype = variant.get("resolved_archetype")
-    if archetype not in _CAPTION_REBURN_ARCHETYPES:
-        raise ValueError(f"variant {variant_id} is not a caption variant")
-    base_path = variant.get("base_video_path")
     cues = list(variant.get("caption_cues") or [])
-    rank = variant.get("rank")
+    captions_enabled = variant.get("captions_enabled", True) is not False
+    if not (captions_enabled and cues):
+        # Off (regardless of stored cue count) or genuinely no cues → caption-free.
+        shutil.copy2(base_local, out_local)
+        return
     # Subtitled word-by-word (lime pop) is rendered by generate_word_pop_ass, not the
     # plain/word ASS styles — flagged here and branched at burn time below.
     subtitled_word_pop = (
@@ -5373,6 +5387,43 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
     # None/unknown → the default). Both narrated AND subtitled persist the font under
     # `voiceover_caption_font` (render + caption-font route + finalize whitelist).
     ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    ass_path = os.path.join(tmpdir, "captions.ass")
+    if subtitled_word_pop:
+        # Real per-word times for cues left untouched; edited cues re-synthesize
+        # inside generate_word_pop_ass (E3). Same safe margin as the first burn.
+        generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=margin_v)
+    else:
+        generate_ass_from_cues(
+            cues,
+            ass_path,
+            font_name=ass_font,
+            style=ass_style,
+            margin_v=margin_v,
+            # Subtitled sentence captions keep their pop-in through edits; the
+            # user's cue set is authoritative (never re-split here). Narrated
+            # stays un-animated (margin_v is None only for narrated).
+            pop_in=(archetype == "subtitled"),
+        )
+    burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+
+
+def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("narrated_caption_reburn_job_not_found", job_id=job_id)
+            return
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if variant is None:
+        raise ValueError(f"variant {variant_id} not found on job {job_id}")
+    archetype = variant.get("resolved_archetype")
+    if archetype not in _CAPTION_REBURN_ARCHETYPES:
+        raise ValueError(f"variant {variant_id} is not a caption variant")
+    base_path = variant.get("base_video_path")
+    rank = variant.get("rank")
     if not base_path:
         raise ValueError("variant has no caption-free base — cannot reburn captions")
 
@@ -5381,28 +5432,7 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(base_path, base_local)
         out_local = os.path.join(tmpdir, "out.mp4")
-        if cues:
-            ass_path = os.path.join(tmpdir, "captions.ass")
-            if subtitled_word_pop:
-                # Real per-word times for cues left untouched; edited cues re-synthesize
-                # inside generate_word_pop_ass (E3). Same safe margin as the first burn.
-                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=margin_v)
-            else:
-                generate_ass_from_cues(
-                    cues,
-                    ass_path,
-                    font_name=ass_font,
-                    style=ass_style,
-                    margin_v=margin_v,
-                    # Subtitled sentence captions keep their pop-in through edits; the
-                    # user's cue set is authoritative (never re-split here). Narrated
-                    # stays un-animated (margin_v is None only for narrated).
-                    pop_in=(archetype == "subtitled"),
-                )
-            burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
-        else:
-            # All cues cleared → caption-free video.
-            shutil.copy2(base_local, out_local)
+        _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
         # New key so CDN / signed-URL caches never serve the pre-edit captions.
         new_gcs = (
             f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4"
@@ -5428,7 +5458,214 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         from app.storage import delete_object_best_effort  # noqa: PLC0415
 
         delete_object_best_effort(old_video_path)
-    log.info("narrated_caption_reburn_done", job_id=job_id, variant_id=variant_id, cues=len(cues))
+    log.info(
+        "narrated_caption_reburn_done",
+        job_id=job_id,
+        variant_id=variant_id,
+        cues=len(variant.get("caption_cues") or []),
+    )
+
+
+# Archetypes with a footage audio-bed concept (background sound under a voice).
+# Subtitled has no separate voice track (it keeps the ONE clip's own audio) — no
+# bed to mix, so it is deliberately excluded here even though it shares the
+# caption-reburn archetype set above.
+_BED_LEVEL_ARCHETYPES = frozenset({"narrated"})
+
+
+@celery_app.task(
+    name="reburn_narrated_bed_level",
+    bind=True,
+    autoretry_for=(OperationalError,),
+    retry_backoff=True,
+    retry_backoff_max=60,
+    retry_jitter=False,
+    max_retries=7,
+    # Re-mixes the audio bed and re-runs the clip assembly (no Whisper, no LLM) —
+    # heavier than the caption reburn's re-encode-only path but far cheaper than a
+    # first render. Same ceiling as the montage regenerate path.
+    soft_time_limit=1740,
+    time_limit=1800,
+)
+def reburn_narrated_bed_level(self, job_id: str, variant_id: str, bed_level: float) -> None:
+    """Re-render a narrated variant's background-sound (voice/bed) balance.
+
+    Post-gen editor Apply step for the Background Sound slider. Unlike the caption
+    reburn (which only re-encodes the already-mixed base), this rebuilds the clip
+    assembly from the persisted, deterministic render inputs — `narrated_timings`
+    (the final step boundaries, so no re-alignment/re-transcription), `filming_guide`
+    + `narrative_order` (so the SAME clip-to-step assignment recurs), and the
+    persisted `caption_cues` (reburned onto the new base via the shared helper, so
+    hand-edited captions survive a background-sound change). A failure reverts the
+    variant to `ready` keeping its last-good video.
+    """
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        try:
+            _run_reburn_narrated_bed_level(job_id, variant_id, bed_level)
+        except OperationalError:
+            raise
+        except Exception as exc:
+            log.error(
+                "narrated_bed_level_reburn_failed",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc)[:MAX_ERROR_DETAIL_LEN],
+                exc_info=True,
+            )
+            # Keep the last-good burned video; just clear the in-flight state.
+            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+
+
+def _run_reburn_narrated_bed_level(job_id: str, variant_id: str, bed_level: float) -> None:
+    from app.pipeline.narrated_alignment import StepTiming  # noqa: PLC0415
+    from app.pipeline.narrated_assembler import (  # noqa: PLC0415
+        NarratedClip,
+        assemble_narrated,
+    )
+    from app.storage import upload_public_read  # noqa: PLC0415
+    from app.tasks.template_orchestrate import _download_clips_parallel  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            log.error("narrated_bed_level_reburn_job_not_found", job_id=job_id)
+            return
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+        all_candidates = job.all_candidates or {}
+    if variant is None:
+        raise ValueError(f"variant {variant_id} not found on job {job_id}")
+    if variant.get("resolved_archetype") not in _BED_LEVEL_ARCHETYPES:
+        raise ValueError(f"variant {variant_id} has no background-sound bed to mix")
+    rank = variant.get("rank")
+    narrated_timings = list(variant.get("narrated_timings") or [])
+    if not narrated_timings:
+        raise ValueError(f"variant {variant_id} has no persisted narrated_timings")
+    voiceover_gcs_path = all_candidates.get("voiceover_gcs_path")
+    if not voiceover_gcs_path:
+        raise ValueError(f"variant {variant_id} has no voiceover to re-mix")
+    filming_guide = list(all_candidates.get("filming_guide") or [])
+    clip_paths_gcs = list(all_candidates.get("clip_paths") or [])
+    if not clip_paths_gcs:
+        raise ValueError(f"job {job_id} has no persisted clip_paths — cannot rebuild the bed")
+    narrative_shot_count = int(all_candidates.get("narrative_shot_count") or 0)
+    landscape_fit = all_candidates.get("landscape_fit") or "fill"
+    caption_style = (
+        "word" if str(variant.get("voiceover_caption_style") or "") == "word" else "sentence"
+    )
+    caption_font = variant.get("voiceover_caption_font") or None
+
+    clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
+    narrative_order = _resolve_narrative_order(narrative_shot_count, clip_id_to_gcs, job_id=job_id)
+
+    _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
+    with tempfile.TemporaryDirectory(prefix="nova_bed_level_reburn_") as tmpdir:
+        from app.storage import download_to_file  # noqa: PLC0415
+
+        local_paths = _download_clips_parallel(clip_paths_gcs, tmpdir)
+        clip_id_to_local = {f"clip_{i}": path for i, path in enumerate(local_paths)}
+        voiceover_local = os.path.join(tmpdir, "voiceover_src")
+        download_to_file(voiceover_gcs_path, voiceover_local)
+
+        # Same clip-to-step assignment rule the first render used — deterministic,
+        # transcript-independent (mirrors _render_narrated_variant's branch).
+        script_steps = _narrated_script_steps(filming_guide)
+        if len(script_steps) >= 2:
+            clip_assignments = _narrated_clip_assignments(
+                filming_guide, narrative_order, clip_id_to_local
+            )
+        else:
+            ordered_ids = list(narrative_order or list(clip_id_to_local))
+            if not ordered_ids:
+                raise ValueError(f"variant {variant_id} has no clips to rebuild the bed from")
+            clip_assignments = [
+                NarratedClip(
+                    step_id=str(t["step_id"]),
+                    clip_path=clip_id_to_local[ordered_ids[i % len(ordered_ids)]],
+                )
+                for i, t in enumerate(narrated_timings)
+                if ordered_ids[i % len(ordered_ids)] in clip_id_to_local
+            ]
+        if not clip_assignments:
+            raise ValueError(f"variant {variant_id}: could not rebuild clip assignments")
+
+        step_timings = [
+            StepTiming(
+                step_id=str(t["step_id"]),
+                start_s=float(t["start_s"]),
+                end_s=float(t["end_s"]),
+                confidence=float(t.get("confidence", 1.0)),
+            )
+            for t in narrated_timings
+        ]
+
+        # transcript=None: the burned-visuals output is a throwaway (identical to the
+        # base when no captions are requested) — only base_output_path is used below.
+        # This reuses the exact, already-tested clip-assembly + audio-mix pipeline
+        # (no new low-level ffmpeg plumbing) at the cost of a real re-assembly rather
+        # than a lossless copy — acceptable given the debounce/commit-on-release
+        # requirement already bounds how often this runs.
+        throwaway_path = os.path.join(tmpdir, "throwaway.mp4")
+        new_base_path = os.path.join(tmpdir, "new_base.mp4")
+        assemble_narrated(
+            step_timings,
+            clip_assignments,
+            voiceover_local,
+            throwaway_path,
+            tmpdir,
+            landscape_fit=landscape_fit,
+            transcript=None,
+            bed_level=bed_level,
+            base_output_path=new_base_path,
+            caption_style=caption_style,
+            caption_font=caption_font,
+        )
+        if not os.path.exists(new_base_path) or os.path.getsize(new_base_path) == 0:
+            raise RuntimeError("bed-level reburn produced an empty base")
+
+        out_local = os.path.join(tmpdir, "out.mp4")
+        _burn_persisted_captions_onto_base(new_base_path, out_local, variant, tmpdir)
+
+        # Shared suffix so the burned + base pair are traceable to the same reburn.
+        reburn_token = uuid.uuid4().hex[:8]
+        new_video_gcs = (
+            f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_bed_{reburn_token}.mp4"
+        )
+        new_base_gcs = (
+            f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_bed_{reburn_token}_base.mp4"
+        )
+        output_url = upload_public_read(out_local, new_video_gcs)
+        upload_public_read(new_base_path, new_base_gcs)
+
+    _update_variant_entry(
+        job_id,
+        variant_id,
+        {
+            "video_path": new_video_gcs,
+            "base_video_path": new_base_gcs,
+            "output_url": output_url,
+            "voiceover_bed_level": bed_level,
+            "render_status": "ready",
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            # A bed-level reburn never touches media overlays — round-trip the
+            # variant's existing values explicitly (narrated never has any, but
+            # naming them here keeps the byte-identity guard honest, same as the
+            # first-render base dict above).
+            "media_overlays": variant.get("media_overlays"),
+            "pre_media_overlay_video_path": variant.get("pre_media_overlay_video_path"),
+        },
+    )
+    # Old burns are unreachable now — free them (generative-jobs/* never expires).
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for old_path in (variant.get("video_path"), variant.get("base_video_path")):
+        if old_path and old_path not in (new_video_gcs, new_base_gcs):
+            delete_object_best_effort(old_path)
+    log.info(
+        "narrated_bed_level_reburn_done", job_id=job_id, variant_id=variant_id, bed_level=bed_level
+    )
 
 
 @celery_app.task(

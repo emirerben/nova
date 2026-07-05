@@ -604,37 +604,56 @@ export function setItemVoiceover(
   });
 }
 
-/**
- * Set how loud the original clip audio plays under the narration.
- * 0 = voice only, 1 = loudest; null clears the override (Nova's default).
- */
-export function setItemVoiceoverBedLevel(
-  itemId: string,
-  bedLevel: number | null,
-): Promise<PlanItem> {
-  return request<PlanItem>(`/plan-items/${itemId}/voiceover-bed-level`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ voiceover_bed_level: bedLevel }),
-  });
-}
-
-/** Caption style for the narrated voiceover. */
+/** Caption style for a caption-capable variant (narrated or talking-to-camera). */
 export type VoiceoverCaptionStyle = "sentence" | "word";
 
 /**
- * Choose how the narrated voiceover captions render: "sentence" (sentence-block
- * captions) or "word" (one big word at a time, the qbuilder word-by-word look).
- * Consumed at generate time — no re-render is triggered.
+ * Set the background-sound (voice/bed) level for a NARRATED variant post-generation
+ * (re-renders, async — NOT the removed generate-time item-scoped setter). Talking-
+ * to-camera has no bed to mix, so this route 422s for any other archetype.
  */
-export function setItemVoiceoverCaptionStyle(
+export function setPlanItemNarratedBedLevel(
   itemId: string,
+  variantId: string,
+  bedLevel: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/bed-level`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bed_level: bedLevel }),
+  });
+}
+
+/**
+ * Set sentence/word caption style for a caption variant (no re-render — the editor
+ * previews it locally; Apply reburns in the chosen style).
+ */
+export function setPlanItemVariantCaptionStyle(
+  itemId: string,
+  variantId: string,
   captionStyle: VoiceoverCaptionStyle,
 ): Promise<PlanItem> {
-  return request<PlanItem>(`/plan-items/${itemId}/voiceover-caption-style`, {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/caption-style`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ voiceover_caption_style: captionStyle }),
+    body: JSON.stringify({ caption_style: captionStyle }),
+  });
+}
+
+/**
+ * Subtitles on/off for a caption variant, independent of stored cue count (no
+ * re-render — off always yields the caption-free burn on Apply; toggling back on
+ * reburns the ORIGINAL cues with no re-transcription).
+ */
+export function setPlanItemCaptionsEnabled(
+  itemId: string,
+  variantId: string,
+  enabled: boolean,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/captions-enabled`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
   });
 }
 
@@ -803,6 +822,16 @@ export interface PlanItemVariant {
   // Narrated on-video caption editor: editable cues over the caption-free base.
   // Present only on narrated variants; null otherwise.
   caption_cues?: CaptionCue[] | null;
+  // Subtitles on/off, independent of caption_cues length — off always yields the
+  // caption-free burn on Apply. Null/absent on legacy variants ⇒ treat as enabled
+  // (matches the render-time default). See setPlanItemCaptionsEnabled.
+  captions_enabled?: boolean | null;
+  // "sentence" (full lines) or "word" (one word at a time). Present on narrated
+  // + talking-to-camera variants. See setPlanItemVariantCaptionStyle.
+  voiceover_caption_style?: VoiceoverCaptionStyle | null;
+  // Background-sound (voice/bed) level — narrated only. Null = Nova's render-time
+  // default. See setPlanItemNarratedBedLevel / BackgroundSoundControl.
+  voiceover_bed_level?: number | null;
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;

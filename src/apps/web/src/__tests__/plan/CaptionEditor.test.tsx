@@ -16,6 +16,8 @@ jest.mock("@/lib/plan-api", () => ({
   setPlanItemCaptions: jest.fn().mockResolvedValue(undefined),
   applyPlanItemCaptions: jest.fn().mockResolvedValue(undefined),
   setPlanItemCaptionFont: jest.fn().mockResolvedValue(undefined),
+  setPlanItemCaptionsEnabled: jest.fn().mockResolvedValue(undefined),
+  setPlanItemVariantCaptionStyle: jest.fn().mockResolvedValue(undefined),
 }));
 
 import CaptionEditor from "@/app/plan/_components/CaptionEditor";
@@ -23,6 +25,8 @@ import {
   applyPlanItemCaptions,
   setPlanItemCaptionFont,
   setPlanItemCaptions,
+  setPlanItemCaptionsEnabled,
+  setPlanItemVariantCaptionStyle,
   type CaptionCue,
 } from "@/lib/plan-api";
 import { INTRO_FONTS } from "@/lib/overlay-constants";
@@ -114,7 +118,7 @@ describe("CaptionEditor", () => {
     }
   });
 
-  it("Apply persists cues + font and triggers the reburn", async () => {
+  it("Apply persists cues + font + style + on/off and triggers the reburn", async () => {
     renderEditor();
     fireEvent.click(screen.getByRole("button", { name: INTRO_FONTS[0].name }));
     await act(async () => {
@@ -122,7 +126,34 @@ describe("CaptionEditor", () => {
     });
     expect(setPlanItemCaptions).toHaveBeenCalled();
     expect(setPlanItemCaptionFont).toHaveBeenCalledWith("item-1", "var-1", INTRO_FONTS[0].name);
+    expect(setPlanItemVariantCaptionStyle).toHaveBeenCalledWith("item-1", "var-1", "sentence");
+    expect(setPlanItemCaptionsEnabled).toHaveBeenCalledWith("item-1", "var-1", true);
     expect(applyPlanItemCaptions).toHaveBeenCalled();
+  });
+});
+
+describe("CaptionEditor subtitles on/off (independent of cue count)", () => {
+  it("toggling off persists immediately and hides the caption preview + cue list, without clearing cues", () => {
+    renderEditor();
+    const toggle = screen.getByRole("switch", { name: "Subtitles" });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(toggle);
+    expect(setPlanItemCaptionsEnabled).toHaveBeenCalledWith("item-1", "var-1", false);
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    // Cue list + font/style pickers hide — but the cues themselves are untouched
+    // client-side (toggling back on needs no re-transcription).
+    expect(screen.queryByText("hello world")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(setPlanItemCaptionsEnabled).toHaveBeenLastCalledWith("item-1", "var-1", true);
+    expect(screen.getAllByText("hello world").length).toBeGreaterThan(0);
+  });
+});
+
+describe("CaptionEditor caption style (sentence/word)", () => {
+  it("picking word-by-word persists immediately", () => {
+    renderEditor();
+    fireEvent.click(screen.getByRole("button", { name: /Word-by-word/ }));
+    expect(setPlanItemVariantCaptionStyle).toHaveBeenCalledWith("item-1", "var-1", "word");
   });
 });
 

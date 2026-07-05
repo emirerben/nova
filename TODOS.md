@@ -938,6 +938,23 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** M (CC: ~45 min) — touches handleDownload + the instant/text render path (backend reapply hook).
 **Priority:** P2 — narrow co-edit case; surface only when both lanes are dirty at once.
 
+## Plan-item redesign — follow-ups (from /autoship eng review, 2026-07-05)
+
+### T-PLAN-1 — Verify T-SFX-2 doesn't gain a third racing edit type
+**What:** Confirm the new post-gen `reburn_narrated_bed_level` (background sound) and `reburn_narrated_captions`/`captions-enabled` (subtitles) reburns don't interact with T-SFX-2's Download-ordering bug once that's fixed.
+**Why:** `handleDownload` already races an uncommitted SFX change against an uncommitted instant-text/caption draft (T-SFX-2). The new reburns dispatch via their own Apply/slider actions, not Download, so the risk should be lower — but this needs confirming when T-SFX-2 is actually picked up, not assumed.
+**Context:** Background-sound and caption-style/on-off both trigger real Celery reburns outside the Download flow (`POST .../bed-level`, `POST .../captions/apply`), unlike SFX/text which share `handleDownload`. Check whether a user with an in-flight bed-level or caption reburn AND an unbaked SFX change can produce the same "only one lane bakes" surprise.
+**Effort:** S (CC: ~20 min) — read-through + a couple of targeted tests once T-SFX-2 is scoped.
+**Priority:** P3 — deferred until T-SFX-2 itself is picked up.
+**Depends on:** T-SFX-2.
+
+### T-PLAN-2 — Talking-to-camera "talking points" recording helper
+**What:** Build a camera+mic capture recording feature (not audio-only) for talking-to-camera (`edit_format="subtitled"`) items, analogous to "Write a script with Nova" for narrated.
+**Why:** Users filming a talk-to-camera clip get no scripting/prompting help today — the existing transcript flow can't be reused as-is for this archetype.
+**Context:** `TeleprompterRecorder.tsx`/`ReviewStep.tsx` (under `plan/items/[id]/transcript/`) write a recorded take to `item.voiceover_gcs_path`, a field `_render_subtitled_variant` never reads (it transcribes the uploaded clip's OWN audio instead — there is no separate voiceover track for this archetype). A talking-to-camera version needs to record a NEW clip (replacing/becoming `clip_gcs_paths[0]`) and trigger a fresh subtitled render, not write to `voiceover_gcs_path`. The Brief/Questions/Script steps are already archetype-agnostic (no `edit_format` check in their backend routes) — only the Record/Review steps need the different mechanism.
+**Effort:** L (human: ~3-4d / CC: ~1d) — new camera-capture UI + a distinct backend trigger path; not a gate change.
+**Priority:** P2 — real gap found during the plan-item redesign's User Challenge resolution, not built defensively there.
+
 ## Auto-placement — follow-ups (from plan-design-review of plans/005, 2026-07-02)
 
 ### T-AUTO-1 — Follow-up plan: generated diagram B-roll

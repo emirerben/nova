@@ -8,8 +8,12 @@ import {
   type CaptionLanguage,
   setPlanItemCaptionFont,
   setPlanItemCaptions,
+  setPlanItemCaptionsEnabled,
+  setPlanItemVariantCaptionStyle,
+  type VoiceoverCaptionStyle,
 } from "../../../lib/plan-api";
 import { INTRO_FONTS } from "../../../lib/overlay-constants";
+import CaptionStyleToggle from "./CaptionStyleToggle";
 
 const CAPTION_LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
 
@@ -73,6 +77,9 @@ export default function CaptionEditor({
   baseVideoUrl,
   initialCues,
   initialFont = null,
+  initialCaptionStyle = "sentence",
+  initialCaptionsEnabled = true,
+  wordHint,
   rendering = false,
   reviewFirst = false,
   captionLanguage = null,
@@ -85,6 +92,13 @@ export default function CaptionEditor({
   baseVideoUrl: string;
   initialCues: CaptionCue[];
   initialFont?: string | null;
+  /** "sentence" (default) or "word" — moved here from the pre-gen picker. */
+  initialCaptionStyle?: VoiceoverCaptionStyle;
+  /** Subtitles on/off, independent of cue count. Off shows no overlay/list here
+   * and Apply reburns to the caption-free base without touching stored cues. */
+  initialCaptionsEnabled?: boolean;
+  /** Word-by-word hint copy — differs slightly between narrated and talking-to-camera. */
+  wordHint?: string;
   rendering?: boolean;
   /**
    * Show a persistent "check your captions before applying" notice until the user
@@ -132,6 +146,13 @@ export default function CaptionEditor({
   const [error, setError] = useState<string | null>(null);
   // Caption font (font-registry key; null = default). Applies to every cue.
   const [font, setFont] = useState<string | null>(initialFont);
+  // Subtitles on/off + sentence/word — moved here from the pre-gen picker.
+  // Persisted immediately (like font); Apply re-sends the final value so a
+  // debounced/in-flight PATCH can never land after the reburn reads it.
+  const [captionsEnabled, setCaptionsEnabled] = useState(initialCaptionsEnabled);
+  const [captionStyle, setCaptionStyle] = useState<VoiceoverCaptionStyle>(initialCaptionStyle);
+  const captionsEnabledInFlight = useRef<Promise<void> | null>(null);
+  const captionStyleInFlight = useRef<Promise<void> | null>(null);
   // Review-first nudge (D6): true once the user has scanned/touched the cue list,
   // which dismisses the "check your captions" notice. Only meaningful when
   // `reviewFirst` is set (subtitled auto-captions).
@@ -187,6 +208,34 @@ export default function CaptionEditor({
       fontTimer.current = setTimeout(() => void sendFont(name), 400);
     },
     [sendFont],
+  );
+
+  const chooseCaptionsEnabled = useCallback(
+    (enabled: boolean) => {
+      setCaptionsEnabled(enabled);
+      const p = setPlanItemCaptionsEnabled(itemId, variantId, enabled)
+        .then(() => {})
+        .catch(() => {})
+        .finally(() => {
+          if (captionsEnabledInFlight.current === p) captionsEnabledInFlight.current = null;
+        });
+      captionsEnabledInFlight.current = p;
+    },
+    [itemId, variantId],
+  );
+
+  const chooseCaptionStyle = useCallback(
+    (style: VoiceoverCaptionStyle) => {
+      setCaptionStyle(style);
+      const p = setPlanItemVariantCaptionStyle(itemId, variantId, style)
+        .then(() => {})
+        .catch(() => {})
+        .finally(() => {
+          if (captionStyleInFlight.current === p) captionStyleInFlight.current = null;
+        });
+      captionStyleInFlight.current = p;
+    },
+    [itemId, variantId],
   );
 
   const activeIndex = useMemo(
@@ -272,11 +321,19 @@ export default function CaptionEditor({
     if (saveTimer.current) clearTimeout(saveTimer.current);
     if (fontTimer.current) clearTimeout(fontTimer.current);
     try {
-      // Let any in-flight debounced font PATCH settle FIRST, then write the final
-      // cues + font LAST, so the reburn always reads the user's latest font choice.
-      await fontInFlight.current;
+      // Let any in-flight debounced font/style/on-off PATCH settle FIRST, then write
+      // the final values LAST, so the reburn always reads the latest choices.
+      await Promise.all([
+        fontInFlight.current,
+        captionsEnabledInFlight.current,
+        captionStyleInFlight.current,
+      ]);
       await setPlanItemCaptions(itemId, variantId, cues);
-      await sendFont(font);
+      await Promise.all([
+        sendFont(font),
+        setPlanItemCaptionsEnabled(itemId, variantId, captionsEnabled),
+        setPlanItemVariantCaptionStyle(itemId, variantId, captionStyle),
+      ]);
       setDirty(false);
       await applyPlanItemCaptions(itemId, variantId);
       onApplied?.();
@@ -285,19 +342,44 @@ export default function CaptionEditor({
     } finally {
       setApplying(false);
     }
-  }, [itemId, variantId, cues, font, sendFont, onApplied]);
+  }, [itemId, variantId, cues, font, captionsEnabled, captionStyle, sendFont, onApplied]);
 
   const active = activeIndex >= 0 ? cues[activeIndex] : null;
   const busy = applying || rendering;
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-[#71717a]">
-        Pause and tap a caption to fix a word. Changes save as you type; hit{" "}
-        <span className="font-medium">Apply</span> to bake them into the video.
-      </p>
+      {/* Subtitles on/off — independent of stored cue count. Off never destroys
+          the transcript-derived cues, so turning it back on needs no re-transcription. */}
+      <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-3 py-2">
+        <span className="text-sm font-medium text-[#0c0c0e]">Subtitles</span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={captionsEnabled}
+          aria-label="Subtitles"
+          disabled={busy}
+          onClick={() => chooseCaptionsEnabled(!captionsEnabled)}
+          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            captionsEnabled ? "bg-lime-600" : "bg-zinc-300"
+          }`}
+        >
+          <span
+            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+              captionsEnabled ? "translate-x-[22px]" : "translate-x-0.5"
+            }`}
+          />
+        </button>
+      </div>
 
-      {reviewFirst && !reviewed && (
+      {captionsEnabled && (
+        <p className="text-xs text-[#71717a]">
+          Pause and tap a caption to fix a word. Changes save as you type; hit{" "}
+          <span className="font-medium">Apply</span> to bake them into the video.
+        </p>
+      )}
+
+      {captionsEnabled && reviewFirst && !reviewed && (
         <div
           role="status"
           className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs text-[#3f3f46]"
@@ -373,8 +455,9 @@ export default function CaptionEditor({
             className="absolute inset-0 h-full w-full object-contain"
           />
 
-          {/* caption overlay — bottom-centered like the burn (MarginV 180/1920) */}
-          {active && (
+          {/* caption overlay — bottom-centered like the burn (MarginV 180/1920).
+              Hidden when subtitles are off — Apply will burn the caption-free base. */}
+          {captionsEnabled && active && (
             <div
               className="absolute inset-x-0 flex justify-center"
               style={{ bottom: `${previewBottomCqh}cqh` }}
@@ -462,8 +545,24 @@ export default function CaptionEditor({
         </div>
       </div>
 
+      {/* Style + font + cue list are moot while subtitles are off. */}
+      {captionsEnabled && (
+      <div>
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
+          Caption style
+        </p>
+        <CaptionStyleToggle
+          value={captionStyle}
+          onChange={chooseCaptionStyle}
+          saving={false}
+          wordHint={wordHint}
+        />
+      </div>
+      )}
+
       {/* Caption font — applies to every cue (both sentence + word styles). Reuses
           the editor's fonts; the preview updates live, Apply burns the choice. */}
+      {captionsEnabled && (
       <div>
         <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
           Caption font
@@ -491,8 +590,10 @@ export default function CaptionEditor({
           })}
         </div>
       </div>
+      )}
 
       {/* cue list — click a line to jump + edit it */}
+      {captionsEnabled && (
       <ul
         onScroll={markReviewed}
         className="max-h-56 space-y-1 overflow-y-auto rounded-xl border border-zinc-100 bg-white p-2"
@@ -542,6 +643,7 @@ export default function CaptionEditor({
           ),
         )}
       </ul>
+      )}
 
       <div className="flex items-center justify-between">
         <p className="text-xs text-zinc-400">

@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.10.0] — 2026-07-05
+
+### Changed
+- **Plan-item pre-generation page redesign: renamed "Subtitled" → "Talking to camera", moved caption + background-sound tuning into the post-gen editor.** "Subtitled" named a caption feature, not the kind of video it makes — renamed to "Talking to camera" (label-only; `edit_format` value stays `subtitled`). Talking-to-camera now auto-generates WITH subtitles by default; the pre-gen caption-style (sentence/word) and background-sound sliders are removed from the pre-gen picker entirely — both are tuned after generation instead, next to a real preview.
+- **Landscape Fit/Fill only appears once a wide clip is detected.** Client-side `videoWidth`/`videoHeight` check on upload (fails safe to hidden — "fit" stays the render default) instead of an always-visible control that showed for the common all-portrait case too.
+- **"Write a script with Nova" promoted to a first-class action** for narrated walkthroughs (was a small inline link inside the voice-recorder bar).
+
+### Added
+- **Background Sound control (post-gen editor, narrated only).** A new dedicated Celery task `reburn_narrated_bed_level` re-mixes a narrated variant's voice/original-audio balance from persisted, deterministic render inputs (no re-transcription, no LLM) — NOT a reuse of the existing `mix` route, which is scoped to `voiceover_only`/`voiceover_music` variants and explicitly rejects narrated as a no-op (caught by an independent codex review before it shipped broken). New route `POST /plan-items/{id}/variants/{vid}/bed-level`. Talking-to-camera has no bed to mix (its own clip audio is the only track), so it gets no control at all.
+- **Subtitles on/off, independent of caption count.** A new `captions_enabled` field (default true) fixes a one-way-door bug in the original design: toggling captions off no longer risks emptying the stored cues, so toggling back on needs no re-transcription. New routes `PATCH .../captions-enabled` and `PATCH .../caption-style` (sentence/word, moved from pre-gen). Shared `CaptionStyleToggle` component (DRY — replaces two near-identical inline pickers).
+
+### Fixed
+- **Race condition in the new Background Sound control** — found in pre-landing review before merge. It initially reused the pre-existing unlocked "read job, mutate in memory, blind-commit" pattern (same as swap-song/retext/apply-captions), but the debounced slider sits right next to the row-locked Captions toggle in the same editor panel — dragging one while toggling the other could silently revert whichever committed first. Fixed by giving the bed-level dispatch its own row-locked (`FOR UPDATE`) re-fetch, mirroring the caption-editing lock pattern. The broader inconsistency across the other `dispatch_*` mutation paths is pre-existing and tracked separately, not fixed here.
+
+Both a codex outside-voice review (plan stage) and an independent subagent review (diff stage) ran before merge; the codex pass caught the `mix`-route mismatch, the subtitles-off trap, and a since-descoped talking-to-camera transcript idea before any of it was built; the diff-stage subagent caught the locking race above. ~110 lines of new/updated tests across both passes (4 new backend task tests for the bed-level reburn's clip-reconstruction fidelity, 1 lock-verification test, 13 new route tests, 6 new frontend component tests, updated landscape-fit + CaptionEditor suites).
+
 ## [0.6.8.0] — 2026-07-02
 
 ### Added

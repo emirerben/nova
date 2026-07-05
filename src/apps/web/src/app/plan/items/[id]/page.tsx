@@ -16,10 +16,7 @@ import {
   NotAuthenticatedError,
   setClipNote,
   setItemVoiceover,
-  setItemVoiceoverBedLevel,
-  setItemVoiceoverCaptionStyle,
   setPlanItemCaptionLanguage,
-  type VoiceoverCaptionStyle,
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
@@ -79,6 +76,7 @@ import SuggestionRail from "../../_components/SuggestionRail";
 import HeroOverlayEditor from "../../_components/HeroOverlayEditor";
 import LiveOverlayCardsLayer from "../../_components/LiveOverlayCardsLayer";
 import CaptionEditor from "../../_components/CaptionEditor";
+import BackgroundSoundControl from "../../_components/BackgroundSoundControl";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
@@ -124,14 +122,26 @@ const SOUND_EFFECTS_ENABLED =
 // pip editing and EXISTING fullscreen cards from the API still work/render.
 const FULLSCREEN_CUTAWAYS_ENABLED =
   process.env.NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED === "true";
-// Kill-switch: the "Subtitled" edit-style card only appears when
-// NEXT_PUBLIC_SUBTITLED_ENABLED=true. Keep in sync with the backend
-// `subtitled_archetype_enabled` Fly secret — if the card shows but the backend
-// flag is off, a subtitled job silently falls back to montage. Same normalize as
-// MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing space) still works.
+// Kill-switch: the "Talking to camera" edit-style card (edit_format="subtitled")
+// only appears when NEXT_PUBLIC_SUBTITLED_ENABLED=true. Keep in sync with the
+// backend `subtitled_archetype_enabled` Fly secret — if the card shows but the
+// backend flag is off, a subtitled job silently falls back to montage. Same
+// normalize as MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing
+// space) still works.
 const _subtitledRaw = (process.env.NEXT_PUBLIC_SUBTITLED_ENABLED ?? "").trim();
 const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRaw === "1";
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
+
+// Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
+// is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
+// StyleCard.tsx / OnboardingShell.tsx's FOOTAGE_OPTIONS, which use the same
+// phrase for a persona-level content preference, not an edit style). Do not
+// merge these two label maps — they answer different questions.
+const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
+  montage: { label: "Montage", desc: "Multiple clips cut to music" },
+  narrated_planned: { label: "Narrated walkthrough", desc: "Footage explained by voiceover or a script" },
+  subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
+};
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
 // applied-fit display (post-render).
@@ -139,6 +149,42 @@ const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: strin
   { value: "fit",  label: "Fit",  desc: "Keep horizontal, black bars top & bottom" },
   { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
 ];
+
+// Reads each file's video dimensions via a detached <video> element and resolves
+// true iff ANY is landscape (width > height). Fails safe (resolves false, never
+// rejects/throws) on metadata timeout or an unsupported codec — the caller's
+// default ("fit") is already correct either way, so a missed detection just means
+// the Fit/Fill picker stays hidden, not a broken render. Not covered: clips
+// attached via ShotSlotUploader (per-slot uploads with no File object reaching
+// this page) — only the PoolUploadCard-based flows (narrated_ready, talking-to-
+// camera, existing_footage) funnel through handleFiles today.
+function detectLandscapeClip(files: File[]): Promise<boolean> {
+  const checks = files.map(
+    (file) =>
+      new Promise<boolean>((resolve) => {
+        const video = document.createElement("video");
+        const url = URL.createObjectURL(file);
+        const cleanup = () => URL.revokeObjectURL(url);
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve(false);
+        }, 5000);
+        video.preload = "metadata";
+        video.onloadedmetadata = () => {
+          clearTimeout(timer);
+          cleanup();
+          resolve(video.videoWidth > video.videoHeight);
+        };
+        video.onerror = () => {
+          clearTimeout(timer);
+          cleanup();
+          resolve(false);
+        };
+        video.src = url;
+      }),
+  );
+  return Promise.all(checks).then((results) => results.some(Boolean));
+}
 
 function deriveReceiptText(job: PlanItemJobStatus): string {
   if (job.started_at && job.finished_at) {
@@ -159,6 +205,13 @@ export default function PlanItemPage() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Landscape auto-detect: the Fit/Fill picker only appears once a wide clip is
+  // detected on upload — hidden by default (the common case is portrait clips).
+  // Sticky within the session (never resets to false) so it doesn't flicker if a
+  // later upload/removal changes the pool; detection failure (metadata never
+  // loads, unsupported codec) fails safe by simply not setting it — "fit" is
+  // already the backend's safe default either way.
+  const [hasLandscapeClip, setHasLandscapeClip] = useState(false);
   const [generating, setGenerating] = useState(false);
   // uploaderBusy: true while ShotSlotUploader has any upload/commit in flight (D6).
   const [uploaderBusy, setUploaderBusy] = useState(false);
@@ -248,14 +301,6 @@ export default function PlanItemPage() {
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
-  // Narrated-walkthrough: original-audio bed level (0 = voice only, 1 = loudest).
-  // null = Nova's default. Optimistic local shadow; reset from item on refetch.
-  const [bedLevel, setBedLevel] = useState<number | null>(null);
-  const [bedSaving, setBedSaving] = useState(false);
-  // Narrated-walkthrough: caption style ("sentence" | "word"). null → "sentence"
-  // (today's sentence-block captions). Optimistic local shadow; reset from item.
-  const [captionStyle, setCaptionStyle] = useState<VoiceoverCaptionStyle | null>(null);
-  const [captionSaving, setCaptionSaving] = useState(false);
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -361,20 +406,6 @@ export default function PlanItemPage() {
       setVoiceoverGcsPath(item.voiceover_gcs_path ?? null);
     }
   }, [item?.voiceover_gcs_path]);
-
-  // Sync the original-audio bed level from the item (after refetch / on load).
-  useEffect(() => {
-    if (item?.voiceover_bed_level !== undefined) {
-      setBedLevel(item.voiceover_bed_level ?? null);
-    }
-  }, [item?.voiceover_bed_level]);
-
-  // Sync the caption style from the item (after refetch / on load).
-  useEffect(() => {
-    if (item?.voiceover_caption_style !== undefined) {
-      setCaptionStyle(item.voiceover_caption_style === "word" ? "word" : "sentence");
-    }
-  }, [item?.voiceover_caption_style]);
 
   const variants = useMemo(
     () => {
@@ -533,6 +564,9 @@ export default function PlanItemPage() {
     conformancePolls.current = 0;
     try {
       const list = Array.from(files);
+      void detectLandscapeClip(list).then((found) => {
+        if (found) setHasLandscapeClip(true);
+      });
       const urls = await requestUploadUrls(
         itemId,
         list.map((f) => ({
@@ -608,30 +642,6 @@ export default function PlanItemPage() {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
     } finally {
       setVoiceoverSaving(false);
-    }
-  }
-
-  async function handleBedLevelChange(level: number | null) {
-    setBedLevel(level);
-    setBedSaving(true);
-    try {
-      await setItemVoiceoverBedLevel(itemId, level);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save background sound");
-    } finally {
-      setBedSaving(false);
-    }
-  }
-
-  async function handleCaptionStyleChange(style: VoiceoverCaptionStyle) {
-    setCaptionStyle(style);
-    setCaptionSaving(true);
-    try {
-      await setItemVoiceoverCaptionStyle(itemId, style);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save caption style");
-    } finally {
-      setCaptionSaving(false);
     }
   }
 
@@ -791,16 +801,10 @@ export default function PlanItemPage() {
                 <div className="grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
                   {(
                     [
-                      { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
-                      { value: "narrated_planned", label: "Narrated walkthrough", desc: "Record your voice, clips follow along" },
+                      { value: "montage", ...EDIT_FORMAT_LABELS.montage },
+                      { value: "narrated_planned", ...EDIT_FORMAT_LABELS.narrated_planned },
                       ...(SUBTITLED_ENABLED
-                        ? [
-                            {
-                              value: "subtitled",
-                              label: "Subtitled",
-                              desc: "Talk to camera — we caption your words, in Turkish or English",
-                            },
-                          ]
+                        ? [{ value: "subtitled", ...EDIT_FORMAT_LABELS.subtitled }]
                         : []),
                     ] as { value: string; label: string; desc: string }[]
                   ).map(({ value, label, desc }) => {
@@ -910,11 +914,16 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Landscape-clip fit picker — shown alongside Edit style */}
-            {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+            {/* Landscape-clip fit picker — only appears once a wide clip is detected on
+                upload (hasLandscapeClip), so the common all-portrait case never sees
+                this control. Reads as a detected notice, not a surprise setting. */}
+            {item.status !== "generating" &&
+              item.status !== "ready" &&
+              variants.length === 0 &&
+              hasLandscapeClip && (
               <div className="mb-4">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Landscape clips
+                  Landscape clip detected
                 </p>
                 <div className="flex gap-2">
                   {LANDSCAPE_FIT_OPTIONS.map(({ value, label, desc }) => {
@@ -1055,167 +1064,34 @@ export default function PlanItemPage() {
                     Voice recorded — clips will be timed to match your narration.
                   </p>
                 )}
+                {/* First-class entry point (moved from a buried inline link during the
+                    plan-item redesign) — narrated only. Talking-to-camera does not get
+                    this: TeleprompterRecorder/ReviewStep write to voiceover_gcs_path, a
+                    field _render_subtitled_variant never reads (see the plan's "Plan
+                    correction" section). */}
                 {process.env.NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED === "true" && (
-                  <p className="mt-2 text-xs text-lime-700">
-                    Not sure what to say?{" "}
-                    <Link
-                      href={`/plan/items/${item.id}/transcript`}
-                      className="underline underline-offset-2 hover:text-lime-800"
-                    >
-                      Get a transcript
-                    </Link>
-                  </p>
+                  <Link
+                    href={`/plan/items/${item.id}/transcript`}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
+                  >
+                    <span aria-hidden>✦</span>
+                    Not sure what to say? Write a script with Nova
+                  </Link>
                 )}
               </div>
             )}
 
-            {/* Narrated walkthrough: original-audio bed control — sits next to the
-                clips so the creator can dial how much of their clip sound plays
-                under the voice. Nova ducks it automatically while they speak. */}
-            {isNarrated && (
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Background sound
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  How loud your original clip audio plays under your voice. Nova ducks it
-                  automatically while you&apos;re talking.
-                </p>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-zinc-400">Off</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={bedLevel ?? 0.25}
-                    onChange={(e) => handleBedLevelChange(Number(e.target.value))}
-                    className="h-1 flex-1 cursor-pointer accent-lime-600"
-                    aria-label="Original video background sound level"
-                  />
-                  <span className="text-xs text-zinc-400">Loud</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between">
-                  <p className="text-xs text-lime-700">
-                    {bedSaving
-                      ? "Saving…"
-                      : bedLevel === null
-                        ? "Nova decides the best level."
-                        : bedLevel === 0
-                          ? "Voice only — no original audio."
-                          : `Original audio at ${Math.round(bedLevel * 100)}%.`}
-                  </p>
-                  {bedLevel !== null && (
-                    <button
-                      type="button"
-                      onClick={() => handleBedLevelChange(null)}
-                      className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline"
-                    >
-                      Reset to Nova
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Narrated walkthrough: caption style — sentence blocks (default) vs
-                word-by-word (one big word at a time, the qbuilder look). Consumed at
-                generate time; editable per-word afterward in the on-video editor. */}
-            {isNarrated && (
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Captions
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  How your voiceover appears as on-screen text.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      {
-                        value: "sentence" as const,
-                        label: "Sentence",
-                        hint: "Full lines, like subtitles",
-                      },
-                      {
-                        value: "word" as const,
-                        label: "Word-by-word",
-                        hint: "One big word at a time",
-                      },
-                    ]
-                  ).map((opt) => {
-                    const active = (captionStyle ?? "sentence") === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        aria-pressed={active}
-                        disabled={captionSaving}
-                        onClick={() => handleCaptionStyleChange(opt.value)}
-                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                          active
-                            ? "border-lime-600 bg-lime-50 text-lime-900"
-                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                        }`}
-                      >
-                        <span className="block text-sm font-semibold">{opt.label}</span>
-                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
-              </div>
-            )}
-
-            {/* Subtitled: caption style — sentence blocks (default) vs word-by-word,
-                where the full line stays visible and the spoken word pops in lime.
-                Consumed at generate time; editable afterward in the on-video editor. */}
-            {isSubtitled && (
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Captions
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  How your words appear as on-screen text.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      {
-                        value: "sentence" as const,
-                        label: "Sentence",
-                        hint: "Full lines, like subtitles",
-                      },
-                      {
-                        value: "word" as const,
-                        label: "Word-by-word",
-                        hint: "Each word pops as you say it",
-                      },
-                    ]
-                  ).map((opt) => {
-                    const active = (captionStyle ?? "sentence") === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        aria-pressed={active}
-                        disabled={captionSaving}
-                        onClick={() => handleCaptionStyleChange(opt.value)}
-                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                          active
-                            ? "border-lime-600 bg-lime-50 text-lime-900"
-                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                        }`}
-                      >
-                        <span className="block text-sm font-semibold">{opt.label}</span>
-                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
-              </div>
+            {/* Background sound (narrated) and caption style/on-off (narrated +
+                talking-to-camera) moved to the post-gen editor — see
+                BackgroundSoundControl / CaptionStyleToggle in PlanVariantEditor.tsx.
+                Talk-to-camera auto-generates WITH subtitles by default; both are
+                tunable after generation, not before. */}
+            {(isNarrated || isSubtitled) && (
+              <p className="mb-4 text-xs text-[#a1a1aa]">
+                {isSubtitled
+                  ? "Subtitles are added automatically and editable after you generate."
+                  : "Background sound and captions can be tuned after you generate."}
+              </p>
             )}
 
             {/* Uploader — branches:
@@ -2135,10 +2011,14 @@ function FocusedResults({
             <div>
               <div className="flex gap-2">
                 {EDITOR_TABS.map((tab) => {
-                  const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
-                  // Captions tab shows for any caption variant (narrated voiceover OR
-                  // subtitled single-clip) that carries editable cues — it's cue-driven,
-                  // not archetype-gated, so both use the same on-video CaptionEditor.
+                  // Archetype-gated (mirrors the backend's _is_editable_caption_variant),
+                  // NOT cue-count-gated — a cue-count gate would make the tab vanish the
+                  // moment subtitles are toggled off, trapping the user with no way back
+                  // on (the bug the plan-item redesign's User Challenge caught).
+                  const hasCaptions =
+                    (variant?.resolved_archetype === "narrated" ||
+                      variant?.resolved_archetype === "subtitled") &&
+                    !!variant?.base_video_url;
                   if (tab.id === "captions" && !hasCaptions) return null;
                   // Caption variants have no song to edit — only Captions + Clips.
                   if (hasCaptions && tab.id === "song") return null;
@@ -2172,6 +2052,7 @@ function FocusedResults({
                   {activeTab === "captions" &&
                   variant.base_video_url &&
                   variant.caption_cues ? (
+                    <div className="space-y-3">
                     <CaptionEditor
                       // Re-mount (re-seed cues) whenever a server render replaces them —
                       // a language re-transcribe swaps all cues, and the editor otherwise
@@ -2184,6 +2065,13 @@ function FocusedResults({
                       baseVideoUrl={variant.base_video_url}
                       initialCues={variant.caption_cues}
                       initialFont={variant.voiceover_caption_font}
+                      initialCaptionStyle={variant.voiceover_caption_style ?? "sentence"}
+                      initialCaptionsEnabled={variant.captions_enabled ?? true}
+                      wordHint={
+                        variant.resolved_archetype === "subtitled"
+                          ? "Each word pops as you say it"
+                          : undefined
+                      }
                       rendering={variant.render_status === "rendering"}
                       // Subtitled captions are machine-transcribed from the clip's own
                       // audio — nudge review before Apply (D6). Narrated (own voiceover)
@@ -2230,6 +2118,23 @@ function FocusedResults({
                         refetch();
                       }}
                     />
+                    {variant.resolved_archetype === "narrated" && (
+                      <BackgroundSoundControl
+                        key={`${variant.variant_id}:bed:${variant.render_finished_at ?? ""}`}
+                        itemId={itemId}
+                        variantId={variant.variant_id}
+                        initialBedLevel={variant.voiceover_bed_level ?? null}
+                        rendering={variant.render_status === "rendering"}
+                        onCommitted={() => {
+                          markVariantRendering(
+                            variant.variant_id,
+                            variant.render_finished_at ?? null,
+                          );
+                          refetch();
+                        }}
+                      />
+                    )}
+                    </div>
                   ) : (
                     <FocusedVariantControls
                       itemId={itemId}

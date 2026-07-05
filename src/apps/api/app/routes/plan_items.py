@@ -29,9 +29,12 @@ from app.auth import CurrentUser
 from app.database import get_db
 from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset
 from app.routes.generative_jobs import (
+    BedLevelRequest,
     CaptionFontRequest,
     CaptionLanguageRequest,
+    CaptionsEnabledRequest,
     CaptionsRequest,
+    CaptionStyleRequest,
     ChangeStyleRequest,
     EditVariantRequest,
     PatchSceneTimingRequest,
@@ -54,11 +57,14 @@ from app.routes.generative_jobs import (
     dispatch_set_intro_size,
     dispatch_set_intro_timing,
     dispatch_set_media_overlays,
+    dispatch_set_narrated_bed_level,
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
     dispatch_swap_song,
     persist_variant_caption_font,
+    persist_variant_caption_style,
     persist_variant_captions,
+    persist_variant_captions_enabled,
 )
 
 log = structlog.get_logger()
@@ -1339,6 +1345,86 @@ async def set_item_caption_font(
         item_id=item_id,
         variant_id=variant_id,
         font=req.caption_font,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.patch("/{item_id}/variants/{variant_id}/caption-style", response_model=PlanItemResponse)
+async def set_item_caption_style(
+    item_id: str,
+    variant_id: str,
+    req: CaptionStyleRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set sentence/word caption style for a caption variant (no re-render).
+
+    The editor previews the choice; Apply (`/captions/apply`) reburns in the
+    chosen style. Moved here from the pre-generation picker — see the plan-item
+    redesign (subtitles are now tuned post-gen, not before).
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await persist_variant_caption_style(job.id, variant_id, req.caption_style, db)
+    log.info(
+        "plan_item_set_caption_style",
+        item_id=item_id,
+        variant_id=variant_id,
+        style=req.caption_style,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.patch("/{item_id}/variants/{variant_id}/captions-enabled", response_model=PlanItemResponse)
+async def set_item_captions_enabled(
+    item_id: str,
+    variant_id: str,
+    req: CaptionsEnabledRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Subtitles on/off for a caption variant (no re-render).
+
+    Independent of stored cue count — toggling off never destroys the
+    transcript-derived cues, so toggling back on later needs no re-transcription.
+    Apply (`/captions/apply`) reburns to reflect the current on/off state.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await persist_variant_captions_enabled(job.id, variant_id, req.enabled, db)
+    log.info(
+        "plan_item_set_captions_enabled",
+        item_id=item_id,
+        variant_id=variant_id,
+        enabled=req.enabled,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/bed-level", response_model=PlanItemResponse)
+async def set_item_bed_level(
+    item_id: str,
+    variant_id: str,
+    req: BedLevelRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Change a narrated variant's background-sound (voice/bed) level — re-renders (async).
+
+    NOT the generate-time `voiceover_bed_level` PATCH (no-render, item-scoped) — this
+    is the post-gen editor's Background Sound slider. Narrated-only: talking-to-camera
+    has no separate voice track to duck under, so there is nothing to mix.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    # dispatch_set_narrated_bed_level does its OWN row-locked re-fetch by job.id and
+    # commits internally — unlike the sibling dispatch_* calls above, it must not
+    # operate on the unlocked `job` snapshot from _owned_item_render_job (see its
+    # docstring for why: the Background Sound slider auto-commits on a debounce
+    # right next to the row-locked Captions toggle in the same panel).
+    await dispatch_set_narrated_bed_level(job.id, variant_id, bed_level=req.bed_level, db=db)
+    log.info(
+        "plan_item_set_bed_level",
+        item_id=item_id,
+        variant_id=variant_id,
+        bed_level=req.bed_level,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

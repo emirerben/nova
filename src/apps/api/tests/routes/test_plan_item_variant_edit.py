@@ -447,9 +447,7 @@ def test_second_swap_song_returns_409(client: TestClient) -> None:
         f"/plan-items/{item.id}/variants/song_text/swap-song",
         json={"new_track_id": "track-456"},
     )
-    assert resp.status_code == 409, (
-        "Second swap-song on a rendering variant must return 409"
-    )
+    assert resp.status_code == 409, "Second swap-song on a rendering variant must return 409"
 
 
 # ── combined /edit (intro layout pick) ────────────────────────────────────────
@@ -889,3 +887,217 @@ def test_edit_captions_409_while_rendering(client: TestClient) -> None:
         json={"cues": [{"text": "x", "start_s": 0.0, "end_s": 1.0}]},
     )
     assert resp.status_code == 409
+
+
+# ── background sound (bed-level) — narrated-only, corrected mechanism ──────────
+# NOT the `mix` route: dispatch_set_narrated_bed_level is a dedicated dispatch onto
+# reburn_narrated_bed_level, gated hard on resolved_archetype == "narrated" (see
+# the plan's "Plan correction" section — the original mix-route design 422s here
+# for exactly the variants this control targets, which is why this guard exists).
+
+BED_REBURN = "app.tasks.generative_build.reburn_narrated_bed_level"
+
+
+def test_set_bed_level_rejects_non_narrated(client: TestClient) -> None:
+    subtitled = {**NARRATED_VARIANT, "variant_id": "subtitled", "resolved_archetype": "subtitled"}
+    user = _user()
+    job = _job([subtitled])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)  # item (ownership) → locked job re-fetch → 422
+    _override(user, db)
+    with patch(BED_REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/bed-level",
+            json={"bed_level": 0.5},
+        )
+    assert resp.status_code == 422
+    reburn.delay.assert_not_called()
+
+
+def test_set_bed_level_rejects_montage(client: TestClient) -> None:
+    montage = {**NARRATED_VARIANT, "variant_id": "original_text", "resolved_archetype": "montage"}
+    user = _user()
+    job = _job([montage])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    with patch(BED_REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/original_text/bed-level",
+            json={"bed_level": 0.5},
+        )
+    assert resp.status_code == 422
+    reburn.delay.assert_not_called()
+
+
+def test_set_bed_level_happy_path_dispatches_reburn(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    # item (ownership) → locked job re-fetch (dispatch_set_narrated_bed_level's OWN
+    # with_for_update() select, not the unlocked _owned_item_render_job snapshot —
+    # this is the race-condition fix: the bed-level slider auto-commits right next
+    # to the row-locked Captions toggle in the same panel) → reload item.
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    with patch(BED_REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/narrated/bed-level",
+            json={"bed_level": 0.6},
+        )
+    assert resp.status_code == 200
+    reburn.delay.assert_called_once_with(str(job.id), "narrated", 0.6)
+
+
+def test_set_bed_level_409_while_rendering(client: TestClient) -> None:
+    user = _user()
+    job = _job([{**NARRATED_VARIANT, "render_status": "rendering"}])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/narrated/bed-level",
+        json={"bed_level": 0.6},
+    )
+    assert resp.status_code == 409
+
+
+def test_set_bed_level_rejects_out_of_range(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/narrated/bed-level",
+        json={"bed_level": 1.5},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_dispatch_set_narrated_bed_level_takes_a_row_lock() -> None:
+    """The race-condition fix: dispatch_set_narrated_bed_level must re-fetch the Job
+    with FOR UPDATE, not operate on an already-loaded, unlocked snapshot — otherwise
+    its bare `assembly_plan` overwrite can land after (and silently clobber) a
+    concurrent locked write from _patch_narrated_variant (captions-enabled /
+    caption-style), which sits right next to this slider in the same editor panel."""
+    from app.routes.generative_jobs import dispatch_set_narrated_bed_level
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.assembly_plan = {"variants": [dict(NARRATED_VARIANT)]}
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=job)
+    db.execute = AsyncMock(return_value=result)
+    db.commit = AsyncMock()
+
+    with patch("app.tasks.generative_build.reburn_narrated_bed_level") as reburn:
+        reburn.delay = MagicMock()
+        await dispatch_set_narrated_bed_level(job.id, "narrated", bed_level=0.6, db=db)
+
+    db.execute.assert_called_once()
+    compiled_stmt = str(db.execute.call_args[0][0])
+    assert "FOR UPDATE" in compiled_stmt.upper()
+    db.commit.assert_called_once()
+    reburn.delay.assert_called_once_with(str(job.id), "narrated", 0.6)
+
+
+# ── subtitles on/off — independent of caption_cues count ───────────────────────
+# Confirms the fix for the codex-flagged "subtitles-off traps the user" bug: the
+# toggle persists a dedicated `captions_enabled` field and never touches the
+# stored `caption_cues`, so turning subtitles back on needs no re-transcription.
+
+
+def test_set_captions_enabled_persists_without_touching_cues(client: TestClient) -> None:
+    user = _user()
+    variant = {**NARRATED_VARIANT, "caption_cues": [{"text": "hi", "start_s": 0.0, "end_s": 1.0}]}
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)  # item → FOR-UPDATE job → reload item
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/captions-enabled",
+        json={"enabled": False},
+    )
+    assert resp.status_code == 200
+    patched_variant = job.assembly_plan["variants"][0]
+    assert patched_variant["captions_enabled"] is False
+    # The cues themselves are untouched — toggling back on needs no re-transcription.
+    assert patched_variant["caption_cues"] == variant["caption_cues"]
+
+
+def test_set_captions_enabled_rejects_non_caption_variant(client: TestClient) -> None:
+    montage = {**NARRATED_VARIANT, "variant_id": "original_text", "resolved_archetype": "montage"}
+    user = _user()
+    job = _job([montage])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/original_text/captions-enabled",
+        json={"enabled": False},
+    )
+    assert resp.status_code == 422
+
+
+def test_burn_helper_skips_burn_when_captions_disabled() -> None:
+    """Unit-level: the shared burn helper must yield the caption-free copy when
+    captions_enabled is False, regardless of how many cues are stored — this is
+    the actual fix for the one-way-door bug (the OLD design emptied cues to mean
+    "off", which made the Captions tab itself disappear)."""
+    import shutil
+    import tempfile
+    from unittest.mock import patch as mock_patch
+
+    from app.tasks.generative_build import _burn_persisted_captions_onto_base
+
+    variant = {
+        "resolved_archetype": "narrated",
+        "captions_enabled": False,
+        "caption_cues": [{"text": "should not burn", "start_s": 0.0, "end_s": 1.0}],
+        "voiceover_caption_style": "sentence",
+        "voiceover_caption_font": None,
+    }
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_local = f"{tmpdir}/base.mp4"
+        out_local = f"{tmpdir}/out.mp4"
+        with open(base_local, "wb") as f:
+            f.write(b"fake video bytes")
+        with mock_patch("shutil.copy2", wraps=shutil.copy2) as copy_spy:
+            _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
+        copy_spy.assert_called_once_with(base_local, out_local)
+
+
+# ── caption style (sentence/word) — moved from pre-gen into the editor ─────────
+
+
+def test_set_caption_style_happy_path(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/caption-style",
+        json={"caption_style": "word"},
+    )
+    assert resp.status_code == 200
+    assert job.assembly_plan["variants"][0]["voiceover_caption_style"] == "word"
+
+
+def test_set_caption_style_rejects_invalid_value(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(NARRATED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)  # FastAPI/pydantic rejects before any route code runs
+    _override(user, db)
+    resp = client.patch(
+        f"/plan-items/{item.id}/variants/narrated/caption-style",
+        json={"caption_style": "paragraph"},
+    )
+    assert resp.status_code == 422
