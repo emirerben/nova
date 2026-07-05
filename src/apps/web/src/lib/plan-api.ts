@@ -440,6 +440,10 @@ export function getPlanItem(id: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`);
 }
 
+export function getPlanItemFresh(id: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${id}`, { cache: "no-store" });
+}
+
 interface UploadUrl {
   upload_url: string;
   gcs_path: string;
@@ -1204,6 +1208,13 @@ export interface PlanItemJobStatus {
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {
   const res = await request<PlanItemJobStatus>(`/generative-jobs/${jobId}/status`);
+  return res;
+}
+
+export async function getPlanItemJobStatusFresh(jobId: string): Promise<PlanItemJobStatus> {
+  const res = await request<PlanItemJobStatus>(`/generative-jobs/${jobId}/status`, {
+    cache: "no-store",
+  });
   return res;
 }
 

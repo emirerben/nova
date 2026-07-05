@@ -39,6 +39,10 @@ import {
   commitEditorSession,
   EditorCommitConflictError,
 } from "@/lib/editor-commit";
+import {
+  buildPlanItemEditorReturnHref,
+  editorCommitStartedRender,
+} from "@/lib/editor-return";
 import { FONT_FACES } from "@/lib/font-faces";
 import { type GenerativeStyleSet } from "@/lib/generative-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
@@ -1270,23 +1274,24 @@ export default function EditorShell({
     setSaveState("saving");
     setSaveMessage(null);
     try {
+      const commitRequest = buildEditorCommitRequest({
+        elements: barsToTextElements(state.bars, originalsRef.current),
+        textDirty,
+        timelineDirty,
+        slots,
+        soundMuted,
+        sfxDirty,
+        soundEffects: localSfx,
+        overlaysDirty,
+        mediaOverlays: localOverlays,
+        titleDirty,
+        title,
+        variant,
+      });
       const res = await commitEditorSession(
         itemId,
         variant.variant_id,
-	        buildEditorCommitRequest({
-	          elements: barsToTextElements(state.bars, originalsRef.current),
-	          textDirty,
-	          timelineDirty,
-	          slots,
-	          soundMuted,
-	          sfxDirty,
-	          soundEffects: localSfx,
-	          overlaysDirty,
-	          mediaOverlays: localOverlays,
-	          titleDirty,
-	          title,
-	          variant,
-	        }),
+        commitRequest,
       );
       // Partial: persist landed (we got a 2xx) but the render kick failed —
       // the response's `ok` flag tells us. Working state stays, Retry re-kicks.
@@ -1304,8 +1309,16 @@ export default function EditorShell({
       setOverlaysDirty(false);
       setTitleDirty(false);
       setSaveState("idle");
-      setSaveMessage("Saved — rendering your latest version");
-      router.push(`/plan/items/${itemId}`);
+      const renderStarted = editorCommitStartedRender(res.sections);
+      setSaveMessage(renderStarted ? "Saved — rendering your latest version" : "Saved");
+      router.push(
+        buildPlanItemEditorReturnHref(itemId, {
+          variantId: variant.variant_id,
+          generation: res.generation,
+          priorFinishedAt: variant.render_finished_at ?? null,
+          renderStarted,
+        }),
+      );
     } catch (err) {
       if (err instanceof EditorCommitConflictError) {
         setSaveState("conflict");
