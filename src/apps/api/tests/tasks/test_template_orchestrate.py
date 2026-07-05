@@ -1736,6 +1736,52 @@ class TestTemplateAudio:
 
         mock_copy.assert_called_once_with("/tmp/assembled.mp4", str(tmp_path / "final.mp4"))
 
+    def test_mix_audio_required_download_failure_raises(self, tmp_path):
+        """Song variants must fail loudly instead of shipping assembled clip audio."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        with (
+            patch(
+                "app.tasks.template_orchestrate.download_to_file",
+                side_effect=Exception("GCS unavailable"),
+            ),
+            patch("app.tasks.template_orchestrate.shutil.copy2") as mock_copy,
+            pytest.raises(RuntimeError, match="template audio download failed"),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="music/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+                require_audio=True,
+            )
+
+        mock_copy.assert_not_called()
+
+    def test_mix_audio_required_ffmpeg_failure_raises(self, tmp_path):
+        """A music-mix ffmpeg error must fail the render, not copy through songless."""
+        from app.tasks.template_orchestrate import _mix_template_audio
+
+        failed_proc = MagicMock()
+        failed_proc.returncode = 1
+        failed_proc.stderr = b"no audio stream"
+
+        with (
+            patch("app.tasks.template_orchestrate.download_to_file"),
+            patch("app.tasks.template_orchestrate.subprocess.run", return_value=failed_proc),
+            patch("app.tasks.template_orchestrate.shutil.copy2") as mock_copy,
+            pytest.raises(RuntimeError, match="template audio mix failed"),
+        ):
+            _mix_template_audio(
+                video_path="/tmp/assembled.mp4",
+                audio_gcs_path="music/t1/audio.m4a",
+                output_path=str(tmp_path / "final.mp4"),
+                tmpdir=str(tmp_path),
+                require_audio=True,
+            )
+
+        mock_copy.assert_not_called()
+
     def test_run_template_job_uses_final_path_when_audio_available(self):
         """With audio_gcs_path set: _mix_template_audio called and final.mp4 uploaded."""
         from app.tasks.template_orchestrate import _run_template_job

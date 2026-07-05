@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { SoundEffectPlacement } from "@/lib/plan-api";
+import { sfxPlaybackOffsetAt } from "@/lib/sfx-preview-scheduler";
 
 interface SfxAudioEntry {
   placement: SoundEffectPlacement;
@@ -43,22 +44,24 @@ export function useSfxPreview(
       }
 
       const offsetInSfx = now - placement.at_s;
+      const activeOffset = sfxPlaybackOffsetAt(
+        placement,
+        now,
+        audio.duration || 60,
+      );
 
       if (video.paused) {
         audio.pause();
-        if (offsetInSfx >= 0 && offsetInSfx < (placement.duration_s ?? (audio.duration || 60))) {
-          audio.currentTime = offsetInSfx;
+        if (activeOffset != null) {
+          audio.currentTime = activeOffset;
         }
       } else {
-        if (offsetInSfx >= 0) {
+        if (activeOffset != null) {
           // Already past the start — play from offset
-          const dur = placement.duration_s ?? (audio.duration || 60);
-          if (offsetInSfx < dur) {
-            audio.currentTime = offsetInSfx;
-            audio.play().catch(() => {});
-          } else {
-            audio.pause();
-          }
+          audio.currentTime = activeOffset;
+          audio.play().catch(() => {});
+        } else if (offsetInSfx >= 0) {
+          audio.pause();
         } else {
           // Not yet — schedule a future play
           audio.pause();

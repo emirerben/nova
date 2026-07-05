@@ -185,12 +185,12 @@ def _patch_render_helpers(monkeypatch, mix_calls: list, assembled_steps: list | 
             f.write(b"\x00" * 16)  # non-empty so the size guard passes
 
     monkeypatch.setattr(to, "_assemble_clips", _fake_assemble, raising=False)
-    monkeypatch.setattr(
-        to,
-        "_mix_template_audio",
-        lambda *a, **k: mix_calls.append(a) or (lambda p: open(p, "wb").write(b"\x00" * 16))(a[2]),
-        raising=False,
-    )
+    def _fake_mix(*a, **k):
+        mix_calls.append({"args": a, "kwargs": k})
+        with open(a[2], "wb") as f:
+            f.write(b"\x00" * 16)
+
+    monkeypatch.setattr(to, "_mix_template_audio", _fake_mix, raising=False)
     monkeypatch.setattr(
         storage, "upload_public_read", lambda local, gcs: f"https://signed/{gcs}", raising=False
     )
@@ -532,6 +532,36 @@ def test_timeline_override_kwarg_beats_persisted_user_timeline(monkeypatch):
     assert steps[0].slot["slot_type"] == "broll"
     assert steps[0].moment["start_s"] == 2.0 and steps[0].moment["end_s"] == 3.5
     assert updates[-1]["ok"] is True
+
+
+def test_song_timeline_override_mixes_required_music_track(monkeypatch):
+    """A song-variant timeline edit still replaces clip audio with the song.
+
+    The mixer is required here: download/ffmpeg failure must make the render fail
+    rather than copy the assembled clip audio through as a songless ready output.
+    """
+    mix_calls: list = []
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="none",
+        music_track_id="t1",
+        user_timeline={"slots": [_tl_slot(0, duration_s=1.0, duration_beats=1)]},
+    )
+    _job, updates, _dl = _regen_setup(
+        monkeypatch,
+        variants=[variant],
+        track=_track("t1"),
+        mix_calls=mix_calls,
+    )
+    _patch_music_recipe(monkeypatch, [0.0, 1.0, 2.0])
+
+    gb._run_regenerate_variant(JOB_ID, "song_text", None, None, False)
+
+    assert updates[-1]["ok"] is True
+    assert len(mix_calls) == 1
+    assert mix_calls[0]["args"][1] == "music/t1/audio.m4a"
+    assert mix_calls[0]["kwargs"]["require_audio"] is True
 
 
 def test_persisted_user_timeline_drops_removed_and_honors_order(monkeypatch):

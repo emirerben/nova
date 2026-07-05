@@ -994,7 +994,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       onSelect={() => onSelect("music", "bed")}
                       dataKind="music"
                       dataId="bed"
-                      className="inset-y-0.5 bg-zinc-200 text-[#0c0c0e]"
+                      title="The song auto-fits your cut — trim clips to change where it ends"
+                      draggable={false}
+                      className="inset-y-0.5 border border-zinc-300/70 bg-zinc-200/70 text-[#52525b]"
                     >
                       <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
                         <span aria-hidden>♫</span>
@@ -1221,6 +1223,8 @@ function BarButton({
   dataKind,
   dataId,
   dataRowIndex,
+  title,
+  draggable,
   className,
   children,
 }: {
@@ -1241,6 +1245,8 @@ function BarButton({
   dataKind?: string;
   dataId?: string;
   dataRowIndex?: number;
+  title?: string;
+  draggable?: boolean;
   className: string;
   children: React.ReactNode;
 }) {
@@ -1254,6 +1260,7 @@ function BarButton({
       data-editor-bar-id={dataId}
       data-editor-row-index={dataRowIndex}
       data-editor-text-row-index={dataKind === "text" ? dataRowIndex : undefined}
+      title={title}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -1267,7 +1274,10 @@ function BarButton({
         onSelect();
       }}
       className={[
-        "group absolute flex min-w-11 cursor-grab items-center rounded transition-[filter,outline-color] hover:brightness-110 active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+        "group absolute flex min-w-11 items-center rounded transition-[filter,outline-color] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+        draggable === false
+          ? "cursor-default"
+          : "cursor-grab hover:brightness-110 active:cursor-grabbing",
         positionedInRow ? "" : "inset-y-0.5",
         selected ? ringCls : "",
         className,

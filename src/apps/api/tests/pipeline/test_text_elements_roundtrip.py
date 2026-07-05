@@ -9,10 +9,10 @@ compiler forward path.  Every legacy variant shape is exercised:
   Shape 3 — Sequence:       build_sequence_overlays()
 
 Known limitation (documented as xfail): burn dicts whose font_family is NOT in
-TextElement._ALLOWED_FONTS (e.g. "Great Vibes" from test stubs) lose the font
-after the round-trip because the adapter's security guard silently drops unknown
-fonts.  Production engines use allowlisted fonts; the xfail test proves the
-failure mode explicitly rather than letting it hide.
+TextElement._ALLOWED_FONTS lose the font after the round-trip because the
+adapter's security guard silently drops unknown fonts. Production engines use
+allowlisted registry fonts; the xfail test proves the unknown-font failure mode
+explicitly rather than letting it hide.
 """
 
 from __future__ import annotations
@@ -748,7 +748,7 @@ class TestSequenceRoundTrip:
         strict=True,
     )
     def test_sequence_roundtrip_fails_with_non_allowlisted_font(self, monkeypatch):
-        """Known mismatch: non-allowlisted fonts are dropped by the adapter (A19)."""
+        """Known mismatch: unknown fonts are dropped by the adapter (A19)."""
         import app.pipeline.intro_cluster as ic
 
         def _bad_font_blocks(
@@ -759,7 +759,7 @@ class TestSequenceRoundTrip:
                     "text": text,
                     "role": "hero",
                     "text_size_px": base_size_px,
-                    "font_family": "Great Vibes",  # NOT in _ALLOWED_FONTS
+                    "font_family": "Definitely Not A Font",
                     "position_x_frac": 0.4,
                     "position_y_frac": 0.44,
                     "start_offset_s": 0.0,
@@ -784,7 +784,7 @@ class TestSequenceRoundTrip:
         roundtrip = build_overlays_from_text_elements(elements, video_duration_s=10.0)
 
         # This assertion MUST fail (strict xfail):
-        # legacy has font_family="Great Vibes"; roundtrip has no font_family key.
+        # legacy has an unknown font_family; roundtrip has no font_family key.
         assert _normalize(roundtrip) == _normalize(legacy)
 
 
@@ -853,6 +853,8 @@ class TestSecurityGuards:
             "PlayfairDisplay-Regular",
             "Inter-Bold",
             "Inter-Regular",
+            "Playfair Display",
+            "Great Vibes",
         ):
             elem = TextElement(text="test", start_s=0, end_s=1, font_family=font)
             assert elem.font_family == font

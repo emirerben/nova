@@ -401,8 +401,8 @@ async def test_edit_grid_slot_with_nonpositive_values_invalid(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_edit_grid_null_beats_slot_uses_duration_s_and_skips_grid(monkeypatch):
-    # B2: a footage-trimmed slot (duration_beats null) on a GRID variant carries
-    # its exact window in duration_s and must NOT walk or advance the grid —
+    # B2: a footage-trimmed slot (duration_beats null) on a no-music GRID
+    # variant snaps its seconds window but must NOT walk or advance the grid —
     # the next beats slot still starts at offset 0.
     seq, _, delays = _arm(monkeypatch)
     await gj.dispatch_edit_timeline(
@@ -417,7 +417,7 @@ async def test_edit_grid_null_beats_slot_uses_duration_s_and_skips_grid(monkeypa
         db=None,
     )
     override = delays[0][1]["timeline_override"]
-    assert override[0]["duration_s"] == pytest.approx(1.137)
+    assert override[0]["duration_s"] == pytest.approx(1.0)
     assert override[0]["duration_beats"] is None
     # s2 walked from offset 0 (null-beats slot consumed no beats): grid[2]-grid[0].
     assert override[1]["duration_s"] == pytest.approx(1.1)
@@ -473,9 +473,9 @@ async def test_edit_no_grid_requires_duration_s(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_edit_no_grid_accepts_off_step_duration(monkeypatch):
-    # B2: NO 0.5-step requirement — original_text AI durations are round(x, 3)
-    # and almost never 0.5-multiples; exact windows need no server quantization.
+async def test_edit_no_grid_snaps_off_step_duration(monkeypatch):
+    # Hotfix 2026-07-05: no-music editor input may be off-step, but the server
+    # persists the snapped 0.5s value so GET timeline mirrors what will bake.
     seq, _, delays = _arm(monkeypatch)
     await gj.dispatch_edit_timeline(
         _timeline_job(beat_grid=[]),
@@ -483,7 +483,7 @@ async def test_edit_no_grid_accepts_off_step_duration(monkeypatch):
         _req([{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 1.3}]),
         db=None,
     )
-    assert delays[0][1]["timeline_override"][0]["duration_s"] == pytest.approx(1.3)
+    assert delays[0][1]["timeline_override"][0]["duration_s"] == pytest.approx(1.5)
 
 
 @pytest.mark.asyncio

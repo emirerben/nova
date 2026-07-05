@@ -20,10 +20,12 @@ output.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
 from copy import deepcopy
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -36,7 +38,7 @@ log = logging.getLogger(__name__)
 
 # Allowed font families (same set as existing burn dict; reject unknown per
 # eng review A19 — user-controlled strings reach the Skia renderer).
-_ALLOWED_FONTS: frozenset[str] = frozenset(
+_LEGACY_FONT_ALIASES: frozenset[str] = frozenset(
     {
         "PlayfairDisplay-Bold",
         "PlayfairDisplay-Regular",
@@ -44,6 +46,22 @@ _ALLOWED_FONTS: frozenset[str] = frozenset(
         "Inter-Regular",
     }
 )
+
+
+def _load_registry_font_names() -> frozenset[str]:
+    registry_path = Path(__file__).resolve().parents[3] / "assets" / "fonts" / "font-registry.json"
+    try:
+        data = json.loads(registry_path.read_text())
+    except Exception as exc:  # noqa: BLE001
+        log.warning("text_element_font_registry_load_failed: %s (%s)", exc, registry_path)
+        return frozenset()
+    fonts = data.get("fonts") if isinstance(data, dict) else None
+    if not isinstance(fonts, dict):
+        return frozenset()
+    return frozenset(str(name) for name in fonts)
+
+
+_ALLOWED_FONTS: frozenset[str] = _LEGACY_FONT_ALIASES | _load_registry_font_names()
 
 # Allowed effects in this schema.  The burn dict supports more effects (e.g.
 # "pop-in", "typewriter") but the TextElement editor surface only exposes the
@@ -55,6 +73,12 @@ _ALLOWED_EFFECTS: frozenset[str] = frozenset(
         "fade-in",
         "slide-up",
         "karaoke-line",
+        "pop-in",
+        "scale-up",
+        "typewriter",
+        "stream-in",
+        "bounce",
+        "slide-in",
     }
 )
 
@@ -235,7 +259,21 @@ class TextElement(BaseModel):
         default="center",
         description="Text alignment (maps to text_anchor in the burn dict).",
     )
-    effect: Literal["static", "fade-in", "slide-up", "karaoke-line"] | None = Field(
+    effect: (
+        Literal[
+            "static",
+            "fade-in",
+            "slide-up",
+            "karaoke-line",
+            "pop-in",
+            "scale-up",
+            "typewriter",
+            "stream-in",
+            "bounce",
+            "slide-in",
+        ]
+        | None
+    ) = Field(
         default="static",
         description="Animation effect.",
     )

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1.0] — 2026-07-05
+
+### Fixed
+- **Editor text saves no longer 422 on AI-styled variants.** The strict save validator now accepts every font/effect the projection itself emits (it was rejecting Nova's own registry fonts like Playfair Display), and validation errors name the exact element and field.
+- **Clip trims can no longer produce a songless render.** Timeline edits on song variants snap to the song's beat grid server-side (whole beats, per the timeline contract; 0.5s steps for no-music edits) and the audio mixer now fails the render loudly if the song can't be mixed — the previous silent fallback shipped video without audio.
+- **Sound effects are audible in the editor preview** (rendered and virtual modes), matching the item page's behavior — including just-added effects before Save, with mute respected.
+- **The music bar is honestly non-editable**: no fake trim affordances; tooltip and inspector explain the song auto-fits your cut. Real music trimming is tracked as a follow-up.
+
 ## [0.7.0.0] — 2026-07-05
 
 ### Added
