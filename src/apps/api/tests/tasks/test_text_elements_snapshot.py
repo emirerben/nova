@@ -74,6 +74,39 @@ def test_snapshot_helper_adds_text_elements_when_enabled(monkeypatch):
         assert "text" in entry
 
 
+def test_snapshot_helper_does_not_clobber_user_edited_elements(monkeypatch):
+    """Snapshot synthesis must never overwrite the authoritative editor list."""
+    monkeypatch.setattr(gb, "_TEXT_ELEMENTS_ENABLED", True)
+
+    saved = [
+        {
+            "id": "qa-live",
+            "text": "QA live text",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "role": "generative_intro",
+            "position": "custom",
+            "x_frac": 0.5,
+            "y_frac": 0.4,
+        }
+    ]
+    result = {
+        "ok": True,
+        "variant_id": "original_text",
+        "text_mode": "agent_text",
+        "intro_text": "projected sequence text",
+        "intro_mode": "sequence",
+        "scenes": [{"text": "Projected", "start_s": 0.0, "end_s": 1.0}],
+        "text_elements_user_edited": True,
+        "text_elements": list(saved),
+    }
+
+    gb._maybe_add_text_elements_snapshot(result)
+
+    assert result["text_elements"] == saved
+    assert result["text_elements_user_edited"] is True
+
+
 # ── Test 2: _reburn_text_on_base early branch respects kill switch ──────────────
 
 

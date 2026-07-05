@@ -32,6 +32,7 @@ import "@testing-library/jest-dom";
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
+  useSearchParams: jest.fn(() => new URLSearchParams()),
 }));
 
 // Mock usePolledJobStatus

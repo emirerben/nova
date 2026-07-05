@@ -440,6 +440,10 @@ export function getPlanItem(id: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${id}`);
 }
 
+export function getPlanItemFresh(id: string): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${id}`, { cache: "no-store" });
+}
+
 interface UploadUrl {
   upload_url: string;
   gcs_path: string;
@@ -682,6 +686,8 @@ export interface MediaOverlay {
    *  status read so the browser can show existing applied cards as a live CSS overlay
    *  without re-uploading. Absent on legacy/unsigned cards. */
   preview_url?: string | null;
+  /** Optional browser-displayable preview object, e.g. JPEG converted from HEIC. */
+  preview_gcs_path?: string | null;
   position: "top" | "center" | "bottom" | "custom";
   x_frac: number;
   y_frac: number;
@@ -767,11 +773,24 @@ export interface TextElement {
   stroke_width?: number | null;
   alignment?: "left" | "center" | "right" | null;
   effect?: "static" | "fade-in" | "slide-up" | "karaoke-line" | null;
+  /** Display-case transform, resolved at compile/layout time (T11 slice;
+   * parity fixture tests/fixtures/text-element-parity/text_case.json). */
+  text_case?: "none" | "upper" | "lower" | "title" | null;
+  /** Tracking in em (× font size), clamped [-0.05, 0.5] server-side (T11;
+   * parity fixture letter_spacing.json). */
+  letter_spacing?: number | null;
+  /** Line-height multiplier, clamped [0.5, 3.0]; null = renderer default 1.15
+   * (T11; parity fixture line_spacing.json). */
+  line_spacing?: number | null;
+  /** Maximum wrap-box width as a frame-width fraction, clamped [0.2, 1.0];
+   * null = renderer default 0.9 (parity fixture max_width_frac.json). */
+  max_width_frac?: number | null;
   fade_out_ms?: number | null;
   reveal_s?: number | null;
   z?: number | null;
   word_timings?: Record<string, unknown>[] | null;
   source_params?: Record<string, unknown> | null;
+  removed?: boolean;
 }
 
 /**
@@ -843,6 +862,7 @@ export interface PlanItemVariant {
   // the hero shows the burned output, so it is NOT instant-edit-eligible. Absent
   // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
   resolved_archetype?: string | null;
+  render_generation_id?: string | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;
   error_class?: string | null;
@@ -1114,6 +1134,26 @@ export async function requestOverlayUploadUrls(
   return res.urls;
 }
 
+export interface OverlayUploadConfirmResult {
+  gcs_path: string;
+  preview_gcs_path?: string | null;
+  preview_url?: string | null;
+}
+
+export async function confirmOverlayUploads(
+  itemId: string,
+  files: { gcs_path: string; content_type: string }[],
+): Promise<OverlayUploadConfirmResult[]> {
+  const res = await request<{ files: OverlayUploadConfirmResult[] }>(
+    `/plan-items/${itemId}/overlay-upload-confirm`,
+    {
+      method: "POST",
+      body: JSON.stringify({ files }),
+    },
+  );
+  return res.files;
+}
+
 /**
  * Full-replace the media-overlay card list on a variant.
  * Send an empty array to clear all cards and restore the clean variant.
@@ -1283,6 +1323,13 @@ export interface PlanItemJobStatus {
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {
   const res = await request<PlanItemJobStatus>(`/generative-jobs/${jobId}/status`);
+  return res;
+}
+
+export async function getPlanItemJobStatusFresh(jobId: string): Promise<PlanItemJobStatus> {
+  const res = await request<PlanItemJobStatus>(`/generative-jobs/${jobId}/status`, {
+    cache: "no-store",
+  });
   return res;
 }
 

@@ -376,6 +376,12 @@ def test_default_backend_prefers_cloud_vision_when_creds_present(monkeypatch):
 def test_default_backend_falls_through_to_apple_when_no_cloud(monkeypatch):
     from app.services import text_overlay_ocr as mod
 
+    # Order-dependence hardening: earlier tests can leak real GCP creds into
+    # os.environ (repo-root .env), which default_backend() reads directly via
+    # _cloud_vision_creds_present(). Same guard as tests/services/ocr/test_engines.py.
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
+
     fake_av = MagicMock()
     monkeypatch.setattr(mod, "_cloud_vision_available", lambda: False)
     monkeypatch.setattr(mod, "_apple_vision_available", lambda: True)
@@ -388,6 +394,9 @@ def test_default_backend_falls_through_to_apple_when_no_cloud(monkeypatch):
 
 def test_default_backend_raises_with_install_hint_when_neither_available(monkeypatch):
     from app.services import text_overlay_ocr as mod
+
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_JSON", raising=False)
 
     monkeypatch.setattr(mod, "_cloud_vision_available", lambda: False)
     monkeypatch.setattr(mod, "_apple_vision_available", lambda: False)

@@ -1,0 +1,89 @@
+{
+  "field": "max_width_frac",
+  "contract": "max_width_frac is authored as a fraction of frame width, clamped identically by TextElement, resolve_max_width_frac, and resolveMaxWidthFrac, carried in the Python burn dict only when authored, and exposed to the CSS layout as maxWidthFrac/maxWidthPx. Null/absent preserves the renderer default 0.9.",
+  "asserted_by": [
+    "src/apps/api/tests/pipeline/test_text_element_parity_contract.py",
+    "src/apps/web/src/__tests__/lib/text-element-parity-contract.test.ts"
+  ],
+  "cases": [
+    {
+      "name": "explicit-narrow-wraps",
+      "element": {
+        "id": "mw-narrow",
+        "text": "one two three four five six",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "max_width_frac": 0.4
+      },
+      "geometry": {
+        "char_width_px": 20
+      },
+      "expected": {
+        "max_width_frac": 0.4,
+        "max_width_px": 432.0,
+        "line_count": 2,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "absent-defaults-to-renderer-width",
+      "element": {
+        "id": "mw-absent",
+        "text": "one two three four five six",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72
+      },
+      "geometry": {
+        "char_width_px": 20
+      },
+      "expected": {
+        "max_width_frac": 0.9,
+        "max_width_px": 972.0,
+        "line_count": 1,
+        "burn_dict_has_field": false
+      }
+    },
+    {
+      "name": "clamps-low",
+      "element": {
+        "id": "mw-low",
+        "text": "one two three four five six",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "max_width_frac": 0.1
+      },
+      "geometry": {
+        "char_width_px": 20
+      },
+      "expected": {
+        "max_width_frac": 0.2,
+        "max_width_px": 216.0,
+        "line_count": 3,
+        "burn_dict_has_field": true
+      }
+    },
+    {
+      "name": "clamps-high",
+      "element": {
+        "id": "mw-high",
+        "text": "one two three four five six",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "size_px": 72,
+        "max_width_frac": 1.4
+      },
+      "geometry": {
+        "char_width_px": 20
+      },
+      "expected": {
+        "max_width_frac": 1.0,
+        "max_width_px": 1080.0,
+        "line_count": 1,
+        "burn_dict_has_field": true
+      }
+    }
+  ]
+}

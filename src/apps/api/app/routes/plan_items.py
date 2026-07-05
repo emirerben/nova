@@ -36,6 +36,9 @@ from app.routes.generative_jobs import (
     CaptionsRequest,
     CaptionStyleRequest,
     ChangeStyleRequest,
+    EditorCommitRequest,
+    EditorCommitResponse,
+    EditorCommitSections,
     EditVariantRequest,
     PatchSceneTimingRequest,
     RetextRequest,
@@ -61,10 +64,19 @@ from app.routes.generative_jobs import (
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
     dispatch_swap_song,
+    enqueue_editor_commit_render,
     persist_variant_caption_font,
     persist_variant_caption_style,
     persist_variant_captions,
     persist_variant_captions_enabled,
+    prepare_editor_commit,
+    validate_media_overlays_for_user,
+    validate_sound_effects_for_user,
+)
+from app.services.media_overlay_preview import (
+    convert_heif_overlay_preview,
+    is_heif_overlay,
+    nonblank_str,
 )
 
 log = structlog.get_logger()
@@ -82,6 +94,7 @@ _OVERLAY_ALLOWED_CONTENT_TYPES = {
     "image/png",
     "image/webp",
     "image/heic",
+    "image/heif",
     "video/mp4",
     "video/quicktime",
 }
@@ -1736,6 +1749,33 @@ class OverlayUploadUrlsResponse(BaseModel):
     urls: list[UploadUrlItem]
 
 
+class OverlayUploadConfirmFile(BaseModel):
+    gcs_path: str
+    content_type: str
+
+
+class OverlayUploadConfirmBody(BaseModel):
+    files: list[OverlayUploadConfirmFile]
+
+
+class OverlayUploadConfirmItem(BaseModel):
+    gcs_path: str
+    preview_gcs_path: str | None = None
+    preview_url: str | None = None
+
+
+class OverlayUploadConfirmResponse(BaseModel):
+    files: list[OverlayUploadConfirmItem]
+
+
+def _is_heif_overlay(path: str, content_type: str) -> bool:
+    return is_heif_overlay(path, content_type)
+
+
+def _convert_heif_overlay_preview(gcs_path: str) -> tuple[str | None, str | None]:
+    return convert_heif_overlay_preview(gcs_path)
+
+
 @router.post("/{item_id}/overlay-upload-urls", response_model=OverlayUploadUrlsResponse)
 async def create_overlay_upload_urls(
     item_id: str,
@@ -1782,6 +1822,53 @@ async def create_overlay_upload_urls(
     return OverlayUploadUrlsResponse(urls=urls)
 
 
+@router.post(
+    "/{item_id}/overlay-upload-confirm",
+    response_model=OverlayUploadConfirmResponse,
+)
+async def confirm_overlay_uploads(
+    item_id: str,
+    body: OverlayUploadConfirmBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OverlayUploadConfirmResponse:
+    """Post-upload hook for browser previews.
+
+    HEIC/HEIF stays as the renderer source, but the browser needs a JPEG preview
+    because Chromium cannot decode HEIC. Non-HEIF uploads return no preview path.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Media overlays not available."
+        )
+
+    item = await _load_owned_item(item_id, user.id, db)
+    prefix = f"users/{user.id}/plan/{item.id}/overlays/"
+    confirmed: list[OverlayUploadConfirmItem] = []
+    for f in body.files:
+        if not f.gcs_path.startswith(prefix):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Overlay asset path must be under '{prefix}'.",
+            )
+        preview_gcs_path: str | None = None
+        preview_url: str | None = None
+        if _is_heif_overlay(f.gcs_path, f.content_type):
+            preview_gcs_path, preview_url = _convert_heif_overlay_preview(f.gcs_path)
+            preview_gcs_path = nonblank_str(preview_gcs_path)
+            preview_url = nonblank_str(preview_url)
+        confirmed.append(
+            OverlayUploadConfirmItem(
+                gcs_path=f.gcs_path,
+                preview_gcs_path=preview_gcs_path,
+                preview_url=preview_url,
+            )
+        )
+    return OverlayUploadConfirmResponse(files=confirmed)
+
+
 class SetMediaOverlaysBody(BaseModel):
     """Full-replace body: the entire new card list. Send [] to clear all cards.
 
@@ -1812,58 +1899,13 @@ def _persist_overlay_metadata_only(
     """
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
-    from app.agents._schemas.media_overlay import (  # noqa: PLC0415
-        coerce_media_overlays,
-        validate_overlay_gcs_path,
-    )
-
-    _user_prefix = f"users/{user_id}/"
-    validated: list[dict] = []
-    if overlays_raw:
-        cards = coerce_media_overlays(overlays_raw) or []
-        for card in cards:
-            try:
-                validate_overlay_gcs_path(card.src_gcs_path)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid overlay asset path: {exc}",
-                ) from exc
-            if not card.src_gcs_path.startswith(_user_prefix):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
-                    ),
-                )
-            if card.end_s <= card.start_s:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Card {card.id}: end_s must be greater than start_s.",
-                )
-            validated.append(card.model_dump())
-        # Plan 009 E4+E9: fullscreen contract (shared helper — same rules as
-        # the render:true dispatch path, so autosave and Download never drift).
-        from app.services.overlay_apply import (  # noqa: PLC0415
-            validate_fullscreen_constraints,
-        )
-
-        _variant_for_check = next(
-            (
-                v
-                for v in (job.assembly_plan or {}).get("variants") or []
-                if v.get("variant_id") == variant_id
-            ),
-            {},
-        )
-        try:
-            validate_fullscreen_constraints(cards, _variant_for_check)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-            ) from exc
-
     variants = list((job.assembly_plan or {}).get("variants") or [])
+    variant_for_check = next((v for v in variants if v.get("variant_id") == variant_id), {})
+    validated = validate_media_overlays_for_user(
+        overlays_raw=overlays_raw,
+        user_id=user_id,
+        variant_context=variant_for_check,
+    )
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["media_overlays"] = validated or None
@@ -1955,6 +1997,101 @@ async def set_item_text_elements(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+@router.post(
+    "/{item_id}/variants/{variant_id}/editor-commit",
+    response_model=EditorCommitResponse,
+)
+async def editor_commit_item(
+    item_id: str,
+    variant_id: str,
+    body: EditorCommitRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> EditorCommitResponse:
+    """Transactional editor Save (E2): all sections in ONE commit + ONE render kick.
+
+    Validates every provided section first (nothing persists on ANY failure),
+    compares `base_generation` against the variant's current baseline (409
+    `baseline_conflict` when another tab/render moved it), then persists all
+    job-JSON sections atomically in a single commit, bumps the render
+    generation, and enqueues exactly one re-render.
+
+    Deliberately NOT guarded by `require_editable_variant` — saving during an
+    in-flight render is the point; the E1 generation guard makes the superseded
+    task discard its terminal write (D8 queue/supersede).
+
+    `title` updates the plan item's display title (`PlanItem.theme`). It lives
+    on a different table than the variant job-JSON, but both rows are written in
+    the SAME database transaction here, so the commit stays all-or-nothing.
+    """
+    item = await _load_owned_item(item_id, user.id, db)
+    job = item.current_job
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+
+    # Validate the title section BEFORE the job-JSON staging so a bad title
+    # fails the whole commit with nothing persisted (validation-first contract).
+    cleaned_title: str | None = None
+    if body.title is not None:
+        cleaned_title = _sanitize_text(body.title.strip())
+        if not cleaned_title:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Title cannot be empty.",
+            )
+
+    commit_body = body
+    if body.sound_effects is not None:
+        resolved_sfx = await _resolve_sound_effect_placements(
+            body.sound_effects,
+            user_id=str(user.id),
+            db=db,
+        )
+        commit_body = body.model_copy(update={"sound_effects": resolved_sfx})
+
+    locked_job = await db.get(Job, job.id, with_for_update=True)
+    if locked_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+
+    prep = prepare_editor_commit(
+        locked_job,
+        variant_id,
+        commit_body,
+        user_id=str(user.id),
+    )
+
+    if cleaned_title is not None:
+        item.theme = cleaned_title
+        item.user_edited = True
+
+    await db.commit()
+    # Kick AFTER the commit so a worker that grabs the task instantly always
+    # observes the committed sections + generation token. If the kick fails the
+    # persist stands — the honest partial state ("saved, rendering didn't
+    # start") the plan's §9 table describes.
+    enqueue_editor_commit_render(str(job.id), variant_id, prep)
+
+    log.info(
+        "plan_item_editor_commit",
+        item_id=item_id,
+        variant_id=variant_id,
+        generation=prep["generation"],
+        sections={**prep["sections"], "title": cleaned_title is not None},
+    )
+    return EditorCommitResponse(
+        ok=True,
+        generation=prep["generation"],
+        sections=EditorCommitSections(
+            text_elements=prep["sections"]["text_elements"],
+            timeline=prep["sections"]["timeline"],
+            mix=prep["sections"]["mix"],
+            sound_effects=prep["sections"]["sound_effects"],
+            media_overlays=prep["sections"]["media_overlays"],
+            title=cleaned_title is not None,
+        ),
+    )
+
+
 # ── Sound-effects routes ──────────────────────────────────────────────────────
 
 
@@ -1976,6 +2113,39 @@ class SetSoundEffectsBody(BaseModel):
     """Full-replace body: the entire new placement list. Send [] to clear all effects."""
 
     placements: list[dict] = Field(default_factory=list)
+
+
+async def _resolve_sound_effect_placements(
+    placements: list[dict],
+    *,
+    user_id: str,
+    db: AsyncSession,
+) -> list[dict]:
+    """Resolve curated SFX IDs server-side, then validate the full placement list."""
+    resolved_placements: list[dict] = []
+    for raw in placements:
+        placement = dict(raw)
+        sound_effect_id = placement.get("sound_effect_id")
+        if sound_effect_id:
+            from sqlalchemy import select as _select  # noqa: PLC0415
+
+            from app.models import SoundEffect  # noqa: PLC0415
+
+            effect_result = await db.execute(
+                _select(SoundEffect).where(SoundEffect.id == sound_effect_id)
+            )
+            effect = effect_result.scalar_one_or_none()
+            if effect is None or not effect.audio_gcs_path:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Sound effect {sound_effect_id!r} not found or has no audio.",
+                )
+            # Always resolve path server-side — never trust a client-supplied sound-effects/ path.
+            placement["src_gcs_path"] = effect.audio_gcs_path
+            placement["label"] = placement.get("label") or effect.name
+            placement["duration_s"] = placement.get("duration_s") or effect.duration_s
+        resolved_placements.append(placement)
+    return validate_sound_effects_for_user(sfx_raw=resolved_placements, user_id=user_id)
 
 
 @router.post("/{item_id}/sfx-upload-urls", response_model=SfxUploadUrlsResponse)
@@ -2054,30 +2224,11 @@ async def set_item_sound_effects(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sound effects not available."
         )
 
-    # Resolve glossary references server-side.
-    resolved_placements: list[dict] = []
-    for raw in body.placements:
-        placement = dict(raw)
-        sound_effect_id = placement.get("sound_effect_id")
-        if sound_effect_id:
-            from sqlalchemy import select as _select  # noqa: PLC0415
-
-            from app.models import SoundEffect  # noqa: PLC0415
-
-            effect_result = await db.execute(
-                _select(SoundEffect).where(SoundEffect.id == sound_effect_id)
-            )
-            effect = effect_result.scalar_one_or_none()
-            if effect is None or not effect.audio_gcs_path:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Sound effect {sound_effect_id!r} not found or has no audio.",
-                )
-            # Always resolve path server-side — never trust a client-supplied sound-effects/ path.
-            placement["src_gcs_path"] = effect.audio_gcs_path
-            placement["label"] = placement.get("label") or effect.name
-            placement["duration_s"] = placement.get("duration_s") or effect.duration_s
-        resolved_placements.append(placement)
+    resolved_placements = await _resolve_sound_effect_placements(
+        body.placements,
+        user_id=str(user.id),
+        db=db,
+    )
 
     job = await _owned_item_render_job(item_id, user.id, db)
 

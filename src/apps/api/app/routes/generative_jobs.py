@@ -30,10 +30,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import storage
+from app.agents._schemas.text_element import (
+    append_ai_text_tombstones,
+    merge_projected_text_elements_for_variant,
+)
 from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import get_db
 from app.models import Job, MusicTrack, User
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.services.media_overlay_preview import (
+    convert_heif_overlay_preview,
+    is_heif_overlay,
+    nonblank_str,
+)
 from app.storage import signed_get_url
 
 log = structlog.get_logger()
@@ -56,6 +65,7 @@ _TEXT_ELEMENTS_MAX = 50
 # read from the persisted relative key (`video_path`) so playback URLs are always
 # fresh. 6h comfortably covers a viewing session; the page re-polls to refresh.
 PLAYBACK_URL_TTL_MIN = 360
+_HEIF_PREVIEW_BACKFILL_ATTEMPTED: set[str] = set()
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
@@ -407,6 +417,59 @@ class TimelineResponse(BaseModel):
     clips: list[TimelineClipOut]
 
 
+# ── Transactional editor commit (E2) ──────────────────────────────────────────
+
+
+class EditorCommitMix(BaseModel):
+    """Editor mix section. `music_level` maps onto the existing per-variant `mix`
+    semantics (voice/bed balance — voiceover variants only). `original_level` is
+    persisted for round-tripping but not yet honored by the render pipeline."""
+
+    music_level: float | None = Field(None, ge=0.0, le=1.0)
+    original_level: float | None = Field(None, ge=0.0, le=1.0)
+
+
+class EditorCommitRequest(BaseModel):
+    """One atomic editor Save: every provided section validates first; nothing
+    persists unless ALL sections are valid. `base_generation` is the baseline the
+    client loaded (the variant's `render_generation_id`, falling back to
+    `render_finished_at` for variants never edited through the editor) — a moved
+    baseline means another tab/render won and the commit 409s (baseline_conflict).
+    """
+
+    text_elements: list[dict] | None = None
+    timeline_slots: list[TimelineSlotEdit] | None = None
+    mix: EditorCommitMix | None = None
+    sound_effects: list[dict] | None = None
+    media_overlays: list[dict] | None = None
+    title: str | None = Field(None, max_length=300)
+    base_generation: str = ""
+
+    @field_validator("timeline_slots")
+    @classmethod
+    def validate_commit_slot_count(
+        cls, v: list[TimelineSlotEdit] | None
+    ) -> list[TimelineSlotEdit] | None:
+        if v is not None and len(v) > _TIMELINE_MAX_SLOTS:
+            raise ValueError(f"Maximum {_TIMELINE_MAX_SLOTS} timeline slots allowed")
+        return v
+
+
+class EditorCommitSections(BaseModel):
+    text_elements: bool
+    timeline: bool
+    mix: bool
+    sound_effects: bool
+    media_overlays: bool
+    title: bool
+
+
+class EditorCommitResponse(BaseModel):
+    ok: bool
+    generation: str
+    sections: EditorCommitSections
+
+
 class StyleSetIntroPreview(BaseModel):
     """Display-only `intro`-role styling, consumed by the instant-edit client
     preview (DOM overlay on the base video). Projection-only — never reaches the
@@ -482,6 +545,83 @@ def _variants_of(job: Job) -> list[dict]:
     return ((job.assembly_plan or {}).get("variants")) or []
 
 
+def _lazy_backfill_media_overlay_previews(job: Job) -> bool:
+    """Generate missing JPEG previews for legacy HEIC overlay cards.
+
+    Upload-confirm handles new HEIC/HEIF cards, but rows created before that
+    feature can have only the original HEIC source. Chromium cannot preview that
+    source, so the status read does one best-effort conversion and stamps the
+    preview path back onto the variant JSON. Failed conversions are guarded per
+    process and per overlay source path to avoid repeating slow reads on every
+    poll.
+    """
+    variants = _variants_of(job)
+    if not variants:
+        return False
+
+    changed = False
+    next_variants: list[dict] = []
+    for v in variants:
+        if not isinstance(v, dict):
+            next_variants.append(v)
+            continue
+        raw_overlays = v.get("media_overlays")
+        if not raw_overlays:
+            next_variants.append(v)
+            continue
+
+        next_overlays: list[object] = []
+        variant_changed = False
+        for card in raw_overlays:
+            if not isinstance(card, dict):
+                next_overlays.append(card)
+                continue
+
+            src_gcs_path = nonblank_str(card.get("src_gcs_path"))
+            preview_gcs_path = nonblank_str(card.get("preview_gcs_path"))
+            if (
+                src_gcs_path
+                and not preview_gcs_path
+                and is_heif_overlay(src_gcs_path)
+                and src_gcs_path not in _HEIF_PREVIEW_BACKFILL_ATTEMPTED
+            ):
+                _HEIF_PREVIEW_BACKFILL_ATTEMPTED.add(src_gcs_path)
+                preview_gcs_path, preview_url = convert_heif_overlay_preview(src_gcs_path)
+                preview_gcs_path = nonblank_str(preview_gcs_path)
+                preview_url = nonblank_str(preview_url)
+                if preview_gcs_path:
+                    card = {**card, "preview_gcs_path": preview_gcs_path}
+                    variant_changed = True
+                    log.info(
+                        "overlay_heif_preview_lazy_backfilled",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        src_gcs_path=src_gcs_path,
+                        preview_gcs_path=preview_gcs_path,
+                    )
+                else:
+                    log.error(
+                        "overlay_heif_preview_lazy_backfill_failed",
+                        job_id=str(job.id),
+                        variant_id=v.get("variant_id"),
+                        src_gcs_path=src_gcs_path,
+                    )
+            elif "preview_gcs_path" in card and card.get("preview_gcs_path") != preview_gcs_path:
+                card = {**card, "preview_gcs_path": preview_gcs_path}
+                variant_changed = True
+
+            next_overlays.append(card)
+
+        if variant_changed:
+            v = {**v, "media_overlays": next_overlays}
+            changed = True
+        next_variants.append(v)
+
+    if changed:
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": next_variants}
+    return changed
+
+
 def _variants_for_response(job: Job) -> list[dict]:
     """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
@@ -497,6 +637,10 @@ def _variants_for_response(job: Job) -> list[dict]:
     playing the base while a committed re-render is in flight. A signing failure just
     omits the key (the editor degrades to the legacy controls).
     """
+    changed = _lazy_backfill_media_overlay_previews(job)
+    if changed:
+        setattr(job, "_media_overlay_preview_backfilled", True)
+
     out: list[dict] = []
     for v in _variants_of(job):
         video_path = v.get("video_path")
@@ -560,7 +704,9 @@ def _variants_for_response(job: Job) -> list[dict]:
                 if not isinstance(card, dict):
                     signed_overlays.append(card)
                     continue
-                src = card.get("src_gcs_path")
+                src = nonblank_str(card.get("preview_gcs_path")) or nonblank_str(
+                    card.get("src_gcs_path")
+                )
                 if src:
                     try:
                         signed_overlays.append(
@@ -588,17 +734,21 @@ def _variants_for_response(job: Job) -> list[dict]:
             for s in raw_scenes
             if s.get("start_s") is not None and s.get("end_s") is not None
         ]
+        v = {**v, "render_generation_id": v.get("render_generation_id")}
         # TextElement overlay (plan-item-timeline feature).  Surfaced when the
         # kill switch is on so the FE can populate its timeline editor from the
         # persisted state (both the AI-snapshot and user-authored lists).
         if _TEXT_ELEMENTS_ENABLED:
             v = {
                 **v,
-                "text_elements": v.get("text_elements"),
+                "text_elements": merge_projected_text_elements_for_variant(v),
                 "text_elements_user_edited": v.get("text_elements_user_edited", False),
                 "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
                 "text_elements_materialized_from": v.get("text_elements_materialized_from"),
             }
+        # E4: per-variant editor capabilities — one server-side truth source for
+        # which editor surfaces the FE may enable (no endpoint probing).
+        v = {**v, "editor_capabilities": _editor_capabilities(job, v)}
         out.append(v)
     return out
 
@@ -1090,40 +1240,18 @@ def dispatch_patch_scene_timing(job: Job, variant_id: str, *, overrides: list[di
     # NOTE: no render enqueue here — overrides are applied at next reburn.
 
 
-def dispatch_set_media_overlays(
-    job: Job,
-    variant_id: str,
+def validate_media_overlays_for_user(
     *,
     overlays_raw: list[dict],
     user_id: str,
-) -> None:
-    """Validate + enqueue a media-overlay card apply-pass for one variant.
-
-    Full-replace semantics: the caller sends the entire new card list.
-    An empty list clears all cards (restores the clean variant from
-    pre_media_overlay_video_path if available).
-
-    Persists render_status="rendering" on the variant BEFORE enqueuing so the
-    frontend immediately reflects the in-progress state — same pattern as
-    dispatch_edit_timeline (persist first, enqueue second).
-    """
+    variant_context: dict | None = None,
+) -> list[dict]:
+    """Validate a full media-overlay replacement list for one user's namespace."""
     from app.agents._schemas.media_overlay import (  # noqa: PLC0415
         coerce_media_overlays,
         validate_overlay_gcs_path,
     )
-    from app.config import settings as _settings  # noqa: PLC0415
 
-    if not _settings.media_overlays_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Media overlays are not available.",
-        )
-
-    require_editable_variant(job, variant_id)
-
-    # Validate each overlay: parse schema + check GCS prefix allowlist.
-    # Path must be scoped to this user's namespace (users/{user_id}/) to
-    # prevent referencing another user's overlay assets.
     _user_prefix = f"users/{user_id}/"
     validated: list[dict] = []
     if overlays_raw:
@@ -1143,33 +1271,106 @@ def dispatch_set_media_overlays(
                         f"Overlay asset path must be under '{_user_prefix}': {card.src_gcs_path!r}"
                     ),
                 )
+            if card.preview_gcs_path:
+                try:
+                    validate_overlay_gcs_path(card.preview_gcs_path)
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Invalid overlay preview path: {exc}",
+                    ) from exc
+                if not card.preview_gcs_path.startswith(_user_prefix):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Overlay preview path must be under '{_user_prefix}': "
+                            f"{card.preview_gcs_path!r}"
+                        ),
+                    )
             if card.end_s <= card.start_s:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=f"Card {card.id}: end_s must be greater than start_s.",
                 )
             validated.append(card.model_dump())
-        # Plan 009 E4+E9: fullscreen contract — shared with the render:false
-        # autosave path (validate_fullscreen_constraints docstring names all
-        # four coupled overlap sites).
-        from app.services.overlay_apply import (  # noqa: PLC0415
-            validate_fullscreen_constraints,
+        if variant_context is not None:
+            # Plan 009 E4+E9: fullscreen contract. Shared by render:true,
+            # render:false autosave, AI apply, and editor-commit Save paths.
+            from app.services.overlay_apply import (  # noqa: PLC0415
+                validate_fullscreen_constraints,
+            )
+
+            try:
+                validate_fullscreen_constraints(cards, variant_context)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+    return validated
+
+
+def validate_sound_effects_for_user(*, sfx_raw: list[dict], user_id: str) -> list[dict]:
+    """Validate a full sound-effect placement replacement list for one user."""
+    from app.agents._schemas.sound_effect import (  # noqa: PLC0415
+        coerce_sound_effects,
+        validate_sfx_gcs_path,
+    )
+
+    _user_prefix = f"users/{user_id}/"
+    validated: list[dict] = []
+    if sfx_raw:
+        placements = coerce_sound_effects(sfx_raw) or []
+        for placement in placements:
+            try:
+                validate_sfx_gcs_path(placement.src_gcs_path)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid SFX asset path: {exc}",
+                ) from exc
+            is_user_path = placement.src_gcs_path.startswith("users/")
+            if is_user_path and not placement.src_gcs_path.startswith(_user_prefix):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"SFX asset path must be under '{_user_prefix}': {placement.src_gcs_path!r}"
+                    ),
+                )
+            validated.append(placement.model_dump())
+    return validated
+
+
+def dispatch_set_media_overlays(
+    job: Job,
+    variant_id: str,
+    *,
+    overlays_raw: list[dict],
+    user_id: str,
+) -> None:
+    """Validate + enqueue a media-overlay card apply-pass for one variant.
+
+    Full-replace semantics: the caller sends the entire new card list.
+    An empty list clears all cards (restores the clean variant from
+    pre_media_overlay_video_path if available).
+
+    Persists render_status="rendering" on the variant BEFORE enqueuing so the
+    frontend immediately reflects the in-progress state — same pattern as
+    dispatch_edit_timeline (persist first, enqueue second).
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.media_overlays_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Media overlays are not available.",
         )
 
-        _variant_for_check = next(
-            (
-                v
-                for v in (job.assembly_plan or {}).get("variants") or []
-                if v.get("variant_id") == variant_id
-            ),
-            {},
-        )
-        try:
-            validate_fullscreen_constraints(cards, _variant_for_check)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-            ) from exc
+    variant = require_editable_variant(job, variant_id)
+    validated = validate_media_overlays_for_user(
+        overlays_raw=overlays_raw,
+        user_id=user_id,
+        variant_context=variant,
+    )
 
     # Persist render_status="rendering" first (row-locked by the DB session the
     # route holds), then enqueue — prevents a race where the worker reads "ready"
@@ -1221,10 +1422,6 @@ def dispatch_set_sound_effects(
     Routes to the overlay-jobs queue (same as media overlays — solo worker,
     no CLIP model fork hazard).
     """
-    from app.agents._schemas.sound_effect import (  # noqa: PLC0415
-        coerce_sound_effects,
-        validate_sfx_gcs_path,
-    )
     from app.config import settings as _settings  # noqa: PLC0415
 
     if not _settings.sound_effects_enabled:
@@ -1235,41 +1432,7 @@ def dispatch_set_sound_effects(
 
     require_editable_variant(job, variant_id)
 
-    # Validate each placement.
-    _user_prefix = f"users/{user_id}/"
-    validated: list[dict] = []
-    if sfx_raw:
-        placements = coerce_sound_effects(sfx_raw) or []
-        for placement in placements:
-            # Curated paths: resolve src_gcs_path server-side from the SoundEffect row.
-            # Never trust a client-supplied sound-effects/ path.
-            if placement.sound_effect_id:
-                # We need a sync-compatible lookup here. Use the same db session
-                # pattern as other dispatchers (db is async, but we have a sync
-                # workaround — import inline and use run_sync).
-                # For simplicity, since dispatch functions in this module already
-                # call .delay() synchronously, we do a best-effort path trust check
-                # and rely on the worker-side validate_sfx_gcs_path for enforcement.
-                # The route layer (set_item_sound_effects) resolves the path server-side
-                # before calling this function.
-                pass  # src_gcs_path is already set by the route layer
-            try:
-                validate_sfx_gcs_path(placement.src_gcs_path)
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid SFX asset path: {exc}",
-                ) from exc
-            # User-uploaded paths must be scoped to this user's namespace.
-            is_user_path = placement.src_gcs_path.startswith("users/")
-            if is_user_path and not placement.src_gcs_path.startswith(_user_prefix):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"SFX asset path must be under '{_user_prefix}': {placement.src_gcs_path!r}"
-                    ),
-                )
-            validated.append(placement.model_dump())
+    validated = validate_sound_effects_for_user(sfx_raw=sfx_raw, user_id=user_id)
 
     # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays).
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
@@ -1291,40 +1454,34 @@ def dispatch_set_sound_effects(
     )
 
 
-def dispatch_set_text_elements(
-    job: Job,
-    variant_id: str,
-    *,
+def validate_text_elements_payload(
+    variant: dict,
     elements: list[dict],
-    render: bool = True,
-) -> None:
-    """Validate + persist TextElements on a variant; optionally enqueue fast-reburn.
+    *,
+    require_base: bool,
+    strict_drop: bool = False,
+) -> tuple[list[dict], bool]:
+    """Shared text-element SECTION validation (PUT /text-elements + editor-commit E2).
 
-    Full-replace semantics: `elements` becomes the authoritative element list for
-    this variant.  An empty list clears all text overlays.
-
-    Guards (all raise HTTPException before any write):
+    Raises (no writes):
       - Feature flag disabled → 404
-      - Unknown / rendering variant → 404 / 409 (via require_editable_variant)
       - text_mode='lyrics' → 422 (A16; lyric lines are beat-synced)
       - len(elements) > _TEXT_ELEMENTS_MAX → 422 (A—)
-      - render=True + base_video_path is None → 422 (no cached base yet)
+      - `require_base` + base_video_path is None → 422 (no cached base yet)
+      - end_s <= start_s on any coerced element → 422
 
-    On write (all before enqueue):
-      - Coerces elements via coerce_text_elements; invalid entries dropped silently
-      - Stores as text_elements on the variant dict
-      - Sets text_elements_user_edited=True
-      - Writes render_generation_id (A20) for stale-write detection
-      - Sets render_status='rendering' when render=True
-      - Replaces job.assembly_plan (SQLAlchemy change tracking via flag_modified)
+    Returns `(validated_element_dicts, materialized_from_sequence)` — the flag is
+    True when an empty payload on a first-edit sequence variant was seeded from
+    the live scenes (T8 materialization), so the caller records the metadata.
+    Invalid entries are dropped silently by `coerce_text_elements` by default
+    (legacy PUT behavior). editor-commit passes `strict_drop=True`, turning any
+    dropped entry into a 422 so Save never loses user-authored text silently.
     """
     if not _TEXT_ELEMENTS_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Text element editing is not available.",
         )
-
-    variant = require_editable_variant(job, variant_id)
 
     # A16: lyrics variant is beat-synced; re-cutting the text would break sync.
     if variant.get("text_mode") == "lyrics":
@@ -1341,13 +1498,13 @@ def dispatch_set_text_elements(
         )
 
     # fast-reburn requires a pre-built text-free base; older/lyrics variants lack it.
-    if render and not variant.get("base_video_path"):
+    if require_base and not variant.get("base_video_path"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No cached base video for fast-reburn — regenerate the variant first.",
         )
 
-    # T8 — Sequence materialization: on the first PUT /text-elements for a sequence
+    # T8 — Sequence materialization: on the first text-element write for a sequence
     # variant, seed elements from the live scenes when the user sent an empty list.
     # This gives them the current editorial sequence as their starting point.
     _is_first_sequence_edit = (
@@ -1368,6 +1525,11 @@ def dispatch_set_text_elements(
     validated: list[dict] = []
     if elements:
         coerced = coerce_text_elements(elements)
+        if strict_drop and len(coerced or []) != len(elements):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="One or more text elements are invalid and were not saved.",
+            )
         if coerced:
             # Additional cross-field check: end_s must be > start_s.
             for elem in coerced:
@@ -1377,6 +1539,49 @@ def dispatch_set_text_elements(
                         detail=f"Element {elem.id}: end_s must be greater than start_s.",
                     )
             validated = [e.model_dump() for e in coerced]
+            validated = append_ai_text_tombstones(variant, validated)
+        elif variant.get("text_elements_user_edited"):
+            # Explicit empty list = delete all generated AI text. Persist tombstones
+            # so the read adapter does not resurrect projected bars on reload.
+            validated = append_ai_text_tombstones(variant, [])
+    return validated, _is_first_sequence_edit
+
+
+def dispatch_set_text_elements(
+    job: Job,
+    variant_id: str,
+    *,
+    elements: list[dict],
+    render: bool = True,
+) -> None:
+    """Validate + persist TextElements on a variant; optionally enqueue fast-reburn.
+
+    Full-replace semantics: `elements` becomes the authoritative element list for
+    this variant.  An empty list clears all text overlays.
+
+    Guards (all raise HTTPException before any write):
+      - Feature flag disabled → 404
+      - Unknown / rendering variant → 404 / 409 (via require_editable_variant)
+      - Section rules → 404/422 (via validate_text_elements_payload)
+
+    On write (all before enqueue):
+      - Stores validated elements as text_elements on the variant dict
+      - Sets text_elements_user_edited=True
+      - Writes render_generation_id (A20) for stale-write detection
+      - Sets render_status='rendering' when render=True
+      - Replaces job.assembly_plan (SQLAlchemy change tracking via flag_modified)
+    """
+    if not _TEXT_ELEMENTS_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Text element editing is not available.",
+        )
+
+    variant = require_editable_variant(job, variant_id)
+
+    validated, _is_first_sequence_edit = validate_text_elements_payload(
+        variant, elements, require_base=render
+    )
 
     # Write render_generation_id before any DB mutation so the stale check in the
     # worker can compare against the value that was current when we enqueued.
@@ -1757,6 +1962,61 @@ def _timeline_error(status_code: int, code: str) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"code": code})
 
 
+def _editor_capabilities(job: Job, variant: dict) -> dict:
+    """E4: server-derived editor capability map for one variant (kills FE 404-probing).
+
+    Cheap by design — flag reads, string checks, and the already-persisted
+    source-liveness prefix check inside `_timeline_ineligibility`. No GCS calls.
+    `reason` carries the timeline-ineligibility code (the same vocabulary the GET
+    /timeline endpoint reports) when timeline/split are disabled, else null.
+    """
+    timeline_reason = _timeline_ineligibility(job, variant)
+    timeline_ok = timeline_reason is None
+    caption_reason = (
+        "captions are edited in the captions tab"
+        if variant.get("resolved_archetype") in {"narrated", "subtitled"}
+        else None
+    )
+    from app.config import settings  # noqa: PLC0415
+
+    effects_reason = None
+    if variant.get("resolved_archetype") in _CAPTION_EDIT_ARCHETYPES:
+        effects_reason = "caption_archetype"
+    elif not variant.get("video_path") and not variant.get("output_url"):
+        effects_reason = "no_video"
+    sfx_reason = (
+        "sound_effects_disabled"
+        if not settings.sound_effects_enabled
+        else effects_reason
+    )
+    overlays_reason = (
+        "media_overlays_disabled"
+        if not settings.media_overlays_enabled
+        else effects_reason
+    )
+    return {
+        # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
+        "text_elements": (
+            _TEXT_ELEMENTS_ENABLED
+            and variant.get("text_mode") != "lyrics"
+            and caption_reason is None
+        ),
+        "timeline": timeline_ok,
+        # Splitting a clip is a timeline-override operation — same eligibility.
+        "split_clips": timeline_ok,
+        # Mirrors dispatch_set_mix: only variants carrying a voice bed can rebalance.
+        "mix": (
+            variant.get("mix") is not None
+            or str(variant.get("variant_id") or "").startswith("voiceover")
+        ),
+        "sfx": sfx_reason is None,
+        "overlays": overlays_reason is None,
+        "reason": caption_reason or timeline_reason,
+        "sfx_reason": sfx_reason,
+        "overlays_reason": overlays_reason,
+    }
+
+
 def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
     """Effective timeline (user_timeline if present, else ai_timeline) + clip pool.
 
@@ -1840,24 +2100,17 @@ async def persist_user_timeline(
     await db.commit()
 
 
-async def dispatch_edit_timeline(
-    job: Job, variant_id: str, payload: TimelineEditRequest, *, db: AsyncSession
-) -> None:
-    """Validate a user timeline, persist it (row-locked), then enqueue the re-render.
+def resolve_timeline_slots_for_edit(
+    job: Job, variant: dict, slots: list[TimelineSlotEdit]
+) -> list[dict]:
+    """Validate a posted slot list against this variant → resolved slot dicts.
 
-    Persist FIRST, enqueue second: a worker that picks the task up instantly must
-    always observe the committed `user_timeline` (the override travels with the
-    task too, but the persisted copy is what survives retries + the GET merge).
+    Single-sourced timeline SECTION validation shared by POST /timeline and the
+    transactional editor commit (E2): eligibility (422 with the reason code),
+    stale slot ids (409 TIMELINE_STALE), beat-grid window math, bounds / floor /
+    ceiling checks, and a hard existence check on every durable source. Raises
+    HTTPException on any violation; never writes.
     """
-    from app.config import settings  # noqa: PLC0415
-
-    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
-        raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
-    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 rendering
-    # A timeline re-render re-cuts from the shared per-job sources; let any in-flight
-    # sibling render finish first so two renders never race the same job row.
-    if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
-        raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
     reason = _timeline_ineligibility(job, variant)
     if reason is not None:
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
@@ -1868,14 +2121,14 @@ async def dispatch_edit_timeline(
     # against an outdated timeline (e.g. a sibling tab re-rendered) — reject the
     # whole edit rather than guess at intent.
     known_ids = {s.get("slot_id") for s in [*ai_slots, *user_slots] if s.get("slot_id")}
-    for e in payload.slots:
+    for e in slots:
         if e.slot_id is not None and e.slot_id not in known_ids:
             raise _timeline_error(status.HTTP_409_CONFLICT, "TIMELINE_STALE")
 
     clip_paths = list((job.all_candidates or {}).get("clip_paths") or [])
-    if not any(not e.removed for e in payload.slots):
+    if not any(not e.removed for e in slots):
         raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_EMPTY")
-    for e in payload.slots:
+    for e in slots:
         if e.clip_index < 0 or e.clip_index >= len(clip_paths):
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_UNKNOWN_CLIP")
 
@@ -1927,7 +2180,7 @@ async def dispatch_edit_timeline(
     resolved: list[dict] = []
     grid_offset = 0  # cumulative beat cursor — grids are NOT uniform
     total = 0.0
-    for order, e in enumerate(payload.slots):
+    for order, e in enumerate(slots):
         duration_s = e.duration_s
         if not e.removed:
             if beat_grid and e.duration_beats is not None and e.duration_beats >= 1:
@@ -1998,6 +2251,30 @@ async def dispatch_edit_timeline(
         if not storage.object_exists(path):
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "sources_expired")
 
+    return resolved
+
+
+async def dispatch_edit_timeline(
+    job: Job, variant_id: str, payload: TimelineEditRequest, *, db: AsyncSession
+) -> None:
+    """Validate a user timeline, persist it (row-locked), then enqueue the re-render.
+
+    Persist FIRST, enqueue second: a worker that picks the task up instantly must
+    always observe the committed `user_timeline` (the override travels with the
+    task too, but the persisted copy is what survives retries + the GET merge).
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
+        raise _timeline_error(status.HTTP_403_FORBIDDEN, "disabled")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 rendering
+    # A timeline re-render re-cuts from the shared per-job sources; let any in-flight
+    # sibling render finish first so two renders never race the same job row.
+    if any(v.get("render_status") == "rendering" for v in _variants_of(job)):
+        raise _timeline_error(status.HTTP_409_CONFLICT, "JOB_BUSY")
+
+    resolved = resolve_timeline_slots_for_edit(job, variant, payload.slots)
+
     await persist_user_timeline(db, str(job.id), variant_id, resolved)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
@@ -2030,6 +2307,240 @@ async def dispatch_reset_timeline(job: Job, variant_id: str, *, db: AsyncSession
     regenerate_generative_variant.delay(
         str(job.id), variant_id, timeline_override=[dict(s) for s in ai_slots]
     )
+
+
+# ── Transactional editor commit dispatch (E2) ───────────────────────────────────
+
+
+def variant_render_baseline(variant: dict) -> str:
+    """The compare-and-fail baseline a client must echo back on editor-commit.
+
+    `render_generation_id` when the variant has ever been committed through a
+    token-stamped edit; else the last `render_finished_at`; else "" (a variant
+    that never finished a render has nothing to conflict with).
+    """
+    return str(variant.get("render_generation_id") or variant.get("render_finished_at") or "")
+
+
+def prepare_editor_commit(
+    job: Job,
+    variant_id: str,
+    payload: EditorCommitRequest,
+    *,
+    user_id: str | None = None,
+) -> dict:
+    """Validate ALL sections, compare the baseline, then stage ONE atomic write.
+
+    Deliberately does NOT use `require_editable_variant`: saving during an
+    in-flight render is the point — the E1 generation guard supersedes the old
+    task's terminal write. Raises before ANY mutation:
+      - 404 unknown variant
+      - 422 no sections provided / any invalid section (single-sourced section
+        validators: `validate_text_elements_payload`, `resolve_timeline_slots_for_edit`,
+        the dispatch_set_mix voiceover rule)
+      - 409 {"detail": "baseline_conflict"} when the variant moved since load
+
+    On success, mutates `job.assembly_plan` IN ONE new-dict replacement — that
+    reassignment is what marks the JSONB column dirty (same pattern as
+    `persist_user_timeline`); the caller owns the single db.commit. Render-
+    affecting sections bump `render_generation_id` and set
+    render_status="rendering"; a title-only commit stages nothing here and
+    kicks no render.
+    """
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+
+    if (
+        payload.text_elements is None
+        and payload.timeline_slots is None
+        and payload.mix is None
+        and payload.sound_effects is None
+        and payload.media_overlays is None
+        and payload.title is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide at least one section to commit.",
+        )
+
+    # ── Validate every provided section BEFORE any write ──────────────────────
+    validated_elements: list[dict] | None = None
+    materialized_from_sequence = False
+    text_requires_full_render = False
+    if payload.text_elements is not None:
+        # The fast-reburn base is only required when this commit will take the
+        # reburn path (no timeline change → no full re-assembly).
+        text_requires_full_render = payload.timeline_slots is None and not bool(
+            variant.get("base_video_path")
+        )
+        validated_elements, materialized_from_sequence = validate_text_elements_payload(
+            variant,
+            payload.text_elements,
+            require_base=payload.timeline_slots is None and not text_requires_full_render,
+            strict_drop=True,
+        )
+
+    resolved_slots: list[dict] | None = None
+    if payload.timeline_slots is not None:
+        resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
+
+    mix_override: float | None = None
+    if payload.mix is not None:
+        # Same rule as dispatch_set_mix: only voiceover variants carry a voice
+        # bed to rebalance.
+        if variant.get("mix") is None and not str(variant_id).startswith("voiceover"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This edit has no voiceover to mix.",
+            )
+        mix_override = payload.mix.music_level
+
+    validated_sfx: list[dict] | None = None
+    if payload.sound_effects is not None:
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        if not _settings.sound_effects_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sound effects are not available for this editor commit.",
+            )
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Sound effects require a user-scoped asset namespace.",
+            )
+        validated_sfx = validate_sound_effects_for_user(
+            sfx_raw=payload.sound_effects,
+            user_id=user_id,
+        )
+
+    validated_overlays: list[dict] | None = None
+    if payload.media_overlays is not None:
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        if not _settings.media_overlays_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Media overlays are not available for this editor commit.",
+            )
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Media overlays require a user-scoped asset namespace.",
+            )
+        validated_overlays = validate_media_overlays_for_user(
+            overlays_raw=payload.media_overlays,
+            user_id=user_id,
+            variant_context=variant,
+        )
+
+    # ── Stale-baseline compare-and-fail (multi-tab / superseded-render safety) ─
+    if payload.base_generation != variant_render_baseline(variant):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
+
+    # ── Stage the single atomic job-JSON write ─────────────────────────────────
+    has_render_section = (
+        validated_elements is not None
+        or resolved_slots is not None
+        or payload.mix is not None
+        or validated_sfx is not None
+        or validated_overlays is not None
+    )
+    new_gen = uuid.uuid4().hex if has_render_section else None
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for i, v in enumerate(variants):
+        if v.get("variant_id") != variant_id:
+            continue
+        updated = dict(v)
+        if validated_elements is not None:
+            updated["text_elements"] = validated_elements
+            updated["text_elements_user_edited"] = True
+            if materialized_from_sequence:
+                updated["geometry_materialized_at_version"] = "1"
+                updated["text_elements_materialized_from"] = "sequence"
+        if resolved_slots is not None:
+            updated["user_timeline"] = {"slots": resolved_slots}
+        if payload.mix is not None:
+            if payload.mix.music_level is not None:
+                updated["mix"] = float(payload.mix.music_level)
+            if payload.mix.original_level is not None:
+                # Round-trip persistence only — not yet honored by the renderer.
+                updated["original_audio_level"] = float(payload.mix.original_level)
+        if validated_sfx is not None:
+            updated["sound_effects"] = validated_sfx or None
+        if validated_overlays is not None:
+            updated["media_overlays"] = validated_overlays or None
+        if new_gen is not None:
+            updated["render_generation_id"] = new_gen
+            updated["render_status"] = "rendering"
+        variants[i] = updated
+        break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+
+    return {
+        "generation": new_gen or payload.base_generation,
+        "has_render_section": has_render_section,
+        "timeline_override": resolved_slots,
+        "mix_override": mix_override,
+        "sfx_override": validated_sfx,
+        "media_overlays_override": validated_overlays,
+        "text_requires_full_render": text_requires_full_render,
+        "sections": {
+            "text_elements": payload.text_elements is not None,
+            "timeline": payload.timeline_slots is not None,
+            "mix": payload.mix is not None,
+            "sound_effects": payload.sound_effects is not None,
+            "media_overlays": payload.media_overlays is not None,
+        },
+    }
+
+
+def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> None:
+    """Kick exactly ONE render for a committed editor Save (call AFTER db.commit).
+
+    Text-only commits ride the overlay-jobs queue (they take the fast-reburn
+    path, mirroring PUT /text-elements); anything touching the timeline or mix
+    is a full re-assembly and rides the default queue. No-op for title-only
+    commits. The task carries the freshly-bumped render_gen_id so E1 can discard
+    any older in-flight task's terminal write.
+    """
+    if not prep["has_render_section"]:
+        return
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    kwargs: dict = {"render_gen_id": prep["generation"]}
+    if prep["timeline_override"] is not None:
+        kwargs["timeline_override"] = prep["timeline_override"]
+    if prep["mix_override"] is not None:
+        kwargs["mix_override"] = float(prep["mix_override"])
+    has_text_section = prep["sections"].get("text_elements") is True
+    full_render = (
+        prep["timeline_override"] is not None
+        or prep["mix_override"] is not None
+        or prep.get("text_requires_full_render") is True
+    )
+    if full_render or has_text_section:
+        # Text/timeline/mix full re-renders read the just-persisted variant state.
+        # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
+        pass
+    elif prep["media_overlays_override"] is not None:
+        # Overlay pass is outer-video, then the worker's terminal hook reapplies the
+        # just-persisted SFX if this same commit also changed sound_effects.
+        kwargs["media_overlays_override"] = prep["media_overlays_override"]
+    elif prep["sfx_override"] is not None:
+        kwargs["sfx_override"] = prep["sfx_override"]
+    is_reburn_only = (
+        prep["timeline_override"] is None
+        and prep["mix_override"] is None
+        and prep.get("text_requires_full_render") is not True
+    )
+    apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
+    if is_reburn_only:
+        # Overlay-jobs queue: solo worker — avoids macOS prefork CLIP fork crash.
+        apply_kwargs["queue"] = "overlay-jobs"
+    regenerate_generative_variant.apply_async(**apply_kwargs)
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -2143,10 +2654,12 @@ async def get_generative_job_status(
     if baselines and pending_count > 0:
         baselines = scale_render_variants(baselines, pending_count)
 
-    return GenerativeJobStatusResponse(
+    variants = _variants_for_response(job)
+
+    response = GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
-        variants=_variants_for_response(job),
+        variants=variants,
         error_detail=job.error_detail,
         created_at=job.created_at,
         updated_at=job.updated_at,
@@ -2157,6 +2670,9 @@ async def get_generative_job_status(
         finished_at=job.finished_at,
         expected_phase_durations=baselines,
     )
+    if getattr(job, "_media_overlay_preview_backfilled", False):
+        await db.commit()
+    return response
 
 
 @router.post("/{job_id}/variants/{variant_id}/swap-song", response_model=GenerativeJobResponse)

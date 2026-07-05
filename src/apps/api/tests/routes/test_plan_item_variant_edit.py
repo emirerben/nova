@@ -119,6 +119,136 @@ def _override(user, db) -> None:
     app.dependency_overrides[get_db] = lambda: db
 
 
+def test_overlay_upload_confirm_converts_heic_preview(client: TestClient, monkeypatch) -> None:
+    from app.config import settings
+
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([item], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    calls: list[str] = []
+
+    def _fake_convert(path: str) -> tuple[str, str]:
+        calls.append(path)
+        return f"{path}.preview.jpg", f"https://signed/{path}.preview.jpg"
+
+    monkeypatch.setattr("app.routes.plan_items._convert_heif_overlay_preview", _fake_convert)
+    gcs_path = f"users/{user.id}/plan/{item.id}/overlays/card.heic"
+
+    resp = client.post(
+        f"/plan-items/{item.id}/overlay-upload-confirm",
+        json={"files": [{"gcs_path": gcs_path, "content_type": "image/heic"}]},
+    )
+
+    assert resp.status_code == 200
+    assert calls == [gcs_path]
+    assert resp.json()["files"] == [
+        {
+            "gcs_path": gcs_path,
+            "preview_gcs_path": f"{gcs_path}.preview.jpg",
+            "preview_url": f"https://signed/{gcs_path}.preview.jpg",
+        }
+    ]
+
+
+def test_overlay_upload_confirm_treats_blank_preview_stamp_as_absent(
+    client: TestClient, monkeypatch
+) -> None:
+    from app.config import settings
+
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([item], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    monkeypatch.setattr(
+        "app.routes.plan_items._convert_heif_overlay_preview",
+        lambda path: ("   ", ""),
+    )
+    gcs_path = f"users/{user.id}/plan/{item.id}/overlays/card.heic"
+
+    resp = client.post(
+        f"/plan-items/{item.id}/overlay-upload-confirm",
+        json={"files": [{"gcs_path": gcs_path, "content_type": "image/heic"}]},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["files"][0]["preview_gcs_path"] is None
+    assert resp.json()["files"][0]["preview_url"] is None
+
+
+def test_overlay_upload_confirm_non_heic_keeps_no_preview(client: TestClient, monkeypatch) -> None:
+    from app.config import settings
+
+    user = _user()
+    item, plan = _owned_item(user.id)
+    db = _db([item], plan)
+    _override(user, db)
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    convert = MagicMock()
+    monkeypatch.setattr("app.routes.plan_items._convert_heif_overlay_preview", convert)
+    gcs_path = f"users/{user.id}/plan/{item.id}/overlays/card.png"
+
+    resp = client.post(
+        f"/plan-items/{item.id}/overlay-upload-confirm",
+        json={"files": [{"gcs_path": gcs_path, "content_type": "image/png"}]},
+    )
+
+    assert resp.status_code == 200
+    convert.assert_not_called()
+    assert resp.json()["files"][0]["preview_gcs_path"] is None
+    assert resp.json()["files"][0]["preview_url"] is None
+
+
+def test_convert_heif_overlay_preview_generates_jpeg(monkeypatch, tmp_path) -> None:
+    try:
+        import pillow_heif
+        from PIL import Image
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"pillow-heif/Pillow unavailable: {exc}")
+
+    pillow_heif.register_heif_opener()
+    src = tmp_path / "source.heic"
+    try:
+        Image.new("RGB", (8, 8), "#336699").save(src, format="HEIF")
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"local pillow-heif cannot encode HEIF: {exc}")
+
+    import app.routes.plan_items as plan_items
+
+    uploaded: dict[str, str] = {}
+
+    def _download_to_file(gcs_path: str, local_path: str) -> None:
+        assert gcs_path == "users/u1/plan/p1/overlays/card.heic"
+        with open(src, "rb") as infile, open(local_path, "wb") as outfile:
+            outfile.write(infile.read())
+
+    def _upload_public_read(local_path: str, gcs_path: str, *, content_type: str | None = None):
+        uploaded["gcs_path"] = gcs_path
+        uploaded["content_type"] = content_type or ""
+        with Image.open(local_path) as preview:
+            uploaded["format"] = preview.format or ""
+            uploaded["size"] = f"{preview.size[0]}x{preview.size[1]}"
+        return f"https://signed/{gcs_path}"
+
+    monkeypatch.setattr(plan_items.storage, "download_to_file", _download_to_file)
+    monkeypatch.setattr(plan_items.storage, "upload_public_read", _upload_public_read)
+
+    preview_path, preview_url = plan_items._convert_heif_overlay_preview(
+        "users/u1/plan/p1/overlays/card.heic"
+    )
+
+    assert preview_path == "users/u1/plan/p1/overlays/card.heic.preview.jpg"
+    assert preview_url == "https://signed/users/u1/plan/p1/overlays/card.heic.preview.jpg"
+    assert uploaded == {
+        "gcs_path": "users/u1/plan/p1/overlays/card.heic.preview.jpg",
+        "content_type": "image/jpeg",
+        "format": "JPEG",
+        "size": "8x8",
+    }
+
+
 # ── swap-song ────────────────────────────────────────────────────────────────
 
 

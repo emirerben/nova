@@ -3176,9 +3176,7 @@ def test_reapply_persisted_sfx_reapplies_and_resets_pre_sfx(monkeypatch):
     )
     _patch_job_session(monkeypatch, job)
     calls = {}
-    monkeypatch.setattr(
-        gb, "_run_sfx_pass", lambda *, job_id, variant_id, sfx_raw: calls.update(sfx_raw=sfx_raw)
-    )
+    monkeypatch.setattr(gb, "_run_sfx_pass", lambda *, sfx_raw, **kw: calls.update(sfx_raw=sfx_raw))
 
     gb._reapply_persisted_sfx_if_any(job_id=str(uuid.uuid4()), variant_id="v1")
 

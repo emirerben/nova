@@ -66,6 +66,67 @@ _DEFAULT_HIGHLIGHT_COLOR = "#FFD24A"
 _HEX_LEN = (4, 7)  # "#RGB" or "#RRGGBB"
 
 
+# ── Parity-gated style-field resolvers (T11, D9/D17) ─────────────────────────
+#
+# Pure, import-light helpers shared by the Skia renderer and the parity
+# contract tests. Each has an EXACT TS mirror in
+# src/apps/web/src/lib/overlay-layout.ts, locked by a shared JSON fixture in
+# tests/fixtures/text-element-parity/ (see
+# tests/pipeline/test_text_element_parity_contract.py).
+
+# Mirrors LETTER_SPACING_* / LINE_SPACING_* in text_element.py + overlay-layout.ts.
+_LETTER_SPACING_MIN_EM = -0.05
+_LETTER_SPACING_MAX_EM = 0.5
+_LINE_SPACING_MIN = 0.5
+_LINE_SPACING_MAX = 3.0
+_MAX_WIDTH_FRAC_MIN = 0.2
+_MAX_WIDTH_FRAC_MAX = 1.0
+DEFAULT_MAX_WIDTH_FRAC = 0.9
+# Renderer default line-height multiplier (Skia _LINE_SPACING / CSS preview).
+DEFAULT_LINE_SPACING = 1.15
+
+
+def resolve_letter_spacing_em(value: object) -> float:
+    """Clamped letter-spacing in em; 0.0 (no tracking) for absent/invalid.
+    TS mirror: resolveLetterSpacingEm (overlay-layout.ts)."""
+    if value is None:
+        return 0.0
+    try:
+        return max(_LETTER_SPACING_MIN_EM, min(_LETTER_SPACING_MAX_EM, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def resolve_letter_spacing_px(value: object, font_size_px: float) -> float:
+    """em → px at the FINAL drawn font size (both renderers scale tracking with
+    the size the text actually renders at, including shrink-to-fit).
+    TS mirror: resolveLetterSpacingPx (overlay-layout.ts)."""
+    return resolve_letter_spacing_em(value) * float(font_size_px)
+
+
+def resolve_line_spacing(value: object) -> float:
+    """Clamped line-height multiplier; DEFAULT_LINE_SPACING for absent/invalid.
+    TS mirror: resolveLineSpacing (overlay-layout.ts)."""
+    if value is None:
+        return DEFAULT_LINE_SPACING
+    try:
+        return max(_LINE_SPACING_MIN, min(_LINE_SPACING_MAX, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_LINE_SPACING
+
+
+def resolve_max_width_frac(value: object) -> float:
+    """Clamped max wrap width as a fraction of frame width; renderer default
+    (0.9) for absent/invalid. TS mirror: resolveMaxWidthFrac
+    (overlay-layout.ts)."""
+    if value is None:
+        return DEFAULT_MAX_WIDTH_FRAC
+    try:
+        return max(_MAX_WIDTH_FRAC_MIN, min(_MAX_WIDTH_FRAC_MAX, float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_WIDTH_FRAC
+
+
 def _coerce_hex(value: object, default: str) -> str:
     """Accept only a valid #RGB/#RRGGBB hex; anything else → default. Self-defending so
     a caller passing user-controlled colors can't push junk to the renderer."""
@@ -97,6 +158,9 @@ def build_intro_overlay(
     text_size_px: int | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
+    letter_spacing: float | None = None,
+    line_spacing: float | None = None,
+    max_width_frac: float | None = None,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -153,6 +217,15 @@ def build_intro_overlay(
         overlay["position_x_frac"] = float(position_x_frac)
     if position_y_frac is not None:
         overlay["position_y_frac"] = float(position_y_frac)
+
+    # Parity-gated spacing fields (T11): clamped here so the burn dict always
+    # carries renderer-safe values (same clamps as the schema + the TS layout).
+    if letter_spacing is not None:
+        overlay["letter_spacing"] = resolve_letter_spacing_em(letter_spacing)
+    if line_spacing is not None:
+        overlay["line_spacing"] = resolve_line_spacing(line_spacing)
+    if max_width_frac is not None:
+        overlay["max_width_frac"] = resolve_max_width_frac(max_width_frac)
 
     # Only the karaoke-line effect consumes per-word timings. Synthesize them from the
     # overlay window (even split, beat-snapped when a song is present).
@@ -737,9 +810,18 @@ def build_overlays_from_text_elements(
     For ``karaoke-line`` elements with stored ``word_timings``, those timings are used
     verbatim (bypassing ``synthesize_word_timings``) to reproduce the original
     beat-snapped values without needing the song's beat list.
+
+    ``text_case`` is resolved HERE (compile time): the burn dict carries the
+    transformed text, so the Skia renderer, the Pillow fallback, and the CSS
+    preview (which applies the same transform in ``resolveTextElementsLayout``)
+    all agree by construction. The stored element keeps the user's casing.
     """
+    from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
+
     overlays: list[dict] = []
     for elem in elements:
+        if getattr(elem, "removed", False):
+            continue
         # ── position → burn-dict position + optional explicit fracs ──────────
         if elem.position == "custom":
             pos = _DEFAULT_POSITION
@@ -766,6 +848,16 @@ def build_overlays_from_text_elements(
         text_size_px = int(elem.size_px) if elem.size_px is not None else None
         stroke_w = int(elem.stroke_width) if elem.stroke_width is not None else None
 
+        # text_case: transform the display text AND any stored karaoke word
+        # timings (their `text` keys are what _draw_karaoke_line burns).
+        elem_text = apply_text_case(elem.text, elem.text_case)
+        elem_word_timings = elem.word_timings
+        if elem.text_case and elem.text_case != "none" and elem_word_timings:
+            elem_word_timings = [
+                {**wt, "text": apply_text_case(str(wt.get("text", "")), elem.text_case)}
+                for wt in elem_word_timings
+            ]
+
         # ── reveal_s: produce [reveal, hold] pair (directly authored only) ───
         # Adapter-sourced elements never set reveal_s (legacy burn dicts don't
         # carry it); those come back as two pre-split TextElements already.
@@ -773,7 +865,7 @@ def build_overlays_from_text_elements(
             reveal_end = min(max(0.0, float(elem.reveal_s)), elem.end_s)
 
             reveal = build_intro_overlay(
-                elem.text,
+                elem_text,
                 effect=effect,
                 position=pos,
                 size_class=size_class,
@@ -787,11 +879,14 @@ def build_overlays_from_text_elements(
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
+                letter_spacing=elem.letter_spacing,
+                line_spacing=elem.line_spacing,
+                max_width_frac=elem.max_width_frac,
             )
             if reveal is not None:
                 reveal["role"] = elem.role
-                if effect == "karaoke-line" and elem.word_timings:
-                    reveal["word_timings"] = elem.word_timings
+                if effect == "karaoke-line" and elem_word_timings:
+                    reveal["word_timings"] = elem_word_timings
                 if elem.fade_out_ms is not None:
                     reveal["fade_out_ms"] = elem.fade_out_ms
                 if elem.z is not None:
@@ -802,7 +897,7 @@ def build_overlays_from_text_elements(
             # karaoke sweeps every word to highlight_color; others stay text_color.
             settled = highlight_color_v if effect == "karaoke-line" else text_color
             hold = build_intro_overlay(
-                elem.text,
+                elem_text,
                 effect="static",
                 position=pos,
                 size_class=size_class,
@@ -816,6 +911,9 @@ def build_overlays_from_text_elements(
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
+                letter_spacing=elem.letter_spacing,
+                line_spacing=elem.line_spacing,
+                max_width_frac=elem.max_width_frac,
             )
             if hold is not None:
                 hold["role"] = elem.role
@@ -828,7 +926,7 @@ def build_overlays_from_text_elements(
 
         # ── single-dict path (adapter elements, sequence blocks, static) ─────
         overlay = build_intro_overlay(
-            elem.text,
+            elem_text,
             effect=effect,
             position=pos,
             size_class=size_class,
@@ -842,6 +940,9 @@ def build_overlays_from_text_elements(
             text_size_px=text_size_px,
             position_x_frac=pos_x_frac,
             position_y_frac=pos_y_frac,
+            letter_spacing=elem.letter_spacing,
+            line_spacing=elem.line_spacing,
+            max_width_frac=elem.max_width_frac,
         )
         if overlay is None:
             continue
@@ -852,8 +953,8 @@ def build_overlays_from_text_elements(
 
         # Use stored word_timings verbatim for karaoke-line so beat-snapped
         # timings from the original render are reproduced exactly (A17).
-        if effect == "karaoke-line" and elem.word_timings:
-            overlay["word_timings"] = elem.word_timings
+        if effect == "karaoke-line" and elem_word_timings:
+            overlay["word_timings"] = elem_word_timings
 
         if elem.fade_out_ms is not None:
             overlay["fade_out_ms"] = elem.fade_out_ms

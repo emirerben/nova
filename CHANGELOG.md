@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0.0] — 2026-07-05
+
+### Added
+- **TikTok-style timeline editor — full-screen editing shell (flag-gated).** A new "Edit" button on rendered plan-item variants opens `/plan/items/[id]/edit`: video preview centered on canvas, left tool rail + drawer (Text with live-styled preset grid + Favorite/Trending/Basic categories, Sounds, Overlays, Styles), a docked right inspector that populates when you select anything (click text on the video OR its timeline bar — canvas handles, bar ring, and inspector light up together), and a full-width multi-track timeline (Text → Video filmstrip → Sound → Overlays) with transport (play/pause + timecode), zoom slider + fit, split-at-playhead, delete, and per-track mute. Edits preview instantly as a CSS overlay (drag to move, corner-drag to scale); Save persists everything in one transactional commit and bakes in the background. Undo/redo (⌘Z/⇧⌘Z) covers every edit; drafts survive tab crashes via session recovery; two-tab conflicts surface a quiet reload notice instead of clobbering. Below 1024px the editor becomes a light-edit mode (watch, scrub, tap text to fix in a full-screen sheet) rather than a squeezed desktop. Keyboard-first: timeline bars are tabbable selectors, arrows nudge timing, full ARIA labeling, 44px targets. Flags: `NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED` (Vercel, default **off**); the item page is byte-identical with the flag off.
+- **Text style controls with render-parity gating.** New text-element fields — letter case, letter spacing, line spacing — appear in the inspector only after passing shared-fixture layout-contract tests that pin the CSS preview to the Skia renderer (same JSON fixtures asserted by pytest AND Jest), so a control never previews something the final render won't honor. Fields present in data but not yet parity-verified render read-only instead of disappearing.
+- **Style presets + one-tap restyle.** Twelve text presets with live thumbnails (rendered in each preset's actual style using your text's first word), per-user favorites, and a Styles drawer that restyles every text element from a style set as a single undoable action.
+
+### Changed
+- **Saving during a render never blocks.** Variant renders now carry a generation token checked at every terminal write: a newer Save supersedes an in-flight bake (the stale result is discarded, never clobbering your latest edit), the editor's Save works mid-render, and multi-tab saves conflict-check against a baseline instead of silently last-writer-winning. Editor commits are transactional — text, timeline, mix, and title persist atomically with exactly one render kick — and the variant payload now reports per-capability editability (`editor_capabilities`) with honest reasons.
+- Timeline playhead restyled (ink head + line spanning all lanes); editor timeline uses strict neutral lane colors with lime reserved exclusively for selection.
+
+### Fixed
+- Invalid text elements in an editor Save now return a clear 422 instead of being silently dropped (which could previously lose user text); preset font/effect values align with the renderer's accepted keys.
+- Filmstrip thumbnail generation no longer leaks video event listeners during rapid zoom/variant switching.
 ## [0.6.10.0] — 2026-07-05
 
 ### Changed

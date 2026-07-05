@@ -269,13 +269,13 @@ export default function SfxLane({
       {/* ── SFX lane track ── */}
       <div className="flex h-11 mb-1">
         <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
-          <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+          <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">
             SFX
           </span>
         </div>
         <div
           ref={laneContentRef}
-          className="relative flex-1 bg-zinc-800/25 border-y border-zinc-700/40 overflow-hidden"
+          className="relative flex-1 bg-zinc-50 border-y border-zinc-200 overflow-hidden"
           data-testid="sfx-lane"
         >
           <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
@@ -333,7 +333,7 @@ export default function SfxLane({
                   "transition-opacity",
                   isBeingDragged ? "opacity-60 z-10 shadow-lg" : "opacity-100",
                   sfxDisabled ? "opacity-40 cursor-not-allowed" : "cursor-grab active:cursor-grabbing",
-                  "bg-lime-700/40 border-lime-500/50 hover:bg-lime-700/60",
+                  "bg-lime-100 border-lime-300 hover:bg-lime-200",
                 ].join(" ")}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 onPointerDown={(e) => handleBarPointerDown(e, p)}
@@ -351,7 +351,7 @@ export default function SfxLane({
                     <div className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10" />
                   </>
                 )}
-                <span className="px-1.5 text-[9px] text-lime-100 truncate pointer-events-none leading-none">
+                <span className="px-1.5 text-[9px] text-lime-700 truncate pointer-events-none leading-none">
                   {p.label ?? formatTimecode(p.at_s)}
                 </span>
               </div>
@@ -365,7 +365,7 @@ export default function SfxLane({
         openPlacementId === p.id ? (
           <div
             key={`edit-${p.id}`}
-            className="ml-14 mr-0 mb-2 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 space-y-2"
+            className="ml-14 mr-0 mb-2 bg-white border border-zinc-200 rounded-lg px-3 py-2 space-y-2"
           >
             <div className="flex items-center gap-2 flex-wrap">
               <input
@@ -373,21 +373,21 @@ export default function SfxLane({
                 onChange={(e) => dispatch({ type: "SET_LABEL", id: p.id, label: e.target.value })}
                 disabled={sfxDisabled}
                 placeholder="Label (optional)"
-                className="flex-1 min-w-0 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-lime-500"
+                className="flex-1 min-w-0 bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-xs text-zinc-900 placeholder-zinc-400 focus:outline-none focus:border-lime-500"
               />
-              <span className="text-xs text-zinc-500 shrink-0 tabular-nums">
+              <span className="text-xs text-zinc-400 shrink-0 tabular-nums">
                 @{(p.at_s ?? 0).toFixed(1)}s
               </span>
               <button
                 type="button"
                 onClick={() => { dispatch({ type: "REMOVE", id: p.id }); setOpenPlacementId(null); }}
                 disabled={sfxDisabled}
-                className="shrink-0 text-xs text-zinc-500 hover:text-red-400 disabled:opacity-40"
+                className="shrink-0 text-xs text-zinc-400 hover:text-red-500 disabled:opacity-40"
               >
                 Remove
               </button>
             </div>
-            <label className="flex items-center gap-2 text-xs text-zinc-400">
+            <label className="flex items-center gap-2 text-xs text-zinc-500">
               <span className="w-5 shrink-0">Vol</span>
               <input
                 type="range"
@@ -412,7 +412,7 @@ export default function SfxLane({
             value={selectedGlossaryId}
             onChange={(e) => setSelectedGlossaryId(e.target.value)}
             disabled={sfxDisabled || sfxGlossaryLoading}
-            className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white disabled:opacity-50"
+            className="flex-1 bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-xs text-zinc-900 disabled:opacity-50"
           >
             <option value="">
               {sfxGlossaryLoading ? "Loading effects…" : "Pick a sound effect (placed at playhead)…"}
@@ -439,7 +439,7 @@ export default function SfxLane({
             type="button"
             onClick={() => sfxFileInputRef.current?.click()}
             disabled={sfxDisabled}
-            className="px-3 py-1 bg-zinc-700 hover:bg-zinc-600 text-zinc-300 text-xs rounded disabled:opacity-40 transition-colors"
+            className="px-3 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-600 text-xs rounded disabled:opacity-40 transition-colors"
           >
             Upload audio…
           </button>
@@ -457,7 +457,7 @@ export default function SfxLane({
             onClick={() => dispatch({ type: "UNDO" })}
             disabled={!canUndo || sfxDisabled}
             title="Undo"
-            className="px-2 py-1 text-sm text-zinc-400 hover:text-white disabled:opacity-25 transition-colors"
+            className="px-2 py-1 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
           >
             ↩
           </button>
@@ -466,7 +466,7 @@ export default function SfxLane({
             onClick={() => dispatch({ type: "REDO" })}
             disabled={!canRedo || sfxDisabled}
             title="Redo"
-            className="px-2 py-1 text-sm text-zinc-400 hover:text-white disabled:opacity-25 transition-colors"
+            className="px-2 py-1 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
           >
             ↪
           </button>

@@ -44,6 +44,7 @@ import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "item-lf-1" })),
+  useSearchParams: jest.fn(() => new URLSearchParams()),
 }));
 
 const mockRefetch = jest.fn();

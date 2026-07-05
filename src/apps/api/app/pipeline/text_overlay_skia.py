@@ -50,6 +50,12 @@ import skia
 import structlog
 from PIL import Image
 
+from app.pipeline.generative_overlays import (
+    resolve_letter_spacing_em,
+    resolve_letter_spacing_px,
+    resolve_line_spacing,
+    resolve_max_width_frac,
+)
 from app.pipeline.text_overlay import (
     _FONT_REGISTRY,
     _FONT_SIZE_MAP,
@@ -105,6 +111,11 @@ _POP_IN_KEYFRAMES_S = (0.0, 0.150, 0.250)
 _POP_IN_SCALES = (0.30, 1.15, 1.00)
 _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 _POP_SUFFIX_MAX_LINES = 2
+
+
+def _overlay_max_width_px(overlay: dict) -> float:
+    """Per-overlay wrap budget. Missing field preserves the legacy 0.9 width."""
+    return CANVAS_W * resolve_max_width_frac(overlay.get("max_width_frac"))
 
 
 # -- Typeface cache (load once at import) -------------------------------------
@@ -582,7 +593,53 @@ def _vertical_block_top(anchor: str, cy: float, block_h: float) -> float:
     return cy - block_h / 2.0
 
 
-def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[str]:
+# ── Letter-spacing primitives (T11 parity slice) ──────────────────────────────
+#
+# Skia has no per-font tracking control on drawString, so a non-zero
+# `letter_spacing` (em, from the burn dict) renders per-character with an
+# explicit advance. Measure and draw MUST share the same advance model:
+# per-char width sum + spacing×(n−1). Kerning pairs are lost when tracking is
+# applied — the same behavior as CSS letter-spacing rendering in practice
+# (documented tolerance; the layout contract locks the em→px resolution, not
+# glyph-level kerning).
+
+
+def _overlay_letter_spacing_px(overlay: dict, font_size_px: float) -> float:
+    """Tracking in px at the FINAL drawn size (0.0 = pristine legacy path)."""
+    return resolve_letter_spacing_px(overlay.get("letter_spacing"), font_size_px)
+
+
+def _measure_line(font: skia.Font, text: str, spacing_px: float = 0.0) -> float:
+    """Line width under the spaced advance model. spacing_px == 0 keeps the
+    kerned single-call measure — byte-identical to the pre-T11 renderer."""
+    if spacing_px == 0.0 or len(text) <= 1:
+        return font.measureText(text)
+    return sum(font.measureText(ch) for ch in text) + spacing_px * (len(text) - 1)
+
+
+def _draw_string_spaced(
+    canvas: skia.Canvas,
+    text: str,
+    x: float,
+    baseline_y: float,
+    font: skia.Font,
+    paint: skia.Paint,
+    spacing_px: float = 0.0,
+) -> None:
+    """drawString with optional per-character tracking (advance model matches
+    _measure_line exactly, so anchoring math stays consistent)."""
+    if spacing_px == 0.0 or len(text) <= 1:
+        canvas.drawString(text, x, baseline_y, font, paint)
+        return
+    cx = x
+    for ch in text:
+        canvas.drawString(ch, cx, baseline_y, font, paint)
+        cx += font.measureText(ch) + spacing_px
+
+
+def _wrap_text_to_lines(
+    text: str, font: skia.Font, max_width: float, spacing_px: float = 0.0
+) -> list[str]:
     """Greedy word-wrap, mirrors text_overlay._wrap_text_to_lines.
 
     If the input already contains explicit newlines, each line is wrapped
@@ -598,7 +655,7 @@ def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[st
         current: list[str] = []
         for word in words:
             candidate = " ".join([*current, word]) if current else word
-            if font.measureText(candidate) <= max_width or not current:
+            if _measure_line(font, candidate, spacing_px) <= max_width or not current:
                 current.append(word)
             else:
                 out.append(" ".join(current))
@@ -608,9 +665,15 @@ def _wrap_text_to_lines(text: str, font: skia.Font, max_width: float) -> list[st
     return out
 
 
-def _wrap_word_indices(words: list[str], font: skia.Font, max_width: float) -> list[list[int]]:
+def _wrap_word_indices(
+    words: list[str], font: skia.Font, max_width: float, spacing_px: float = 0.0
+) -> list[list[int]]:
     """Balanced word-wrap that preserves original word indices."""
-    return balanced_word_wrap_indices(words, font.measureText, max_width)
+    if spacing_px == 0.0:
+        return balanced_word_wrap_indices(words, font.measureText, max_width)
+    return balanced_word_wrap_indices(
+        words, lambda s: _measure_line(font, s, spacing_px), max_width
+    )
 
 
 def _shrink_to_fit(
@@ -618,26 +681,31 @@ def _shrink_to_fit(
     typeface: skia.Typeface,
     initial_size: int,
     max_width: float,
+    letter_spacing_em: float = 0.0,
 ) -> tuple[skia.Font, int, list[str]]:
     """Wrap + iteratively shrink the font until every line fits inside
     max_width. Caps at 6 iterations and a 24px floor, matching Pillow.
+    Tracking (letter_spacing_em) scales with the size under test so the
+    fitted result matches what actually draws.
 
     Returns (font, final_size_px, wrapped_lines).
     """
     size = initial_size
     font = skia.Font(typeface, size)
     font.setSubpixel(True)
-    lines = _wrap_text_to_lines(text, font, max_width)
+    spacing_px = letter_spacing_em * size
+    lines = _wrap_text_to_lines(text, font, max_width, spacing_px)
 
     iterations = 0
     while iterations < 6 and size > _MIN_FONT_SIZE:
-        widest = max((font.measureText(ln) for ln in lines), default=0)
+        widest = max((_measure_line(font, ln, spacing_px) for ln in lines), default=0)
         if widest <= max_width:
             break
         size = max(_MIN_FONT_SIZE, int(size * 0.85))
         font = skia.Font(typeface, size)
         font.setSubpixel(True)
-        lines = _wrap_text_to_lines(text, font, max_width)
+        spacing_px = letter_spacing_em * size
+        lines = _wrap_text_to_lines(text, font, max_width, spacing_px)
         iterations += 1
 
     return font, size, lines
@@ -648,6 +716,7 @@ def _wrap_at_fixed_size(
     typeface: skia.Typeface,
     size: int,
     max_width: float,
+    letter_spacing_em: float = 0.0,
 ) -> tuple[skia.Font, int, list[str]]:
     """Wrap text at the requested font size without shrinking.
 
@@ -658,7 +727,7 @@ def _wrap_at_fixed_size(
     size = max(_MIN_FONT_SIZE, int(size))
     font = skia.Font(typeface, size)
     font.setSubpixel(True)
-    return font, size, _wrap_text_to_lines(text, font, max_width)
+    return font, size, _wrap_text_to_lines(text, font, max_width, letter_spacing_em * size)
 
 
 def _shrink_to_fit_max_lines(
@@ -688,12 +757,24 @@ def _shrink_to_fit_max_lines(
     return font, size, lines
 
 
-def _measure_block(font: skia.Font, lines: list[str]) -> dict[str, Any]:
-    """Compute per-line widths, max line height, total block height."""
+def _measure_block(
+    font: skia.Font,
+    lines: list[str],
+    *,
+    line_spacing: float = _LINE_SPACING,
+    letter_spacing_px: float = 0.0,
+) -> dict[str, Any]:
+    """Compute per-line widths, max line height, total block height.
+
+    `line_spacing` is the per-overlay multiplier (burn-dict `line_spacing`,
+    default = the legacy 1.15 constant); `letter_spacing_px` feeds the spaced
+    advance model so widths match what _draw_string_spaced draws. TS mirror of
+    the step/height math: blockMetrics in lib/overlay-layout.ts (parity
+    fixture line_spacing.json)."""
     metrics = font.getMetrics()
     line_height_raw = metrics.fDescent - metrics.fAscent
-    line_step = int(line_height_raw * _LINE_SPACING)
-    widths = [font.measureText(ln) for ln in lines]
+    line_step = int(line_height_raw * line_spacing)
+    widths = [_measure_line(font, ln, letter_spacing_px) for ln in lines]
     block_h = line_step * (len(lines) - 1) + int(line_height_raw) if lines else 0
     return {
         "widths": widths,
@@ -762,25 +843,33 @@ def _draw_centered_text(
         return
 
     typeface = _typeface_for_overlay(overlay)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    max_width = _overlay_max_width_px(overlay)
     if font_override is not None:
         font = font_override
         size = int(font.getSize())
-        lines = _wrap_text_to_lines(text, font, CANVAS_W * _MAX_LINE_W_FRAC)
+        lines = _wrap_text_to_lines(text, font, max_width, letter_spacing_em * size)
     else:
         initial_size = _resolve_font_size_px(overlay)
         if overlay.get("preserve_font_size"):
             font, size, lines = _wrap_at_fixed_size(
-                text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
+                text, typeface, initial_size, max_width, letter_spacing_em
             )
         else:
             font, size, lines = _shrink_to_fit(
-                text, typeface, initial_size, CANVAS_W * _MAX_LINE_W_FRAC
+                text, typeface, initial_size, max_width, letter_spacing_em
             )
 
     if not lines:
         return
 
-    block = _measure_block(font, lines)
+    letter_spacing_px = letter_spacing_em * size
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=letter_spacing_px,
+    )
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
 
@@ -827,6 +916,9 @@ def _draw_centered_text(
         else:
             line_x = _anchored_left_x(anchor, cx, line_w)
 
+        draw_kwargs: dict[str, Any] = {"shader": gradient_shader}
+        if letter_spacing_px != 0.0:
+            draw_kwargs["letter_spacing_px"] = letter_spacing_px
         _draw_line_with_layers(
             canvas,
             line,
@@ -836,7 +928,7 @@ def _draw_centered_text(
             fill_color,
             stroke_px,
             shadow_alpha,
-            shader=gradient_shader,
+            **draw_kwargs,
         )
 
     # Emoji compositing onto the canvas at the resolved combined-block x
@@ -862,6 +954,7 @@ def _draw_line_with_layers(
     shadow_alpha: int,
     *,
     shader: Any = None,
+    letter_spacing_px: float = 0.0,
 ) -> None:
     """Shadow → stroke → fill, in that order, matching Pillow's compositing.
 
@@ -869,6 +962,9 @@ def _draw_line_with_layers(
     ``_skia_gradient_shader``), the fill paint uses it instead of the solid
     ``fill_color``.  Shadow and stroke remain solid black so the gradient
     glyphs keep depth and legibility.
+
+    ``letter_spacing_px`` applies per-character tracking to every layer
+    (shadow, stroke, fill share one advance model — see _draw_string_spaced).
     """
     # Shadow: soft black blur, offset 6px down (Pillow uses y+6, alpha 160).
     if shadow_alpha > 0:
@@ -877,7 +973,9 @@ def _draw_line_with_layers(
             Color=skia.ColorSetARGB(shadow_alpha, 0, 0, 0),
             MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, 12.0),
         )
-        canvas.drawString(line, x, baseline_y + 6.0, font, shadow_paint)
+        _draw_string_spaced(
+            canvas, line, x, baseline_y + 6.0, font, shadow_paint, letter_spacing_px
+        )
 
     # Crisp black stroke (TikTok caption look)
     if stroke_px > 0:
@@ -888,13 +986,13 @@ def _draw_line_with_layers(
             StrokeWidth=stroke_px * 2.0,
             StrokeJoin=skia.Paint.kRound_Join,
         )
-        canvas.drawString(line, x, baseline_y, font, stroke_paint)
+        _draw_string_spaced(canvas, line, x, baseline_y, font, stroke_paint, letter_spacing_px)
 
     # Fill: solid colour OR gradient shader
     fill_paint = skia.Paint(AntiAlias=True, Color=fill_color)
     if shader is not None:
         fill_paint.setShader(shader)
-    canvas.drawString(line, x, baseline_y, font, fill_paint)
+    _draw_string_spaced(canvas, line, x, baseline_y, font, fill_paint, letter_spacing_px)
 
 
 # -- Emoji compositing -------------------------------------------------------
@@ -1044,21 +1142,21 @@ def _draw_pop_in_with_suffix(
             text,
             typeface,
             initial_size,
-            CANVAS_W * _MAX_LINE_W_FRAC,
+            _overlay_max_width_px(overlay),
         )
     elif anchor == "left":
         full_font, _full_size, full_lines = _shrink_to_fit(
             text,
             typeface,
             initial_size,
-            CANVAS_W * _MAX_LINE_W_FRAC,
+            _overlay_max_width_px(overlay),
         )
     else:
         full_font, _full_size, full_lines = _shrink_to_fit_max_lines(
             text,
             typeface,
             initial_size,
-            CANVAS_W * _MAX_LINE_W_FRAC,
+            _overlay_max_width_px(overlay),
             _POP_SUFFIX_MAX_LINES,
         )
     if not full_lines:
@@ -1169,18 +1267,27 @@ def _draw_karaoke_line(
     initial_size = _resolve_font_size_px(overlay)
     font = skia.Font(typeface, initial_size)
     font.setSubpixel(True)
-    max_width = CANVAS_W * _MAX_LINE_W_FRAC
-    line_word_indices = _wrap_word_indices(words, font, max_width)
+    max_width = _overlay_max_width_px(overlay)
+    spacing_px = _overlay_letter_spacing_px(overlay, initial_size)
+    line_word_indices = _wrap_word_indices(words, font, max_width, spacing_px)
     if not line_word_indices:
         return
 
-    space_w = font.measureText(" ")
-    word_widths = [font.measureText(w) for w in words]
+    # Inter-word gap under the spaced advance model: a space character plus
+    # the tracking on BOTH of its sides (word|sp|space|sp|word), so word-drawn
+    # lines occupy exactly the width _measure_line reports for the full line.
+    space_w = font.measureText(" ") + 2.0 * spacing_px
+    word_widths = [_measure_line(font, w, spacing_px) for w in words]
     line_texts = [" ".join(words[i] for i in line) for line in line_word_indices]
 
     cx, cy = _resolve_anchor(overlay)
     anchor = _resolve_text_anchor(overlay)
-    block = _measure_block(font, line_texts)
+    block = _measure_block(
+        font,
+        line_texts,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=spacing_px,
+    )
     block_top = _vertical_block_top(anchor, cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
@@ -1195,8 +1302,18 @@ def _draw_karaoke_line(
         for i in line:
             already_sung = starts[i] <= t_local
             color = highlight_color if already_sung else primary_color
+            draw_kwargs: dict[str, Any] = {"shadow_alpha": 160}
+            if spacing_px != 0.0:
+                draw_kwargs["letter_spacing_px"] = spacing_px
             _draw_line_with_layers(
-                canvas, words[i], x, baseline_y, font, color, stroke_px, shadow_alpha=160
+                canvas,
+                words[i],
+                x,
+                baseline_y,
+                font,
+                color,
+                stroke_px,
+                **draw_kwargs,
             )
             x += word_widths[i] + space_w
 

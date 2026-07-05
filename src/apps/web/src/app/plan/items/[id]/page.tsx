@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   attachClips,
@@ -12,7 +12,9 @@ import {
   generatePlanItem,
   generatePlanItemGuide,
   getPlanItem,
+  getPlanItemFresh,
   getPlanItemJobStatus,
+  getPlanItemJobStatusFresh,
   NotAuthenticatedError,
   setClipNote,
   setItemVoiceover,
@@ -98,6 +100,10 @@ import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-pa
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
 import { resolveTextElementsLayout } from "@/lib/overlay-layout";
 import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
+import {
+  parsePlanItemEditorReturnSignal,
+  stripPlanItemEditorReturnParams,
+} from "@/lib/editor-return";
 
 // How long a dispatched render may take to register its Job before we admit
 // failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
@@ -130,7 +136,28 @@ const FULLSCREEN_CUTAWAYS_ENABLED =
 // space) still works.
 const _subtitledRaw = (process.env.NEXT_PUBLIC_SUBTITLED_ENABLED ?? "").trim();
 const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRaw === "1";
+// Kill-switch: the item-page "Edit" entry into the full-screen TikTok-style
+// editor shell (/plan/items/[id]/edit) only appears when
+// NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED=true. Frontend-only gate — the shell route
+// and the server's editor_capabilities are unconditionally present; this flag
+// only controls whether the entry point is shown.
+const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
+// Server-derived per-variant capability map (routes/generative_jobs.py
+// `_editor_capabilities`). Not yet in the shared PlanItemVariant type — declared
+// locally here since only the Edit-entry gate reads it.
+type EditorCapabilities = {
+  text_elements: boolean;
+  timeline: boolean;
+  split_clips: boolean;
+  mix: boolean;
+  reason: string | null;
+};
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
+type PendingEdit = {
+  priorFinishedAt: string | null;
+  sawRendering: boolean;
+  targetGeneration?: string | null;
+};
 
 // Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
 // is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
@@ -199,7 +226,15 @@ function deriveReceiptText(job: PlanItemJobStatus): string {
 
 export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const itemId = params.id;
+  const editorReturnSignal = useMemo(
+    () =>
+      TIKTOK_EDITOR_ENABLED
+        ? parsePlanItemEditorReturnSignal(searchParams)
+        : null,
+    [searchParams],
+  );
 
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
@@ -288,7 +323,7 @@ export default function PlanItemPage() {
   // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
   const [generatingGuide, setGeneratingGuide] = useState(false);
-  const pendingEdits = useRef<Map<string, { priorFinishedAt: string | null; sawRendering: boolean }>>(new Map());
+  const pendingEdits = useRef<Map<string, PendingEdit>>(new Map());
   // Incremented whenever pendingEdits is mutated so the variants memo re-runs
   // immediately (useMemo only tracks reactive dependencies; the ref itself is not reactive).
   const [editGeneration, setEditGeneration] = useState(0);
@@ -310,6 +345,8 @@ export default function PlanItemPage() {
   // a busy worker can take >12s to pick the task up (second dogfood round: the
   // count-based window expired, showed the error, THEN the render started).
   const awaitingJobSince = useRef<number | null>(null);
+  const forceFreshFetchRef = useRef(false);
+  const consumedEditorReturnRef = useRef<string | null>(null);
 
   useEffect(() => {
     getMusicTracks()
@@ -321,9 +358,13 @@ export default function PlanItemPage() {
   }, []);
 
   const fetcher = useCallback(async () => {
-    const it = await getPlanItem(itemId);
+    const forceFresh = forceFreshFetchRef.current;
+    forceFreshFetchRef.current = false;
+    const it = await (forceFresh ? getPlanItemFresh : getPlanItem)(itemId);
     const jobSt = it.current_job_id
-      ? await getPlanItemJobStatus(it.current_job_id)
+      ? await (forceFresh ? getPlanItemJobStatusFresh : getPlanItemJobStatus)(
+          it.current_job_id,
+        )
       : null;
     return { item: it, job: jobSt };
   }, [itemId]);
@@ -390,6 +431,35 @@ export default function PlanItemPage() {
   } = usePolledJobStatus(fetcher, undefined, isTerminalFn);
 
   useEffect(() => {
+    if (!TIKTOK_EDITOR_ENABLED || editorReturnSignal === null) return;
+    if (consumedEditorReturnRef.current === editorReturnSignal.key) return;
+    consumedEditorReturnRef.current = editorReturnSignal.key;
+    forceFreshFetchRef.current = true;
+    setFocusedVariantId(editorReturnSignal.variantId);
+    setError(null);
+
+    if (editorReturnSignal.renderStarted) {
+      const existing = pendingEdits.current.get(editorReturnSignal.variantId);
+      pendingEdits.current.set(editorReturnSignal.variantId, {
+        priorFinishedAt: editorReturnSignal.priorFinishedAt,
+        sawRendering: existing?.sawRendering ?? false,
+        targetGeneration: editorReturnSignal.generation,
+      });
+      renderingAction.current = { type: "other", label: "Rendering your saved edits…" };
+      setEditGeneration((g) => g + 1);
+    }
+
+    refetch();
+
+    const nextSearch = stripPlanItemEditorReturnParams(window.location.search);
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${nextSearch}${window.location.hash}`,
+    );
+  }, [editorReturnSignal, refetch]);
+
+  useEffect(() => {
     if (data !== null || pollError !== null) setLoading(false);
   }, [data, pollError]);
 
@@ -424,14 +494,19 @@ export default function PlanItemPage() {
         }
         // Decide whether this "ready" / "failed" is the result of OUR edit.
         // A fresh render is detected when:
-        //   (a) we already saw the variant pass through "rendering", OR
-        //   (b) the server's render_finished_at timestamp advanced past what we
+        //   (a) the editor-return generation token is now visible, OR
+        //   (b) we already saw the variant pass through "rendering", OR
+        //   (c) the server's render_finished_at timestamp advanced past what we
         //       captured at edit-submission time.
         // Without this guard, the first poll after submission can still return
         // the PRE-edit "ready" (the Celery task hasn't fired yet) and clear the
         // pin too early — leaving controls re-enabled while the render hasn't
         // actually run.  Mirrors the commitMarkerRef pattern in useVariantEditSession.
+        const matchesTargetGeneration =
+          pending.targetGeneration != null &&
+          (v.render_generation_id ?? null) === pending.targetGeneration;
         const isFreshRender =
+          matchesTargetGeneration ||
           pending.sawRendering ||
           (v.render_finished_at ?? null) !== pending.priorFinishedAt;
         if ((v.render_status === "ready" || v.render_status === "failed") && isFreshRender) {
@@ -492,6 +567,7 @@ export default function PlanItemPage() {
       pendingEdits.current.set(variantId, {
         priorFinishedAt,
         sawRendering: existing?.sawRendering ?? false,
+        targetGeneration: existing?.targetGeneration ?? null,
       });
       refetch();
     },
@@ -1853,6 +1929,28 @@ function FocusedResults({
       : (TEXT_MODE_PILL[variant.text_mode] ?? "Original audio")
     : null;
 
+  // Flag-gated Edit entry into the full-screen TikTok-style editor shell.
+  // Eligible = rendered (output_url present) and not mid-render. If the
+  // server's editor_capabilities map is present and every capability is
+  // false, the button still shows but disabled, with the server's reason
+  // as the tooltip (kills FE 404-probing on a genuinely ineligible variant).
+  const editorEntryEligible =
+    TIKTOK_EDITOR_ENABLED &&
+    !!variant &&
+    !!variant.output_url &&
+    variant.render_status !== "rendering";
+  const editorCapabilities = (
+    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
+  )?.editor_capabilities;
+  const editorEntryDisabledReason =
+    editorCapabilities &&
+    !editorCapabilities.text_elements &&
+    !editorCapabilities.timeline &&
+    !editorCapabilities.split_clips &&
+    !editorCapabilities.mix
+      ? (editorCapabilities.reason ?? "Editing isn't available for this variant.")
+      : null;
+
   // The editor panel reveals PlanVariantEditor filtered to the active tab.
   // We keep one PlanVariantEditor instance and use the tab to scroll/focus.
   const focusedEditable = variant && (!!variant.output_url || variant.render_status === "failed");
@@ -1916,6 +2014,22 @@ function FocusedResults({
               <span className="rounded-full border border-zinc-200 bg-white px-3 py-0.5 text-xs text-[#71717a]">
                 {modePill}
               </span>
+            </div>
+          )}
+          {/* Edit entry: full-screen TikTok-style editor shell (flag-gated) */}
+          {editorEntryEligible && (
+            <div className="mt-2 flex justify-center">
+              {editorEntryDisabledReason ? (
+                <InkButton type="button" variant="ghost" disabled title={editorEntryDisabledReason}>
+                  Edit
+                </InkButton>
+              ) : (
+                <Link href={`/plan/items/${itemId}/edit?variant=${variant!.variant_id}`}>
+                  <InkButton type="button" variant="ghost">
+                    Edit
+                  </InkButton>
+                </Link>
+              )}
             </div>
           )}
         </div>
@@ -3815,4 +3929,3 @@ function PoolUploadCard({
     </div>
   );
 }
-

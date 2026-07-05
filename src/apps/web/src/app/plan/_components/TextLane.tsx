@@ -14,6 +14,7 @@
  */
 
 import { type Dispatch, useEffect, useReducer, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { computeBarPosition } from "@/lib/timeline/bar-position";
 import { classifyZone, clampSeconds } from "@/lib/timeline/drag-zone";
 import {
@@ -23,6 +24,7 @@ import {
   type TextElementBar,
 } from "@/lib/timeline/text-timeline-reducer";
 import { Playhead } from "@/lib/timeline/Playhead";
+import { INTRO_FONTS } from "@/lib/overlay-constants";
 
 // ── Re-export so callers can import the type from this file ───────────────────
 
@@ -88,6 +90,12 @@ export interface TextLaneProps {
    * signal that editing the flow makes it user-owned.
    */
   isFirstSequenceEdit?: boolean;
+  /**
+   * When provided, the TextPropertyPanel for the selected bar portals into this
+   * element instead of rendering inline (used by the 3-column TikTok layout to
+   * place the panel in the right column).
+   */
+  textPanelPortalTarget?: HTMLElement | null;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -103,6 +111,7 @@ export default function TextLane({
   readOnly = false,
   onTrimClamped,
   isFirstSequenceEdit = false,
+  textPanelPortalTarget,
 }: TextLaneProps) {
   // ── T8: one-time "now user-owned" note for sequence variants ──────────────────
   // Declared before the emit useEffect so the ref is in scope when bars change.
@@ -338,7 +347,7 @@ export default function TextLane({
       <div className="flex h-11 mb-0">
         {/* Label */}
         <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
-          <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+          <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">
             Text
           </span>
         </div>
@@ -346,7 +355,7 @@ export default function TextLane({
         {/* Timeline content */}
         <div
           ref={laneContentRef}
-          className="relative flex-1 bg-zinc-800/25 border-y border-zinc-700/40 overflow-hidden"
+          className="relative flex-1 bg-zinc-50 border-y border-zinc-200 overflow-hidden"
           data-testid="text-lane"
           onClick={(e) => {
             // Click directly on the track (not on a bar) → deselect
@@ -361,7 +370,7 @@ export default function TextLane({
               type="button"
               onClick={handleAdd}
               disabled={readOnly}
-              className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600 hover:text-amber-400/60 transition-colors disabled:pointer-events-none disabled:cursor-default"
+              className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-400 hover:text-amber-500 transition-colors disabled:pointer-events-none disabled:cursor-default"
             >
               No text yet — ＋ Add text
             </button>
@@ -388,15 +397,15 @@ export default function TextLane({
                   isBeingDragged ? "opacity-60 z-10 shadow-lg" : "opacity-100",
                   bar.role === "narrated_caption"
                     ? locked
-                      ? "bg-teal-900/25 border-teal-800/30 cursor-not-allowed opacity-60"
+                      ? "bg-teal-50 border-teal-200 cursor-not-allowed opacity-60"
                       : isExpanded
-                      ? "bg-teal-400/40 border-teal-400/70 ring-1 ring-teal-400/50 cursor-grab active:cursor-grabbing"
-                      : "bg-teal-700/40 border-teal-500/50 hover:bg-teal-700/60 cursor-grab active:cursor-grabbing"
+                      ? "bg-teal-200 border-teal-400 ring-1 ring-teal-300 cursor-grab active:cursor-grabbing"
+                      : "bg-teal-100 border-teal-300 hover:bg-teal-150 cursor-grab active:cursor-grabbing"
                     : locked
-                    ? "bg-amber-900/25 border-amber-800/30 cursor-not-allowed opacity-60"
+                    ? "bg-amber-50 border-amber-200 cursor-not-allowed opacity-60"
                     : isExpanded
-                    ? "bg-amber-400/40 border-amber-400/70 ring-1 ring-amber-400/50 cursor-grab active:cursor-grabbing"
-                    : "bg-amber-700/40 border-amber-500/50 hover:bg-amber-700/60 cursor-grab active:cursor-grabbing",
+                    ? "bg-amber-200 border-amber-400 ring-1 ring-amber-300 cursor-grab active:cursor-grabbing"
+                    : "bg-amber-100 border-amber-300 hover:bg-amber-150 cursor-grab active:cursor-grabbing",
                 ].join(" ")}
                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 onPointerDown={(e) => handleBarPointerDown(e, bar)}
@@ -412,25 +421,25 @@ export default function TextLane({
                 {/* Left trim handle (hidden for locked bars) */}
                 {!locked && (
                   <div
-                    className="absolute left-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/20"
+                    className="absolute left-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/10"
                     aria-hidden="true"
                   >
-                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-300/50" : "bg-amber-300/50"}`} />
+                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-500/60" : "bg-amber-500/60"}`} />
                   </div>
                 )}
 
                 {/* Text preview */}
-                <span className={`px-2 text-[9px] truncate pointer-events-none leading-none ${bar.role === "narrated_caption" ? "text-teal-100" : "text-amber-100"}`}>
+                <span className={`px-2 text-[9px] truncate pointer-events-none leading-none ${bar.role === "narrated_caption" ? "text-teal-700" : "text-amber-700"}`}>
                   {textPreview}
                 </span>
 
                 {/* Right trim handle */}
                 {!locked && (
                   <div
-                    className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/20"
+                    className="absolute right-0 top-0 bottom-0 w-2.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-black/10"
                     aria-hidden="true"
                   >
-                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-300/50" : "bg-amber-300/50"}`} />
+                    <div className={`w-px h-3 rounded-full ${bar.role === "narrated_caption" ? "bg-teal-500/60" : "bg-amber-500/60"}`} />
                   </div>
                 )}
               </div>
@@ -452,16 +461,29 @@ export default function TextLane({
         </div>
       </div>
 
-      {/* ── Per-bar inline property panel (T7) ── */}
+      {/* ── Per-bar property panel — portals to right column when target provided ── */}
       {bars.map((bar) =>
         expandedBarId === bar.id ? (
-          <TextPropertyPanel
-            key={`panel-${bar.id}`}
-            bar={bar}
-            bars={bars}
-            dispatch={dispatch}
-            onApply={onApply}
-          />
+          textPanelPortalTarget
+            ? createPortal(
+                <TextPropertyPanel
+                  key={`panel-${bar.id}`}
+                  bar={bar}
+                  bars={bars}
+                  dispatch={dispatch}
+                  onApply={onApply}
+                />,
+                textPanelPortalTarget,
+              )
+            : (
+                <TextPropertyPanel
+                  key={`panel-${bar.id}`}
+                  bar={bar}
+                  bars={bars}
+                  dispatch={dispatch}
+                  onApply={onApply}
+                />
+              )
         ) : null,
       )}
 
@@ -473,7 +495,7 @@ export default function TextLane({
             onClick={() => dispatch({ type: "UNDO" })}
             disabled={!canUndo}
             title="Undo"
-            className="px-2 py-0.5 text-sm text-zinc-500 hover:text-white disabled:opacity-25 transition-colors"
+            className="px-2 py-0.5 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
           >
             ↩
           </button>
@@ -482,7 +504,7 @@ export default function TextLane({
             onClick={() => dispatch({ type: "REDO" })}
             disabled={!canRedo}
             title="Redo"
-            className="px-2 py-0.5 text-sm text-zinc-500 hover:text-white disabled:opacity-25 transition-colors"
+            className="px-2 py-0.5 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
           >
             ↪
           </button>
@@ -531,6 +553,14 @@ const PANEL_SIZE_PRESETS: Array<{ label: string; value: string }> = [
   { label: "J",  value: "jumbo"  },
 ];
 
+/**
+ * Effects supported by the TextElement API schema
+ * (Literal["static","fade-in","slide-up","karaoke-line"]).
+ * The full INTRO_ANIMATIONS list (e.g. "pop-in","bounce") is only valid for
+ * the intro-overlay POST /edit path and would 422 against PUT /text-elements.
+ * Expand after widening TextElement.effect in the backend schema.
+ * INTRO_FONTS is imported above for the PANEL_FONTS derivation.
+ */
 const PANEL_EFFECTS: Array<{ label: string; value: string }> = [
   { label: "Static",   value: "static"       },
   { label: "Fade in",  value: "fade-in"      },
@@ -539,41 +569,22 @@ const PANEL_EFFECTS: Array<{ label: string; value: string }> = [
 ];
 
 /**
- * Curated 4-font shortlist for the property panel.
- * Keys are canonical font-registry.json names (validated by the Skia renderer).
- * cssFamily + weight are used for live in-button preview only.
+ * Full font list — derived from INTRO_FONTS (overlay-constants.ts, all
+ * non-deprecated registry entries). Previously a 4-font shortlist (PANEL_FONTS);
+ * expanded to match EditToolbar so text-lane and instant-editor share the same
+ * options (plan D). The `label` field is the registry name (no extra "Bold" suffix).
  */
 const PANEL_FONTS: Array<{
   name: string;
   label: string;
   cssFamily: string;
   weight: number;
-}> = [
-  {
-    name: "Playfair Display",
-    label: "Playfair Bold",
-    cssFamily: "'Playfair Display', serif",
-    weight: 700,
-  },
-  {
-    name: "Playfair Display Regular",
-    label: "Playfair Regular",
-    cssFamily: "'Playfair Display', serif",
-    weight: 400,
-  },
-  {
-    name: "Inter",
-    label: "Inter Bold",
-    cssFamily: "'Inter', sans-serif",
-    weight: 700,
-  },
-  {
-    name: "Inter Regular",
-    label: "Inter Regular",
-    cssFamily: "'Inter', sans-serif",
-    weight: 400,
-  },
-];
+}> = INTRO_FONTS.map((f) => ({
+  name: f.name,
+  label: f.name,
+  cssFamily: f.cssFamily,
+  weight: f.weight,
+}));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -627,7 +638,7 @@ function TextPropertyPanel({
     <div className="space-y-3">
       {/* Text content */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Text
         </label>
         <textarea
@@ -637,12 +648,12 @@ function TextPropertyPanel({
           }
           maxLength={500}
           rows={3}
-          className="w-full text-xs bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-white placeholder-zinc-600 focus:border-amber-400/60 focus:outline-none resize-none leading-relaxed"
+          className="w-full text-xs bg-zinc-50 border border-zinc-200 rounded-lg px-2 py-1.5 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none resize-none leading-relaxed"
           placeholder="Enter text…"
         />
         <div
           className={`text-[9px] text-right mt-0.5 tabular-nums ${
-            charCount >= 450 ? "text-amber-400" : "text-zinc-600"
+            charCount >= 450 ? "text-amber-500" : "text-zinc-400"
           }`}
         >
           {charCount}/500
@@ -651,7 +662,7 @@ function TextPropertyPanel({
 
       {/* Size — numeric stepper + preset chips */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Size
         </label>
         <div className="flex items-center gap-2 mb-1.5">
@@ -660,12 +671,12 @@ function TextPropertyPanel({
             onClick={() =>
               patch({ size_px: Math.max(8, (sizePx ?? 72) - 1), size_class: undefined })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
             aria-label="Decrease font size"
           >
             −
           </button>
-          <span className="w-12 text-center text-xs text-white tabular-nums">
+          <span className="w-12 text-center text-xs text-zinc-700 tabular-nums">
             {sizePx !== null ? `${sizePx}px` : "—"}
           </span>
           <button
@@ -673,7 +684,7 @@ function TextPropertyPanel({
             onClick={() =>
               patch({ size_px: Math.min(300, (sizePx ?? 72) + 1), size_class: undefined })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
             aria-label="Increase font size"
           >
             ＋
@@ -690,7 +701,7 @@ function TextPropertyPanel({
               className={`flex-1 text-[10px] rounded py-1 transition-colors ${
                 bar.size_class === p.value
                   ? "bg-lime-400 text-black font-semibold"
-                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {p.label}
@@ -701,12 +712,12 @@ function TextPropertyPanel({
 
       {/* Text color */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Color
         </label>
         <div className="flex items-center gap-2">
           <div
-            className="w-6 h-6 rounded border border-zinc-600 flex-shrink-0"
+            className="w-6 h-6 rounded border border-zinc-300 flex-shrink-0"
             style={{ backgroundColor: bar.color ?? "#ffffff" }}
             aria-hidden="true"
           />
@@ -718,7 +729,7 @@ function TextPropertyPanel({
             onKeyDown={(e) => { if (e.key === "Enter") commitColor(colorDraft); }}
             maxLength={7}
             placeholder="#ffffff"
-            className="flex-1 text-xs bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-white placeholder-zinc-600 focus:border-amber-400/60 focus:outline-none font-mono"
+            className="flex-1 text-xs bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none font-mono"
             aria-label="Text color (6-digit hex)"
           />
         </div>
@@ -726,13 +737,13 @@ function TextPropertyPanel({
 
       {/* Highlight color (optional) */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Highlight{" "}
-          <span className="text-zinc-600 normal-case font-normal">(optional)</span>
+          <span className="text-zinc-400 normal-case font-normal">(optional)</span>
         </label>
         <div className="flex items-center gap-2">
           <div
-            className="w-6 h-6 rounded border border-zinc-600 flex-shrink-0"
+            className="w-6 h-6 rounded border border-zinc-300 flex-shrink-0"
             style={{
               backgroundColor: bar.highlight_color ?? "transparent",
               backgroundImage: bar.highlight_color
@@ -750,14 +761,14 @@ function TextPropertyPanel({
             onKeyDown={(e) => { if (e.key === "Enter") commitHighlight(hlDraft); }}
             maxLength={7}
             placeholder="#ffee00 or empty"
-            className="flex-1 text-xs bg-zinc-900 border border-zinc-700 rounded px-2 py-1 text-white placeholder-zinc-600 focus:border-amber-400/60 focus:outline-none font-mono"
+            className="flex-1 text-xs bg-zinc-50 border border-zinc-200 rounded px-2 py-1 text-zinc-900 placeholder-zinc-400 focus:border-amber-400 focus:outline-none font-mono"
             aria-label="Highlight color (6-digit hex, optional)"
           />
           {bar.highlight_color && (
             <button
               type="button"
               onClick={() => { setHlDraft(""); patch({ highlight_color: undefined }); }}
-              className="text-zinc-500 hover:text-red-400 text-xs px-1 leading-none"
+              className="text-zinc-400 hover:text-red-500 text-xs px-1 leading-none"
               aria-label="Clear highlight color"
             >
               ✕
@@ -774,7 +785,7 @@ function TextPropertyPanel({
     <div className="space-y-3">
       {/* Alignment */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Alignment
         </label>
         <div className="flex gap-1" role="group" aria-label="Text alignment">
@@ -788,7 +799,7 @@ function TextPropertyPanel({
               className={`flex-1 text-sm py-1 rounded transition-colors ${
                 bar.alignment === a
                   ? "bg-lime-400 text-black font-semibold"
-                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {a === "left" ? "◀" : a === "center" ? "▬" : "▶"}
@@ -799,7 +810,7 @@ function TextPropertyPanel({
 
       {/* Stroke width */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Stroke
         </label>
         <div className="flex items-center gap-2">
@@ -810,12 +821,12 @@ function TextPropertyPanel({
                 stroke_width: Math.max(0, parseFloat((strokeW - 0.5).toFixed(1))),
               })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
             aria-label="Decrease stroke width"
           >
             −
           </button>
-          <span className="w-10 text-center text-xs text-white tabular-nums">
+          <span className="w-10 text-center text-xs text-zinc-700 tabular-nums">
             {strokeW.toFixed(1)}
           </span>
           <button
@@ -825,7 +836,7 @@ function TextPropertyPanel({
                 stroke_width: Math.min(20, parseFloat((strokeW + 0.5).toFixed(1))),
               })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-700 text-white hover:bg-zinc-600 leading-none select-none"
+            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
             aria-label="Increase stroke width"
           >
             ＋
@@ -835,7 +846,7 @@ function TextPropertyPanel({
 
       {/* Effect */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Effect
         </label>
         <div className="flex flex-wrap gap-1">
@@ -848,7 +859,7 @@ function TextPropertyPanel({
               className={`text-[10px] px-2 py-1 rounded transition-colors ${
                 bar.effect === opt.value
                   ? "bg-lime-400 text-black font-semibold"
-                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {opt.label}
@@ -859,7 +870,7 @@ function TextPropertyPanel({
 
       {/* Font — rendered in their own typeface as preview */}
       <div>
-        <label className="block text-[10px] text-zinc-400 uppercase tracking-wide mb-1">
+        <label className="block text-[10px] text-zinc-500 uppercase tracking-wide mb-1">
           Font
         </label>
         <div className="grid grid-cols-2 gap-1">
@@ -873,7 +884,7 @@ function TextPropertyPanel({
               className={`text-[11px] px-2 py-1.5 rounded transition-colors text-left truncate ${
                 bar.font_family === f.name
                   ? "bg-lime-400 text-black"
-                  : "bg-zinc-700 text-zinc-300 hover:bg-zinc-600"
+                  : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
               }`}
             >
               {f.label}
@@ -889,11 +900,11 @@ function TextPropertyPanel({
   return (
     <div className="ml-14 mr-0 mb-1">
       <div
-        className="bg-zinc-800 border border-zinc-700 rounded-lg mt-1 flex flex-col overflow-hidden"
+        className="bg-white border border-zinc-200 rounded-lg mt-1 flex flex-col overflow-hidden"
         style={{ maxHeight: "60vh" }}
       >
         {/* Mobile tabs — hidden on desktop, visible on ≤375px */}
-        <div className="hidden max-[375px]:flex border-b border-zinc-700 flex-shrink-0">
+        <div className="hidden max-[375px]:flex border-b border-zinc-200 flex-shrink-0">
           {(["text", "style"] as const).map((t) => (
             <button
               key={t}
@@ -901,8 +912,8 @@ function TextPropertyPanel({
               onClick={() => setTab(t)}
               className={`flex-1 text-xs py-2 capitalize transition-colors ${
                 tab === t
-                  ? "text-white font-semibold border-b-2 border-amber-400"
-                  : "text-zinc-400 hover:text-zinc-200"
+                  ? "text-zinc-900 font-semibold border-b-2 border-amber-500"
+                  : "text-zinc-500 hover:text-zinc-700"
               }`}
             >
               {t === "text" ? "Text" : "Style"}
@@ -915,7 +926,7 @@ function TextPropertyPanel({
           {/* Desktop (>375px): Tier 1 + Tier 2 stacked */}
           <div className="max-[375px]:hidden">
             {tier1}
-            <div className="border-t border-zinc-700/60 mt-3 pt-3">
+            <div className="border-t border-zinc-200 mt-3 pt-3">
               {tier2}
             </div>
           </div>
@@ -926,11 +937,11 @@ function TextPropertyPanel({
         </div>
 
         {/* Sticky Apply row — always at bottom even when content is scrolled */}
-        <div className="border-t border-zinc-700 px-3 py-2 flex items-center justify-between bg-zinc-800 flex-shrink-0">
+        <div className="border-t border-zinc-200 px-3 py-2 flex items-center justify-between bg-zinc-50 flex-shrink-0">
           <button
             type="button"
             onClick={() => dispatch({ type: "UNDO" })}
-            className="text-xs text-zinc-500 hover:text-white transition-colors px-2 py-1 rounded hover:bg-zinc-700"
+            className="text-xs text-zinc-400 hover:text-zinc-700 transition-colors px-2 py-1 rounded hover:bg-zinc-100"
           >
             ↩ Undo
           </button>

@@ -1208,6 +1208,8 @@ def regenerate_generative_variant(
                 error=str(exc),
                 exc_info=True,
             )
+            # E1: a superseded task must not flip render_status to "failed" —
+            # the newer commit's task owns the variant's terminal state now.
             _update_variant_entry(
                 job_id,
                 variant_id,
@@ -1217,6 +1219,8 @@ def regenerate_generative_variant(
                     "error": str(exc),
                     "error_class": _classify_error(exc),
                 },
+                expected_render_gen_id=render_gen_id,
+                outcome="failed",
             )
 
 
@@ -1319,6 +1323,7 @@ def _run_media_overlay_pass(
     job_id: str,
     variant_id: str,
     overlays_raw: list[dict],
+    expected_render_gen_id: str | None = None,
 ) -> None:
     """Apply (or clear) media-overlay cards on a finished variant (fast path).
 
@@ -1340,7 +1345,7 @@ def _run_media_overlay_pass(
     from app.storage import copy_object  # noqa: PLC0415
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
         if job is None:
             log.error("media_overlay_job_not_found", job_id=job_id)
             return
@@ -1400,6 +1405,21 @@ def _run_media_overlay_pass(
             # Patch the variant.
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="media_overlay_clear",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["media_overlays"] = None
                     v["output_url"] = signed_url
                     if will_reapply_sfx:
@@ -1415,7 +1435,11 @@ def _run_media_overlay_pass(
             db.commit()
             record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
             # Terminal hook: re-apply persisted SFX on top of the restored clean variant.
-            _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+            _reapply_persisted_sfx_if_any(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=expected_render_gen_id,
+            )
             return
 
         # ── Apply path: composite cards onto the clean base ──────────────────
@@ -1455,6 +1479,21 @@ def _run_media_overlay_pass(
             )
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="media_overlay_failed",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["render_status"] = "failed"
                     v["render_error"] = str(exc)[:500]
                     break
@@ -1469,7 +1508,8 @@ def _run_media_overlay_pass(
         # Re-read FRESH under a row lock before writing back (plan 009 E5): the
         # ffmpeg run above took minutes; autosaves may have landed since. The
         # variants list loaded at task start is stale — never write it back.
-        db.expire_all()
+        if hasattr(db, "expire_all"):
+            db.expire_all()
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
@@ -1477,6 +1517,21 @@ def _run_media_overlay_pass(
         stale_write_skipped = False
         for v in variants:
             if v.get("variant_id") == variant_id:
+                current = v.get("render_generation_id")
+                if (
+                    expected_render_gen_id is not None
+                    and current is not None
+                    and current != expected_render_gen_id
+                ):
+                    log.warning(
+                        "stale_render_write_discarded",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        outcome="media_overlay_apply",
+                        expected_gen_id=expected_render_gen_id,
+                        actual_gen_id=current,
+                    )
+                    return
                 if _canon_cards(v.get("media_overlays")) == overlays_at_start:
                     v["media_overlays"] = [c.model_dump() for c in cards]
                 else:
@@ -1506,10 +1561,88 @@ def _run_media_overlay_pass(
             },
         )
         # Terminal hook: re-apply persisted SFX on top of the newly composited video.
-        _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+        _reapply_persisted_sfx_if_any(
+            job_id=job_id,
+            variant_id=variant_id,
+            expected_render_gen_id=expected_render_gen_id,
+        )
 
 
-def _reapply_persisted_sfx_if_any(*, job_id: str, variant_id: str) -> None:
+def _reapply_persisted_media_overlays_if_any(
+    *,
+    job_id: str,
+    variant_id: str,
+    expected_render_gen_id: str | None = None,
+) -> bool:
+    """Re-apply media overlays after a fresh full re-render, if any are persisted.
+
+    Full re-renders produce a fresh base video without media-overlay cards. Reset
+    stale clean-copy snapshots, then route through _run_media_overlay_pass so its
+    normal terminal behavior and SFX reapply hook stay single-sourced.
+    """
+    from app.config import settings as _settings_overlay  # noqa: PLC0415
+
+    if not _settings_overlay.media_overlays_enabled:
+        return False
+
+    try:
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None:
+                return False
+            variants = list((job.assembly_plan or {}).get("variants") or [])
+            existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
+            if existing is None:
+                return False
+            overlays_raw = existing.get("media_overlays")
+            if not overlays_raw:
+                return False
+            for v in variants:
+                if v.get("variant_id") == variant_id:
+                    v["pre_media_overlay_video_path"] = None
+                    # SFX is re-applied after overlays. Any old SFX clean copy
+                    # points at the pre-full-render video, so force a fresh one.
+                    v["pre_sfx_video_path"] = None
+                    break
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            flag_modified(job, "assembly_plan")
+            db.commit()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("media_overlay_reapply_prep_failed", job_id=job_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
+        return True
+
+    try:
+        _run_media_overlay_pass(
+            job_id=job_id,
+            variant_id=variant_id,
+            overlays_raw=overlays_raw,
+            expected_render_gen_id=expected_render_gen_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("media_overlay_reapply_failed", job_id=job_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
+    return True
+
+
+def _reapply_persisted_sfx_if_any(
+    *,
+    job_id: str,
+    variant_id: str,
+    expected_render_gen_id: str | None = None,
+) -> None:
     """Re-apply sound effects after an overlay edit, if any SFX are persisted.
 
     SFX is the outermost layer: an overlay edit replaces video_path from the
@@ -1555,20 +1688,41 @@ def _reapply_persisted_sfx_if_any(*, job_id: str, variant_id: str) -> None:
         # render_status="rendering"). A prep failure means _run_sfx_pass never
         # runs, so surface it as a failed render rather than stranding the
         # variant in "rendering" forever.
-        _mark_variant_failed(job_id=job_id, variant_id=variant_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
         return
 
     try:
-        _run_sfx_pass(job_id=job_id, variant_id=variant_id, sfx_raw=sfx_raw)
+        _run_sfx_pass(
+            job_id=job_id,
+            variant_id=variant_id,
+            sfx_raw=sfx_raw,
+            expected_render_gen_id=expected_render_gen_id,
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_failed", job_id=job_id, error=str(exc))
         # _run_sfx_pass sets render_status="failed" itself on a HANDLED apply
         # error; this catch covers UNHANDLED errors, which would otherwise leave
         # the overlay-deferred "rendering" state stuck. Surface it.
-        _mark_variant_failed(job_id=job_id, variant_id=variant_id, error=str(exc))
+        _mark_variant_failed(
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+            expected_render_gen_id=expected_render_gen_id,
+        )
 
 
-def _mark_variant_failed(*, job_id: str, variant_id: str, error: str) -> None:
+def _mark_variant_failed(
+    *,
+    job_id: str,
+    variant_id: str,
+    error: str,
+    expected_render_gen_id: str | None = None,
+) -> None:
     """Best-effort flip of a variant to render_status="failed".
 
     Used when a pass that DEFERRED its terminal render_status (e.g. an overlay
@@ -1577,12 +1731,27 @@ def _mark_variant_failed(*, job_id: str, variant_id: str, error: str) -> None:
     """
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
                 return
             variants = list((job.assembly_plan or {}).get("variants") or [])
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="sfx_failed",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["render_status"] = "failed"
                     v["render_error"] = error[:500]
                     break
@@ -1600,6 +1769,7 @@ def _run_sfx_pass(
     job_id: str,
     variant_id: str,
     sfx_raw: list[dict],
+    expected_render_gen_id: str | None = None,
 ) -> None:
     """Apply (or clear) sound-effect placements on a finished variant (fast path).
 
@@ -1623,7 +1793,7 @@ def _run_sfx_pass(
     from app.storage import copy_object  # noqa: PLC0415
 
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=expected_render_gen_id is not None)
         if job is None:
             log.error("sfx_job_not_found", job_id=job_id)
             return
@@ -1653,6 +1823,21 @@ def _run_sfx_pass(
 
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="sfx_clear",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["sound_effects"] = None
                     v["output_url"] = signed_url
                     v["render_status"] = "ready"
@@ -1696,6 +1881,21 @@ def _run_sfx_pass(
             )
             for v in variants:
                 if v.get("variant_id") == variant_id:
+                    current = v.get("render_generation_id")
+                    if (
+                        expected_render_gen_id is not None
+                        and current is not None
+                        and current != expected_render_gen_id
+                    ):
+                        log.warning(
+                            "stale_render_write_discarded",
+                            job_id=job_id,
+                            variant_id=variant_id,
+                            outcome="sfx_failed",
+                            expected_gen_id=expected_render_gen_id,
+                            actual_gen_id=current,
+                        )
+                        return
                     v["render_status"] = "failed"
                     v["render_error"] = str(exc)[:500]
                     break
@@ -1709,6 +1909,21 @@ def _run_sfx_pass(
 
         for v in variants:
             if v.get("variant_id") == variant_id:
+                current = v.get("render_generation_id")
+                if (
+                    expected_render_gen_id is not None
+                    and current is not None
+                    and current != expected_render_gen_id
+                ):
+                    log.warning(
+                        "stale_render_write_discarded",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        outcome="sfx_apply",
+                        expected_gen_id=expected_render_gen_id,
+                        actual_gen_id=current,
+                    )
+                    return
                 v["sound_effects"] = [p.model_dump() for p in placements]
                 v["pre_sfx_video_path"] = pre_clean
                 v["output_url"] = new_url
@@ -1739,10 +1954,13 @@ def _maybe_add_text_elements_snapshot(result: dict) -> None:
     No-op when:
       - ``_TEXT_ELEMENTS_ENABLED`` is False (kill switch)
       - the render failed (``ok`` is falsy)
+      - ``text_elements_user_edited`` is true (the user's saved list is authoritative)
       - ``text_elements_for_variant`` raises or returns an empty list
     Never raises — a snapshot failure must never block a completed render.
     """
     if not _TEXT_ELEMENTS_ENABLED or not result.get("ok"):
+        return
+    if result.get("text_elements_user_edited"):
         return
     try:
         from app.agents._schemas.text_element import text_elements_for_variant  # noqa: PLC0415
@@ -2339,6 +2557,7 @@ def _run_regenerate_variant(
             job_id=job_id,
             variant_id=variant_id,
             overlays_raw=media_overlays_override or [],
+            expected_render_gen_id=render_gen_id,
         )
         return
 
@@ -2377,6 +2596,7 @@ def _run_regenerate_variant(
             job_id=job_id,
             variant_id=variant_id,
             sfx_raw=sfx_override or [],
+            expected_render_gen_id=render_gen_id,
         )
         return
 
@@ -2431,7 +2651,14 @@ def _run_regenerate_variant(
                 variant_id=variant_id,
                 archetype=existing.get("resolved_archetype"),
             )
-            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+            # E1: terminal write ("ready") — token-checked like every other outcome.
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {"render_status": "ready"},
+                expected_render_gen_id=render_gen_id,
+                outcome="caption_reject",
+            )
             return
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
@@ -2649,37 +2876,32 @@ def _run_regenerate_variant(
             else:
                 raise
         if _used_fast_path:
-            # A20: stale-write guard for text_elements reburns.  A subsequent
-            # PUT /text-elements overwrites `render_generation_id` in the DB; if
-            # it differs from the token we were launched with, our result is stale
-            # and the newer task will write its own — discard rather than clobber.
-            if render_gen_id is not None:
-                with _sync_session() as _guard_db:
-                    _guard_job = _guard_db.get(Job, uuid.UUID(job_id))
-                    if _guard_job is not None:
-                        _guard_variants = (_guard_job.assembly_plan or {}).get("variants") or []
-                        _guard_v = next(
-                            (v for v in _guard_variants if v.get("variant_id") == variant_id),
-                            None,
-                        )
-                        if (
-                            _guard_v is not None
-                            and _guard_v.get("render_generation_id") != render_gen_id
-                        ):
-                            log.warning(
-                                "stale_text_elements_reburn_discarded",
-                                job_id=job_id,
-                                variant_id=variant_id,
-                                expected_gen_id=render_gen_id,
-                                actual_gen_id=_guard_v.get("render_generation_id"),
-                            )
-                            return
-            _update_variant_entry(job_id, variant_id, result)
-            # SFX is the OUTERMOST layer. A text/style reburn overwrites video_path
-            # from the cached base WITHOUT the SFX mix, so re-apply persisted effects
-            # on top (the hook also resets the stale pre_sfx_video_path). Mirrors the
-            # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
-            _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+            # A20/E1: stale-write guard for reburns.  A subsequent editor commit
+            # (or PUT /text-elements) overwrites `render_generation_id` in the DB;
+            # if it differs from the token we were launched with, our result is
+            # stale and the newer task will write its own — discard, don't clobber.
+            if not _update_variant_entry(
+                job_id,
+                variant_id,
+                result,
+                expected_render_gen_id=render_gen_id,
+                outcome="reburn",
+            ):
+                return
+            # A text/style reburn overwrites video_path from the cached text-free
+            # base, so any persisted user media layers must be rebuilt. Re-apply
+            # overlays first; that pass owns the SFX hook because SFX is the
+            # outermost audio layer. If no overlays exist, keep the SFX-only hook.
+            if not _reapply_persisted_media_overlays_if_any(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=render_gen_id,
+            ):
+                _reapply_persisted_sfx_if_any(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    expected_render_gen_id=render_gen_id,
+                )
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
 
@@ -2877,14 +3099,74 @@ def _run_regenerate_variant(
             landscape_fit=landscape_fit_regen,
         )
 
+    # E1: the token check covers BOTH terminal branches (ready and failed) —
+    # a superseded task's output/status must never clobber the newer commit's.
     if result.get("ok"):
-        _update_variant_entry(job_id, variant_id, result)
-        # SFX is the OUTERMOST layer. A full re-render (song swap, retext, clip
-        # edit, style change) re-assembles video_path WITHOUT the SFX mix, so
-        # re-apply persisted effects onto the freshly re-rendered base (the hook
-        # also resets the now-stale pre_sfx_video_path snapshot). Mirrors the
-        # terminal hook in _run_media_overlay_pass. No-op when no SFX persisted.
-        _reapply_persisted_sfx_if_any(job_id=job_id, variant_id=variant_id)
+        if (
+            _TEXT_ELEMENTS_ENABLED
+            and existing.get("text_elements_user_edited")
+            and result.get("base_video_path")
+        ):
+            result = {
+                **result,
+                **_reburn_text_on_base(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    existing={
+                        **existing,
+                        **result,
+                        "text_elements": existing.get("text_elements") or [],
+                        "text_elements_user_edited": True,
+                    },
+                    agent_text=agent_text,
+                    agent_form=agent_form,
+                    text_mode=text_mode,
+                    resolved_style_set_id=resolved_style_set_id,
+                    size_override_px=resolved_size_override_px,
+                    settings=settings,
+                    sequence_allowed=allow_sequence,
+                    language=language,
+                    font_family_override=resolved_font_override,
+                    effect_override=resolved_effect_override,
+                    text_color_override=resolved_color_override,
+                    cluster_hero_font_override=resolved_cluster_hero_override,
+                    cluster_body_font_override=resolved_cluster_body_override,
+                    cluster_accent_font_override=resolved_cluster_accent_override,
+                    cluster_hero_size_px_override=resolved_cluster_hero_size_override,
+                    cluster_body_size_px_override=resolved_cluster_body_size_override,
+                    cluster_accent_size_px_override=resolved_cluster_accent_size_override,
+                ),
+            }
+        persisted_media_overlays = existing.get("media_overlays") or None
+        if persisted_media_overlays:
+            # A fresh full render produces the clean base without user media cards.
+            # Preserve the just-persisted cards through the result merge and reset
+            # stale snapshots so the reapply pass composites onto the new base.
+            result["media_overlays"] = persisted_media_overlays
+            result["pre_media_overlay_video_path"] = None
+            result["pre_sfx_video_path"] = None
+        if not _update_variant_entry(
+            job_id,
+            variant_id,
+            result,
+            expected_render_gen_id=render_gen_id,
+            outcome="full_render",
+        ):
+            return
+        # A full re-render re-assembles video_path without user media layers.
+        # Re-apply overlays first; that pass owns the follow-up SFX hook because
+        # SFX is the outermost audio layer. If no overlays exist (or the overlay
+        # feature is disabled), keep the pre-existing SFX-only terminal hook.
+        if not _reapply_persisted_media_overlays_if_any(
+            job_id=job_id,
+            variant_id=variant_id,
+            expected_render_gen_id=render_gen_id,
+        ):
+            _reapply_persisted_sfx_if_any(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=render_gen_id,
+            )
     else:
         # Failure-patch hygiene: the failure record spreads the fresh `base`
         # dict, whose None values (base_video_path, intro_text, ...) would NULL
@@ -2896,7 +3178,13 @@ def _run_regenerate_variant(
             for k, v in result.items()
             if v is not None and k not in ("video_path", "output_url")
         }
-        _update_variant_entry(job_id, variant_id, failure_patch)
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            failure_patch,
+            expected_render_gen_id=render_gen_id,
+            outcome="full_render_failed",
+        )
 
 
 def _existing_variants(job_id: str) -> list[dict[str, Any]]:
@@ -2959,27 +3247,95 @@ def _clear_user_timeline(job_id: str, variant_id: str) -> None:
         db.commit()
 
 
-def _update_variant_entry(job_id: str, variant_id: str, patch: dict[str, Any]) -> None:
+def _stale_render_discarded(
+    job_id: str, variant_id: str, render_gen_id: str | None, *, outcome: str
+) -> bool:
+    """Render-intent guard (E1): True → this task's terminal DB write must be skipped.
+
+    A render task launched with a `render_gen_id` token owns the variant's
+    DB-visible outcome only while the variant's persisted `render_generation_id`
+    still equals that token. Every editor commit bumps the token BEFORE
+    enqueueing its own render, so an older task that finishes late must finish
+    its compute but DISCARD its patch — the newest committed state is the one
+    whose render lands (D8 queue/supersede). Tasks launched without a token
+    (legacy per-field dispatchers) always write — flag-off surfaces unchanged.
+    """
+    if render_gen_id is None:
+        return False
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return False
+        variants = (job.assembly_plan or {}).get("variants") or []
+        variant = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if variant is None:
+        return False
+    current = variant.get("render_generation_id")
+    if current is not None and current != render_gen_id:
+        log.warning(
+            "stale_render_write_discarded",
+            job_id=job_id,
+            variant_id=variant_id,
+            outcome=outcome,
+            expected_gen_id=render_gen_id,
+            actual_gen_id=current,
+        )
+        return True
+    return False
+
+
+def _update_variant_entry(
+    job_id: str,
+    variant_id: str,
+    patch: dict[str, Any],
+    *,
+    expected_render_gen_id: str | None = None,
+    outcome: str | None = None,
+) -> bool:
     """Merge `patch` into the matching entry of Job.assembly_plan['variants'].
 
     Row-locked (SELECT ... FOR UPDATE): concurrent `regenerate_generative_variant`
     tasks each do a read-modify-write of the whole `assembly_plan` JSONB, so without
     the lock one task's variant update silently clobbers another's (worker runs
     --concurrency=4). The lock serializes the RMW per Job row.
+
+    When `expected_render_gen_id` is provided, the stale-generation comparison is
+    performed under the same row lock as the merge. This makes terminal render
+    writes check-and-write atomic; legacy tokenless tasks pass None and always
+    write as before. Returns False when the patch was discarded or the row was
+    missing.
     """
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
-            return
+            return False
         plan = dict(job.assembly_plan or {})
         variants = list(plan.get("variants") or [])
         for i, v in enumerate(variants):
             if v.get("variant_id") == variant_id:
+                current = v.get("render_generation_id")
+                if (
+                    expected_render_gen_id is not None
+                    and current is not None
+                    and current != expected_render_gen_id
+                ):
+                    log.warning(
+                        "stale_render_write_discarded",
+                        job_id=job_id,
+                        variant_id=variant_id,
+                        outcome=outcome or "variant_update",
+                        expected_gen_id=expected_render_gen_id,
+                        actual_gen_id=current,
+                    )
+                    return False
                 variants[i] = {**v, **{k: val for k, val in patch.items() if k != "variant_id"}}
                 break
+        else:
+            return False
         plan["variants"] = variants
         job.assembly_plan = plan
         db.commit()
+    return True
 
 
 # ── Variant spec ──────────────────────────────────────────────────────────────

@@ -24,7 +24,7 @@
  *   ClipsLane.tsx   — Clips expand/collapse
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { SoundEffectPlacement, MediaOverlay } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { Playhead } from "@/lib/timeline/Playhead";
@@ -36,6 +36,9 @@ import OverlayLane from "./OverlayLane";
 import ClipsLane from "./ClipsLane";
 import TextLane from "./TextLane";
 import type { ClipTimelineHandle } from "./useClipTimeline";
+import EditorTimelineBody, {
+  type EditorTimelineBodyProps,
+} from "../items/[id]/_editor/EditorTimelineBody";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -157,6 +160,29 @@ export interface UnifiedTimelineProps {
    * one draft.
    */
   clipTimelineHandle?: ClipTimelineHandle;
+  /**
+   * Plan C fix: called when the user clicks a clip bar body in the lane.
+   * The key is the clicked slot.key so the parent can pre-select it in
+   * InlineClipsEditor and show only that clip's trim panel.
+   */
+  onClipBodyClick?: (key: string) => void;
+  /**
+   * 3-column layout: when provided, the TextPropertyPanel for the selected bar
+   * is portaled into this element (forwarded to TextLane).
+   */
+  textPanelPortalTarget?: HTMLElement | null;
+  /**
+   * 3-column layout: called whenever the text bar selection changes so the
+   * parent can conditionally show/hide other right-panel content.
+   */
+  onTextBarSelect?: (id: string | null) => void;
+  /**
+   * Editor-shell mode (plan §6, T4). When provided, UnifiedTimeline renders the
+   * scale-driven editor timeline (Text → Video → Sound → Overlays, zoom, scrub,
+   * lime selection, mutes, filmstrip) instead of the item-page lanes. Absent =
+   * the item-page timeline is byte-identical to before (all props above only).
+   */
+  editorMode?: EditorTimelineBodyProps;
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -195,10 +221,22 @@ export default function UnifiedTimeline({
   clipsPanel,
   onClipsPanelChange,
   clipTimelineHandle,
+  onClipBodyClick,
+  textPanelPortalTarget,
+  onTextBarSelect,
+  editorMode,
 }: UnifiedTimelineProps) {
+  // ── Editor-shell mode: delegate to the scale-driven editor timeline ──────────
+  // (early return so the item-page render path below is untouched.)
+
   // ── Text lane selection (controlled here so T7 can read expandedBarId) ────────
 
   const [textExpandedBarId, setTextExpandedBarId] = useState<string | null>(null);
+
+  // Notify parent when selection changes (for 3-column layout right-panel control).
+  useEffect(() => {
+    onTextBarSelect?.(textExpandedBarId);
+  }, [textExpandedBarId, onTextBarSelect]);
 
   // ── Ruler ─────────────────────────────────────────────────────────────────────
 
@@ -213,12 +251,16 @@ export default function UnifiedTimeline({
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
+  // Editor-shell mode wins the render (all hooks above still run, so hook order
+  // is stable). The item-page path below is unchanged.
+  if (editorMode) return <EditorTimelineBody {...editorMode} />;
+
   return (
     <div className="select-none overflow-x-auto" data-testid="unified-timeline">
       {/* ── Ruler ── */}
       <div className="flex h-5" style={{ minWidth: "100%" }}>
         <div className="flex-shrink-0 w-14" />
-        <div className="relative flex-1 bg-zinc-900/40 border-b border-zinc-800/60">
+        <div className="relative flex-1 bg-zinc-50 border-b border-zinc-200">
           {totalDurationS > 0 &&
             ticks.map((t) => {
               const pct = (t / totalDurationS) * 100;
@@ -228,8 +270,8 @@ export default function UnifiedTimeline({
                   className="absolute top-0 h-full pointer-events-none"
                   style={{ left: `${pct}%` }}
                 >
-                  <div className="w-px h-2 bg-zinc-700" />
-                  <span className="absolute left-0.5 top-2 text-[8px] leading-none text-zinc-500 whitespace-nowrap">
+                  <div className="w-px h-2 bg-zinc-300" />
+                  <span className="absolute left-0.5 top-2 text-[8px] leading-none text-zinc-400 whitespace-nowrap">
                     {formatTimecode(t)}
                   </span>
                 </div>
@@ -245,6 +287,7 @@ export default function UnifiedTimeline({
         clipsPanel={clipsPanel}
         onClipsPanelChange={onClipsPanelChange}
         clipHandle={clipTimelineHandle}
+        onClipBodyClick={onClipBodyClick}
       />
 
       {/* ── Text lane ── */}
@@ -258,6 +301,7 @@ export default function UnifiedTimeline({
         onApply={onTextApply}
         onTrimClamped={onTextTrimClamped}
         isFirstSequenceEdit={isFirstSequenceEdit}
+        textPanelPortalTarget={textPanelPortalTarget}
       />
 
       {/* ── Overlays lane ── */}
@@ -302,7 +346,7 @@ export default function UnifiedTimeline({
           .map((s) => ({ id: s.id, sfx: s.sfx!, staged: s.staged }))}
       />
 
-      <p className="pl-14 pt-1.5 text-[9px] text-zinc-600">
+      <p className="pl-14 pt-1.5 text-[9px] text-zinc-400">
         Clips lane — click to expand inline · Text lane — click to expand inline
       </p>
     </div>
@@ -329,11 +373,11 @@ function ReadOnlyLane({ label, totalDurationS, currentTimeS, onClick, children }
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } }}
     >
       <div className="flex-shrink-0 w-14 flex items-center justify-end pr-2">
-        <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider truncate">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider truncate">
           {label}
         </span>
       </div>
-      <div className="relative flex-1 bg-zinc-800/15 border-y border-zinc-700/30 overflow-hidden group-hover:bg-zinc-800/30 transition-colors">
+      <div className="relative flex-1 bg-zinc-50 border-y border-zinc-200 overflow-hidden group-hover:bg-zinc-100 transition-colors">
         <Playhead currentTimeS={currentTimeS} totalDurationS={totalDurationS} />
         {children}
       </div>
