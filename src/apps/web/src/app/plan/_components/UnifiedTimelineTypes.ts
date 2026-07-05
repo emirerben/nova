@@ -6,6 +6,8 @@
  * only what it needs.
  */
 
+import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+
 // ── File upload ────────────────────────────────────────────────────────────────
 
 export interface UploadFile {
@@ -43,4 +45,25 @@ export interface OverlayDragState {
   containerWidth: number;
   scaleDuration: number;
   clipDurationS: number | null;
+  /** Set when the dragged card is an AI suggestion (006 T3): patches route to
+   *  onSuggestionEdit(suggestionId, …) instead of onUpdateCard — suggestions
+   *  never mutate the manual media_overlays state. */
+  suggestionId?: string | null;
+}
+
+// ── Overlay suggestions in the lanes (plans/006 T3, 005-4A) ───────────────────
+
+/**
+ * One pending AI overlay suggestion rendered in the timeline lanes with
+ * provenance styling (dashed lime-600 + ✦). Derived from the rail's working
+ * `OverlaySuggestion` envelopes; `id` is the ENVELOPE id (the rail row
+ * identity), NOT the embedded overlay's id.
+ */
+export interface SuggestionLaneEntry {
+  id: string;
+  overlay: MediaOverlay;
+  sfx: SoundEffectPlacement | null;
+  /** True once the row is ✓-kept or lane-edited — drives the dashed→solid
+   *  border + ✦ fade accept transition (005-6A). */
+  staged: boolean;
 }

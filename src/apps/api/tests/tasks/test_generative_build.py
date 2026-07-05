@@ -2890,6 +2890,186 @@ def test_reburn_subtitled_word_style_routes_to_word_pop(monkeypatch):
     assert seen["pop"] is True and burned["called"] is True
 
 
+# ── Background-sound (bed-level) reburn — new post-gen editor control ─────────
+# Reconstructs the render inputs from persisted, deterministic data (narrated_
+# timings, filming_guide, narrative_order) — no Whisper/LLM re-run. These tests
+# pin the reconstruction fidelity flagged in the pre-landing review: the clip-
+# assignment branch (_narrated_clip_assignments vs the auto-segment cycling) MUST
+# match the branch the original render took, or the rebuilt audio bed would
+# silently desync from the frozen visuals reused from base_video_path.
+
+
+class _FakeJobWithCandidates(_FakeJob):
+    def __init__(self, assembly_plan=None, all_candidates=None):
+        super().__init__(assembly_plan=assembly_plan)
+        self.all_candidates = all_candidates or {}
+
+
+def _narrated_bed_variant(**over):
+    v = {
+        "variant_id": "narrated",
+        "rank": 1,
+        "render_status": "ready",
+        "resolved_archetype": "narrated",
+        "base_video_path": "generative-jobs/j/variant_1_narrated_base.mp4",
+        "video_path": "generative-jobs/j/variant_1_narrated.mp4",
+        "output_url": "https://signed/old",
+        "caption_cues": [{"text": "the energy here", "start_s": 0.0, "end_s": 1.2}],
+        "captions_enabled": True,
+        "voiceover_caption_style": "sentence",
+        "voiceover_caption_font": None,
+        "voiceover_bed_level": 0.25,
+        "narrated_timings": [
+            {"step_id": "shot_1", "start_s": 0.0, "end_s": 1.2, "confidence": 1.0},
+            {"step_id": "shot_2", "start_s": 1.2, "end_s": 2.5, "confidence": 1.0},
+        ],
+        "media_overlays": None,
+        "pre_media_overlay_video_path": None,
+    }
+    v.update(over)
+    return v
+
+
+def _patch_bed_level_io(monkeypatch, *, assemble_calls: list):
+    monkeypatch.setattr("app.storage.download_to_file", lambda *a, **k: None)
+    monkeypatch.setattr("app.storage.upload_public_read", lambda *a, **k: "https://signed/new")
+    monkeypatch.setattr("app.storage.delete_object_best_effort", lambda *a, **k: True)
+    monkeypatch.setattr(
+        "app.tasks.template_orchestrate._download_clips_parallel",
+        lambda paths, tmpdir: [f"{tmpdir}/local_{i}.mp4" for i in range(len(paths))],
+    )
+
+    def _fake_assemble(step_timings, clip_assignments, voiceover_local, output_path, tmpdir, **kw):
+        assemble_calls.append(
+            {
+                "step_timings": step_timings,
+                "clip_assignments": clip_assignments,
+                "bed_level": kw.get("bed_level"),
+                "base_output_path": kw.get("base_output_path"),
+                "transcript": kw.get("transcript"),
+            }
+        )
+        # Real function writes files at output_path / base_output_path — simulate.
+        with open(output_path, "wb") as f:
+            f.write(b"x")
+        base_path = kw.get("base_output_path")
+        if base_path:
+            with open(base_path, "wb") as f:
+                f.write(b"x")
+        return []
+
+    monkeypatch.setattr("app.pipeline.narrated_assembler.assemble_narrated", _fake_assemble)
+    monkeypatch.setattr(
+        "app.tasks.generative_build._burn_persisted_captions_onto_base",
+        lambda base_local, out_local, variant, tmpdir: open(out_local, "wb").write(b"x"),
+    )
+
+
+def test_reburn_bed_level_happy_path_uses_auto_segment_assignment(monkeypatch):
+    """filming_guide has < 2 scripted steps → the auto-segment (cycling) branch,
+    matching _render_narrated_variant's own branch for the same input shape."""
+    import uuid
+
+    variant = _narrated_bed_variant()
+    job = _FakeJobWithCandidates(
+        assembly_plan={"variants": [variant]},
+        all_candidates={
+            "voiceover_gcs_path": "voiceover-uploads/x/voice.webm",
+            "filming_guide": [],  # < 2 script steps → auto-segment branch
+            "clip_paths": ["slot-uploads/a.mp4", "slot-uploads/b.mp4"],
+            "narrative_shot_count": 0,
+            "landscape_fit": "fit",
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    calls = []
+    _patch_bed_level_io(monkeypatch, assemble_calls=calls)
+
+    gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.6)
+
+    assert len(calls) == 1
+    assert calls[0]["bed_level"] == 0.6
+    assert calls[0]["transcript"] is None  # no re-transcription
+    assert [t.step_id for t in calls[0]["step_timings"]] == ["shot_1", "shot_2"]
+    # Cycling assignment: clip_0 → shot_1, clip_1 → shot_2 (2 clips, 2 steps).
+    assigned = {c.step_id: c.clip_path for c in calls[0]["clip_assignments"]}
+    assert set(assigned.keys()) == {"shot_1", "shot_2"}
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "ready"
+    assert v["voiceover_bed_level"] == 0.6
+    assert v["video_path"] != "generative-jobs/j/variant_1_narrated.mp4"
+    assert v["base_video_path"] != "generative-jobs/j/variant_1_narrated_base.mp4"
+    # Media-overlay keys round-trip untouched (narrated never has any, but the
+    # byte-identity guard requires every base_video_path-carrying dict to name them).
+    assert v["media_overlays"] is None
+    assert v["pre_media_overlay_video_path"] is None
+    # Captions untouched by a bed-level change.
+    assert v["caption_cues"] == variant["caption_cues"]
+
+
+def test_reburn_bed_level_uses_scripted_assignment_when_guide_has_2plus_steps(monkeypatch):
+    """filming_guide has >= 2 scripted steps → _narrated_clip_assignments branch,
+    mirroring _render_narrated_variant's own branch selection exactly."""
+    import uuid
+
+    variant = _narrated_bed_variant()
+    job = _FakeJobWithCandidates(
+        assembly_plan={"variants": [variant]},
+        all_candidates={
+            "voiceover_gcs_path": "voiceover-uploads/x/voice.webm",
+            "filming_guide": [
+                {"shot_id": "shot_1", "what": "pour the coffee"},
+                {"shot_id": "shot_2", "what": "take the first sip"},
+            ],
+            "clip_paths": ["slot-uploads/a.mp4", "slot-uploads/b.mp4"],
+            "narrative_shot_count": 2,
+            "landscape_fit": "fill",
+        },
+    )
+    _patch_job_session(monkeypatch, job)
+    calls = []
+    _patch_bed_level_io(monkeypatch, assemble_calls=calls)
+
+    gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.0)
+
+    assert len(calls) == 1
+    assigned = {c.step_id: c.clip_path for c in calls[0]["clip_assignments"]}
+    assert assigned == {
+        "shot_1": calls[0]["clip_assignments"][0].clip_path,
+        "shot_2": calls[0]["clip_assignments"][1].clip_path,
+    }
+    assert job.assembly_plan["variants"][0]["voiceover_bed_level"] == 0.0
+
+
+def test_reburn_bed_level_rejects_non_narrated(monkeypatch):
+    import uuid
+
+    import pytest
+
+    subtitled = _narrated_bed_variant(resolved_archetype="subtitled", variant_id="subtitled")
+    job = _FakeJobWithCandidates(assembly_plan={"variants": [subtitled]})
+    _patch_job_session(monkeypatch, job)
+    _patch_bed_level_io(monkeypatch, assemble_calls=[])
+
+    with pytest.raises(ValueError, match="no background-sound bed"):
+        gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "subtitled", 0.5)
+
+
+def test_reburn_bed_level_requires_persisted_timings(monkeypatch):
+    import uuid
+
+    import pytest
+
+    variant = _narrated_bed_variant(narrated_timings=[])
+    job = _FakeJobWithCandidates(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    _patch_bed_level_io(monkeypatch, assemble_calls=[])
+
+    with pytest.raises(ValueError, match="narrated_timings"):
+        gb._run_reburn_narrated_bed_level(str(uuid.uuid4()), "narrated", 0.5)
+
+
 def test_finalize_job_preserves_caption_cues(monkeypatch):
     """REGRESSION: _finalize_job rebuilds variants from a key whitelist that silently
     strips anything not listed. caption_cues MUST survive or the on-video editor (which

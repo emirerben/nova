@@ -1,0 +1,53 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.1.0",
+  "input": {
+    "words": [
+      {"word": "here's", "start_s": 0.3, "end_s": 0.6},
+      {"word": "my", "start_s": 0.6, "end_s": 0.7},
+      {"word": "desk", "start_s": 0.7, "end_s": 1.0},
+      {"word": "setup", "start_s": 1.0, "end_s": 1.4},
+      {"word": "the", "start_s": 4.0, "end_s": 4.1},
+      {"word": "office", "start_s": 4.1, "end_s": 4.5},
+      {"word": "view", "start_s": 4.5, "end_s": 4.8},
+      {"word": "is", "start_s": 4.8, "end_s": 4.9},
+      {"word": "unreal", "start_s": 4.9, "end_s": 5.4}
+    ],
+    "assets": [
+      {
+        "asset_id": "asset_pano",
+        "kind": "image",
+        "subject": "ultrawide panorama of the office",
+        "description": "very wide stitched panorama, whole floor visible",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 2.4,
+        "width": 4800,
+        "height": 2000
+      }
+    ],
+    "occupied": [],
+    "duration_s": 20.0,
+    "archetype": "talking_head"
+  },
+  "raw_text": "{\"placements\": [{\"asset_id\": \"asset_pano\", \"slot\": \"top\", \"start_s\": 4.1, \"end_s\": 7.5, \"confidence_tier\": \"confident\", \"reason\": \"You say the office view is unreal — this panorama shows it.\", \"transcript_anchor\": \"office view is unreal\", \"sfx_intent\": \"pop_in\"}], \"wishlist\": []}",
+  "output": {
+    "placements": [
+      {
+        "asset_id": "asset_pano",
+        "slot": "top",
+        "start_s": 4.1,
+        "end_s": 7.5,
+        "confidence_tier": "confident",
+        "reason": "You say the office view is unreal — this panorama shows it.",
+        "transcript_anchor": "office view is unreal",
+        "sfx_intent": "pop_in"
+      }
+    ],
+    "wishlist": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "panorama (aspect 2.4 > 2.2) correctly NOT given slot full — pip card instead"
+  }
+}

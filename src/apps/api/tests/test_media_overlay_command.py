@@ -191,3 +191,90 @@ class TestEncoderPolicy:
         card = _card_img()
         cmd = _build([card])
         assert "/tmp/out.mp4" in cmd
+
+
+def _card_fullscreen_img(**kw) -> MediaOverlay:
+    kw.setdefault("id_", "fs1")
+    card = _card_img(**kw)
+    return card.model_copy(update={"display_mode": "fullscreen"})
+
+
+class TestFullscreenCard:
+    """Plan 009 T1: cover-crop takeover branch."""
+
+    def test_cover_crop_filter_string(self):
+        cmd = _build([_card_fullscreen_img()])
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        assert (
+            "scale=1080:1920:force_original_aspect_ratio=increase"
+            ",crop=1080:1920,setsar=1,format=yuv420p" in fc
+        )
+
+    def test_overlay_at_origin(self):
+        cmd = _build([_card_fullscreen_img()])
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        assert "overlay=0:0:" in fc
+        # No runtime height expression for the fullscreen card.
+        assert "overlay_h" not in fc
+
+    def test_enable_gate_still_present(self):
+        cmd = _build([_card_fullscreen_img(start_s=2.0, end_s=5.0)])
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        assert "enable='between(t,2.000,5.000)'" in fc
+
+    def test_trim_and_tpad_still_apply_for_fullscreen_video(self):
+        card = _card_video(id_="fsv").model_copy(
+            update={
+                "display_mode": "fullscreen",
+                "clip_trim_start_s": 1.0,
+                "clip_trim_end_s": 2.0,
+                "clip_duration_s": 4.0,
+            }
+        )
+        cmd = _build([card], local_paths=["/tmp/fsv.mp4"])
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        assert "trim=start=1.000:end=2.000" in fc
+        # window 0-3s, trim covers 1s → 2s clone pad
+        assert "tpad=stop_mode=clone:stop_duration=2.000" in fc
+
+    def test_mixed_set_keeps_pip_fit_width_pins(self):
+        pip = _card_img(id_="pip1", scale=0.4)
+        fs = _card_fullscreen_img(id_="fs2", z=1)
+        cmd = _build([pip, fs], local_paths=["/tmp/pip1.jpg", "/tmp/fs2.jpg"])
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        assert f"scale={pip.card_width_px()}:-2,format=yuv420p" in fc
+        assert "crop=1080:1920" in fc
+
+
+def _preset_of(cmd: list[str]) -> str:
+    return cmd[cmd.index("-preset") + 1]
+
+
+class TestEncoderPolicyModes:
+    """Plan 009 E7: dual preset assertions — the REAL gate for this module
+    (media_overlay.py is not in the encoder-policy AST audit list, so these
+    tests are what pins the mode-dependent preset decision)."""
+
+    def test_pip_only_pass_uses_veryfast(self):
+        cmd = _build([_card_img()])
+        assert _preset_of(cmd) == "veryfast"
+
+    def test_any_fullscreen_pass_uses_fast_not_veryfast(self):
+        cmd = _build(
+            [_card_img(id_="p"), _card_fullscreen_img(id_="f", z=1)],
+            local_paths=["/tmp/p.jpg", "/tmp/f.jpg"],
+        )
+        assert _preset_of(cmd) == "fast"
+        assert "veryfast" not in cmd
+
+    def test_force_veryfast_overrides_fullscreen(self):
+        card = _card_fullscreen_img()
+        cmd = build_media_overlay_command(
+            "/tmp/base.mp4",
+            [card],
+            ["/tmp/fs1.jpg"],
+            [card.card_width_px()],
+            "/tmp/out.mp4",
+            force_veryfast=True,
+        )
+        assert _preset_of(cmd) == "veryfast"

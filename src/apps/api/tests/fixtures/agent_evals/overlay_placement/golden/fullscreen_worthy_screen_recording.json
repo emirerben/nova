@@ -1,0 +1,69 @@
+{
+  "agent": "nova.compose.overlay_placement",
+  "prompt_version": "1.1.0",
+  "input": {
+    "words": [
+      {"word": "so", "start_s": 0.2, "end_s": 0.4},
+      {"word": "I", "start_s": 0.4, "end_s": 0.5},
+      {"word": "checked", "start_s": 0.5, "end_s": 0.9},
+      {"word": "what", "start_s": 3.0, "end_s": 3.2},
+      {"word": "it", "start_s": 3.2, "end_s": 3.3},
+      {"word": "actually", "start_s": 3.3, "end_s": 3.8},
+      {"word": "sends", "start_s": 3.8, "end_s": 4.2},
+      {"word": "it", "start_s": 5.0, "end_s": 5.1},
+      {"word": "builds", "start_s": 5.1, "end_s": 5.5},
+      {"word": "a", "start_s": 5.5, "end_s": 5.6},
+      {"word": "payload", "start_s": 5.6, "end_s": 6.1},
+      {"word": "every", "start_s": 6.1, "end_s": 6.4},
+      {"word": "single", "start_s": 6.4, "end_s": 6.8},
+      {"word": "turn", "start_s": 6.8, "end_s": 7.2}
+    ],
+    "assets": [
+      {
+        "asset_id": "asset_recording",
+        "kind": "video",
+        "subject": "screen recording of the payload builder animating",
+        "description": "dark UI, progress bars filling as the payload assembles",
+        "on_screen_text": "it builds a payload",
+        "duration_s": 6.0,
+        "aspect": 0.5625,
+        "width": 1080,
+        "height": 1920
+      },
+      {
+        "asset_id": "asset_photo",
+        "kind": "image",
+        "subject": "wide landscape photo of an office",
+        "description": "panorama of a desk setup",
+        "on_screen_text": "",
+        "duration_s": null,
+        "aspect": 2.4,
+        "width": 4800,
+        "height": 2000
+      }
+    ],
+    "occupied": [],
+    "duration_s": 30.0,
+    "archetype": "talking_head"
+  },
+  "raw_text": "{\"placements\": [{\"asset_id\": \"asset_recording\", \"slot\": \"full\", \"start_s\": 5.0, \"end_s\": 8.5, \"confidence_tier\": \"confident\", \"reason\": \"You say \\\"it builds a payload\\\" — this recording shows exactly that.\", \"transcript_anchor\": \"it builds a payload\", \"sfx_intent\": \"whoosh\"}], \"wishlist\": []}",
+  "output": {
+    "placements": [
+      {
+        "asset_id": "asset_recording",
+        "slot": "full",
+        "start_s": 5.0,
+        "end_s": 8.5,
+        "confidence_tier": "confident",
+        "reason": "You say \"it builds a payload\" — this recording shows exactly that.",
+        "transcript_anchor": "it builds a payload",
+        "sfx_intent": "whoosh"
+      }
+    ],
+    "wishlist": []
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "portrait screen recording IS the thing being described -> slot full, outside the hook, whoosh; panorama photo NOT chosen for full"
+  }
+}

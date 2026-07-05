@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.0.0] — 2026-07-03
+## [0.7.0.0] — 2026-07-05
 
 ### Added
 - **TikTok-style timeline editor — full-screen editing shell (flag-gated).** A new "Edit" button on rendered plan-item variants opens `/plan/items/[id]/edit`: video preview centered on canvas, left tool rail + drawer (Text with live-styled preset grid + Favorite/Trending/Basic categories, Sounds, Overlays, Styles), a docked right inspector that populates when you select anything (click text on the video OR its timeline bar — canvas handles, bar ring, and inspector light up together), and a full-width multi-track timeline (Text → Video filmstrip → Sound → Overlays) with transport (play/pause + timecode), zoom slider + fit, split-at-playhead, delete, and per-track mute. Edits preview instantly as a CSS overlay (drag to move, corner-drag to scale); Save persists everything in one transactional commit and bakes in the background. Undo/redo (⌘Z/⇧⌘Z) covers every edit; drafts survive tab crashes via session recovery; two-tab conflicts surface a quiet reload notice instead of clobbering. Below 1024px the editor becomes a light-edit mode (watch, scrub, tap text to fix in a full-screen sheet) rather than a squeezed desktop. Keyboard-first: timeline bars are tabbable selectors, arrows nudge timing, full ARIA labeling, 44px targets. Flags: `NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED` (Vercel, default **off**); the item page is byte-identical with the flag off.
@@ -16,6 +16,21 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - Invalid text elements in an editor Save now return a clear 422 instead of being silently dropped (which could previously lose user text); preset font/effect values align with the renderer's accepted keys.
 - Filmstrip thumbnail generation no longer leaks video event listeners during rapid zoom/variant switching.
+## [0.6.10.0] — 2026-07-05
+
+### Changed
+- **Plan-item pre-generation page redesign: renamed "Subtitled" → "Talking to camera", moved caption + background-sound tuning into the post-gen editor.** "Subtitled" named a caption feature, not the kind of video it makes — renamed to "Talking to camera" (label-only; `edit_format` value stays `subtitled`). Talking-to-camera now auto-generates WITH subtitles by default; the pre-gen caption-style (sentence/word) and background-sound sliders are removed from the pre-gen picker entirely — both are tuned after generation instead, next to a real preview.
+- **Landscape Fit/Fill only appears once a wide clip is detected.** Client-side `videoWidth`/`videoHeight` check on upload (fails safe to hidden — "fit" stays the render default) instead of an always-visible control that showed for the common all-portrait case too.
+- **"Write a script with Nova" promoted to a first-class action** for narrated walkthroughs (was a small inline link inside the voice-recorder bar).
+
+### Added
+- **Background Sound control (post-gen editor, narrated only).** A new dedicated Celery task `reburn_narrated_bed_level` re-mixes a narrated variant's voice/original-audio balance from persisted, deterministic render inputs (no re-transcription, no LLM) — NOT a reuse of the existing `mix` route, which is scoped to `voiceover_only`/`voiceover_music` variants and explicitly rejects narrated as a no-op (caught by an independent codex review before it shipped broken). New route `POST /plan-items/{id}/variants/{vid}/bed-level`. Talking-to-camera has no bed to mix (its own clip audio is the only track), so it gets no control at all.
+- **Subtitles on/off, independent of caption count.** A new `captions_enabled` field (default true) fixes a one-way-door bug in the original design: toggling captions off no longer risks emptying the stored cues, so toggling back on needs no re-transcription. New routes `PATCH .../captions-enabled` and `PATCH .../caption-style` (sentence/word, moved from pre-gen). Shared `CaptionStyleToggle` component (DRY — replaces two near-identical inline pickers).
+
+### Fixed
+- **Race condition in the new Background Sound control** — found in pre-landing review before merge. It initially reused the pre-existing unlocked "read job, mutate in memory, blind-commit" pattern (same as swap-song/retext/apply-captions), but the debounced slider sits right next to the row-locked Captions toggle in the same editor panel — dragging one while toggling the other could silently revert whichever committed first. Fixed by giving the bed-level dispatch its own row-locked (`FOR UPDATE`) re-fetch, mirroring the caption-editing lock pattern. The broader inconsistency across the other `dispatch_*` mutation paths is pre-existing and tracked separately, not fixed here.
+
+Both a codex outside-voice review (plan stage) and an independent subagent review (diff stage) ran before merge; the codex pass caught the `mix`-route mismatch, the subtitles-off trap, and a since-descoped talking-to-camera transcript idea before any of it was built; the diff-stage subagent caught the locking race above. ~110 lines of new/updated tests across both passes (4 new backend task tests for the bed-level reburn's clip-reconstruction fidelity, 1 lock-verification test, 13 new route tests, 6 new frontend component tests, updated landscape-fit + CaptionEditor suites).
 
 ## [0.6.8.0] — 2026-07-02
 

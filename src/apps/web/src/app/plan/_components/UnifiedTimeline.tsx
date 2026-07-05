@@ -30,7 +30,7 @@ import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { Playhead } from "@/lib/timeline/Playhead";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
-import type { UploadFile } from "./UnifiedTimelineTypes";
+import type { UploadFile, SuggestionLaneEntry } from "./UnifiedTimelineTypes";
 import SfxLane from "./SfxLane";
 import OverlayLane from "./OverlayLane";
 import ClipsLane from "./ClipsLane";
@@ -73,6 +73,55 @@ export interface UnifiedTimelineProps {
   onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
   onRemoveCard: (id: string) => void;
   onClearOverlays: () => void;
+  /**
+   * 006 T3 (005-4A): pending AI overlay suggestions rendered as editable
+   * provenance cards in the Overlays lane (+ read-only sfx diamonds in the
+   * SFX lane). Edits fire onSuggestionEdit — never the manual card callbacks.
+   */
+  overlaySuggestions?: SuggestionLaneEntry[];
+  onSuggestionEdit?: (suggestionId: string, patch: Partial<MediaOverlay>) => void;
+  /**
+   * 009 T3: intro-text window for the hatched zinc keep-out band in the
+   * Overlays lane and the "Covers your intro text" fullscreen warning.
+   * The timing MUST come from the variant's intro fields upstream (page.tsx
+   * owns the wiring) — the timeline never derives a duplicate source of truth.
+   */
+  introTextWindow?: { start_s: number; end_s: number } | null;
+  /**
+   * 009 T3: resolves aspect/pixel metadata for an overlay's src_gcs_path
+   * (overlays only carry the path) so the fullscreen popover can raise
+   * crop/low-res warnings. Optional — warnings degrade gracefully
+   * (suppressed, never faked) while unwired or while a field is missing.
+   */
+  resolveAssetMeta?: (
+    srcGcsPath: string,
+  ) => { aspect?: number; width?: number; height?: number } | undefined;
+  /**
+   * 009 T5 (D5/E9): when set, fullscreen promotion is unavailable on the
+   * focused variant (lyrics) — the Overlays-lane popover renders the
+   * "Full screen" option disabled with this copy. The page owns the wiring
+   * ("Full-screen cutaways aren't available on lyric edits.").
+   */
+  fullscreenDisabledReason?: string | null;
+  /**
+   * R2 (review C8): web twin of the api FULLSCREEN_CUTAWAYS_ENABLED. When false
+   * (default in Vercel until the Fly deploy carrying display_mode is live), the
+   * NEW fullscreen PROMOTE affordances hide (segmented "Full screen" option, the
+   * "Make full screen →" max-scale affordance, and the F-to-fullscreen chip
+   * shortcut) so a previewed fullscreen can't bake as pip against an old api.
+   * Existing fullscreen cards still render and demote paths stay live. Defaults
+   * to true so unwired callers keep the pre-flag behavior.
+   */
+  fullscreenPromoteEnabled?: boolean;
+  /**
+   * 009 T3 external-edit contract (hero preview click-to-edit): when this
+   * changes to a card id present in the Overlays lane, that card's popover
+   * opens and onExternalEditHandled() fires so the page can clear its
+   * handoff state.
+   */
+  externalEditCardId?: string | null;
+  /** Ack for externalEditCardId — called once the popover has been opened. */
+  onExternalEditHandled?: () => void;
   // Text lane (interactive multi-block) ----------------------------------------
   /**
    * Text element bars to display. T6 will wire real API data here.
@@ -156,6 +205,14 @@ export default function UnifiedTimeline({
   onUpdateCard,
   onRemoveCard,
   onClearOverlays,
+  overlaySuggestions,
+  onSuggestionEdit,
+  introTextWindow,
+  resolveAssetMeta,
+  fullscreenDisabledReason,
+  fullscreenPromoteEnabled = true,
+  externalEditCardId,
+  onExternalEditHandled,
   textElements,
   onTextElementsChange,
   onTextApply,
@@ -248,7 +305,9 @@ export default function UnifiedTimeline({
       />
 
       {/* ── Overlays lane ── */}
-      {(overlayCards.length > 0 || overlaysEnabled) && (
+      {(overlayCards.length > 0 ||
+        (overlaySuggestions?.length ?? 0) > 0 ||
+        overlaysEnabled) && (
         <OverlayLane
           totalDurationS={totalDurationS}
           currentTimeS={currentTimeS}
@@ -260,6 +319,14 @@ export default function UnifiedTimeline({
           onUpdateCard={onUpdateCard}
           onRemoveCard={onRemoveCard}
           onClearOverlays={onClearOverlays}
+          suggestions={overlaySuggestions}
+          onSuggestionEdit={onSuggestionEdit}
+          introTextWindow={introTextWindow}
+          resolveAssetMeta={resolveAssetMeta}
+          fullscreenDisabledReason={fullscreenDisabledReason}
+          fullscreenPromoteEnabled={fullscreenPromoteEnabled}
+          externalEditCardId={externalEditCardId}
+          onExternalEditHandled={onExternalEditHandled}
         />
       )}
 
@@ -274,6 +341,9 @@ export default function UnifiedTimeline({
         sfxUploading={sfxUploading}
         onSfxChange={onSfxChange}
         onSfxUploadRequest={onSfxUploadRequest}
+        suggestionSfx={(overlaySuggestions ?? [])
+          .filter((s) => s.sfx != null)
+          .map((s) => ({ id: s.id, sfx: s.sfx!, staged: s.staged }))}
       />
 
       <p className="pl-14 pt-1.5 text-[9px] text-zinc-400">

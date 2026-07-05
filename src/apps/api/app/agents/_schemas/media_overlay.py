@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.services.media_overlay_preview import nonblank_str
 
@@ -64,6 +64,13 @@ class MediaOverlay(BaseModel):
     # src_gcs_path for the renderer, while preview_gcs_path points at a JPEG.
     preview_gcs_path: str | None = None
 
+    # Display mode (plan 009). "pip" = floating scaled card (today's behavior);
+    # "fullscreen" = cover-crop takeover of the whole 1080x1920 frame for the
+    # card's window (speech continues — card audio is always dropped).
+    # Fullscreen IGNORES position/x_frac/y_frac/scale at render time but keeps
+    # them in the dict so toggling back to pip restores the prior layout.
+    display_mode: Literal["pip", "fullscreen"] = "pip"
+
     # Position: preset OR custom frac pair. On parse, presets resolve to their
     # canonical y_frac / x_frac defaults; custom uses the literal values.
     position: Literal["top", "center", "bottom", "custom"] = "center"
@@ -89,6 +96,17 @@ class MediaOverlay(BaseModel):
 
     # z-order (higher = rendered later = on top). Defaults to list position.
     z: int = Field(default=0, ge=0)
+
+    @field_validator("display_mode", mode="before")
+    @classmethod
+    def _coerce_display_mode(cls, v: object) -> str:
+        """Coerce unknown/missing display_mode to "pip" — version-skew safe.
+
+        A card written by a newer client must never be DROPPED by an older
+        server (or vice versa) over this field; worst case it renders as the
+        long-standing pip behavior.
+        """
+        return v if v in ("pip", "fullscreen") else "pip"
 
     @field_validator("x_frac", "y_frac", mode="before")
     @classmethod
@@ -119,6 +137,28 @@ class MediaOverlay(BaseModel):
             return max(0.0, float(v))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return 0.0
+
+    @model_validator(mode="after")
+    def _sanitize_trim_pair(self) -> MediaOverlay:
+        """Cross-field trim guard (plan 006, decision B).
+
+        An out-of-range trim pair reaches ffmpeg as `trim=start=X:end=Y` with
+        an empty result stream and kills the WHOLE variant render — so every
+        write path (agent, manual edit, edited suggestion envelope) sanitizes
+        here. File philosophy is clamp-don't-fail: repairable values clamp to
+        the clip duration; an irreparable pair (end ≤ start) drops to None
+        (= play from 0:00), never a hard error.
+        """
+        start, end, dur = self.clip_trim_start_s, self.clip_trim_end_s, self.clip_duration_s
+        if dur is not None:
+            if end is not None:
+                end = min(end, dur)
+            if start is not None and start >= dur:
+                start, end = None, None
+        if start is not None and end is not None and end - start <= 0.05:
+            start, end = None, None
+        self.clip_trim_start_s, self.clip_trim_end_s = start, end
+        return self
 
     def resolved_xy_frac(self) -> tuple[float, float]:
         """Return (x_frac, y_frac) after applying position presets."""

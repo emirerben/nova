@@ -81,6 +81,11 @@ def _patch_common(monkeypatch, job, *, sfx_apply, sound_effects_enabled=True):
         def get(self, model, pk, **kw):
             return job
 
+        def expire_all(self):
+            # Plan 009 E5: the overlay pass re-reads fresh under a row lock
+            # before write-back; the fake session has one shared job object.
+            pass
+
         def commit(self):
             pass
 

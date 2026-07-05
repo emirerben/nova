@@ -34,6 +34,48 @@ def _card(**kw) -> dict:
     return base
 
 
+class TestDisplayMode:
+    """Plan 009 T1: display_mode field + coercing validator (version-skew safe)."""
+
+    def test_default_is_pip(self):
+        card = MediaOverlay.model_validate(_card())
+        assert card.display_mode == "pip"
+
+    def test_explicit_fullscreen_parses(self):
+        card = MediaOverlay.model_validate(_card(display_mode="fullscreen"))
+        assert card.display_mode == "fullscreen"
+
+    def test_unknown_value_coerces_to_pip_never_drops(self):
+        # A card from a NEWER client with an unknown mode must not be dropped.
+        card = MediaOverlay.model_validate(_card(display_mode="cinema"))
+        assert card.display_mode == "pip"
+
+    def test_non_string_coerces_to_pip(self):
+        card = MediaOverlay.model_validate(_card(display_mode=7))
+        assert card.display_mode == "pip"
+
+    def test_fullscreen_preserves_pip_layout_fields(self):
+        # Toggle-back contract: fracs/scale ride along untouched in the dict.
+        raw = _card(
+            display_mode="fullscreen",
+            position="custom",
+            x_frac=0.3,
+            y_frac=0.7,
+            scale=0.42,
+        )
+        card = MediaOverlay.model_validate(raw)
+        dumped = card.model_dump()
+        assert dumped["display_mode"] == "fullscreen"
+        assert dumped["x_frac"] == pytest.approx(0.3)
+        assert dumped["y_frac"] == pytest.approx(0.7)
+        assert dumped["scale"] == pytest.approx(0.42)
+
+    def test_round_trip_through_coerce(self):
+        cards = coerce_media_overlays([_card(display_mode="fullscreen")])
+        assert cards is not None
+        assert cards[0].display_mode == "fullscreen"
+
+
 class TestMediaOverlayValidation:
     def test_valid_card_parses(self):
         card = MediaOverlay.model_validate(_card())

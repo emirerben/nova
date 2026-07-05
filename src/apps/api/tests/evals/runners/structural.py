@@ -1734,10 +1734,48 @@ def check_voiceover_interviewer(output: Any, input: Any) -> list[str]:  # noqa: 
     return failures
 
 
+def check_overlay_placement(output, input) -> list[str]:  # noqa: A002
+    """Structural floor for nova.compose.overlay_placement (plan 009 E8).
+
+    The server enforcement layer (rules a-h) demotes/drops bad placements, so
+    these checks pin the PROMPT's contract — a drift here means the model
+    stopped honoring rule 5's takeover grammar and every suggestion round
+    burns enforcement work.
+    """
+    failures: list[str] = []
+    asset_ids = {a.asset_id for a in getattr(input, "assets", [])}
+    aspects = {a.asset_id: a.aspect for a in getattr(input, "assets", [])}
+    full_count = 0
+    for i, pl in enumerate(output.placements):
+        if pl.asset_id not in asset_ids:
+            failures.append(f"placement {i}: unknown asset_id {pl.asset_id!r}")
+        if pl.end_s <= pl.start_s:
+            failures.append(f"placement {i}: end_s={pl.end_s} <= start_s={pl.start_s}")
+        if pl.slot == "full":
+            full_count += 1
+            if pl.start_s < 2.5:
+                failures.append(
+                    f"placement {i}: slot=full inside the hook window (start_s={pl.start_s})"
+                )
+            asp = aspects.get(pl.asset_id)
+            if asp is not None and asp > 2.2:
+                failures.append(f"placement {i}: slot=full on a panorama asset (aspect={asp})")
+            if pl.end_s - pl.start_s > 6.0:
+                failures.append(
+                    f"placement {i}: slot=full window {pl.end_s - pl.start_s:.1f}s "
+                    "far past the 1.5-4s takeover grammar"
+                )
+    if full_count > 2:
+        failures.append(f"{full_count} slot=full placements (prompt caps at 2)")
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
         return check_overlay_format_matcher(output)
+    if agent_name == "nova.compose.overlay_placement":
+        return check_overlay_placement(output, input)
     if agent_name == "nova.compose.intro_writer":
         return check_intro_writer(output, input)
     if agent_name == "nova.compose.sequence_emphasis":

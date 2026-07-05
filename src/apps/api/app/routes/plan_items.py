@@ -16,9 +16,10 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, status
+from fastapi import UploadFile as MultipartFile
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,11 +27,14 @@ from app import storage
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import ContentPlan, Job, Persona, PlanItem
+from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset
 from app.routes.generative_jobs import (
+    BedLevelRequest,
     CaptionFontRequest,
     CaptionLanguageRequest,
+    CaptionsEnabledRequest,
     CaptionsRequest,
+    CaptionStyleRequest,
     ChangeStyleRequest,
     EditorCommitRequest,
     EditorCommitResponse,
@@ -56,12 +60,15 @@ from app.routes.generative_jobs import (
     dispatch_set_intro_size,
     dispatch_set_intro_timing,
     dispatch_set_media_overlays,
+    dispatch_set_narrated_bed_level,
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
     dispatch_swap_song,
     enqueue_editor_commit_render,
     persist_variant_caption_font,
+    persist_variant_caption_style,
     persist_variant_captions,
+    persist_variant_captions_enabled,
     prepare_editor_commit,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
@@ -1355,6 +1362,86 @@ async def set_item_caption_font(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+@router.patch("/{item_id}/variants/{variant_id}/caption-style", response_model=PlanItemResponse)
+async def set_item_caption_style(
+    item_id: str,
+    variant_id: str,
+    req: CaptionStyleRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set sentence/word caption style for a caption variant (no re-render).
+
+    The editor previews the choice; Apply (`/captions/apply`) reburns in the
+    chosen style. Moved here from the pre-generation picker — see the plan-item
+    redesign (subtitles are now tuned post-gen, not before).
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await persist_variant_caption_style(job.id, variant_id, req.caption_style, db)
+    log.info(
+        "plan_item_set_caption_style",
+        item_id=item_id,
+        variant_id=variant_id,
+        style=req.caption_style,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.patch("/{item_id}/variants/{variant_id}/captions-enabled", response_model=PlanItemResponse)
+async def set_item_captions_enabled(
+    item_id: str,
+    variant_id: str,
+    req: CaptionsEnabledRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Subtitles on/off for a caption variant (no re-render).
+
+    Independent of stored cue count — toggling off never destroys the
+    transcript-derived cues, so toggling back on later needs no re-transcription.
+    Apply (`/captions/apply`) reburns to reflect the current on/off state.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await persist_variant_captions_enabled(job.id, variant_id, req.enabled, db)
+    log.info(
+        "plan_item_set_captions_enabled",
+        item_id=item_id,
+        variant_id=variant_id,
+        enabled=req.enabled,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/bed-level", response_model=PlanItemResponse)
+async def set_item_bed_level(
+    item_id: str,
+    variant_id: str,
+    req: BedLevelRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Change a narrated variant's background-sound (voice/bed) level — re-renders (async).
+
+    NOT the generate-time `voiceover_bed_level` PATCH (no-render, item-scoped) — this
+    is the post-gen editor's Background Sound slider. Narrated-only: talking-to-camera
+    has no separate voice track to duck under, so there is nothing to mix.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    # dispatch_set_narrated_bed_level does its OWN row-locked re-fetch by job.id and
+    # commits internally — unlike the sibling dispatch_* calls above, it must not
+    # operate on the unlocked `job` snapshot from _owned_item_render_job (see its
+    # docstring for why: the Background Sound slider auto-commits on a debounce
+    # right next to the row-locked Captions toggle in the same panel).
+    await dispatch_set_narrated_bed_level(job.id, variant_id, bed_level=req.bed_level, db=db)
+    log.info(
+        "plan_item_set_bed_level",
+        item_id=item_id,
+        variant_id=variant_id,
+        bed_level=req.bed_level,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
 @router.post("/{item_id}/variants/{variant_id}/caption-language", response_model=PlanItemResponse)
 async def set_item_caption_language(
     item_id: str,
@@ -1812,12 +1899,13 @@ def _persist_overlay_metadata_only(
     """
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    variant_for_check = next((v for v in variants if v.get("variant_id") == variant_id), {})
     validated = validate_media_overlays_for_user(
         overlays_raw=overlays_raw,
         user_id=user_id,
+        variant_context=variant_for_check,
     )
-
-    variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["media_overlays"] = validated or None
@@ -2548,5 +2636,654 @@ async def transcript_recorded(
     _require_transcript_helper()
     item = await _load_owned_item(item_id, user.id, db)
     item.voiceover_script_recorded_version = int(body.version)
+    await db.commit()
+    return {"ok": True}
+
+
+# ── Asset-pool routes (auto-placement PR0, plans/005) ────────────────────────
+#
+# The per-item visual asset pool that feeds the overlay auto-placement matcher.
+# All routes 404 when OVERLAY_AUTOPLACE_ENABLED is off (dual-flag: the frontend
+# twin is NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED — keep Fly + Vercel in sync).
+# Objects land under the persistent users/{uid}/plan/{item_id}/pool/ prefix.
+
+_MAX_POOL_ASSETS = 20  # plan 005 finding 9: cap + dedupe keep analysis spend bounded
+
+
+def _require_autoplace() -> None:
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.overlay_autoplace_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Auto-placement not available."
+        )
+
+
+def _asset_kind_for_content_type(content_type: str) -> str:
+    return "video" if content_type.startswith("video/") else "image"
+
+
+class PoolUploadFile(BaseModel):
+    filename: str
+    content_type: str
+    file_size_bytes: int
+
+
+class PoolUploadUrlsBody(BaseModel):
+    files: list[PoolUploadFile]
+
+
+class PoolUploadUrlsResponse(BaseModel):
+    urls: list[UploadUrlItem]
+
+
+@router.post("/{item_id}/assets/upload-urls", response_model=PoolUploadUrlsResponse)
+async def create_pool_upload_urls(
+    item_id: str,
+    body: PoolUploadUrlsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PoolUploadUrlsResponse:
+    """Signed PUT URLs for pool assets (same content-type set as overlay cards)."""
+    _require_autoplace()
+    item = await _load_owned_item(item_id, user.id, db)
+    if not body.files:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide files")
+    existing = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(PlanItemAsset.plan_item_id == item.id)
+            )
+        ).scalar_one()
+    )
+    if existing + len(body.files) > _MAX_POOL_ASSETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+        )
+    urls: list[UploadUrlItem] = []
+    for f in body.files:
+        if f.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported asset content type: {f.content_type}",
+            )
+        if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_OVERLAY_FILE_BYTES:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
+        safe_name = f"{uuid.uuid4().hex}-{f.filename.split('/')[-1]}"
+        upload_url, gcs_path = storage.presigned_put_url_for_pool_asset(
+            user_id=str(user.id),
+            plan_item_id=str(item.id),
+            filename=safe_name,
+            content_type=f.content_type,
+        )
+        urls.append(UploadUrlItem(upload_url=upload_url, gcs_path=gcs_path))
+    return PoolUploadUrlsResponse(urls=urls)
+
+
+class RegisterAssetBody(BaseModel):
+    gcs_path: str
+    content_type: str
+    content_hash: str | None = None
+    source_filename: str | None = None
+
+
+class PoolAssetOut(BaseModel):
+    id: str
+    kind: str
+    status: str
+    source_filename: str | None
+    duration_s: float | None
+    aspect: float | None
+    # Pixel dims (plan 009 E1) — from the ANALYSIS_VERSION-3 analysis JSONB;
+    # None on legacy assets until the backfill re-analyzes them. Feed the FE
+    # low-res warning (min(w,h) < 720) — never fake them client-side.
+    width: int | None = None
+    height: int | None = None
+    subject: str | None  # analysis micro-label for the pool tile (2A state table)
+    display_url: str | None
+    deduped: bool = False
+
+
+def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
+    analysis = asset.analysis or {}
+    if not isinstance(analysis, dict):
+        analysis = {}
+    display_url: str | None = None
+    try:
+        display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
+    except Exception:  # noqa: BLE001 — thumbnail signing is best-effort, never 500s the list
+        display_url = None
+    return PoolAssetOut(
+        id=str(asset.id),
+        kind=asset.kind,
+        status=asset.status,
+        source_filename=asset.source_filename,
+        duration_s=asset.duration_s,
+        aspect=asset.aspect,
+        width=analysis.get("width"),
+        height=analysis.get("height"),
+        subject=analysis.get("subject"),
+        display_url=display_url,
+        deduped=deduped,
+    )
+
+
+@router.post("/{item_id}/assets", response_model=PoolAssetOut)
+async def register_pool_asset(
+    item_id: str,
+    body: RegisterAssetBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PoolAssetOut:
+    """Register an uploaded pool asset.
+
+    Dedupe: an existing row with the same content_hash on this item is returned
+    as-is (`deduped=true`) — identical bytes are never re-analyzed (plan 005
+    finding 9). Analysis dispatch lands in PR1a; PR0 rows stay status="uploaded".
+    """
+    _require_autoplace()
+    item = await _load_owned_item(item_id, user.id, db)
+    _pool_prefix = f"users/{user.id}/plan/{item.id}/pool/"
+    if not body.gcs_path.startswith(_pool_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Asset path must be under '{_pool_prefix}'.",
+        )
+    if body.content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported asset content type: {body.content_type}",
+        )
+    if body.content_hash:
+        existing = (
+            await db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.content_hash == body.content_hash,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _asset_out(existing, deduped=True)
+    count = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(PlanItemAsset.plan_item_id == item.id)
+            )
+        ).scalar_one()
+    )
+    if count >= _MAX_POOL_ASSETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+        )
+    asset = PlanItemAsset(
+        plan_item_id=item.id,
+        user_id=user.id,
+        gcs_path=body.gcs_path,
+        kind=_asset_kind_for_content_type(body.content_type),
+        content_hash=body.content_hash,
+        source_filename=body.source_filename,
+        status="uploaded",
+    )
+    db.add(asset)
+    await db.commit()
+    await db.refresh(asset)
+
+    # Upload-time analysis (PR1a): async, best-effort — a broker hiccup must not
+    # fail the register; the asset just stays "uploaded" until re-registered.
+    try:
+        from app.config import settings as _settings  # noqa: PLC0415
+        from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+        analyze_pool_asset.apply_async(args=[str(asset.id)], queue=_settings.autoplace_queue)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "pool_asset_analysis_dispatch_failed", asset_id=str(asset.id), error=str(exc)[:160]
+        )
+    return _asset_out(asset)
+
+
+# Proxy uploads stream through the API (browser → Next proxy → FastAPI → GCS),
+# sidestepping bucket-CORS entirely. Smaller cap than the presigned path — pool
+# assets are screenshots / short screen recordings, and the bytes transit the API.
+_MAX_POOL_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
+
+@router.post("/{item_id}/assets/upload", response_model=PoolAssetOut)
+async def upload_pool_asset(
+    item_id: str,
+    user: CurrentUser,
+    file: MultipartFile = File(...),  # noqa: B008
+    db: AsyncSession = Depends(get_db),
+) -> PoolAssetOut:
+    """One-shot pool upload: multipart file → GCS (server-side) → asset row.
+
+    Replaces the presigned-PUT dance for the pool: a browser PUT straight to
+    storage.googleapis.com dies on bucket CORS for origins the bucket doesn't
+    list (any localhost). Server computes the content hash while streaming, so
+    dedupe never trusts the client. Analysis dispatches like register.
+    """
+    import hashlib  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
+
+    _require_autoplace()
+    item = await _load_owned_item(item_id, user.id, db)
+
+    content_type = (file.content_type or "").split(";")[0].strip()
+    if content_type not in _OVERLAY_ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported asset content type: {content_type or 'unknown'}",
+        )
+
+    count = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(PlanItemAsset.plan_item_id == item.id)
+            )
+        ).scalar_one()
+    )
+    if count >= _MAX_POOL_ASSETS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Pool is capped at {_MAX_POOL_ASSETS} assets per item.",
+        )
+
+    # Stream to a temp file, hashing as we go (never the whole file in RAM).
+    hasher = hashlib.sha256()
+    total = 0
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_path = tmp.name
+        while chunk := await file.read(1024 * 1024):
+            total += len(chunk)
+            if total > _MAX_POOL_UPLOAD_BYTES:
+                tmp.close()
+                _os.unlink(tmp_path)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="File too large (100 MB max for pool assets).",
+                )
+            hasher.update(chunk)
+            tmp.write(chunk)
+    try:
+        if total == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+        content_hash = hasher.hexdigest()
+
+        existing = (
+            await db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.content_hash == content_hash,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return _asset_out(existing, deduped=True)
+
+        source_filename = (file.filename or "asset").split("/")[-1]
+        safe_name = f"{uuid.uuid4().hex}-{source_filename}"
+        gcs_path = f"users/{user.id}/plan/{item.id}/pool/{safe_name}"
+        await asyncio.to_thread(storage.upload_local_file, tmp_path, gcs_path, content_type)
+    finally:
+        try:
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    asset = PlanItemAsset(
+        plan_item_id=item.id,
+        user_id=user.id,
+        gcs_path=gcs_path,
+        kind=_asset_kind_for_content_type(content_type),
+        content_hash=content_hash,
+        source_filename=source_filename,
+        status="uploaded",
+    )
+    db.add(asset)
+    await db.commit()
+    await db.refresh(asset)
+
+    try:
+        from app.config import settings as _settings  # noqa: PLC0415
+        from app.tasks.autoplace import analyze_pool_asset  # noqa: PLC0415
+
+        analyze_pool_asset.apply_async(args=[str(asset.id)], queue=_settings.autoplace_queue)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "pool_asset_analysis_dispatch_failed", asset_id=str(asset.id), error=str(exc)[:160]
+        )
+    return _asset_out(asset)
+
+
+class PoolAssetsResponse(BaseModel):
+    assets: list[PoolAssetOut]
+    max_assets: int = _MAX_POOL_ASSETS
+
+
+@router.get("/{item_id}/assets", response_model=PoolAssetsResponse)
+async def list_pool_assets(
+    item_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PoolAssetsResponse:
+    _require_autoplace()
+    item = await _load_owned_item(item_id, user.id, db)
+    assets = (
+        (
+            await db.execute(
+                select(PlanItemAsset)
+                .where(PlanItemAsset.plan_item_id == item.id)
+                .order_by(PlanItemAsset.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return PoolAssetsResponse(assets=[_asset_out(a) for a in assets])
+
+
+@router.delete("/{item_id}/assets/{asset_id}")
+async def delete_pool_asset(
+    item_id: str,
+    asset_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Remove an asset from the pool.
+
+    PR1b hook (plan 005 decision 11A): deleting an asset will ALSO clear
+    dependent PENDING overlay suggestions + show the zinc notice. PR0 has no
+    suggestions yet, so this is a plain row delete (GCS object left in place —
+    the persistent prefix is cheap and other rows may share bytes).
+    """
+    _require_autoplace()
+    item = await _load_owned_item(item_id, user.id, db)
+    try:
+        aid = uuid.UUID(asset_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
+    asset = (
+        await db.execute(
+            select(PlanItemAsset).where(
+                PlanItemAsset.id == aid, PlanItemAsset.plan_item_id == item.id
+            )
+        )
+    ).scalar_one_or_none()
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    removed = 0
+    if item.current_job is not None:
+        # Decision 11A: deleting an asset eagerly clears dependent PENDING
+        # suggestion rows (staged/accepted cards are real placements — untouched).
+        removed = _clear_suggestions_for_asset(item.current_job, str(asset.id))
+    await db.delete(asset)
+    await db.commit()
+    return {"ok": True, "removed_suggestions": removed}
+
+
+def _clear_suggestions_for_asset(job: Job, asset_id: str) -> int:
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    removed = 0
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        pending = v.get("overlay_suggestions") or []
+        if not pending:
+            continue
+        kept = [s for s in pending if str(s.get("asset_id")) != asset_id]
+        removed += len(pending) - len(kept)
+        if len(kept) != len(pending):
+            v["overlay_suggestions"] = kept or None
+            if not kept and v.get("overlay_suggest_status") == "ready":
+                v["overlay_suggest_status"] = "zero"
+    if removed:
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+    return removed
+
+
+# ── Overlay auto-placement suggestion routes (plans/005 PR1b) ─────────────────
+
+
+def _find_variant_dict(job: Job, variant_id: str) -> dict:
+    for v in (job.assembly_plan or {}).get("variants") or []:
+        if v.get("variant_id") == variant_id:
+            return v
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+
+
+class SuggestOverlaysResponse(BaseModel):
+    status: str  # "matching"
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/suggest-overlays",
+    response_model=SuggestOverlaysResponse,
+)
+async def suggest_overlays(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> SuggestOverlaysResponse:
+    """Kick the matcher: draft overlay+SFX placements for this variant.
+
+    Persists overlay_suggest_status="matching" BEFORE enqueuing (persist-first
+    pattern) so the frontend Pulse state reflects immediately. The matcher task
+    replaces all PENDING suggestions (staged/accepted/manual never touched).
+    """
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    _require_autoplace()
+    item = await _load_owned_item(item_id, user.id, db)
+    job = await _owned_item_render_job(item_id, user.id, db)
+    variant = _find_variant_dict(job, variant_id)
+
+    # Music-variant guard (review C20): mirror the zero-click auto path's G2-A
+    # rule — Whisper on a song track yields garbage anchors, and lyric variants
+    # must never get a fullscreen takeover over the lyrics. The auto path skips
+    # these variants entirely; the manual route must too.
+    if variant.get("music_track_id") is not None or variant.get("text_mode") == "lyrics":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Auto-placement isn't available on song or lyric variants.",
+        )
+
+    ready_count = int(
+        (
+            await db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.status == "ready",
+                )
+            )
+        ).scalar_one()
+    )
+    if ready_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Add at least one visual first — the pool has no analyzed assets.",
+        )
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["overlay_suggest_status"] = "matching"
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
+    await db.commit()
+
+    from app.tasks.autoplace import match_overlay_suggestions  # noqa: PLC0415
+
+    # Guard the enqueue (review C32): "matching" is already committed, so a
+    # broker failure here would strand the UI polling a task that never queued.
+    # Revert the status and surface 503 so the rail shows a real error + Retry.
+    try:
+        match_overlay_suggestions.apply_async(
+            args=[str(job.id), variant_id, str(user.id)],
+            queue=_settings.autoplace_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        for v in variants:
+            if v.get("variant_id") == variant_id:
+                v["overlay_suggest_status"] = None
+                break
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+        await db.commit()
+        log.warning("plan_item_suggest_enqueue_failed", item_id=item_id, error=str(exc)[:200])
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Couldn't start matching right now. Please try again.",
+        ) from exc
+    log.info("plan_item_suggest_overlays", item_id=item_id, variant_id=variant_id)
+    return SuggestOverlaysResponse(status="matching")
+
+
+class OverlaySuggestionsResponse(BaseModel):
+    status: str | None  # matching | ready | zero | failed | None (never run)
+    suggestions: list[dict]
+    wishlist: list[str]
+    stale_cleared: bool = False
+
+
+@router.get(
+    "/{item_id}/variants/{variant_id}/overlay-suggestions",
+    response_model=OverlaySuggestionsResponse,
+)
+async def get_overlay_suggestions(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> OverlaySuggestionsResponse:
+    """Read the suggestion set — with the READ-TIME staleness check (tension 3):
+    if the persisted transcript no longer matches the hash the set was matched
+    against, pending suggestions are cleared here and the caller shows the
+    'Your script changed' notice."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.services.transcript_source import persisted_hash_is_stale  # noqa: PLC0415
+
+    _require_autoplace()
+    await _load_owned_item(item_id, user.id, db)
+    job = await _owned_item_render_job(item_id, user.id, db)
+    variant = _find_variant_dict(job, variant_id)
+
+    stale_cleared = False
+    if (variant.get("overlay_suggestions") or None) and persisted_hash_is_stale(variant):
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        for v in variants:
+            if v.get("variant_id") == variant_id:
+                v["overlay_suggestions"] = None
+                v["overlay_suggest_status"] = None
+                v["overlay_suggest_hash"] = None
+                break
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+        await db.commit()
+        variant = _find_variant_dict(job, variant_id)
+        stale_cleared = True
+
+    return OverlaySuggestionsResponse(
+        status=variant.get("overlay_suggest_status"),
+        suggestions=list(variant.get("overlay_suggestions") or []),
+        wishlist=list(variant.get("overlay_suggest_wishlist") or []),
+        stale_cleared=stale_cleared,
+    )
+
+
+class ApplySuggestionsBody(BaseModel):
+    """The STAGED suggestion envelopes (possibly edited by drag/trim). Accept =
+    unwrap + copy through the existing validated dispatch (decision 5A)."""
+
+    suggestions: list[dict]
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/overlay-suggestions/apply",
+    response_model=PlanItemResponse,
+)
+async def apply_overlay_suggestions(
+    item_id: str,
+    variant_id: str,
+    body: ApplySuggestionsBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """'Apply N to video' — ONE render chain (decisions 4A + 10A).
+
+    Delegates to the SHARED `apply_suggestions_to_variant` helper (plan 007,
+    G1-A) — the same unit the zero-click auto-apply task uses, so route and
+    automation can never drift. The helper mutates; this route commits.
+    """
+    from app.services.overlay_apply import apply_suggestions_to_variant  # noqa: PLC0415
+
+    _require_autoplace()
+    await _load_owned_item(item_id, user.id, db)
+    job = await _owned_item_render_job(item_id, user.id, db)
+    _find_variant_dict(job, variant_id)
+
+    result = apply_suggestions_to_variant(job, variant_id, body.suggestions, user_id=str(user.id))
+    if not result["dispatched"]:
+        # No-fault copy (007 finding 13): concurrent updates, not user error.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="These placements were just updated — refresh to see the latest.",
+        )
+    await db.commit()
+    log.info(
+        "plan_item_apply_overlay_suggestions",
+        item_id=item_id,
+        variant_id=variant_id,
+        applied=result["applied"],
+        dropped=result["dropped"],
+        sfx=result["sfx"],
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/overlay-suggestions/dismiss",
+)
+async def dismiss_overlay_suggestions(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Clear all PENDING suggestions (staged/accepted/manual cards untouched)."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    _require_autoplace()
+    await _load_owned_item(item_id, user.id, db)
+    job = await _owned_item_render_job(item_id, user.id, db)
+    _find_variant_dict(job, variant_id)
+
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["overlay_suggestions"] = None
+            v["overlay_suggest_status"] = None
+            v["overlay_suggest_hash"] = None
+            v["overlay_suggest_wishlist"] = None
+            break
+    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    flag_modified(job, "assembly_plan")
     await db.commit()
     return {"ok": True}

@@ -44,6 +44,7 @@ def _normalise_content_type(ct: str) -> str:
         return "video/mp4"
     return ct
 
+
 # Google Drive file IDs: alphanumeric + hyphen/underscore, typically 20-50 chars
 DRIVE_FILE_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{10,60}$")
 
@@ -451,9 +452,7 @@ async def upload_template_photo(
         )
 
     # Look up template + slot to resolve target duration and validate media_type
-    result = await db.execute(
-        select(VideoTemplate).where(VideoTemplate.id == template_id)
-    )
+    result = await db.execute(select(VideoTemplate).where(VideoTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if template is None:
         raise HTTPException(status_code=404, detail="Template not found")
@@ -516,9 +515,7 @@ async def upload_template_photo(
             # the executor pressure under burst load.
             image_bytes_to_mp4(raw, out_path, duration_s=mp4_duration_s)
             bucket = storage._get_client().bucket(settings.storage_bucket)
-            bucket.blob(gcs_path).upload_from_filename(
-                out_path, content_type="video/mp4"
-            )
+            bucket.blob(gcs_path).upload_from_filename(out_path, content_type="video/mp4")
 
         try:
             # run_in_threadpool: keep the FastAPI event loop responsive during
@@ -571,3 +568,81 @@ async def get_batch_import_status(batch_id: str) -> DriveImportBatchStatus:
         gcs_paths=data.get("gcs_paths", []),
         errors=data.get("errors", []),
     )
+
+
+# ── Signed-URL relay (localhost bucket-CORS workaround, plans/005 era) ─────────
+#
+# Browsers on origins the bucket's CORS config doesn't list (any localhost) can't
+# PUT to storage.googleapis.com directly — the preflight comes back without
+# Access-Control-Allow-Origin and fetch dies with "failed to fetch". This relay
+# accepts the SAME signed URL the client already holds and performs the PUT
+# server-side (no CORS applies). The signed URL is the authorization; scope
+# validation below keeps this from being an open relay.
+
+_RELAY_MAX_BYTES = 2 * 1024 * 1024 * 1024  # 2 GB — matches the presigned clip cap
+
+
+def _validate_relay_url(signed_url: str, user_id: str) -> None:
+    from urllib.parse import urlparse  # noqa: PLC0415
+
+    parsed = urlparse(signed_url)
+    if parsed.scheme != "https" or parsed.hostname != "storage.googleapis.com":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Relay only accepts storage.googleapis.com signed URLs.",
+        )
+    path = parsed.path.lstrip("/")
+    bucket_prefix = f"{settings.storage_bucket}/"
+    if not path.startswith(bucket_prefix):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Relay URL is not for this bucket.",
+        )
+    object_path = path[len(bucket_prefix) :]
+    # Every browser-minted upload path is user-scoped or a dev-user path this
+    # user owns. Restrict the relay to the caller's own prefixes.
+    allowed = (f"users/{user_id}/", "dev-user/", "slot-uploads/")
+    if not object_path.startswith(allowed):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Relay URL outside your upload scope.",
+        )
+
+
+@router.post("/relay")
+async def relay_signed_upload(
+    current_user: CurrentUserOrSynthetic,
+    file: UploadFile = File(...),  # noqa: B008
+    signed_url: str = Form(...),
+    content_type: str = Form("application/octet-stream"),
+) -> dict:
+    """PUT `file` to `signed_url` server-side. Streams from the multipart body
+    to GCS in chunks — never the whole file in memory."""
+    import httpx  # noqa: PLC0415
+
+    _validate_relay_url(signed_url, str(current_user.id))
+
+    async def _chunks():
+        sent = 0
+        while chunk := await file.read(1024 * 1024):
+            sent += len(chunk)
+            if sent > _RELAY_MAX_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="File too large for relay (2 GB max).",
+                )
+            yield chunk
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0)) as client:
+        upstream = await client.put(
+            signed_url,
+            content=_chunks(),
+            headers={"Content-Type": content_type},
+        )
+    if upstream.status_code not in (200, 201):
+        log.warning("upload_relay_failed", status=upstream.status_code, body=upstream.text[:200])
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Storage rejected the upload ({upstream.status_code}).",
+        )
+    return {"ok": True}

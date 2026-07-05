@@ -29,6 +29,7 @@ celery_app = Celery(
         "app.tasks.maintenance",
         "app.tasks.conformance_build",
         "app.tasks.transcript_analyze",
+        "app.tasks.autoplace",
     ],
 )
 

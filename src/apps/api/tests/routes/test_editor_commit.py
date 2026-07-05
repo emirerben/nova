@@ -312,6 +312,51 @@ def test_overlay_only_commit_persists_and_kicks_overlay_pass(monkeypatch):
     )
 
 
+def test_overlay_editor_commit_enforces_fullscreen_overlap_contract(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+    overlays = [
+        {
+            "id": "fs-1",
+            "kind": "image",
+            "src_gcs_path": "users/u123/plan/item/overlays/full.png",
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 1.0,
+            "start_s": 1.0,
+            "end_s": 3.0,
+            "z": 0,
+            "display_mode": "fullscreen",
+        },
+        {
+            "id": "pip-1",
+            "kind": "image",
+            "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.35,
+            "start_s": 2.0,
+            "end_s": 4.0,
+            "z": 1,
+        },
+    ]
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(media_overlays=overlays),
+            user_id="u123",
+        )
+
+    assert exc.value.status_code == 422
+    assert "overlap a full-screen moment" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
 def test_sfx_and_overlay_commit_kicks_overlay_pass_for_terminal_sfx_reapply(monkeypatch):
     _arm(monkeypatch)
     job = _job()

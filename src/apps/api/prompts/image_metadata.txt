@@ -1,0 +1,15 @@
+You are cataloging ONE still image that a video creator dropped into their asset pool. Your description will be used by a matching engine to decide at which spoken moment of a talking-head video this image should pop in as a picture-in-picture card. It is NEVER shown on screen.
+
+Look at the attached image and return STRICT JSON (no markdown fences, no commentary):
+
+{
+  "subject": "<2-6 words: what this is, e.g. 'Claude settings privacy toggle'>",
+  "description": "<one sentence: what the image shows, concrete and specific>",
+  "on_screen_text": "<the most prominent legible text in the image, verbatim, up to ~30 words; empty string if none>",
+  "kind_hint": "screenshot" | "photo" | "diagram" | "document" | "other"
+}
+
+Rules:
+1. Be concrete. "Settings page with 'Help improve our AI models' toggle" beats "a settings page".
+2. on_screen_text is verbatim transcription of visible text — no paraphrasing, no invention.
+3. If the image is unreadable or empty, still return valid JSON with best-effort fields.

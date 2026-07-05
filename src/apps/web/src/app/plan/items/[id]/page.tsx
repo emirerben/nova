@@ -18,10 +18,7 @@ import {
   NotAuthenticatedError,
   setClipNote,
   setItemVoiceover,
-  setItemVoiceoverBedLevel,
-  setItemVoiceoverCaptionStyle,
   setPlanItemCaptionLanguage,
-  type VoiceoverCaptionStyle,
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
@@ -36,6 +33,8 @@ import {
   uploadToGcs,
   requestOverlayUploadUrls,
   setVariantMediaOverlays,
+  listPoolAssets,
+  type PoolAsset,
   type MediaOverlay,
   requestSfxUploadUrls,
   setVariantSoundEffects,
@@ -52,7 +51,7 @@ import {
   type SceneTimingPatch,
 } from "@/lib/plan-api";
 import { useSfxPreview } from "../../_components/useSfxPreview";
-import { resolveSfxPreviewUrls } from "@/lib/sfx-preview-urls";
+import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
 import AskNovaPanel from "./components/AskNovaPanel";
@@ -74,10 +73,18 @@ import { usePolledJobStatus } from "@/hooks/usePolledJobStatus";
 import { LightShell } from "@/components/ui/LightShell";
 import { InkButton } from "@/components/ui/InkButton";
 import { SeedProvenanceBadge } from "../../_components/ui/SeedProvenanceBadge";
+import AssetPool from "../../_components/AssetPool";
+import SuggestionRail from "../../_components/SuggestionRail";
+import HeroOverlayEditor from "../../_components/HeroOverlayEditor";
+import LiveOverlayCardsLayer from "../../_components/LiveOverlayCardsLayer";
 import CaptionEditor from "../../_components/CaptionEditor";
+import BackgroundSoundControl from "../../_components/BackgroundSoundControl";
 import PlanVariantEditor from "../../_components/PlanVariantEditor";
 import SignInPrompt from "../../_components/SignInPrompt";
 import UnifiedTimeline from "../../_components/UnifiedTimeline";
+import { computeIntroTextWindow } from "../../_components/introTextWindow";
+import type { SuggestionLaneEntry } from "../../_components/UnifiedTimelineTypes";
+import { useOverlaySuggestionState } from "../../_components/useOverlaySuggestions";
 import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
 import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
@@ -111,11 +118,22 @@ const MEDIA_OVERLAYS_ENABLED =
   _mediaOverlaysRaw.toLowerCase() === "true" || _mediaOverlaysRaw === "1";
 const SOUND_EFFECTS_ENABLED =
   process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
-// Kill-switch: the "Subtitled" edit-style card only appears when
-// NEXT_PUBLIC_SUBTITLED_ENABLED=true. Keep in sync with the backend
-// `subtitled_archetype_enabled` Fly secret — if the card shows but the backend
-// flag is off, a subtitled job silently falls back to montage. Same normalize as
-// MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing space) still works.
+// R2 (review C8): version-skew guard for the manual fullscreen-cutaway toggle.
+// New web + OLD api (Vercel auto-deploys on merge; Fly is manual/CD and can lag)
+// = the api's MediaOverlay model has no display_mode field and Pydantic
+// extra="ignore" silently strips it → a previewed fullscreen bakes as pip. This
+// is the WEB TWIN of the api's FULLSCREEN_CUTAWAYS_ENABLED. Keep it FALSE in
+// Vercel until the Fly deploy carrying display_mode is confirmed live, then flip
+// Vercel AFTER Fly (never before). When off, the NEW promote affordances hide;
+// pip editing and EXISTING fullscreen cards from the API still work/render.
+const FULLSCREEN_CUTAWAYS_ENABLED =
+  process.env.NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED === "true";
+// Kill-switch: the "Talking to camera" edit-style card (edit_format="subtitled")
+// only appears when NEXT_PUBLIC_SUBTITLED_ENABLED=true. Keep in sync with the
+// backend `subtitled_archetype_enabled` Fly secret — if the card shows but the
+// backend flag is off, a subtitled job silently falls back to montage. Same
+// normalize as MEDIA_OVERLAYS so a near-miss Vercel value ("True", trailing
+// space) still works.
 const _subtitledRaw = (process.env.NEXT_PUBLIC_SUBTITLED_ENABLED ?? "").trim();
 const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRaw === "1";
 // Kill-switch: the item-page "Edit" entry into the full-screen TikTok-style
@@ -141,12 +159,59 @@ type PendingEdit = {
   targetGeneration?: string | null;
 };
 
+// Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
+// is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
+// StyleCard.tsx / OnboardingShell.tsx's FOOTAGE_OPTIONS, which use the same
+// phrase for a persona-level content preference, not an edit style). Do not
+// merge these two label maps — they answer different questions.
+const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
+  montage: { label: "Montage", desc: "Multiple clips cut to music" },
+  narrated_planned: { label: "Narrated walkthrough", desc: "Footage explained by voiceover or a script" },
+  subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
+};
+
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
 // applied-fit display (post-render).
 const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: string }[] = [
   { value: "fit",  label: "Fit",  desc: "Keep horizontal, black bars top & bottom" },
   { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
 ];
+
+// Reads each file's video dimensions via a detached <video> element and resolves
+// true iff ANY is landscape (width > height). Fails safe (resolves false, never
+// rejects/throws) on metadata timeout or an unsupported codec — the caller's
+// default ("fit") is already correct either way, so a missed detection just means
+// the Fit/Fill picker stays hidden, not a broken render. Not covered: clips
+// attached via ShotSlotUploader (per-slot uploads with no File object reaching
+// this page) — only the PoolUploadCard-based flows (narrated_ready, talking-to-
+// camera, existing_footage) funnel through handleFiles today.
+function detectLandscapeClip(files: File[]): Promise<boolean> {
+  const checks = files.map(
+    (file) =>
+      new Promise<boolean>((resolve) => {
+        const video = document.createElement("video");
+        const url = URL.createObjectURL(file);
+        const cleanup = () => URL.revokeObjectURL(url);
+        const timer = setTimeout(() => {
+          cleanup();
+          resolve(false);
+        }, 5000);
+        video.preload = "metadata";
+        video.onloadedmetadata = () => {
+          clearTimeout(timer);
+          cleanup();
+          resolve(video.videoWidth > video.videoHeight);
+        };
+        video.onerror = () => {
+          clearTimeout(timer);
+          cleanup();
+          resolve(false);
+        };
+        video.src = url;
+      }),
+  );
+  return Promise.all(checks).then((results) => results.some(Boolean));
+}
 
 function deriveReceiptText(job: PlanItemJobStatus): string {
   if (job.started_at && job.finished_at) {
@@ -175,6 +240,13 @@ export default function PlanItemPage() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Landscape auto-detect: the Fit/Fill picker only appears once a wide clip is
+  // detected on upload — hidden by default (the common case is portrait clips).
+  // Sticky within the session (never resets to false) so it doesn't flicker if a
+  // later upload/removal changes the pool; detection failure (metadata never
+  // loads, unsupported codec) fails safe by simply not setting it — "fit" is
+  // already the backend's safe default either way.
+  const [hasLandscapeClip, setHasLandscapeClip] = useState(false);
   const [generating, setGenerating] = useState(false);
   // uploaderBusy: true while ShotSlotUploader has any upload/commit in flight (D6).
   const [uploaderBusy, setUploaderBusy] = useState(false);
@@ -185,6 +257,69 @@ export default function PlanItemPage() {
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
+  // 006 T3 (005-4A lane rendering): overlay-suggestion working state, lifted
+  // here so SuggestionRail (review index) and the timeline lanes (editable
+  // provenance cards) share ONE envelope set. Lane edits patch the envelopes
+  // and implicitly stage the row; only the rail's Apply hits the network.
+  const overlaySuggestions = useOverlaySuggestionState();
+  // 007 Fix 2: signed pool-asset thumbnails for the hero direct-manipulation
+  // cards. Fetched once when suggestions exist (the rail/AssetPool keep their
+  // own copies internal); join rows' asset_id → display_url keyed by the
+  // embedded overlay's src_gcs_path so HeroOverlayEditor can resolve by overlay.
+  const autoplaceEnabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
+  const [suggestionPoolAssets, setSuggestionPoolAssets] = useState<PoolAsset[]>([]);
+  const hasSuggestionRows = overlaySuggestions.rows.length > 0;
+  useEffect(() => {
+    if (!autoplaceEnabled || !hasSuggestionRows) return;
+    let cancelled = false;
+    listPoolAssets(itemId)
+      .then((res) => {
+        if (!cancelled) setSuggestionPoolAssets(res.assets);
+      })
+      .catch(() => {
+        // Thumbnails are progressive enhancement — cards fall back to a
+        // placeholder block; the gestures themselves never need the URL.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoplaceEnabled, hasSuggestionRows, itemId]);
+  const suggestionAssetUrlBySrcPath = useMemo(() => {
+    const assetById = new Map(suggestionPoolAssets.map((a) => [a.id, a]));
+    const map = new Map<string, string>();
+    for (const row of overlaySuggestions.rows) {
+      const url = assetById.get(row.asset_id)?.display_url;
+      if (url) map.set(row.overlay.src_gcs_path, url);
+    }
+    return map;
+  }, [suggestionPoolAssets, overlaySuggestions.rows]);
+  const resolveSuggestionAssetUrl = useCallback(
+    (overlay: MediaOverlay): string | undefined =>
+      suggestionAssetUrlBySrcPath.get(overlay.src_gcs_path) ?? overlay.preview_url ?? undefined,
+    [suggestionAssetUrlBySrcPath],
+  );
+  // 009 T5: aspect/pixel metadata for the fullscreen crop/low-res popover
+  // warnings — same asset_id → overlay.src_gcs_path join as the URL map above
+  // (the pool response carries no gcs_path, so the suggestion rows are the
+  // bridge). Missing assets/fields stay undefined — warnings suppress, never fake.
+  const suggestionAssetMetaBySrcPath = useMemo(() => {
+    const assetById = new Map(suggestionPoolAssets.map((a) => [a.id, a]));
+    const map = new Map<string, { aspect?: number; width?: number; height?: number }>();
+    for (const row of overlaySuggestions.rows) {
+      const asset = assetById.get(row.asset_id);
+      if (!asset) continue;
+      map.set(row.overlay.src_gcs_path, {
+        aspect: asset.aspect ?? undefined,
+        width: asset.width ?? undefined,
+        height: asset.height ?? undefined,
+      });
+    }
+    return map;
+  }, [suggestionPoolAssets, overlaySuggestions.rows]);
+  const resolveAssetMeta = useCallback(
+    (srcGcsPath: string) => suggestionAssetMetaBySrcPath.get(srcGcsPath),
+    [suggestionAssetMetaBySrcPath],
+  );
   // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
   const [generatingGuide, setGeneratingGuide] = useState(false);
@@ -201,14 +336,6 @@ export default function PlanItemPage() {
   // when VoiceRecorder fires onVoiceover; reset from item on refetch.
   const [voiceoverGcsPath, setVoiceoverGcsPath] = useState<string | null>(null);
   const [voiceoverSaving, setVoiceoverSaving] = useState(false);
-  // Narrated-walkthrough: original-audio bed level (0 = voice only, 1 = loudest).
-  // null = Nova's default. Optimistic local shadow; reset from item on refetch.
-  const [bedLevel, setBedLevel] = useState<number | null>(null);
-  const [bedSaving, setBedSaving] = useState(false);
-  // Narrated-walkthrough: caption style ("sentence" | "word"). null → "sentence"
-  // (today's sentence-block captions). Optimistic local shadow; reset from item.
-  const [captionStyle, setCaptionStyle] = useState<VoiceoverCaptionStyle | null>(null);
-  const [captionSaving, setCaptionSaving] = useState(false);
   // Conformance polling: keep fetching for up to 3 extra cycles after clips are attached
   // so the verdict panel appears shortly after the async agent finishes (~6s window).
   const conformancePolls = useRef(0);
@@ -246,6 +373,12 @@ export default function PlanItemPage() {
     ({ item, job }: { item: PlanItem; job: PlanItemJobStatus | null }) => {
       const anyRendering =
         job?.variants?.some((v) => v.render_status === "rendering") ?? false;
+      // Plan 007 (CRITICAL-2): the zero-click autoplace chain (match → burn)
+      // runs server-side AFTER variants_ready. Keep polling while any variant
+      // is mid-match, so the auto-applied result (and the hydration effect)
+      // is never invisible until a manual reload.
+      const anyAutoMatching =
+        job?.variants?.some((v) => v.overlay_suggest_status === "matching") ?? false;
       const pending = pendingEdits.current;
       // If the job-level status is already terminal (processing_failed,
       // variants_failed, etc.) treat it as done regardless of any frozen
@@ -257,6 +390,7 @@ export default function PlanItemPage() {
         job?.status != null && GENERATIVE_TERMINAL_STATUSES.includes(job.status);
       const baseTerminal =
         (jobTerminal || !anyRendering) &&
+        !anyAutoMatching &&
         pending.size === 0 &&
         item.status !== "generating" &&
         !(item.current_job_id && item.status !== "ready" && item.status !== "failed");
@@ -342,20 +476,6 @@ export default function PlanItemPage() {
       setVoiceoverGcsPath(item.voiceover_gcs_path ?? null);
     }
   }, [item?.voiceover_gcs_path]);
-
-  // Sync the original-audio bed level from the item (after refetch / on load).
-  useEffect(() => {
-    if (item?.voiceover_bed_level !== undefined) {
-      setBedLevel(item.voiceover_bed_level ?? null);
-    }
-  }, [item?.voiceover_bed_level]);
-
-  // Sync the caption style from the item (after refetch / on load).
-  useEffect(() => {
-    if (item?.voiceover_caption_style !== undefined) {
-      setCaptionStyle(item.voiceover_caption_style === "word" ? "word" : "sentence");
-    }
-  }, [item?.voiceover_caption_style]);
 
   const variants = useMemo(
     () => {
@@ -520,6 +640,9 @@ export default function PlanItemPage() {
     conformancePolls.current = 0;
     try {
       const list = Array.from(files);
+      void detectLandscapeClip(list).then((found) => {
+        if (found) setHasLandscapeClip(true);
+      });
       const urls = await requestUploadUrls(
         itemId,
         list.map((f) => ({
@@ -595,30 +718,6 @@ export default function PlanItemPage() {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
     } finally {
       setVoiceoverSaving(false);
-    }
-  }
-
-  async function handleBedLevelChange(level: number | null) {
-    setBedLevel(level);
-    setBedSaving(true);
-    try {
-      await setItemVoiceoverBedLevel(itemId, level);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save background sound");
-    } finally {
-      setBedSaving(false);
-    }
-  }
-
-  async function handleCaptionStyleChange(style: VoiceoverCaptionStyle) {
-    setCaptionStyle(style);
-    setCaptionSaving(true);
-    try {
-      await setItemVoiceoverCaptionStyle(itemId, style);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save caption style");
-    } finally {
-      setCaptionSaving(false);
     }
   }
 
@@ -778,16 +877,10 @@ export default function PlanItemPage() {
                 <div className="grid gap-2 sm:grid-flow-col sm:auto-cols-fr">
                   {(
                     [
-                      { value: "montage", label: "Montage", desc: "Cuts and transitions from your clips" },
-                      { value: "narrated_planned", label: "Narrated walkthrough", desc: "Record your voice, clips follow along" },
+                      { value: "montage", ...EDIT_FORMAT_LABELS.montage },
+                      { value: "narrated_planned", ...EDIT_FORMAT_LABELS.narrated_planned },
                       ...(SUBTITLED_ENABLED
-                        ? [
-                            {
-                              value: "subtitled",
-                              label: "Subtitled",
-                              desc: "Talk to camera — we caption your words, in Turkish or English",
-                            },
-                          ]
+                        ? [{ value: "subtitled", ...EDIT_FORMAT_LABELS.subtitled }]
                         : []),
                     ] as { value: string; label: string; desc: string }[]
                   ).map(({ value, label, desc }) => {
@@ -897,11 +990,16 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Landscape-clip fit picker — shown alongside Edit style */}
-            {item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+            {/* Landscape-clip fit picker — only appears once a wide clip is detected on
+                upload (hasLandscapeClip), so the common all-portrait case never sees
+                this control. Reads as a detected notice, not a surprise setting. */}
+            {item.status !== "generating" &&
+              item.status !== "ready" &&
+              variants.length === 0 &&
+              hasLandscapeClip && (
               <div className="mb-4">
                 <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Landscape clips
+                  Landscape clip detected
                 </p>
                 <div className="flex gap-2">
                   {LANDSCAPE_FIT_OPTIONS.map(({ value, label, desc }) => {
@@ -1042,167 +1140,34 @@ export default function PlanItemPage() {
                     Voice recorded — clips will be timed to match your narration.
                   </p>
                 )}
+                {/* First-class entry point (moved from a buried inline link during the
+                    plan-item redesign) — narrated only. Talking-to-camera does not get
+                    this: TeleprompterRecorder/ReviewStep write to voiceover_gcs_path, a
+                    field _render_subtitled_variant never reads (see the plan's "Plan
+                    correction" section). */}
                 {process.env.NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED === "true" && (
-                  <p className="mt-2 text-xs text-lime-700">
-                    Not sure what to say?{" "}
-                    <Link
-                      href={`/plan/items/${item.id}/transcript`}
-                      className="underline underline-offset-2 hover:text-lime-800"
-                    >
-                      Get a transcript
-                    </Link>
-                  </p>
+                  <Link
+                    href={`/plan/items/${item.id}/transcript`}
+                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
+                  >
+                    <span aria-hidden>✦</span>
+                    Not sure what to say? Write a script with Nova
+                  </Link>
                 )}
               </div>
             )}
 
-            {/* Narrated walkthrough: original-audio bed control — sits next to the
-                clips so the creator can dial how much of their clip sound plays
-                under the voice. Nova ducks it automatically while they speak. */}
-            {isNarrated && (
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Background sound
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  How loud your original clip audio plays under your voice. Nova ducks it
-                  automatically while you&apos;re talking.
-                </p>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-zinc-400">Off</span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    value={bedLevel ?? 0.25}
-                    onChange={(e) => handleBedLevelChange(Number(e.target.value))}
-                    className="h-1 flex-1 cursor-pointer accent-lime-600"
-                    aria-label="Original video background sound level"
-                  />
-                  <span className="text-xs text-zinc-400">Loud</span>
-                </div>
-                <div className="mt-1 flex items-center justify-between">
-                  <p className="text-xs text-lime-700">
-                    {bedSaving
-                      ? "Saving…"
-                      : bedLevel === null
-                        ? "Nova decides the best level."
-                        : bedLevel === 0
-                          ? "Voice only — no original audio."
-                          : `Original audio at ${Math.round(bedLevel * 100)}%.`}
-                  </p>
-                  {bedLevel !== null && (
-                    <button
-                      type="button"
-                      onClick={() => handleBedLevelChange(null)}
-                      className="text-xs text-zinc-400 underline-offset-2 hover:text-zinc-600 hover:underline"
-                    >
-                      Reset to Nova
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Narrated walkthrough: caption style — sentence blocks (default) vs
-                word-by-word (one big word at a time, the qbuilder look). Consumed at
-                generate time; editable per-word afterward in the on-video editor. */}
-            {isNarrated && (
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Captions
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  How your voiceover appears as on-screen text.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      {
-                        value: "sentence" as const,
-                        label: "Sentence",
-                        hint: "Full lines, like subtitles",
-                      },
-                      {
-                        value: "word" as const,
-                        label: "Word-by-word",
-                        hint: "One big word at a time",
-                      },
-                    ]
-                  ).map((opt) => {
-                    const active = (captionStyle ?? "sentence") === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        aria-pressed={active}
-                        disabled={captionSaving}
-                        onClick={() => handleCaptionStyleChange(opt.value)}
-                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                          active
-                            ? "border-lime-600 bg-lime-50 text-lime-900"
-                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                        }`}
-                      >
-                        <span className="block text-sm font-semibold">{opt.label}</span>
-                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
-              </div>
-            )}
-
-            {/* Subtitled: caption style — sentence blocks (default) vs word-by-word,
-                where the full line stays visible and the spoken word pops in lime.
-                Consumed at generate time; editable afterward in the on-video editor. */}
-            {isSubtitled && (
-              <div className="mb-6">
-                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Captions
-                </p>
-                <p className="mb-3 text-sm text-[#71717a]">
-                  How your words appear as on-screen text.
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      {
-                        value: "sentence" as const,
-                        label: "Sentence",
-                        hint: "Full lines, like subtitles",
-                      },
-                      {
-                        value: "word" as const,
-                        label: "Word-by-word",
-                        hint: "Each word pops as you say it",
-                      },
-                    ]
-                  ).map((opt) => {
-                    const active = (captionStyle ?? "sentence") === opt.value;
-                    return (
-                      <button
-                        key={opt.value}
-                        type="button"
-                        aria-pressed={active}
-                        disabled={captionSaving}
-                        onClick={() => handleCaptionStyleChange(opt.value)}
-                        className={`rounded-xl border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                          active
-                            ? "border-lime-600 bg-lime-50 text-lime-900"
-                            : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
-                        }`}
-                      >
-                        <span className="block text-sm font-semibold">{opt.label}</span>
-                        <span className="block text-xs text-[#71717a]">{opt.hint}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {captionSaving && <p className="mt-1 text-xs text-zinc-400">Saving…</p>}
-              </div>
+            {/* Background sound (narrated) and caption style/on-off (narrated +
+                talking-to-camera) moved to the post-gen editor — see
+                BackgroundSoundControl / CaptionStyleToggle in PlanVariantEditor.tsx.
+                Talk-to-camera auto-generates WITH subtitles by default; both are
+                tunable after generation, not before. */}
+            {(isNarrated || isSubtitled) && (
+              <p className="mb-4 text-xs text-[#a1a1aa]">
+                {isSubtitled
+                  ? "Subtitles are added automatically and editable after you generate."
+                  : "Background sound and captions can be tuned after you generate."}
+              </p>
             )}
 
             {/* Uploader — branches:
@@ -1299,6 +1264,32 @@ export default function PlanItemPage() {
                 />
               </>
             )}
+
+            {/* Visuals pool — screenshots/screen recordings that feed AI overlay
+                auto-placement (plans/005 PR0). Renders nothing unless
+                NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED=true (gate lives inside). */}
+            <AssetPool itemId={itemId} />
+
+            {/* Suggestion rail — AI overlay auto-placement review for the
+                focused variant (plans/005 PR2). Same flag gate as AssetPool;
+                renders nothing until a variant exists. */}
+            <SuggestionRail
+              itemId={itemId}
+              variantId={focused?.variant_id ?? null}
+              previewUrl={focused?.output_url ?? focused?.base_video_url ?? null}
+              rows={overlaySuggestions.rows}
+              onRowsChange={overlaySuggestions.setRows}
+              keptIds={overlaySuggestions.keptIds}
+              onKeptIdsChange={overlaySuggestions.setKeptIds}
+              onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
+              applyReceipt={focused?.overlay_apply_receipt ?? null}
+              onApplied={() => {
+                if (focused) {
+                  markVariantRendering(focused.variant_id, focused.render_finished_at ?? null);
+                }
+                refetch();
+              }}
+            />
 
             {/* Generate + "N shots left" caption — below the shot sections (WS1) */}
             {!isGenerating && (
@@ -1488,6 +1479,10 @@ export default function PlanItemPage() {
             }
             renderingAction={renderingAction.current}
             updatedVariantId={updatedVariantId}
+            overlaySuggestions={overlaySuggestions.laneEntries}
+            onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
+            resolveSuggestionAssetUrl={resolveSuggestionAssetUrl}
+            resolveAssetMeta={resolveAssetMeta}
           />
         )}
       </div>
@@ -1564,6 +1559,10 @@ function FocusedResults({
   onChangeLayout,
   renderingAction,
   updatedVariantId,
+  overlaySuggestions,
+  onSuggestionEdit,
+  resolveSuggestionAssetUrl,
+  resolveAssetMeta,
 }: {
   itemId: string;
   item: PlanItem;
@@ -1586,6 +1585,17 @@ function FocusedResults({
   onChangeLayout: (layout: "linear" | "cluster") => Promise<void>;
   renderingAction: { type: "song" | "text" | "style" | "other"; label: string } | null;
   updatedVariantId: string | null;
+  /** 006 T3: pending AI suggestions for the timeline lanes (from the page's
+   *  useOverlaySuggestionState — same envelopes SuggestionRail reviews). */
+  overlaySuggestions?: SuggestionLaneEntry[];
+  onSuggestionEdit?: (suggestionId: string, patch: Partial<MediaOverlay>) => void;
+  /** 007 Fix 2: overlay → signed pool display_url for hero suggestion cards. */
+  resolveSuggestionAssetUrl?: (overlay: MediaOverlay) => string | undefined;
+  /** 009 T5: src_gcs_path → {aspect,width,height} for the fullscreen popover
+   *  crop/low-res warnings (page-built join over the suggestion pool assets). */
+  resolveAssetMeta?: (
+    srcGcsPath: string,
+  ) => { aspect?: number; width?: number; height?: number } | undefined;
 }) {
   const [activeTab, setActiveTab] = useState<EditorTab | null>(null);
   // T5: textLaneOpen is derived (not state) — true when the timeline tab is open and the variant
@@ -1606,19 +1616,119 @@ function FocusedResults({
   // here would double the overlay on page load. Cleared when a burn completes (render_finished_at
   // effect below), so the burned output takes over without doubling.
   const [localPreviewUrls, setLocalPreviewUrls] = useState<Record<string, string>>({});
+  // Plan 009 T4: card ids whose preview media failed to load (routine — signed
+  // URLs expire in 24h). While any CURRENT card is failed, the Download
+  // overlay-bake path is blocked with inline copy; lifted from
+  // LiveOverlayCardsLayer via onCardMediaError.
+  const [failedCardIds, setFailedCardIds] = useState<Set<string>>(new Set());
+  // Plan 009 T4 click-to-edit: card id whose timeline popover was requested by
+  // clicking a fullscreen card's frame in the hero. Consumed by UnifiedTimeline
+  // (externalEditCardId / onExternalEditHandled, T3 props).
+  const [requestedEditCardId, setRequestedEditCardId] = useState<string | null>(null);
   // SFX placements — lifted alongside overlayCards so both stay in sync with the active variant.
   const [sfxPlacements, setSfxPlacements] = useState<SoundEffectPlacement[]>(
     variant?.sound_effects ?? [],
   );
   // sfxAudioUrls: map from src_gcs_path → playable URL (signed GCS or blob URL) for instant preview.
   const [sfxAudioUrls, setSfxAudioUrls] = useState<Record<string, string>>({});
+  // SFX glossary — owned HERE (not in FocusedVariantControls) so APPLIED
+  // placements loaded from the variant get playable URLs even when no editor
+  // tab is open: the hero's useSfxPreview needs sfxAudioUrls populated to make
+  // saved effects audible, not just freshly-picked ones.
+  const [glossaryEffects, setGlossaryEffects] = useState<SoundEffectSummary[]>([]);
+  const [glossaryLoading, setGlossaryLoading] = useState(false);
+  // Load the glossary when the Timeline tab first opens (picker needs the list)
+  // OR as soon as an applied glossary placement lacks a preview URL (hero
+  // playback needs preview_audio_url from the glossary payload).
+  const needsGlossaryForApplied = sfxPlacements.some(
+    (p) => p.sound_effect_id && !sfxAudioUrls[sfxUrlKey(p)],
+  );
+  useEffect(() => {
+    if (!SOUND_EFFECTS_ENABLED) return;
+    if (glossaryEffects.length > 0) return;
+    if (activeTab !== "timeline" && !needsGlossaryForApplied) return;
+    setGlossaryLoading(true);
+    getSoundEffects()
+      .then(setGlossaryEffects)
+      .catch(() => {/* glossary is best-effort */})
+      .finally(() => setGlossaryLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, needsGlossaryForApplied]);
+  // Fetch signed playback URLs for SFX placements that don't have one yet.
+  // Key: use src_gcs_path when available, fall back to placement.id so glossary
+  // effects (src_gcs_path="" until server resolves it) get a URL immediately.
+  useEffect(() => {
+    if (!SOUND_EFFECTS_ENABLED) return;
+    const { glossaryUrls, userUploadPaths } = resolveSfxPreviewUrls(
+      sfxPlacements,
+      glossaryEffects,
+      sfxAudioUrls,
+    );
+
+    if (Object.keys(glossaryUrls).length > 0) {
+      setSfxAudioUrls((prev) => ({ ...prev, ...glossaryUrls }));
+    }
+
+    for (const p of userUploadPaths) {
+      getSfxAudioUrl(itemId, p.src_gcs_path)
+        .then((url) => setSfxAudioUrls((prev) => ({ ...prev, [p.src_gcs_path]: url })))
+        .catch(() => {});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
   // Current video time lifted from the hero player so "Add at playhead" works.
   const [currentTimeS, setCurrentTimeS] = useState(0);
+  // 007 Fix 2: thumbnail lookup for the hero direct-manipulation cards —
+  // local blob previews first (freshly uploaded), then the page-built signed
+  // pool display_url join.
+  const resolveSuggestionCardUrl = useCallback(
+    (overlay: MediaOverlay): string | undefined =>
+      localPreviewUrls[overlay.id] ?? resolveSuggestionAssetUrl?.(overlay),
+    [localPreviewUrls, resolveSuggestionAssetUrl],
+  );
+  // Plan 009 T4: failed-media lift + failed-tile Remove + fullscreen
+  // click-to-edit. These serve BOTH hero surfaces (Hero and LiveEditPreview —
+  // both mount LiveOverlayCardsLayer + HeroOverlayEditor).
+  const handleCardMediaError = useCallback((cardId: string) => {
+    setFailedCardIds((prev) => {
+      if (prev.has(cardId)) return prev;
+      const next = new Set(prev);
+      next.add(cardId);
+      return next;
+    });
+  }, []);
+  const handleRemoveFailedCard = useCallback((cardId: string) => {
+    // Mirrors the timeline lane's remove path at the page level (the lane's
+    // handler lives in FocusedVariantControls, which only mounts with the
+    // Timeline tab open). The removal persists on the next Download bake,
+    // which always sends the CURRENT overlayCards list.
+    setOverlayCards((prev) => prev.filter((c) => c.id !== cardId));
+    setLocalPreviewUrls((prev) => {
+      if (!prev[cardId]) return prev;
+      URL.revokeObjectURL(prev[cardId]);
+      const next = { ...prev };
+      delete next[cardId];
+      return next;
+    });
+    setFailedCardIds((prev) => {
+      if (!prev.has(cardId)) return prev;
+      const next = new Set(prev);
+      next.delete(cardId);
+      return next;
+    });
+  }, []);
+  const handleRequestEditCard = useCallback((cardId: string) => {
+    // The popover lives in the timeline lanes — make sure they are mounted.
+    setActiveTab("timeline");
+    setRequestedEditCardId(cardId);
+  }, []);
   useEffect(() => {
     const nextCards = variant?.media_overlays ?? [];
     setOverlayCards(nextCards);
     setSfxPlacements(variant?.sound_effects ?? []);
     setSfxAudioUrls({});
+    setFailedCardIds(new Set());
+    setRequestedEditCardId(null);
     // Revoke any blob URLs from the previous variant and reset to empty.
     // Do NOT repopulate from preview_url — the burned output_url already shows the cards.
     setLocalPreviewUrls((prev) => {
@@ -1627,6 +1737,19 @@ function FocusedResults({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant?.variant_id]);
+  // Plan 007 Fix 3 (decision D4-A): the effect above keys on variant_id only, so
+  // server-side card mutations on the SAME variant (Apply burn, zero-click
+  // auto-apply) never reached the lanes until a full page reload — the timeline
+  // showed empty OVERLAYS/SFX on a variant with baked visuals. Re-sync from the
+  // refetched variant when the burn-completion signal advances. Keyed to
+  // render_finished_at: no edit session exists at burn completion, so this can
+  // never clobber in-flight local edits.
+  useEffect(() => {
+    if (!variant?.render_finished_at) return;
+    setOverlayCards(variant?.media_overlays ?? []);
+    setSfxPlacements(variant?.sound_effects ?? []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variant?.render_finished_at]);
   // Declared here (before the render_finished_at effect) so the effect can read it.
   // The full definition lives further down alongside handleDownload.
   const pendingDownloadRef = useRef(false);
@@ -1717,6 +1840,10 @@ function FocusedResults({
   const needsSfxBake = sfxNeedsBake(sfxPlacements, variant);
   const sfxIsPersistDirty = sfxPersistDirty(sfxPlacements, variant);
 
+  // Plan 009 T4: failed cards still in the working set — derived as an
+  // intersection so removing a card (tile Remove or lane) unblocks instantly.
+  const failedOverlayCount = overlayCards.filter((c) => failedCardIds.has(c.id)).length;
+
   const handleDownload = useCallback(async () => {
     if (!variant) return;
 
@@ -1735,6 +1862,10 @@ function FocusedResults({
     // remix finishes (two-pass observability). Must run before the SFX-only
     // branch so a co-edit isn't split across two Download clicks.
     if (overlayCards.length > 0) {
+      // Plan 009 T4: a card whose media failed to load would bake a broken /
+      // blank visual — block the overlay-bake path until it's refreshed or
+      // removed (inline copy under the button explains why).
+      if (failedOverlayCount > 0) return;
       pendingDownloadRef.current = true;
       try {
         await flushSfx();
@@ -1777,7 +1908,7 @@ function FocusedResults({
       return;
     }
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
-  }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, itemId, downloadName, markVariantRendering, onError]);
+  }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, failedOverlayCount, itemId, downloadName, markVariantRendering, onError]);
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
@@ -1831,7 +1962,9 @@ function FocusedResults({
 
         {/* ── HERO: large video player ── */}
         <div className="w-full shrink-0 sm:max-w-xs lg:w-[300px]">
-          <div className="relative">
+          {/* data-variant-preview: stable DOM hook for the SuggestionRail reveal
+              (row click seeks this variant's preview video — plans/005 1A). */}
+          <div className="relative" data-variant-preview={variant?.variant_id}>
             {/* "Nova's pick" badge */}
             {isNovaPick && variant?.output_url && (
               <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
@@ -1847,6 +1980,14 @@ function FocusedResults({
                 textElements={variant.text_elements ?? undefined}
                 sfxPlacements={sfxPlacements}
                 sfxAudioUrls={sfxAudioUrls}
+                overlayCards={overlayCards}
+                localPreviewUrls={localPreviewUrls}
+                suggestionEntries={overlaySuggestions}
+                onSuggestionEdit={onSuggestionEdit}
+                resolveSuggestionCardUrl={resolveSuggestionCardUrl}
+                onCardMediaError={handleCardMediaError}
+                onRemoveCard={handleRemoveFailedCard}
+                onRequestEditCard={handleRequestEditCard}
               />
             ) : (
               <Hero
@@ -1858,6 +1999,12 @@ function FocusedResults({
                 sfxAudioUrls={sfxAudioUrls}
                 renderingAction={renderingAction}
                 showUpdatedCue={updatedVariantId === variant?.variant_id}
+                suggestionEntries={overlaySuggestions}
+                onSuggestionEdit={onSuggestionEdit}
+                resolveSuggestionCardUrl={resolveSuggestionCardUrl}
+                onCardMediaError={handleCardMediaError}
+                onRemoveCard={handleRemoveFailedCard}
+                onRequestEditCard={handleRequestEditCard}
               />
             )}
           </div>
@@ -1978,10 +2125,14 @@ function FocusedResults({
             <div>
               <div className="flex gap-2">
                 {EDITOR_TABS.map((tab) => {
-                  const hasCaptions = !!variant?.caption_cues?.length && !!variant?.base_video_url;
-                  // Captions tab shows for any caption variant (narrated voiceover OR
-                  // subtitled single-clip) that carries editable cues — it's cue-driven,
-                  // not archetype-gated, so both use the same on-video CaptionEditor.
+                  // Archetype-gated (mirrors the backend's _is_editable_caption_variant),
+                  // NOT cue-count-gated — a cue-count gate would make the tab vanish the
+                  // moment subtitles are toggled off, trapping the user with no way back
+                  // on (the bug the plan-item redesign's User Challenge caught).
+                  const hasCaptions =
+                    (variant?.resolved_archetype === "narrated" ||
+                      variant?.resolved_archetype === "subtitled") &&
+                    !!variant?.base_video_url;
                   if (tab.id === "captions" && !hasCaptions) return null;
                   // Caption variants have no song to edit — only Captions + Clips.
                   if (hasCaptions && tab.id === "song") return null;
@@ -2015,6 +2166,7 @@ function FocusedResults({
                   {activeTab === "captions" &&
                   variant.base_video_url &&
                   variant.caption_cues ? (
+                    <div className="space-y-3">
                     <CaptionEditor
                       // Re-mount (re-seed cues) whenever a server render replaces them —
                       // a language re-transcribe swaps all cues, and the editor otherwise
@@ -2027,6 +2179,13 @@ function FocusedResults({
                       baseVideoUrl={variant.base_video_url}
                       initialCues={variant.caption_cues}
                       initialFont={variant.voiceover_caption_font}
+                      initialCaptionStyle={variant.voiceover_caption_style ?? "sentence"}
+                      initialCaptionsEnabled={variant.captions_enabled ?? true}
+                      wordHint={
+                        variant.resolved_archetype === "subtitled"
+                          ? "Each word pops as you say it"
+                          : undefined
+                      }
                       rendering={variant.render_status === "rendering"}
                       // Subtitled captions are machine-transcribed from the clip's own
                       // audio — nudge review before Apply (D6). Narrated (own voiceover)
@@ -2073,6 +2232,23 @@ function FocusedResults({
                         refetch();
                       }}
                     />
+                    {variant.resolved_archetype === "narrated" && (
+                      <BackgroundSoundControl
+                        key={`${variant.variant_id}:bed:${variant.render_finished_at ?? ""}`}
+                        itemId={itemId}
+                        variantId={variant.variant_id}
+                        initialBedLevel={variant.voiceover_bed_level ?? null}
+                        rendering={variant.render_status === "rendering"}
+                        onCommitted={() => {
+                          markVariantRendering(
+                            variant.variant_id,
+                            variant.render_finished_at ?? null,
+                          );
+                          refetch();
+                        }}
+                      />
+                    )}
+                    </div>
                   ) : (
                     <FocusedVariantControls
                       itemId={itemId}
@@ -2097,10 +2273,15 @@ function FocusedResults({
                       setLocalPreviewUrls={setLocalPreviewUrls}
                       sfxPlacements={sfxPlacements}
                       setSfxPlacements={setSfxPlacements}
-                      sfxAudioUrls={sfxAudioUrls}
-                      setSfxAudioUrls={setSfxAudioUrls}
+                      glossaryEffects={glossaryEffects}
+                      glossaryLoading={glossaryLoading}
                       currentTimeS={currentTimeS}
                       onError={onError}
+                      overlaySuggestions={overlaySuggestions}
+                      onSuggestionEdit={onSuggestionEdit}
+                      resolveAssetMeta={resolveAssetMeta}
+                      externalEditCardId={requestedEditCardId}
+                      onExternalEditHandled={() => setRequestedEditCardId(null)}
                     />
                   )}
                 </div>
@@ -2119,6 +2300,15 @@ function FocusedResults({
               >
                 {baking ? "Preparing your video…" : "Download"}
               </button>
+              {/* Plan 009 T4: failed card media blocks the overlay-bake path —
+                  say so inline instead of silently no-oping the click. */}
+              {failedOverlayCount > 0 && (
+                <p className="mt-1 text-center text-xs text-[#3f3f46]">
+                  {failedOverlayCount === 1
+                    ? "1 visual couldn't load — refresh or remove it."
+                    : `${failedOverlayCount} visuals couldn't load — refresh or remove them.`}
+                </p>
+              )}
               {((instantEligible && editSession.isDirty) || needsSfxBake) && !baking && (
                 <p className="mt-1 text-center text-xs text-[#a1a1aa]">
                   Unsaved — downloads will include your changes
@@ -2242,10 +2432,15 @@ function FocusedVariantControls({
   setLocalPreviewUrls,
   sfxPlacements,
   setSfxPlacements,
-  sfxAudioUrls,
-  setSfxAudioUrls,
+  glossaryEffects,
+  glossaryLoading,
   currentTimeS,
   onError,
+  overlaySuggestions,
+  onSuggestionEdit,
+  resolveAssetMeta,
+  externalEditCardId,
+  onExternalEditHandled,
 }: {
   itemId: string;
   variant: PlanItemVariant;
@@ -2269,11 +2464,23 @@ function FocusedVariantControls({
   setLocalPreviewUrls: Dispatch<SetStateAction<Record<string, string>>>;
   sfxPlacements: SoundEffectPlacement[];
   setSfxPlacements: Dispatch<SetStateAction<SoundEffectPlacement[]>>;
-  sfxAudioUrls: Record<string, string>;
-  setSfxAudioUrls: Dispatch<SetStateAction<Record<string, string>>>;
+  /** SFX glossary — owned by FocusedResults (hero preview needs it too). */
+  glossaryEffects: SoundEffectSummary[];
+  glossaryLoading: boolean;
   currentTimeS: number;
   /** Surface a user-facing error in the page-level banner (e.g. SFX save failures). */
   onError: (msg: string) => void;
+  /** 006 T3: pending AI suggestions rendered in the timeline lanes. */
+  overlaySuggestions?: SuggestionLaneEntry[];
+  onSuggestionEdit?: (suggestionId: string, patch: Partial<MediaOverlay>) => void;
+  /** 009 T5: src_gcs_path → asset dims for the fullscreen popover warnings. */
+  resolveAssetMeta?: (
+    srcGcsPath: string,
+  ) => { aspect?: number; width?: number; height?: number } | undefined;
+  /** Plan 009 T4: hero fullscreen click-to-edit → open this card's timeline
+   *  popover (forwarded to UnifiedTimeline's T3 props). */
+  externalEditCardId?: string | null;
+  onExternalEditHandled?: () => void;
 }) {
   const [overlayUploading, setOverlayUploading] = useState(false);
   // True when cards have been modified and need metadata persistence.
@@ -2285,6 +2492,22 @@ function FocusedVariantControls({
   // Shared clip-timeline data: owned here so ClipsLane header bars and the
   // InlineClipsEditor expanded panel read/write one draft (no double fetch).
   const clipTimeline = useClipTimeline(itemId, variant.variant_id, "plan-item");
+
+  // 009 T5: intro-text keep-out window for the Overlays lane (hatched band +
+  // "Covers your intro text" warning) — derived from the variant's persisted
+  // text_elements by the single unit-tested helper. Null when no text layer.
+  const introTextWindow = useMemo(
+    () => computeIntroTextWindow(variant.text_elements),
+    [variant.text_elements],
+  );
+
+  // 009 D5/E9: fullscreen cutaways are structurally self-defeating on lyric
+  // edits (the burned lyric layer would be covered) — the server 422s them;
+  // this disables the promote affordances with honest copy.
+  const fullscreenDisabledReason =
+    variant.text_mode === "lyrics" || variant.variant_id === "song_lyrics"
+      ? "Full-screen cutaways aren't available on lyric edits."
+      : null;
 
   // Probe the actual variant duration so the overlay timeline shows the right length.
   const [variantDurationS, setVariantDurationS] = useState(30);
@@ -2490,9 +2713,10 @@ function FocusedVariantControls({
     : { onRetext, onRemoveText, onChangeStyle, onResize, onChangeLayout };
 
   // ── SFX state + handlers ──────────────────────────────────────────────────
+  // (glossaryEffects / glossaryLoading and the sfxAudioUrls signing effect were
+  // hoisted to FocusedResults so applied placements preview on the hero even
+  // when no editor tab is open.)
   const [sfxUploading, setSfxUploading] = useState(false);
-  const [glossaryEffects, setGlossaryEffects] = useState<SoundEffectSummary[]>([]);
-  const [glossaryLoading, setGlossaryLoading] = useState(false);
 
   // ── Text-elements state (T10 + T6) ────────────────────────────────────────
   // Optimistic render status per variantId so the UI doesn't freeze on apply
@@ -2528,18 +2752,6 @@ function FocusedVariantControls({
   }, [variant.render_finished_at]);
   // Debounce timer ref for the auto-apply after text-element edits.
   const textApplyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Load glossary when the Timeline tab is first opened.
-  useEffect(() => {
-    if (activeTab !== "timeline" || !SOUND_EFFECTS_ENABLED) return;
-    if (glossaryEffects.length > 0) return;
-    setGlossaryLoading(true);
-    getSoundEffects()
-      .then(setGlossaryEffects)
-      .catch(() => {/* glossary is best-effort */})
-      .finally(() => setGlossaryLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
 
   async function handleSfxUpload(
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
@@ -2593,29 +2805,6 @@ function FocusedVariantControls({
       }
     }, 600);
   }
-
-  // Fetch signed playback URLs for SFX placements that don't have one yet.
-  // Key: use src_gcs_path when available, fall back to placement.id so glossary
-  // effects (src_gcs_path="" until server resolves it) get a URL immediately.
-  useEffect(() => {
-    if (!SOUND_EFFECTS_ENABLED) return;
-    const { glossaryUrls, userUploadPaths } = resolveSfxPreviewUrls(
-      sfxPlacements,
-      glossaryEffects,
-      sfxAudioUrls,
-    );
-
-    if (Object.keys(glossaryUrls).length > 0) {
-      setSfxAudioUrls((prev) => ({ ...prev, ...glossaryUrls }));
-    }
-
-    for (const p of userUploadPaths) {
-      getSfxAudioUrl(itemId, p.src_gcs_path)
-        .then((url) => setSfxAudioUrls((prev) => ({ ...prev, [p.src_gcs_path]: url })))
-        .catch(() => {});
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sfxPlacements, glossaryEffects, sfxAudioUrls, itemId]);
 
   // ── Text-element handlers (T6) ────────────────────────────────────────────
 
@@ -2793,6 +2982,8 @@ function FocusedVariantControls({
           <div className="rounded-xl bg-[#0c0c0e] border border-white/10 p-3">
             <UnifiedTimeline
               totalDurationS={variantDurationS}
+              externalEditCardId={externalEditCardId}
+              onExternalEditHandled={onExternalEditHandled}
               currentTimeS={currentTimeS}
               sfxPlacements={sfxPlacements}
               sfxGlossaryEffects={glossaryEffects}
@@ -2809,6 +3000,12 @@ function FocusedVariantControls({
               onUpdateCard={handleUpdateCard}
               onRemoveCard={handleRemoveCard}
               onClearOverlays={handleClearOverlays}
+              overlaySuggestions={overlaySuggestions}
+              onSuggestionEdit={onSuggestionEdit}
+              introTextWindow={introTextWindow}
+              resolveAssetMeta={resolveAssetMeta}
+              fullscreenDisabledReason={fullscreenDisabledReason}
+              fullscreenPromoteEnabled={FULLSCREEN_CUTAWAYS_ENABLED}
               textElements={textElements}
               onTextElementsChange={handleTextElementsChange}
               onTextApply={(bars) => {
@@ -2934,6 +3131,14 @@ function LiveEditPreview({
   textElements,
   sfxPlacements = [],
   sfxAudioUrls = {},
+  overlayCards = [],
+  localPreviewUrls = {},
+  suggestionEntries,
+  onSuggestionEdit,
+  resolveSuggestionCardUrl,
+  onCardMediaError,
+  onRemoveCard,
+  onRequestEditCard,
 }: {
   variant: PlanItemVariant;
   styleSets: GenerativeStyleSet[];
@@ -2953,6 +3158,23 @@ function LiveEditPreview({
    */
   sfxPlacements?: SoundEffectPlacement[];
   sfxAudioUrls?: Record<string, string>;
+  /**
+   * Plan 008 gap-close: instant-eligible variants render THROUGH this component
+   * (not Hero), so the live overlay-card layer must exist here too — otherwise
+   * timeline edits (scale / position / trim) never reach the preview for
+   * agent_text variants. Mirrors Hero's live-edit wiring exactly.
+   */
+  overlayCards?: MediaOverlay[];
+  localPreviewUrls?: Record<string, string>;
+  suggestionEntries?: SuggestionLaneEntry[];
+  onSuggestionEdit?: (suggestionId: string, patch: Partial<MediaOverlay>) => void;
+  resolveSuggestionCardUrl?: (overlay: MediaOverlay) => string | undefined;
+  /** Plan 009 T4: failed-media lift / failed-tile Remove / fullscreen
+   *  click-to-edit — mirrors Hero's wiring (both surfaces mount the same
+   *  LiveOverlayCardsLayer + HeroOverlayEditor). */
+  onCardMediaError?: (cardId: string) => void;
+  onRemoveCard?: (cardId: string) => void;
+  onRequestEditCard?: (cardId: string) => void;
 }) {
   const sfxVideoRef = useRef<HTMLVideoElement>(null);
   // Sync SFX audio elements to whichever preview video is active (burned output
@@ -2967,6 +3189,25 @@ function LiveEditPreview({
   const previewLayout =
     (session.draft.layout ?? variant.intro_layout) === "cluster" ? "cluster" : "linear";
 
+  // ── Live overlay-card mode (mirrors Hero) ───────────────────────────────────
+  // ACTIVE when the variant carries the overlay-clean base AND cards exist.
+  // Same two latches as Hero: frozen while a re-burn is in flight, and sticky
+  // through "Clear all" so the un-carded base previews a cleared download.
+  const overlayRendering = variant.render_status === "rendering";
+  const hasPreOverlayBase = !!variant.pre_overlay_video_url;
+  const prevLiveModeRef = useRef(false);
+  const liveOverlayMode =
+    hasPreOverlayBase &&
+    (overlayRendering
+      ? prevLiveModeRef.current
+      : overlayCards.length > 0 || prevLiveModeRef.current);
+  useEffect(() => {
+    prevLiveModeRef.current = liveOverlayMode;
+  });
+
+  // Playhead time for the time-gated overlay layers (cards + suggestion editor).
+  const [videoTime, setVideoTime] = useState(0);
+
   // When the draft is clean (no uncommitted edits, not saving), show the burned
   // output_url — byte-identical to what the download button serves. Switch to
   // the WYSIWYG DOM overlay only while the user is actively editing or a reburn
@@ -2974,9 +3215,34 @@ function LiveEditPreview({
   // what they see at rest IS what they get.
   // (fireCommit already calls setBaseline(toCommit) so isDirty resets to false
   // as soon as a commit fires; it goes true again only on the next keystroke.)
+  // In live overlay mode the clean source is the PRE-OVERLAY base (text baked,
+  // cards NOT) so the CSS card layer is the single source of card pixels.
   const burnedSrc: string | null =
-    !session.isDirty && !session.isSaving ? (variant.output_url ?? null) : null;
-  const burnedIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+    !session.isDirty && !session.isSaving
+      ? liveOverlayMode
+        ? (variant.pre_overlay_video_url ?? null)
+        : (variant.output_url ?? null)
+      : null;
+  // Live mode keys the identity on the pre-overlay GCS path (re-signed poll
+  // URLs never restart playback; the "live:" prefix forces adopt on mode flip).
+  const burnedIdentity = liveOverlayMode
+    ? `live:${variant.variant_id}:${variant.pre_media_overlay_video_path ?? ""}`
+    : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
+
+  // Track the playhead of whichever preview video is mounted. Keyed on which
+  // source kind is active — NOT the URL string, which is re-signed every poll.
+  const mountedSrcKind = burnedSrc
+    ? `clean:${liveOverlayMode}`
+    : variant.base_video_url
+      ? "base"
+      : "none";
+  useEffect(() => {
+    const el = sfxVideoRef.current;
+    if (!el) return;
+    const onTimeUpdate = () => setVideoTime(el.currentTime);
+    el.addEventListener("timeupdate", onTimeUpdate);
+    return () => el.removeEventListener("timeupdate", onTimeUpdate);
+  }, [mountedSrcKind]);
 
   // N-element preview: use the text_elements array when available (T6).
   // Each element is positioned by its API-persisted x_frac/y_frac or named
@@ -3053,76 +3319,39 @@ function LiveEditPreview({
           <IntroTextPreview params={introParams} editable={false} layout={previewLayout} playToken={playToken} />
         )
       )}
+      {/* CSS overlay-card layer — rendered ABOVE the text layers to match the
+          bake order (text burns first, cards composite on top).
+          LIVE mode / base playback: no cards are baked into the playing video,
+          so ALL cards render here and lane edits reflect in real time.
+          Burned output playback: only fresh blob-URL uploads render (baked
+          pixels are never doubled). */}
+      <LiveOverlayCardsLayer
+        cards={overlayCards}
+        resolveCardSrc={(card) =>
+          liveOverlayMode || !burnedSrc
+            ? (card.preview_url ?? localPreviewUrls[card.id])
+            : localPreviewUrls[card.id]
+        }
+        videoTimeS={videoTime}
+        timeGate={mountedSrcKind !== "none"}
+        mainVideoRef={sfxVideoRef}
+        onCardMediaError={onCardMediaError}
+        onRemoveCard={onRemoveCard}
+      />
+      {/* Direct-manipulation layer for kept AI overlay suggestions (007 Fix 2)
+          — instant-eligible variants render through THIS component, so the
+          drag/resize layer must mount here too, not just in Hero. */}
+      {suggestionEntries && onSuggestionEdit && (
+        <HeroOverlayEditor
+          entries={suggestionEntries}
+          onSuggestionEdit={onSuggestionEdit}
+          currentTimeS={videoTime}
+          resolveCardUrl={resolveSuggestionCardUrl}
+          onRequestEditCard={onRequestEditCard}
+        />
+      )}
     </div>
   );
-}
-
-/** Video overlay card synced to the main edit player.
- *  Seeks to the trim-offset position in lock-step with the edit video, and
- *  mirrors play/pause so it never plays independently in a loop. */
-function TrimmedVideoPreview({
-  src,
-  trimStart,
-  trimEnd,
-  mainVideoRef,
-  cardStartS,
-}: {
-  src: string;
-  trimStart: number;
-  trimEnd: number | null;
-  /** Ref to the main edit <video> element used for sync. */
-  mainVideoRef: React.RefObject<HTMLVideoElement | null>;
-  /** The card's start_s on the edit timeline (used to compute card offset). */
-  cardStartS: number;
-}) {
-  const ref = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const card = ref.current;
-    const main = mainVideoRef.current;
-    if (!card) return;
-    // No main video (configuration-only mode, no render yet) — just autoplay.
-    if (!main) {
-      card.currentTime = trimStart;
-      card.play().catch(() => {});
-      return;
-    }
-
-    // Seek card to its trim-offset position matching the main video's current time.
-    function syncTime() {
-      if (!card || !main) return;
-      const cardTime = trimStart + Math.max(0, main.currentTime - cardStartS);
-      const cappedTime = trimEnd !== null ? Math.min(cardTime, trimEnd) : cardTime;
-      // Only seek if the drift exceeds 150ms to avoid thrashing.
-      if (Math.abs(card.currentTime - cappedTime) > 0.15) {
-        card.currentTime = cappedTime;
-      }
-    }
-
-    const c = card, m = main;
-    function onMainPlay() { c.play().catch(() => {}); syncTime(); }
-    function onMainPause() { c.pause(); syncTime(); }
-    function onMainTimeUpdate() { syncTime(); }
-    function onMainSeeked() { syncTime(); }
-
-    // Seed initial state.
-    syncTime();
-    if (!main.paused) card.play().catch(() => {});
-    else card.pause();
-
-    m.addEventListener("play", onMainPlay);
-    m.addEventListener("pause", onMainPause);
-    m.addEventListener("timeupdate", onMainTimeUpdate);
-    m.addEventListener("seeked", onMainSeeked);
-    return () => {
-      m.removeEventListener("play", onMainPlay);
-      m.removeEventListener("pause", onMainPause);
-      m.removeEventListener("timeupdate", onMainTimeUpdate);
-      m.removeEventListener("seeked", onMainSeeked);
-    };
-  }, [src, trimStart, trimEnd, cardStartS, mainVideoRef]);
-
-  return <video ref={ref} src={src} muted playsInline className="w-full h-auto rounded" />;
 }
 
 /** Large hero player for the focused variant. */
@@ -3135,6 +3364,12 @@ function Hero({
   sfxAudioUrls = {},
   renderingAction = null,
   showUpdatedCue = false,
+  suggestionEntries,
+  onSuggestionEdit,
+  resolveSuggestionCardUrl,
+  onCardMediaError,
+  onRemoveCard,
+  onRequestEditCard,
 }: {
   variant: PlanItemVariant | null;
   generating: boolean;
@@ -3146,6 +3381,17 @@ function Hero({
   renderingAction?: { type: "song" | "text" | "style" | "other"; label: string } | null;
   /** Show the "✓ Updated" confirmation cue for 4 s after render_finished_at advances. */
   showUpdatedCue?: boolean;
+  /** 007 Fix 2: kept AI overlay suggestions rendered as direct-manipulation
+   *  cards over the video (HeroOverlayEditor gates on flag + non-empty). */
+  suggestionEntries?: SuggestionLaneEntry[];
+  onSuggestionEdit?: (suggestionId: string, patch: Partial<MediaOverlay>) => void;
+  resolveSuggestionCardUrl?: (overlay: MediaOverlay) => string | undefined;
+  /** Plan 009 T4: failed-media lift / failed-tile Remove / fullscreen
+   *  click-to-edit — mirrored in LiveEditPreview (both surfaces mount the
+   *  same LiveOverlayCardsLayer + HeroOverlayEditor). */
+  onCardMediaError?: (cardId: string) => void;
+  onRemoveCard?: (cardId: string) => void;
+  onRequestEditCard?: (cardId: string) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [videoTime, setVideoTime] = useState(0);
@@ -3153,17 +3399,51 @@ function Hero({
   // Sync SFX audio elements to the video playhead for instant preview.
   useSfxPreview(videoRef, sfxPlacements, sfxAudioUrls);
 
-  // Re-attach when the video src changes (output_url becomes available after render).
+  // ── Live-edit mode ──────────────────────────────────────────────────────────
+  // ACTIVE when the variant carries a signed pre-overlay base (captured before
+  // the first card burn) AND there are overlay cards. The hero then plays the
+  // overlay-CLEAN base and ALL cards render as a live CSS layer on top, so
+  // every timeline edit (scale / position / window drag / clip trim / remove)
+  // reflects instantly — the FFmpeg bake still only fires on Download.
+  //
+  // Two latches, both scoped to this variant (Hero remounts on a focus switch —
+  // FocusedResults is keyed by variant_id):
+  //  • While a re-burn is in-flight (render_status "rendering") the mode is
+  //    FROZEN at its pre-burn value so the video source never flips mid-burn
+  //    (the shimmer/lock overlay below keeps today's behavior).
+  //  • Once ON, the mode survives overlayCards going empty ("Clear all"): the
+  //    un-carded base IS the correct preview of a cleared download, while the
+  //    burned output_url still has the old cards baked in.
+  const rendering = variant?.render_status === "rendering";
+  const hasPreOverlayBase = !!variant?.pre_overlay_video_url;
+  const prevLiveModeRef = useRef(false);
+  const liveMode =
+    hasPreOverlayBase &&
+    (rendering
+      ? prevLiveModeRef.current
+      : overlayCards.length > 0 || prevLiveModeRef.current);
+  useEffect(() => {
+    prevLiveModeRef.current = liveMode;
+  });
+
+  // In live mode the hero plays the clean base; otherwise the burned output.
+  const heroSrc = liveMode
+    ? (variant?.pre_overlay_video_url ?? null)
+    : (variant?.output_url ?? null);
+  const heroSrcPresent = !!heroSrc;
+
+  // Re-attach when the hero video mounts (a src becomes available) or the source
+  // mode flips. Keyed on presence + mode — NOT the URL string, which is re-signed
+  // on every status poll.
   useEffect(() => {
     const el = videoRef.current;
     if (!el) return;
     const onTimeUpdate = () => setVideoTime(el.currentTime);
     el.addEventListener("timeupdate", onTimeUpdate);
     return () => el.removeEventListener("timeupdate", onTimeUpdate);
-  }, [variant?.output_url]);
+  }, [heroSrcPresent, liveMode]);
 
   if (!variant) return <SkeletonTile />;
-  const rendering = variant.render_status === "rendering";
   const failed = variant.render_status === "failed";
 
   // StableVideo identity: composite of variant_id + render_finished_at so it
@@ -3171,25 +3451,19 @@ function Hero({
   // advances) and a focus switch to a different variant (variant_id changes).
   // The old video keeps playing through a re-render; the overlay dims it gently
   // and the swap happens automatically when render_finished_at advances.
-  const heroIdentity = `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
-
-  // Cards visible in the CSS preview layer:
-  //   - must have a blob URL (locally uploaded, not yet FFmpeg-burned)
-  //   - when a rendered video exists: only show the card during its [start_s, end_s]
-  //     window so the preview matches what the final render will look like
-  //   - when no video yet (configuration-only mode): show all cards unconditionally
-  const previewableCards = overlayCards.filter((c) => {
-    if (!localPreviewUrls[c.id]) return false;
-    if (!variant.output_url) return true;
-    return videoTime >= c.start_s && videoTime <= c.end_s;
-  });
+  // In live mode the identity keys on the pre-overlay GCS path instead (the
+  // "live:" prefix forces the adopt when the mode flips), so re-signed poll URLs
+  // never restart base playback.
+  const heroIdentity = liveMode
+    ? `live:${variant.variant_id}:${variant.pre_media_overlay_video_path ?? ""}`
+    : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
-      {variant.output_url ? (
+      {heroSrc ? (
         <StableVideo
           ref={videoRef}
-          src={variant.output_url}
+          src={heroSrc}
           identity={heroIdentity}
           controls
           className="h-full w-full object-contain"
@@ -3203,38 +3477,39 @@ function Hero({
           {generating ? "Rendering…" : "No preview yet"}
         </div>
       )}
-      {/* Instant CSS preview layer — shows uploaded cards positioned/scaled over
-          the video immediately without waiting for the FFmpeg render pass. */}
-      {previewableCards.map((card) => (
-        <div
-          key={card.id}
-          style={{
-            position: "absolute",
-            left: `${card.x_frac * 100}%`,
-            top: `${card.y_frac * 100}%`,
-            transform: "translate(-50%, -50%)",
-            width: `${card.scale * 100}%`,
-            pointerEvents: "none",
-          }}
-        >
-          {card.kind === "image" ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={localPreviewUrls[card.id]}
-              alt=""
-              className="w-full h-auto rounded"
-            />
-          ) : (
-            <TrimmedVideoPreview
-              src={localPreviewUrls[card.id]}
-              trimStart={card.clip_trim_start_s ?? 0}
-              trimEnd={card.clip_trim_end_s ?? null}
-              mainVideoRef={videoRef}
-              cardStartS={card.start_s}
-            />
-          )}
-        </div>
-      ))}
+      {/* CSS overlay-card layer.
+          LIVE mode: the hero above plays the overlay-clean base, so ALL cards
+          render here (signed preview_url for applied cards, blob URL for fresh
+          uploads) and reflect lane edits in real time.
+          LEGACY mode: only freshly-uploaded cards (blob URL, not yet burned)
+          render, so pixels already baked into output_url are never doubled;
+          in configuration-only mode (no video yet) they show un-gated. */}
+      <LiveOverlayCardsLayer
+        cards={overlayCards}
+        resolveCardSrc={(card) =>
+          liveMode
+            ? (card.preview_url ?? localPreviewUrls[card.id])
+            : localPreviewUrls[card.id]
+        }
+        videoTimeS={videoTime}
+        timeGate={liveMode || !!variant.output_url}
+        mainVideoRef={videoRef}
+        onCardMediaError={onCardMediaError}
+        onRemoveCard={onRemoveCard}
+      />
+      {/* 007 Fix 2: direct-manipulation layer for kept AI overlay suggestions —
+          drag to reposition, corner handle to resize; every gesture routes
+          through onSuggestionEdit (implicit staging, zero network until Apply).
+          Gated inside on NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED + non-empty. */}
+      {suggestionEntries && onSuggestionEdit && (
+        <HeroOverlayEditor
+          entries={suggestionEntries}
+          onSuggestionEdit={onSuggestionEdit}
+          currentTimeS={videoTime}
+          resolveCardUrl={resolveSuggestionCardUrl}
+          onRequestEditCard={onRequestEditCard}
+        />
+      )}
       {/* While a re-render runs, keep old video playing under a gentle overlay.
           pointer-events-none ensures the video controls beneath remain usable. */}
       {rendering && variant.output_url && (

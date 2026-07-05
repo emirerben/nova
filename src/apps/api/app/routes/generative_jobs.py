@@ -159,6 +159,10 @@ class GenerativeVariant(BaseModel):
     intro_size_source: str | None = None
     resolved_archetype: str | None = None
     mix: float | None = None
+    # Background-sound (voice/bed) level for narrated variants — None means Nova's
+    # render-time default. Editable post-gen via the BackgroundSoundControl reburn
+    # (NOT `mix`, which is scoped to voiceover_only/voiceover_music variants).
+    voiceover_bed_level: float | None = None
     # Per-variant render timing (D6 tile clock — instrumented by PR2).
     render_started_at: str | None = None
     render_finished_at: str | None = None
@@ -188,6 +192,11 @@ class GenerativeVariant(BaseModel):
     # Narrated on-video caption editor: editable cues [{text, start_s, end_s}]
     # (assembled-time). Present only on narrated variants with an editable base.
     caption_cues: list[dict] | None = None
+    # Subtitles on/off, independent of caption_cues count — off always yields the
+    # caption-free burn even when cues are stored, so toggling back on needs no
+    # re-transcription. None on legacy variants predating this field; the editor
+    # treats missing as enabled (matches the render-time default of True).
+    captions_enabled: bool | None = None
     # User-pinned independent overrides (decoupled from style_set_id).
     # null when not pinned; the renderer uses the style-set value.
     intro_font_family: str | None = None
@@ -665,6 +674,26 @@ def _variants_for_response(job: Job) -> list[dict]:
                     exc_info=True,
                 )
                 # no base_video_url key → the instant editor simply stays hidden
+        # Overlay-clean base (plan 008 live edit): the un-carded video captured
+        # before the first overlay burn. When present, the hero can play THIS
+        # and render every card as a live CSS layer — timeline edits reflect
+        # instantly and the burn waits for Download. Same graceful-skip contract.
+        pre_overlay_path = v.get("pre_media_overlay_video_path")
+        if pre_overlay_path:
+            try:
+                v = {
+                    **v,
+                    "pre_overlay_video_url": signed_get_url(pre_overlay_path, PLAYBACK_URL_TTL_MIN),
+                }
+            except Exception:  # noqa: BLE001 — one bad sign must not 500 the poll
+                log.warning(
+                    "variant_pre_overlay_resign_failed",
+                    job_id=str(job.id),
+                    variant_id=v.get("variant_id"),
+                    pre_overlay_path=pre_overlay_path,
+                    exc_info=True,
+                )
+                # no pre_overlay_video_url → live-edit mode stays off (baked playback)
         # Media-overlay cards: sign each card's src_gcs_path into a preview_url so
         # the browser can show existing applied cards as a live CSS overlay without
         # re-uploading them. Signing failure skips the key on that card (graceful).
@@ -890,6 +919,25 @@ class CaptionFontRequest(BaseModel):
     caption_font: str | None = None
 
 
+class CaptionStyleRequest(BaseModel):
+    """Sentence/word caption style for a caption variant."""
+
+    caption_style: Literal["sentence", "word"]
+
+
+class CaptionsEnabledRequest(BaseModel):
+    """Subtitles on/off toggle for a caption variant, independent of cue count."""
+
+    enabled: bool
+
+
+class BedLevelRequest(BaseModel):
+    """Background-sound (voice/bed) level for a narrated variant (0 = voice only,
+    1 = loudest original audio)."""
+
+    bed_level: float = Field(ge=0.0, le=1.0)
+
+
 # Languages the subtitled caption override accepts. Lockstep with the worker's
 # `_SUBTITLED_CAPTION_LANGUAGES`.
 _SUBTITLED_CAPTION_LANGUAGES = frozenset({"en", "tr"})
@@ -996,6 +1044,36 @@ async def persist_variant_caption_font(
             detail="Unknown caption font.",
         )
     await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
+
+
+_CAPTION_STYLES = frozenset({"sentence", "word"})
+
+
+async def persist_variant_caption_style(
+    job_id: uuid.UUID, variant_id: str, caption_style: str, db: AsyncSession
+) -> None:
+    """Persist sentence/word caption style on a caption variant. No re-render — the
+    editor previews the choice; Apply reburns in the chosen style."""
+    if caption_style not in _CAPTION_STYLES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unknown caption style.",
+        )
+    await _patch_narrated_variant(
+        job_id, variant_id, {"voiceover_caption_style": caption_style}, db
+    )
+
+
+async def persist_variant_captions_enabled(
+    job_id: uuid.UUID, variant_id: str, enabled: bool, db: AsyncSession
+) -> None:
+    """Persist the subtitles on/off toggle, independent of stored cue count.
+
+    Never destroys `caption_cues` — off always yields the caption-free burn on
+    Apply regardless of cue count; on reburns the ORIGINAL cues with no
+    re-transcription. See `_burn_persisted_captions_onto_base`'s gate.
+    """
+    await _patch_narrated_variant(job_id, variant_id, {"captions_enabled": bool(enabled)}, db)
 
 
 def _mark_variant_rendering(job: Job, variant_id: str) -> None:
@@ -1162,7 +1240,12 @@ def dispatch_patch_scene_timing(job: Job, variant_id: str, *, overrides: list[di
     # NOTE: no render enqueue here — overrides are applied at next reburn.
 
 
-def validate_media_overlays_for_user(*, overlays_raw: list[dict], user_id: str) -> list[dict]:
+def validate_media_overlays_for_user(
+    *,
+    overlays_raw: list[dict],
+    user_id: str,
+    variant_context: dict | None = None,
+) -> list[dict]:
     """Validate a full media-overlay replacement list for one user's namespace."""
     from app.agents._schemas.media_overlay import (  # noqa: PLC0415
         coerce_media_overlays,
@@ -1210,6 +1293,19 @@ def validate_media_overlays_for_user(*, overlays_raw: list[dict], user_id: str) 
                     detail=f"Card {card.id}: end_s must be greater than start_s.",
                 )
             validated.append(card.model_dump())
+        if variant_context is not None:
+            # Plan 009 E4+E9: fullscreen contract. Shared by render:true,
+            # render:false autosave, AI apply, and editor-commit Save paths.
+            from app.services.overlay_apply import (  # noqa: PLC0415
+                validate_fullscreen_constraints,
+            )
+
+            try:
+                validate_fullscreen_constraints(cards, variant_context)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
     return validated
 
 
@@ -1269,9 +1365,12 @@ def dispatch_set_media_overlays(
             detail="Media overlays are not available.",
         )
 
-    require_editable_variant(job, variant_id)
-
-    validated = validate_media_overlays_for_user(overlays_raw=overlays_raw, user_id=user_id)
+    variant = require_editable_variant(job, variant_id)
+    validated = validate_media_overlays_for_user(
+        overlays_raw=overlays_raw,
+        user_id=user_id,
+        variant_context=variant,
+    )
 
     # Persist render_status="rendering" first (row-locked by the DB session the
     # route holds), then enqueue — prevents a race where the worker reads "ready"
@@ -1765,6 +1864,48 @@ def dispatch_set_mix(job: Job, variant_id: str, *, mix: float) -> None:
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
     regenerate_generative_variant.delay(str(job.id), variant_id, mix_override=float(mix))
+
+
+async def dispatch_set_narrated_bed_level(
+    job_id: uuid.UUID, variant_id: str, *, bed_level: float, db: AsyncSession
+) -> None:
+    """Validate + enqueue a background-sound (voice/bed) change for a NARRATED variant.
+
+    NOT `dispatch_set_mix` — that dispatches the generic regenerate path, which is
+    scoped to `voiceover_only`/`voiceover_music` variants and explicitly rejects
+    narrated/subtitled as no-ops. Narrated has no `mix` field at all (it hard-codes
+    `mix: 1.0` and uses `voiceover_bed_level` instead) and subtitled has no bed
+    concept whatsoever (its own clip audio is the only track) — so this is a
+    dedicated dispatch onto the dedicated `reburn_narrated_bed_level` task.
+
+    Row-locked (mirrors `_patch_narrated_variant`), NOT the unlocked
+    `_mark_variant_rendering` + bare-commit pattern the sibling `dispatch_*`
+    functions use (swap-song, retext, apply-captions, set-mix). Those all mutate
+    an ALREADY-loaded, unlocked `job` snapshot and blind-overwrite the whole
+    `assembly_plan` column on commit — safe enough when each variant only has one
+    plausible concurrent writer, but the Background Sound slider (auto-commits on
+    a debounce) sits in the same editor panel as the Captions on/off toggle
+    (locked via `_patch_narrated_variant`), and a real drag-while-toggling race
+    would silently revert whichever committed first while still marking the
+    variant "rendering". Locking here closes that specific window; the
+    inconsistency across the OTHER dispatch_* functions is a pre-existing,
+    broader pattern this fix does not attempt to unify (see TODOS.md).
+    """
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    if variant.get("resolved_archetype") != "narrated":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Background sound can only be adjusted on narrated videos.",
+        )
+    _mark_variant_rendering(job, variant_id)
+    await db.commit()
+    from app.tasks.generative_build import reburn_narrated_bed_level  # noqa: PLC0415
+
+    reburn_narrated_bed_level.delay(str(job_id), variant_id, float(bed_level))
 
 
 # ── Timeline editor: eligibility + GET/POST/DELETE dispatch ─────────────────────
@@ -2291,6 +2432,7 @@ def prepare_editor_commit(
         validated_overlays = validate_media_overlays_for_user(
             overlays_raw=payload.media_overlays,
             user_id=user_id,
+            variant_context=variant,
         )
 
     # ── Stale-baseline compare-and-fail (multi-tab / superseded-render safety) ─

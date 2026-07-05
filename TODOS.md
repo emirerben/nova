@@ -963,3 +963,86 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Effort:** S (human: ~half day / CC: ~20min)
 **Priority:** P3
 **Depends on:** T7 preset registry (`lib/text-presets.ts`) shipped; a user-prefs model/endpoint existing.
+## Plan-item redesign — follow-ups (from /autoship eng review, 2026-07-05)
+
+### T-PLAN-1 — Verify T-SFX-2 doesn't gain a third racing edit type
+**What:** Confirm the new post-gen `reburn_narrated_bed_level` (background sound) and `reburn_narrated_captions`/`captions-enabled` (subtitles) reburns don't interact with T-SFX-2's Download-ordering bug once that's fixed.
+**Why:** `handleDownload` already races an uncommitted SFX change against an uncommitted instant-text/caption draft (T-SFX-2). The new reburns dispatch via their own Apply/slider actions, not Download, so the risk should be lower — but this needs confirming when T-SFX-2 is actually picked up, not assumed.
+**Context:** Background-sound and caption-style/on-off both trigger real Celery reburns outside the Download flow (`POST .../bed-level`, `POST .../captions/apply`), unlike SFX/text which share `handleDownload`. Check whether a user with an in-flight bed-level or caption reburn AND an unbaked SFX change can produce the same "only one lane bakes" surprise.
+**Effort:** S (CC: ~20 min) — read-through + a couple of targeted tests once T-SFX-2 is scoped.
+**Priority:** P3 — deferred until T-SFX-2 itself is picked up.
+**Depends on:** T-SFX-2.
+
+### T-PLAN-2 — Talking-to-camera "talking points" recording helper
+**What:** Build a camera+mic capture recording feature (not audio-only) for talking-to-camera (`edit_format="subtitled"`) items, analogous to "Write a script with Nova" for narrated.
+**Why:** Users filming a talk-to-camera clip get no scripting/prompting help today — the existing transcript flow can't be reused as-is for this archetype.
+**Context:** `TeleprompterRecorder.tsx`/`ReviewStep.tsx` (under `plan/items/[id]/transcript/`) write a recorded take to `item.voiceover_gcs_path`, a field `_render_subtitled_variant` never reads (it transcribes the uploaded clip's OWN audio instead — there is no separate voiceover track for this archetype). A talking-to-camera version needs to record a NEW clip (replacing/becoming `clip_gcs_paths[0]`) and trigger a fresh subtitled render, not write to `voiceover_gcs_path`. The Brief/Questions/Script steps are already archetype-agnostic (no `edit_format` check in their backend routes) — only the Record/Review steps need the different mechanism.
+**Effort:** L (human: ~3-4d / CC: ~1d) — new camera-capture UI + a distinct backend trigger path; not a gate change.
+**Priority:** P2 — real gap found during the plan-item redesign's User Challenge resolution, not built defensively there.
+
+## Auto-placement — follow-ups (from plan-design-review of plans/005, 2026-07-02)
+
+### T-AUTO-1 — Follow-up plan: generated diagram B-roll
+**What:** Plan for Nova to GENERATE the animated dark-UI diagram sequences (the @qbuilder sample's payload visualization) when the asset pool has no match — template-driven motion graphics from transcript claims.
+**Why:** The remaining ~30% of sample-video parity deferred at scope decision D1 (2026-07-02). The zero-match wishlist state ("add a screenshot of X") becomes "generate a visual of X" — natural entry point.
+**Pros:** True differentiator; wishlist UX already ships in plan 005. **Cons:** Research-grade scope (motion-graphic templates, brand theming, render cost).
+**Context:** Reference: tiktok @qbuilder/7651054516120341791. See plans/005-auto-media-overlay-sfx.md "Non-goals".
+**Depends on:** plan 005 shipped (wishlist state is the hook).
+**Effort:** L (multi-PR). **Priority:** P3.
+
+### T-AUTO-2 — Standalone sound-only SFX suggestions
+**What:** Matcher pass proposing SFX at moments with NO visual (emphasis whooshes on key words, risers before reveals).
+**Why:** Decision 9A (2026-07-02) made SFX children of overlays — deliberately can't express sound-only moments; the reference genre uses them.
+**Pros:** Completes the automated audio layer; rule-based mapping + glossary exist. **Cons:** No visual anchor in the rail — risk of feeling arbitrary.
+**Depends on:** plan 005's suggestion rail + lifecycle machinery.
+**Effort:** M. **Priority:** P3.
+
+## Full-screen cutaways — follow-ups (from plan-design-review of plans/009, 2026-07-03)
+
+### T-CUT-1 — v1.1: caption cue re-burn over cutaways
+**What:** Re-burn ONLY the caption cues whose timing intersects fullscreen windows on top of the composited output (cue-persisting variants: agent_text/none montage + narrated; reuse `_run_fast_reburn`'s persisted cue inputs — never reimplement the burn). The same PR must convert the "Remove all cards" clear path and add the preview layer split (fullscreen below the live caption layer) + a stacking guard test. Ship WHOLE, never partially per-variant.
+**Why:** The committed second half of decision D2 (2026-07-03): v1 covers captions with rule (h) minimizing exposure; v1.1 restores the reference grammar (captions ride on top).
+**Pros:** Full reference fidelity for muted viewers. **Cons:** New render code in the incident-prone class (renderer-parity #296/#297, lyric-stacking 5a71226e/e72d52e9); song_lyrics stays excluded regardless (PNG sequences).
+**Depends on:** plan 009 v1 shipped.
+**Effort:** M-L (CC: ~1-2h). **Priority:** P2 — the D2 decision leans on this landing.
+
+### T-CUT-2 — Snap-to-fullscreen resize gesture (desktop)
+**What:** Dragging a PiP card's corner resize handle past ~92% frame width shows a full-frame ghost; release snaps `display_mode` to fullscreen (decision D6 cut this from v1).
+**Why:** Teaches the mode through the existing resize affordance; ship if v1 data (popover-toggle usage, demote rate) shows discovery friction.
+**Pros:** Design rationale captured while fresh. **Cons:** Second write path for display_mode in HeroOverlayEditor — the component absorbing the most fullscreen gating traps; may never be needed.
+**Depends on:** T4 of plan 009 (HeroOverlayEditor fullscreen gating) shipped.
+**Effort:** M (CC: ~40min). **Priority:** P3.
+
+### T-CUT-3 — "Great for full screen" tag on portrait pool assets
+**What:** Quiet "⛶ Great for full screen" tag on AssetPool tiles whose analyzed aspect is portrait/near-9:16 (suppressed until analysis metadata arrives).
+**Why:** Enforcement rule (f) makes portrait assets the best fullscreen candidates; users only learn this when a suggestion appears. Seeding the mental model at upload time compounds suggestion quality (outside-voice finding, 2026-07-03).
+**Pros:** Cheap; nudges users to stock the pool with takeover-ready material. **Cons:** One more UI element; label noise if over-applied.
+**Depends on:** plan 009 v1 shipped (rule f active).
+**Effort:** S (CC: ~15min). **Priority:** P3.
+
+## Review follow-ups — informational findings (from /review of plans 005-009, 2026-07-03)
+
+The /review army (31 agents) confirmed 20 criticals — all fixed inline or by the
+R1-R4 decisions. These 32 informational findings were batched here (decision R4-A).
+Grouped by area; none block ship.
+
+### Backend correctness / safety (informational)
+- **T-REV-1 (P2)** — `_WHISPER_WALL_CLOCK_S = 90` in `transcript_source.py` is defined + documented as bounding ASR but NEVER referenced; `transcribe_variant_video` runs Whisper unbounded. A slow/local backend can exceed the match task's soft_time_limit=240. Wire the wall-clock into `transcribe_whisper` or drop the dead constant.
+- **T-REV-2 (P2)** — `/uploads/relay` (`routes/uploads.py`) streams up to 2GB per request through the prod API VM (1 shared CPU / 512MB), holds an httpx connection up to 600s, no concurrency bound, available to every authenticated user. Now the pool-upload FALLBACK (post-review), so hit less, but still an unbounded resource path. Consider a concurrency semaphore + smaller relay cap. Also: the relay cap comment claims it "matches the presigned clip cap" but the presigned caps are 4GB (uploads.py / plan_items.py `_MAX_BYTES_PER_FILE`) — comment is wrong.
+- **T-REV-3 (P3)** — `/uploads/relay` uses `CurrentUserOrSynthetic`: an unauthenticated caller (no X-User-Id) gets the synthetic user and can relay-PUT to `dev-user/*`, `slot-uploads/*`. Confirm the synthetic-user path is acceptable for the relay in prod or require a real user.
+- **T-REV-4 (P3)** — receipt reason vocab drift: `SuggestionRail.receiptLines` special-cases reason `"hook"`/`"intro"` for the "shown smaller to protect your intro" copy, but the backend demote reasons are structural (`cap`/`no_dims`/`panorama`/`low_res`/`gap`/`window_too_short`) — so that nicer copy never fires (falls to generic "shown smaller"). Either map a structural reason → "intro" when the demote was intro-driven, or drop the dead FE branch.
+
+### Data-migration (informational)
+- **T-REV-5 (P2)** — `migrations/0063_plan_item_assets.py`: `created_at` is `nullable=True` but the ORM `PlanItemAsset.created_at: Mapped[datetime]` implies NOT NULL, and every prior table-creating migration in the chain declares it NOT NULL with a server default. Align (server_default=now(), nullable=False) to avoid a NULL created_at slipping in.
+- **T-REV-6 (P3)** — `plan_item_assets.user_id` FK has no supporting index and no `ondelete` (defaults NO ACTION), unlike `plan_item_id` (CASCADE + composite index). CLAUDE.md says to revisit lifecycle when auth/user-delete lands — add the index + ondelete then.
+
+### Maintainability (informational)
+- **T-REV-7 (P3)** — DRY: `isUnavailableError` duplicated verbatim in SuggestionRail + AssetPool (both key on a backend 404 detail string — rewording it silently breaks feature-off detection); the pool-cap COUNT query triplicated across 3 pool routes; the fullscreen-constraint call site (variant lookup + ValueError→422) duplicated in generative_jobs.py + plan_items.py; FE fullscreen warning thresholds (720, 2.5) hand-duplicate backend constants with no sync note. Consolidate + add cross-file sync comments.
+- **T-REV-8 (P3)** — stale PR0-era docstrings contradict shipped code (register_pool_asset "dispatch lands in PR1a" but it dispatches now; delete_pool_asset "PR0 has no suggestions yet"). `_persist_variant_fields` docstring promises a return all 4 callers ignore. Refresh.
+
+### Frontend / design (informational)
+- **T-REV-9 (P3)** — touch targets: several new secondary controls (× remove-sound strip, etc.) fall below the 44px floor; NumField focus outline is a weak zinc border shift. Audit against DESIGN.md a11y.
+- **T-REV-10 (P3)** — pre-existing (flagged because the lane is now the suggestion showcase): manual pip chips cycle a rainbow TRACK_COLORS palette starting violet #8B5CF6 (AI-slop signal per DESIGN.md); consider a calmer palette.
+- **T-REV-11 (P3)** — lost-update asymmetry: the autoplace TASK takes row locks for assembly_plan writes, but the 4 new suggestion ROUTES do read-modify-write without with_for_update (a concurrent manual edit + task write can lose one). Low frequency; add row locks to the route writers if it surfaces.
+- **T-REV-12 (P3)** — a transiently failed pool-asset analysis (one GCS blip / Gemini 500) marks status="failed" permanently; the matcher backfill only re-touches stale-but-ready video assets, so a failed asset is a dead end with no retry path. Add a re-analyze affordance or a bounded auto-retry.
+- **T-REV-13 (P3)** — autoplace tasks land on the default "celery" queue drained by prod's ONE concurrency=1 worker alongside 30-min renders (generate-first-week enqueues 7 at once), so match_overlay_suggestions can queue behind a long render. Consider a dedicated autoplace queue/process group in prod (local dev already uses a separate queue).
