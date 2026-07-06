@@ -2,6 +2,7 @@ import { slotWindows, type DraftSlot, type SlotWindow } from "@/app/generative/t
 import {
   renderedSlotLayout,
   type RenderedSlotLayout,
+  type RenderedSlotLayoutOptions,
 } from "@/lib/timeline/transition-overlap";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
@@ -78,8 +79,9 @@ export function sequentialSlotLayout(
 export function renderedSequentialSlotLayout(
   slots: DraftSlot[],
   grid: number[],
+  options: RenderedSlotLayoutOptions = {},
 ): RenderedSlotLayout & { sourceRangeKey: string } {
-  const layout = renderedSlotLayout(slots, grid);
+  const layout = renderedSlotLayout(slots, grid, options);
   const rangeParts = slots.map((slot, index) => {
     const win = layout.windows[index];
     if (!win || slot.removed || win.startS == null || win.durationS <= 0) {
@@ -380,17 +382,24 @@ export function outputTimeForSlotBoundary({
   key,
   boundary = "start",
   rendered = false,
+  renderedOutputDurationS,
+  fallbackOverlapS,
 }: {
   slots: DraftSlot[];
   grid: number[];
   key: string;
   boundary?: "start" | "end";
   rendered?: boolean;
+  renderedOutputDurationS?: number | null;
+  fallbackOverlapS?: number;
 }): number | null {
   const idx = slots.findIndex((s) => s.key === key);
   if (idx < 0) return null;
   const layout = rendered
-    ? renderedSequentialSlotLayout(slots, grid)
+    ? renderedSequentialSlotLayout(slots, grid, {
+        outputDurationS: renderedOutputDurationS,
+        fallbackOverlapS,
+      })
     : sequentialSlotLayout(slots, grid);
   const win = layout.windows[idx];
   if (!win || win.startS == null) return null;

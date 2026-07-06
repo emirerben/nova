@@ -79,6 +79,14 @@ export function filmstripDecodeKey({
   ].join(":");
 }
 
+export function filmstripFallbackLabel(
+  label: string | undefined,
+  durationS: number,
+): string {
+  const trimmed = label?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : formatSeconds(durationS);
+}
+
 export function allocateFilmstripSeekBudget(
   widthsPx: number[],
   budget = FILMSTRIP_MAX_SEEKS,
@@ -353,7 +361,7 @@ export default function Filmstrip({
   }, [activeRequest]);
 
   if (failed) {
-    const fallbackText = label ?? formatSeconds(durationS);
+    const fallbackText = filmstripFallbackLabel(label, durationS);
     return (
       <div
         data-testid="editor-filmstrip"

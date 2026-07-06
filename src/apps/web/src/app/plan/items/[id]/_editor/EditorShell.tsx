@@ -760,6 +760,8 @@ export default function EditorShell({
           key: id,
           boundary: "start",
           rendered: !virtualPreviewActive,
+          renderedOutputDurationS: duration,
+          fallbackOverlapS: 0,
         });
         if (startS != null) {
           seekPlaybackTo(startS);
@@ -774,7 +776,7 @@ export default function EditorShell({
         if (overlay) seekPlaybackTo(overlay.start_s);
       }
     },
-    [clip.state.grid, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
+    [clip.state.grid, duration, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -1657,6 +1659,7 @@ export default function EditorShell({
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
+    renderedOutputDurationS: duration,
     currentTimeS: currentTime,
     zoom,
     fitRequestKey: timelineFitRequestKey,

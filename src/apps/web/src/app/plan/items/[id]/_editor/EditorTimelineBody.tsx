@@ -84,6 +84,8 @@ export interface EditorOverlayBar {
 
 export interface EditorTimelineBodyProps {
   durationS: number;
+  /** Real rendered player duration, used to calibrate transition overlap. */
+  renderedOutputDurationS?: number | null;
   currentTimeS: number;
   /** Zoom factor: 1 = fit-to-width. */
   zoom: number;
@@ -192,6 +194,7 @@ type ActiveDrag =
 export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const {
     durationS,
+    renderedOutputDurationS,
     currentTimeS,
     zoom,
     fitRequestKey,
@@ -260,9 +263,13 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }, []);
 
   const baseSlotLayout = sequentialSlotLayout(slots, grid);
+  const renderedLayoutOptions = {
+    outputDurationS: renderedOutputDurationS,
+    fallbackOverlapS: 0,
+  };
   const slotLayout =
     clipPreviewMode === "rendered"
-      ? renderedSequentialSlotLayout(slots, grid)
+      ? renderedSequentialSlotLayout(slots, grid, renderedLayoutOptions)
       : baseSlotLayout;
   const effectiveDurationS =
     slotLayout.totalDurationS > 0 ? slotLayout.totalDurationS : durationS;
@@ -327,7 +334,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const windows = slotLayout.windows;
   const filmstripLayout =
     clipPreviewMode === "rendered"
-      ? renderedSequentialSlotLayout(filmstripSlots, grid)
+      ? renderedSequentialSlotLayout(
+          filmstripSlots,
+          grid,
+          renderedLayoutOptions,
+        )
       : sequentialSlotLayout(filmstripSlots, grid);
   const filmstripSourceByIndex = new Map(
     filmstripClips.map((clip) => [clip.clip_index, clip]),
