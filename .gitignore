@@ -23,6 +23,7 @@ tmp/
 # Python
 __pycache__/
 .venv/
+.venv
 .ruff_cache/
 *.pyc *.pyo
 dist/
@@ -30,6 +31,7 @@ dist/
 
 # Node / Next.js
 node_modules/
+node_modules
 .next/
 .turbo/
 out/
@@ -52,6 +54,7 @@ research/tiktok/raw/
 
 # Test virtualenv (separate dir from .venv/, shared across worktrees)
 .venv-test/
+.venv-test
 
 # gbrain local source caches / mirrors (machine-local; rebuilt by gbrain sync)
 .sources/

@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.3.1] — 2026-07-07
+
+### Added
+- **Session-automation scripts** (from the loops audit of 93 sessions):
+  - `scripts/worktree-setup.sh` — idempotent worktree bootstrap (symlinks `.env`/`.venv`/`node_modules` from the primary checkout, checks bound infra ports, runs migrations when the DB is reachable). Auto-invoked by `scripts/new-session.sh`, killing the ~30-min manual bring-up flagged in the 2026-06-13 retro.
+  - `scripts/preship-check.sh` — mechanical pre-PR gate encoding the shipping rules that have each cost an extra CI cycle: scoped ruff on changed files, `tsc --noEmit` when web TS changed, file-drift check vs origin/main, VERSION-slot collision check, and a list of CI `[skip-*]` markers.
+  - `scripts/dev/reset-stuck-plans.py` — local-only reaper for content plans stuck in `generating`/`activating` after a dev worker crash (replaces the manual SQL UPDATE; refuses non-localhost DBs without `--force`).
+
 ## [0.7.3.0] — 2026-07-07
 
 ### Added
@@ -10,6 +18,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Editor saves can no longer silently wipe AI-placed visuals.** The overlay/SFX apply path (manual saves, the item-page suggestion rail, and zero-click auto-apply) now bumps `render_generation_id` like every editor commit, so a Save from a stale editor session 409s with a reload prompt instead of last-writer-wins clobbering the AI's cards — and a superseded apply-render discards its write instead of racing.
 - **The conflict tile's Reload actually reloads.** It now re-seeds every section you haven't edited from the refreshed video (your in-progress edits are kept), so the state you continue from matches what's on the server.
+
 
 ## [0.7.2.2] — 2026-07-06
 
