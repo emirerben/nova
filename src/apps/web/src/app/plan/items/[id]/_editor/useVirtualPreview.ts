@@ -49,6 +49,7 @@ export interface VirtualPreviewVideoProps {
   onSeeking: () => void;
   onSeeked: () => void;
   onTimeUpdate: () => void;
+  onEnded: () => void;
   onPlay: () => void;
   onPause: () => void;
   onError: () => void;
@@ -151,6 +152,15 @@ export function useVirtualPreview({
     return deck === "a" ? videoARef : videoBRef;
   }, []);
 
+  const pauseAll = useCallback(() => {
+    pendingSeekRef.current.a = null;
+    pendingSeekRef.current.b = null;
+    videoARef.current?.pause();
+    videoBRef.current?.pause();
+    musicAudioRef.current?.pause();
+    onPlayingChange(false);
+  }, [onPlayingChange]);
+
   const loadDeck = useCallback(
     (deck: Deck, entry: VirtualTimelineEntry, timeS: number | null, play: boolean) => {
       const video = refForDeck(deck).current;
@@ -169,11 +179,11 @@ export function useVirtualPreview({
       if (timeS != null) safeSetCurrentTime(video, timeS);
       if (play) {
         void video.play().catch(() => {
-          onPlayingChange(false);
+          pauseAll();
         });
       }
     },
-    [onPlayingChange, refForDeck],
+    [pauseAll, refForDeck],
   );
 
   const preloadNext = useCallback(
@@ -193,13 +203,15 @@ export function useVirtualPreview({
       safeSetCurrentTime(audio, musicTimeS);
     }
     if (play) {
-      void audio.play().catch(() => {
-        /* Video playback can continue silently when the browser blocks audio. */
-      });
+      if (audio.paused) {
+        void audio.play().catch(() => {
+          pauseAll();
+        });
+      }
     } else {
       audio.pause();
     }
-  }, []);
+  }, [pauseAll]);
 
   const showMapping = useCallback(
     (timeS: number, play: boolean) => {
@@ -219,11 +231,8 @@ export function useVirtualPreview({
   );
 
   const pause = useCallback(() => {
-    videoARef.current?.pause();
-    videoBRef.current?.pause();
-    musicAudioRef.current?.pause();
-    onPlayingChange(false);
-  }, [onPlayingChange]);
+    pauseAll();
+  }, [pauseAll]);
 
   const play = useCallback(() => {
     if (!enabledRef.current) return;
@@ -288,11 +297,11 @@ export function useVirtualPreview({
       safeSetCurrentTime(video, pending.timeS);
       if (pending.play) {
         void video.play().catch(() => {
-          onPlayingChange(false);
+          pauseAll();
         });
       }
     },
-    [onPlayingChange, refForDeck],
+    [pauseAll, refForDeck],
   );
 
   const handleTimeUpdate = useCallback(
@@ -382,6 +391,7 @@ export function useVirtualPreview({
       onSeeking: () => setBuffering(true),
       onSeeked: () => setBuffering(false),
       onTimeUpdate: () => handleTimeUpdate(deck),
+      onEnded: () => handleTimeUpdate(deck),
       onPlay: () => {
         if (deck === activeDeckRef.current) onPlayingChange(true);
       },
