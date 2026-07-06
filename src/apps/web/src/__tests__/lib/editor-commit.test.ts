@@ -1,6 +1,7 @@
 import {
   buildEditorCommitRequest,
   editorCommitBaseGeneration,
+  formatEditorCommitError,
 } from "@/lib/editor-commit";
 import type { TextElement } from "@/lib/plan-api";
 
@@ -144,6 +145,25 @@ describe("buildEditorCommitRequest", () => {
     expect(body.title).toBeUndefined();
     expect(body.base_generation).toBe("");
   });
+
+  it("does not send mix for non-mixable variants even when preview audio is muted", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      soundMuted: true,
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "prod-gen",
+        editor_capabilities: { mix: false },
+      },
+    });
+
+    expect(body.mix).toBeUndefined();
+    expect(body.base_generation).toBe("prod-gen");
+  });
 });
 
 describe("editorCommitBaseGeneration", () => {
@@ -158,5 +178,49 @@ describe("editorCommitBaseGeneration", () => {
       "finished",
     );
     expect(editorCommitBaseGeneration({})).toBe("");
+  });
+});
+
+describe("formatEditorCommitError", () => {
+  it("formats FastAPI detail shapes without object stringification", () => {
+    const cases: Array<[string, unknown, string]> = [
+      ["plain string", "No cached base video", "No cached base video"],
+      [
+        "detail string",
+        { detail: "This edit has no voiceover to mix." },
+        "This edit has no voiceover to mix.",
+      ],
+      [
+        "validation errors",
+        {
+          detail: [
+            {
+              loc: ["body", "timeline_slots", 0, "duration_s"],
+              msg: "Input should be greater than 0",
+            },
+            {
+              loc: ["body", "text_elements", 1, "font_family"],
+              msg: "Input should be a valid font",
+            },
+          ],
+        },
+        "timeline_slots.0.duration_s: Input should be greater than 0\ntext_elements.1.font_family: Input should be a valid font",
+      ],
+      [
+        "named text element",
+        {
+          detail:
+            "Text element bad-font: field font_family has invalid value 'illegal': Value error, unknown font_family",
+        },
+        "Text bad-font: field font_family — Value error, unknown font_family",
+      ],
+      ["timeline code object", { detail: { code: "TIMELINE_TOO_SHORT" } }, "TIMELINE_TOO_SHORT"],
+    ];
+
+    for (const [name, payload, expected] of cases) {
+      expect(formatEditorCommitError(payload, 422)).toBe(expected);
+      expect(formatEditorCommitError(payload, 422)).not.toBe("[object Object]");
+      expect(name).toBeTruthy();
+    }
   });
 });
