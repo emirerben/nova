@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2.1] — 2026-07-06
+
+### Fixed
+- **Playhead alignment on song videos.** Song montages cut on beats with no crossfade overlap; the timeline was applying a montage-style overlap correction that shifted the playhead badly on song variants. The mapping now calibrates from the video's real duration — exact for every edit style.
+- **Clip thumbnails restored** — a blank-label fallback was rendering empty tiles.
+
 ## [0.7.2.0] — 2026-07-06
 
 ### Added

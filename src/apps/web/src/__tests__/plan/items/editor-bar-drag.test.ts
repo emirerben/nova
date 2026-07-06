@@ -333,6 +333,26 @@ describe("sequentialSlotLayout", () => {
     ).toBe(6.4);
   });
 
+  it("keeps song-style rendered boundaries on the plain slot clock when output is longer", () => {
+    const slots = [
+      slot({ key: "a", slotId: "a", durationS: 0.469 }),
+      slot({ key: "b", slotId: "b", durationS: 0.469 }),
+      slot({ key: "c", slotId: "c", durationS: 0.982 }),
+    ];
+
+    expect(
+      outputTimeForSlotBoundary({
+        slots,
+        grid: [],
+        key: "c",
+        boundary: "start",
+        rendered: true,
+        renderedOutputDurationS: 2.5,
+        fallbackOverlapS: 0,
+      }),
+    ).toBe(0.938);
+  });
+
   it("ripples a split slot by cumulative seconds", () => {
     const layout = sequentialSlotLayout(
       [

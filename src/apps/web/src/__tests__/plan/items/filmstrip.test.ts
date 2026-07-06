@@ -4,6 +4,7 @@ import {
   FILMSTRIP_TILE_W,
   allocateFilmstripSeekBudget,
   filmstripDecodeKey,
+  filmstripFallbackLabel,
   filmstripZoomBucket,
 } from "@/app/plan/items/[id]/_editor/Filmstrip";
 
@@ -76,5 +77,18 @@ describe("editor source filmstrip helpers", () => {
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 6, 3)).toBe(3);
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W * 0.4, 3)).toBe(1);
     expect(filmstripZoomBucket(FILMSTRIP_TILE_W, 0)).toBe(0);
+  });
+
+  it("allocates visible tiles for a prod-shaped 17-slot song timeline", () => {
+    const budgets = allocateFilmstripSeekBudget(new Array(17).fill(FILMSTRIP_TILE_W));
+
+    expect(budgets).toHaveLength(17);
+    expect(budgets.every((value) => value > 0)).toBe(true);
+  });
+
+  it("falls back to duration text when the caller passes an empty label", () => {
+    expect(filmstripFallbackLabel("", 0.469)).toBe("0.5s");
+    expect(filmstripFallbackLabel("  ", 3.2)).toBe("3.2s");
+    expect(filmstripFallbackLabel("Clip 1", 3.2)).toBe("Clip 1");
   });
 });
