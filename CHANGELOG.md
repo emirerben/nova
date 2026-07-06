@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2.3] — 2026-07-06
+
+### Fixed
+- **Music stops when your cut ends.** When the edited preview reached the end of a short cut, the video stopped but the (much longer) song kept playing on. The preview now pauses audio and video together at the end of the cut — verified against the live editor.
+
 ## [0.7.2.2] — 2026-07-06
 
 ### Fixed

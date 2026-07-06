@@ -110,4 +110,27 @@ describe("useVirtualPreview music transport", () => {
     rerender(<Harness onPlayingChange={jest.fn()} soundMuted={false} />);
     expect(screen.getByTestId("music")).toHaveProperty("muted", false);
   });
+
+  it("pauses music when the active video reaches its native end before the virtual boundary", () => {
+    const onPlayingChange = jest.fn();
+    playSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockImplementation(() => Promise.resolve());
+
+    render(<Harness onPlayingChange={onPlayingChange} />);
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const music = screen.getByTestId("music") as HTMLAudioElement;
+
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    deckA.currentTime = 2;
+    music.currentTime = 57;
+    fireEvent.ended(deckA);
+
+    const audioPauseCalls = pauseSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "AUDIO",
+    );
+    expect(audioPauseCalls.length).toBeGreaterThan(0);
+    expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  });
 });
