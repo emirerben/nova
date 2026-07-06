@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2.2] — 2026-07-06
+
+### Fixed
+- **Music keeps playing while you arrange clips — for real this time.** Cropping or moving a clip mid-playback left the preview's audio and video in a torn state (video paused, music stranded elsewhere); the virtual preview now runs one unified transport: play starts both together, any failure pauses both visibly, seeking repositions both, and music stops when the cut ends.
+
 ## [0.7.2.1] — 2026-07-06
 
 ### Fixed
