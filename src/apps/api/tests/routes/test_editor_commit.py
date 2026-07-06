@@ -1110,9 +1110,12 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "mix": True,  # fixture carries mix=0.5
         "sfx": True,
         "overlays": True,
+        # _arm leaves overlay_autoplace_enabled at its default (False).
+        "suggestions": False,
         "reason": None,
         "sfx_reason": None,
         "overlays_reason": None,
+        "suggestions_reason": "autoplace_disabled",
     }
 
 
@@ -1223,3 +1226,156 @@ def test_capabilities_timeline_flag_off(monkeypatch):
     assert caps["timeline"] is False
     assert caps["split_clips"] is False
     assert caps["reason"] == "disabled"
+
+
+# ── AI overlay suggestions: capability + accepted_suggestion_ids resolution ────
+
+
+def _arm_autoplace(monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "overlay_autoplace_enabled", True, raising=False)
+
+
+def _suggestion(id_: str, overlay_id: str) -> dict:
+    return {
+        "id": id_,
+        "asset_id": "asset-1",
+        "confidence_tier": "high",
+        "reason": "You mention the dashboard here",
+        "transcript_anchor": "dashboard",
+        "overlay": {"id": overlay_id, "kind": "image"},
+        "sfx": None,
+    }
+
+
+def test_capabilities_suggestions_on_for_eligible_speech_variant(monkeypatch):
+    _arm(monkeypatch)
+    _arm_autoplace(monkeypatch)
+    job = _job(variant_id="original_text", music_track_id=None, mix=None)
+    caps = _caps(job, "original_text")
+    assert caps["suggestions"] is True
+    assert caps["suggestions_reason"] is None
+
+
+def test_capabilities_suggestions_off_on_song_variant(monkeypatch):
+    _arm(monkeypatch)
+    _arm_autoplace(monkeypatch)
+    caps = _caps(_job(), "song_text")  # fixture carries music_track_id="t1"
+    assert caps["suggestions"] is False
+    assert caps["suggestions_reason"] == "song_or_lyric_variant"
+
+
+def test_capabilities_suggestions_inherit_overlays_reason(monkeypatch):
+    _arm(monkeypatch)
+    _arm_autoplace(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "media_overlays_enabled", False, raising=False)
+    job = _job(variant_id="original_text", music_track_id=None, mix=None)
+    caps = _caps(job, "original_text")
+    assert caps["suggestions"] is False
+    assert caps["suggestions_reason"] == "media_overlays_disabled"
+
+
+def test_commit_clears_accepted_suggestion_envelopes_atomically(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        overlay_suggestions=[
+            _suggestion("sug-1", "ov-accepted"),
+            _suggestion("sug-2", "ov-pending"),
+        ],
+        overlay_suggest_status="ready",
+    )
+    overlays = [
+        {
+            "id": "ov-accepted",
+            "kind": "image",
+            "src_gcs_path": "users/u123/plan/item/pool/card.png",
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.35,
+            "start_s": 0.4,
+            "end_s": 2.4,
+            "z": 0,
+        }
+    ]
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=overlays, accepted_suggestion_ids=["sug-1"]),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert [s["id"] for s in v["overlay_suggestions"]] == ["sug-2"]
+    assert v["overlay_suggest_status"] == "ready"  # still pending rows left
+    assert v["media_overlays"][0]["id"] == "ov-accepted"
+
+
+def test_commit_clearing_last_envelope_flips_status_to_zero(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        overlay_suggestions=[_suggestion("sug-1", "ov-accepted")],
+        overlay_suggest_status="ready",
+    )
+    overlays = [
+        {
+            "id": "ov-accepted",
+            "kind": "image",
+            "src_gcs_path": "users/u123/plan/item/pool/card.png",
+            "position": "center",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "scale": 0.35,
+            "start_s": 0.4,
+            "end_s": 2.4,
+            "z": 0,
+        }
+    ]
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=overlays, accepted_suggestion_ids=["sug-1"]),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["overlay_suggestions"] is None
+    assert v["overlay_suggest_status"] == "zero"
+
+
+def test_commit_unknown_accepted_ids_noop(monkeypatch):
+    """Replayed/double Save: ids already cleared must not error or over-clear."""
+    _arm(monkeypatch)
+    job = _job(
+        overlay_suggestions=[_suggestion("sug-2", "ov-pending")],
+        overlay_suggest_status="ready",
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[], accepted_suggestion_ids=["sug-gone"]),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert [s["id"] for s in v["overlay_suggestions"]] == ["sug-2"]
+    assert v["overlay_suggest_status"] == "ready"
+
+
+def test_accepted_ids_without_media_overlays_section_422(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(title="New title", accepted_suggestion_ids=["sug-1"]),
+        )
+    assert exc.value.status_code == 422
+    assert "media_overlays" in str(exc.value.detail)
