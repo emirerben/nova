@@ -128,6 +128,8 @@ describe("serializeDraft / deserializeDraft", () => {
       overlays: [overlay({ x_frac: 0.8, y_frac: 0.2, scale: 0.55 })],
       videoMuted: true,
       soundMuted: true,
+      mixLevel: 0.25,
+      mixDirty: true,
       title: "My clip",
     });
     const parsed = deserializeDraft(serializeDraft("v1", d));
@@ -154,6 +156,8 @@ describe("serializeDraft / deserializeDraft", () => {
       slots: null,
       videoMuted: false,
       soundMuted: false,
+      mixLevel: null,
+      mixDirty: false,
       title: "",
     });
   });

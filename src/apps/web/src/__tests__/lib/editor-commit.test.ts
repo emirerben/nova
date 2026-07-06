@@ -37,7 +37,8 @@ describe("buildEditorCommitRequest", () => {
           removed: true,
         },
       ],
-      soundMuted: true,
+      mixDirty: true,
+      mixLevel: 0,
       sfxDirty: true,
       soundEffects: [
         {
@@ -75,6 +76,7 @@ describe("buildEditorCommitRequest", () => {
 
     expect(body).toEqual({
       text_elements: [element],
+      caption_cues: undefined,
       timeline_slots: [
         {
           slot_id: "slot-a",
@@ -131,7 +133,6 @@ describe("buildEditorCommitRequest", () => {
       textDirty: false,
       timelineDirty: false,
       slots: [],
-      soundMuted: false,
       titleDirty: false,
       title: " ",
       variant: {},
@@ -146,13 +147,14 @@ describe("buildEditorCommitRequest", () => {
     expect(body.base_generation).toBe("");
   });
 
-  it("does not send mix for non-mixable variants even when preview audio is muted", () => {
+  it("does not send mix for non-mixable variants even when mix changed", () => {
     const body = buildEditorCommitRequest({
       elements: [element],
       textDirty: false,
       timelineDirty: false,
       slots: [],
-      soundMuted: true,
+      mixDirty: true,
+      mixLevel: 0,
       titleDirty: false,
       title: "",
       variant: {

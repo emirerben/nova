@@ -116,6 +116,10 @@ export default function InspectorPanel({
   onPreviewOverlay,
   onRecordOverlay,
   onDeleteOverlay,
+  mixLevel,
+  mixEditable,
+  mixLabel,
+  onPatchMix,
   onClose,
   onPickPreset,
 }: {
@@ -142,6 +146,10 @@ export default function InspectorPanel({
   onPreviewOverlay: (id: string, patch: Partial<MediaOverlay>) => void;
   onRecordOverlay: () => void;
   onDeleteOverlay: (id: string) => void;
+  mixLevel?: number | null;
+  mixEditable?: boolean;
+  mixLabel?: string;
+  onPatchMix?: (level: number) => void;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
@@ -198,15 +206,13 @@ export default function InspectorPanel({
           onClose={onClose}
         />
       ) : selection.kind === "music" ? (
-        <div className="px-5 pt-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-display text-[18px] text-[#0c0c0e]">Music</h2>
-            <CloseX onClose={onClose} />
-          </div>
-          <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-            The song auto-fits your cut — trim clips to change where it ends
-          </p>
-        </div>
+        <MixInspector
+          level={mixLevel}
+          editable={mixEditable ?? false}
+          label={mixLabel ?? "Music"}
+          onPatch={onPatchMix}
+          onClose={onClose}
+        />
       ) : (
         // sfx / clip / overlay selections get their minimal inspectors with
         // the timeline task — never a dead end, but nothing to edit yet here.
@@ -221,6 +227,55 @@ export default function InspectorPanel({
             Controls for this element arrive with the timeline update.
           </p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function MixInspector({
+  level,
+  editable,
+  label,
+  onPatch,
+  onClose,
+}: {
+  level?: number | null;
+  editable: boolean;
+  label: string;
+  onPatch?: (level: number) => void;
+  onClose: () => void;
+}) {
+  const safeLevel = Math.max(0, Math.min(1, level ?? 0));
+  return (
+    <div className="px-5 pt-5">
+      <div className="flex items-center justify-between">
+        <h2 className="font-display text-[18px] text-[#0c0c0e]">{label}</h2>
+        <CloseX onClose={onClose} />
+      </div>
+      {editable ? (
+        <div className="mt-4">
+          <div className="flex items-center justify-between text-[12px] font-semibold text-[#3f3f46]">
+            <label htmlFor="editor-mix-level">Bed level</label>
+            <span>{Math.round(safeLevel * 100)}%</span>
+          </div>
+          <input
+            id="editor-mix-level"
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={safeLevel}
+            onChange={(e) => onPatch?.(Number(e.target.value))}
+            className="mt-2 h-11 w-full cursor-pointer accent-lime-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          />
+          <p className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
+            Balance the background bed against your voiceover.
+          </p>
+        </div>
+      ) : (
+        <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
+          This sound bed is locked for this edit.
+        </p>
       )}
     </div>
   );

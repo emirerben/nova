@@ -851,6 +851,9 @@ export interface PlanItemVariant {
   // Background-sound (voice/bed) level — narrated only. Null = Nova's render-time
   // default. See setPlanItemNarratedBedLevel / BackgroundSoundControl.
   voiceover_bed_level?: number | null;
+  // Generic rendered bed level returned by editor-capable variants (voiceover +
+  // montage). Older narrated rows may only carry voiceover_bed_level.
+  mix?: number | null;
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;

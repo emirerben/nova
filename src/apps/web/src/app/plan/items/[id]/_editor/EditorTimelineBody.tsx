@@ -105,6 +105,8 @@ export interface EditorTimelineBodyProps {
   ) => void;
 
   slots: DraftSlot[];
+  clipReadOnly?: boolean;
+  clipDisabledReason?: string | null;
   clipSourceDurations?: Record<string, number | null>;
   onPreviewClipTiming?: (
     key: string,
@@ -125,6 +127,9 @@ export interface EditorTimelineBodyProps {
   ) => void;
   hasMusic: boolean;
   musicLabel?: string;
+  soundLaneTitle?: string;
+  soundBedLabel?: string;
+  soundBedTitle?: string;
   videoMuted: boolean;
   onToggleVideoMute: () => void;
   soundMuted: boolean;
@@ -196,6 +201,8 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onRecordTimelineEdit,
     onPreviewTextTiming,
     slots,
+    clipReadOnly = false,
+    clipDisabledReason,
     clipSourceDurations,
     onPreviewClipTiming,
     onPreviewSeek,
@@ -206,6 +213,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onPreviewSfxTiming,
     hasMusic,
     musicLabel,
+    soundLaneTitle,
+    soundBedLabel,
+    soundBedTitle,
     videoMuted,
     onToggleVideoMute,
     soundMuted,
@@ -534,7 +544,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }
 
   function startClipDrag(e: React.PointerEvent<HTMLElement>, slot: DraftSlot) {
-    if (readOnly || slot.removed) return;
+    if (readOnly || clipReadOnly || slot.removed) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const handle = resolveBarDragHandle({
       localX: e.clientX - rect.left,
@@ -698,7 +708,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 muteState={{
                   muted: soundMuted,
                   onToggle: onToggleSoundMute,
-                  title: "Music + effects",
+                  title: soundLaneTitle ?? "Music + effects",
                 }}
               />
               <GutterRow
@@ -849,6 +859,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         aria-pressed={selected}
                         data-editor-bar-kind="clip"
                         data-editor-bar-id={slot.key}
+                        title={clipReadOnly ? (clipDisabledReason ?? "Clip timing is locked") : undefined}
                         onPointerDown={(e) => startClipDrag(e, slot)}
                         onPointerMove={(e) => updateDrag(e.clientX)}
                         onPointerUp={(e) => finishDrag(e, "clip", slot.key)}
@@ -862,7 +873,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onSelect("clip", slot.key);
                         }}
                         className={[
-                          "group absolute inset-y-0.5 min-w-11 cursor-grab overflow-hidden rounded border bg-zinc-200 transition-colors active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          "group absolute inset-y-0.5 min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          clipReadOnly
+                            ? "cursor-default active:cursor-default"
+                            : "cursor-grab active:cursor-grabbing",
                           selected
                             ? `border-transparent ${ringCls}`
                             : "border-white/50 hover:border-white",
@@ -994,14 +1008,14 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       onSelect={() => onSelect("music", "bed")}
                       dataKind="music"
                       dataId="bed"
-                      title="The song auto-fits your cut — trim clips to change where it ends"
+                      title={soundBedTitle ?? "The song auto-fits your cut"}
                       draggable={false}
                       className="inset-y-0.5 border border-zinc-300/70 bg-zinc-200/70 text-[#52525b]"
                     >
                       <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
                         <span aria-hidden>♫</span>
                         <span className="truncate">
-                          {musicLabel ?? "Music"}
+                          {soundBedLabel ?? musicLabel ?? "Music"}
                         </span>
                       </span>
                     </BarButton>
