@@ -56,6 +56,7 @@ describe("editor return signal", () => {
   it("detects render-affecting editor sections", () => {
     expect(editorCommitStartedRender({ title: true })).toBe(false);
     expect(editorCommitStartedRender({ text_elements: true, title: true })).toBe(true);
+    expect(editorCommitStartedRender({ caption_cues: true })).toBe(true);
     expect(editorCommitStartedRender({ media_overlays: true })).toBe(true);
   });
 

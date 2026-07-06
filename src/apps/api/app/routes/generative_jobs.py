@@ -488,6 +488,7 @@ class EditorCommitRequest(BaseModel):
     """
 
     text_elements: list[dict] | None = None
+    caption_cues: list[dict] | None = None
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
     sound_effects: list[dict] | None = None
@@ -507,6 +508,7 @@ class EditorCommitRequest(BaseModel):
 
 class EditorCommitSections(BaseModel):
     text_elements: bool
+    caption_cues: bool
     timeline: bool
     mix: bool
     sound_effects: bool
@@ -2032,6 +2034,8 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
     vid = str(variant.get("variant_id") or "")
     if vid == "song_lyrics" or variant.get("text_mode") == "lyrics":
         return "lyrics_sync"  # lyric lines are beat-synced; re-cutting breaks sync
+    if variant.get("resolved_archetype") == "narrated":
+        return "locked_to_voiceover"  # clip timing is driven by the narrated VO bed
     if vid.startswith("voiceover"):
         return "voiceover_bed_fit"  # slots are fit to the voice bed, not user cuts
     if variant.get("resolved_archetype") == "talking_head":
@@ -2062,9 +2066,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     """
     timeline_reason = _timeline_ineligibility(job, variant)
     timeline_ok = timeline_reason is None
+    archetype = variant.get("resolved_archetype")
     caption_reason = (
-        "captions are edited in the captions tab"
-        if variant.get("resolved_archetype") in {"narrated", "subtitled"}
+        "Captions for this edit are managed in the Captions tab"
+        if archetype == "subtitled"
         else None
     )
     from app.config import settings  # noqa: PLC0415
@@ -2089,7 +2094,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "text_elements": (
             _TEXT_ELEMENTS_ENABLED
             and variant.get("text_mode") != "lyrics"
-            and caption_reason is None
+            and (caption_reason is None or archetype == "narrated")
         ),
         "timeline": timeline_ok,
         # Splitting a clip is a timeline-override operation — same eligibility.
@@ -2283,6 +2288,22 @@ def resolve_timeline_slots_for_edit(
             key=lambda beats: abs((beat_grid[offset + beats] - beat_grid[offset]) - target_s),
         )
 
+    def _smallest_beat_count_clearing_floor(
+        offset: int, *, max_source_window_s: float | None
+    ) -> int:
+        max_beats = len(beat_grid) - 1 - offset
+        if max_beats < 1:
+            raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED")
+        start = beat_grid[offset]
+        for beats in range(1, max_beats + 1):
+            duration = beat_grid[offset + beats] - start
+            if duration < TIMELINE_MIN_SLOT_S - 1e-9:
+                continue
+            if max_source_window_s is not None and duration > max_source_window_s + 1e-6:
+                continue
+            return beats
+        raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
+
     def _snap_half_second(duration_s: float | None) -> float:
         if duration_s is None or duration_s <= 0:
             raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION")
@@ -2291,6 +2312,8 @@ def resolve_timeline_slots_for_edit(
     for order, e in enumerate(slots):
         duration_s = e.duration_s
         duration_beats = e.duration_beats
+        src_dur = src_dur_by_idx.get(e.clip_index)
+        max_source_window_s = None if src_dur is None else max(0.0, src_dur - e.in_s)
         if not e.removed:
             if (
                 beat_grid
@@ -2309,12 +2332,28 @@ def resolve_timeline_slots_for_edit(
                 # duration is grid[offset+beats] - grid[offset]; the offset then
                 # advances, so the same beat count can yield different seconds at
                 # different positions (non-uniform grids).
+                if is_song_variant and _window_changed(e):
+                    requested_end = grid_offset + duration_beats
+                    if requested_end <= len(beat_grid) - 1:
+                        requested_duration_s = beat_grid[requested_end] - beat_grid[grid_offset]
+                        if requested_duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
+                            duration_beats = _smallest_beat_count_clearing_floor(
+                                grid_offset,
+                                max_source_window_s=max_source_window_s,
+                            )
                 end = grid_offset + duration_beats
                 if end > len(beat_grid) - 1:
                     raise _timeline_error(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
+                if _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
+                    duration_beats = _smallest_beat_count_clearing_floor(
+                        grid_offset,
+                        max_source_window_s=max_source_window_s,
+                    )
+                    end = grid_offset + duration_beats
+                    duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
             elif is_song_variant:
                 duration_beats = _nearest_beat_count(grid_offset, duration_s)
@@ -2351,7 +2390,6 @@ def resolve_timeline_slots_for_edit(
             total += duration_s
             # Bounds against the probed source duration. New clips the AI never
             # probed have no known duration — skip; the worker's probe will clamp.
-            src_dur = src_dur_by_idx.get(e.clip_index)
             if e.in_s < 0 or (src_dur is not None and e.in_s + duration_s > src_dur + 1e-6):
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS"
@@ -2491,6 +2529,7 @@ def prepare_editor_commit(
 
     if (
         payload.text_elements is None
+        and payload.caption_cues is None
         and payload.timeline_slots is None
         and payload.mix is None
         and payload.sound_effects is None
@@ -2518,6 +2557,20 @@ def prepare_editor_commit(
             require_base=payload.timeline_slots is None and not text_requires_full_render,
             strict_drop=True,
         )
+
+    validated_caption_cues: list[dict] | None = None
+    if payload.caption_cues is not None:
+        if variant.get("resolved_archetype") != "narrated" or not _is_editable_caption_variant(
+            variant
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Captions for this edit are managed in the Captions tab.",
+            )
+        validated_caption_cues = [
+            CaptionCue.model_validate(c).model_dump(exclude_none=True)
+            for c in payload.caption_cues
+        ]
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:
@@ -2580,6 +2633,7 @@ def prepare_editor_commit(
     # ── Stage the single atomic job-JSON write ─────────────────────────────────
     has_render_section = (
         validated_elements is not None
+        or validated_caption_cues is not None
         or resolved_slots is not None
         or payload.mix is not None
         or validated_sfx is not None
@@ -2598,6 +2652,8 @@ def prepare_editor_commit(
             if materialized_from_sequence:
                 updated["geometry_materialized_at_version"] = "1"
                 updated["text_elements_materialized_from"] = "sequence"
+        if validated_caption_cues is not None:
+            updated["caption_cues"] = validated_caption_cues
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
         if payload.mix is not None:
@@ -2624,9 +2680,11 @@ def prepare_editor_commit(
         "mix_override": mix_override,
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
+        "caption_cues_override": validated_caption_cues,
         "text_requires_full_render": text_requires_full_render,
         "sections": {
             "text_elements": payload.text_elements is not None,
+            "caption_cues": payload.caption_cues is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
             "sound_effects": payload.sound_effects is not None,
@@ -2645,6 +2703,11 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     any older in-flight task's terminal write.
     """
     if not prep["has_render_section"]:
+        return
+    if prep["sections"].get("caption_cues") is True:
+        from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+        reburn_narrated_captions.apply_async(args=[job_id, variant_id])
         return
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 

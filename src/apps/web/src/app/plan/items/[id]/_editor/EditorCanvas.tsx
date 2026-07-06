@@ -216,6 +216,10 @@ export default function EditorCanvas({
   const virtualVideoBProps = virtualPreview
     ? { ...virtualPreview.videoBProps, ref: undefined }
     : null;
+  const virtualMusicAudioRef = virtualPreview?.musicAudioProps?.ref;
+  const virtualMusicAudioProps = virtualPreview?.musicAudioProps
+    ? { ...virtualPreview.musicAudioProps, ref: undefined }
+    : null;
   const identity = variant.base_video_url
     ? (variant.base_video_path ?? undefined)
     : `${variant.variant_id}:${variant.render_finished_at ?? ""}`;
@@ -626,6 +630,13 @@ export default function EditorCanvas({
                   ].join(" ")}
                   style={{ zIndex: EDITOR_STAGE_Z.video }}
                 />
+                {virtualMusicAudioProps && (
+                  <audio
+                    {...virtualMusicAudioProps}
+                    ref={virtualMusicAudioRef}
+                    className="hidden"
+                  />
+                )}
               </>
             ) : src ? (
               <StableVideo

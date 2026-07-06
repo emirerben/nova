@@ -39,6 +39,8 @@ export interface EditorDocument {
   overlays?: MediaOverlay[];
   videoMuted: boolean;
   soundMuted: boolean;
+  mixLevel?: number | null;
+  mixDirty?: boolean;
   title: string;
 }
 
@@ -151,6 +153,9 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         ...(Array.isArray(doc.overlays) ? { overlays: doc.overlays as MediaOverlay[] } : {}),
         videoMuted: Boolean(doc.videoMuted),
         soundMuted: Boolean(doc.soundMuted),
+        mixLevel:
+          typeof doc.mixLevel === "number" ? Math.max(0, Math.min(1, doc.mixLevel)) : null,
+        mixDirty: Boolean(doc.mixDirty),
         title: typeof doc.title === "string" ? doc.title : "",
       },
     };

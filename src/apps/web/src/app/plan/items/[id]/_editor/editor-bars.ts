@@ -202,3 +202,14 @@ export function barsToTextElements(
       };
     });
 }
+
+/** Working narrated-caption bars -> API CaptionCue[] for the full-editor Save. */
+export function barsToCaptionCues(bars: TextElementBar[]): CaptionCue[] {
+  return bars
+    .filter((bar) => bar.role === "narrated_caption")
+    .map((bar) => ({
+      text: bar.text,
+      start_s: bar.start_s,
+      end_s: bar.end_s,
+    }));
+}

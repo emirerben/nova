@@ -56,6 +56,8 @@ import {
   applySfxBarDrag,
   applyTextBarDrag,
   effectiveBarEdgeHitPx,
+  minimumClipDurationForSlot,
+  renderedSequentialSlotLayout,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
   sequentialSlotLayout,
@@ -105,6 +107,8 @@ export interface EditorTimelineBodyProps {
   ) => void;
 
   slots: DraftSlot[];
+  clipReadOnly?: boolean;
+  clipDisabledReason?: string | null;
   clipSourceDurations?: Record<string, number | null>;
   onPreviewClipTiming?: (
     key: string,
@@ -112,6 +116,7 @@ export interface EditorTimelineBodyProps {
   ) => void;
   onPreviewSeek?: (seconds: number) => void;
   grid: number[];
+  clipPreviewMode?: "rendered" | "virtual";
   clipsLoading: boolean;
   filmstripClips: Pick<
     TimelineClip,
@@ -125,6 +130,9 @@ export interface EditorTimelineBodyProps {
   ) => void;
   hasMusic: boolean;
   musicLabel?: string;
+  soundLaneTitle?: string;
+  soundBedLabel?: string;
+  soundBedTitle?: string;
   videoMuted: boolean;
   onToggleVideoMute: () => void;
   soundMuted: boolean;
@@ -159,6 +167,7 @@ type ActiveDrag =
       pxPerSecond: number;
       origin: Pick<DraftSlot, "inS" | "durationS">;
       sourceDurationS: number | null;
+      minDurationS: number;
       active: boolean;
     }
   | {
@@ -196,16 +205,22 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onRecordTimelineEdit,
     onPreviewTextTiming,
     slots,
+    clipReadOnly = false,
+    clipDisabledReason,
     clipSourceDurations,
     onPreviewClipTiming,
     onPreviewSeek,
     grid,
+    clipPreviewMode = "rendered",
     clipsLoading,
     filmstripClips,
     sfx,
     onPreviewSfxTiming,
     hasMusic,
     musicLabel,
+    soundLaneTitle,
+    soundBedLabel,
+    soundBedTitle,
     videoMuted,
     onToggleVideoMute,
     soundMuted,
@@ -244,17 +259,25 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     return () => ro.disconnect();
   }, []);
 
+  const baseSlotLayout = sequentialSlotLayout(slots, grid);
+  const slotLayout =
+    clipPreviewMode === "rendered"
+      ? renderedSequentialSlotLayout(slots, grid)
+      : baseSlotLayout;
+  const effectiveDurationS =
+    slotLayout.totalDurationS > 0 ? slotLayout.totalDurationS : durationS;
+
   const trackViewportW = Math.max(0, viewportW);
-  const liveFitPps = fitPxPerSecond(trackViewportW, durationS);
+  const liveFitPps = fitPxPerSecond(trackViewportW, effectiveDurationS);
   const { fitPxPerSecond: fitPps, pxPerSecond: pps } =
     resolveEditorTimelineScale({
       viewportWidth: trackViewportW,
-      durationS,
+      durationS: effectiveDurationS,
       zoom,
       frozenFitPxPerSecond: frozenFitPps,
     });
-  const trackW = Math.max(trackViewportW, scaledTrackWidth(durationS, pps));
-  const videoEndPx = secondsToPx(durationS, pps);
+  const trackW = Math.max(trackViewportW, scaledTrackWidth(effectiveDurationS, pps));
+  const videoEndPx = secondsToPx(effectiveDurationS, pps);
   const showEndMarker = videoEndPx > 0 && videoEndPx < trackW - 1;
 
   useEffect(() => {
@@ -262,7 +285,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }, [fitPps, onReportFit]);
 
   useLayoutEffect(() => {
-    if (trackViewportW <= 0 || durationS <= 0) return;
+    if (trackViewportW <= 0 || effectiveDurationS <= 0) return;
     const resetRequested = lastScaleResetKeyRef.current !== scaleResetKey;
     const fitRequested = lastFitRequestKeyRef.current !== fitRequestKey;
 
@@ -273,7 +296,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       setFrozenFitPps(liveFitPps);
     }
   }, [
-    durationS,
+    effectiveDurationS,
     fitRequestKey,
     frozenFitPps,
     liveFitPps,
@@ -294,16 +317,18 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       viewportWidth: el.clientWidth,
       previousPxPerSecond: previous.pps,
       nextPxPerSecond: pps,
-      durationS,
+      durationS: effectiveDurationS,
       currentTimeS,
     });
     previousScaleRef.current = { pps, trackW };
-  }, [currentTimeS, durationS, pps, trackW, viewportW]);
+  }, [currentTimeS, effectiveDurationS, pps, trackW, viewportW]);
 
   const playheadPx = secondsToPx(currentTimeS, pps);
-  const slotLayout = sequentialSlotLayout(slots, grid);
   const windows = slotLayout.windows;
-  const filmstripLayout = sequentialSlotLayout(filmstripSlots, grid);
+  const filmstripLayout =
+    clipPreviewMode === "rendered"
+      ? renderedSequentialSlotLayout(filmstripSlots, grid)
+      : sequentialSlotLayout(filmstripSlots, grid);
   const filmstripSourceByIndex = new Map(
     filmstripClips.map((clip) => [clip.clip_index, clip]),
   );
@@ -349,7 +374,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     ]),
   );
   const tickInterval = tickIntervalForScale(pps);
-  const ticks = rulerTicks(durationS, pps);
+  const ticks = rulerTicks(effectiveDurationS, pps);
   const textLane = deriveTextLaneRows(textBars);
   const sfxLane = deriveLaneRows(sfx, {
     baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
@@ -377,7 +402,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   function scrubToClientX(clientX: number, trackEl: HTMLElement) {
     const rect = trackEl.getBoundingClientRect();
     const localX = clientX - rect.left;
-    const sec = Math.max(0, Math.min(durationS, pxToSeconds(localX, pps)));
+    const sec = Math.max(0, Math.min(effectiveDurationS, pxToSeconds(localX, pps)));
     onScrub(sec);
   }
   function onRulerPointerDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -433,7 +458,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         bar: active.origin,
         handle: active.handle,
         deltaS,
-        videoDurationS: durationS,
+        videoDurationS: effectiveDurationS,
       });
       onPreviewTextTiming?.(active.id, next);
       setDragLabel({
@@ -447,6 +472,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         handle: active.handle,
         deltaS,
         sourceDurationS: active.sourceDurationS,
+        minDurationS: active.minDurationS,
       });
       onPreviewClipTiming?.(active.id, next);
       const idx = slots.findIndex((slot) => slot.key === active.id);
@@ -469,7 +495,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         bar: active.origin,
         handle: active.handle,
         deltaS,
-        videoDurationS: durationS,
+        videoDurationS: effectiveDurationS,
       });
       onPreviewSfxTiming?.(active.id, next);
       setDragLabel({
@@ -482,7 +508,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       const minDuration = 0.3;
       let next = active.origin;
       if (active.handle === "body") {
-        const maxStart = Math.max(0, durationS - duration);
+        const maxStart = Math.max(0, effectiveDurationS - duration);
         const start_s = Math.max(0, Math.min(maxStart, active.origin.start_s + deltaS));
         next = {
           start_s: Math.round(start_s * 10) / 10,
@@ -495,7 +521,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           end_s: active.origin.end_s,
         };
       } else {
-        const end_s = Math.min(durationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
+        const end_s = Math.min(effectiveDurationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
         next = {
           start_s: active.origin.start_s,
           end_s: Math.round(end_s * 10) / 10,
@@ -534,7 +560,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }
 
   function startClipDrag(e: React.PointerEvent<HTMLElement>, slot: DraftSlot) {
-    if (readOnly || slot.removed) return;
+    if (readOnly || clipReadOnly || slot.removed) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const handle = resolveBarDragHandle({
       localX: e.clientX - rect.left,
@@ -546,6 +572,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     const slotIndex = slots.findIndex((s) => s.key === slot.key);
     const effectiveDurationS =
       slot.durationS ?? windows[slotIndex]?.durationS ?? 0.6;
+    const minDurationS = minimumClipDurationForSlot({
+      grid,
+      offsetBeats: windows[slotIndex]?.offsetBeats,
+    });
     dragRef.current = {
       kind: "clip",
       id: slot.key,
@@ -554,6 +584,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       pxPerSecond: pps,
       origin: { inS: slot.inS, durationS: effectiveDurationS },
       sourceDurationS: clipSourceDurations?.[slot.key] ?? null,
+      minDurationS,
       active: false,
     };
   }
@@ -698,7 +729,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                 muteState={{
                   muted: soundMuted,
                   onToggle: onToggleSoundMute,
-                  title: "Music + effects",
+                  title: soundLaneTitle ?? "Music + effects",
                 }}
               />
               <GutterRow
@@ -849,6 +880,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         aria-pressed={selected}
                         data-editor-bar-kind="clip"
                         data-editor-bar-id={slot.key}
+                        title={clipReadOnly ? (clipDisabledReason ?? "Clip timing is locked") : undefined}
                         onPointerDown={(e) => startClipDrag(e, slot)}
                         onPointerMove={(e) => updateDrag(e.clientX)}
                         onPointerUp={(e) => finishDrag(e, "clip", slot.key)}
@@ -862,7 +894,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onSelect("clip", slot.key);
                         }}
                         className={[
-                          "group absolute inset-y-0.5 min-w-11 cursor-grab overflow-hidden rounded border bg-zinc-200 transition-colors active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          "group absolute inset-y-0.5 min-w-11 overflow-hidden rounded border bg-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                          clipReadOnly
+                            ? "cursor-default active:cursor-default"
+                            : "cursor-grab active:cursor-grabbing",
                           selected
                             ? `border-transparent ${ringCls}`
                             : "border-white/50 hover:border-white",
@@ -987,21 +1022,21 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   {hasMusic ? (
                     <BarButton
                       left={0}
-                      width={secondsToPx(durationS, pps)}
+                      width={secondsToPx(effectiveDurationS, pps)}
                       selected={isSel("music", "bed")}
                       ringCls={ringCls}
                       ariaLabel={`Music bed ${musicLabel ?? ""}`}
                       onSelect={() => onSelect("music", "bed")}
                       dataKind="music"
                       dataId="bed"
-                      title="The song auto-fits your cut — trim clips to change where it ends"
+                      title={soundBedTitle ?? "The song auto-fits your cut"}
                       draggable={false}
                       className="inset-y-0.5 border border-zinc-300/70 bg-zinc-200/70 text-[#52525b]"
                     >
                       <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
                         <span aria-hidden>♫</span>
                         <span className="truncate">
-                          {musicLabel ?? "Music"}
+                          {soundBedLabel ?? musicLabel ?? "Music"}
                         </span>
                       </span>
                     </BarButton>

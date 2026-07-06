@@ -24,6 +24,7 @@ from app.database import get_db
 from app.main import app
 
 REGEN = "app.tasks.generative_build.regenerate_generative_variant"
+REBURN_NARRATED = "app.tasks.generative_build.reburn_narrated_captions"
 
 GRID = [0.0, 0.5, 1.1, 1.6, 2.4, 3.0, 3.8]
 
@@ -142,6 +143,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert prep["has_render_section"] is True
     assert prep["sections"] == {
         "text_elements": True,
+        "caption_cues": False,
         "timeline": True,
         "mix": True,
         "sound_effects": False,
@@ -201,6 +203,48 @@ def test_sequence_text_commit_serializes_saved_elements_not_projection(monkeypat
     assert out["text_elements_user_edited"] is True
     assert [e["text"] for e in out["text_elements"]] == ["QA live text"]
     assert out["text_elements"][0]["id"] == "qa-live"
+
+
+def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[
+            {"text": "Old line", "start_s": 0.0, "end_s": 1.0},
+        ],
+        mix=None,
+    )
+    cues = [
+        {"text": "Updated voice line", "start_s": 0.2, "end_s": 1.4},
+        {"text": "Second cue", "start_s": 1.5, "end_s": 2.2},
+    ]
+
+    prep = gj.prepare_editor_commit(job, "narrated", _commit_req(caption_cues=cues))
+
+    v = job.assembly_plan["variants"][0]
+    assert v["caption_cues"] == cues
+    assert v["render_generation_id"] == prep["generation"]
+    assert v["render_status"] == "rendering"
+    assert prep["sections"] == {
+        "text_elements": False,
+        "caption_cues": True,
+        "timeline": False,
+        "mix": False,
+        "sound_effects": False,
+        "media_overlays": False,
+    }
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        REBURN_NARRATED,
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "narrated", prep)
+    assert calls == [{"args": [str(job.id), "narrated"]}]
 
 
 def test_text_only_commit_rides_overlay_jobs_queue(monkeypatch):
@@ -920,6 +964,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     assert body["ok"] is True
     assert body["sections"] == {
         "text_elements": True,
+        "caption_cues": False,
         "timeline": False,
         "mix": False,
         "sound_effects": False,
@@ -1107,7 +1152,27 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["overlays"] is True
 
 
-def test_capabilities_caption_archetype_text_elements_off(monkeypatch):
+def test_capabilities_narrated_caption_archetype_text_elements_on(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    caps = _caps(job, "narrated")
+    assert caps["text_elements"] is True
+    assert caps["timeline"] is False
+    assert caps["split_clips"] is False
+    assert caps["reason"] == "locked_to_voiceover"
+    assert caps["sfx"] is False
+    assert caps["overlays"] is False
+    assert caps["sfx_reason"] == "caption_archetype"
+    assert caps["overlays_reason"] == "caption_archetype"
+
+
+def test_capabilities_subtitled_caption_archetype_text_elements_off(monkeypatch):
     _arm(monkeypatch)
     job = _job(
         variant_id="subtitled",
@@ -1117,7 +1182,7 @@ def test_capabilities_caption_archetype_text_elements_off(monkeypatch):
     )
     caps = _caps(job, "subtitled")
     assert caps["text_elements"] is False
-    assert caps["reason"] == "captions are edited in the captions tab"
+    assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
     assert caps["sfx"] is False
     assert caps["overlays"] is False
     assert caps["sfx_reason"] == "caption_archetype"

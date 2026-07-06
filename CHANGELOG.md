@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.2.0] — 2026-07-06
+
+### Added
+- **Walkthrough and voiceover videos are first-class in the editor.** Narrated-walkthrough captions appear as editable bars and save through their own caption pipeline; clip operations that would desync your voiceover are locked with a clear reason. Voiceover videos get a voice/music balance slider in the inspector and a properly-labeled Voiceover lane. Subtitled videos link you straight to their Captions editor instead of a dead-end message. Every video type × tool combination now either works or explains itself.
+- **The song plays while you arrange clips.** Rearranging or trimming clips no longer silences the preview — the actual track plays through your edited cut, synced to the transport, exactly as the final render will mix it.
+
+### Fixed
+- **The playhead now aligns with clip strips on rendered videos.** Baked videos join clips with overlapping crossfades; the timeline now accounts for that overlap, so the frame you see always matches the clip under the playhead.
+- **Trimming a clip short no longer fails with TIMELINE_TOO_SHORT.** Song-variant trims snap up to the smallest legal beat length instead of erroring, the trim handles respect the beat grid while you drag, and the error (when truly unavoidable) reads as a plain sentence.
+
 ## [0.7.1.1] — 2026-07-05
 
 ### Fixed

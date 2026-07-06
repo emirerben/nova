@@ -20,6 +20,7 @@
 import {
   NotAuthenticatedError,
   type MediaOverlay,
+  type CaptionCue,
   type SoundEffectPlacement,
   type TextElement,
 } from "@/lib/plan-api";
@@ -47,6 +48,8 @@ export interface EditorCommitMix {
 export interface EditorCommitRequest {
   /** Full replacement text-element list (same shape putTextElements sends). */
   text_elements?: TextElement[];
+  /** Full replacement narrated caption cue list. */
+  caption_cues?: CaptionCue[];
   /** Clip-slot overrides (timeline task). Omit when untouched. */
   timeline_slots?: EditorTimelineSlot[];
   /** Voice/bed mix 0..1 (gutter mutes map onto this). Omit when untouched. */
@@ -72,6 +75,7 @@ export interface EditorCommitResponse {
   /** Per-section persist echo — which sections this commit actually wrote. */
   sections: {
     text_elements?: boolean;
+    caption_cues?: boolean;
     timeline?: boolean;
     mix?: boolean;
     sound_effects?: boolean;
@@ -95,6 +99,8 @@ export interface EditorCommitVariantBaseline {
   editor_capabilities?: {
     mix?: boolean;
   } | null;
+  mix?: number | null;
+  voiceover_bed_level?: number | null;
 }
 
 export function editorCommitBaseGeneration(
@@ -105,10 +111,13 @@ export function editorCommitBaseGeneration(
 
 export function buildEditorCommitRequest({
   elements,
+  captionCues,
   textDirty = true,
+  captionDirty = false,
   timelineDirty,
   slots,
-  soundMuted,
+  mixDirty = false,
+  mixLevel,
   sfxDirty = false,
   soundEffects = [],
   overlaysDirty = false,
@@ -118,10 +127,13 @@ export function buildEditorCommitRequest({
   variant,
 }: {
   elements: TextElement[];
+  captionCues?: CaptionCue[];
   textDirty?: boolean;
+  captionDirty?: boolean;
   timelineDirty: boolean;
   slots: EditorCommitDraftSlot[];
-  soundMuted: boolean;
+  mixDirty?: boolean;
+  mixLevel?: number | null;
   sfxDirty?: boolean;
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
@@ -131,8 +143,11 @@ export function buildEditorCommitRequest({
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
   const mixEditable = variant.editor_capabilities?.mix !== false;
+  const normalizedMix =
+    mixLevel == null ? null : Math.max(0, Math.min(1, Number(mixLevel)));
   return {
     text_elements: textDirty ? elements : undefined,
+    caption_cues: captionDirty ? (captionCues ?? []) : undefined,
     timeline_slots: timelineDirty
       ? slots.map((s) => ({
           slot_id: s.slotId,
@@ -143,7 +158,9 @@ export function buildEditorCommitRequest({
           removed: s.removed,
         }))
       : undefined,
-    mix: soundMuted && mixEditable ? { music_level: 0.0 } : undefined,
+    mix: mixDirty && mixEditable && normalizedMix != null
+      ? { music_level: normalizedMix }
+      : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
@@ -163,6 +180,9 @@ function formatLoc(loc: unknown): string {
 
 function formatDetailValue(detail: unknown, fallback: string): string {
   if (typeof detail === "string") {
+    if (detail === "TIMELINE_TOO_SHORT") {
+      return "That clip would be shorter than the minimum (0.6s).";
+    }
     const match = detail.match(
       /^Text element ([^:]+): field ([^ ]+) has invalid value [\s\S]*: (.+)$/,
     );
@@ -188,7 +208,7 @@ function formatDetailValue(detail: unknown, fallback: string): string {
     if (record.detail !== undefined) {
       return formatDetailValue(record.detail, fallback);
     }
-    if (typeof record.code === "string") return record.code;
+    if (typeof record.code === "string") return formatDetailValue(record.code, fallback);
     if (typeof record.msg === "string") return record.msg;
     try {
       return JSON.stringify(detail);

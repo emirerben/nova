@@ -1,4 +1,8 @@
 import { slotWindows, type DraftSlot, type SlotWindow } from "@/app/generative/timeline-math";
+import {
+  renderedSlotLayout,
+  type RenderedSlotLayout,
+} from "@/lib/timeline/transition-overlap";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 export type BarDragHandle = "left" | "right" | "body";
@@ -67,6 +71,30 @@ export function sequentialSlotLayout(
   return {
     windows,
     totalDurationS: roundTiming(startS),
+    sourceRangeKey: rangeParts.join("|"),
+  };
+}
+
+export function renderedSequentialSlotLayout(
+  slots: DraftSlot[],
+  grid: number[],
+): RenderedSlotLayout & { sourceRangeKey: string } {
+  const layout = renderedSlotLayout(slots, grid);
+  const rangeParts = slots.map((slot, index) => {
+    const win = layout.windows[index];
+    if (!win || slot.removed || win.startS == null || win.durationS <= 0) {
+      return `${slot.key}:removed`;
+    }
+    return [
+      slot.key,
+      roundTiming(slot.inS),
+      roundTiming(win.durationS),
+      slot.durationBeats ?? "s",
+      roundTiming(win.overlapBeforeS),
+    ].join(":");
+  });
+  return {
+    ...layout,
     sourceRangeKey: rangeParts.join("|"),
   };
 }
@@ -253,6 +281,22 @@ export function applyClipSourceWindowDrag({
   };
 }
 
+export function minimumClipDurationForSlot({
+  grid,
+  offsetBeats,
+  baseMinDurationS = CLIP_MIN_DURATION_S,
+}: {
+  grid: number[];
+  offsetBeats: number | null | undefined;
+  baseMinDurationS?: number;
+}): number {
+  if (!grid.length || offsetBeats == null || offsetBeats < 0) return baseMinDurationS;
+  const start = grid[offsetBeats];
+  const next = grid[offsetBeats + 1];
+  if (start == null || next == null) return baseMinDurationS;
+  return roundTiming(Math.max(baseMinDurationS, next - start));
+}
+
 export function applyClipTimingInput({
   inS,
   outS,
@@ -335,15 +379,20 @@ export function outputTimeForSlotBoundary({
   grid,
   key,
   boundary = "start",
+  rendered = false,
 }: {
   slots: DraftSlot[];
   grid: number[];
   key: string;
   boundary?: "start" | "end";
+  rendered?: boolean;
 }): number | null {
   const idx = slots.findIndex((s) => s.key === key);
   if (idx < 0) return null;
-  const win = sequentialSlotLayout(slots, grid).windows[idx];
+  const layout = rendered
+    ? renderedSequentialSlotLayout(slots, grid)
+    : sequentialSlotLayout(slots, grid);
+  const win = layout.windows[idx];
   if (!win || win.startS == null) return null;
   return roundTiming(
     boundary === "end" ? win.startS + win.durationS : win.startS,

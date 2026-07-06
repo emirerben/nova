@@ -2083,6 +2083,7 @@ async def editor_commit_item(
         generation=prep["generation"],
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
+            caption_cues=prep["sections"]["caption_cues"],
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             sound_effects=prep["sections"]["sound_effects"],

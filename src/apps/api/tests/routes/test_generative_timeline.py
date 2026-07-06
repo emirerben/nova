@@ -501,10 +501,30 @@ async def test_edit_no_grid_accepts_half_steps(monkeypatch):
 @pytest.mark.asyncio
 async def test_edit_too_short_floor(monkeypatch):
     # 1 beat from grid start = 0.5s < the 0.6s floor; the slot's window CHANGED
-    # (baseline s1 is 2 beats), so the floor applies.
+    # (baseline s1 is 2 beats), so song variants snap up to the smallest legal
+    # beat count instead of surfacing raw TIMELINE_TOO_SHORT.
+    seq, _, delays = _arm(monkeypatch)
+    job = _timeline_job()
+    job.assembly_plan["variants"][0]["music_track_id"] = "track-1"
+    await gj.dispatch_edit_timeline(
+        job,
+        "song_text",
+        _req([{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 1}]),
+        db=None,
+    )
+    assert seq == ["persist", "enqueue"]
+    override = delays[0][1]["timeline_override"]
+    assert override[0]["duration_beats"] == 2
+    assert override[0]["duration_s"] == pytest.approx(1.1)
+
+
+@pytest.mark.asyncio
+async def test_edit_too_short_floor_when_no_legal_beat_fits_source(monkeypatch):
+    job = _timeline_job(src_dur=0.55)
+    job.assembly_plan["variants"][0]["music_track_id"] = "track-1"
     await _expect_422(
         monkeypatch,
-        _timeline_job(),
+        job,
         [{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_beats": 1}],
         "TIMELINE_TOO_SHORT",
     )

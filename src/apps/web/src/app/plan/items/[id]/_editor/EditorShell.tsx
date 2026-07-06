@@ -34,6 +34,7 @@ import {
   type TextElement,
 } from "@/lib/plan-api";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
+import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import {
   buildEditorCommitRequest,
   commitEditorSession,
@@ -58,7 +59,7 @@ import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
-import { barsToTextElements, seedBarsFromVariant } from "./editor-bars";
+import { barsToCaptionCues, barsToTextElements, seedBarsFromVariant } from "./editor-bars";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
   applyClipTimingInput,
@@ -100,6 +101,20 @@ const NEW_TEXT_DURATION_S = 2.0;
 const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
+
+const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Captions tab";
+
+function editorReasonCopy(reason: string | null | undefined): string {
+  if (!reason) return "This version can't be edited.";
+  if (reason === "voiceover_bed_fit" || reason === "locked_to_voiceover") {
+    return "locked to your voiceover";
+  }
+  if (reason === "lyrics_sync") return "lyrics are synced to the song";
+  if (reason === "no_slot_timeline") return "this edit has no clip timeline";
+  if (reason === "sources_expired") return "the source clips are no longer available";
+  if (reason === "caption_archetype") return CAPTIONS_TAB_REASON;
+  return reason;
+}
 
 function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   if (!deleteKeyAllowed(target)) return false;
@@ -221,6 +236,8 @@ export default function EditorShell({
   const localOverlayPreviewUrlsRef = useRef<Record<string, string>>({});
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
+  const [mixLevel, setMixLevel] = useState<number | null>(null);
+  const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
   const [titleDirty, setTitleDirty] = useState(false);
 
@@ -242,6 +259,15 @@ export default function EditorShell({
     setSfxDirty(false);
     setOverlaysDirty(false);
     setTitleDirty(false);
+    const seededMix =
+      typeof variant.mix === "number"
+        ? variant.mix
+        : typeof variant.voiceover_bed_level === "number"
+          ? variant.voiceover_bed_level
+          : null;
+    setMixLevel(seededMix);
+    setMixDirty(false);
+    setSoundMuted(seededMix === 0);
     setAppliedStyleSetId(null);
   }, [variant]);
 
@@ -284,6 +310,8 @@ export default function EditorShell({
   const [timelineDirty, setTimelineDirty] = useState(false);
   const [sfxGlossaryEffects, setSfxGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [sfxGlossaryLoading, setSfxGlossaryLoading] = useState(false);
+  const [musicTracks, setMusicTracks] = useState<MusicTrackSummary[]>([]);
+  const [musicTracksLoaded, setMusicTracksLoaded] = useState(false);
   const [overlayUploading, setOverlayUploading] = useState(false);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
@@ -356,8 +384,15 @@ export default function EditorShell({
     capabilities.mix === false &&
     capabilities.sfx === false &&
     capabilities.overlays === false;
-  const readOnlyReason =
-    capabilities?.reason ?? "This version can't be edited.";
+  const readOnlyReason = editorReasonCopy(capabilities?.reason);
+  const clipLockedToVoiceover =
+    capabilities?.timeline === false &&
+    (capabilities?.reason === "voiceover_bed_fit" ||
+      capabilities?.reason === "locked_to_voiceover" ||
+      variant?.resolved_archetype === "narrated");
+  const clipDisabledReason = clipLockedToVoiceover
+    ? "locked to your voiceover"
+    : editorReasonCopy(capabilities?.reason);
 
   // ── Unified undo/redo (plan §7, task T8) ────────────────────────────────────
   const getCurrent = useCallback(
@@ -368,9 +403,21 @@ export default function EditorShell({
       overlays: localOverlays,
       videoMuted,
       soundMuted,
+      mixLevel,
+      mixDirty,
       title,
     }),
-    [state.bars, localSlots, localSfx, localOverlays, videoMuted, soundMuted, title],
+    [
+      state.bars,
+      localSlots,
+      localSfx,
+      localOverlays,
+      videoMuted,
+      soundMuted,
+      mixLevel,
+      mixDirty,
+      title,
+    ],
   );
 
   const applyDocument = useCallback(
@@ -382,6 +429,8 @@ export default function EditorShell({
       setLocalOverlays(doc.overlays ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
+      setMixLevel(doc.mixLevel ?? null);
+      setMixDirty(doc.mixDirty ?? false);
       setTitle(doc.title);
       setTextDirty(true);
       setSfxDirty(true);
@@ -498,6 +547,11 @@ export default function EditorShell({
 
   const virtualPreviewRequested =
     clipDirty && !virtualFallback && clip.loadState === "ready";
+  const virtualMusicTrack = variant?.music_track_id
+    ? musicTracks.find((track) => track.id === variant.music_track_id) ?? null
+    : null;
+  const virtualMusicAudioUrl = virtualMusicTrack?.preview_audio_url ?? null;
+  const virtualMusicStartS = virtualMusicTrack?.preview_start_s ?? 0;
   const virtualPreview = useVirtualPreview({
     enabled: virtualPreviewRequested,
     slots,
@@ -505,6 +559,9 @@ export default function EditorShell({
     grid: clip.state.grid,
     currentTime,
     muted: videoMuted,
+    musicAudioUrl: virtualMusicAudioUrl,
+    musicStartS: virtualMusicStartS,
+    soundMuted,
     onTimeUpdate: setCurrentTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
@@ -633,6 +690,24 @@ export default function EditorShell({
   }, [activeTool, sfxGlossaryEffects.length]);
 
   useEffect(() => {
+    if (!variant?.music_track_id || musicTracksLoaded) return;
+    let cancelled = false;
+    void getMusicTracks()
+      .then((res) => {
+        if (!cancelled) setMusicTracks(res.tracks);
+      })
+      .catch(() => {
+        if (!cancelled) setMusicTracks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMusicTracksLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [musicTracksLoaded, variant?.music_track_id]);
+
+  useEffect(() => {
     if (localSfx.length === 0 || sfxGlossaryEffects.length === 0) return;
     setLocalSfxAudioUrls((current) => {
       const next = { ...current };
@@ -684,6 +759,7 @@ export default function EditorShell({
           grid: clip.state.grid,
           key: id,
           boundary: "start",
+          rendered: !virtualPreviewActive,
         });
         if (startS != null) {
           seekPlaybackTo(startS);
@@ -698,7 +774,7 @@ export default function EditorShell({
         if (overlay) seekPlaybackTo(overlay.start_s);
       }
     },
-    [clip.state.grid, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots],
+    [clip.state.grid, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -747,18 +823,18 @@ export default function EditorShell({
       key: string,
       patch: Pick<DraftSlot, "inS" | "durationS" | "durationBeats">,
     ) => {
-      if (readOnly) return;
+      if (readOnly || clipLockedToVoiceover) return;
       setLocalSlots((cur) =>
         (cur ?? slots).map((s) => (s.key === key ? { ...s, ...patch } : s)),
       );
       setTimelineDirty(true);
     },
-    [readOnly, slots],
+    [clipLockedToVoiceover, readOnly, slots],
   );
 
   const patchSelectedClipTiming = useCallback(
     (patch: { inS?: number; outS?: number; durationS?: number }) => {
-      if (!selectedClip || readOnly) return;
+      if (!selectedClip || readOnly || clipLockedToVoiceover) return;
       const current = selectedClip.slot;
       const currentDuration = selectedClip.durationS;
       const next = applyClipTimingInput({
@@ -779,12 +855,12 @@ export default function EditorShell({
       history.record();
       previewClipTiming(current.key, next);
     },
-    [history, previewClipTiming, readOnly, selectedClip],
+    [clipLockedToVoiceover, history, previewClipTiming, readOnly, selectedClip],
   );
 
   const previewSelectedClipTiming = useCallback(
     (patch: { inS: number; durationS: number }) => {
-      if (!selectedClip || readOnly) return;
+      if (!selectedClip || readOnly || clipLockedToVoiceover) return;
       previewClipTiming(selectedClip.slot.key, {
         inS: patch.inS,
         durationS: patch.durationS,
@@ -800,7 +876,15 @@ export default function EditorShell({
         seekPlaybackTo(boundaryS);
       }
     },
-    [previewClipTiming, readOnly, seekPlaybackTo, selectedClip, slotLayout.windows, slots],
+    [
+      clipLockedToVoiceover,
+      previewClipTiming,
+      readOnly,
+      seekPlaybackTo,
+      selectedClip,
+      slotLayout.windows,
+      slots,
+    ],
   );
 
   const seekPreviewToOutput = useCallback(
@@ -915,6 +999,18 @@ export default function EditorShell({
       clear();
     },
     [capabilities?.overlays, clear, history, readOnly],
+  );
+
+  const patchMixLevel = useCallback(
+    (level: number) => {
+      if (readOnly || capabilities?.mix === false) return;
+      const next = Math.max(0, Math.min(1, level));
+      history.record("mix");
+      setMixLevel(next);
+      setSoundMuted(next === 0);
+      setMixDirty(true);
+    },
+    [capabilities?.mix, history, readOnly],
   );
 
   const handleOverlayUpload = useCallback(
@@ -1096,10 +1192,14 @@ export default function EditorShell({
       out.styles = readOnlyReason;
     }
     if (capabilities?.sfx === false) {
-      out.sounds = capabilities.sfx_reason ?? "Sound effects are not available";
+      out.sounds = editorReasonCopy(
+        capabilities.sfx_reason ?? "Sound effects are not available",
+      );
     }
     if (capabilities?.overlays === false) {
-      out.overlays = capabilities.overlays_reason ?? "Media overlays are not available";
+      out.overlays = editorReasonCopy(
+        capabilities.overlays_reason ?? "Media overlays are not available",
+      );
     }
     return out;
   }, [capabilities, readOnly, readOnlyReason]);
@@ -1111,7 +1211,7 @@ export default function EditorShell({
       setTextDirty(true);
       dispatch({ type: "DELETE_BAR", id: selection.id });
       clear();
-    } else if (selection.kind === "clip") {
+    } else if (selection.kind === "clip" && !clipLockedToVoiceover) {
       const res = deleteSlotEnforceFloor(slots, selection.id);
       if (res.didDelete) {
         history.record();
@@ -1126,7 +1226,16 @@ export default function EditorShell({
     } else if (selection.kind === "overlay") {
       removeOverlay(selection.id);
     }
-  }, [selection, clear, slots, readOnly, history, removeSfx, removeOverlay]);
+  }, [
+    clipLockedToVoiceover,
+    selection,
+    clear,
+    slots,
+    readOnly,
+    history,
+    removeSfx,
+    removeOverlay,
+  ]);
 
   const splitAtPlayhead = useCallback(() => {
     if (!selection || readOnly) return;
@@ -1209,16 +1318,18 @@ export default function EditorShell({
   // Transport enablement (plan §6).
   const canSplit =
     selection?.kind === "text" ||
-    (selection?.kind === "clip" && splitClipsAllowed);
+    (selection?.kind === "clip" && splitClipsAllowed && !clipLockedToVoiceover);
   const splitReason =
     selection?.kind === "music"
       ? "Music fits the cut automatically"
+      : selection?.kind === "clip" && clipLockedToVoiceover
+        ? "locked to your voiceover"
       : selection?.kind === "clip" && !splitClipsAllowed
         ? "This variant's clips can't be split"
         : undefined;
   const canDelete =
     selection?.kind === "text" ||
-    (selection?.kind === "clip" && activeSlotCount(slots) > 1) ||
+    (selection?.kind === "clip" && !clipLockedToVoiceover && activeSlotCount(slots) > 1) ||
     selection?.kind === "sfx" ||
     selection?.kind === "overlay";
 
@@ -1311,12 +1422,16 @@ export default function EditorShell({
     setSaveState("saving");
     setSaveMessage(null);
     try {
+      const captionCues = barsToCaptionCues(state.bars);
       const commitRequest = buildEditorCommitRequest({
         elements: barsToTextElements(state.bars, originalsRef.current),
-        textDirty,
+        captionCues,
+        textDirty: textDirty && captionCues.length === 0,
+        captionDirty: textDirty && captionCues.length > 0,
         timelineDirty,
         slots,
-        soundMuted,
+        mixDirty,
+        mixLevel,
         sfxDirty,
         soundEffects: localSfx,
         overlaysDirty,
@@ -1345,6 +1460,7 @@ export default function EditorShell({
       setSfxDirty(false);
       setOverlaysDirty(false);
       setTitleDirty(false);
+      setMixDirty(false);
       setSaveState("idle");
       const renderStarted = editorCommitStartedRender(res.sections);
       setSaveMessage(renderStarted ? "Saved — rendering your latest version" : "Saved");
@@ -1377,7 +1493,8 @@ export default function EditorShell({
     router,
     timelineDirty,
     slots,
-    soundMuted,
+    mixDirty,
+    mixLevel,
     textDirty,
     sfxDirty,
     localSfx,
@@ -1410,6 +1527,8 @@ export default function EditorShell({
     localOverlays,
     videoMuted,
     soundMuted,
+    mixLevel,
+    mixDirty,
     title,
     getCurrent,
   ]);
@@ -1518,6 +1637,24 @@ export default function EditorShell({
     );
   }
 
+  const isVoiceoverVariant = variant.variant_id.startsWith("voiceover");
+  const hasSoundBed = !!variant.music_track_id || isVoiceoverVariant || mixLevel != null;
+  const soundBedLabel = isVoiceoverVariant
+    ? variant.music_track_id
+      ? `Voiceover + ${variant.track_title ?? "music"}`
+      : "Voiceover"
+    : (variant.track_title ?? "Music");
+  const soundLaneTitle = isVoiceoverVariant ? "Voiceover bed" : "Music + effects";
+  const hasUnbakedSfx = sfxDirty || localSfx.length > 0;
+  const clipPreviewHint = (() => {
+    if (!virtualPreviewActive) return "Clip changes preview after Save";
+    const missing: string[] = [];
+    if (variant.music_track_id && !virtualMusicAudioUrl) missing.push("Music");
+    missing.push(missing.length > 0 ? "transitions" : "Transitions");
+    if (hasUnbakedSfx) missing.push("sound effects");
+    return `${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} preview after Save`;
+  })();
+
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
     currentTimeS: currentTime,
@@ -1534,10 +1671,13 @@ export default function EditorShell({
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
     slots,
+    clipReadOnly: clipLockedToVoiceover,
+    clipDisabledReason,
     clipSourceDurations,
     onPreviewClipTiming: previewClipTiming,
     onPreviewSeek: seekPreviewToOutput,
     grid: clip.state.grid,
+    clipPreviewMode: virtualPreviewActive ? "virtual" : "rendered",
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
     sfx: localSfx.map((p) => {
@@ -1554,8 +1694,13 @@ export default function EditorShell({
       };
     }),
     onPreviewSfxTiming: previewSfxTiming,
-    hasMusic: !!variant.music_track_id,
+    hasMusic: hasSoundBed,
     musicLabel: variant.track_title ?? "Music",
+    soundLaneTitle,
+    soundBedLabel,
+    soundBedTitle: isVoiceoverVariant
+      ? "Balance this bed against your voiceover in the inspector"
+      : "The song auto-fits your cut",
     videoMuted,
     onToggleVideoMute: () => {
       if (readOnly) return;
@@ -1565,9 +1710,13 @@ export default function EditorShell({
     soundMuted,
     onToggleSoundMute: () => {
       if (readOnly) return;
-      history.record();
-      setSoundMuted((m) => !m);
-      setTimelineDirty(true);
+      const nextMuted = !soundMuted;
+      if (capabilities?.mix !== false && mixLevel != null) {
+        patchMixLevel(nextMuted ? 0 : Math.max(mixLevel, variant.mix ?? 0.2));
+      } else {
+        history.record();
+        setSoundMuted(nextMuted);
+      }
     },
     overlays: localOverlays.map((o) => ({
       id: o.id,
@@ -1884,6 +2033,10 @@ export default function EditorShell({
 	          onPreviewOverlay={previewOverlayPatch}
 	          onRecordOverlay={recordTimelineDrag}
 	          onDeleteOverlay={removeOverlay}
+          mixLevel={mixLevel}
+          mixEditable={capabilities?.mix !== false && mixLevel != null}
+          mixLabel={soundBedLabel}
+          onPatchMix={patchMixLevel}
 	          onClose={clear}
           onPickPreset={pickPreset}
         />
@@ -1928,6 +2081,7 @@ export default function EditorShell({
           }}
           clipTimingDirty={clipDirty}
           clipPreviewMode={virtualPreviewActive ? "virtual" : "rendered"}
+          clipPreviewHint={clipPreviewHint}
         />
         <div className="min-h-0 flex-1">
           <UnifiedTimeline
@@ -1995,9 +2149,20 @@ export default function EditorShell({
 
       {/* ── Read-only banner (ineligible variant, plan §9 / E4) ── */}
       {readOnly && (
-        <div className="pointer-events-none absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
+        <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div className="rounded-lg border border-zinc-200 bg-white/95 px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm">
             This version can&apos;t be edited. {readOnlyReason}
+            {readOnlyReason === CAPTIONS_TAB_REASON && (
+              <>
+                {" "}
+                <a
+                  href={`/plan/items/${itemId}`}
+                  className="font-semibold underline decoration-zinc-300 underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  Open the item page Captions tab
+                </a>
+              </>
+            )}
           </div>
         </div>
       )}
