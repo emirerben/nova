@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
   buildVirtualTimeline,
+  mapVirtualTimeToMusicTime,
   mapVirtualTime,
   slotsDifferFromBaseline,
 } from "@/app/plan/items/[id]/_editor/virtual-timeline";
@@ -47,6 +48,11 @@ describe("virtual timeline", () => {
       localOffsetS: 1,
       sourceTimeS: 11,
     });
+  });
+
+  it("maps virtual time onto the selected song section", () => {
+    expect(mapVirtualTimeToMusicTime(2.25, 14.5)).toBe(16.75);
+    expect(mapVirtualTimeToMusicTime(-2, 14.5)).toBe(14.5);
   });
 
   it("uses the next slot at an exact boundary", () => {

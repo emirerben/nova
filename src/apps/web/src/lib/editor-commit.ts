@@ -180,6 +180,9 @@ function formatLoc(loc: unknown): string {
 
 function formatDetailValue(detail: unknown, fallback: string): string {
   if (typeof detail === "string") {
+    if (detail === "TIMELINE_TOO_SHORT") {
+      return "That clip would be shorter than the minimum (0.6s).";
+    }
     const match = detail.match(
       /^Text element ([^:]+): field ([^ ]+) has invalid value [\s\S]*: (.+)$/,
     );
@@ -205,7 +208,7 @@ function formatDetailValue(detail: unknown, fallback: string): string {
     if (record.detail !== undefined) {
       return formatDetailValue(record.detail, fallback);
     }
-    if (typeof record.code === "string") return record.code;
+    if (typeof record.code === "string") return formatDetailValue(record.code, fallback);
     if (typeof record.msg === "string") return record.msg;
     try {
       return JSON.stringify(detail);

@@ -5,6 +5,7 @@ import type { TimelineClip } from "@/lib/generative-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import {
   buildVirtualTimeline,
+  mapVirtualTimeToMusicTime,
   mapVirtualTime,
   nextVirtualEntry,
   type VirtualTimeline,
@@ -25,6 +26,9 @@ export interface UseVirtualPreviewOptions {
   grid: number[];
   currentTime: number;
   muted: boolean;
+  musicAudioUrl?: string | null;
+  musicStartS?: number;
+  soundMuted?: boolean;
   onTimeUpdate: (timeS: number) => void;
   onDuration: (durationS: number) => void;
   onPlayingChange: (playing: boolean) => void;
@@ -50,12 +54,22 @@ export interface VirtualPreviewVideoProps {
   onError: () => void;
 }
 
+export interface VirtualPreviewAudioProps {
+  ref: RefObject<HTMLAudioElement>;
+  src: string;
+  muted: boolean;
+  preload: "auto";
+  "data-virtual-preview-music": true;
+  onError: () => void;
+}
+
 export interface VirtualPreviewController {
   timeline: VirtualTimeline;
   activeDeck: Deck;
   buffering: boolean;
   videoAProps: VirtualPreviewVideoProps;
   videoBProps: VirtualPreviewVideoProps;
+  musicAudioProps: VirtualPreviewAudioProps | null;
   play: () => void;
   pause: () => void;
   toggle: () => void;
@@ -66,7 +80,7 @@ function otherDeck(deck: Deck): Deck {
   return deck === "a" ? "b" : "a";
 }
 
-function safeSetCurrentTime(video: HTMLVideoElement, timeS: number) {
+function safeSetCurrentTime(video: HTMLMediaElement, timeS: number) {
   try {
     video.currentTime = Math.max(0, timeS);
   } catch {
@@ -82,6 +96,9 @@ export function useVirtualPreview({
   grid,
   currentTime,
   muted,
+  musicAudioUrl,
+  musicStartS = 0,
+  soundMuted = false,
   onTimeUpdate,
   onDuration,
   onPlayingChange,
@@ -94,6 +111,7 @@ export function useVirtualPreview({
 
   const videoARef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
   const videoBRef = useRef<HTMLVideoElement>(null) as RefObject<HTMLVideoElement>;
+  const musicAudioRef = useRef<HTMLAudioElement>(null) as RefObject<HTMLAudioElement>;
   const [activeDeck, setActiveDeck] = useState<Deck>("a");
   const [buffering, setBuffering] = useState(false);
 
@@ -101,12 +119,18 @@ export function useVirtualPreview({
   const currentTimeRef = useRef(currentTime);
   const timelineRef = useRef(timeline);
   const enabledRef = useRef(enabled);
+  const musicAudioUrlRef = useRef(musicAudioUrl ?? null);
+  const musicStartSRef = useRef(musicStartS);
+  const soundMutedRef = useRef(soundMuted);
   const deckSlotRef = useRef<Record<Deck, number | null>>({ a: null, b: null });
   const pendingSeekRef = useRef<Record<Deck, PendingSeek | null>>({ a: null, b: null });
 
   currentTimeRef.current = currentTime;
   timelineRef.current = timeline;
   enabledRef.current = enabled;
+  musicAudioUrlRef.current = musicAudioUrl ?? null;
+  musicStartSRef.current = musicStartS;
+  soundMutedRef.current = soundMuted;
 
   useEffect(() => {
     onDuration(enabled ? timeline.totalDurationS : 0);
@@ -117,6 +141,11 @@ export function useVirtualPreview({
       if (video) video.muted = muted;
     }
   }, [muted]);
+
+  useEffect(() => {
+    const audio = musicAudioRef.current;
+    if (audio) audio.muted = soundMuted;
+  }, [soundMuted]);
 
   const refForDeck = useCallback((deck: Deck) => {
     return deck === "a" ? videoARef : videoBRef;
@@ -156,6 +185,22 @@ export function useVirtualPreview({
     [loadDeck],
   );
 
+  const syncMusicToVirtualTime = useCallback((virtualTimeS: number, play: boolean) => {
+    const audio = musicAudioRef.current;
+    if (!audio || !musicAudioUrlRef.current) return;
+    const musicTimeS = mapVirtualTimeToMusicTime(virtualTimeS, musicStartSRef.current);
+    if (Math.abs(audio.currentTime - musicTimeS) > 0.08) {
+      safeSetCurrentTime(audio, musicTimeS);
+    }
+    if (play) {
+      void audio.play().catch(() => {
+        /* Video playback can continue silently when the browser blocks audio. */
+      });
+    } else {
+      audio.pause();
+    }
+  }, []);
+
   const showMapping = useCallback(
     (timeS: number, play: boolean) => {
       const mapping = mapVirtualTime(timelineRef.current, timeS);
@@ -167,14 +212,16 @@ export function useVirtualPreview({
       const deck = activeDeckRef.current;
       loadDeck(deck, mapping.entry, mapping.sourceTimeS, play);
       preloadNext(otherDeck(deck), mapping.entryIndex);
+      syncMusicToVirtualTime(mapping.virtualTimeS, play);
       onTimeUpdate(mapping.virtualTimeS);
     },
-    [loadDeck, onSourceError, onTimeUpdate, preloadNext],
+    [loadDeck, onSourceError, onTimeUpdate, preloadNext, syncMusicToVirtualTime],
   );
 
   const pause = useCallback(() => {
     videoARef.current?.pause();
     videoBRef.current?.pause();
+    musicAudioRef.current?.pause();
     onPlayingChange(false);
   }, [onPlayingChange]);
 
@@ -219,6 +266,7 @@ export function useVirtualPreview({
       activeDeckRef.current = nextDeck;
       setActiveDeck(nextDeck);
       preloadNext(prevDeck, entryIndex + 1);
+      syncMusicToVirtualTime(next.startS, true);
       onTimeUpdate(next.startS);
 
       if (nextVideo) {
@@ -228,7 +276,7 @@ export function useVirtualPreview({
         });
       }
     },
-    [loadDeck, onPlayingChange, onTimeUpdate, pause, preloadNext, refForDeck],
+    [loadDeck, onPlayingChange, onTimeUpdate, pause, preloadNext, refForDeck, syncMusicToVirtualTime],
   );
 
   const handleLoadedMetadata = useCallback(
@@ -265,6 +313,13 @@ export function useVirtualPreview({
         entry.startS,
         Math.min(entry.startS + entry.durationS, entry.startS + localOffsetS),
       );
+      const audio = musicAudioRef.current;
+      if (audio && musicAudioUrlRef.current && !audio.paused) {
+        const target = mapVirtualTimeToMusicTime(virtualTimeS, musicStartSRef.current);
+        if (Math.abs(audio.currentTime - target) > 0.25) {
+          safeSetCurrentTime(audio, target);
+        }
+      }
       onTimeUpdate(virtualTimeS);
 
       if (localOffsetS >= entry.durationS - 0.05) {
@@ -295,6 +350,19 @@ export function useVirtualPreview({
     }
     showMapping(currentTimeRef.current, false);
   }, [enabled, onSourceError, pause, showMapping, timeline]);
+
+  const musicAudioProps: VirtualPreviewAudioProps | null = musicAudioUrl
+    ? {
+        ref: musicAudioRef,
+        src: musicAudioUrl,
+        muted: soundMuted,
+        preload: "auto",
+        "data-virtual-preview-music": true,
+        onError: () => {
+          musicAudioRef.current?.pause();
+        },
+      }
+    : null;
 
   function videoProps(deck: Deck): VirtualPreviewVideoProps {
     return {
@@ -330,6 +398,7 @@ export function useVirtualPreview({
     buffering,
     videoAProps: videoProps("a"),
     videoBProps: videoProps("b"),
+    musicAudioProps,
     play,
     pause,
     toggle,

@@ -27,6 +27,13 @@ export interface VirtualTimeMapping {
   sourceTimeS: number;
 }
 
+export function mapVirtualTimeToMusicTime(
+  virtualTimeS: number,
+  sectionStartS: number,
+): number {
+  return Math.max(0, sectionStartS) + Math.max(0, virtualTimeS);
+}
+
 function durationForSlot(slot: DraftSlot, grid: number[], offsetBeats: number): number {
   if (slot.removed) return 0;
   if (grid.length > 0 && slot.durationBeats != null) {

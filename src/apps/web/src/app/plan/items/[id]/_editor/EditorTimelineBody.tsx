@@ -56,6 +56,8 @@ import {
   applySfxBarDrag,
   applyTextBarDrag,
   effectiveBarEdgeHitPx,
+  minimumClipDurationForSlot,
+  renderedSequentialSlotLayout,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
   sequentialSlotLayout,
@@ -114,6 +116,7 @@ export interface EditorTimelineBodyProps {
   ) => void;
   onPreviewSeek?: (seconds: number) => void;
   grid: number[];
+  clipPreviewMode?: "rendered" | "virtual";
   clipsLoading: boolean;
   filmstripClips: Pick<
     TimelineClip,
@@ -164,6 +167,7 @@ type ActiveDrag =
       pxPerSecond: number;
       origin: Pick<DraftSlot, "inS" | "durationS">;
       sourceDurationS: number | null;
+      minDurationS: number;
       active: boolean;
     }
   | {
@@ -207,6 +211,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onPreviewClipTiming,
     onPreviewSeek,
     grid,
+    clipPreviewMode = "rendered",
     clipsLoading,
     filmstripClips,
     sfx,
@@ -254,17 +259,25 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     return () => ro.disconnect();
   }, []);
 
+  const baseSlotLayout = sequentialSlotLayout(slots, grid);
+  const slotLayout =
+    clipPreviewMode === "rendered"
+      ? renderedSequentialSlotLayout(slots, grid)
+      : baseSlotLayout;
+  const effectiveDurationS =
+    slotLayout.totalDurationS > 0 ? slotLayout.totalDurationS : durationS;
+
   const trackViewportW = Math.max(0, viewportW);
-  const liveFitPps = fitPxPerSecond(trackViewportW, durationS);
+  const liveFitPps = fitPxPerSecond(trackViewportW, effectiveDurationS);
   const { fitPxPerSecond: fitPps, pxPerSecond: pps } =
     resolveEditorTimelineScale({
       viewportWidth: trackViewportW,
-      durationS,
+      durationS: effectiveDurationS,
       zoom,
       frozenFitPxPerSecond: frozenFitPps,
     });
-  const trackW = Math.max(trackViewportW, scaledTrackWidth(durationS, pps));
-  const videoEndPx = secondsToPx(durationS, pps);
+  const trackW = Math.max(trackViewportW, scaledTrackWidth(effectiveDurationS, pps));
+  const videoEndPx = secondsToPx(effectiveDurationS, pps);
   const showEndMarker = videoEndPx > 0 && videoEndPx < trackW - 1;
 
   useEffect(() => {
@@ -272,7 +285,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   }, [fitPps, onReportFit]);
 
   useLayoutEffect(() => {
-    if (trackViewportW <= 0 || durationS <= 0) return;
+    if (trackViewportW <= 0 || effectiveDurationS <= 0) return;
     const resetRequested = lastScaleResetKeyRef.current !== scaleResetKey;
     const fitRequested = lastFitRequestKeyRef.current !== fitRequestKey;
 
@@ -283,7 +296,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       setFrozenFitPps(liveFitPps);
     }
   }, [
-    durationS,
+    effectiveDurationS,
     fitRequestKey,
     frozenFitPps,
     liveFitPps,
@@ -304,16 +317,18 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       viewportWidth: el.clientWidth,
       previousPxPerSecond: previous.pps,
       nextPxPerSecond: pps,
-      durationS,
+      durationS: effectiveDurationS,
       currentTimeS,
     });
     previousScaleRef.current = { pps, trackW };
-  }, [currentTimeS, durationS, pps, trackW, viewportW]);
+  }, [currentTimeS, effectiveDurationS, pps, trackW, viewportW]);
 
   const playheadPx = secondsToPx(currentTimeS, pps);
-  const slotLayout = sequentialSlotLayout(slots, grid);
   const windows = slotLayout.windows;
-  const filmstripLayout = sequentialSlotLayout(filmstripSlots, grid);
+  const filmstripLayout =
+    clipPreviewMode === "rendered"
+      ? renderedSequentialSlotLayout(filmstripSlots, grid)
+      : sequentialSlotLayout(filmstripSlots, grid);
   const filmstripSourceByIndex = new Map(
     filmstripClips.map((clip) => [clip.clip_index, clip]),
   );
@@ -359,7 +374,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     ]),
   );
   const tickInterval = tickIntervalForScale(pps);
-  const ticks = rulerTicks(durationS, pps);
+  const ticks = rulerTicks(effectiveDurationS, pps);
   const textLane = deriveTextLaneRows(textBars);
   const sfxLane = deriveLaneRows(sfx, {
     baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
@@ -387,7 +402,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   function scrubToClientX(clientX: number, trackEl: HTMLElement) {
     const rect = trackEl.getBoundingClientRect();
     const localX = clientX - rect.left;
-    const sec = Math.max(0, Math.min(durationS, pxToSeconds(localX, pps)));
+    const sec = Math.max(0, Math.min(effectiveDurationS, pxToSeconds(localX, pps)));
     onScrub(sec);
   }
   function onRulerPointerDown(e: React.PointerEvent<HTMLDivElement>) {
@@ -443,7 +458,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         bar: active.origin,
         handle: active.handle,
         deltaS,
-        videoDurationS: durationS,
+        videoDurationS: effectiveDurationS,
       });
       onPreviewTextTiming?.(active.id, next);
       setDragLabel({
@@ -457,6 +472,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         handle: active.handle,
         deltaS,
         sourceDurationS: active.sourceDurationS,
+        minDurationS: active.minDurationS,
       });
       onPreviewClipTiming?.(active.id, next);
       const idx = slots.findIndex((slot) => slot.key === active.id);
@@ -479,7 +495,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
         bar: active.origin,
         handle: active.handle,
         deltaS,
-        videoDurationS: durationS,
+        videoDurationS: effectiveDurationS,
       });
       onPreviewSfxTiming?.(active.id, next);
       setDragLabel({
@@ -492,7 +508,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       const minDuration = 0.3;
       let next = active.origin;
       if (active.handle === "body") {
-        const maxStart = Math.max(0, durationS - duration);
+        const maxStart = Math.max(0, effectiveDurationS - duration);
         const start_s = Math.max(0, Math.min(maxStart, active.origin.start_s + deltaS));
         next = {
           start_s: Math.round(start_s * 10) / 10,
@@ -505,7 +521,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           end_s: active.origin.end_s,
         };
       } else {
-        const end_s = Math.min(durationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
+        const end_s = Math.min(effectiveDurationS, Math.max(active.origin.start_s + minDuration, active.origin.end_s + deltaS));
         next = {
           start_s: active.origin.start_s,
           end_s: Math.round(end_s * 10) / 10,
@@ -556,6 +572,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     const slotIndex = slots.findIndex((s) => s.key === slot.key);
     const effectiveDurationS =
       slot.durationS ?? windows[slotIndex]?.durationS ?? 0.6;
+    const minDurationS = minimumClipDurationForSlot({
+      grid,
+      offsetBeats: windows[slotIndex]?.offsetBeats,
+    });
     dragRef.current = {
       kind: "clip",
       id: slot.key,
@@ -564,6 +584,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
       pxPerSecond: pps,
       origin: { inS: slot.inS, durationS: effectiveDurationS },
       sourceDurationS: clipSourceDurations?.[slot.key] ?? null,
+      minDurationS,
       active: false,
     };
   }
@@ -1001,7 +1022,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                   {hasMusic ? (
                     <BarButton
                       left={0}
-                      width={secondsToPx(durationS, pps)}
+                      width={secondsToPx(effectiveDurationS, pps)}
                       selected={isSel("music", "bed")}
                       ringCls={ringCls}
                       ariaLabel={`Music bed ${musicLabel ?? ""}`}

@@ -8,7 +8,9 @@ import {
   applyTextBarDrag,
   applyTextTimingInput,
   effectiveBarEdgeHitPx,
+  minimumClipDurationForSlot,
   outputTimeForSlotBoundary,
+  renderedSequentialSlotLayout,
   resolveBarDragHandle,
   secondsDeltaFromTimelineX,
   sequentialSlotLayout,
@@ -210,6 +212,12 @@ describe("editor bar drag math", () => {
     ).toEqual({ inS: 2, durationS: 0.6, durationBeats: null });
   });
 
+  it("raises the clip trim floor to one beat on song grids", () => {
+    const grid = [0, 0.8, 1.1];
+    expect(minimumClipDurationForSlot({ grid, offsetBeats: 0 })).toBe(0.8);
+    expect(minimumClipDurationForSlot({ grid, offsetBeats: 1 })).toBe(0.6);
+  });
+
   it("moves SFX starts while keeping duration inside the video", () => {
     expect(
       applySfxMove({
@@ -260,6 +268,20 @@ describe("sequentialSlotLayout", () => {
     expect(after.totalDurationS).toBe(6.5);
   });
 
+  it("can lay out rendered mode with overlapping transition boundaries", () => {
+    const layout = renderedSequentialSlotLayout(
+      [
+        slot({ key: "a", slotId: "a", durationS: 4 }),
+        slot({ key: "b", slotId: "b", durationS: 3 }),
+        slot({ key: "c", slotId: "c", durationS: 2 }),
+      ],
+      [],
+    );
+
+    expect(layout.windows.map((w) => w.startS)).toEqual([0, 3.7, 6.4]);
+    expect(layout.totalDurationS).toBe(8.4);
+  });
+
   it("skips removed slots when computing downstream positions", () => {
     const layout = sequentialSlotLayout(
       [
@@ -291,6 +313,24 @@ describe("sequentialSlotLayout", () => {
     expect(
       outputTimeForSlotBoundary({ slots, grid: [], key: "b", boundary: "start" }),
     ).toBeNull();
+  });
+
+  it("maps slot output offsets in rendered mode with transition overlap", () => {
+    const slots = [
+      slot({ key: "a", slotId: "a", durationS: 4 }),
+      slot({ key: "b", slotId: "b", durationS: 3 }),
+      slot({ key: "c", slotId: "c", durationS: 2 }),
+    ];
+
+    expect(
+      outputTimeForSlotBoundary({
+        slots,
+        grid: [],
+        key: "c",
+        boundary: "start",
+        rendered: true,
+      }),
+    ).toBe(6.4);
   });
 
   it("ripples a split slot by cumulative seconds", () => {

@@ -34,6 +34,7 @@ import {
   type TextElement,
 } from "@/lib/plan-api";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
+import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import {
   buildEditorCommitRequest,
   commitEditorSession,
@@ -309,6 +310,8 @@ export default function EditorShell({
   const [timelineDirty, setTimelineDirty] = useState(false);
   const [sfxGlossaryEffects, setSfxGlossaryEffects] = useState<SoundEffectSummary[]>([]);
   const [sfxGlossaryLoading, setSfxGlossaryLoading] = useState(false);
+  const [musicTracks, setMusicTracks] = useState<MusicTrackSummary[]>([]);
+  const [musicTracksLoaded, setMusicTracksLoaded] = useState(false);
   const [overlayUploading, setOverlayUploading] = useState(false);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
@@ -544,6 +547,11 @@ export default function EditorShell({
 
   const virtualPreviewRequested =
     clipDirty && !virtualFallback && clip.loadState === "ready";
+  const virtualMusicTrack = variant?.music_track_id
+    ? musicTracks.find((track) => track.id === variant.music_track_id) ?? null
+    : null;
+  const virtualMusicAudioUrl = virtualMusicTrack?.preview_audio_url ?? null;
+  const virtualMusicStartS = virtualMusicTrack?.preview_start_s ?? 0;
   const virtualPreview = useVirtualPreview({
     enabled: virtualPreviewRequested,
     slots,
@@ -551,6 +559,9 @@ export default function EditorShell({
     grid: clip.state.grid,
     currentTime,
     muted: videoMuted,
+    musicAudioUrl: virtualMusicAudioUrl,
+    musicStartS: virtualMusicStartS,
+    soundMuted,
     onTimeUpdate: setCurrentTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
@@ -679,6 +690,24 @@ export default function EditorShell({
   }, [activeTool, sfxGlossaryEffects.length]);
 
   useEffect(() => {
+    if (!variant?.music_track_id || musicTracksLoaded) return;
+    let cancelled = false;
+    void getMusicTracks()
+      .then((res) => {
+        if (!cancelled) setMusicTracks(res.tracks);
+      })
+      .catch(() => {
+        if (!cancelled) setMusicTracks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setMusicTracksLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [musicTracksLoaded, variant?.music_track_id]);
+
+  useEffect(() => {
     if (localSfx.length === 0 || sfxGlossaryEffects.length === 0) return;
     setLocalSfxAudioUrls((current) => {
       const next = { ...current };
@@ -730,6 +759,7 @@ export default function EditorShell({
           grid: clip.state.grid,
           key: id,
           boundary: "start",
+          rendered: !virtualPreviewActive,
         });
         if (startS != null) {
           seekPlaybackTo(startS);
@@ -744,7 +774,7 @@ export default function EditorShell({
         if (overlay) seekPlaybackTo(overlay.start_s);
       }
     },
-    [clip.state.grid, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots],
+    [clip.state.grid, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -1615,6 +1645,15 @@ export default function EditorShell({
       : "Voiceover"
     : (variant.track_title ?? "Music");
   const soundLaneTitle = isVoiceoverVariant ? "Voiceover bed" : "Music + effects";
+  const hasUnbakedSfx = sfxDirty || localSfx.length > 0;
+  const clipPreviewHint = (() => {
+    if (!virtualPreviewActive) return "Clip changes preview after Save";
+    const missing: string[] = [];
+    if (variant.music_track_id && !virtualMusicAudioUrl) missing.push("Music");
+    missing.push(missing.length > 0 ? "transitions" : "Transitions");
+    if (hasUnbakedSfx) missing.push("sound effects");
+    return `${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} preview after Save`;
+  })();
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
@@ -1638,6 +1677,7 @@ export default function EditorShell({
     onPreviewClipTiming: previewClipTiming,
     onPreviewSeek: seekPreviewToOutput,
     grid: clip.state.grid,
+    clipPreviewMode: virtualPreviewActive ? "virtual" : "rendered",
     clipsLoading: clip.loadState === "loading",
     filmstripClips: clip.clips,
     sfx: localSfx.map((p) => {
@@ -2041,6 +2081,7 @@ export default function EditorShell({
           }}
           clipTimingDirty={clipDirty}
           clipPreviewMode={virtualPreviewActive ? "virtual" : "rendered"}
+          clipPreviewHint={clipPreviewHint}
         />
         <div className="min-h-0 flex-1">
           <UnifiedTimeline

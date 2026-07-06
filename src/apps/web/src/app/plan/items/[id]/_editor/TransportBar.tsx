@@ -27,6 +27,7 @@ export interface TransportBarProps {
   onPlayPause: () => void;
   clipTimingDirty?: boolean;
   clipPreviewMode?: "rendered" | "virtual";
+  clipPreviewHint?: string;
 
   /** Split enablement — false disables the button; `reason` fills the tooltip
    * (e.g. the music bed: "music fits the cut automatically"). */
@@ -60,6 +61,7 @@ export default function TransportBar({
   onPlayPause,
   clipTimingDirty = false,
   clipPreviewMode = "rendered",
+  clipPreviewHint,
   canSplit,
   splitReason,
   onSplit,
@@ -122,9 +124,10 @@ export default function TransportBar({
         </span>
         {clipTimingDirty && (
           <span className="hidden max-w-[180px] truncate text-[11px] text-[#71717a] sm:inline">
-            {clipPreviewMode === "virtual"
-              ? "Music and transitions preview after Save"
-              : "Clip changes preview after Save"}
+            {clipPreviewHint ??
+              (clipPreviewMode === "virtual"
+                ? "Music and transitions preview after Save"
+                : "Clip changes preview after Save")}
           </span>
         )}
       </div>
