@@ -1027,6 +1027,31 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Depends on:** plan 009 v1 shipped (rule f active).
 **Effort:** S (CC: ~15min). **Priority:** P3.
 
+## AI auto-placement × editor — follow-ups (from the reintegration PR, 2026-07-07)
+
+### "Placed by AI" receipt chip in the editor
+**What:** Surface `overlay_apply_receipt` (the zero-click demote receipt) as a small provenance chip on editor overlay cards that were auto-applied before the session opened — today they seed as indistinguishable normal cards.
+**Why:** Zero-click applies visuals the user never saw being placed; a quiet "✦ placed by AI" cue builds trust and explains where cards came from.
+**How:** `_variants_for_response` already exposes the receipt; map applied-card ids → chip in `EditorCanvas`/inspector. No new persistence.
+**Effort:** S (human: ~3h / CC: ~20 min)
+**Priority:** P3
+
+### Retire the item-page SuggestionRail/AssetPool once the editor is GA
+**What:** Remove `SuggestionRail.tsx`, `HeroOverlayEditor.tsx`, and the item-page AssetPool mount after `NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED` defaults on; the editor's Overlays drawer is the single suggestion surface.
+**Why:** Two review surfaces for the same envelopes will drift (copy, styling, semantics). Editor accept-→-commit and rail apply-→-render are already different write paths.
+**How:** Separate cleanup PR (kill-switch/file-deletion rule: never delete the fallback in the enabling PR). Keep `useOverlaySuggestions.ts` (shared state) until the rail goes.
+**Effort:** M (human: ~1d / CC: ~45 min)
+**Priority:** P3
+**Depends on:** editor flag default-on in Vercel.
+
+### Wishlist → pool-upload deep link
+**What:** Each wishlist line in the editor's suggestion section ("a diagram of X would fit 0:42") gets an Upload button that opens the pool uploader pre-tagged with that wish; after analysis, auto-rerun matching.
+**Why:** The wishlist is the agent telling the user exactly what asset would improve the edit — today it's dead text; closing the loop turns it into the pool-stocking mechanism (compounds suggestion quality, same insight as T-CUT-3).
+**How:** Thread `wishlist` entries into the pool strip's upload CTA; on the tagged asset reaching `ready`, call `suggestVariantOverlays` once.
+**Effort:** S (human: ~4h / CC: ~25 min)
+**Priority:** P3
+**Depends on:** this PR's editor suggestion section.
+
 ## Review follow-ups — informational findings (from /review of plans 005-009, 2026-07-03)
 
 The /review army (31 agents) confirmed 20 criticals — all fixed inline or by the

@@ -104,6 +104,7 @@ export default function EditorCanvas({
   bars,
   mediaOverlays = [],
   overlayPreviewUrls = {},
+  suggestedOverlayIds,
   sfxPlacements = [],
   sfxAudioUrls = {},
   selectedTextId,
@@ -133,6 +134,9 @@ export default function EditorCanvas({
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
   overlayPreviewUrls?: Record<string, string>;
+  /** Overlay ids that came from ✓-accepted AI suggestions — dashed ✦
+   *  provenance outline until Save (never stored on MediaOverlay itself). */
+  suggestedOverlayIds?: Set<string>;
   sfxPlacements?: SoundEffectPlacement[];
   sfxAudioUrls?: Record<string, string>;
   selectedTextId: string | null;
@@ -699,6 +703,7 @@ export default function EditorCanvas({
                     overlay={overlay}
                     currentTimeS={currentTime}
                     selected={selectedOverlayId === overlay.card.id}
+                    suggested={suggestedOverlayIds?.has(overlay.card.id) ?? false}
                     hovered={hoveredOverlayId === overlay.card.id}
                     dragOverride={
                       dragOverride?.target === "overlay" && dragOverride.id === overlay.card.id
@@ -938,6 +943,7 @@ function MediaOverlayCard({
   overlay,
   currentTimeS,
   selected,
+  suggested = false,
   hovered,
   dragOverride,
   allowManipulation,
@@ -952,6 +958,8 @@ function MediaOverlayCard({
   overlay: VisibleMediaOverlay;
   currentTimeS: number;
   selected: boolean;
+  /** ✓-accepted AI suggestion, unsaved — dashed lime outline + ✦ marker. */
+  suggested?: boolean;
   hovered: boolean;
   dragOverride: Extract<DragOverride, { target: "overlay" }> | null;
   allowManipulation: boolean;
@@ -1024,6 +1032,19 @@ function MediaOverlayCard({
           className="pointer-events-none absolute inset-0 rounded-[2px]"
           style={{ outline: "1px solid rgba(161,161,170,0.6)" }}
         />
+      )}
+      {/* Suggestion provenance (until Save): dashed lime outline + ✦ badge.
+          Suppressed while selected so it never fights the selection frame. */}
+      {suggested && !selected && (
+        <div
+          aria-hidden
+          data-testid={`suggested-overlay-marker-${card.id}`}
+          className="pointer-events-none absolute inset-0 rounded-[2px] border-[1.5px] border-dashed border-lime-600"
+        >
+          <span className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-lime-600 text-[9px] text-white">
+            ✦
+          </span>
+        </div>
       )}
       {selected && (
         <div

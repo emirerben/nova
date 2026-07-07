@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Music stops when your cut ends.** When the edited preview reached the end of a short cut, the video stopped but the (much longer) song kept playing on. The preview now pauses audio and video together at the end of the cut — verified against the live editor.
+## [0.7.3.0] — 2026-07-07
+
+### Added
+- **AI visual suggestions live inside the editor.** The Overlays drawer now carries the auto-placement flow from plans 005-009: a compact asset-pool strip (upload + analysis status), "Place visuals for me", and suggestion rows with transcript-grounded reasons. Accepting a suggestion stages it as a normal editable card — one Save, one render. Rejecting dismisses it server-side. Gated by the existing `OVERLAY_AUTOPLACE_ENABLED` / `NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED` flags; song/lyric variants show no dead chrome.
+
+### Fixed
+- **Editor saves can no longer silently wipe AI-placed visuals.** The overlay/SFX apply path (manual saves, the item-page suggestion rail, and zero-click auto-apply) now bumps `render_generation_id` like every editor commit, so a Save from a stale editor session 409s with a reload prompt instead of last-writer-wins clobbering the AI's cards — and a superseded apply-render discards its write instead of racing.
+- **The conflict tile's Reload actually reloads.** It now re-seeds every section you haven't edited from the refreshed video (your in-progress edits are kept), so the state you continue from matches what's on the server.
 
 ## [0.7.2.2] — 2026-07-06
 
