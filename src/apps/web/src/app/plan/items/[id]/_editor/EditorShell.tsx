@@ -28,6 +28,7 @@ import {
   requestOverlayUploadUrls,
   uploadToGcs,
   type MediaOverlay,
+  type OverlaySuggestion,
   type PlanItem,
   type PlanItemVariant,
   type SoundEffectPlacement,
@@ -39,6 +40,7 @@ import {
   buildEditorCommitRequest,
   commitEditorSession,
   EditorCommitConflictError,
+  type AcceptedSuggestionRef,
 } from "@/lib/editor-commit";
 import {
   buildPlanItemEditorReturnHref,
@@ -71,6 +73,8 @@ import {
 import TransportBar from "./TransportBar";
 import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
+import OverlaySuggestions from "./OverlaySuggestions";
+import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
 import ToolDrawer from "./ToolDrawer";
@@ -226,12 +230,27 @@ export default function EditorShell({
   // doesn't model (reveal_s, word_timings, …) survive untouched.
   const originalsRef = useRef<Map<string, TextElement>>(new Map());
   const seededVariantIdRef = useRef<string | null>(null);
+  // Conflict-tile Reload: the refetched variant must replace working state in
+  // sections the user hasn't touched (an AI auto-apply or another tab moved
+  // them), while dirty sections keep the user's edits. Without this, the
+  // seeding guard above skips the refetch entirely and the NEXT Save clobbers
+  // the other writer's changes with a freshly-blessed baseline.
+  const conflictReseedRef = useRef(false);
   const [title, setTitle] = useState("");
   // Last style-set applied via restyle-all — drives the StyleChip ring.
   const [appliedStyleSetId, setAppliedStyleSetId] = useState<string | null>(null);
   const [localSfx, setLocalSfx] = useState<SoundEffectPlacement[]>([]);
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
+  // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
+  // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
+  // filters these against the staged overlay ids, so an undone accept is
+  // never resolved server-side.
+  const [acceptedSuggestions, setAcceptedSuggestions] = useState<AcceptedSuggestionRef[]>([]);
+  const suggestedOverlayIds = useMemo(
+    () => new Set(acceptedSuggestions.map((a) => a.overlayId)),
+    [acceptedSuggestions],
+  );
   const [localOverlayPreviewUrls, setLocalOverlayPreviewUrls] = useState<Record<string, string>>({});
   const localOverlayPreviewUrlsRef = useRef<Record<string, string>>({});
   const [sfxDirty, setSfxDirty] = useState(false);
@@ -242,33 +261,54 @@ export default function EditorShell({
   const [titleDirty, setTitleDirty] = useState(false);
 
   useEffect(() => {
-    if (!variant || seededVariantIdRef.current === variant.variant_id) return;
+    if (!variant) return;
+    const sameVariant = seededVariantIdRef.current === variant.variant_id;
+    const conflictReseed = conflictReseedRef.current && sameVariant;
+    if (sameVariant && !conflictReseed) return;
+    conflictReseedRef.current = false;
     seededVariantIdRef.current = variant.variant_id;
-    originalsRef.current = new Map(
-      (variant.text_elements ?? []).map((el) => [el.id, el]),
+    const sections = computeReseedSections(
+      { textDirty, sfxDirty, overlaysDirty, mixDirty },
+      conflictReseed,
     );
-    dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
-    setLocalSfx((variant.sound_effects ?? []).map((p) => ({ ...p })));
-    setLocalSfxAudioUrls({});
-    setLocalOverlays((variant.media_overlays ?? []).map((o) => ({ ...o })));
-    setLocalOverlayPreviewUrls((current) => {
-      Object.values(current).forEach((url) => URL.revokeObjectURL(url));
-      return {};
-    });
-    setTextDirty(false);
-    setSfxDirty(false);
-    setOverlaysDirty(false);
-    setTitleDirty(false);
-    const seededMix =
-      typeof variant.mix === "number"
-        ? variant.mix
-        : typeof variant.voiceover_bed_level === "number"
-          ? variant.voiceover_bed_level
-          : null;
-    setMixLevel(seededMix);
-    setMixDirty(false);
-    setSoundMuted(seededMix === 0);
-    setAppliedStyleSetId(null);
+    if (sections.text) {
+      originalsRef.current = new Map(
+        (variant.text_elements ?? []).map((el) => [el.id, el]),
+      );
+      dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
+      setTextDirty(false);
+    }
+    if (sections.sfx) {
+      setLocalSfx((variant.sound_effects ?? []).map((p) => ({ ...p })));
+      setLocalSfxAudioUrls({});
+      setSfxDirty(false);
+    }
+    if (sections.overlays) {
+      setLocalOverlays((variant.media_overlays ?? []).map((o) => ({ ...o })));
+      setLocalOverlayPreviewUrls((current) => {
+        Object.values(current).forEach((url) => URL.revokeObjectURL(url));
+        return {};
+      });
+      // Re-seeded from the server ⇒ any accepted-but-unsaved cards are gone.
+      setAcceptedSuggestions([]);
+      setOverlaysDirty(false);
+    }
+    if (sections.titleAndStyle) setTitleDirty(false);
+    if (sections.mix) {
+      const seededMix =
+        typeof variant.mix === "number"
+          ? variant.mix
+          : typeof variant.voiceover_bed_level === "number"
+            ? variant.voiceover_bed_level
+            : null;
+      setMixLevel(seededMix);
+      setMixDirty(false);
+      setSoundMuted(seededMix === 0);
+    }
+    if (sections.titleAndStyle) setAppliedStyleSetId(null);
+    // Dirty flags are read as a snapshot when a (re)seed fires; they must not
+    // retrigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant]);
 
   useEffect(() => {
@@ -363,19 +403,7 @@ export default function EditorShell({
   // A variant whose editor_capabilities are ALL false is read-only: banner +
   // Save disabled + every mutating command no-ops. The server's honest reason
   // is surfaced verbatim.
-  const capabilities = (variant as unknown as {
-    editor_capabilities?: {
-      text_elements?: boolean;
-      timeline?: boolean;
-      split_clips?: boolean;
-      mix?: boolean;
-      sfx?: boolean;
-      overlays?: boolean;
-      reason?: string;
-      sfx_reason?: string | null;
-      overlays_reason?: string | null;
-    };
-  } | null)?.editor_capabilities;
+  const capabilities = variant?.editor_capabilities;
   const readOnly =
     !!capabilities &&
     capabilities.text_elements === false &&
@@ -1087,6 +1115,32 @@ export default function EditorShell({
     ],
   );
 
+  // Accept an AI overlay suggestion (Overlays drawer): the envelope's card
+  // (and sound, when present) joins the working state as ONE undoable command
+  // — same record-then-mutate shape as handleOverlayUpload/addSfxFromGlossary.
+  // Persistence rides the normal Save (editor-commit accepted_suggestion_ids).
+  const handleAcceptSuggestion = useCallback(
+    (suggestion: OverlaySuggestion) => {
+      if (readOnly || capabilities?.overlays === false) return;
+      history.record();
+      setLocalOverlays((cur) => [...cur, { ...suggestion.overlay }]);
+      setOverlaysDirty(true);
+      if (suggestion.sfx) {
+        const sfx = { ...suggestion.sfx };
+        setLocalSfx((cur) => [...cur, sfx]);
+        setSfxDirty(true);
+      }
+      setAcceptedSuggestions((cur) =>
+        cur.some((a) => a.id === suggestion.id)
+          ? cur
+          : [...cur, { id: suggestion.id, overlayId: suggestion.overlay.id }],
+      );
+      select("overlay", suggestion.overlay.id);
+      setInspectorTab("basic");
+    },
+    [capabilities?.overlays, history, readOnly, select],
+  );
+
   const recordTimelineDrag = useCallback(() => {
     if (readOnly) return;
     history.record();
@@ -1438,6 +1492,9 @@ export default function EditorShell({
         soundEffects: localSfx,
         overlaysDirty,
         mediaOverlays: localOverlays,
+        // Filtered against the staged overlay ids inside the builder — an
+        // accepted suggestion the user undid must not be resolved.
+        acceptedSuggestions,
         titleDirty,
         title,
         variant,
@@ -1502,6 +1559,7 @@ export default function EditorShell({
     localSfx,
     overlaysDirty,
     localOverlays,
+    acceptedSuggestions,
     titleDirty,
     history,
     clearDraft,
@@ -1657,6 +1715,22 @@ export default function EditorShell({
     return `${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} preview after Save`;
   })();
 
+  // AI suggestions inside the Overlays drawer — dual-gated (frontend flag +
+  // the variant's honest capability). A false capability (e.g.
+  // song_or_lyric_variant) renders NOTHING: no dead chrome in the drawer.
+  const suggestionsEnabled =
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" &&
+    capabilities?.suggestions === true &&
+    !readOnly;
+  const overlaySuggestionsNode = suggestionsEnabled ? (
+    <OverlaySuggestions
+      itemId={itemId}
+      variantId={variant.variant_id}
+      onAccept={handleAcceptSuggestion}
+      onSeek={seekPlaybackTo}
+    />
+  ) : null;
+
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
     renderedOutputDurationS: duration,
@@ -1726,6 +1800,8 @@ export default function EditorShell({
       start_s: o.start_s,
       end_s: o.end_s,
       label: o.kind === "video" ? "Video" : "Image",
+      // Provenance until Save: accepted AI suggestions get the dashed ✦ bar.
+      suggested: suggestedOverlayIds.has(o.id),
     })),
     onPreviewOverlayTiming: previewOverlayTiming,
     onOpenSounds: () => setActiveTool("sounds"),
@@ -1887,6 +1963,7 @@ export default function EditorShell({
             bars={state.bars}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
+            suggestedOverlayIds={suggestedOverlayIds}
             sfxPlacements={previewSfxPlacements}
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
@@ -1950,6 +2027,7 @@ export default function EditorShell({
 	              onAddSfx={addSfxFromGlossary}
 	              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
+	              overlaySuggestions={overlaySuggestionsNode}
 	              onClose={() => setActiveTool(null)}
 	            />
           ) : (
@@ -1970,6 +2048,7 @@ export default function EditorShell({
 	              onAddSfx={addSfxFromGlossary}
 	              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
+	              overlaySuggestions={overlaySuggestionsNode}
 	              onClose={() => setActiveTool(null)}
 	            />
           </div>
@@ -1984,6 +2063,7 @@ export default function EditorShell({
             bars={state.bars}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
+            suggestedOverlayIds={suggestedOverlayIds}
             sfxPlacements={previewSfxPlacements}
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
@@ -2188,6 +2268,13 @@ export default function EditorShell({
                 onClick={() => {
                   setSaveState("idle");
                   setSaveMessage(null);
+                  // Re-seed non-dirty sections from the refetch (see
+                  // conflictReseedRef) and refresh the slot baseline.
+                  conflictReseedRef.current = true;
+                  if (!timelineDirty) {
+                    slotsSeededRef.current = null;
+                    reloadClipTimeline();
+                  }
                   setLoadNonce((n) => n + 1);
                 }}
                 className="min-h-11 flex-shrink-0 rounded-full bg-[#0c0c0e] px-4 text-[12px] font-semibold text-white hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"

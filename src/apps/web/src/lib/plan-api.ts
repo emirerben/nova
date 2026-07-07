@@ -807,6 +807,28 @@ export interface OverlayApplyReceipt {
   at?: string;
 }
 
+/**
+ * Per-variant editor capability map — mirrors `_editor_capabilities` in
+ * app/routes/generative_jobs.py. All-false ⇒ the editor shell is read-only;
+ * per-section false gates that tool with its honest `*_reason`.
+ */
+export interface EditorCapabilities {
+  text_elements?: boolean;
+  timeline?: boolean;
+  split_clips?: boolean;
+  mix?: boolean;
+  sfx?: boolean;
+  overlays?: boolean;
+  /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
+   *  Deliberately does NOT check pool assets — the drawer owns the empty-pool state. */
+  suggestions?: boolean;
+  reason?: string;
+  sfx_reason?: string | null;
+  overlays_reason?: string | null;
+  /** "autoplace_disabled" | "song_or_lyric_variant" | inherited overlay reasons. */
+  suggestions_reason?: string | null;
+}
+
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
@@ -946,6 +968,8 @@ export interface PlanItemVariant {
    */
   intro_start_s?: number | null;
   intro_end_s?: number | null;
+  /** Editor-shell capability map (see EditorCapabilities). Absent on legacy reads. */
+  editor_capabilities?: EditorCapabilities | null;
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {

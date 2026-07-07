@@ -61,6 +61,14 @@ export interface EditorCommitRequest {
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
   /**
+   * AI-suggestion resolution metadata, NOT a section: envelope ids from
+   * `variants[i].overlay_suggestions` the user ✓-accepted in the editor. Their
+   * cards ride inside `media_overlays`; the commit drops the envelopes
+   * atomically with that write. The server 422s when these arrive WITHOUT the
+   * media_overlays section — the builder only emits them alongside it.
+   */
+  accepted_suggestion_ids?: string[];
+  /**
    * Compare-and-fail baseline (stale-baseline 409, plan §9). The variant's
    * `render_gen_id` once the GET payload exposes it; until then callers seed
    * it from `render_finished_at` (string) — the server accepts either.
@@ -109,6 +117,13 @@ export function editorCommitBaseGeneration(
   return variant.render_generation_id ?? variant.render_finished_at ?? "";
 }
 
+/** One editor-accepted AI suggestion: envelope id + the overlay card id it
+ * staged into the working overlay list (the undo filter key). */
+export interface AcceptedSuggestionRef {
+  id: string;
+  overlayId: string;
+}
+
 export function buildEditorCommitRequest({
   elements,
   captionCues,
@@ -122,6 +137,7 @@ export function buildEditorCommitRequest({
   soundEffects = [],
   overlaysDirty = false,
   mediaOverlays = [],
+  acceptedSuggestions = [],
   titleDirty = true,
   title,
   variant,
@@ -138,6 +154,7 @@ export function buildEditorCommitRequest({
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
   mediaOverlays?: MediaOverlay[];
+  acceptedSuggestions?: AcceptedSuggestionRef[];
   titleDirty?: boolean;
   title: string;
   variant: EditorCommitVariantBaseline;
@@ -145,6 +162,16 @@ export function buildEditorCommitRequest({
   const mixEditable = variant.editor_capabilities?.mix !== false;
   const normalizedMix =
     mixLevel == null ? null : Math.max(0, Math.min(1, Number(mixLevel)));
+  // An accepted suggestion the user later undid (its card is no longer in the
+  // staged overlay list) must NOT be resolved server-side — filter against the
+  // overlays actually being sent. Ids ride ONLY with the media_overlays
+  // section (the server 422s otherwise).
+  const stagedOverlayIds = new Set(mediaOverlays.map((o) => o.id));
+  const acceptedIds = overlaysDirty
+    ? acceptedSuggestions
+        .filter((a) => stagedOverlayIds.has(a.overlayId))
+        .map((a) => a.id)
+    : [];
   return {
     text_elements: textDirty ? elements : undefined,
     caption_cues: captionDirty ? (captionCues ?? []) : undefined,
@@ -163,6 +190,7 @@ export function buildEditorCommitRequest({
       : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
+    accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     base_generation: editorCommitBaseGeneration(variant),
   };

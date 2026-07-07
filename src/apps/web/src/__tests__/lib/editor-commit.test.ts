@@ -168,6 +168,108 @@ describe("buildEditorCommitRequest", () => {
   });
 });
 
+describe("buildEditorCommitRequest — accepted suggestion ids", () => {
+  const overlay = {
+    id: "ov-1",
+    kind: "image" as const,
+    src_gcs_path: "users/u/plan/i/pool/shot.png",
+    position: "custom" as const,
+    x_frac: 0.5,
+    y_frac: 0.3,
+    scale: 0.4,
+    start_s: 2,
+    end_s: 6,
+    z: 0,
+  };
+
+  it("includes accepted ids only alongside the media_overlays section", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      overlaysDirty: true,
+      mediaOverlays: [overlay],
+      acceptedSuggestions: [{ id: "sug-1", overlayId: "ov-1" }],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+
+    expect(body.media_overlays).toEqual([overlay]);
+    expect(body.accepted_suggestion_ids).toEqual(["sug-1"]);
+  });
+
+  it("omits accepted ids when the overlays section is not being sent (422 guard)", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: true,
+      timelineDirty: false,
+      slots: [],
+      overlaysDirty: false,
+      mediaOverlays: [overlay],
+      acceptedSuggestions: [{ id: "sug-1", overlayId: "ov-1" }],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+
+    expect(body.media_overlays).toBeUndefined();
+    expect(body.accepted_suggestion_ids).toBeUndefined();
+  });
+
+  it("filters accepted ids against the staged overlay ids (undone accepts drop out)", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      overlaysDirty: true,
+      mediaOverlays: [overlay],
+      acceptedSuggestions: [
+        { id: "sug-1", overlayId: "ov-1" },
+        // Undo removed this suggestion's card from the working overlays —
+        // its envelope must NOT be resolved server-side.
+        { id: "sug-2", overlayId: "ov-gone" },
+      ],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+
+    expect(body.accepted_suggestion_ids).toEqual(["sug-1"]);
+  });
+
+  it("omits the field entirely when the filter leaves no ids or none were accepted", () => {
+    const allUndone = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      overlaysDirty: true,
+      mediaOverlays: [overlay],
+      acceptedSuggestions: [{ id: "sug-2", overlayId: "ov-gone" }],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+    expect(allUndone.accepted_suggestion_ids).toBeUndefined();
+
+    const noneAccepted = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      overlaysDirty: true,
+      mediaOverlays: [overlay],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+    expect(noneAccepted.accepted_suggestion_ids).toBeUndefined();
+  });
+});
+
 describe("editorCommitBaseGeneration", () => {
   it("prefers render_generation_id, then render_finished_at, then empty string", () => {
     expect(
