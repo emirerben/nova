@@ -1125,7 +1125,9 @@ export default function EditorShell({
       history.record();
       setLocalOverlays((cur) => [...cur, { ...suggestion.overlay }]);
       setOverlaysDirty(true);
-      if (suggestion.sfx) {
+      // SFX child rides only when the sfx section can actually commit —
+      // staging it with sound effects disabled would 404 the whole Save.
+      if (suggestion.sfx && capabilities?.sfx !== false) {
         const sfx = { ...suggestion.sfx };
         setLocalSfx((cur) => [...cur, sfx]);
         setSfxDirty(true);
@@ -1138,7 +1140,7 @@ export default function EditorShell({
       select("overlay", suggestion.overlay.id);
       setInspectorTab("basic");
     },
-    [capabilities?.overlays, history, readOnly, select],
+    [capabilities?.overlays, capabilities?.sfx, history, readOnly, select],
   );
 
   const recordTimelineDrag = useCallback(() => {

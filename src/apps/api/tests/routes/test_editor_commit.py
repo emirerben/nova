@@ -1379,3 +1379,25 @@ def test_accepted_ids_without_media_overlays_section_422(monkeypatch):
         )
     assert exc.value.status_code == 422
     assert "media_overlays" in str(exc.value.detail)
+
+
+def test_commit_keeps_envelope_when_accepted_card_not_committed(monkeypatch):
+    """An accepted id whose card is absent from the committed overlay list
+    (buggy/malicious client) must NOT clear the envelope — the suggestion
+    would be silently lost with nothing persisted in its place."""
+    _arm(monkeypatch)
+    job = _job(
+        overlay_suggestions=[_suggestion("sug-1", "ov-accepted")],
+        overlay_suggest_status="ready",
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[], accepted_suggestion_ids=["sug-1"]),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert [s["id"] for s in v["overlay_suggestions"]] == ["sug-1"]
+    assert v["overlay_suggest_status"] == "ready"

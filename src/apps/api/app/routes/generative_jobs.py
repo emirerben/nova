@@ -2694,11 +2694,20 @@ def prepare_editor_commit(
         if payload.accepted_suggestion_ids:
             # Accepted AI suggestions became cards in the media_overlays section;
             # drop their envelopes in the SAME atomic write. Unknown ids no-op
-            # (replayed Save, already-cleared envelope). Mirrors the pending-set
-            # bookkeeping in plan_items._clear_suggestions_for_asset.
+            # (replayed Save, already-cleared envelope). An envelope is only
+            # cleared when its card actually landed in the committed overlay
+            # list — an id whose card is absent (buggy client) keeps its
+            # envelope instead of silently losing the suggestion. Mirrors the
+            # pending-set bookkeeping in plan_items._clear_suggestions_for_asset.
             accepted = set(payload.accepted_suggestion_ids)
+            committed_ids = {o.get("id") for o in (validated_overlays or [])}
             pending = list(updated.get("overlay_suggestions") or [])
-            kept = [s for s in pending if s.get("id") not in accepted]
+            kept = [
+                s
+                for s in pending
+                if s.get("id") not in accepted
+                or (s.get("overlay") or {}).get("id") not in committed_ids
+            ]
             if len(kept) != len(pending):
                 updated["overlay_suggestions"] = kept or None
                 if not kept and updated.get("overlay_suggest_status") == "ready":

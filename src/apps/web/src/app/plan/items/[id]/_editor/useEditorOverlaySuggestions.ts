@@ -127,10 +127,19 @@ export function useEditorOverlaySuggestions({
     [showStaleNotice],
   );
 
+  /** Monotonic identity token: bumped on every itemId/variantId reset so a
+   *  late-resolving GET from the previous variant can never seed rows into the
+   *  current one (out-of-order poll responses are dropped, not applied). */
+  const runIdRef = useRef(0);
+
   const refresh = useCallback(async () => {
+    const runId = runIdRef.current;
     try {
-      applyResponse(await getOverlaySuggestions(itemId, variantId));
+      const res = await getOverlaySuggestions(itemId, variantId);
+      if (runIdRef.current !== runId) return; // stale response — identity moved
+      applyResponse(res);
     } catch (err) {
+      if (runIdRef.current !== runId) return;
       if (isUnavailableError(err)) setUnavailable(true);
       // Transient poll errors: keep the current phase; the next tick retries.
     }
@@ -139,6 +148,7 @@ export function useEditorOverlaySuggestions({
   // Initial load + reset on variant switch.
   useEffect(() => {
     if (!enabled) return;
+    runIdRef.current += 1;
     setPhase("idle");
     setRows([]);
     setWishlist([]);
