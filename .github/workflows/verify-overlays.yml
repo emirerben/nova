@@ -1,0 +1,67 @@
+name: Verify overlays (render parity)
+
+# Runs `make verify-overlays` — the font-accurate, Skia-in-the-prod-Docker-image
+# overlay-clipping check — on PRs that touch render paths. Before this workflow
+# the check was only enforced by the (dormant) dev-loop gate and the honor-system
+# `Local test:` PR-body marker; a render-path PR could merge with clipped text.
+#
+# The "does this diff touch render paths" decision reuses
+# app/services/build_gate.py::render_paths_touched (stdlib-only, importable
+# under bare python3) — the SAME detector the dev-loop gate uses, so the two
+# can never drift. Known blind spot (documented there): prompt-only changes
+# that alter overlay TEXT don't touch render paths and skip this job.
+
+on:
+  pull_request:
+    paths:
+      - "src/apps/api/**"
+      - "Dockerfile"
+      - "docker-compose.local-render.yml"
+
+concurrency:
+  group: verify-overlays-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  verify-overlays:
+    name: verify-overlays (render paths only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether render paths changed
+        id: render
+        run: |
+          git diff "origin/${{ github.base_ref }}...HEAD" > /tmp/pr.diff
+          if PYTHONPATH=src/apps/api python3 - <<'PY'
+          import sys
+          from app.services.build_gate import render_paths_touched
+          sys.exit(0 if render_paths_touched(open("/tmp/pr.diff").read()) else 1)
+          PY
+          then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "Render paths touched — running verify-overlays."
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "No render-path change — skipping verify-overlays."
+          fi
+
+      - name: Run verify-overlays inside the prod image
+        if: steps.render.outputs.needed == 'true'
+        run: |
+          # The container user's uid differs from the runner's, so the
+          # bind-mounted output dir must be world-writable on Linux runners.
+          mkdir -p .overlay-verify && chmod 777 .overlay-verify
+          make verify-overlays \
+            LOCAL_RENDER_COMPOSE="docker compose -f docker-compose.local-render.yml"
+
+      - name: Upload montage + report
+        if: always() && steps.render.outputs.needed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: overlay-verify
+          path: .overlay-verify/
+          if-no-files-found: warn
