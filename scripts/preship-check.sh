@@ -26,8 +26,8 @@ info() { printf '  %s\n' "$*"; }
 git fetch origin main --quiet 2>/dev/null || warn "could not fetch origin/main — comparing against last-known ref"
 MB="$(git merge-base HEAD origin/main)"
 
-# Changed files: committed since branch point + staged + unstaged.
-CHANGED="$( { git diff --name-only "$MB" HEAD; git diff --name-only HEAD; git diff --name-only --cached; } | sort -u )"
+# Changed files: committed since branch point + staged + unstaged + untracked.
+CHANGED="$( { git diff --name-only "$MB" HEAD; git diff --name-only HEAD; git diff --name-only --cached; git ls-files --others --exclude-standard; } | sort -u )"
 
 echo "preship-check vs origin/main ($(git rev-parse --short origin/main)), branch point $(git rev-parse --short "$MB")"
 
