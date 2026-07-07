@@ -10,6 +10,10 @@ All notable changes to this project will be documented in this file.
   - `scripts/preship-check.sh` — mechanical pre-PR gate encoding the shipping rules that have each cost an extra CI cycle: scoped ruff on changed files, `tsc --noEmit` when web TS changed, file-drift check vs origin/main, VERSION-slot collision check, and a list of CI `[skip-*]` markers.
   - `scripts/dev/reset-stuck-plans.py` — local-only reaper for content plans stuck in `generating`/`activating` after a dev worker crash (replaces the manual SQL UPDATE; refuses non-localhost DBs without `--force`).
 
+## [0.7.2.3] — 2026-07-06
+
+### Fixed
+- **Music stops when your cut ends.** When the edited preview reached the end of a short cut, the video stopped but the (much longer) song kept playing on. The preview now pauses audio and video together at the end of the cut — verified against the live editor.
 ## [0.7.3.0] — 2026-07-07
 
 ### Added
