@@ -100,15 +100,9 @@ def _text_element_shape_for_log(raw: object) -> dict:
     return {
         "id": raw.get("id"),
         "keys": sorted(str(k) for k in raw),
-        "safe_fields": {
-            k: raw.get(k)
-            for k in sorted(_TEXT_ELEMENT_LOG_SAFE_FIELDS)
-            if k in raw
-        },
+        "safe_fields": {k: raw.get(k) for k in sorted(_TEXT_ELEMENT_LOG_SAFE_FIELDS) if k in raw},
         "word_timings_len": (
-            len(raw.get("word_timings"))
-            if isinstance(raw.get("word_timings"), list)
-            else None
+            len(raw.get("word_timings")) if isinstance(raw.get("word_timings"), list) else None
         ),
         "source_params_keys": (
             sorted(str(k) for k in raw.get("source_params"))
@@ -495,6 +489,13 @@ class EditorCommitRequest(BaseModel):
     media_overlays: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
     base_generation: str = ""
+    # AI-suggestion resolution metadata, NOT a section: envelope ids from
+    # variants[i]["overlay_suggestions"] the user ✓-accepted in the editor.
+    # Their cards arrive inside `media_overlays`/`sound_effects`; the commit
+    # drops the envelopes atomically with that write. Explicit ids (not
+    # overlay.id inference) so a replayed/double Save is a no-op and validators
+    # can never confuse a user upload with an accepted suggestion.
+    accepted_suggestion_ids: list[str] | None = None
 
     @field_validator("timeline_slots")
     @classmethod
@@ -1427,12 +1428,21 @@ def dispatch_set_media_overlays(
     # Persist render_status="rendering" first (row-locked by the DB session the
     # route holds), then enqueue — prevents a race where the worker reads "ready"
     # and an immediate second PUT sees "ready" and double-enqueues.
+    # render_generation_id joins the same write so every overlay writer (manual
+    # item-page apply, rail apply, zero-click auto-apply — all funnel through
+    # here) participates in the editor-commit supersession model: an editor Save
+    # whose base_generation predates this apply now 409s instead of silently
+    # replacing the cards, and a superseded apply-render discards its terminal
+    # write (same pattern as dispatch_set_text_elements).
+    render_gen_id = uuid.uuid4().hex
+
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
+            v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
@@ -1451,7 +1461,7 @@ def dispatch_set_media_overlays(
     # celery,plan-jobs,overlay-jobs so no extra process needed.
     regenerate_generative_variant.apply_async(
         args=[str(job.id), variant_id],
-        kwargs={"media_overlays_override": validated},
+        kwargs={"media_overlays_override": validated, "render_gen_id": render_gen_id},
         queue="overlay-jobs",
     )
 
@@ -1487,12 +1497,16 @@ def dispatch_set_sound_effects(
     validated = validate_sound_effects_for_user(sfx_raw=sfx_raw, user_id=user_id)
 
     # Persist render_status="rendering" first (same pattern as dispatch_set_media_overlays).
+    # render_generation_id joins the same write — see dispatch_set_media_overlays.
+    render_gen_id = uuid.uuid4().hex
+
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
+            v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
@@ -1501,7 +1515,7 @@ def dispatch_set_sound_effects(
 
     regenerate_generative_variant.apply_async(
         args=[str(job.id), variant_id],
-        kwargs={"sfx_override": validated},
+        kwargs={"sfx_override": validated, "render_gen_id": render_gen_id},
         queue="overlay-jobs",
     )
 
@@ -2079,16 +2093,19 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         effects_reason = "caption_archetype"
     elif not variant.get("video_path") and not variant.get("output_url"):
         effects_reason = "no_video"
-    sfx_reason = (
-        "sound_effects_disabled"
-        if not settings.sound_effects_enabled
-        else effects_reason
-    )
+    sfx_reason = "sound_effects_disabled" if not settings.sound_effects_enabled else effects_reason
     overlays_reason = (
-        "media_overlays_disabled"
-        if not settings.media_overlays_enabled
-        else effects_reason
+        "media_overlays_disabled" if not settings.media_overlays_enabled else effects_reason
     )
+    # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
+    # eligibility EXCEPT the ready-asset count — that's a DB query and this map is
+    # cheap-by-design; the editor's pool strip owns the empty-pool state locally.
+    if not settings.overlay_autoplace_enabled:
+        suggestions_reason = "autoplace_disabled"
+    elif variant.get("music_track_id") is not None or variant.get("text_mode") == "lyrics":
+        suggestions_reason = "song_or_lyric_variant"
+    else:
+        suggestions_reason = overlays_reason
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
@@ -2106,9 +2123,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         ),
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
+        "suggestions": suggestions_reason is None,
         "reason": caption_reason or timeline_reason,
         "sfx_reason": sfx_reason,
         "overlays_reason": overlays_reason,
+        "suggestions_reason": suggestions_reason,
     }
 
 
@@ -2375,9 +2394,7 @@ def resolve_timeline_slots_for_edit(
                 # round-trip can carry the AI's original non-stepped timings; keep
                 # unchanged slots byte-stable so Save does not dirty a baseline.
                 duration_s = (
-                    _snap_half_second(e.duration_s)
-                    if _window_changed(e)
-                    else float(e.duration_s)
+                    _snap_half_second(e.duration_s) if _window_changed(e) else float(e.duration_s)
                 )
                 duration_beats = None
             else:
@@ -2541,6 +2558,15 @@ def prepare_editor_commit(
             detail="Provide at least one section to commit.",
         )
 
+    # Accepted-suggestion ids only make sense riding a media_overlays write —
+    # accepting a suggestion stages its card, which marks the section dirty.
+    # An id list without the section is a client bug; fail loudly, not silently.
+    if payload.accepted_suggestion_ids and payload.media_overlays is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="accepted_suggestion_ids requires the media_overlays section.",
+        )
+
     # ── Validate every provided section BEFORE any write ──────────────────────
     validated_elements: list[dict] | None = None
     materialized_from_sequence = False
@@ -2568,8 +2594,7 @@ def prepare_editor_commit(
                 detail="Captions for this edit are managed in the Captions tab.",
             )
         validated_caption_cues = [
-            CaptionCue.model_validate(c).model_dump(exclude_none=True)
-            for c in payload.caption_cues
+            CaptionCue.model_validate(c).model_dump(exclude_none=True) for c in payload.caption_cues
         ]
 
     resolved_slots: list[dict] | None = None
@@ -2666,6 +2691,27 @@ def prepare_editor_commit(
             updated["sound_effects"] = validated_sfx or None
         if validated_overlays is not None:
             updated["media_overlays"] = validated_overlays or None
+        if payload.accepted_suggestion_ids:
+            # Accepted AI suggestions became cards in the media_overlays section;
+            # drop their envelopes in the SAME atomic write. Unknown ids no-op
+            # (replayed Save, already-cleared envelope). An envelope is only
+            # cleared when its card actually landed in the committed overlay
+            # list — an id whose card is absent (buggy client) keeps its
+            # envelope instead of silently losing the suggestion. Mirrors the
+            # pending-set bookkeeping in plan_items._clear_suggestions_for_asset.
+            accepted = set(payload.accepted_suggestion_ids)
+            committed_ids = {o.get("id") for o in (validated_overlays or [])}
+            pending = list(updated.get("overlay_suggestions") or [])
+            kept = [
+                s
+                for s in pending
+                if s.get("id") not in accepted
+                or (s.get("overlay") or {}).get("id") not in committed_ids
+            ]
+            if len(kept) != len(pending):
+                updated["overlay_suggestions"] = kept or None
+                if not kept and updated.get("overlay_suggest_status") == "ready":
+                    updated["overlay_suggest_status"] = "zero"
         if new_gen is not None:
             updated["render_generation_id"] = new_gen
             updated["render_status"] = "rendering"

@@ -45,6 +45,7 @@ export default function ToolDrawer({
   onAddSfx,
   overlayUploading = false,
   onOverlayUpload,
+  overlaySuggestions = null,
   onClose,
 }: {
   tool: EditorTool;
@@ -61,6 +62,9 @@ export default function ToolDrawer({
   onOverlayUpload?: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
   ) => void;
+  /** "AI suggestions" section for the Overlays pane (EditorShell gates it on
+   *  the autoplace flag + the variant's `suggestions` capability). */
+  overlaySuggestions?: React.ReactNode;
   onClose: () => void;
 }) {
   const [category, setCategory] = useState<TextPresetCategory>("basic");
@@ -172,7 +176,11 @@ export default function ToolDrawer({
       )}
 
       {tool === "overlays" && (
-        <OverlaysDrawer uploading={overlayUploading} onOverlayUpload={onOverlayUpload} />
+        <OverlaysDrawer
+          uploading={overlayUploading}
+          onOverlayUpload={onOverlayUpload}
+          suggestions={overlaySuggestions}
+        />
       )}
     </div>
   );
@@ -238,11 +246,13 @@ const OVERLAY_MIME_TYPES = [
 function OverlaysDrawer({
   uploading,
   onOverlayUpload,
+  suggestions,
 }: {
   uploading: boolean;
   onOverlayUpload?: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
   ) => void;
+  suggestions?: React.ReactNode;
 }) {
   const [dragOver, setDragOver] = useState(false);
 
@@ -291,6 +301,7 @@ function OverlaysDrawer({
         />
         {uploading ? "Uploading..." : "Drop image/video or click to upload"}
       </label>
+      {suggestions}
     </div>
   );
 }

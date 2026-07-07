@@ -80,6 +80,8 @@ export interface EditorOverlayBar {
   start_s: number;
   end_s: number;
   label?: string | null;
+  /** ✓-accepted AI suggestion, unsaved — dashed lime provenance styling. */
+  suggested?: boolean;
 }
 
 export interface EditorTimelineBodyProps {
@@ -1116,9 +1118,14 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
                             showTrimHandles
-                            className="border border-zinc-300 bg-white text-[#0c0c0e]"
+                            className={
+                              o.suggested
+                                ? "border-[1.5px] border-dashed border-lime-600 bg-white text-[#0c0c0e]"
+                                : "border border-zinc-300 bg-white text-[#0c0c0e]"
+                            }
                           >
                             <span className="pointer-events-none truncate px-2 text-[10px]">
+                              {o.suggested && <span aria-hidden>✦ </span>}
                               {o.label ?? "Overlay"}
                             </span>
                           </BarButton>
