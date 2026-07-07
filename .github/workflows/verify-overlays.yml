@@ -52,6 +52,9 @@ jobs:
       - name: Run verify-overlays inside the prod image
         if: steps.render.outputs.needed == 'true'
         run: |
+          # The container user's uid differs from the runner's, so the
+          # bind-mounted output dir must be world-writable on Linux runners.
+          mkdir -p .overlay-verify && chmod 777 .overlay-verify
           make verify-overlays \
             LOCAL_RENDER_COMPOSE="docker compose -f docker-compose.local-render.yml"
 
