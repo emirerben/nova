@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.4.0] — 2026-07-07
+
+### Added
+- **verify-overlays now runs in PR CI** (`.github/workflows/verify-overlays.yml`). Render-path PRs get the font-accurate Skia-in-prod-Docker overlay-clipping check automatically, with the montage + report uploaded as artifacts. The render-path decision reuses `build_gate.render_paths_touched` — the same detector as the dev-loop gate, so the two can't drift. Previously this check was honor-system only.
+- **Worker task-registry guard** (`tests/test_worker_task_registry.py`). Every `app/tasks/*.py` module defining a Celery task must be reachable from the worker's include list / import graph — closing the "new task module silently discarded" trap. Found one real case: `app.tasks.email` (waitlist confirmation) is enqueued but never registered; documented in the test's allowlist pending the Resend go-live decision.
+- **Canary + retro loops** (`scripts/cron/canary-postdeploy.sh` every 30 min: prod health, web reachability, new-Fly-release machine checks, macOS alert on failure; `scripts/cron/weekly-retro.sh` Friday 17:00: headless /retro). launchd templates in `infra/launchd/`.
+- **Dev-loop backlog seeded**: six XS automation-ready items from TODOS.md added to `TASKS.md` for the builder loop.
+
 ## [0.7.3.0] — 2026-07-07
 
 ### Added
@@ -10,6 +18,7 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Editor saves can no longer silently wipe AI-placed visuals.** The overlay/SFX apply path (manual saves, the item-page suggestion rail, and zero-click auto-apply) now bumps `render_generation_id` like every editor commit, so a Save from a stale editor session 409s with a reload prompt instead of last-writer-wins clobbering the AI's cards — and a superseded apply-render discards its write instead of racing.
 - **The conflict tile's Reload actually reloads.** It now re-seeds every section you haven't edited from the refreshed video (your in-progress edits are kept), so the state you continue from matches what's on the server.
+
 
 ## [0.7.2.2] — 2026-07-06
 

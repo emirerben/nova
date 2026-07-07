@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: replace __HOME__ with $HOME, copy to ~/Library/LaunchAgents/,
+     then: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nova.weekly-retro.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nova.weekly-retro</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__HOME__/Projects/nova/scripts/cron/weekly-retro.sh</string>
+    </array>
+
+    <!-- Friday 17:00 local time (Weekday 5 = Friday) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key>
+        <integer>5</integer>
+        <key>Hour</key>
+        <integer>17</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.nova/logs/launchd-weekly-retro.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.nova/logs/launchd-weekly-retro.err.log</string>
+</dict>
+</plist>

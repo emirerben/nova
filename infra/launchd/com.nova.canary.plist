@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template: replace __HOME__ with $HOME, copy to ~/Library/LaunchAgents/,
+     then: launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.nova.canary.plist -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nova.canary</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__HOME__/Projects/nova/scripts/cron/canary-postdeploy.sh</string>
+    </array>
+
+    <!-- Every 30 minutes -->
+    <key>StartInterval</key>
+    <integer>1800</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/.nova/logs/launchd-canary.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.nova/logs/launchd-canary.err.log</string>
+</dict>
+</plist>
