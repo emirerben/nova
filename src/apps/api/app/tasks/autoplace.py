@@ -537,6 +537,12 @@ def match_overlay_suggestions(
 
             # 4. Persist under the row lock, validating against FRESH occupied
             #    intervals (finding 8 — the user may have dragged cards mid-match).
+            # Trace events from build_suggestions are DEFERRED until the lock is
+            # released: record_pipeline_event opens its own connection and
+            # UPDATEs the same jobs row this session holds FOR UPDATE — calling
+            # it mid-lock self-deadlocks the worker (observed 2026-07-07: every
+            # matcher run with ≥1 placement hung until pg_terminate_backend).
+            deferred_trace: list[tuple[str, dict]] = []
             assets_by_id = {a["id"]: a for a in assets}
             with _sync_session() as db:
                 job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
@@ -566,7 +572,9 @@ def match_overlay_suggestions(
                     duration_s=duration_s,
                     occupied=_occupied_intervals(target),
                     glossary=glossary,
-                    trace=lambda event, **f: _record(event, variant_id=variant_id, **f),
+                    trace=lambda event, **f: deferred_trace.append(
+                        (event, {"variant_id": variant_id, **f})
+                    ),
                     fullscreen_enabled=settings.fullscreen_cutaways_enabled,
                     intro_windows=intro_windows,
                     caption_cues=list(target.get("caption_cues") or []),
@@ -588,6 +596,8 @@ def match_overlay_suggestions(
                 job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
                 flag_modified(job, "assembly_plan")
                 db.commit()
+            for _ev, _fields in deferred_trace:
+                _record(_ev, **_fields)
             _record(
                 "autoplace_match_done",
                 variant_id=variant_id,

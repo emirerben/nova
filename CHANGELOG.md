@@ -2,10 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.2.3] — 2026-07-06
+## [0.7.3.1] — 2026-07-07
 
 ### Fixed
-- **Music stops when your cut ends.** When the edited preview reached the end of a short cut, the video stopped but the (much longer) song kept playing on. The preview now pauses audio and video together at the end of the cut — verified against the live editor.
+- **"Place visuals for me" no longer hangs the worker.** The suggestion matcher validated placements while holding the job row lock, and each validation trace event opened a second database connection to update the same row — deadlocking the worker on every run that actually found a match (zero-match runs were unaffected, which is how it shipped). Trace events now flush after the lock releases. Found by the v0.7.3.0 localhost E2E; regression-tested red/green.
+
 ## [0.7.3.0] — 2026-07-07
 
 ### Added
@@ -14,6 +15,11 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - **Editor saves can no longer silently wipe AI-placed visuals.** The overlay/SFX apply path (manual saves, the item-page suggestion rail, and zero-click auto-apply) now bumps `render_generation_id` like every editor commit, so a Save from a stale editor session 409s with a reload prompt instead of last-writer-wins clobbering the AI's cards — and a superseded apply-render discards its write instead of racing.
 - **The conflict tile's Reload actually reloads.** It now re-seeds every section you haven't edited from the refreshed video (your in-progress edits are kept), so the state you continue from matches what's on the server.
+
+## [0.7.2.3] — 2026-07-06
+
+### Fixed
+- **Music stops when your cut ends.** When the edited preview reached the end of a short cut, the video stopped but the (much longer) song kept playing on. The preview now pauses audio and video together at the end of the cut — verified against the live editor.
 
 ## [0.7.2.2] — 2026-07-06
 

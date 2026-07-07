@@ -309,3 +309,68 @@ def test_auto_apply_skipped_when_suggestions_gone(monkeypatch):
     ap.match_overlay_suggestions(JOB_ID, VARIANT_ID, USER_ID, auto_apply=True)
 
     assert apply_calls == [], "apply helper must NOT run when suggestions were cleared"
+
+
+# ── build_suggestions trace events flush AFTER the row lock releases ───────────
+
+
+def test_build_suggestions_trace_deferred_until_after_persist_commit(monkeypatch):
+    """Regression (2026-07-07 localhost E2E): build_suggestions' trace callback
+    used to call record_pipeline_event while the persist session held the jobs
+    row FOR UPDATE. record_pipeline_event opens its OWN connection and UPDATEs
+    the same jobs row → the worker self-deadlocked on EVERY matcher run that
+    produced ≥1 placement (zero-placement runs emit no trace events and sailed
+    through — which is how this shipped). The trace events must flush only
+    after the locked persist commits."""
+    job = _Job(_variant())
+    assets = [_Asset()]
+    _patch_common(monkeypatch, job, assets, gemini_key="k")
+
+    timeline: list[str] = []
+    state: dict = {}
+
+    class _TimelineSess(_Sess):
+        def commit(self):
+            super().commit()
+            timeline.append("commit")
+
+    monkeypatch.setattr(ap, "_sync_session", lambda: _TimelineSess(job, assets, state=state))
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda stage, event, data=None: timeline.append(f"trace:{event}"),
+    )
+
+    words = [{"word": "hello", "start_s": 0.0, "end_s": 0.5}]
+    monkeypatch.setattr("app.services.transcript_source.words_from_variant", lambda v: words)
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda v, **kw: (words, "hash-abc"),
+    )
+    import app.agents.overlay_placement as opa
+
+    def _boom(*a, **kw):
+        raise RuntimeError("agent exploded")
+
+    monkeypatch.setattr(opa, "OverlayPlacementAgent", _boom)
+    monkeypatch.setattr(
+        "app.services.overlay_autoplace.heuristic_match",
+        lambda *a, **kw: [{"asset_id": str(assets[0].id)}],
+    )
+
+    def _build_with_trace(raw, **kw):
+        # What the real validator does per item: drop/demote/snap events fire
+        # through the trace callback while the caller holds the row lock.
+        kw["trace"]("suggestion_snap", from_s=1.0)
+        return [{"id": "sug-1"}]
+
+    monkeypatch.setattr("app.services.overlay_autoplace.build_suggestions", _build_with_trace)
+
+    ap.match_overlay_suggestions(JOB_ID, VARIANT_ID, USER_ID)
+
+    assert _variant_now(job)["overlay_suggest_status"] == "ready"
+    snap = timeline.index("trace:suggestion_snap")
+    last_commit = max(i for i, entry in enumerate(timeline) if entry == "commit")
+    assert snap > last_commit, (
+        "build_suggestions trace event fired before the locked persist "
+        f"committed — self-deadlock regression. timeline={timeline}"
+    )
