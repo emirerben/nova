@@ -53,6 +53,13 @@ if [ -f "$repo_root/.gbrain-source" ]; then
   echo "→ Copied .gbrain-source pin to $target_path"
 fi
 
+# Bootstrap the worktree (.env/.venv/node_modules symlinks + migrations) so it
+# is runnable immediately instead of after a manual checklist.
+if [ -f "$target_path/scripts/worktree-setup.sh" ]; then
+  (cd "$target_path" && bash scripts/worktree-setup.sh) || \
+    echo "→ worktree-setup had warnings — see output above; re-run: bash scripts/worktree-setup.sh"
+fi
+
 cat <<EOF
 
 Fresh worktree ready. Next step (run this yourself — scripts can't cd for you):

@@ -10,6 +10,18 @@ All notable changes to this project will be documented in this file.
 - **Canary + retro loops** (`scripts/cron/canary-postdeploy.sh` every 30 min: prod health, web reachability, new-Fly-release machine checks, macOS alert on failure; `scripts/cron/weekly-retro.sh` Friday 17:00: headless /retro). launchd templates in `infra/launchd/`.
 - **Dev-loop backlog seeded**: six XS automation-ready items from TODOS.md added to `TASKS.md` for the builder loop.
 
+## [0.7.3.1] — 2026-07-07
+
+### Added
+- **Session-automation scripts** (from the loops audit of 93 sessions):
+  - `scripts/worktree-setup.sh` — idempotent worktree bootstrap (symlinks `.env`/`.venv`/`node_modules` from the primary checkout, checks bound infra ports, runs migrations when the DB is reachable). Auto-invoked by `scripts/new-session.sh`, killing the ~30-min manual bring-up flagged in the 2026-06-13 retro.
+  - `scripts/preship-check.sh` — mechanical pre-PR gate encoding the shipping rules that have each cost an extra CI cycle: scoped ruff on changed files, `tsc --noEmit` when web TS changed, file-drift check vs origin/main, VERSION-slot collision check, and a list of CI `[skip-*]` markers.
+  - `scripts/dev/reset-stuck-plans.py` — local-only reaper for content plans stuck in `generating`/`activating` after a dev worker crash (replaces the manual SQL UPDATE; refuses non-localhost DBs without `--force`).
+
+## [0.7.2.3] — 2026-07-06
+
+### Fixed
+- **Music stops when your cut ends.** When the edited preview reached the end of a short cut, the video stopped but the (much longer) song kept playing on. The preview now pauses audio and video together at the end of the cut — verified against the live editor.
 ## [0.7.3.0] — 2026-07-07
 
 ### Added
