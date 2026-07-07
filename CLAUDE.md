@@ -29,6 +29,8 @@ bash scripts/new-session.sh <topic>      # e.g. template-text-100
 cd ../nova-<topic>                       # script prints this; copy it
 ```
 
+Both paths auto-run `scripts/worktree-setup.sh` (symlinks `.env`/`.venv`/`node_modules` from the primary checkout + migrations). Re-run it manually in any worktree that's missing those.
+
 A `SessionStart` hook (`.claude/settings.json` → `scripts/session-check.sh`) fetches `origin/main`, then: on a **clean `main`** it auto fast-forwards (so the shared checkout never drifts); on a dirty `main` or any feature branch it only prints a warning (it can't relocate the session or discard work). If you see the stale-worktree warning, run `nova-fresh`/`new-session.sh` for new work, or `git merge --ff-only origin/main` to update an in-flight branch.
 
 Rules:
@@ -76,7 +78,7 @@ cp .env.example .env            # fill in values
 ./scripts/dev-auto.sh            # single-command dev env with hot reload
 ```
 
-`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`.
+`dev-auto.sh` starts redis + postgres via `docker-compose up -d redis db` (infra only), runs migrations, then launches API (`uvicorn --reload`), Celery worker (`watchfiles`), and Next.js (HMR) natively. Logs go to `.dev/<service>.log`. Do NOT restart servers manually — hot reload handles all code edits. Stop with `./scripts/dev-stop.sh`. If a worker crash leaves a plan spinning in `generating`, run `python3 scripts/dev/reset-stuck-plans.py` (local-only reaper).
 
 Alternatives:
 - `./scripts/dev-no-docker.sh` — same flow but assumes postgres@16 + redis already running
@@ -103,6 +105,7 @@ make local-render MODE=generative CLIPS="a.mp4 b.mp4 c.mp4"
 - Frontend lint: `cd src/apps/web && npm run lint`
 - Frontend typecheck: `cd src/apps/web && npx tsc --noEmit`
 - Frontend tests: `cd src/apps/web && npm test` (Jest)
+- Pre-PR gate: `bash scripts/preship-check.sh` — scoped ruff on changed files, tsc when web TS changed, drift vs origin/main, VERSION-slot check, CI `[skip-*]` marker list. Run before every PR.
 
 ## Admin API access (for automation / Claude Code)
 Use `scripts/admin.py` instead of curling `/admin/*` with a raw token — the token stays in `.env`, never in commands or transcripts.
