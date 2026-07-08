@@ -109,3 +109,26 @@ def test_ffmpeg_exception_is_zero():
         patch.object(clip_speech.subprocess, "run", side_effect=OSError("no ffmpeg")),
     ):
         assert speech_coverage("x.mp4") == 0.0
+
+
+def test_ffmpeg_command_decodes_audio_only():
+    """-vn/-sn/-dn must stay in the silencedetect command: decoding the video
+    stream just to measure audio silence is 10-50x slower and can blow the 60s
+    probe timeout on long phone clips — which scores 0.0 and misroutes a
+    genuinely narrated clip set to montage (self-narration resolution)."""
+    captured: dict = {}
+
+    def _capture_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _ffmpeg_result("")
+
+    with (
+        patch.object(clip_speech, "probe_video", return_value=_probe()),
+        patch.object(clip_speech.subprocess, "run", _capture_run),
+    ):
+        speech_coverage("x.mp4")
+
+    for flag in ("-vn", "-sn", "-dn"):
+        assert flag in captured["cmd"]
+    # Audio-strip flags must come before the output spec, after the input.
+    assert captured["cmd"].index("-vn") > captured["cmd"].index("-i")

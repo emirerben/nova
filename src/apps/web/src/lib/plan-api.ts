@@ -12,6 +12,7 @@
  */
 
 import type { EditVariantPayload } from "@/lib/generative-api";
+import type { ArchetypeFallback } from "@/lib/plan-generate-gate";
 
 const PLAN_BASE = "/api/plan";
 
@@ -1346,6 +1347,12 @@ export interface PlanItemJobStatus {
   finished_at?: string | null;
   expected_phase_durations?: Record<string, number> | null;
   created_at?: string | null;
+  /** Style-downgrade explanation persisted by the orchestrator when the declared
+   *  edit_format fell back to montage (e.g. self-narration found no speech).
+   *  Null when the declared format rendered. Drives the item-page banner.
+   *  Mirrors ArchetypeFallbackOut in routes/generative_jobs.py — the single TS
+   *  definition lives in plan-generate-gate.ts. */
+  archetype_fallback?: ArchetypeFallback | null;
 }
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {
@@ -1667,6 +1674,10 @@ export interface PoolAsset {
   subject: string | null;
   display_url: string | null;
   deduped: boolean;
+  /** Object key under users/{uid}/plan/{itemId}/pool/ — already inside
+   *  attach_clips' allowed prefix, so "Use in edit" can promote the asset to a
+   *  clip via the existing attach flow (no copy, no new endpoint). */
+  gcs_path: string;
 }
 
 /** Signed PUT URLs for pool assets (users/{uid}/plan/{itemId}/pool/, persistent). */

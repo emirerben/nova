@@ -60,6 +60,13 @@ def speech_coverage(path: str) -> float:
         "ffmpeg",
         "-i",
         path,
+        # Audio-only decode: silencedetect never reads video, and without -vn
+        # ffmpeg decodes the full video stream anyway — 10-50x slower on long
+        # phone clips, enough to blow the 60s timeout below (which scores the
+        # clip 0.0 and can misroute a genuinely narrated clip set to montage).
+        "-vn",
+        "-sn",
+        "-dn",
         "-af",
         f"silencedetect=noise={_NOISE_FLOOR_DB}dB:d={_MIN_SILENCE_S}",
         "-f",

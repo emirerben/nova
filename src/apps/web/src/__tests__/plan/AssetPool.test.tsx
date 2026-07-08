@@ -51,6 +51,7 @@ function makeAsset(overrides: Record<string, unknown> = {}) {
     subject: null,
     display_url: "https://storage.example/signed/shot.png",
     deduped: false,
+    gcs_path: "users/u1/plan/item-1/pool/shot.png",
     ...overrides,
   };
 }
@@ -348,5 +349,108 @@ describe("AssetPool — backend flag mismatch (dual-flag trap)", () => {
     ).toBeInTheDocument();
     // Never silent, but also never a scary red banner.
     expect(screen.queryByText(/drop the screenshots/i)).toBeNull();
+  });
+});
+
+describe("AssetPool — \u201cUse in edit\u201d promotion (pool asset \u2192 clip)", () => {
+  it("renders the affordance on video assets and calls the handler with the asset", async () => {
+    process.env[FLAG] = "true";
+    const video = makeAsset({
+      kind: "video",
+      status: "ready",
+      gcs_path: "users/u1/plan/item-1/pool/rec.mp4",
+      source_filename: "rec.mp4",
+    });
+    mockFetch(listRoute([video]));
+    const onUseInEdit = jest.fn();
+    await act(async () => {
+      render(<AssetPool itemId="item-1" attachedPaths={[]} onUseInEdit={onUseInEdit} />);
+    });
+
+    const btn = screen.getByRole("button", { name: /use rec\.mp4 in the edit/i });
+    await act(async () => {
+      fireEvent.click(btn);
+    });
+    expect(onUseInEdit).toHaveBeenCalledTimes(1);
+    expect(onUseInEdit.mock.calls[0][0].gcs_path).toBe("users/u1/plan/item-1/pool/rec.mp4");
+  });
+
+  it("shows \u201cIn edit \u2713\u201d instead of the button once the path is attached", async () => {
+    process.env[FLAG] = "true";
+    const video = makeAsset({
+      kind: "video",
+      status: "ready",
+      gcs_path: "users/u1/plan/item-1/pool/rec.mp4",
+    });
+    mockFetch(listRoute([video]));
+    await act(async () => {
+      render(
+        <AssetPool
+          itemId="item-1"
+          attachedPaths={["users/u1/plan/item-1/pool/rec.mp4"]}
+          onUseInEdit={jest.fn()}
+        />,
+      );
+    });
+
+    expect(screen.getByText("In edit \u2713")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /use .* in the edit/i })).toBeNull();
+  });
+
+  it("never renders the affordance on image assets or without a handler", async () => {
+    process.env[FLAG] = "true";
+    const image = makeAsset({ kind: "image", status: "ready" });
+    mockFetch(listRoute([image]));
+    await act(async () => {
+      render(<AssetPool itemId="item-1" attachedPaths={[]} onUseInEdit={jest.fn()} />);
+    });
+    expect(screen.queryByRole("button", { name: /in the edit/i })).toBeNull();
+
+    // No handler prop (pool-only surfaces) \u2192 no affordance on videos either.
+    const video = makeAsset({ kind: "video", status: "ready" });
+    mockFetch(listRoute([video]));
+    await act(async () => {
+      render(<AssetPool itemId="item-1" />);
+    });
+    expect(screen.queryByRole("button", { name: /in the edit/i })).toBeNull();
+  });
+
+  it("hides the affordance when gcs_path is missing (old-API version skew)", async () => {
+    process.env[FLAG] = "true";
+    // An old API's PoolAssetOut has no gcs_path — promotion must not render,
+    // or clicking would send undefined -> JSON null -> 422 from attach_clips.
+    const video = makeAsset({ kind: "video", status: "ready", gcs_path: "" });
+    mockFetch(listRoute([video]));
+    await act(async () => {
+      render(<AssetPool itemId="item-1" attachedPaths={[]} onUseInEdit={jest.fn()} />);
+    });
+    expect(screen.queryByRole("button", { name: /in the edit/i })).toBeNull();
+  });
+
+  it("hides the affordance while the video is still analyzing", async () => {
+    process.env[FLAG] = "true";
+    const video = makeAsset({ kind: "video", status: "analyzing" });
+    mockFetch(listRoute([video]));
+    await act(async () => {
+      render(<AssetPool itemId="item-1" attachedPaths={[]} onUseInEdit={jest.fn()} />);
+    });
+    expect(screen.queryByRole("button", { name: /in the edit/i })).toBeNull();
+  });
+
+  it("disables promotion while another attach writer is busy", async () => {
+    process.env[FLAG] = "true";
+    const video = makeAsset({ kind: "video", status: "ready" });
+    mockFetch(listRoute([video]));
+    await act(async () => {
+      render(
+        <AssetPool
+          itemId="item-1"
+          attachedPaths={[]}
+          onUseInEdit={jest.fn()}
+          attachBusy
+        />,
+      );
+    });
+    expect(screen.getByRole("button", { name: /in the edit/i })).toBeDisabled();
   });
 });

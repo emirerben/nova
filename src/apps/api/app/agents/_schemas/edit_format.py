@@ -39,10 +39,13 @@ DEFAULT_EDIT_FORMAT: EditFormat = "montage"
 
 EDIT_FORMATS: tuple[str, ...] = get_args(EditFormat)
 
-# Formats that render the narrated archetype — every one REQUIRES a user voiceover
-# (the narration is the spine). Generation must be blocked for these until a
-# voiceover is attached; without it the job has no narration and silently falls
-# back to montage. Single source of truth for that grouping.
+# Formats spined by narration. With NARRATED_SELF_NARRATION_ENABLED off (the
+# default), every one REQUIRES a recorded voiceover and generation is blocked
+# until one is attached — without it the job silently falls back to montage.
+# With the flag on, the footage's own speech may spine the edit instead
+# (_resolve_archetype routes 1 clip → subtitled, 2+ → talking_head; no speech →
+# montage with a persisted, user-visible reason). Single source of truth for
+# the grouping.
 NARRATED_EDIT_FORMATS: frozenset[str] = frozenset(
     {"narrated", "narrated_planned", "narrated_ready"}
 )

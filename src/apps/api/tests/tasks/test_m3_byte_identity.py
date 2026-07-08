@@ -286,7 +286,7 @@ class TestArchetypeBiasContract:
                 voiceover_gcs_path=None,
                 footage_type_bias=None,
             )
-        assert result == ("montage", None)
+        assert result == ("montage", None, None)
 
     def test_montage_format_empty_bias_returns_montage(self) -> None:
         """edit_format='montage' with empty bias list → ('montage', None)."""
@@ -301,7 +301,7 @@ class TestArchetypeBiasContract:
                 voiceover_gcs_path=None,
                 footage_type_bias=[],
             )
-        assert result == ("montage", None)
+        assert result == ("montage", None, None)
 
     def test_voiceover_wins_over_bias(self) -> None:
         """Voiceover fast path always wins — bias must not override it."""
@@ -316,7 +316,7 @@ class TestArchetypeBiasContract:
                 voiceover_gcs_path="users/test/voice.mp3",
                 footage_type_bias=["talking_head"],
             )
-        assert result == ("voiceover", None), (
+        assert result == ("voiceover", None, None), (
             "Voiceover fast path must not be overridden by footage_type_bias"
         )
 
@@ -336,7 +336,7 @@ class TestArchetypeBiasContract:
                 job_id="test-job",
                 footage_type_bias=["talking_head"],
             )
-        assert result == ("montage", None), (
+        assert result == ("montage", None, None), (
             "edit_format_talking_head_enabled=False must prevent bias from activating talking_head"
         )
 
@@ -357,7 +357,7 @@ class TestArchetypeBiasContract:
                 job_id="test-job",
                 footage_type_bias=["talking_head"],
             )
-        # No clips → best_id is None → fallback "no_speech"
-        assert result == ("montage", None), (
+        # No clips → best_id is None → fallback "no_speech" (reason rides the 3rd slot)
+        assert result == ("montage", None, "no_speech"), (
             "Explicit talking_head with no speech must still fall back to montage"
         )

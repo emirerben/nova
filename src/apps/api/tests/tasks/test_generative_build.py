@@ -3237,3 +3237,60 @@ def test_specs_for_archetype_narrated_carries_caption_style():
         "narrated", None, voiceover_gcs_path="voiceover-uploads/abc/voice.m4a"
     )
     assert default_specs[0]["voiceover_caption_style"] is None
+
+
+# ── Self-narration: archetype_fallback persistence via _set_status ───────────
+
+
+def test_set_status_extra_plan_merges_archetype_fallback(monkeypatch):
+    """The orchestrator stashes the style-downgrade reason on assembly_plan via
+    _set_status(extra_plan=...) — merged alongside variants, never replacing them."""
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "song_text"}]})
+    _patch_job_session(monkeypatch, job)
+
+    gb._set_status(
+        "11111111-1111-1111-1111-111111111111",
+        "rendering",
+        extra_plan={"archetype_fallback": {"declared": "narrated_ready", "reason": "no_speech"}},
+    )
+    assert job.status == "rendering"
+    assert job.assembly_plan["archetype_fallback"] == {
+        "declared": "narrated_ready",
+        "reason": "no_speech",
+    }
+    assert job.assembly_plan["variants"] == [{"variant_id": "song_text"}]
+
+    # A retry that resolves cleanly clears the stale reason (key set to None).
+    gb._set_status(
+        "11111111-1111-1111-1111-111111111111",
+        "rendering",
+        extra_plan={"archetype_fallback": None},
+    )
+    assert job.assembly_plan["archetype_fallback"] is None
+
+
+def test_persist_archetype_fallback_sets_clears_and_noops(monkeypatch):
+    """The shared writer behind the item-page downgrade banner: reason set → dict
+    lands beside variants; reason None → clears ONLY an existing key (a clean job's
+    assembly_plan stays byte-identical — the flag-off guarantee)."""
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "song_text"}]})
+    _patch_job_session(monkeypatch, job)
+
+    gb._persist_archetype_fallback(
+        "11111111-1111-1111-1111-111111111111", "narrated_ready", "no_speech"
+    )
+    assert job.assembly_plan["archetype_fallback"] == {
+        "declared": "narrated_ready",
+        "reason": "no_speech",
+    }
+    assert job.assembly_plan["variants"] == [{"variant_id": "song_text"}]
+
+    # Retry that resolves cleanly → stale reason cleared.
+    gb._persist_archetype_fallback("11111111-1111-1111-1111-111111111111", "narrated_ready", None)
+    assert job.assembly_plan["archetype_fallback"] is None
+
+    # Clean job + no reason → assembly_plan untouched (no key materialized).
+    clean = _FakeJob(assembly_plan={"variants": []})
+    _patch_job_session(monkeypatch, clean)
+    gb._persist_archetype_fallback("11111111-1111-1111-1111-111111111111", "montage", None)
+    assert "archetype_fallback" not in clean.assembly_plan

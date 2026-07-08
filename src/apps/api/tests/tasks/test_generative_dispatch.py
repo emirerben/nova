@@ -128,14 +128,16 @@ def test_specs_for_subtitled_word_style_follows_toggle():
 
 def test_resolve_montage_passthrough_no_fallback(monkeypatch):
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype("montage", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j")
+    archetype, spine, _reason = gb._resolve_archetype(
+        "montage", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
+    )
     assert (archetype, spine) == ("montage", None)
     assert events == []  # montage is the default — no fallback noise
 
 
 def test_resolve_unimplemented_format_falls_back(monkeypatch):
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "day_vlog", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("montage", None)
@@ -148,7 +150,7 @@ def test_resolve_unimplemented_format_falls_back(monkeypatch):
 def test_resolve_subtitled_flag_off_falls_back_to_montage(monkeypatch):
     monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", False, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "subtitled", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("montage", None)
@@ -158,7 +160,7 @@ def test_resolve_subtitled_flag_off_falls_back_to_montage(monkeypatch):
 def test_resolve_subtitled_flag_on_selects_subtitled(monkeypatch):
     monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", True, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "subtitled", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("subtitled", None)
@@ -171,7 +173,7 @@ def test_resolve_subtitled_no_speech_still_selects(monkeypatch):
     monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", True, raising=False)
     monkeypatch.setattr(clip_speech, "speech_coverage", lambda *_a, **_k: 0.0, raising=False)
     _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "subtitled", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("subtitled", None)
@@ -180,7 +182,7 @@ def test_resolve_subtitled_no_speech_still_selects(monkeypatch):
 def test_resolve_narrated_flag_off_falls_through_to_voiceover(monkeypatch):
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", False, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -196,10 +198,12 @@ def test_resolve_narrated_flag_off_falls_through_to_voiceover(monkeypatch):
 
 
 def test_resolve_narrated_requires_voiceover(monkeypatch):
-    """Narrated still REQUIRES a voiceover — without one it can't be the spine."""
+    """Self-narration OFF (the default): narrated without a voiceover falls back to
+    montage — the pre-self-narration behavior, pinned as the kill-switch baseline."""
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", False, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -222,7 +226,7 @@ def test_resolve_narrated_one_step_guide_still_selects_narrated(monkeypatch):
     the renderer auto-segments the narration, so narrated still wins (captions)."""
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
     _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -236,7 +240,7 @@ def test_resolve_narrated_one_step_guide_still_selects_narrated(monkeypatch):
 def test_resolve_narrated_enabled_selects_before_voiceover(monkeypatch):
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -252,10 +256,104 @@ def test_resolve_narrated_enabled_selects_before_voiceover(monkeypatch):
     assert sel and sel[0][2]["archetype"] == "narrated"
 
 
+# ── narrated self-narration (no recorded voiceover; NARRATED_SELF_NARRATION_ENABLED) ──
+
+
+def test_resolve_self_narration_single_clip_selects_subtitled(monkeypatch):
+    """1 clip whose audio carries speech → subtitled (own audio + editable captions).
+    The flag is the SOLE gate: subtitled_archetype_enabled=False (the declared-format
+    kill switch) must NOT block this resolution outcome."""
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "subtitled_archetype_enabled", False, raising=False)
+    monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: 0.9)
+    events = _trace_capture(monkeypatch)
+    archetype, spine, reason = gb._resolve_archetype(
+        "narrated_planned", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j", voiceover_gcs_path=None
+    )
+    assert (archetype, spine, reason) == ("subtitled", None, None)
+    sel = [e for e in events if e[1] == "archetype_selected"]
+    assert sel and sel[0][2]["archetype"] == "subtitled"
+    assert sel[0][2]["via"] == "narrated_self_narration"
+
+
+def test_resolve_self_narration_multi_clip_selects_talking_head_spine(monkeypatch):
+    """2+ clips → talking_head spined by the highest-speech clip. Independent of
+    edit_format_talking_head_enabled (sole-gate contract)."""
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "edit_format_talking_head_enabled", False, raising=False)
+    coverage = {"/a.mp4": 0.2, "/b.mp4": 0.9}
+    monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: coverage[path])
+    events = _trace_capture(monkeypatch)
+    archetype, spine, reason = gb._resolve_archetype(
+        "narrated_ready",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path=None,
+    )
+    assert (archetype, spine, reason) == ("talking_head", "c2", None)
+    sel = [e for e in events if e[1] == "archetype_selected"]
+    assert sel and sel[0][2]["via"] == "narrated_self_narration"
+    assert sel[0][2]["spine_clip_id"] == "c2"
+
+
+def test_resolve_self_narration_no_speech_falls_back_with_reason(monkeypatch):
+    """Flag on but no clip clears the speech floor → montage, and the reason rides
+    the 3rd tuple slot so the orchestrator can persist it for the item-page banner."""
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True, raising=False)
+    monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: 0.0)
+    events = _trace_capture(monkeypatch)
+    archetype, spine, reason = gb._resolve_archetype(
+        "narrated_ready",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path=None,
+    )
+    assert (archetype, spine, reason) == ("montage", None, "no_speech")
+    assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "no_speech" for e in events)
+
+
+def test_resolve_self_narration_voiceover_still_wins(monkeypatch):
+    """A recorded voiceover beats self-narration: the narrated archetype renders
+    exactly as before, even with the self-narration flag on."""
+    monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True, raising=False)
+    _trace_capture(monkeypatch)
+    archetype, spine, reason = gb._resolve_archetype(
+        "narrated_planned",
+        [_Meta("c1")],
+        {"c1": "/a.mp4"},
+        job_id="j",
+        voiceover_gcs_path="gcs/voice.m4a",
+        filming_guide=[{"shot_id": "s1", "what": "open the app"}],
+    )
+    assert (archetype, spine, reason) == ("narrated", None, None)
+
+
+def test_resolve_self_narration_coverage_at_floor_selects(monkeypatch):
+    """Boundary pin: coverage EXACTLY at _MIN_SPINE_COVERAGE selects (the gate is
+    strict-less-than) — an off-by-one flip to <= would silently pass otherwise."""
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True, raising=False)
+    monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: gb._MIN_SPINE_COVERAGE)
+    _trace_capture(monkeypatch)
+    archetype, spine, reason = gb._resolve_archetype(
+        "narrated_ready", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j", voiceover_gcs_path=None
+    )
+    assert (archetype, spine, reason) == ("subtitled", None, None)
+
+
+def test_pick_speech_spine_no_local_paths_returns_none(monkeypatch):
+    """No clip has a local path → (None, -1.0); callers fall back on the floor check."""
+    best_id, best_cov = gb._pick_speech_spine([_Meta("c1")], {}, job_id="j")
+    assert best_id is None
+    assert best_cov == -1.0
+
+
 def test_resolve_talking_head_flag_off_falls_back(monkeypatch):
     monkeypatch.setattr(gb.settings, "edit_format_talking_head_enabled", False, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "talking_head", [_Meta("c1")], {"c1": "/a.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("montage", None)
@@ -266,7 +364,7 @@ def test_resolve_talking_head_no_speech_falls_back(monkeypatch):
     monkeypatch.setattr(gb.settings, "edit_format_talking_head_enabled", True, raising=False)
     monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: 0.0)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "talking_head", [_Meta("c1"), _Meta("c2")], {"c1": "/a.mp4", "c2": "/b.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("montage", None)
@@ -278,7 +376,7 @@ def test_resolve_talking_head_picks_highest_speech_clip(monkeypatch):
     coverage = {"/a.mp4": 0.1, "/b.mp4": 0.8, "/c.mp4": 0.05}
     monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: coverage[path])
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "talking_head",
         [_Meta("c1"), _Meta("c2"), _Meta("c3")],
         {"c1": "/a.mp4", "c2": "/b.mp4", "c3": "/c.mp4"},
@@ -302,7 +400,7 @@ def test_resolve_talking_head_coverage_error_scores_zero(monkeypatch):
 
     monkeypatch.setattr(clip_speech, "speech_coverage", _flaky)
     _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "talking_head", [_Meta("c1"), _Meta("c2")], {"c1": "/a.mp4", "c2": "/b.mp4"}, job_id="j"
     )
     assert (archetype, spine) == ("talking_head", "c2")
@@ -404,7 +502,7 @@ def test_resolve_voiceover_wins_over_footage(monkeypatch):
     declared edit_format or what the footage contains (it's an uploaded-asset signal,
     not a footage-derived one)."""
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "talking_head",
         [_Meta("c1")],
         {"c1": "/a.mp4"},
@@ -447,7 +545,7 @@ def test_specs_for_voiceover_includes_music_when_track():
 def test_resolve_narrated_planned_dispatches(monkeypatch):
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated_planned",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -467,7 +565,7 @@ def test_resolve_narrated_ready_dispatches_without_filming_guide(monkeypatch):
     """narrated_ready needs only a voiceover — no pre-written filming_guide required."""
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated_ready",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -483,7 +581,7 @@ def test_resolve_narrated_ready_dispatches_without_filming_guide(monkeypatch):
 def test_resolve_narrated_ready_flag_off_falls_through(monkeypatch):
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", False, raising=False)
     events = _trace_capture(monkeypatch)
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated_ready",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -503,7 +601,7 @@ def test_resolve_narrated_planned_empty_guide_still_narrated(monkeypatch):
     """
     monkeypatch.setattr(gb.settings, "narrated_archetype_enabled", True, raising=False)
     # empty guide
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated_planned",
         [_Meta("c1"), _Meta("c2")],
         {"c1": "/a.mp4", "c2": "/b.mp4"},
@@ -513,7 +611,7 @@ def test_resolve_narrated_planned_empty_guide_still_narrated(monkeypatch):
     )
     assert (archetype, spine) == ("narrated", None)
     # one-step guide
-    archetype, spine = gb._resolve_archetype(
+    archetype, spine, _reason = gb._resolve_archetype(
         "narrated_planned",
         [_Meta("c1")],
         {"c1": "/a.mp4"},

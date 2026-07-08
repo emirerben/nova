@@ -260,6 +260,19 @@ class GenerativeVariant(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class ArchetypeFallbackOut(BaseModel):
+    """Typed shape for assembly_plan["archetype_fallback"] on the status response.
+
+    Field-level allowlist: whatever else a hand-edited JSONB row carries under that
+    key, only these two documented fields reach the public payload (Pydantic strips
+    unknown keys). Mirrored by `ArchetypeFallback` in the web app's
+    plan-generate-gate.ts — keep in sync.
+    """
+
+    declared: str | None = None
+    reason: str | None = None
+
+
 class GenerativeJobStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -279,6 +292,13 @@ class GenerativeJobStatusResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     expected_phase_durations: dict[str, int] | None = None
+    # Style-downgrade explanation persisted by the orchestrator when the declared
+    # edit_format fell back to montage (e.g. narrated self-narration found no speech).
+    # Null when the declared format rendered. Drives the item-page banner so a style
+    # swap is never silent. `reason` values are an INTERNAL enum (no_speech,
+    # spine_extraction_failed, flag_disabled, ...) — clients map the known ones to
+    # specific copy and show a generic downgrade banner for anything else.
+    archetype_fallback: ArchetypeFallbackOut | None = None
 
 
 class SwapSongRequest(BaseModel):
@@ -2903,6 +2923,18 @@ async def get_generative_job_status(
 
     variants = _variants_for_response(job)
 
+    # Null-safe, never-raising read of the style-downgrade stash: a corrupt or
+    # non-dict value from a hand-edited row degrades to null rather than a 500.
+    _raw_fallback = (job.assembly_plan or {}).get("archetype_fallback")
+    archetype_fallback: ArchetypeFallbackOut | None = None
+    if isinstance(_raw_fallback, dict):
+        _declared = _raw_fallback.get("declared")
+        _reason = _raw_fallback.get("reason")
+        archetype_fallback = ArchetypeFallbackOut(
+            declared=str(_declared) if _declared is not None else None,
+            reason=str(_reason) if _reason is not None else None,
+        )
+
     response = GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -2916,6 +2948,7 @@ async def get_generative_job_status(
         started_at=job.started_at,
         finished_at=job.finished_at,
         expected_phase_durations=baselines,
+        archetype_fallback=archetype_fallback,
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
         await db.commit()

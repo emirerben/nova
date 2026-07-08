@@ -763,6 +763,38 @@ async def attach_clips(
             for p in body.clip_gcs_paths
         ]
 
+    # Pool→clip promotion guard (server-side twin of the AssetPool "Use in edit"
+    # video-only affordance): a NEWLY attached path under the pool sub-prefix must
+    # belong to a video pool asset — an image (or a deleted row) would fail the
+    # render confusingly instead of loudly here. Only NEW paths are checked: the
+    # frontend re-sends the FULL assignment set on every attach, so a previously
+    # promoted clip whose pool row was later deleted must keep re-attaching.
+    pool_sub_prefix = f"{item_prefix}pool/"
+    already_attached = {
+        a.get("gcs_path")
+        for a in (item.clip_assignments or [])
+        if isinstance(a, dict) and a.get("gcs_path")
+    }
+    new_pool_paths = [
+        a.gcs_path
+        for a in assignments
+        if a.gcs_path.startswith(pool_sub_prefix) and a.gcs_path not in already_attached
+    ]
+    if new_pool_paths:
+        asset_rows = await db.execute(
+            select(PlanItemAsset).where(
+                PlanItemAsset.plan_item_id == item.id,
+                PlanItemAsset.gcs_path.in_(new_pool_paths),
+            )
+        )
+        kind_by_path = {row.gcs_path: row.kind for row in asset_rows.scalars()}
+        for p in new_pool_paths:
+            if kind_by_path.get(p) != "video":
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Only video visuals from the pool can be used in the edit",
+                )
+
     try:
         set_item_clips(item, assignments)
     except ClipAssignmentError as exc:
@@ -1215,12 +1247,20 @@ async def generate_item(
 ) -> PlanItemResponse:
     """Enqueue a generative render for this item's themed clips (≥1 required)."""
     item = await _load_owned_item(item_id, user.id, db)
-    # Narrated walkthroughs are spined by the recorded voiceover — block generation
-    # until one is attached. Without it the job has no narration and silently falls
-    # back to montage (the "started a narrated render with no audio" dogfood bug).
+    # Narrated walkthroughs are spined by narration. With self-narration OFF that
+    # means a recorded voiceover — block generation until one is attached (without it
+    # the job silently falls back to montage: the "started a narrated render with no
+    # audio" dogfood bug). With self-narration ON the footage's own audio may carry
+    # the voice, so dispatch proceeds and _resolve_archetype routes by speech; a
+    # no-speech clip set falls back to montage WITH a persisted, user-visible reason.
     from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS  # noqa: PLC0415
+    from app.config import settings  # noqa: PLC0415
 
-    if (item.edit_format or "") in NARRATED_EDIT_FORMATS and not item.voiceover_gcs_path:
+    if (
+        (item.edit_format or "") in NARRATED_EDIT_FORMATS
+        and not item.voiceover_gcs_path
+        and not settings.narrated_self_narration_enabled
+    ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Record or upload your voiceover before generating a narrated walkthrough",
@@ -2746,6 +2786,12 @@ class PoolAssetOut(BaseModel):
     subject: str | None  # analysis micro-label for the pool tile (2A state table)
     display_url: str | None
     deduped: bool = False
+    # Object key under users/{uid}/plan/{item_id}/pool/ — inside attach_clips'
+    # allowed prefix, so the frontend "Use in edit" promotion can re-register the
+    # same object as a clip without a copy or a new endpoint. Required (no default):
+    # a constructor that forgets it must fail response validation loudly, never
+    # ship an empty path the promotion would 422 on.
+    gcs_path: str
 
 
 def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
@@ -2769,6 +2815,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         subject=analysis.get("subject"),
         display_url=display_url,
         deduped=deduped,
+        gcs_path=asset.gcs_path,
     )
 
 
