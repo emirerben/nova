@@ -2,7 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.4.1] — 2026-07-07
+## [0.7.4.2] — 2026-07-08
+
+### Fixed
+- **Generative variant state can no longer be silently clobbered by a concurrent write.** Several `Job.assembly_plan` read-modify-writers in the generative pipeline (`_set_status`/finalize, `_fail_job`, and the media-overlay / SFX re-apply prep passes) updated the whole JSONB column without `SELECT … FOR UPDATE`, while sibling regenerate tasks (worker `--concurrency=4`) and the status route's lazy HEIC-preview backfill mutate the same column concurrently. A stale read in any unlocked writer overwrote another writer's variants — lost render state, lost preview stamps. All four worker writers now row-lock (mirroring `_upsert_variant_entry`), and the status route persists its preview backfill by re-reading the row `FOR UPDATE` and merging only the stamps instead of committing an unlocked snapshot. Regression-tested (lock-spy on the writers + a route test proving a concurrent worker append survives the backfill).
 
 ### Fixed
 - **"Place visuals for me" no longer hangs the worker.** The suggestion matcher validated placements while holding the job row lock, and each validation trace event opened a second database connection to update the same row — deadlocking the worker on every run that actually found a match (zero-match runs were unaffected, which is how it shipped). Trace events now flush after the lock releases. Found by the v0.7.3.0 localhost E2E; regression-tested red/green.

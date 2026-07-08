@@ -1027,6 +1027,106 @@ def test_upsert_does_not_change_job_status(monkeypatch):
     assert job.status == "rendering"
 
 
+# ── assembly_plan RMW writers must row-lock (lost-update guard) ─────────────────
+#
+# Every writer that does a read-modify-write of Job.assembly_plan must SELECT ...
+# FOR UPDATE. Sibling regenerate/reapply tasks (worker --concurrency=4) and the
+# status route's lazy overlay-preview backfill mutate the same JSONB concurrently;
+# an unlocked stale read clobbers the whole plan (lost variant state / preview
+# URLs). These pin that the previously-unlocked writers now request the lock,
+# mirroring the already-locked _upsert_variant_entry / _update_variant_entry.
+
+_LOCK_TEST_JID = "11111111-1111-1111-1111-111111111111"
+
+
+class _LockSpySession:
+    """Fake sync session recording the `with_for_update` kwarg of every .get()."""
+
+    def __init__(self, job):
+        self._job = job
+        self.for_update_calls: list[bool] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, _model, _pk, **kw):
+        self.for_update_calls.append(bool(kw.get("with_for_update", False)))
+        return self._job
+
+    def commit(self):
+        pass
+
+
+def _patch_lock_spy(monkeypatch, job) -> _LockSpySession:
+    spy = _LockSpySession(job)
+    monkeypatch.setattr(gb, "_sync_session", lambda: spy)
+    return spy
+
+
+def test_set_status_row_locks_the_job(monkeypatch):
+    """_set_status merges extra_plan into assembly_plan (finalize writes the whole
+    variants list). The RMW must lock the row so a concurrent write is not clobbered."""
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "song_text"}]})
+    spy = _patch_lock_spy(monkeypatch, job)
+    gb._set_status(_LOCK_TEST_JID, "variants_ready", extra_plan={"variants": []})
+    assert spy.for_update_calls == [True]
+    assert job.status == "variants_ready"
+
+
+def test_fail_job_row_locks_the_job(monkeypatch):
+    """_fail_job reconciles per-variant render_status — an unlocked RMW here can wipe
+    a concurrent finalize's variant list."""
+    job = _FakeJob(assembly_plan={"variants": [{"variant_id": "a", "render_status": "rendering"}]})
+    spy = _patch_lock_spy(monkeypatch, job)
+    gb._fail_job(_LOCK_TEST_JID, "boom", failure_reason="processing_timeout")
+    assert spy.for_update_calls == [True]
+    # And the reconcile still ran: the in-flight variant flipped to failed.
+    assert job.assembly_plan["variants"][0]["render_status"] == "failed"
+    assert job.status == "processing_failed"
+
+
+def test_reapply_media_overlays_row_locks_the_prep_write(monkeypatch):
+    """The clean-copy reset in _reapply_persisted_media_overlays_if_any is a full-
+    variants-list RMW and must lock the row before writing back."""
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [{"variant_id": "song_text", "media_overlays": [{"src_gcs_path": "x"}]}]
+        }
+    )
+    spy = _patch_lock_spy(monkeypatch, job)
+    monkeypatch.setattr(gb.settings, "media_overlays_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_run_media_overlay_pass", lambda **kw: None, raising=False)
+    # flag_modified needs a real mapped instance; no-op it for the fake job.
+    import sqlalchemy.orm.attributes as _sa_attrs
+
+    monkeypatch.setattr(_sa_attrs, "flag_modified", lambda *a, **k: None)
+    handled = gb._reapply_persisted_media_overlays_if_any(
+        job_id=_LOCK_TEST_JID, variant_id="song_text"
+    )
+    assert handled is True
+    assert spy.for_update_calls == [True]
+
+
+def test_reapply_sfx_row_locks_the_prep_write(monkeypatch):
+    """The pre_sfx_video_path reset in _reapply_persisted_sfx_if_any is a full-
+    variants-list RMW and must lock the row before writing back."""
+    job = _FakeJob(
+        assembly_plan={"variants": [{"variant_id": "song_text", "sound_effects": [{"id": "s1"}]}]}
+    )
+    spy = _patch_lock_spy(monkeypatch, job)
+    monkeypatch.setattr(gb.settings, "sound_effects_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_run_sfx_pass", lambda **kw: None, raising=False)
+    # flag_modified needs a real mapped instance; no-op it for the fake job.
+    import sqlalchemy.orm.attributes as _sa_attrs
+
+    monkeypatch.setattr(_sa_attrs, "flag_modified", lambda *a, **k: None)
+    gb._reapply_persisted_sfx_if_any(job_id=_LOCK_TEST_JID, variant_id="song_text")
+    assert spy.for_update_calls == [True]
+
+
 def test_match_best_track_ignores_publish_gate(monkeypatch):
     """Generative auto-match draws from the WHOLE analyzed library, so it must
     call the shared candidate loader with require_published=False — otherwise

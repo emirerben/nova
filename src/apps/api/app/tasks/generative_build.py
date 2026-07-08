@@ -1587,7 +1587,10 @@ def _reapply_persisted_media_overlays_if_any(
 
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            # Row-locked RMW: clearing the clean-copy snapshots below rewrites the
+            # whole variants list. Without SELECT ... FOR UPDATE a concurrent
+            # writer's assembly_plan state is clobbered (mirrors _upsert_variant_entry).
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
                 return False
             variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -1660,7 +1663,10 @@ def _reapply_persisted_sfx_if_any(
 
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            # Row-locked RMW: clearing pre_sfx_video_path below rewrites the whole
+            # variants list. Without SELECT ... FOR UPDATE a concurrent writer's
+            # assembly_plan state is clobbered (mirrors _upsert_variant_entry).
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
                 return
             variants = list((job.assembly_plan or {}).get("variants") or [])
@@ -6753,8 +6759,13 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
 
 
 def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = None) -> None:
+    # Row-locked RMW (mirrors _upsert_variant_entry / _update_variant_entry).
+    # `extra_plan` merges into assembly_plan — _finalize_job writes the WHOLE
+    # variants list here. Sibling regenerate/reapply tasks and the status route's
+    # lazy overlay-preview backfill read-modify-write the same JSONB concurrently,
+    # so without SELECT ... FOR UPDATE a stale read silently clobbers their state.
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
         job.status = status
@@ -6767,7 +6778,11 @@ def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = No
 def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None) -> None:
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            # Row-locked: reconciling variant render_status below is a
+            # read-modify-write of assembly_plan. Without SELECT ... FOR UPDATE a
+            # concurrent variant/finalize write can be clobbered by this stale read
+            # (mirrors _upsert_variant_entry).
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job:
                 job.status = "processing_failed"
                 job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]
