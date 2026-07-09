@@ -50,6 +50,12 @@ import {
   patchPlanItemSceneTiming,
   type SceneTimingPatch,
 } from "@/lib/plan-api";
+import { buildPromotedAssignments } from "@/lib/plan-clip-promotion";
+import {
+  FINISHING_UPLOAD_HINT,
+  generateGate,
+  narrationFallbackBanner,
+} from "@/lib/plan-generate-gate";
 import { useSfxPreview } from "../../_components/useSfxPreview";
 import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
@@ -708,6 +714,28 @@ export default function PlanItemPage() {
     }
   }
 
+  // "Use in edit" (Visuals pool → clip promotion). Pool objects live under
+  // users/{uid}/plan/{itemId}/pool/ — already inside attach_clips' allowed
+  // prefix — so promotion is a plain re-attach with the pool path appended.
+  // The asset stays in the pool (overlay suggestions still see it).
+  async function promotePoolAsset(asset: PoolAsset) {
+    // Pure merge (unit-tested): preserves every existing shot_id/user_note and
+    // returns null on dedupe or a missing gcs_path (old-API version skew).
+    const assignments = buildPromotedAssignments(item?.clip_assignments ?? [], asset.gcs_path);
+    if (!assignments) return;
+    conformancePolls.current = 0;
+    try {
+      await attachClips(
+        itemId,
+        assignments.map((a) => a.gcs_path),
+        assignments,
+      );
+      refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't add that visual to the edit");
+    }
+  }
+
   async function handleVoiceover(gcsPath: string | null) {
     setVoiceoverGcsPath(gcsPath);
     setVoiceoverSaving(true);
@@ -815,6 +843,30 @@ export default function PlanItemPage() {
   const totalShots = item.filming_guide?.length ?? 0;
   const filledShots = item.clip_assignments?.filter((a) => a.shot_id !== null).length ?? 0;
   const shotsLeft = Math.max(0, totalShots - filledShots);
+
+  // Self-narration (dual-flag with NARRATED_SELF_NARRATION_ENABLED on Fly — flip
+  // Fly first, then Vercel): narrated items may generate without a recorded
+  // voiceover; the footage's own audio drives the edit.
+  const selfNarrationEnabled =
+    process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
+  // Button + hint from ONE decision so they can never disagree (plan-generate-gate).
+  const gate = generateGate({
+    generating,
+    isGenerating,
+    uploaderBusy,
+    clipCount,
+    isNarrated,
+    hasVoiceover: !!voiceoverGcsPath,
+    selfNarrationEnabled,
+    isInstructed,
+    shotsLeft,
+  });
+  // "Your narrated render became a montage" explanation (no_speech etc.) —
+  // persisted by the orchestrator, surfaced here so the swap is never silent.
+  const fallbackBanner = narrationFallbackBanner(
+    isNarrated,
+    data?.job?.archetype_fallback ?? null,
+  );
 
   const currentPhase =
     data?.job?.current_phase ??
@@ -1200,8 +1252,13 @@ export default function PlanItemPage() {
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Your clips
                 </p>
+                {/* Self-narration mode keeps this line short — the gate hint under
+                    Generate carries the "your video's own narration" explanation
+                    (one explanation per screen, DESIGN.md §9). */}
                 <p className="mb-4 text-sm text-[#71717a]">
-                  Upload all the clips you filmed. We&apos;ll listen to your recording and match each moment to the right clip automatically.
+                  {selfNarrationEnabled && !voiceoverGcsPath
+                    ? "Upload all the clips you filmed."
+                    : "Upload all the clips you filmed. We'll listen to your recording and match each moment to the right clip automatically."}
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
@@ -1268,7 +1325,12 @@ export default function PlanItemPage() {
             {/* Visuals pool — screenshots/screen recordings that feed AI overlay
                 auto-placement (plans/005 PR0). Renders nothing unless
                 NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED=true (gate lives inside). */}
-            <AssetPool itemId={itemId} />
+            <AssetPool
+              itemId={itemId}
+              attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
+              onUseInEdit={promotePoolAsset}
+              attachBusy={uploading || uploaderBusy}
+            />
 
             {/* Suggestion rail — AI overlay auto-placement review for the
                 focused variant (plans/005 PR2). Same flag gate as AssetPool;
@@ -1291,36 +1353,21 @@ export default function PlanItemPage() {
               }}
             />
 
-            {/* Generate + "N shots left" caption — below the shot sections (WS1) */}
+            {/* Generate + hint caption — both from generateGate (plan-generate-gate)
+                so the disabled state and its explanation can never disagree. */}
             {!isGenerating && (
               <div className="mt-4 space-y-2">
-                <InkButton
-                  onClick={handleGenerate}
-                  disabled={
-                    generating ||
-                    clipCount === 0 ||
-                    isGenerating ||
-                    uploaderBusy ||
-                    (isNarrated && !voiceoverGcsPath)
-                  }
-                >
+                <InkButton onClick={handleGenerate} disabled={gate.disabled}>
                   {generating
                     ? "Starting…"
                     : uploaderBusy
-                      ? "Finishing upload…"
+                      ? FINISHING_UPLOAD_HINT
                       : "Generate videos"}
                 </InkButton>
-                <p className="text-center text-sm text-[#a1a1aa]">
-                  {uploaderBusy
-                    ? "Finishing upload…"
-                    : isNarrated && !voiceoverGcsPath
-                      ? "Record your voiceover first — narration drives the edit"
-                      : clipCount === 0
-                        ? "Add clips to generate"
-                        : isInstructed && shotsLeft > 0
-                          ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
-                          : null}
-                </p>
+                {/* #71717a, not the faint #a1a1aa: this line now carries must-read
+                    gating copy (why the button is off / what drives the edit) —
+                    DESIGN.md §8 keeps faint ink decorative-only. */}
+                <p className="text-center text-sm text-[#71717a]">{gate.hint}</p>
               </div>
             )}
 
@@ -1384,6 +1431,18 @@ export default function PlanItemPage() {
             {item.status === "failed" && variants.length === 0 && (
               <p className="mt-2 text-sm text-[#71717a]">
                 Generation failed before any variant rendered. Try generating again.
+              </p>
+            )}
+            {/* Style-downgrade explanation: the narrated render fell back to
+                montage (no speech found / unreadable clip / flag-skew window).
+                Quiet zinc notice — informative, recoverable, never red (DESIGN.md).
+                Gated on a finished render WITH variants: the reason persists at
+                render START, so without the gate the past-tense "we made a montage"
+                would show mid-render, and after a hard failure it would claim a
+                montage exists right under "Generation failed". */}
+            {fallbackBanner && !isGenerating && variants.length > 0 && (
+              <p className="mt-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-[#3f3f46]">
+                {fallbackBanner}
               </p>
             )}
           </div>

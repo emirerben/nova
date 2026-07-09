@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.5.0] — 2026-07-08
+
+### Added
+- **Narrated walkthroughs generate without a separate voiceover recording** (behind `NARRATED_SELF_NARRATION_ENABLED`, default off). When a creator picks a narrated style and uploads footage whose own audio carries the narration, generation now proceeds instead of hard-blocking on the voice recorder. `_resolve_archetype` routes by the footage's own speech: 1 clip → `subtitled` (own audio + editable captions), 2+ clips → `talking_head` (highest-speech spine + B-roll). No audible speech anywhere → montage fallback with a persisted, user-visible reason. A recorded voiceover still wins and renders the narrated archetype unchanged. Dual-flag with `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (flip Fly first, then Vercel). The flag is the SOLE gate for the branch — it deliberately bypasses the per-archetype kill switches so rollback is one switch (incident note: if you disable a broken assembler, disable this too).
+- **"Use in edit" promotes a Visuals-pool video into the render** (rides the existing `NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED`). Pool objects already live inside `attach_clips`' allowed prefix, so promotion is a plain re-attach — no new endpoint, no copy. The asset stays in the pool for overlay suggestions. Video assets only; server-side kind check rejects non-video pool paths with a clear 422, matching the UI.
+- **Style-downgrade banner on the plan-item page.** When a narrated render falls back to montage, the reason is persisted on `assembly_plan["archetype_fallback"]` and surfaced as a quiet notice ("we made a montage instead…") so a style swap is never silent. Any unmapped reason still shows a generic downgrade line — a silent swap was the original dogfood bug this exists to prevent.
+
+### Changed
+- **`speech_coverage` decodes audio only** (`-vn -sn -dn` on the `silencedetect` command). Decoding the full video stream just to measure audio silence was 10-50x slower and could blow the 60s probe timeout on long phone clips — which scored the clip 0.0 and could misroute a genuinely narrated clip set to montage.
+- The Generate button's disabled state and its hint line now come from one pure, unit-tested function (`plan-generate-gate.ts`) so they can never disagree — the exact divergence class behind the "Record your voiceover first" bug.
+
 ## [0.7.4.1] — 2026-07-07
 
 ### Fixed

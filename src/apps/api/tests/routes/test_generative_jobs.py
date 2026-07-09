@@ -1310,3 +1310,79 @@ def test_topic_and_intent_default_to_none():
     req = CreateGenerativeJobRequest(clip_gcs_paths=["music-uploads/a.mp4"])
     assert req.topic is None
     assert req.intent is None
+
+
+# ── Self-narration: archetype_fallback exposure on /status ───────────────────
+
+
+async def test_status_exposes_archetype_fallback(monkeypatch):
+    """The orchestrator persists assembly_plan["archetype_fallback"] when a declared
+    format fell back to montage; /status must expose it so the item page can explain
+    the style swap. Pins the read path the fallback banner depends on."""
+    import types
+    import uuid
+    from datetime import datetime
+
+    import app.routes.generative_jobs as gj
+    import app.services.phase_baselines as pb
+
+    fallback = {"declared": "narrated_ready", "reason": "no_speech"}
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        mode="generative",
+        assembly_plan={"variants": [], "archetype_fallback": fallback},
+        error_detail=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        all_candidates={"edit_format": "narrated_ready"},
+        current_phase=None,
+        phase_log=None,
+        started_at=None,
+        finished_at=None,
+    )
+
+    async def _load(job_id, db, user, allowed_modes=None):
+        return job
+
+    monkeypatch.setattr(gj, "_load_generative_job", _load)
+    monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
+
+    resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
+    assert resp.archetype_fallback is not None
+    assert resp.archetype_fallback.model_dump() == fallback
+
+
+async def test_status_archetype_fallback_null_when_absent_or_malformed(monkeypatch):
+    """No stash (or a non-dict value from a hand-edited row) → null, never a crash."""
+    import types
+    import uuid
+    from datetime import datetime
+
+    import app.routes.generative_jobs as gj
+    import app.services.phase_baselines as pb
+
+    for plan in ({"variants": []}, {"variants": [], "archetype_fallback": "corrupt"}):
+        job = types.SimpleNamespace(
+            id=uuid.uuid4(),
+            status="variants_ready",
+            mode="generative",
+            assembly_plan=plan,
+            error_detail=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            all_candidates={},
+            current_phase=None,
+            phase_log=None,
+            started_at=None,
+            finished_at=None,
+        )
+
+        async def _load(job_id, db, user, allowed_modes=None, _job=job):
+            return _job
+
+        monkeypatch.setattr(gj, "_load_generative_job", _load)
+        monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
+
+        resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
+        assert resp.archetype_fallback is None

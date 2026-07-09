@@ -147,6 +147,22 @@ class Settings(BaseSettings):
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
 
+    # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
+    # recorded voiceover may still generate when its footage carries the voice — the
+    # clip audio IS the narration. Resolution: 1 clip with speech → subtitled (editable
+    # captions from its own audio); 2+ clips → talking_head (highest-speech spine +
+    # B-roll); no speech anywhere → montage fallback, reason persisted on
+    # assembly_plan["archetype_fallback"] and surfaced on the item page. This flag is
+    # the SOLE gate for the branch — it deliberately does NOT consult
+    # edit_format_talking_head_enabled / subtitled_archetype_enabled (those gate
+    # plan-DECLARED formats, not resolution outcomes) so rollback is one switch.
+    # INCIDENT NOTE: if either assembler's own kill switch is flipped off because
+    # that render path is broken, ALSO flip this flag off — self-narration would
+    # otherwise keep routing narrated items into the disabled assembler.
+    # Mirror flag NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED gates the frontend
+    # Generate button; flip Fly first, then Vercel. Default OFF.
+    narrated_self_narration_enabled: bool = False
+
     # "Get a transcript" helper for narrated-walkthrough voiceovers. When False,
     # the transcript routes (POST/GET /plan-items/{id}/transcript/*) return 404 and
     # the frontend entry link is hidden (mirror flag NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED

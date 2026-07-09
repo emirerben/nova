@@ -428,7 +428,7 @@ def _run_generative_job(job_id: str) -> None:
         _footage_type_bias: list[str] = list(
             (user_style.get("footage_type_bias") or []) if user_style else []
         )
-        archetype, spine_clip_id = _resolve_archetype(
+        archetype, spine_clip_id, archetype_fallback_reason = _resolve_archetype(
             edit_format,
             clip_metas,
             clip_id_to_local,
@@ -438,6 +438,10 @@ def _run_generative_job(job_id: str) -> None:
             footage_type_bias=_footage_type_bias,
         )
         _set_status(job_id, "rendering")
+        # Persist the style-downgrade reason so the item page can explain a montage
+        # fallback to the user (trace events are admin-only). A retry that now
+        # resolves cleanly clears the stale reason from the previous attempt.
+        _persist_archetype_fallback(job_id, edit_format, archetype_fallback_reason)
 
         # Resume support. A prior run of THIS job (killed mid-render by a CI
         # deploy / OOM, then redelivered via Celery acks_late) may have already
@@ -672,6 +676,9 @@ def _run_generative_job(job_id: str) -> None:
                 {"declared": edit_format, "reason": "spine_extraction_failed"},
             )
             log.warning("generative_talking_head_degrade_montage", job_id=job_id, error=str(exc))
+            # Persist the downgrade reason for the item-page banner (same contract as
+            # the resolution-time stash above).
+            _persist_archetype_fallback(job_id, edit_format, "spine_extraction_failed")
             # Re-upsert the montage fallback specs so the tile set stays consistent.
             fallback_specs = _variant_specs(best_track)
             for spec in fallback_specs:
@@ -3383,11 +3390,13 @@ def _resolve_archetype(
     voiceover_gcs_path: str | None = None,
     filming_guide: list[dict] | None = None,
     footage_type_bias: list[str] | None = None,
-) -> tuple[str, str | None]:
-    """Resolve the plan-declared edit_format against the footage → (archetype, spine).
+) -> tuple[str, str | None, str | None]:
+    """Resolve the declared edit_format against footage → (archetype, spine, fallback_reason).
 
-    Default-safe: returns `("montage", None)` for every case except a talking_head edit
-    that is enabled AND backed by footage with usable speech. Emits an
+    Default-safe: returns `("montage", None, reason)` for every case except a talking_head
+    edit that is enabled AND backed by footage with usable speech, and the narrated
+    self-narration branch (no voiceover + flag on) which can select subtitled or
+    talking_head from the footage's own speech. Emits an
     `archetype_fallback` / `archetype_selected` trace event so the admin job-debug view
     explains why a declared format did or didn't take. The returned `spine_clip_id` is
     fed straight to `assemble_talking_head`, whose override path then only re-scores
@@ -3406,17 +3415,22 @@ def _resolve_archetype(
     no assembler yet), `flag_disabled` (kill switch off), `no_speech` (no clip clears
     `_MIN_SPINE_COVERAGE`), `archetype_bias_no_speech` (bias suggested talking_head but
     no speech found).
+
+    The third tuple element is the montage-fallback reason (None when a non-montage
+    archetype was selected or montage was the declared format). The orchestrator
+    persists it on `assembly_plan["archetype_fallback"]` so the plan-item page can
+    explain a style downgrade to the user — the trace event alone is admin-only.
     """
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
-    def _fallback(reason: str) -> tuple[str, None]:
+    def _fallback(reason: str) -> tuple[str, None, str]:
         record_pipeline_event(
             "assembly", "archetype_fallback", {"declared": edit_format, "reason": reason}
         )
         log.info(
             "generative_archetype_fallback", job_id=job_id, declared=edit_format, reason=reason
         )
-        return "montage", None
+        return "montage", None, reason
 
     # Any narrated format with a voiceover renders the narrated archetype. A written
     # script (the filming guide) drives force-alignment; without a usable one
@@ -3428,7 +3442,7 @@ def _resolve_archetype(
         if settings.narrated_archetype_enabled:
             record_pipeline_event("assembly", "archetype_selected", {"archetype": "narrated"})
             log.info("generative_archetype_selected", job_id=job_id, archetype="narrated")
-            return "narrated", None
+            return "narrated", None, None
         record_pipeline_event(
             "assembly",
             "archetype_fallback",
@@ -3441,6 +3455,47 @@ def _resolve_archetype(
             reason="flag_disabled",
         )
 
+    # Self-narration: a narrated format with NO recorded voiceover can still be
+    # narration-driven when the footage itself carries the voice (the user filmed a
+    # walkthrough narrating over it). One clip with speech → subtitled (own audio +
+    # editable captions, the purpose-built renderer for "the clip's audio IS the
+    # narration"); several clips → talking_head (highest-speech clip spines the edit,
+    # the rest cut in as B-roll). No audible speech anywhere → montage fallback with
+    # the reason persisted for the item-page banner. NARRATED_SELF_NARRATION_ENABLED
+    # is the SOLE gate here — the declared-format kill switches
+    # (subtitled_archetype_enabled / edit_format_talking_head_enabled) gate the style
+    # picker, not this resolution outcome (see config.py).
+    if (
+        edit_format in NARRATED_EDIT_FORMATS
+        and not voiceover_gcs_path
+        and settings.narrated_self_narration_enabled
+    ):
+        spine_id, coverage = _pick_speech_spine(clip_metas, clip_id_to_local, job_id=job_id)
+        if spine_id is None or coverage < _MIN_SPINE_COVERAGE:
+            return _fallback("no_speech")
+        selected = "subtitled" if len(clip_id_to_local) == 1 else "talking_head"
+        record_pipeline_event(
+            "assembly",
+            "archetype_selected",
+            {
+                "archetype": selected,
+                "via": "narrated_self_narration",
+                "spine_clip_id": spine_id,
+                "speech_coverage": round(coverage, 3),
+            },
+        )
+        log.info(
+            "generative_archetype_selected",
+            job_id=job_id,
+            archetype=selected,
+            via="narrated_self_narration",
+            spine_clip_id=spine_id,
+            speech_coverage=round(coverage, 3),
+        )
+        if selected == "subtitled":
+            return "subtitled", None, None
+        return "talking_head", spine_id, None
+
     # A user-supplied voiceover wins over any footage-derived archetype: the voice is
     # the spine. Resolved BEFORE the speech-coverage logic because it's driven by an
     # uploaded asset, not by what the footage happens to contain.
@@ -3448,7 +3503,7 @@ def _resolve_archetype(
     if voiceover_gcs_path:
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "voiceover"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="voiceover")
-        return "voiceover", None
+        return "voiceover", None, None
 
     # Subtitled single-clip talking-head: no voiceover, no spine selection — the whole
     # clip keeps its own audio and is captioned. Gated by the kill switch; a
@@ -3461,7 +3516,7 @@ def _resolve_archetype(
             return _fallback("flag_disabled")
         record_pipeline_event("assembly", "archetype_selected", {"archetype": "subtitled"})
         log.info("generative_archetype_selected", job_id=job_id, archetype="subtitled")
-        return "subtitled", None
+        return "subtitled", None, None
 
     if edit_format == "montage":
         # B3 soft bias: when the user's style says "talking_head", attempt the
@@ -3482,21 +3537,9 @@ def _resolve_archetype(
         if bias and "talking_head" in bias and settings.edit_format_talking_head_enabled:
             # Attempt the bias: check speech coverage.
             try:
-                from app.services.clip_speech import speech_coverage  # noqa: PLC0415
-
-                best_id_bias: str | None = None
-                best_cov_bias = -1.0
-                for m in clip_metas:
-                    cid = str(getattr(m, "clip_id", "") or "")
-                    path = clip_id_to_local.get(cid)
-                    if not path:
-                        continue
-                    try:
-                        cov = float(speech_coverage(path))
-                    except Exception:  # noqa: BLE001
-                        cov = 0.0
-                    if cov > best_cov_bias:
-                        best_cov_bias, best_id_bias = cov, cid
+                best_id_bias, best_cov_bias = _pick_speech_spine(
+                    clip_metas, clip_id_to_local, job_id=job_id
+                )
 
                 if best_id_bias is not None and best_cov_bias >= _MIN_SPINE_COVERAGE:
                     record_pipeline_event(
@@ -3517,7 +3560,7 @@ def _resolve_archetype(
                         spine_clip_id=best_id_bias,
                         speech_coverage=round(best_cov_bias, 3),
                     )
-                    return "talking_head", best_id_bias
+                    return "talking_head", best_id_bias, None
                 else:
                     # Bias suggested talking_head but no speech — fall through to montage.
                     record_pipeline_event(
@@ -3542,7 +3585,7 @@ def _resolve_archetype(
                     job_id=job_id,
                     error=str(exc),
                 )
-        return "montage", None
+        return "montage", None, None
 
     if edit_format != "talking_head":
         # day_vlog / single_hero declared but no assembler exists yet.
@@ -3551,24 +3594,7 @@ def _resolve_archetype(
         return _fallback("flag_disabled")
 
     # Pick the highest-speech clip; reject the format if none carries real speech.
-    from app.services.clip_speech import speech_coverage  # noqa: PLC0415
-
-    best_id: str | None = None
-    best_cov = -1.0
-    for m in clip_metas:
-        cid = str(getattr(m, "clip_id", "") or "")
-        path = clip_id_to_local.get(cid)
-        if not path:
-            continue
-        try:
-            cov = float(speech_coverage(path))
-        except Exception as exc:  # noqa: BLE001 — best-effort; a probe failure scores 0
-            log.warning(
-                "generative_speech_coverage_failed", job_id=job_id, clip_id=cid, error=str(exc)
-            )
-            cov = 0.0
-        if cov > best_cov:
-            best_cov, best_id = cov, cid
+    best_id, best_cov = _pick_speech_spine(clip_metas, clip_id_to_local, job_id=job_id)
 
     if best_id is None or best_cov < _MIN_SPINE_COVERAGE:
         return _fallback("no_speech")
@@ -3589,7 +3615,43 @@ def _resolve_archetype(
         spine_clip_id=best_id,
         speech_coverage=round(best_cov, 3),
     )
-    return "talking_head", best_id
+    return "talking_head", best_id, None
+
+
+def _pick_speech_spine(
+    clip_metas: list,
+    clip_id_to_local: dict[str, str],
+    *,
+    job_id: str | None = None,
+) -> tuple[str | None, float]:
+    """Scan every clip's speech coverage → (best clip_id, best coverage).
+
+    The single spine-selection loop shared by the footage-type-bias branch, the
+    declared-talking_head branch, and the narrated self-narration branch of
+    `_resolve_archetype` — one source of truth for how "which clip carries the
+    voice" is decided. A probe failure logs and scores that clip 0 rather than
+    failing resolution (best-effort). Returns (None, -1.0) when no clip has a
+    local path. Callers compare the coverage against `_MIN_SPINE_COVERAGE`.
+    """
+    from app.services.clip_speech import speech_coverage  # noqa: PLC0415
+
+    best_id: str | None = None
+    best_cov = -1.0
+    for m in clip_metas:
+        cid = str(getattr(m, "clip_id", "") or "")
+        path = clip_id_to_local.get(cid)
+        if not path:
+            continue
+        try:
+            cov = float(speech_coverage(path))
+        except Exception as exc:  # noqa: BLE001 — best-effort; a probe failure scores 0
+            log.warning(
+                "generative_speech_coverage_failed", job_id=job_id, clip_id=cid, error=str(exc)
+            )
+            cov = 0.0
+        if cov > best_cov:
+            best_cov, best_id = cov, cid
+    return best_id, best_cov
 
 
 def _specs_for_archetype(
@@ -6750,6 +6812,32 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
         successes=len(successes),
         failures=len(failures),
     )
+
+
+def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) -> None:
+    """Persist (or clear) the style-downgrade reason on assembly_plan["archetype_fallback"].
+
+    The single writer for the key both call sites share (resolution-time stash and the
+    mid-render spine-degrade path). `reason` set → {declared, reason} lands on the plan
+    and the item page shows the downgrade banner. `reason` None → clear a stale value
+    from a prior attempt, but ONLY when the key already exists — never touching a
+    clean job keeps flag-off assembly_plan byte-identical to pre-feature output.
+    """
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return
+        plan = job.assembly_plan or {}
+        if reason:
+            job.assembly_plan = {
+                **plan,
+                "archetype_fallback": {"declared": declared, "reason": reason},
+            }
+        elif "archetype_fallback" in plan:
+            job.assembly_plan = {**plan, "archetype_fallback": None}
+        else:
+            return
+        db.commit()
 
 
 def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = None) -> None:
