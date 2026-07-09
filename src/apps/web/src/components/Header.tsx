@@ -177,6 +177,13 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
           >
             My videos
           </Link>
+          <Link
+            href="/plan/persona"
+            onClick={() => setOpen(false)}
+            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
+          >
+            Your persona
+          </Link>
           {!confirming ? (
             <button
               onClick={() => {

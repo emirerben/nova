@@ -14,10 +14,13 @@ export function MomentumCard({ plan }: MomentumCardProps) {
 
   return (
     <LightCard className="px-6 py-5">
-      <p className="font-display text-[28px] font-medium text-[#0c0c0e]">
-        {made} <span className="text-[#a1a1aa]">/ {total}</span>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a1a1aa]">
+        Completion
       </p>
-      <p className="mt-1 text-[13px] text-[#71717a]">videos made</p>
+      <p className="font-display text-[28px] font-medium text-[#0c0c0e]">
+        {made} <span className="text-[#a1a1aa]">of {total}</span>
+      </p>
+      <p className="mt-1 text-[13px] text-[#71717a]">videos made from this plan</p>
       <div className="mt-3 h-[5px] w-full overflow-hidden rounded-full bg-zinc-100">
         <div
           className="h-full rounded-full bg-lime-600 transition-all duration-500"
@@ -30,7 +33,7 @@ export function MomentumCard({ plan }: MomentumCardProps) {
             <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-lime-600 opacity-60" />
             <span className="relative inline-flex h-2 w-2 rounded-full bg-lime-600" />
           </span>
-          Matching your clips to your plan…
+          Matching your clips to remaining videos…
         </p>
       )}
       {!activating && rendering > 0 && (
@@ -44,7 +47,7 @@ export function MomentumCard({ plan }: MomentumCardProps) {
       )}
       {!activating && rendering === 0 && readyToPost > 0 && (
         <p className="mt-3 text-[13px] text-lime-700">
-          {readyToPost} ready to post
+          {readyToPost} {readyToPost === 1 ? "video is" : "videos are"} ready to post
         </p>
       )}
     </LightCard>

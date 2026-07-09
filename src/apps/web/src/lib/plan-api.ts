@@ -372,10 +372,6 @@ export function regenerateContentPlan(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/regenerate`, { method: "POST" });
 }
 
-export function addIdeasToPlan(planId: string): Promise<ContentPlan> {
-  return request<ContentPlan>(`/content-plans/${planId}/add-ideas`, { method: "POST" });
-}
-
 /** Idea-centric: append AI-generated ideas to the plan (opt-in, never auto-runs). */
 export function generateIdeasWithAI(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/generate-ideas`, { method: "POST" });
@@ -1369,7 +1365,7 @@ export async function getPlanItemJobStatusFresh(jobId: string): Promise<PlanItem
 
 // ── Creator Agent M1: Per-user style ─────────────────────────────────────────
 // Gated behind USER_STYLE_ENABLED on the backend (returns 404 when disabled).
-// Frontend: render StyleCard only when the style API returns non-404.
+// Frontend: render style surfaces only when the style API returns non-404.
 
 export interface StyleKnobs {
   font_family?: string | null;

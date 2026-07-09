@@ -1,13 +1,9 @@
 "use client";
-import { useState, useEffect } from "react";
-import type { ContentPlan, PersonaResponse, StyleResponse } from "@/lib/plan-api";
-import { FONT_FACES } from "@/lib/font-faces";
+import type { ContentPlan } from "@/lib/plan-api";
 import { calendarToday, behindBy } from "@/app/plan/_lib/plan-schedule";
 import { HomeTodayCard } from "./HomeTodayCard";
 import { IdeasSidebar } from "./IdeasSidebar";
 import { MomentumCard } from "./MomentumCard";
-import { PersonaCard } from "./PersonaCard";
-import { StyleCard } from "./StyleCard";
 import { ThisWeekStrip } from "./ThisWeekStrip";
 import { MonthCalendarGrid } from "./MonthCalendarGrid";
 import { PlanReadyBanner } from "./PlanReadyBanner";
@@ -17,7 +13,6 @@ import SteerInput from "../SteerInput";
 
 interface WorkspaceHomeProps {
   plan: ContentPlan;
-  persona: PersonaResponse;
   /** True when this is an in-session generating→ready flip (banner should show) */
   planJustReady: boolean;
   regenerating: boolean;
@@ -25,42 +20,16 @@ interface WorkspaceHomeProps {
   onError: (msg: string) => void;
   /** Called after the ready banner auto-dismisses so the parent can reset the flag */
   onBannerDismiss?: () => void;
-  /** Creator Agent M1: user style — absent when USER_STYLE_ENABLED=false */
-  styleResponse?: StyleResponse | null;
 }
 
 export function WorkspaceHome({
   plan,
-  persona: personaProp,
   planJustReady,
   regenerating,
   onRefresh,
   onError,
   onBannerDismiss,
-  styleResponse,
 }: WorkspaceHomeProps) {
-  // Local copy of persona so IdeasSidebar can optimistically update idea_seeds
-  // without triggering a full plan refresh (saves avoid a round-trip to the parent).
-  const [persona, setPersona] = useState<PersonaResponse>(personaProp);
-
-  // When the parent refreshes (e.g. plan regeneration, poll cycle), propagate
-  // changes from outside while keeping any in-flight local saves stable.
-  // Keyed on the parent's generation_started_at so a new plan generation always
-  // wins; idea_seeds changes from IdeasSidebar's own saves are the one
-  // authoritative local mutation path and do NOT come through personaProp
-  // until the next poll.
-  useEffect(
-    () => {
-      setPersona(personaProp);
-    },
-    // Intentional partial deps: re-sync only when the server signals a new
-    // generation (generation_started_at / persona_status change). We do NOT
-    // include personaProp itself to avoid clobbering in-flight idea_seeds
-    // saves that haven't yet round-tripped through the parent's poll cycle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [personaProp.generation_started_at, personaProp.persona_status],
-  );
-
   const items = plan.items ?? [];
   // Items that have been scheduled (expanded ideas with a calendar slot).
   const scheduledItems = items.filter((i) => i.day_index !== null);
@@ -86,18 +55,13 @@ export function WorkspaceHome({
 
   return (
     <div className="min-h-screen bg-[#fafaf8]">
-      {/* Inject @font-face declarations once so StyleCard (and any other font-previewing
-          component in this subtree) can render fonts in their REAL typeface. The item page
-          already does this; WorkspaceHome is a separate subtree so we inject it here too. */}
-      <style dangerouslySetInnerHTML={{ __html: FONT_FACES }} />
-
       <div className="mx-auto max-w-[1280px] px-6 pb-24 pt-8">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">
 
           {/* ── Left rail: "Your ideas" sidebar ───────────────────────────── */}
           {/* Mobile: stacks above Today card
-              Desktop: sticky left rail w-64 */}
-          <div className="w-full lg:w-64 lg:shrink-0 lg:sticky lg:top-8">
+              Desktop: sticky left rail w-96 */}
+          <div className="w-full lg:w-96 lg:shrink-0 lg:sticky lg:top-8">
             <IdeasSidebar
               plan={plan}
               onRefresh={onRefresh}
@@ -168,21 +132,6 @@ export function WorkspaceHome({
               <div className="flex-1">
                 <MomentumCard plan={plan} />
               </div>
-              <div className="flex-1">
-                <PersonaCard persona={persona} />
-              </div>
-              {/* Creator Agent M1: StyleCard — absent when USER_STYLE_ENABLED=false */}
-              {styleResponse && (
-                <div className="flex-1">
-                  <StyleCard
-                    style={styleResponse.style}
-                    status={styleResponse.status}
-                    styleSetPreview={styleResponse.style_set_preview}
-                    fontPreview={styleResponse.font_preview}
-                    provenance={styleResponse.provenance}
-                  />
-                </div>
-              )}
             </div>
 
             {/* SteerInput — recessive, below everything */}
