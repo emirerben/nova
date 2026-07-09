@@ -46,6 +46,11 @@ from app.agents.overlay_format_matcher import (
     OverlayFormatMatcherOutput,
 )
 from app.agents.platform_copy import PlatformCopyOutput
+from app.agents.retake_detector import (
+    RetakeDetectorInput,
+    RetakeDetectorOutput,
+    retake_structural_failures,
+)
 from app.agents.sequence_emphasis import SequenceEmphasisInput, SequenceEmphasisOutput
 from app.agents.sequence_quote_writer import SequenceQuoteOutput, quote_structural_failures
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
@@ -1309,6 +1314,22 @@ def check_sequence_quote(output: SequenceQuoteOutput) -> list[str]:
     return quote_structural_failures(output.quote)
 
 
+def check_retake_detector(
+    output: RetakeDetectorOutput,
+    input: RetakeDetectorInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for nova.audio.retake_detector.
+
+    parse() funnels every span through `normalize_retake_spans`, which
+    guarantees these invariants by construction (spans within bounds,
+    start <= end, never reaching the final word, sorted/merged, non-empty
+    reasons). The structural check imports `retake_structural_failures` from
+    the agent module so the eval can never drift from the runtime's own
+    validation — same pattern as sequence_quote.
+    """
+    return retake_structural_failures(output.retakes, len(input.words))
+
+
 def check_persona_generator(output: Persona) -> list[str]:
     """Structural floor for nova.plan.persona_generator.
 
@@ -1802,6 +1823,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_song_sections(output, input)
     if agent_name == "nova.audio.music_matcher":
         return check_music_matcher(output, input)
+    if agent_name == "nova.audio.retake_detector":
+        return check_retake_detector(output, input)
     if agent_name == "nova.plan.clip_plan_matcher":
         return check_clip_plan_matcher(output, input)
     if agent_name == "nova.video.clip_router":
