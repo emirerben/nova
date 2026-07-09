@@ -167,7 +167,7 @@ type PendingEdit = {
 
 // Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
 // is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
-// StyleCard.tsx / OnboardingShell.tsx's FOOTAGE_OPTIONS, which use the same
+// the persona/onboarding footage options, which use the same
 // phrase for a persona-level content preference, not an edit style). Do not
 // merge these two label maps — they answer different questions.
 const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {

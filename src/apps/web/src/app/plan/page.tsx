@@ -8,11 +8,9 @@ import {
   createContentPlan,
   getContentPlan,
   getPersona,
-  getStyle,
   NotAuthenticatedError,
   type PersonaContent,
   type PersonaResponse,
-  type StyleResponse,
   retunePersonaFromFeedback,
   tiktokScrape,
   updatePersona,
@@ -60,7 +58,6 @@ function PlanPageInner() {
 
   const [persona, setPersona] = useState<PersonaResponse | null>(null);
   const [plan, setPlan] = useState<ContentPlan | null>(null);
-  const [styleResponse, setStyleResponse] = useState<StyleResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,21 +83,8 @@ function PlanPageInner() {
 
   const load = useCallback(async () => {
     try {
-      // Fetch style best-effort: API returns 404 when USER_STYLE_ENABLED=false.
-      // Map any 404 (or NotAuthenticatedError rethrow) → absent so the page
-      // never crashes when the feature flag is off.
-      const stylePromise = getStyle().catch((err) => {
-        const msg: string = err instanceof Error ? err.message : String(err);
-        if (msg.includes("404") || msg.includes("Not Found")) {
-          return { style: null, status: "absent" as const };
-        }
-        // For any other error (e.g. network), treat as absent — non-critical.
-        return { style: null, status: "absent" as const };
-      });
-
-      const [p, pl, sr] = await Promise.all([getPersona(), getContentPlan(), stylePromise]);
+      const [p, pl] = await Promise.all([getPersona(), getContentPlan()]);
       setPersona(p);
-      setStyleResponse(sr);
       setPlan((prevPlan) => {
         // Detect in-session generating → ready flip
         const prevStatus = prevPlan?.plan_status ?? null;
@@ -139,8 +123,7 @@ function PlanPageInner() {
   const isGenerating =
     persona?.persona_status === "generating" ||
     plan?.plan_status === "generating" ||
-    (plan?.items ?? []).some((i) => i.status === "rerolling") ||
-    styleResponse?.status === "deriving";
+    (plan?.items ?? []).some((i) => i.status === "rerolling");
 
   useEffect(() => {
     if (!isGenerating) return;
@@ -226,13 +209,11 @@ function PlanPageInner() {
     return (
       <WorkspaceHome
         plan={plan!}
-        persona={persona!}
         planJustReady={planJustReady}
         regenerating={mode === "workspace:regenerating"}
         onRefresh={load}
         onError={setError}
         onBannerDismiss={() => setPlanJustReady(false)}
-        styleResponse={styleResponse}
       />
     );
   }

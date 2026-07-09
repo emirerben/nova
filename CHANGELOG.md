@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.7.0] — 2026-07-09
+
+### Changed
+- **Plan home is ideas-first.** Removed the "Your persona" and "Your style" cards (and the dead `IdeasCard`/`TodayCard` components) from the plan workspace, widened the sticky ideas rail (`lg:w-64` → `lg:w-96`), and gave the Ideas heading a real display treatment with a primary lime "Generate with AI" button. `IdeasSidebar` now splits into two sections — unscheduled **Ideas** and **In your plan** (scheduled, muted, with a "Day N" chip) — and AI-generation failures (including the 409 "already generating" case) surface in their own error slot instead of the generic save-error text.
+- Persona editing is still one click away: the account-menu dropdown gained a "Your persona" link to `/plan/persona`.
+- `MomentumCard` copy reworded from streak/momentum language to honest completion-progress phrasing ("X of Y videos made") — no change to the underlying `planProgress()` computation.
 ## [0.7.6.0] — 2026-07-09
 
 ### Changed
