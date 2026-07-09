@@ -32,6 +32,7 @@ import {
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 
+import { SilenceCutStrip } from "./SilenceCutStrip";
 import { Timeline } from "./Timeline";
 
 // Status values eligible for cancellation.
@@ -398,6 +399,9 @@ function GenerativeVariants({
                   </div>
                 )}
               </div>
+              {/* Renders null unless the variant carries a silence_cut blob
+                  with removed ranges (plans/010) — old jobs show nothing. */}
+              <SilenceCutStrip variant={v} />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <button
                   type="button"
