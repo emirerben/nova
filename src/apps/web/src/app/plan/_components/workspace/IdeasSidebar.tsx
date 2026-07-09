@@ -106,13 +106,7 @@ export function IdeasSidebar({ plan, onRefresh }: IdeasSidebarProps) {
 
       {/* Items list */}
       {!isEmpty && (
-        <section aria-labelledby="ideas-heading">
-          <p
-            id="ideas-heading"
-            className="mb-1 text-[11px] font-semibold uppercase tracking-[.18em] text-lime-700"
-          >
-            Ideas
-          </p>
+        <section aria-label="Ideas">
           <ul className="flex flex-col" aria-label="Ideas">
             {ideaItems.map((item) => (
               <li
