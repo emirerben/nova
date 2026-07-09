@@ -6,17 +6,18 @@ flag signaling when the interview is complete.
 
 Design:
 - Single-shot per turn: no persistent session, just full history on each call.
-- Hard cap: route enforces ≤8 turns; agent signals is_final=True when it
-  decides no more questions are needed (typically 4-7 turns).
+- Hard cap: route enforces ≤7 turns; agent signals is_final=True when it
+  decides no more questions are needed (typically 4-6 turns).
 - Final-Q prefix: when is_final=True, the question MUST start with
   "One last thing — " (checked by the route).
 - TikTok-aware: when tiktok_profile is present, the agent skips questions
   that the profile already answers and goes deeper on gaps.
 
 Changelog:
+  2026-07-09 — Removed Turn 3 motivation question; tightened arc to 4-5 turns.
   2026-06-12 — Turn-label consistency contract (M never below N; reaching your own
                advertised M forces is_final) — dogfood: labels drifted to "7-8 OF ~6"
-               after the DIRECTION turn lengthened the arc. Aim tightened to 5-6 turns.
+               after the prior arc lengthening.
   2026-06-11 — Turn 1 is now DIRECTION (existing footage vs create-new fork, chips
                carry the classification); conditional GROUNDING question pins
                current location vs past-trip footage; turn-1 suggestions exception.
@@ -38,13 +39,13 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-06-12"
-_HARD_CAP = 8
+INTERVIEWER_PROMPT_VERSION = "2026-07-09"
+_HARD_CAP = 7
 # Server-side turn contract (parse() enforces; the prompt only *aims*):
 # question _FORCE_FINAL_AT is always the last one, and turn_label is derived
 # from the route's counter — the model's label arithmetic is never trusted.
-_FORCE_FINAL_AT = 7
-_DEFAULT_TOTAL_ESTIMATE = 6
+_FORCE_FINAL_AT = 6
+_DEFAULT_TOTAL_ESTIMATE = 5
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
@@ -62,6 +63,11 @@ class InterviewerInput(BaseModel):
     # Sanitized TikTok profile summary — None when user skipped or scrape failed
     tiktok_summary: str | None = None
     turn_count: int = 0
+    # The M last advertised to the user ("~N OF ~M"), extracted from the stored
+    # previous agent turn. Caps this turn's M so the denominator never visibly
+    # creeps upward mid-interview (dogfood 2026-07-09: ~5 → ~8 over 7 turns).
+    # None on the first turn or for legacy stored turns without a label.
+    prev_total_estimate: int | None = None
 
 
 class InterviewerOutput(BaseModel):
@@ -70,7 +76,7 @@ class InterviewerOutput(BaseModel):
     question: str = Field(min_length=5)
     suggestions: list[str] = Field(default_factory=list, max_length=5)
     is_final: bool = False
-    # "~3 OF ~6" eyebrow label shown above the question
+    # "~3 OF ~5" eyebrow label shown above the question
     turn_label: str = ""
 
 
@@ -144,7 +150,7 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
             raise RefusalError(f"interviewer: validation — {exc}") from exc
 
         # ── Server-enforced turn contract (dogfood: model emitted "~7 OF ~6") ──
-        # The prompt ASKS for label consistency and a 5-6 turn finish, but
+        # The prompt ASKS for label consistency and a 4-5 turn finish, but
         # arithmetic promises can't be left to the model. N comes from the
         # route's own counter; the model only contributes its estimate of M.
         n = max(1, int(input.turn_count or 1))
@@ -159,10 +165,15 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
 
         # Label: final question is always "~n OF ~n"; otherwise at least one
         # more question follows, so the advertised total is ≥ n+1 (and never
-        # above the cap). The model's M survives only within those bounds.
+        # above the cap). The model's M survives only within those bounds, and
+        # never above the M already shown to the user (monotonic denominator) —
+        # unless n+1 forces it, i.e. the interview genuinely ran past the
+        # advertised total.
         m_match = re.search(r"OF\s*~?(\d+)", output.turn_label or "")
         model_m = int(m_match.group(1)) if m_match else _DEFAULT_TOTAL_ESTIMATE
         m = n if is_final else min(max(model_m, n + 1), _FORCE_FINAL_AT)
+        if not is_final and input.prev_total_estimate is not None:
+            m = min(m, max(input.prev_total_estimate, n + 1))
 
         return InterviewerOutput(
             question=question,
@@ -175,7 +186,7 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
         return (
             "\n\nIMPORTANT: return ONLY valid JSON with keys: "
             "question (string), suggestions (list of 2-4 short strings), "
-            "is_final (boolean), turn_label (string like '~3 OF ~6'). "
+            "is_final (boolean), turn_label (string like '~3 OF ~5'). "
             "No markdown, no prose outside the JSON."
         )
 

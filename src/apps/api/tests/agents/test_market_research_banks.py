@@ -214,7 +214,7 @@ def test_intro_writer_prompt_injects_success_factors():
 def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-05-31: added gap-in-market-founder-01 archetype (nermozdemir origin-story pattern).
     # Bump 2026-06-05: added posts_per_week field (structured post frequency 1-7).
-    # Bump 2026-06-06: interview_turns replaces flat fields as primary input; added signature_quote.
+    # Bump 2026-06-06: interview_turns replaces flat fields as primary input.
     # Bump 2026-06-06.1: added $tiktok_analysis block (deep TikTok profile analysis).
     # Bump 2026-06-07: weekly research refresh — added adventure-humor-candid-01 archetype
     #                  (izzsiomoi humor+extreme pattern, vi=124x).
@@ -222,8 +222,9 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
+    # Bump 2026-07-09: persona prompt/schema removed an unused output field; banks untouched.
     assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-06-14"
+    assert PERSONA_PROMPT_VERSION == "2026-07-09"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -262,8 +263,9 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
+    # Persona bumped to 2026-07-09: prompt/schema removed an unused output field; banks untouched.
     assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-06-14"
+    assert PERSONA_PROMPT_VERSION == "2026-07-09"
     assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
 
