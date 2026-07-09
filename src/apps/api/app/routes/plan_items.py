@@ -199,8 +199,9 @@ class PlanItemResponse(BaseModel):
     conformance: dict | None = None
     # Persona content mode (direction fork, 2026-06-11): drives the film-card
     # header copy — "HOW TO FILM THIS" (create_new/legacy) vs "WHAT TO LOOK FOR"
-    # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Populated on the item
-    # GET (the page's poll path); other responses default to create_new.
+    # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Resolved on the item
+    # GET and on plan (list) responses via content_plans._resolve_item_content_mode
+    # so the two read paths agree; bare mutation responses default to create_new.
     content_mode: str = "create_new"
     # Render archetype assigned at plan-generation time (e.g. "montage",
     # "talking_head"). Null for items generated before this field shipped.

@@ -73,10 +73,22 @@ class ContentPlanResponse(BaseModel):
     idea_seeds: list[dict] = []
 
 
+def _resolve_item_content_mode(item: PlanItem, persona_content_mode: str | None) -> str:
+    """Mirror plan_items._get_content_mode without a DB read: item override
+    beats the persona-level value; anything unknown collapses to create_new."""
+    own = getattr(item, "content_mode", None)
+    if own in ("existing_footage", "create_new", "mixed"):
+        return own
+    if persona_content_mode in ("existing_footage", "create_new", "mixed"):
+        return persona_content_mode
+    return "create_new"
+
+
 def _plan_response(
     plan: ContentPlan,
     idea_seeds: list[dict] | None = None,
     seed_text_by_id: dict[str, str] | None = None,
+    persona_content_mode: str | None = None,
 ) -> ContentPlanResponse:
     pool = plan.pool or {}
     pool_clips = [c for c in pool.get("clips", []) if isinstance(c, dict)]
@@ -102,7 +114,14 @@ def _plan_response(
         plan_status=plan.plan_status,
         horizon_days=plan.horizon_days,
         events=plan.events,
-        items=[plan_item_response(it, seed_text_by_id=_seed_map) for it in plan.items],
+        items=[
+            plan_item_response(
+                it,
+                seed_text_by_id=_seed_map,
+                content_mode=_resolve_item_content_mode(it, persona_content_mode),
+            )
+            for it in plan.items
+        ],
         activation_status=plan.activation_status,
         seed_clip_count=len(plan.seed_clip_paths or []),
         generation_started_at=plan.generation_started_at,
@@ -201,12 +220,20 @@ async def create_plan(
             .scalars()
             .all()
         )
+        _persona_mode = (
+            str(persona.persona.get("content_mode") or "")
+            if isinstance(persona.persona, dict)
+            else None
+        )
         return ContentPlanResponse(
             id=str(plan.id),
             plan_status=plan.plan_status,
             horizon_days=plan.horizon_days,
             events=plan.events,
-            items=[plan_item_response(it) for it in items],
+            items=[
+                plan_item_response(it, content_mode=_resolve_item_content_mode(it, _persona_mode))
+                for it in items
+            ],
             idea_seeds=raw_seeds,
         )
 
@@ -275,7 +302,16 @@ async def get_plan(
         for s in seeds
         if isinstance(s, dict) and s.get("id") and s.get("text")
     }
-    return _plan_response(plan, idea_seeds=idea_seeds, seed_text_by_id=seed_text_by_id)
+    return _plan_response(
+        plan,
+        idea_seeds=idea_seeds,
+        seed_text_by_id=seed_text_by_id,
+        persona_content_mode=(
+            str(persona.persona.get("content_mode") or "")
+            if persona is not None and isinstance(persona.persona, dict)
+            else None
+        ),
+    )
 
 
 @router.post("/{plan_id}/regenerate", response_model=ContentPlanResponse)
@@ -304,34 +340,6 @@ async def regenerate_plan(
     from app.tasks.content_plan_build import regenerate_content_plan  # noqa: PLC0415
 
     regenerate_content_plan.delay(str(plan.id))
-    return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
-
-
-@router.post("/{plan_id}/add-ideas", response_model=ContentPlanResponse)
-async def add_ideas_to_plan(
-    plan_id: str,
-    user: CurrentUser,
-    db: AsyncSession = Depends(get_db),
-) -> ContentPlanResponse:
-    """Generate one plan item per pending idea seed and append to the plan.
-
-    Lightweight alternative to full regeneration: only generates items for
-    seeds that haven't been turned into plan items yet. 409 if generation
-    is already in flight.
-    """
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
-    if plan.plan_status == "generating":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="A plan generation is already in progress",
-        )
-    plan.plan_status = "generating"
-    plan.generation_started_at = datetime.now(UTC)
-    await db.commit()
-
-    from app.tasks.content_plan_build import add_ideas_to_plan as _add_ideas_task  # noqa: PLC0415
-
-    _add_ideas_task.delay(str(plan.id))
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
