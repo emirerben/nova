@@ -48,10 +48,6 @@ export interface PersonaContent {
   // The AI's "why this lane" — shown read-only in the dashboard. Optional:
   // personas generated before this field shipped won't have it.
   rationale?: string;
-  // The single most revealing thing the creator said in the chat interview —
-  // shown verbatim as "You said: '...'" on the persona reveal. Empty for
-  // personas generated from the old flat-field questionnaire.
-  signature_quote?: string;
   // "What kind of videos do you make?" onboarding signal.
   // talking_head | montage | day_vlog | mixed
   footage_type_bias?: string[];
