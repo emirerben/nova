@@ -341,10 +341,11 @@ async def generate_ideas_into_plan(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> ContentPlanResponse:
-    """Generate AI ideas and append to the plan (opt-in, idea-centric mode).
+    """Generate with AI for a plan in two modes.
 
-    Uses ContentPlanGeneratorAgent to create new idea items; appends them
-    preserving all existing user-edited/in-flight items. 409 if already generating.
+    If bare ideas exist, the task expands and schedules them in-place. If no
+    bare ideas exist, it creates fresh bare AI suggestions for the user to
+    curate before a later click schedules them. 409 if already generating.
     """
     plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
     if plan.plan_status == "generating":

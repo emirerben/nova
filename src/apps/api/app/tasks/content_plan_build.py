@@ -1196,21 +1196,36 @@ def add_ideas_to_plan(self, plan_id: str) -> None:  # noqa: ANN001
     time_limit=180,
 )
 def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
-    """Expand bare ideas in-place into full plan items (idea-centric mode).
+    """Generate with AI for content plans in two modes.
 
-    Called by POST /content-plans/{id}/generate-ideas. For each item with
-    day_index=None, runs IdeaExpanderAgent and writes theme/filming_guide/
-    rationale/day_index back to that same row. Ideas graduate from the sidebar
-    to the calendar rather than spawning duplicate rows.
+    Mode 1: when bare items exist, expand user-typed ideas in-place with
+    IdeaExpanderAgent and assign calendar slots. Items that already have a
+    theme + filming_guide are only scheduled.
 
-    Items that fail to expand are left untouched (remain as bare ideas).
-    Idempotency: if there are no bare ideas, sets plan_status="ready" and returns.
+    Mode 2: when no bare items exist, use ContentPlanGeneratorAgent to create
+    fresh bare suggestions for user curation. A later click schedules them via
+    Mode 1.
     """
     from sqlalchemy.orm.attributes import flag_modified  # noqa: I001, PLC0415
     from app.agents.idea_expander import IdeaExpanderAgent, IdeaExpanderInput  # noqa: PLC0415
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     pid = uuid.UUID(str(plan_id))
+
+    def _terminal_failure() -> bool:
+        return int(getattr(self.request, "retries", 0) or 0) >= int(
+            getattr(self, "max_retries", 0) or 0
+        )
+
+    def _is_preexpanded(item: PlanItem) -> bool:
+        theme = getattr(item, "theme", None)
+        guide = getattr(item, "filming_guide", None)
+        return (
+            isinstance(theme, str)
+            and bool(theme.strip())
+            and isinstance(guide, list)
+            and bool(guide)
+        )
 
     with sync_session() as session:
         plan = session.get(ContentPlan, pid)
@@ -1227,8 +1242,73 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
         )
 
         if not bare_items:
+            persona = (
+                Persona(**persona_row.persona)
+                if persona_row and persona_row.persona
+                else Persona(
+                    summary="",
+                    content_pillars=[],
+                    tone="",
+                    audience="",
+                    posting_cadence="",
+                    sample_topics=[],
+                )
+            )
+            agent_input = ContentPlanInput(
+                persona=persona,
+                events=str((plan.events or {}).get("text", "") or ""),
+                horizon_days=5,
+                exclude_ideas=[it.idea for it in existing_items if it.idea],
+                user_idea_seeds=[],
+            )
+            existing_bare_positions = [
+                it.position
+                for it in existing_items
+                if it.day_index is None and it.position is not None
+            ]
+            next_position = max(existing_bare_positions, default=0) + 1
+
+            try:
+                agent = ContentPlanGeneratorAgent(default_client())
+                output = agent.run(agent_input, ctx=RunContext(job_id=None))
+                new_specs = list(output.items)[:5]
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "generate_ideas_into_plan.fresh_failed",
+                    plan_id=plan_id,
+                    error=str(exc),
+                )
+                if _terminal_failure():
+                    plan.plan_status = "failed"
+                    session.commit()
+                raise self.retry(exc=exc) from exc
+
+            for i, spec in enumerate(new_specs):
+                session.add(
+                    PlanItem(
+                        content_plan_id=plan.id,
+                        day_index=None,
+                        position=next_position + i,
+                        theme=spec.theme,
+                        idea=spec.idea,
+                        filming_suggestion=spec.filming_suggestion or None,
+                        rationale=spec.rationale or None,
+                        edit_format=spec.edit_format or "montage",
+                        filming_guide=[
+                            {**s.model_dump(), "shot_id": uuid.uuid4().hex}
+                            for s in (spec.filming_guide or [])
+                        ],
+                        item_status="idea",
+                    )
+                )
+
             plan.plan_status = "ready"
             session.commit()
+            log.info(
+                "generate_ideas_into_plan.fresh_done",
+                plan_id=plan_id,
+                added=len(new_specs),
+            )
             return
 
         # Assign calendar slots: find free day_index values within horizon.
@@ -1241,7 +1321,14 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
             free_slots += list(range(horizon + 1, horizon + 1 + extra))
 
         # Collect (item_id, idea_text, assigned_slot) for the agent loop.
-        work = [(item.id, item.idea or "", free_slots[i]) for i, item in enumerate(bare_items)]
+        schedule_only = [
+            (item.id, free_slots[i]) for i, item in enumerate(bare_items) if _is_preexpanded(item)
+        ]
+        work = [
+            (item.id, item.idea or "", free_slots[i])
+            for i, item in enumerate(bare_items)
+            if not _is_preexpanded(item)
+        ]
 
         persona = (
             Persona(**persona_row.persona)
@@ -1256,13 +1343,13 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
             )
         )
 
-    # Run IdeaExpanderAgent for each bare idea — outside DB session.
+    # Run IdeaExpanderAgent for each non-expanded bare idea — outside DB session.
     results: list[tuple[uuid.UUID, int, object]] = []
     with pipeline_trace_for(pid):
-        agent = IdeaExpanderAgent(default_client())
+        agent = IdeaExpanderAgent(default_client()) if work else None
         for item_id, idea_text, slot in work:
             try:
-                output = agent.run(
+                output = agent.run(  # type: ignore[union-attr]
                     IdeaExpanderInput(
                         idea=idea_text,
                         persona_summary=persona.summary,
@@ -1280,13 +1367,14 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 )
                 # Item stays as bare idea — partial success is fine.
 
-    if not results:
+    if work and not results:
         # Every item failed — surface error and allow retry.
         with sync_session() as session:
             plan = session.get(ContentPlan, pid)
             if plan is not None:
-                plan.plan_status = "ready"
-                session.commit()
+                if _terminal_failure():
+                    plan.plan_status = "failed"
+                    session.commit()
         raise self.retry(exc=RuntimeError("all idea expansions failed")) from None
 
     # Write expansions back to the existing items.
@@ -1294,6 +1382,11 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
         plan = session.get(ContentPlan, pid)
         if plan is None:
             return
+
+        for item_id, slot in schedule_only:
+            item = session.get(PlanItem, item_id)
+            if item is not None:
+                item.day_index = slot
 
         for item_id, slot, output in results:
             item = session.get(PlanItem, item_id)
@@ -1316,5 +1409,6 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
         "generate_ideas_into_plan.done",
         plan_id=plan_id,
         expanded=len(results),
+        scheduled_without_expansion=len(schedule_only),
         skipped=len(work) - len(results),
     )
