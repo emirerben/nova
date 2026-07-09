@@ -189,228 +189,6 @@ def test_dedup_replaces_duplicate_with_distinct_regen_idea() -> None:
     assert day3.rationale == "save-worthy"
 
 
-# ── T5 provenance: add_ideas_to_plan sets source_idea_seed_id + flips status ──
-
-
-from app.tasks.content_plan_build import add_ideas_to_plan  # noqa: E402
-
-
-def _make_add_ideas_sessions(plan, persona_row, new_specs):
-    """Build the two sync_session context managers used by add_ideas_to_plan.
-
-    Session 1: returns plan + persona_row (setup read).
-    Session 2: returns a fresh plan mock + persona_row (persist write).
-    """
-    added_items = []
-
-    # --- session 1 (read) ---
-    session1 = MagicMock()
-    plan1 = MagicMock()
-    plan1.persona_id = plan.persona_id
-    plan1.id = plan.id
-    plan1.horizon_days = plan.horizon_days
-    plan1.events = {}
-    plan1.items = []
-    plan1.plan_status = "ready"
-
-    def _get1(model, _pk):
-        return {ContentPlan: plan1, PersonaRow: persona_row}.get(model)
-
-    session1.get = MagicMock(side_effect=_get1)
-    ctx1 = MagicMock()
-    ctx1.__enter__ = MagicMock(return_value=session1)
-    ctx1.__exit__ = MagicMock(return_value=False)
-
-    # --- session 2 (write) ---
-    session2 = MagicMock()
-    plan2 = MagicMock()
-    plan2.persona_id = plan.persona_id
-    plan2.id = plan.id
-    plan2.plan_status = "ready"
-
-    persona_row2 = MagicMock()
-    persona_row2.idea_seeds = list(persona_row.idea_seeds)
-
-    def _get2(model, _pk):
-        return {ContentPlan: plan2, PersonaRow: persona_row2}.get(model)
-
-    session2.get = MagicMock(side_effect=_get2)
-
-    def _add(item):
-        added_items.append(item)
-
-    session2.add = MagicMock(side_effect=_add)
-    ctx2 = MagicMock()
-    ctx2.__enter__ = MagicMock(return_value=session2)
-    ctx2.__exit__ = MagicMock(return_value=False)
-
-    return [ctx1, ctx2], added_items, persona_row2
-
-
-def test_add_ideas_sets_source_idea_seed_id() -> None:
-    """add_ideas_to_plan writes source_idea_seed_id on the new PlanItem."""
-    persona_id = uuid.uuid4()
-
-    persona_row = MagicMock()
-    persona_row.persona = {
-        "summary": "s",
-        "content_pillars": ["sport"],
-        "tone": "cool",
-        "audience": "gen z",
-        "posting_cadence": "daily",
-        "sample_topics": ["football"],
-    }
-    persona_row.idea_seeds = [
-        {"id": "seed_fb", "text": "Fenerbahce game", "status": "pending"},
-    ]
-    persona_row.style = None
-
-    plan = MagicMock()
-    plan.persona_id = persona_id
-    plan.id = uuid.uuid4()
-    plan.horizon_days = 30
-    plan.events = {}
-    plan.items = []
-
-    # One spec closely matching the seed
-    new_spec = PlanItemSpec(
-        day_index=1,
-        theme="Football",
-        idea="Fenerbahce match day atmosphere",
-        filming_guide=[],
-    )
-    agent_output = ContentPlanOutput(items=[new_spec])
-
-    ctxs, added_items, persona_row2 = _make_add_ideas_sessions(plan, persona_row, [new_spec])
-    ctx_iter = iter(ctxs)
-
-    with (
-        patch(
-            "app.tasks.content_plan_build.sync_session",
-            side_effect=lambda: next(ctx_iter),
-        ),
-        patch(
-            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
-        ) as mock_agent_cls,
-    ):
-        mock_agent_cls.return_value.run.return_value = agent_output
-        add_ideas_to_plan.run(str(uuid.uuid4()))
-
-    assert len(added_items) == 1
-    assert added_items[0].source_idea_seed_id == "seed_fb"
-
-
-def test_add_ideas_flips_seed_status_to_in_plan() -> None:
-    """Matched seeds are flipped to in_plan so IdeasCard shows ✓ and re-submission is idempotent."""
-    persona_id = uuid.uuid4()
-
-    persona_row = MagicMock()
-    persona_row.persona = {
-        "summary": "s",
-        "content_pillars": ["running"],
-        "tone": "energetic",
-        "audience": "runners",
-        "posting_cadence": "daily",
-        "sample_topics": ["marathon"],
-    }
-    persona_row.idea_seeds = [
-        {"id": "seed_run", "text": "morning run in London", "status": "pending"},
-    ]
-    persona_row.style = None
-
-    plan = MagicMock()
-    plan.persona_id = persona_id
-    plan.id = uuid.uuid4()
-    plan.horizon_days = 30
-    plan.events = {}
-    plan.items = []
-
-    new_spec = PlanItemSpec(
-        day_index=2,
-        theme="Morning fitness",
-        idea="early morning run along the Thames",
-        filming_guide=[],
-    )
-    agent_output = ContentPlanOutput(items=[new_spec])
-
-    ctxs, added_items, persona_row2 = _make_add_ideas_sessions(plan, persona_row, [new_spec])
-    ctx_iter = iter(ctxs)
-
-    with (
-        patch(
-            "app.tasks.content_plan_build.sync_session",
-            side_effect=lambda: next(ctx_iter),
-        ),
-        patch(
-            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
-        ) as mock_agent_cls,
-    ):
-        mock_agent_cls.return_value.run.return_value = agent_output
-        add_ideas_to_plan.run(str(uuid.uuid4()))
-
-    # persona_row2.idea_seeds must have been reassigned with status flipped.
-    updated_seeds = persona_row2.idea_seeds
-    assert any(s.get("id") == "seed_run" and s.get("status") == "in_plan" for s in updated_seeds), (
-        f"Seed not flipped to in_plan; got: {updated_seeds}"
-    )
-
-
-def test_add_ideas_unmatched_seed_stays_pending() -> None:
-    """A seed that the model ignored stays pending (no false positive flip)."""
-    persona_id = uuid.uuid4()
-
-    persona_row = MagicMock()
-    persona_row.persona = {
-        "summary": "s",
-        "content_pillars": ["cooking"],
-        "tone": "casual",
-        "audience": "foodies",
-        "posting_cadence": "daily",
-        "sample_topics": ["recipes"],
-    }
-    persona_row.idea_seeds = [
-        {"id": "seed_run", "text": "morning run in London", "status": "pending"},
-        {"id": "seed_food", "text": "pasta carbonara recipe", "status": "pending"},
-    ]
-    persona_row.style = None
-
-    plan = MagicMock()
-    plan.persona_id = persona_id
-    plan.id = uuid.uuid4()
-    plan.horizon_days = 30
-    plan.events = {}
-    plan.items = []
-
-    # Only one seed in pending (status != in_plan) but we filter to both above.
-    # The model only deepens "morning run" here; "pasta" gets no matching spec.
-    new_spec = PlanItemSpec(
-        day_index=3,
-        theme="Morning run",
-        idea="early morning run jog in London parks",
-        filming_guide=[],
-    )
-    agent_output = ContentPlanOutput(items=[new_spec])
-
-    ctxs, added_items, persona_row2 = _make_add_ideas_sessions(plan, persona_row, [new_spec])
-    ctx_iter = iter(ctxs)
-
-    with (
-        patch(
-            "app.tasks.content_plan_build.sync_session",
-            side_effect=lambda: next(ctx_iter),
-        ),
-        patch(
-            "app.tasks.content_plan_build.ContentPlanGeneratorAgent",
-        ) as mock_agent_cls,
-    ):
-        mock_agent_cls.return_value.run.return_value = agent_output
-        add_ideas_to_plan.run(str(uuid.uuid4()))
-
-    updated = {s["id"]: s["status"] for s in persona_row2.idea_seeds if isinstance(s, dict)}
-    assert updated.get("seed_run") == "in_plan"
-    assert updated.get("seed_food") == "pending"
-
-
 def test_dedup_keeps_original_when_regen_fails() -> None:
     output = ContentPlanOutput(
         items=[
@@ -438,6 +216,9 @@ def test_dedup_keeps_original_slot_when_regen_has_no_distinct_idea() -> None:
         "5am gym workout motivation routine",
         "early morning gym workout motivation routine",
     ]
+
+
+# ── regenerate_content_plan: the "their say" invariant ────────────────────────
 
 
 # ── regenerate_content_plan: the "their say" invariant ────────────────────────
@@ -1145,6 +926,307 @@ def test_generate_ideas_updates_in_place() -> None:
     assert bare2.day_index == 2
     # Plan status was reset to ready.
     assert plan.plan_status == "ready"
+
+
+def test_generate_ideas_fresh_when_no_bare_ideas() -> None:
+    """No bare ideas: generate fresh AI suggestions as unscheduled rows."""
+    from app.agents._schemas.content_plan import ContentPlanOutput, ShotSpec  # noqa: PLC0415
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+
+    scheduled = MagicMock()
+    scheduled.id = uuid.uuid4()
+    scheduled.idea = "existing scheduled post"
+    scheduled.day_index = 3
+    scheduled.position = 3
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.plan_status = "generating"
+    plan.items = [scheduled]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["fitness"],
+        "tone": "direct",
+        "audience": "beginners",
+        "posting_cadence": "daily",
+        "sample_topics": ["mobility"],
+    }
+
+    spec = PlanItemSpec(
+        day_index=1,
+        theme="Desk Mobility",
+        idea="three stretches after a long workday",
+        filming_suggestion="Film each stretch beside your desk",
+        rationale="solves a common pain point",
+        edit_format="single_hero",
+        filming_guide=[
+            ShotSpec(what="show tight shoulders", how="medium shot", duration_s=3),
+        ],
+    )
+
+    added = []
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    session.add = MagicMock(side_effect=added.append)
+    session.commit = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+    ):
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = ContentPlanOutput(items=[spec])
+        mock_agent_cls.return_value = mock_agent
+
+        generate_ideas_into_plan.run(plan_id)
+
+    mock_agent.run.assert_called_once()
+    agent_input = mock_agent.run.call_args.args[0]
+    assert agent_input.horizon_days == 5
+    assert agent_input.exclude_ideas == ["existing scheduled post"]
+    assert agent_input.user_idea_seeds == []
+    assert len(added) == 1
+    assert added[0].day_index is None
+    assert added[0].position == 1
+    assert added[0].item_status == "idea"
+    assert added[0].theme == "Desk Mobility"
+    assert added[0].filming_suggestion == "Film each stretch beside your desk"
+    assert added[0].rationale == "solves a common pain point"
+    assert added[0].edit_format == "single_hero"
+    assert added[0].filming_guide[0]["what"] == "show tight shoulders"
+    assert added[0].filming_guide[0]["shot_id"]
+    assert scheduled.day_index == 3
+    assert plan.plan_status == "ready"
+
+
+def test_generate_ideas_skips_expander_for_preexpanded_items() -> None:
+    """Pre-expanded bare items are scheduled without another LLM call."""
+    from app.agents.idea_expander import FilmingShot, IdeaExpanderOutput  # noqa: PLC0415
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    preexpanded_id = uuid.uuid4()
+    plain_id = uuid.uuid4()
+
+    preexpanded = MagicMock()
+    preexpanded.id = preexpanded_id
+    preexpanded.idea = "already suggested idea"
+    preexpanded.theme = "Existing Theme"
+    preexpanded.filming_guide = [{"what": "open", "duration_s": 3, "shot_id": "stable"}]
+    preexpanded.day_index = None
+    preexpanded.position = 1
+
+    plain = MagicMock()
+    plain.id = plain_id
+    plain.idea = "plain user idea"
+    plain.theme = ""
+    plain.filming_guide = []
+    plain.day_index = None
+    plain.position = 2
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.plan_status = "generating"
+    plan.items = [preexpanded, plain]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["outdoor"],
+        "tone": "warm",
+        "audience": "hikers",
+        "posting_cadence": "3/wk",
+        "sample_topics": ["trails"],
+    }
+
+    expanded = IdeaExpanderOutput(
+        theme="Expanded Plain Idea",
+        filming_suggestion="Film the plain idea",
+        filming_guide=[FilmingShot(what="detail", how="close", duration_s=4)],
+        rationale="clear hook",
+    )
+
+    read_session = MagicMock()
+    read_session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    read_ctx = MagicMock()
+    read_ctx.__enter__ = MagicMock(return_value=read_session)
+    read_ctx.__exit__ = MagicMock(return_value=False)
+
+    write_session = MagicMock()
+    write_session.get = MagicMock(
+        side_effect=lambda model, pk: {
+            ContentPlan: plan,
+            PlanItem: preexpanded if pk == preexpanded_id else plain,
+        }.get(model)
+    )
+    write_session.add = MagicMock()
+    write_session.commit = MagicMock()
+    write_ctx = MagicMock()
+    write_ctx.__enter__ = MagicMock(return_value=write_session)
+    write_ctx.__exit__ = MagicMock(return_value=False)
+
+    ctx_iter = iter([read_ctx, write_ctx])
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", side_effect=lambda: next(ctx_iter)),
+        patch("app.agents.idea_expander.IdeaExpanderAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch("sqlalchemy.orm.attributes.flag_modified"),
+    ):
+        mock_trace_ctx = MagicMock()
+        mock_trace_ctx.__enter__ = MagicMock(return_value=None)
+        mock_trace_ctx.__exit__ = MagicMock(return_value=False)
+        mock_trace.return_value = mock_trace_ctx
+
+        mock_agent = MagicMock()
+        mock_agent.run.return_value = expanded
+        mock_agent_cls.return_value = mock_agent
+
+        generate_ideas_into_plan.run(plan_id)
+
+    mock_agent.run.assert_called_once()
+    agent_input = mock_agent.run.call_args.args[0]
+    assert agent_input.idea == "plain user idea"
+    write_session.add.assert_not_called()
+    assert preexpanded.day_index == 1
+    assert preexpanded.theme == "Existing Theme"
+    assert preexpanded.filming_guide == [{"what": "open", "duration_s": 3, "shot_id": "stable"}]
+    assert plain.day_index == 2
+    assert plain.theme == "Expanded Plain Idea"
+    assert plan.plan_status == "ready"
+
+
+def test_generate_ideas_terminal_failure_sets_failed() -> None:
+    """Retries exhausted: failed generation leaves plan_status=failed."""
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+
+    scheduled = MagicMock()
+    scheduled.id = uuid.uuid4()
+    scheduled.idea = "existing scheduled post"
+    scheduled.day_index = 1
+    scheduled.position = 1
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.plan_status = "generating"
+    plan.items = [scheduled]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["fitness"],
+        "tone": "direct",
+        "audience": "beginners",
+        "posting_cadence": "daily",
+        "sample_topics": [],
+    }
+
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    session.commit = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    previous_retries = getattr(generate_ideas_into_plan.request, "retries", 0)
+    generate_ideas_into_plan.request.retries = generate_ideas_into_plan.max_retries
+    try:
+        with (
+            patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+            patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+            patch.object(generate_ideas_into_plan, "retry", side_effect=RuntimeError("retry")),
+            pytest.raises(RuntimeError, match="retry"),
+        ):
+            mock_agent_cls.return_value.run.side_effect = RuntimeError("agent boom")
+            generate_ideas_into_plan.run(plan_id)
+    finally:
+        generate_ideas_into_plan.request.retries = previous_retries
+
+    assert plan.plan_status == "failed"
+    session.commit.assert_called_once()
+
+
+def test_generate_ideas_fresh_empty_output_retries() -> None:
+    """Zero fresh specs is a retryable failure, not a silent no-op.
+
+    ContentPlanOutput's schema enforces >=1 item, so a real parse can't be
+    empty — this pins the defensive guard with a schema-bypassing mock.
+    """
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+
+    scheduled = MagicMock()
+    scheduled.id = uuid.uuid4()
+    scheduled.idea = "existing scheduled post"
+    scheduled.day_index = 1
+    scheduled.position = 1
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.plan_status = "generating"
+    plan.items = [scheduled]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["fitness"],
+        "tone": "direct",
+        "audience": "beginners",
+        "posting_cadence": "daily",
+        "sample_topics": [],
+    }
+
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    session.add = MagicMock()
+    session.commit = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch.object(generate_ideas_into_plan, "retry", side_effect=RuntimeError("retry")),
+        pytest.raises(RuntimeError, match="retry"),
+    ):
+        mock_agent_cls.return_value.run.return_value = MagicMock(items=[])
+        generate_ideas_into_plan.run(plan_id)
+
+    session.add.assert_not_called()
+    assert plan.plan_status == "generating"
 
 
 # ── landscape_fit threading (0057) ───────────────────────────────────────────

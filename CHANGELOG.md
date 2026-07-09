@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.5.1] — 2026-07-09
+
+### Fixed
+- **`content_mode` now agrees between plan (list) and item (detail) reads.** `GET /content-plans` hardcoded `create_new` per item while `GET /plan-items/{id}` resolved item-override → persona → default, so the same item reported different modes on the two endpoints (found in the 2026-07-09 E2E baseline pass). Plan responses now resolve via `_resolve_item_content_mode` (same priority, no extra DB read) on the GET and create paths.
+- **"Generate with AI" no longer no-ops when the idea list is empty.** `generate_ideas_into_plan` only ever expanded bare (unscheduled) items — once a plan had none left, clicking the button silently flipped `plan_status` back to `"ready"` with no visible change. It's now two-mode: with bare ideas, expand + schedule them as before (skipping a redundant `IdeaExpanderAgent` call for items that already carry a theme + filming guide from a prior fresh-generate pass); with none, reuse `ContentPlanGeneratorAgent` (same pattern as `add_ideas_to_plan`) to drop ~5 fresh unscheduled suggestions for the user to curate, so a second click schedules them. Terminal failures (retries exhausted) now set `plan_status="failed"` instead of masking as `"ready"`.
+
+### Removed
+- **Orphaned `POST /content-plans/{id}/add-ideas` + its `add_ideas_to_plan` Celery task.** Only caller was the dead `IdeasCard.tsx` (zero imports); the live flow is the two-mode `/generate-ideas` above. Frontend client fn + dead component removal ships separately with the ideas-first plan-home PR.
+
 ## [0.7.5.0] — 2026-07-08
 
 ### Added
