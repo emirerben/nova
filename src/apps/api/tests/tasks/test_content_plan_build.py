@@ -1390,6 +1390,64 @@ def test_generate_ideas_terminal_failure_sets_failed() -> None:
     session.commit.assert_called_once()
 
 
+def test_generate_ideas_fresh_empty_output_retries() -> None:
+    """Zero fresh specs is a retryable failure, not a silent no-op.
+
+    ContentPlanOutput's schema enforces >=1 item, so a real parse can't be
+    empty — this pins the defensive guard with a schema-bypassing mock.
+    """
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+
+    scheduled = MagicMock()
+    scheduled.id = uuid.uuid4()
+    scheduled.idea = "existing scheduled post"
+    scheduled.day_index = 1
+    scheduled.position = 1
+
+    plan = MagicMock()
+    plan.id = uuid.UUID(plan_id)
+    plan.persona_id = uuid.uuid4()
+    plan.horizon_days = 30
+    plan.events = {}
+    plan.plan_status = "generating"
+    plan.items = [scheduled]
+
+    persona_row = MagicMock()
+    persona_row.persona = {
+        "summary": "creator",
+        "content_pillars": ["fitness"],
+        "tone": "direct",
+        "audience": "beginners",
+        "posting_cadence": "daily",
+        "sample_topics": [],
+    }
+
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+    )
+    session.add = MagicMock()
+    session.commit = MagicMock()
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=session)
+    ctx.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch.object(generate_ideas_into_plan, "retry", side_effect=RuntimeError("retry")),
+        pytest.raises(RuntimeError, match="retry"),
+    ):
+        mock_agent_cls.return_value.run.return_value = MagicMock(items=[])
+        generate_ideas_into_plan.run(plan_id)
+
+    session.add.assert_not_called()
+    assert plan.plan_status == "generating"
+
+
 # ── landscape_fit threading (0057) ───────────────────────────────────────────
 
 
