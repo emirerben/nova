@@ -75,6 +75,7 @@ TURN LABEL
 Set turn_label to "~N OF ~M" where N = $turns_so_far and M = your honest estimate of total turns needed (4-6 with the DIRECTION turn; lean low). Increment N by 1 each turn.
 The label is a promise — keep it consistent:
 - M must NEVER be smaller than N. "~7 OF ~6" destroys trust; if you are on turn 7, the label is at least "~7 OF ~7".
+- M must NEVER grow mid-interview. Whatever M you advertised on turn 1 is a promise — a creeping denominator ("~2 OF ~5" … "~6 OF ~8") reads as a moving goalpost. Finish early if anything; never later.
 - Once N reaches the M you last advertised, this question MUST be the final one (is_final=true). Do not extend the interview past your own estimate — a good-enough persona now beats a perfect persona two questions later.
 
 OUTPUT (JSON only, no markdown, no prose outside the JSON):

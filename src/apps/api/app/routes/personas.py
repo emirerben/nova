@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import re
 import uuid
 from datetime import UTC, datetime
 
@@ -657,6 +658,22 @@ async def rederive_style(
 # ── Chat interview routes ─────────────────────────────────────────────────────
 
 
+def _prev_total_estimate(turns_raw: list[dict]) -> int | None:
+    """Extract the M last advertised to the user from the stored agent turns.
+
+    Feeds InterviewerInput.prev_total_estimate so the "~N OF ~M" denominator
+    never creeps upward mid-interview. None when no prior agent turn carries a
+    parseable label (first turn / legacy rows).
+    """
+    for t in reversed(turns_raw):
+        if t.get("role") != "agent":
+            continue
+        m = re.search(r"OF\s*~?(\d+)", str(t.get("turn_label") or ""))
+        if m:
+            return int(m.group(1))
+    return None
+
+
 def _tiktok_summary(profile: dict) -> str:
     """Format a scraped TikTok profile dict into a text summary for the interviewer."""
     parts: list[str] = []
@@ -782,14 +799,18 @@ async def chat_start(
     result = await asyncio.to_thread(
         InterviewerAgent(default_client()).run,
         InterviewerInput(
-            turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count + 1
+            turns=conv_turns,
+            tiktok_summary=tiktok_summary,
+            turn_count=agent_count + 1,
+            prev_total_estimate=_prev_total_estimate(turns_raw),
         ),
     )
 
     # turn_label comes from InterviewerAgent.parse(), which derives N from the
-    # same counter we pass as turn_count and clamps the total (N ≤ M ≤ 7,
-    # final → M = N). The old hardcoded "OF ~6" here produced "~7 OF ~6" the
-    # moment the interview ran long (dogfood 2026-06-12).
+    # same counter we pass as turn_count and clamps the total (N ≤ M ≤ cap,
+    # monotonic vs the previously advertised M, final → M = N). The old
+    # hardcoded "OF ~6" here produced "~7 OF ~6" the moment the interview ran
+    # long (dogfood 2026-06-12).
     computed_label = result.turn_label
 
     # Store Q + metadata so resume is free (no re-call on page refresh).
@@ -889,7 +910,10 @@ async def chat_turn(
     result = await asyncio.to_thread(
         InterviewerAgent(default_client()).run,
         InterviewerInput(
-            turns=conv_turns, tiktok_summary=tiktok_summary, turn_count=agent_count + 1
+            turns=conv_turns,
+            tiktok_summary=tiktok_summary,
+            turn_count=agent_count + 1,
+            prev_total_estimate=_prev_total_estimate(turns_raw),
         ),
     )
 
@@ -897,7 +921,8 @@ async def chat_turn(
     agent_is_final = result.is_final or new_agent_count >= _HARD_CAP
 
     # turn_label comes from InterviewerAgent.parse() — same contract as
-    # chat/start (N from our counter, N ≤ M ≤ 7, final → M = N).
+    # chat/start (N from our counter, N ≤ M ≤ cap, monotonic vs the previously
+    # advertised M, final → M = N).
     computed_label = result.turn_label
 
     # Store the question; if agent flagged it as final, mark it so the NEXT

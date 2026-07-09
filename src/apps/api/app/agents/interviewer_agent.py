@@ -63,6 +63,11 @@ class InterviewerInput(BaseModel):
     # Sanitized TikTok profile summary — None when user skipped or scrape failed
     tiktok_summary: str | None = None
     turn_count: int = 0
+    # The M last advertised to the user ("~N OF ~M"), extracted from the stored
+    # previous agent turn. Caps this turn's M so the denominator never visibly
+    # creeps upward mid-interview (dogfood 2026-07-09: ~5 → ~8 over 7 turns).
+    # None on the first turn or for legacy stored turns without a label.
+    prev_total_estimate: int | None = None
 
 
 class InterviewerOutput(BaseModel):
@@ -160,10 +165,15 @@ class InterviewerAgent(Agent[InterviewerInput, InterviewerOutput]):
 
         # Label: final question is always "~n OF ~n"; otherwise at least one
         # more question follows, so the advertised total is ≥ n+1 (and never
-        # above the cap). The model's M survives only within those bounds.
+        # above the cap). The model's M survives only within those bounds, and
+        # never above the M already shown to the user (monotonic denominator) —
+        # unless n+1 forces it, i.e. the interview genuinely ran past the
+        # advertised total.
         m_match = re.search(r"OF\s*~?(\d+)", output.turn_label or "")
         model_m = int(m_match.group(1)) if m_match else _DEFAULT_TOTAL_ESTIMATE
         m = n if is_final else min(max(model_m, n + 1), _FORCE_FINAL_AT)
+        if not is_final and input.prev_total_estimate is not None:
+            m = min(m, max(input.prev_total_estimate, n + 1))
 
         return InterviewerOutput(
             question=question,
