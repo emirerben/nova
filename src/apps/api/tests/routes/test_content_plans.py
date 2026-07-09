@@ -623,3 +623,70 @@ def test_attach_seed_clips_still_rejects_wrong_prefix(client: TestClient) -> Non
         json={"clip_gcs_paths": ["generative-jobs/abc123/sources/clip1.mp4"]},
     )
     assert resp.status_code == 422
+
+
+# ── content_mode resolution parity (list GET vs item GET) ─────────────────────
+
+
+def _bare_plan_item(content_mode=None):
+    it = MagicMock()
+    it.id = uuid.uuid4()
+    it.day_index = 1
+    it.theme = "t"
+    it.idea = "i"
+    it.position = 1
+    it.scheduled_date = None
+    it.notes = None
+    it.scenes = []
+    it.filming_suggestion = None
+    it.rationale = None
+    it.filming_guide = []
+    it.clip_gcs_paths = []
+    it.clip_assignments = []
+    it.item_status = "idea"
+    it.current_job = None
+    it.current_job_id = None
+    it.user_edited = False
+    it.conformance = None
+    it.content_mode = content_mode
+    it.edit_format = None
+    it.voiceover_gcs_path = None
+    it.landscape_fit = "fit"
+    it.voiceover_bed_level = None
+    it.voiceover_caption_style = None
+    it.source_idea_seed_id = None
+    return it
+
+
+def test_resolve_item_content_mode_priority() -> None:
+    """Item override beats persona; junk collapses to create_new."""
+    from app.routes.content_plans import _resolve_item_content_mode
+
+    assert _resolve_item_content_mode(_bare_plan_item("existing_footage"), "mixed") == (
+        "existing_footage"
+    )
+    assert _resolve_item_content_mode(_bare_plan_item(None), "mixed") == "mixed"
+    assert _resolve_item_content_mode(_bare_plan_item(None), "bogus") == "create_new"
+    assert _resolve_item_content_mode(_bare_plan_item(None), None) == "create_new"
+
+
+def test_plan_response_threads_persona_content_mode() -> None:
+    """The plan (list) payload must resolve content_mode like the item GET does —
+    it previously hardcoded create_new, diverging from GET /plan-items/{id}."""
+    from app.routes.content_plans import _plan_response
+
+    plan = MagicMock()
+    plan.id = uuid.uuid4()
+    plan.plan_status = "ready"
+    plan.horizon_days = 30
+    plan.events = None
+    plan.items = [_bare_plan_item(None), _bare_plan_item("create_new")]
+    plan.pool = {}
+    plan.activation_status = "none"
+    plan.seed_clip_paths = []
+    plan.generation_started_at = None
+    plan.start_date = None
+
+    resp = _plan_response(plan, persona_content_mode="mixed")
+    assert resp.items[0].content_mode == "mixed"  # persona fallback
+    assert resp.items[1].content_mode == "create_new"  # item override wins
