@@ -103,19 +103,9 @@ lower-probability items deferred so the PR stays scoped.
 ### Prose shot labels in unplaced signal
 **What:** The "Not in this take" card shows "Shot N" (ordinal) but not the shot's prose description ("morning run"). Surfacing the literal label requires stashing `narrative_shot_labels` on `all_candidates` before `shot_id` is stripped. **Priority:** P3.
 
-## Creator Agent — Style Observation pipeline (PR 1/5 shipped dark in v0.5.8.0)
+## Creator Agent — Style Observation pipeline (PRs 1-4/5 SHIPPED dark; only the flag flip remains)
 
-### T-STYLE-2 — per-video URLs + Celery task (PR 2/5)
-**What:** Extend `TikTokVideoRecord` + `_to_video_record` with `video_id`/`webpage_url`; new `analyze_tiktok_style` Celery task (`app/tasks/style_vision_build.py`, soft=1740/hard=1800) with deterministic aggregator; fire from `scrape_tiktok_profile` alongside `analyze_tiktok_profile`; add to `worker.py` include list + `test_task_time_limits.py` `_RENDER_ORCHESTRATORS`.
-**Effort:** M (CC: ~1h)
-
-### T-STYLE-3 — wire observations into style_derivation (PR 3/5)
-**What:** Add `observed_style: ObservedStyleSummary | None` to `StyleDerivationInput`; inject block above metadata in `derive_user_style.txt` prompt; `style_build.py` reads aggregate; refresh golden fixtures; live evals (persona_alignment ≥ 3.5, parity_safety = 5).
-**Effort:** M (CC: ~1h)
-
-### T-STYLE-4 — provenance API + StyleCard UI (PR 4/5)
-**What:** `_style_provenance()` in `personas.py`; `StyleProvenance` TS interface; StyleCard "Learned from your TikTok — seen in N/30 videos" section above existing chips.
-**Effort:** M (CC: ~1h)
+_Reconciled 2026-07-09: T-STYLE-2 shipped in #564 (v0.5.9.0), T-STYLE-3 in #565 (v0.5.10.0), T-STYLE-4 in #566 (v0.5.11.0) — the entries below were stale._
 
 ### T-STYLE-5 — flip tiktok_style_vision_enabled then user_style_enabled (PR 5/5)
 **What:** Bake with ingest flag on → watch cost/latency → pass eval gate → flip render flag.
@@ -124,6 +114,7 @@ lower-probability items deferred so the PR stays scoped.
 ### Enable USER_STYLE_ENABLED + live-eval validation (pre-flip gate)
 **What:** Before setting `USER_STYLE_ENABLED=true` on Fly, run `NOVA_EVAL_MODE=live pytest tests/evals/test_style_derivation_evals.py --eval-mode=live` to capture golden fixtures and validate agent output quality. Check rubric dimensions: persona_alignment ≥ 3.5, parity_safety (no effect in knobs), calibration, instruction_level_correctness.
 **Effort:** XS (CC: ~10 min)
+**2026-07-09 gate run:** pytest gate passed 2/2 twice with `--with-judge`, but `golden/qbuilder_bold_display_observed` is flaky at the threshold — a per-dimension rerun scored avg 3.25 (<3.5) with parity_safety 3.0 (bar is 5). Run 3-5x and confirm the fixture clears consistently before treating the gate as passed; `travel_lifestyle_creator` clears cleanly every run.
 
 ### Frontend StyleCard (M1 UI, after kill switch flip)
 **What:** `StyleCard.tsx` in `WorkspaceHome.tsx` near `PersonaCard`. Shows font preview (css_family), set picker (StyleChip grid), position/size/color controls, footage-bias chips, status badge (polls while deriving), Re-derive button. Light editorial design system.
