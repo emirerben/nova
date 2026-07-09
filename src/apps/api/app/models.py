@@ -569,7 +569,8 @@ class Persona(Base):
     # optional tiktok_handle). UNTRUSTED free text — sanitized before any agent call.
     questionnaire: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Editable AI output: {summary, content_pillars[], tone, audience,
-    # posting_cadence, sample_topics[], signature_quote}.
+    # posting_cadence, posts_per_week, sample_topics[], rationale, goal,
+    # content_mode, current_situation}.
     persona: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     # Scraped public TikTok profile from the onboarding pre-screen.
     # {handle, follower_count, video_count, top_captions[], top_hashtags[], analyzed_at}

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.6.0] — 2026-07-09
+
+### Changed
+- **Onboarding interview drops the Turn-3 MOTIVATION question** ("What would you keep filming even if nobody ever watched?") — users found it weird. Arc renumbers to AUDIENCE (turn 3) → GAP (turn 4+), GROUNDING stays a conditional swap-in. Caps tighten proportionally: `_HARD_CAP` 8→7, `_FORCE_FINAL_AT` 7→6, `_DEFAULT_TOTAL_ESTIMATE` 6→5. `INTERVIEWER_PROMPT_VERSION` bumped to `2026-07-09`.
+- **Removed `signature_quote` persona field end-to-end** (prompt, schema, generator, model comment, frontend type). Generated and stored since 2026-06-06 but never rendered anywhere and never consumed by any downstream agent — confirmed by exhaustive grep. No DB migration: the field lived inside a JSONB blob; legacy rows with the key are harmless. `PERSONA_PROMPT_VERSION` bumped to `2026-07-09`.
+
 ## [0.7.5.0] — 2026-07-08
 
 ### Added

@@ -825,7 +825,7 @@ async def chat_turn(
     """Submit a chat answer and get the next question (or finalize).
 
     Appends the user answer to interview_turns, calls InterviewerAgent for the
-    next Q. If the agent signals is_final (or the hard cap of 8 agent turns is
+    next Q. If the agent signals is_final (or the imported hard cap is
     reached), fires generate_persona.delay() and returns is_final=True.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415

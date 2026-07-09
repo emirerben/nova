@@ -48,7 +48,6 @@ def _generated_persona_dict() -> dict:
         "posting_cadence": "4/week",
         "sample_topics": [],
         "rationale": "",
-        "signature_quote": "",
         "goal": "",
         "content_mode": None,
         "current_situation": "",
