@@ -63,9 +63,6 @@ function PlanPageInner() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Track when the plan flips from generating → ready in-session (for banner).
-  const [planJustReady, setPlanJustReady] = useState(false);
-
   // Edits-first onboarding funnel state.
   // uploadedClips: full clip objects (gcsPath + objectUrl) from the upload step.
   const [uploadedClips, setUploadedClips] = useState<ClipItem[]>([]);
@@ -85,15 +82,7 @@ function PlanPageInner() {
     try {
       const [p, pl] = await Promise.all([getPersona(), getContentPlan()]);
       setPersona(p);
-      setPlan((prevPlan) => {
-        // Detect in-session generating → ready flip
-        const prevStatus = prevPlan?.plan_status ?? null;
-        const newStatus = pl?.plan_status ?? null;
-        if (prevStatus === "generating" && newStatus === "ready") {
-          setPlanJustReady(true);
-        }
-        return pl;
-      });
+      setPlan(pl);
       return { p, pl };
     } catch (err) {
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
@@ -192,9 +181,7 @@ function PlanPageInner() {
 
   if (loading) {
     return (
-      <LightShell>
-        <p className="py-24 text-center text-[#71717a]">Loading…</p>
-      </LightShell>
+      <WorkspaceHomeSkeleton />
     );
   }
 
@@ -209,11 +196,8 @@ function PlanPageInner() {
     return (
       <WorkspaceHome
         plan={plan!}
-        planJustReady={planJustReady}
-        regenerating={mode === "workspace:regenerating"}
         onRefresh={load}
         onError={setError}
-        onBannerDismiss={() => setPlanJustReady(false)}
       />
     );
   }
@@ -467,5 +451,31 @@ function PlanPageInner() {
       onRetune={handleRetunePersona}
       error={error}
     />
+  );
+}
+
+function WorkspaceHomeSkeleton() {
+  return (
+    <div className="min-h-screen bg-[#fafaf8]">
+      <div className="mx-auto max-w-[760px] px-6 pb-24 pt-14">
+        <div className="flex items-baseline justify-between gap-6">
+          <div className="h-11 w-32 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+          <div className="hidden h-4 w-48 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer sm:block" />
+        </div>
+        <div className="mt-4 h-4 w-56 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+        <div className="mt-10 flex flex-col gap-0">
+          {[0, 1, 2, 3].map((row) => (
+            <div
+              key={row}
+              className="grid min-h-[48px] grid-cols-[2rem_1fr_auto] items-start gap-3 border-t border-zinc-100 py-2.5"
+            >
+              <div className="h-5 w-4 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+              <div className="h-4 w-full max-w-md rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+              <div className="h-5 w-20 rounded-full bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }

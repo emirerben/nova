@@ -15,11 +15,13 @@ import "@testing-library/jest-dom";
 const mockRequestUploadUrls = jest.fn();
 const mockUploadToGcsWithProgress = jest.fn();
 const mockAttachClips = jest.fn();
+const mockUpdatePlanItemShot = jest.fn();
 
 jest.mock("@/lib/plan-api", () => ({
   requestUploadUrls: (...args: unknown[]) => mockRequestUploadUrls(...args),
   uploadToGcsWithProgress: (...args: unknown[]) => mockUploadToGcsWithProgress(...args),
   attachClips: (...args: unknown[]) => mockAttachClips(...args),
+  updatePlanItemShot: (...args: unknown[]) => mockUpdatePlanItemShot(...args),
 }));
 
 // ── Mock URL APIs (jsdom stubs) ───────────────────────────────────────────────
@@ -161,6 +163,42 @@ describe("ShotSlotUploader — idle slot render", () => {
 
     const liveRegion = document.querySelector("[aria-live='polite']");
     expect(liveRegion).toBeInTheDocument();
+  });
+});
+
+describe("ShotSlotUploader — shot text editing sentinel", () => {
+  it("does not auto-enter edit mode for legacy null shot_id rows", () => {
+    const item = makeItem({
+      filming_guide: [
+        shot({ shot_id: null, what: "legacy opener", how: "wide shot" }),
+        shot({ shot_id: null, what: "legacy detail", how: "close shot" }),
+      ],
+    });
+
+    render(<ShotSlotUploader item={item} onAttached={jest.fn()} onBusyChange={jest.fn()} />);
+
+    expect(screen.getByText("legacy opener")).toBeInTheDocument();
+    expect(screen.getByText("legacy detail")).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText("What to film")).toBeNull();
+    expect(screen.queryByPlaceholderText("How (optional)")).toBeNull();
+    expect(screen.queryByText("Save")).toBeNull();
+    expect(screen.queryByText("Cancel")).toBeNull();
+  });
+
+  it("Cancel exits shot text edit mode", () => {
+    const item = makeItem({
+      filming_guide: [shot({ shot_id: "s1", what: "editable opener", how: "eye level" })],
+    });
+
+    render(<ShotSlotUploader item={item} onAttached={jest.fn()} onBusyChange={jest.fn()} />);
+
+    fireEvent.click(screen.getByLabelText("Edit shot 1 text"));
+    expect(screen.getByDisplayValue("editable opener")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Cancel"));
+
+    expect(screen.queryByDisplayValue("editable opener")).toBeNull();
+    expect(screen.getByText("editable opener")).toBeInTheDocument();
   });
 });
 

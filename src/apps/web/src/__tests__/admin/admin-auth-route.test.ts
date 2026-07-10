@@ -8,6 +8,8 @@
  * Mirrors the pattern in github-route.test.ts.
  */
 
+export {};
+
 jest.mock("next/server", () => {
   class MockNextResponse {
     body: string;
