@@ -483,8 +483,8 @@ def _run_generative_job(job_id: str) -> None:
         # Once-per-clip silence-cut artifacts (plans/010 7A): verbatim transcript,
         # CutPlan, and the cut base render are computed on first need and cached
         # here for the whole job, so every cut-capable variant shares ONE whisper
-        # call and ONE cut encode (subtitled today; talking_head reuses the same
-        # cache at T6). Lives under the job tmpdir — per-variant scratch cleanup
+        # call and ONE cut encode (subtitled + the talking_head spine). Lives
+        # under the job tmpdir — per-variant scratch cleanup
         # (shutil.rmtree(variant_dir)) never touches it.
         silence_cut_cache = _SilenceCutCache(os.path.join(tmpdir, "silence_cut"))
 
@@ -525,6 +525,8 @@ def _run_generative_job(job_id: str) -> None:
                         user_style_knobs=user_style_knobs,
                         language=language,
                         landscape_fit=landscape_fit,
+                        silence_cut_disabled=silence_cut_disabled,
+                        silence_cut_cache=silence_cut_cache,
                     )
                 elif spec.get("archetype") == "narrated":
                     result = _render_narrated_variant(
@@ -5046,6 +5048,8 @@ def _render_talking_head_variant(
     user_style_knobs: dict | None = None,
     language: str = "en",
     landscape_fit: str = "fill",
+    silence_cut_disabled: bool = False,
+    silence_cut_cache: _SilenceCutCache | None = None,
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -5057,6 +5061,14 @@ def _render_talking_head_variant(
     the composite via the standalone Skia path (`burn_text_overlays_skia`) — the
     assembler itself draws no text. Shape-compatible with `_render_generative_variant`
     plus a `resolved_archetype` field.
+
+    Silence/filler/retake cut (plans/010 T6, behind SILENCE_CUT_ENABLED): the SPINE
+    clip gets the same cut stage as subtitled — the flag/per-item gates live here,
+    the mechanics (pre-cap, has_audio gate, keep_segments reframe, b-roll cut-point
+    anchors) live in the assembler, and the analysis routes through the shared
+    `_silence_cut_analysis` + per-job cache so a clip is never re-analyzed. Every
+    gate/failure falls OPEN to the uncut flow; flag off is byte-identical
+    (kill-switch pinned).
     """
     from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
@@ -5097,6 +5109,9 @@ def _render_talking_head_variant(
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
+        # Silence-cut summary {removed, time_saved_s, version} (plans/010 T6) — set
+        # only when the stage ran to a plan; drives the admin cut-plan viewer.
+        "silence_cut": None,
     }
 
     try:
@@ -5105,6 +5120,30 @@ def _render_talking_head_variant(
         # upload failure — becomes a per-variant failure record (the never-raise
         # contract `_render_generative_variant` also honors).
         base_path = os.path.join(variant_dir, "base.mp4")
+
+        # ── Silence/filler/retake cut gates (plans/010 T6) ──────────────────
+        # Flag off / per-item disable ⇒ silence_cut_fn stays None and the
+        # assembler runs its pre-T6 flow byte-identically. The has_audio gate
+        # needs the SPINE probe, so it lives inside the assembler (same event).
+        silence_cut_fn = None
+        silence_cut_out: dict[str, Any] = {}
+        if settings.silence_cut_enabled:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            if silence_cut_disabled:
+                # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_skipped_disabled", {"variant_id": variant_id}
+                )
+            else:
+
+                def silence_cut_fn(analysis_path: str, duration_s: float) -> dict[str, Any]:
+                    # Shared analysis (7A): per-job cache ⇒ a clip analyzed for
+                    # one variant is never re-analyzed for another.
+                    return _silence_cut_analysis(
+                        analysis_path, duration_s, job_id=job_id, cache=silence_cut_cache
+                    )
+
         assemble_talking_head(
             clip_paths=clip_id_to_local,
             clip_metas=clip_metas,
@@ -5115,7 +5154,10 @@ def _render_talking_head_variant(
             job_id=job_id,
             spine_clip_id=spine_clip_id,
             landscape_fit=landscape_fit,
+            silence_cut_fn=silence_cut_fn,
+            silence_cut_out=silence_cut_out,
         )
+        base["silence_cut"] = silence_cut_out.get("summary")
 
         final_path = base_path
         if agent_text is not None:

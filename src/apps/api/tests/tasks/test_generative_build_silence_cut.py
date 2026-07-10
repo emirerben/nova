@@ -1,4 +1,4 @@
-"""Subtitled silence/filler/retake cut integration — plans/010 T5.
+"""Subtitled + talking_head silence/filler/retake cut integration — plans/010 T5+T6.
 
 Pins the `_render_subtitled_variant` wiring of the silence-cut stage:
 
@@ -17,6 +17,18 @@ Pins the `_render_subtitled_variant` wiring of the silence-cut stage:
   two variant renders of the same clip
 - `_finalize_job` whitelist preserves `silence_cut` (the strip class pinned by
   test_finalize_job_preserves_ai_timeline)
+
+And the `_render_talking_head_variant` wiring (T6 — the mechanics themselves
+are pinned in tests/pipeline/test_talking_head_assembler.py):
+
+- kill switch OFF ⇒ the assembler receives silence_cut_fn=None (byte-identical
+  pre-T6 flow), no silence_cut key, no stage events
+- per-item `silence_cut_disabled` skips the stage with the same event
+- flag ON routes the assembler's analysis hook through the SHARED
+  `_silence_cut_analysis` with the per-job cache (no parallel mechanism)
+- full integration through the REAL assembler: spine cut via keep_segments +
+  punch-in, usable_s from the re-probed cut spine, anchored b-roll windows,
+  `silence_cut` persisted; bailout + retake-failure isolation on this path
 
 Everything network/ffmpeg-shaped is stubbed (no API keys, no real encodes);
 the real `build_cut_plan` / `remap_words` / `is_filler_token` run for real so
@@ -501,3 +513,359 @@ def test_finalize_job_preserves_silence_cut(monkeypatch):
     assert captured["plan"]["variants"][0]["silence_cut"] == silence_cut, (
         "finalize stripped silence_cut"
     )
+
+
+# ══ talking_head wiring (plans/010 T6) ═══════════════════════════════════════════
+
+
+def _patch_th_stub(monkeypatch, *, summary=None):
+    """Stub `assemble_talking_head` itself — pins the RENDER-FN wiring only
+    (gates, hook plumbing, summary persistence). The assembler mechanics are
+    pinned in tests/pipeline/test_talking_head_assembler.py."""
+    import app.pipeline.talking_head_assembler as tha
+    import app.services.pipeline_trace as pt
+    import app.storage as storage
+
+    calls: dict = {"assemble": [], "events": []}
+
+    def _fake_assemble(**kw):
+        calls["assemble"].append(kw)
+        if summary is not None and kw.get("silence_cut_out") is not None:
+            kw["silence_cut_out"]["summary"] = summary
+        with open(kw["output_path"], "wb") as f:
+            f.write(b"\x00" * 16)
+        return kw["output_path"]
+
+    monkeypatch.setattr(tha, "assemble_talking_head", _fake_assemble, raising=False)
+    monkeypatch.setattr(
+        storage, "upload_public_read", lambda local, gcs: f"https://signed/{gcs}", raising=False
+    )
+    monkeypatch.setattr(
+        pt,
+        "record_pipeline_event",
+        lambda stage, event, data=None: calls["events"].append((stage, event, data or {})),
+        raising=False,
+    )
+    return calls
+
+
+def _render_th(monkeypatch, tmp_path, *, disabled=False, cache=None, probe_map=None, target=60.0):
+    vdir = tmp_path / "th_variant"
+    vdir.mkdir(exist_ok=True)
+    return gb._render_talking_head_variant(
+        job_id=JOB_ID,
+        rank=1,
+        spine_clip_id=None,
+        clip_metas=[
+            types.SimpleNamespace(clip_id="c1", content_type="talking_head", audio_type="dialogue"),
+            types.SimpleNamespace(clip_id="c2", content_type="broll", audio_type="ambient"),
+        ],
+        clip_id_to_local={"c1": str(tmp_path / "a.mp4"), "c2": str(tmp_path / "b.mp4")},
+        probe_map=probe_map or {},
+        available_footage_s=target,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        silence_cut_disabled=disabled,
+        silence_cut_cache=cache,
+    )
+
+
+def test_talking_head_flag_off_passes_no_cut_fn(monkeypatch, tmp_path):
+    # Kill switch: the assembler gets silence_cut_fn=None → its pre-T6 flow is
+    # byte-identical (pinned assembler-side by test_assemble_without_cut_fn…).
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_th_stub(monkeypatch)
+    _bomb_retake_detector(monkeypatch)
+
+    res = _render_th(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert calls["assemble"][0]["silence_cut_fn"] is None
+    assert res["silence_cut"] is None
+    assert not [e for e in calls["events"] if e[0] == "silence_cut"]
+
+
+def test_talking_head_per_item_disable_skips_stage(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_th_stub(monkeypatch)
+    _bomb_retake_detector(monkeypatch)
+
+    res = _render_th(monkeypatch, tmp_path, disabled=True)
+
+    assert res["ok"] is True
+    events = _events_named(calls, "silence_cut_skipped_disabled")
+    assert events and events[0][2]["variant_id"] == "talking_head"
+    assert calls["assemble"][0]["silence_cut_fn"] is None
+    assert res["silence_cut"] is None
+
+
+def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_path):
+    # T6 must not invent a parallel mechanism: the hook handed to the assembler
+    # IS `_silence_cut_analysis` with this job's id + per-job cache bound.
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_stub(monkeypatch)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    seen: dict = {}
+
+    def _fake_analysis(path, duration_s, *, job_id, cache):
+        seen.update(path=path, duration_s=duration_s, job_id=job_id, cache=cache)
+        return {"failed": True, "plan": None, "retake_span_count": 0}
+
+    monkeypatch.setattr(gb, "_silence_cut_analysis", _fake_analysis)
+
+    res = _render_th(monkeypatch, tmp_path, cache=cache)
+
+    assert res["ok"] is True
+    fn = calls["assemble"][0]["silence_cut_fn"]
+    assert callable(fn)
+    fn("spine.mp4", 42.0)
+    assert seen == {
+        "path": "spine.mp4",
+        "duration_s": 42.0,
+        "job_id": JOB_ID,
+        "cache": cache,
+    }
+
+
+def test_talking_head_summary_from_assembler_is_persisted(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    summary = {
+        "removed": [{"start_s": 0.88, "end_s": 1.42, "reason": "filler_lexical"}],
+        "time_saved_s": 0.54,
+        "version": 1,
+    }
+    _patch_th_stub(monkeypatch, summary=summary)
+
+    res = _render_th(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert res["silence_cut"] == summary
+
+
+# ── Full integration: real assembler + real shared analysis, mocked ffmpeg/ASR ────
+
+
+def _patch_th_full(monkeypatch, *, words=None, silences=None, cut_dur=4.06):
+    """Real `assemble_talking_head` + real `_silence_cut_analysis`; every
+    ffmpeg/ASR-shaped dependency stubbed. Returns the call-capture dict."""
+    import app.pipeline.talking_head_assembler as tha
+    import app.pipeline.transcribe as transcribe_mod
+    import app.services.clip_speech as clip_speech_mod
+    import app.services.pipeline_trace as pt
+    import app.storage as storage
+
+    calls: dict = {"transcribe": [], "detect": [], "reframe": [], "cmds": [], "events": []}
+
+    # select_spine's coverage_fn default binds the real speech_coverage at
+    # import time — stub the selection wholesale (spine=c1, broll=[c2]).
+    monkeypatch.setattr(
+        tha,
+        "select_spine",
+        lambda *a, **k: tha.SpineSelection(
+            spine_clip_id="c1", spine_score=1.0, broll_clip_ids=["c2"]
+        ),
+        raising=False,
+    )
+
+    def _fake_reframe(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        calls["reframe"].append({"input": input_path, "start": start_s, "end": end_s, **kw})
+
+    monkeypatch.setattr(tha, "reframe_and_export", _fake_reframe, raising=False)
+    monkeypatch.setattr(
+        tha, "resolve_output_fit", lambda probe, landscape_fit="fill", **kw: "crop", raising=False
+    )
+
+    def _fake_run(cmd, **kwargs):
+        calls["cmds"].append(cmd)
+        with open(cmd[-1], "wb") as f:  # composite output (_encoding_args tail)
+            f.write(b"\x00" * 16)
+        return types.SimpleNamespace(returncode=0, stderr=b"")
+
+    monkeypatch.setattr(tha.subprocess, "run", _fake_run, raising=False)
+    # Re-probe of the CUT spine (the has_audio gate reads probe_map instead).
+    monkeypatch.setattr(
+        tha,
+        "probe_video",
+        lambda p: types.SimpleNamespace(duration_s=cut_dur, has_audio=True),
+        raising=False,
+    )
+
+    def _record(stage, event, data=None):
+        calls["events"].append((stage, event, data or {}))
+
+    monkeypatch.setattr(tha, "record_pipeline_event", _record, raising=False)
+    monkeypatch.setattr(pt, "record_pipeline_event", _record, raising=False)
+
+    def _fake_transcribe(path, *, language=None, verbatim_prompt=None, **kw):
+        calls["transcribe"].append(
+            {"path": path, "language": language, "verbatim_prompt": verbatim_prompt}
+        )
+        return types.SimpleNamespace(
+            words=list(words if words is not None else _cut_words()),
+            language="en",
+            low_confidence=False,
+            full_text="",
+        )
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper", _fake_transcribe, raising=False)
+
+    def _fake_detect(path, **kw):
+        calls["detect"].append({"path": path, **kw})
+        return list(silences if silences is not None else SILENCES)
+
+    monkeypatch.setattr(clip_speech_mod, "detect_silences", _fake_detect, raising=False)
+    monkeypatch.setattr(
+        storage, "upload_public_read", lambda local, gcs: f"https://signed/{gcs}", raising=False
+    )
+    return calls
+
+
+def _th_probe_map(*, duration, has_audio=True):
+    return {
+        "c1": types.SimpleNamespace(duration_s=duration, has_audio=has_audio),
+        "c2": types.SimpleNamespace(duration_s=duration, has_audio=True),
+    }
+
+
+def test_talking_head_happy_path_cuts_spine_and_anchors_broll(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch, cut_dur=4.06)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    res = _render_th(
+        monkeypatch, tmp_path, cache=cache, probe_map=_th_probe_map(duration=DURATION), target=6.5
+    )
+
+    assert res["ok"] is True
+    # Detection ran ONCE on the ORIGINAL spine (6.5s < cap → no pre-cap WAV),
+    # with the shared verbatim prompt + the cut-path silencedetect floor.
+    assert len(calls["transcribe"]) == 1
+    assert calls["transcribe"][0]["path"].endswith("a.mp4")
+    assert calls["transcribe"][0]["verbatim_prompt"] == SILENCE_CUT_VERBATIM_PROMPT
+    assert calls["detect"][0]["min_silence_s"] == 0.1
+
+    # Spine reframe carries the exact plan segments + the punch-in CONSTANT;
+    # the b-roll reframe is untouched (never cut).
+    spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
+    broll = next(c for c in calls["reframe"] if c["input"].endswith("b.mp4"))
+    assert spine["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
+    assert spine["keep_segments_punch_in"] == KEEP_SEGMENTS_PUNCH_IN
+    assert "keep_segments" not in broll
+
+    # usable_s comes from the re-probed CUT spine (4.06s): the composite trims
+    # to it and the b-roll window fits inside the cut timeline.
+    (composite,) = calls["cmds"]
+    joined = " ".join(composite)
+    assert "trim=0:4.060" in joined
+    assert "enable='between(t,1.500,4.060)'" in joined
+
+    # Persistence + the plan event, exactly like the subtitled path.
+    assert res["silence_cut"] == {
+        "removed": [
+            {"start_s": 0.88, "end_s": 1.42, "reason": "filler_lexical"},
+            {"start_s": 2.5, "end_s": 4.4, "reason": "silence"},
+        ],
+        "time_saved_s": 2.44,
+        "version": 1,
+    }
+    events = _events_named(calls, "silence_cut_plan")
+    assert events and events[0][2]["applied"] is True
+    assert events[0][2]["variant_id"] == "talking_head"
+    assert events[0][2]["broll_anchors"] == 2
+
+
+def test_talking_head_has_audio_gate_short_circuits_before_asr(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    _bomb_retake_detector(monkeypatch)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=10.0, has_audio=False),
+        target=10.0,
+    )
+
+    assert res["ok"] is True
+    assert _events_named(calls, "silence_cut_skipped_no_audio")
+    assert calls["transcribe"] == []  # the ASR never ran (eng review 3A)
+    assert calls["detect"] == []
+    spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
+    assert "keep_segments" not in spine
+    assert res["silence_cut"] is None
+
+
+def test_talking_head_bailout_renders_uncut(monkeypatch, tmp_path):
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch, words=BAILOUT_WORDS, silences=BAILOUT_SILENCES)
+
+    res = _render_th(
+        monkeypatch,
+        tmp_path,
+        probe_map=_th_probe_map(duration=BAILOUT_DURATION),
+        target=BAILOUT_DURATION,
+    )
+
+    assert res["ok"] is True
+    events = _events_named(calls, "silence_cut_bailout")
+    assert events and events[0][2]["reason"] == "max_removal_exceeded"
+    spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
+    assert "keep_segments" not in spine
+    assert spine["end"] == pytest.approx(BAILOUT_DURATION)  # full uncut spine
+    assert res["silence_cut"] is None
+    assert not _events_named(calls, "silence_cut_plan")
+
+
+def test_talking_head_retake_failure_isolated_cut_still_applies(monkeypatch, tmp_path):
+    from app.agents._runtime import TerminalError
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    calls = _patch_th_full(monkeypatch)
+
+    import app.agents.retake_detector as rd
+
+    def _fail(*a, **k):
+        raise TerminalError("agent exhausted retries")
+
+    monkeypatch.setattr(rd, "run_retake_detector", _fail, raising=False)
+
+    res = _render_th(monkeypatch, tmp_path, probe_map=_th_probe_map(duration=DURATION), target=6.5)
+
+    assert res["ok"] is True
+    assert _events_named(calls, "retake_detector_failed")
+    # Zero retake cuts, but the silence/filler plan still applied to the spine.
+    spine = next(c for c in calls["reframe"] if c["input"].endswith("a.mp4"))
+    assert spine["keep_segments"] == pytest.approx([(0.0, 0.88), (1.42, 2.5), (4.4, 6.5)])
+    assert res["silence_cut"] is not None
+    assert all(r["reason"] != "retake" for r in res["silence_cut"]["removed"])
+
+
+def test_talking_head_cache_shares_analysis_across_renders(monkeypatch, tmp_path):
+    # 7A: the spine clip is analyzed ONCE per job — a second talking_head
+    # render (retry/self-narration sibling) reuses the cached entry.
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_th_full(monkeypatch)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    first = _render_th(
+        monkeypatch, tmp_path, cache=cache, probe_map=_th_probe_map(duration=DURATION), target=6.5
+    )
+    second = _render_th(
+        monkeypatch, tmp_path, cache=cache, probe_map=_th_probe_map(duration=DURATION), target=6.5
+    )
+
+    assert first["ok"] is True and second["ok"] is True
+    assert len(calls["transcribe"]) == 1  # ONE whisper pass across both renders
+    assert len(calls["detect"]) == 1
+    assert first["silence_cut"] == second["silence_cut"]
