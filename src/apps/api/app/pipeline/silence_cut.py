@@ -17,7 +17,8 @@ apply step (``reframe_and_export(keep_segments=…)``); see plans/010.
                       2. acoustic fillers   (soundful short gaps)
                       3. pause tightening   (silence-intersected)
                       4. retake spans       (outward-snapped, never mid-word)
-                      5. hygiene: MIN_CUT_S drop → merge → safety rails
+                      5. hygiene: MIN_CUT_S drop → merge →
+                         micro-fragment absorb → safety rails
                                                 │
                                                 ▼
                     CutPlan(keep_segments, removed, time_saved_s)
@@ -83,8 +84,11 @@ ACOUSTIC_GAP_MIN_S = 0.15  # soundful gap must be at least this long to be a fil
 ACOUSTIC_GAP_MAX_S = 1.2  # soundful gaps longer than this are left alone (laughter…)
 AVG_LOGPROB_MIN = -1.0  # segment avg_logprob below this blocks lexical cuts
 NO_SPEECH_PROB_MAX = 0.5  # segment no_speech_prob above this blocks lexical cuts
+MIN_KEEP_SEGMENT_S = 0.25  # word-free keep fragments shorter than this are absorbed
+KEEP_SEGMENTS_PUNCH_IN = 1.08  # alternating punch-in factor — user-validated 2026-07-09;
+# integrations pass this to reframe_and_export(keep_segments_punch_in=…) so every
+# render path produces the approved jump-cut style from one constant.
 
-_CONFIDENCE_MIN = 0.5  # real (faster-whisper) word confidence below this blocks cuts
 _EPS = 1e-9  # float-comparison tolerance for interval arithmetic
 
 
@@ -95,7 +99,26 @@ _EPS = 1e-9  # float-comparison tolerance for interval arithmetic
 # One UNIVERSAL non-lexical vocalization set, applied regardless of detected
 # language. Real words ("şey", "like", "you know") are NEVER cut in v1.
 _FILLER_LEXICON = frozenset(
-    {"uh", "um", "er", "erm", "hmm", "mm", "mhm", "ıı", "ııı", "eee", "aaa", "ıh"}
+    {
+        "uh",
+        "um",
+        "er",
+        "erm",
+        "hmm",
+        "mm",
+        "mhm",
+        "ıı",
+        "ııı",
+        "eee",
+        "aaa",
+        "ıh",
+        # 2026-07-09 local-test round 2: user-reported escapes ("eh, ıh, o" class).
+        # Bare "o" stays OUT ("o" = Turkish pronoun); "oo"+ elongations are safe.
+        "eh",
+        "ah",
+        "oh",
+        "oo",
+    }
 )
 # Real Turkish exclamations — deliberately NOT fillers. Subtracted defensively;
 # by construction no lexicon elongation image collapses onto them ("eee" only
@@ -313,18 +336,23 @@ def _overlaps_any(lo: float, hi: float, spans: list[tuple[float, float]]) -> boo
 
 
 def _segment_signals_allow(word: _CutWord) -> bool:
-    """Quality guard: only cut fillers whisper was confident about.
+    """Quality guard: block cuts only on whisper hallucination signals.
 
     whisper-1 returns NO per-word confidence (transcribe.py hardcodes 1.0),
     so the guard rides SEGMENT-level signals mapped onto each word. A ``None``
-    signal never blocks (the caller may not have segment data). A real
-    per-word confidence (faster-whisper, < 1.0) must clear ``_CONFIDENCE_MIN``.
+    signal never blocks (the caller may not have segment data).
+
+    Deliberately NO per-word confidence floor: fillers naturally score low
+    ASR confidence (they are the sounds whisper is least sure about), so a
+    floor blocks exactly the tokens this rule exists to cut — local test
+    2026-07-09 saw it protect 2/4 real "um"s (conf 0.03/0.46) that prod
+    (confidence hardcoded 1.0) would have cut. For NON-LEXICAL vocalization
+    tokens the mis-cut downside is one padded vocalization-length span;
+    hallucination protection stays with the segment signals above.
     """
     if word.avg_logprob is not None and word.avg_logprob < AVG_LOGPROB_MIN:
         return False
     if word.no_speech_prob is not None and word.no_speech_prob > NO_SPEECH_PROB_MAX:
-        return False
-    if word.confidence is not None and word.confidence < _CONFIDENCE_MIN:
         return False
     return True
 
@@ -491,6 +519,45 @@ def _merge_removals(raw: list[Removal], duration_s: float) -> list[Removal]:
     return merged
 
 
+def _absorb_micro_fragments(
+    removals: list[Removal],
+    words: list[_CutWord],
+    duration_s: float,
+) -> list[Removal]:
+    """Glitch hygiene: absorb word-free keep fragments < MIN_KEEP_SEGMENT_S.
+
+    A keep fragment shorter than MIN_KEEP_SEGMENT_S sandwiched between two
+    removals (or between a removal and a clip edge) that carries no kept word
+    is a few-frame flash of video between two jump cuts — found in local
+    testing 2026-07-09 as a 110ms three-frame stutter between an "um" cut and
+    a pause cut. Fragments carrying ANY kept word are never absorbed.
+    """
+    out = list(removals)
+    changed = True
+    while changed and out:
+        changed = False
+        for i in range(len(out) + 1):
+            lo = out[i - 1].end_s if i > 0 else 0.0
+            hi = out[i].start_s if i < len(out) else duration_s
+            frag = hi - lo
+            if frag <= _EPS or frag >= MIN_KEEP_SEGMENT_S - _EPS:
+                continue
+            if any(w.end > lo + _EPS and w.start < hi - _EPS for w in words):
+                continue  # carries a kept word — never absorb
+            if 0 < i < len(out):  # between two removals: merge through
+                left, right = out[i - 1], out[i]
+                out[i - 1 : i + 1] = [
+                    Removal(start_s=left.start_s, end_s=right.end_s, reason=left.reason)
+                ]
+            elif i == 0:  # leading sliver before the first removal
+                out[0] = Removal(start_s=0.0, end_s=out[0].end_s, reason=out[0].reason)
+            else:  # trailing sliver after the last removal
+                out[-1] = Removal(start_s=out[-1].start_s, end_s=duration_s, reason=out[-1].reason)
+            changed = True
+            break
+    return out
+
+
 def _complement(removals: list[Removal], duration_s: float) -> list[tuple[float, float]]:
     """Keep segments: everything in ``[0, duration_s]`` not removed."""
     segments: list[tuple[float, float]] = []
@@ -538,6 +605,7 @@ def build_cut_plan(
     raw.extend(_retake_removals(cut_words, retake_spans, duration))
 
     removals = _merge_removals(raw, duration)
+    removals = _absorb_micro_fragments(removals, cut_words, duration)
     total_removed = sum(r.end_s - r.start_s for r in removals)
 
     if total_removed > MAX_REMOVAL_FRAC * duration:

@@ -235,6 +235,8 @@ def reframe_and_export(
     grid_highlight_windows: list[tuple[float, float]] | None = None,
     color_trc: str | None = None,
     has_audio: bool | None = None,
+    keep_segments: list[tuple[float, float]] | None = None,
+    keep_segments_punch_in: float | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -244,6 +246,14 @@ def reframe_and_export(
     ass_overlay_paths: list of ASS file paths for animated text overlays.
     speed_factor: playback speed multiplier (2.0 = 2x fast). Applied as setpts=PTS/speed_factor.
     color_hint: color grading preset -- "warm", "cool", "high-contrast", etc.
+    keep_segments: optional [(start_s, end_s), ...] in the OUTPUT clip timeline
+        (post -ss/-t, 0-based) — render only these spans, concatenated in
+        order, with 5ms audio declick fades at cut-adjacent edges
+        (plans/010 silence cut). Validated fail-loud (sorted,
+        non-overlapping, within [0, duration]); raises ValueError on
+        violation — callers own the uncut fallback. Not combinable with
+        text_overlay_pngs / ass_overlay_paths: cut first, then burn overlays
+        on the cut output. None ⇒ byte-identical to the uncut command.
     """
     duration = end_s - start_s
     if duration <= 0:
@@ -301,6 +311,16 @@ def reframe_and_export(
     # Build command -- use filter_complex when overlays are present
     has_overlays = bool(text_overlay_pngs) or bool(ass_overlay_paths)
 
+    if keep_segments is not None:
+        if has_overlays:
+            raise ValueError(
+                "keep_segments cannot be combined with text_overlay_pngs/"
+                "ass_overlay_paths — cut first, then burn overlays on the "
+                "cut output (plans/010: captions are rebuilt from remapped "
+                "words in the cut timeline)"
+            )
+        _validate_keep_segments(keep_segments, duration)
+
     if has_overlays:
         cmd = _build_overlay_cmd(
             input_path,
@@ -312,6 +332,36 @@ def reframe_and_export(
             output_path,
             has_audio=has_audio,
         )
+    elif keep_segments is not None:
+        log.info(
+            "reframe_keep_segments",
+            segments=len(keep_segments),
+            kept_s=round(sum(b - a for a, b in keep_segments), 3),
+            duration_s=duration,
+        )
+        # Punch-in needs the chain's exact output dims so every segment
+        # returns to identical geometry before concat (mixed dims abort).
+        punch_dims = (
+            (settings.output_width, settings.output_height)
+            if aspect_ratio == "9:16"
+            else (settings.output_height, settings.output_width)
+        )
+        cmd = _build_keep_segments_cmd(
+            input_path,
+            start_s,
+            duration,
+            vf_parts,
+            keep_segments,
+            has_audio=has_audio,
+            punch_in=keep_segments_punch_in,
+            punch_dims=punch_dims,
+        )
+        # Same intermediate ultrafast/crf=14 budget as the uncut branch below —
+        # the cut output is re-encoded by the downstream burn exactly like an
+        # uncut reframe. The call stays in THIS function (not the builder) so
+        # the encoder-policy audit (tests/test_encoder_policy.py) keeps seeing
+        # only allowlisted call sites.
+        cmd += _encoding_args(output_path, preset="ultrafast", crf="14")
     else:
         vf_string = ",".join(vf_parts)
         cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
@@ -385,6 +435,7 @@ def reframe_and_export(
             grid_highlight_windows=grid_highlight_windows,
             color_trc=color_trc,
             has_audio=has_audio,
+            keep_segments=keep_segments,
         )
 
     if result.returncode != 0:
@@ -502,6 +553,135 @@ def _build_overlay_cmd(
     # the matching note in reframe_and_export.
     cmd.extend(_encoding_args(output_path, preset="ultrafast", crf="14"))
 
+    return cmd
+
+
+# 5ms declick fade at cut-adjacent keep-segment edges (plans/010, eng review
+# T3=C). Long enough to kill the step discontinuity (click) an arbitrary
+# waveform cut produces, short enough to be inaudible as a fade. Never applied
+# at the clip's true start/end — those edges are not cuts.
+# 12ms: still imperceptible as a fade but kills boundary clicks more reliably
+# than 5ms on real phone audio (local-test round 2, 2026-07-09).
+_DECLICK_FADE_S = 0.012
+
+
+def _validate_keep_segments(
+    keep_segments: list[tuple[float, float]],
+    duration: float,
+) -> None:
+    """Fail-loud validation for reframe_and_export(keep_segments=...).
+
+    Callers own the fallback (render uncut) — a malformed cut plan must never
+    silently render a wrong cut, so any violation raises ValueError.
+    """
+    if not keep_segments:
+        raise ValueError("keep_segments must contain at least one segment")
+    prev_end = 0.0
+    for i, (seg_start, seg_end) in enumerate(keep_segments):
+        if not seg_start < seg_end:
+            raise ValueError(
+                f"keep_segments[{i}] has non-positive length: ({seg_start}, {seg_end})"
+            )
+        if seg_start < 0 or seg_end > duration:
+            raise ValueError(
+                f"keep_segments[{i}] out of bounds [0, {duration}]: ({seg_start}, {seg_end})"
+            )
+        if i > 0 and seg_start < prev_end:
+            raise ValueError(
+                f"keep_segments must be sorted and non-overlapping; segment {i} "
+                f"starts at {seg_start} before previous segment end {prev_end}"
+            )
+        prev_end = seg_end
+
+
+def _build_keep_segments_cmd(
+    input_path: str,
+    start_s: float,
+    duration: float,
+    vf_parts: list[str],
+    keep_segments: list[tuple[float, float]],
+    has_audio: bool = True,
+    punch_in: float | None = None,
+    punch_dims: tuple[int, int] | None = None,
+) -> list[str]:
+    """Build the FFmpeg command prefix for keep-segment cutting (plans/010).
+
+    The cut runs INSIDE the reframe filtergraph, appended AFTER the existing
+    scale/crop/fps chain (vf_parts, which always includes the
+    `framerate=fps=N` CFR stage) — so frame math only ever touches the
+    CFR-normalized stream, never raw phone VFR/HEIF input with
+    `avg_frame_rate=1/0` (the CFR-before-xfade incident class; see
+    single_pass.py and agents/DECISIONS.md 2026-05-18).
+
+    Chain: [0:v] -> vf filters -> [base] -> split -> per-segment
+    trim + setpts=PTS-STARTPTS; audio -> asplit -> per-segment
+    atrim + asetpts=PTS-STARTPTS + 5ms afade declick at CUT-ADJACENT edges
+    only (a segment starting at the clip's true start gets no fade-in; one
+    ending at the clip's true end gets no fade-out) -> concat. Per-segment
+    concat re-syncs A/V at every joint (shorter audio is silence-padded to
+    the segment max), so cumulative drift is structurally impossible — the
+    30-cut drift e2e in tests/pipeline/test_reframe_keep_segments.py is the
+    permanent guard.
+
+    Sources with no audio track mirror the uncut silent-audio contract:
+    lavfi anullsrc input after the main input, concat v=1:a=0, and
+    `-map 1:a:0 -shortest` truncating the silent track to the cut video.
+
+    Returns the command WITHOUT output encoding args — the caller appends
+    `_encoding_args(...)` itself, keeping every encoder-policy call site
+    inside reframe_and_export (tests/test_encoder_policy.py allowlist).
+    """
+    n = len(keep_segments)
+    cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
+    if not has_audio:
+        cmd += _SILENT_AUDIO_INPUT
+
+    vf_chain = ",".join(vf_parts) if vf_parts else "null"
+    fc_parts = [f"[0:v]{vf_chain}[base]"]
+
+    # Alternating punch-in (plans/010 local-test round 2): odd segments get a
+    # subtle zoom so each cut reads as an intentional framing change (the
+    # standard talking-head jump-cut idiom) instead of a positional stutter.
+    # Scale up by the factor, then crop back to the chain's EXACT output dims
+    # so all segments share geometry (concat aborts on mixed dims).
+    punch_chain = ""
+    if punch_in is not None and punch_in > 1.0 and punch_dims is not None:
+        base_w, base_h = punch_dims
+        punch_w = int(round(base_w * punch_in / 2)) * 2
+        punch_h = int(round(base_h * punch_in / 2)) * 2
+        punch_chain = f",scale={punch_w}:{punch_h},crop={base_w}:{base_h}"
+
+    split_out = "".join(f"[vs{i}]" for i in range(n))
+    fc_parts.append(f"[base]split={n}{split_out}")
+    for i, (seg_start, seg_end) in enumerate(keep_segments):
+        seg_punch = punch_chain if i % 2 == 1 else ""
+        fc_parts.append(
+            f"[vs{i}]trim=start={seg_start:.6f}:end={seg_end:.6f},"
+            f"setpts=PTS-STARTPTS{seg_punch}[v{i}]"
+        )
+
+    if has_audio:
+        asplit_out = "".join(f"[as{i}]" for i in range(n))
+        fc_parts.append(f"[0:a]asplit={n}{asplit_out}")
+        for i, (seg_start, seg_end) in enumerate(keep_segments):
+            chain = f"atrim=start={seg_start:.6f}:end={seg_end:.6f},asetpts=PTS-STARTPTS"
+            if seg_start > 0:
+                chain += f",afade=t=in:st=0:d={_DECLICK_FADE_S}"
+            if seg_end < duration:
+                fade_out_start = (seg_end - seg_start) - _DECLICK_FADE_S
+                chain += f",afade=t=out:st={fade_out_start:.6f}:d={_DECLICK_FADE_S}"
+            fc_parts.append(f"[as{i}]{chain}[a{i}]")
+        pairs = "".join(f"[v{i}][a{i}]" for i in range(n))
+        fc_parts.append(f"{pairs}concat=n={n}:v=1:a=1[vout][aout]")
+    else:
+        vids = "".join(f"[v{i}]" for i in range(n))
+        fc_parts.append(f"{vids}concat=n={n}:v=1:a=0[vout]")
+
+    cmd += ["-filter_complex", ";".join(fc_parts), "-map", "[vout]"]
+    if has_audio:
+        cmd += ["-map", "[aout]"]
+    else:
+        cmd += ["-map", "1:a:0", "-shortest"]
     return cmd
 
 

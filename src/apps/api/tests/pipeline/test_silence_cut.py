@@ -27,6 +27,7 @@ from app.pipeline.silence_cut import (
     MAX_REMOVAL_FRAC,
     MIN_CLIP_S,
     MIN_CUT_S,
+    MIN_KEEP_SEGMENT_S,
     MIN_OUTPUT_S,
     PAD_ACOUSTIC_S,
     PAD_S,
@@ -117,6 +118,17 @@ class TestFillerLexicon:
             "ııııı",
             "eeee",
             "aaaa",
+            # round-2 additions (user-reported escapes: "eh, ıh, o" class)
+            "eh",
+            "Ehh,",
+            "ehhh",
+            "ah",
+            "ahh...",
+            "oh",
+            "Ohh",
+            "oo",
+            "ooo",
+            "oooo",
         ],
     )
     def test_filler_tokens_match(self, token):
@@ -140,10 +152,10 @@ class TestFillerLexicon:
             "you",
             "know",
             "hello",
-            "eh",
             "era",
             "umbrella",
             "hummus",
+            "o",  # Turkish pronoun — bare "o" must NEVER match (only "oo"+)
             # junk
             "",
             "   ",
@@ -214,8 +226,11 @@ class TestSegmentSignalGuard:
             ({"segment_no_speech_prob": 0.8}, False),  # above NO_SPEECH_PROB_MAX
             ({"segment_no_speech_prob": 0.5}, True),  # at threshold → allowed
             ({"segment_no_speech_prob": 0.1}, True),
-            ({"confidence": 0.4}, False),  # real faster-whisper value below 0.5
-            ({"confidence": 0.5}, True),
+            # NO word-confidence floor: fillers naturally score low ASR
+            # confidence, so a floor blocks exactly what this rule cuts
+            # (local test 2026-07-09: conf 0.03/0.46 real "um"s escaped).
+            ({"confidence": 0.03}, True),
+            ({"confidence": 0.4}, True),
             ({"confidence": 1.0}, True),  # whisper-1 hardcodes 1.0 → not a signal
             ({"segment_avg_logprob": -0.3, "segment_no_speech_prob": 0.9}, False),
         ],
@@ -678,3 +693,60 @@ def test_property_random_layouts_hold_plan_invariants():
         for original, entry in zip(survivors, remapped):
             original_len = original["end_s"] - original["start_s"]
             assert entry["end_s"] - entry["start_s"] == pytest.approx(original_len, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------------
+# Micro-fragment absorption (round 2 — MIN_KEEP_SEGMENT_S glitch hygiene)
+# ---------------------------------------------------------------------------------
+
+
+class TestMicroFragmentAbsorb:
+    """Word-free keep fragments < MIN_KEEP_SEGMENT_S never survive.
+
+    Found in local testing 2026-07-09: keep (16.60, 16.71) flashed 110ms of
+    video (3 frames) between an "um" cut and a pause cut — reads as a glitch.
+    """
+
+    def test_fragment_between_two_removals_is_absorbed(self):
+        # Words at 0.5-1.5 and 5.0-6.0; "um" filler at 2.0-2.3 and a long
+        # silent pause 2.5-4.5 leave a ~0.1s word-free fragment between the
+        # filler cut's padded end and the pause cut's start.
+        words = [
+            {"text": "hello", "start_s": 0.5, "end_s": 1.5},
+            {"text": "um", "start_s": 2.0, "end_s": 2.3},
+            {"text": "world", "start_s": 5.0, "end_s": 6.0},
+        ]
+        silences = [(2.45, 4.85)]
+        plan = build_cut_plan(words, silences, 8.0)
+        assert plan.bailout_reason is None
+        for lo, hi in plan.keep_segments:
+            assert hi - lo >= MIN_KEEP_SEGMENT_S - 1e-9, plan.keep_segments
+
+    def test_fragment_carrying_a_word_is_never_absorbed(self):
+        # A short word sits between two removals — the fragment holding it
+        # must survive even though it's shorter than MIN_KEEP_SEGMENT_S.
+        words = [
+            {"text": "hello", "start_s": 0.5, "end_s": 1.5},
+            {"text": "um", "start_s": 2.0, "end_s": 2.2},
+            {"text": "no", "start_s": 2.42, "end_s": 2.55},  # kept word
+            {"text": "um", "start_s": 2.75, "end_s": 2.95},
+            {"text": "world", "start_s": 5.0, "end_s": 6.0},
+        ]
+        plan = build_cut_plan(words, [(3.2, 4.8)], 8.0)
+        kept_word_covered = any(lo <= 2.42 and hi >= 2.55 for lo, hi in plan.keep_segments)
+        assert kept_word_covered, plan.keep_segments
+
+    def test_trailing_sliver_after_last_removal_is_absorbed(self):
+        # Trailing filler cut ends 0.19s before clip end (word-free tail).
+        words = [
+            {"text": "hello", "start_s": 0.5, "end_s": 1.5},
+            {"text": "world", "start_s": 2.0, "end_s": 3.0},
+            {"text": "um", "start_s": 20.5, "end_s": 22.5},
+        ]
+        silences = [(3.1, 20.4)]
+        plan = build_cut_plan(words, silences, 22.7)
+        # last keep segment must not be a dangling word-free sliver
+        last_lo, last_hi = plan.keep_segments[-1]
+        assert last_hi - last_lo >= MIN_KEEP_SEGMENT_S - 1e-9 or last_hi == pytest.approx(22.7)
+        for lo, hi in plan.keep_segments:
+            assert hi - lo >= MIN_KEEP_SEGMENT_S - 1e-9, plan.keep_segments

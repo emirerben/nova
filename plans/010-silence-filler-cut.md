@@ -291,6 +291,32 @@ implementation; else extend the existing debug serializer). Jest test for
 band layout math; no pipeline coupling. Lives in
 `src/apps/web/src/app/admin/jobs/[id]/`.
 
+## Round 2 — user-validated behavior lock (2026-07-09/10 local test)
+
+Tested live on a real WhatsApp talk clip; first output rejected ("ehh at 2s
+survived; transitions amateur"), fixes validated and APPROVED on re-render.
+As-built deltas vs the sections above:
+
+1. **No per-word confidence floor.** Fillers naturally score low ASR
+   confidence — the floor blocked 2/4 real "um"s (conf 0.03/0.46) that prod
+   (whisper-1, confidence hardcoded 1.0) would cut. Guard = segment signals
+   only. (Supersedes the confidence-floor half of eng review 5A.)
+2. **Lexicon widened:** + eh/ah/oh/oo (+ elongations). Bare "o" excluded (TR
+   pronoun); "ee"/"aa" still excluded.
+3. **`MIN_KEEP_SEGMENT_S = 0.25`:** word-free keep fragments between cuts
+   are absorbed (110ms three-frame flash found in testing).
+4. **Alternating punch-in `KEEP_SEGMENTS_PUNCH_IN = 1.08`** on odd segments
+   (pro jump-cut idiom — cuts read as intentional framing changes);
+   `reframe_and_export(keep_segments_punch_in=…)`.
+5. **Declick fades 5ms → 12ms.**
+6. Validated numbers on the test clip: 22.9s → 14.8s (36% removed, 6 cuts),
+   0 residual fillers on re-transcription, terminal A/V offset 17ms,
+   punch alternation confirmed on boundary frames.
+7. **Golden pin:** `tests/pipeline/test_silence_cut_golden.py` snapshots the
+   clip's detection INPUTS (word timings + silence ranges — no media in git)
+   and asserts the exact approved plan. Changing detection rules moves this
+   pin ⇒ conscious product-behavior change + re-render review.
+
 ## Encoder policy
 
 The cut runs inside `reframe_and_export`'s existing filtergraph (13A) ⇒ NO
