@@ -52,6 +52,7 @@ function item(day: number): PlanItem {
     day_index: day,
     theme: "t",
     idea: "i",
+    position: day,
     filming_suggestion: null,
     rationale: null,
     filming_guide: [],
@@ -59,6 +60,7 @@ function item(day: number): PlanItem {
     status: "idea",
     current_job_id: null,
     user_edited: false,
+    landscape_fit: "fit",
   };
 }
 

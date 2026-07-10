@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.8.0] — 2026-07-10
+
+### Changed
+- **Plan home is now a single ideas ledger — calendar planning is fully removed.** `WorkspaceHome` becomes a centered composer-first column: Fraunces "Ideas" H1 with a live stat line ("N ready · M rendering · View ready videos →"), add-input + "✦ Generate with AI" on top, and a newest-first numbered ledger with per-item status (Ready to post / Rendering… / Didn't render / Needs footage / Plan this →). Deleted: `HomeTodayCard`, `ThisWeekStrip`, `MonthCalendarGrid`, `PlanReadyBanner`, `FootagePool`, `MomentumCard`, `SteerInput`, `IdeasSidebar`, dead `PlanCalendar`/`PlanItemCard`/`PlanFilmstrip`, and `plan-schedule.ts`/`plan-logic.ts`. Legacy items with a `day_index` render as plain ideas (column kept, vestigial). Deleting an idea that already has a video now asks an inline "Keep / Delete" confirm; the × is always visible on touch. DESIGN.md §12 rewritten to codify the ledger.
+- **"Generate with AI" creates exactly ONE idea per click.** The two-mode task (which scheduled ideas onto the calendar on the second click and produced up to 5 at once) is gone: every click appends one fresh bare idea (`horizon_days=1`, newest-first). While generating, an optimistic shimmer row ("Nova is writing an idea…") appears at the top of the ledger.
+- **Item page: "Expand with AI" + "Generate shot plan" merged into one "✦ Plan this for me" flow.** The proposal card now shows the actual numbered shot list (what/how/~Ns) before you accept ("Use this plan"); the rationale moves under the card; the button only renders while the item has no shot plan and disappears once shots exist. Propose/save failures surface as visible quiet-zinc error lines (was a silent `catch {}`).
+
+### Fixed
+- **Talking-to-camera ideas no longer open as montage with nothing selected.** New `resolvePickerFormat` maps planner vocab to the picker (talking_head → "Talking to camera"/subtitled when the flag is on, else montage; day_vlog/single_hero → montage; narrated family preserved incl. the narrated_ready sub-mode) so a card is always pre-selected, and the resolved format is persisted right before Generate dispatch for planner-only vocab — so the rendered video matches the flow shown (server renders raw `talking_head` as montage fallback).
+- **"Plan this for me" can no longer produce an empty "How to film this".** `IdeaExpanderAgent.parse()` refuses an empty sanitized shot list (runtime does one clarification retry; terminal failure → friendly 502), and every persisted/returned shot now carries a server-assigned `shot_id` — fixing the soft-lock where accepted shots (`shot_id: null`) all rendered as un-cancellable empty edit forms in `ShotSlotUploader`.
+- **Generate-with-AI no longer strands the page in "Generating…" forever.** The task is fail-closed: any crash marks `plan_status="failed"` (quiet dashed "Try again" tile). Persona resolution survives a dangling `plan.persona_id` (falls back to the user's persona row) and salvages sparse mid-onboarding payloads (e.g. only `footage_type_bias` saved) by overlaying generic defaults instead of crashing — found by E2E: any mid-onboarding account previously crashed generation 100% of the time.
+- **Frontend `tsc --noEmit` gate un-broken repo-wide:** added the missing `@types/jest` devDependency and fixed 19 stale test fixtures (MusicTrackDetail/EditDraft/PlanItem drift, duplicate `originalEnv` redeclares) that had the preship typecheck red.
+
 ## [0.7.7.0] — 2026-07-09
 
 ### Changed

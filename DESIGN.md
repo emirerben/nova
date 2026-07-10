@@ -229,7 +229,7 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
 | 6 | Eyebrow `letter-spacing` varies: `tracking-wide` (0.025em), 0.12, 0.14, 0.18, 0.22, 0.24em | `tracking-[0.18em]` landing section cards (dominant); `tracking-[0.24em]` hero eyebrow; `tracking-wide` product micro-labels (dominant in `/plan`) | Normalize opportunistically |
 | 7 | `/generative` submit CTA deviates from amber-CTA rule: `rounded bg-white text-black` | Resolved v0.4.87.0 — `/generative` now uses `InkButton` (`bg-[#0c0c0e] text-white rounded-full`), same as all other light surfaces. Amber CTA exception closed. | DONE |
-| 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:bg-zinc-800 disabled:text-zinc-500` (`PlanCalendar`), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
+| 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
 | 9 | Light editorial system covers landing + /plan flow. `/plan/items/[id]`, `/library`, `/generative` remain dark theater. | Resolved v0.4.87.0 — D20 + D21 landed. All user-facing surfaces are now light editorial. §1 standing rule updated. | DONE |
 | 10 | Workspace route layout | `/plan` = mode router (setup flow for new users; workspace for returning users); `/plan/setup` = canonical onboarding URL (redirects to `/plan`); `/plan/persona` = real persona read+edit page | PR3 ships the canonical routes and back-compat redirects. |
 | 11 | Display font: Playfair Display → Fraunces | `"Fraunces", Georgia, serif` — optical-size variable, `opsz,wght@9..144`. Rationale: 3-way user comparison (Fraunces / Space Grotesk / Instrument Serif), Fraunces chosen (D6/D8 in based-on-our-talk-deep-hopper plan). Body unchanged → Inter. **Web UI only** — burned-in video fonts (`assets/fonts/`, Skia ASS) unaffected. | DONE v0.4.106.0 |
@@ -238,34 +238,28 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 
 ## §12 Idea-centric plan components (v0.4.111+)
 
-Four new / redesigned components shipped with the idea-centric plan redesign. Rules here supplement §2 (light editorial system).
+Rules here supplement §2 (light editorial system).
 
-### IdeasSidebar (`/plan` left rail)
-- **Data source:** `plan.items` sorted by `position` — NOT `persona.idea_seeds`.
-- **Item row:** `min-h-[44px] border-t border-zinc-100 py-2.5`; idea text `text-[14px] leading-snug text-[#0c0c0e]`; each row is a `Link` to `/plan/items/{id}`.
-- **Delete affordance:** `× button` opacity-0 → opacity-100 on `group-hover`. `w-[28px] h-[28px]` tap target.
-- **Add input:** dashed border `border-zinc-300`, focus ring `border-lime-500/60`; lime `+` prefix; commits on Enter or blur.
-- **Empty state:** Fraunces `text-[16px] font-medium` invitation + `text-[12px]` muted sub-line inside `rounded-xl border-dashed border-zinc-200` tile.
-- **Generating spinner:** `animate-ping` lime dot + `text-[12px] text-[#71717a]` label (matches §7 ping convention).
+### Ideas ledger (`/plan` home)
+- **Canvas:** `bg-[#fafaf8]`; centered column `max-w-[760px] px-6 pt-14`.
+- **Header:** Fraunces `font-display text-[44px] font-medium` "Ideas"; sub-line `text-[14px] text-[#71717a]` "Every idea here becomes a video."
+- **Stat line:** right-baseline `text-[13px] text-[#71717a]`; zero fragments hidden; whole line hidden when ready+rendering are zero. Ready fragment `font-semibold text-lime-700`; rendering plain zinc; `/library` link hover underline.
+- **Composer:** add input `min-h-[44px] rounded-lg border border-dashed border-zinc-300 bg-white`, focus `border-lime-500/60`, lime `+`, placeholder "A video idea, rough is fine…"; commits on Enter/blur. Button `min-h-[44px] rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#71717a]`, hover `border-lime-400 text-lime-700`, disabled `opacity-50 cursor-not-allowed`, copy "✦ Generate with AI".
+- **Ledger rows:** semantic `ol`; `plan.items` sorted newest-first by `position` descending. Row `min-h-[48px] border-t border-zinc-100 py-2.5`; grid numeral | link | status | delete.
+- **Numeral:** decorative `font-display italic text-[20px] text-zinc-300 w-8`, top-aligned, hidden below 380px.
+- **Idea link:** `text-[15px] leading-snug text-[#0c0c0e] line-clamp-2`; hover `text-lime-700`; focus `outline-2 outline-[#0c0c0e]`.
+- **Status slots:** ready pill `border-lime-200 bg-lime-50 text-lime-800 text-[11px]` "Ready to post"; generating/rerolling `text-[12px] text-[#71717a]` "Rendering…" + lime `motion-safe:animate-ping` dot; failed zinc "Didn't render — open to retry"; awaiting_clips zinc "Needs footage"; idea faint `text-[#a1a1aa]` "Plan this →".
+- **Delete:** `×` button `h-[28px] w-[28px]`; hidden until row hover/focus on hover-capable devices, always visible on touch. `ready|generating|rerolling` rows show inline zinc confirmation "Delete idea? It has a video — Keep / Delete"; other rows delete immediately.
+- **Generating:** top in-list optimistic row with `role="status" aria-live="polite"`, lime ping dot in numeral slot, `motion-safe:animate-shimmer` bar, label "Nova is writing an idea…"; button stays focused and disabled.
+- **Empty:** no card/icon; list zone shows Fraunces `text-[16px] font-medium` "Pitch your first idea."
+- **Failed plan:** quiet dashed `border-zinc-200` tile between composer and ledger, zinc copy "That idea didn't come through. Try again"; no red.
+- **Initial load:** SHIMMER tier — header ghost plus 4 ghost rows.
 
-### IdeaItem row (inside IdeasSidebar)
-- Idea text truncated at 2 lines (`line-clamp-2`). Full text is accessible via `/plan/items/{id}`.
-- Hover: idea text transitions to `text-lime-700`; delete `×` fades in.
-- No "Day N" badge — items are position-ordered, not calendar-slotted until AI expands them.
-- Focus ring: `focus-visible:outline-2 focus-visible:outline-[#0c0c0e] focus-visible:rounded`.
-
-### Generate-with-AI button
-- Full-width button below the add-input in IdeasSidebar.
-- Tokens: `border border-zinc-200 bg-white text-[12px] text-[#71717a]`; hover `border-lime-400 text-lime-700`.
-- Disabled while `aiGenerating` or `plan.plan_status === "generating"`: `opacity-50 cursor-not-allowed`.
-- Sparkle icon `✦` prefix (aria-hidden). Copy: "Generate with AI" / "Generating…".
-
-### Expand-with-AI proposal card (item detail page)
-- Shown only when `!item.theme && clip_gcs_paths.length === 0` — un-expanded pure ideas.
-- Trigger button matches Generate-with-AI token pattern.
-- Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`. Rationale `text-xs text-[#71717a]`.
-- Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold`. Dismiss: `border-zinc-200 bg-white text-[#71717a]`.
-- On accept: writes `theme + filming_suggestion` to item via `updatePlanItem`, then refetches — card disappears.
+### Expand-with-AI proposal card (item detail page; trigger "✦ Plan this for me")
+- Shown only while the item has no `filming_guide`; trigger button matches Generate-with-AI token pattern.
+- Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`.
+- Shot list renders inside the card: italic Fraunces numerals `text-[17px] text-lime-600`, shot `what` `text-[15px] font-medium text-[#0c0c0e]`, `how` `text-[13.5px] text-[#3f3f46]`, duration chip `text-[11px] border-zinc-200 bg-white text-[#3f3f46]`.
+- Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold` copy "Use this plan". Dismiss: `border-zinc-200 bg-white text-[#71717a]`. Rationale `text-xs italic text-[#71717a]` under the card.
 
 ---
 

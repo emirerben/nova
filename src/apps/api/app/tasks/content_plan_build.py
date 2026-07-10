@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 import structlog
+from sqlalchemy import select
 
 from app.agents._model_client import default_client
 from app.agents._runtime import RunContext
@@ -1038,6 +1039,20 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
     )
 
 
+# Fallback persona for mid-onboarding accounts whose stored payload doesn't
+# validate yet (e.g. only footage_type_bias saved during the interview). Keeps
+# the home page's generate CTA working; the real persona takes over once
+# generation completes. Deliberately generic — no invented niche.
+_GENERIC_PERSONA_DEFAULTS: dict = {
+    "summary": "A creator sharing their real day-to-day work and life on short-form video.",
+    "content_pillars": ["day-to-day moments", "behind the scenes", "personal projects"],
+    "tone": "casual and direct",
+    "audience": "people curious about the creator's work and life",
+    "posting_cadence": "a few times a week",
+    "sample_topics": [],
+}
+
+
 @celery_app.task(
     name="app.tasks.content_plan_build.generate_ideas_into_plan",
     bind=True,
@@ -1047,157 +1062,104 @@ def reroll_plan_item(self, item_id: str) -> None:  # noqa: ANN001
     time_limit=180,
 )
 def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
-    """Generate with AI for content plans in two modes.
-
-    Mode 1: when bare items exist, expand user-typed ideas in-place with
-    IdeaExpanderAgent and assign calendar slots. Items that already have a
-    theme + filming_guide are only scheduled.
-
-    Mode 2: when no bare items exist, use ContentPlanGeneratorAgent to create
-    fresh bare suggestions for user curation. A later click schedules them via
-    Mode 1.
-    """
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: I001, PLC0415
-    from app.agents.idea_expander import IdeaExpanderAgent, IdeaExpanderInput  # noqa: PLC0415
+    """Generate exactly one fresh unscheduled AI idea for a content plan."""
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     pid = uuid.UUID(str(plan_id))
 
-    def _terminal_failure() -> bool:
-        return int(getattr(self.request, "retries", 0) or 0) >= int(
-            getattr(self, "max_retries", 0) or 0
-        )
-
-    def _mark_failed_if_terminal() -> None:
-        if not _terminal_failure():
-            return
+    def _mark_failed() -> None:
         with sync_session() as session:
             plan = session.get(ContentPlan, pid)
             if plan is not None:
                 plan.plan_status = "failed"
                 session.commit()
 
-    def _is_preexpanded(item: PlanItem) -> bool:
-        theme = getattr(item, "theme", None)
-        guide = getattr(item, "filming_guide", None)
-        return (
-            isinstance(theme, str)
-            and bool(theme.strip())
-            and isinstance(guide, list)
-            and bool(guide)
-        )
-
     with sync_session() as session:
         plan = session.get(ContentPlan, pid)
         if plan is None:
             return
 
-        persona_row = session.get(PersonaRow, plan.persona_id)
+        def _persona_from_row(row: PersonaRow | None) -> Persona | None:
+            # Sparse payloads are a legitimate mid-onboarding state (the
+            # interview PATCHes e.g. footage_type_bias before generation fills
+            # the rest) and fail Persona's min-length validators. Salvage what
+            # validates by overlaying the payload on generic defaults —
+            # personas is UNIQUE(user_id), so there is no other row to try.
+            if row is None or not row.persona:
+                return None
+            payload = dict(row.persona)
+            try:
+                return Persona(**payload)
+            except Exception:  # noqa: BLE001 — pydantic ValidationError et al.
+                pass
+            try:
+                return Persona(**{**_GENERIC_PERSONA_DEFAULTS, **payload})
+            except Exception:  # noqa: BLE001 — a provided field itself is invalid
+                return Persona(**_GENERIC_PERSONA_DEFAULTS)
+
+        persona = _persona_from_row(session.get(PersonaRow, plan.persona_id))
+        if persona is None:
+            persona_row = (
+                session.execute(
+                    select(PersonaRow)
+                    .where(PersonaRow.user_id == plan.user_id)
+                    .order_by(PersonaRow.created_at.desc())
+                    .limit(1)
+                )
+                .scalars()
+                .first()
+            )
+            persona = _persona_from_row(persona_row)
+        if persona is None:
+            plan.plan_status = "failed"
+            session.commit()
+            return
 
         existing_items = list(plan.items or [])
-        # Bare ideas: user-added items with no calendar slot yet.
-        bare_items = sorted(
-            [it for it in existing_items if it.day_index is None],
-            key=lambda it: it.position,
+        events_text = str((plan.events or {}).get("text", "") or "")
+        exclude_ideas = [it.idea for it in existing_items if it.idea]
+        next_position = (
+            max((it.position for it in existing_items if it.position is not None), default=0) + 1
         )
 
-        persona = (
-            Persona(**persona_row.persona)
-            if persona_row and persona_row.persona
-            else Persona(
-                summary="",
-                content_pillars=[],
-                tone="",
-                audience="",
-                posting_cadence="",
-                sample_topics=[],
-            )
+    try:
+        agent_input = ContentPlanInput(
+            persona=persona,
+            events=events_text,
+            horizon_days=1,
+            exclude_ideas=exclude_ideas,
+            user_idea_seeds=[],
         )
-
-        fresh_input: ContentPlanInput | None = None
-        fresh_next_position = 1
-        if not bare_items:
-            fresh_input = ContentPlanInput(
-                persona=persona,
-                events=str((plan.events or {}).get("text", "") or ""),
-                horizon_days=5,
-                exclude_ideas=[it.idea for it in existing_items if it.idea],
-                user_idea_seeds=[],
-            )
-            fresh_next_position = (
-                max(
-                    (
-                        it.position
-                        for it in existing_items
-                        if it.day_index is None and it.position is not None
-                    ),
-                    default=0,
-                )
-                + 1
-            )
-
-        # Assign calendar slots: find free day_index values within horizon.
-        used_days = {it.day_index for it in existing_items if it.day_index is not None}
-        horizon = plan.horizon_days or 30
-        free_slots = [d for d in range(1, horizon + 1) if d not in used_days]
-        # Extend beyond horizon if more ideas than free slots.
-        extra = len(bare_items) - len(free_slots)
-        if extra > 0:
-            free_slots += list(range(horizon + 1, horizon + 1 + extra))
-
-        # Collect (item_id, idea_text, assigned_slot) for the agent loop.
-        schedule_only = [
-            (item.id, free_slots[i]) for i, item in enumerate(bare_items) if _is_preexpanded(item)
-        ]
-        work = [
-            (item.id, item.idea or "", free_slots[i])
-            for i, item in enumerate(bare_items)
-            if not _is_preexpanded(item)
-        ]
-
-    # Mode 2: run ContentPlanGeneratorAgent outside the DB session (file-wide
-    # rule: never hold a pooled connection across LLM latency), then reopen
-    # a session for the write-back.
-    if fresh_input is not None:
-        try:
+        with pipeline_trace_for(pid):
             agent = ContentPlanGeneratorAgent(default_client())
-            output = agent.run(fresh_input, ctx=RunContext(job_id=None))
-            new_specs = list(output.items)[:5]
-        except Exception as exc:  # noqa: BLE001
-            log.warning(
-                "generate_ideas_into_plan.fresh_failed",
-                plan_id=plan_id,
-                error=str(exc),
-            )
-            _mark_failed_if_terminal()
-            raise self.retry(exc=exc) from exc
+            output = agent.run(agent_input, ctx=RunContext(job_id=None))
+            new_specs = list(output.items)[:1]
         if not new_specs:
             log.warning("generate_ideas_into_plan.fresh_empty", plan_id=plan_id)
-            _mark_failed_if_terminal()
-            raise self.retry(exc=RuntimeError("fresh idea generation returned no items")) from None
+            raise RuntimeError("fresh idea generation returned no items")
 
         with sync_session() as session:
             plan = session.get(ContentPlan, pid)
             if plan is None:
                 return
-            for i, spec in enumerate(new_specs):
-                session.add(
-                    PlanItem(
-                        content_plan_id=plan.id,
-                        day_index=None,
-                        position=fresh_next_position + i,
-                        theme=spec.theme,
-                        idea=spec.idea,
-                        filming_suggestion=spec.filming_suggestion or None,
-                        rationale=spec.rationale or None,
-                        edit_format=spec.edit_format or "montage",
-                        filming_guide=[
-                            {**s.model_dump(), "shot_id": uuid.uuid4().hex}
-                            for s in (spec.filming_guide or [])
-                        ],
-                        item_status="idea",
-                    )
+            spec = new_specs[0]
+            session.add(
+                PlanItem(
+                    content_plan_id=plan.id,
+                    day_index=None,
+                    position=next_position,
+                    theme=spec.theme,
+                    idea=spec.idea,
+                    filming_suggestion=spec.filming_suggestion or None,
+                    rationale=spec.rationale or None,
+                    edit_format=spec.edit_format or "montage",
+                    filming_guide=[
+                        {**s.model_dump(), "shot_id": uuid.uuid4().hex}
+                        for s in (spec.filming_guide or [])
+                    ],
+                    item_status="idea",
                 )
+            )
             plan.plan_status = "ready"
             session.commit()
         log.info(
@@ -1205,69 +1167,11 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
             plan_id=plan_id,
             added=len(new_specs),
         )
-        return
-
-    # Run IdeaExpanderAgent for each non-expanded bare idea — outside DB session.
-    results: list[tuple[uuid.UUID, int, object]] = []
-    with pipeline_trace_for(pid):
-        agent = IdeaExpanderAgent(default_client()) if work else None
-        for item_id, idea_text, slot in work:
-            try:
-                output = agent.run(  # type: ignore[union-attr]
-                    IdeaExpanderInput(
-                        idea=idea_text,
-                        persona_summary=persona.summary,
-                        content_pillars=list(persona.content_pillars),
-                    ),
-                    ctx=RunContext(job_id=None),
-                )
-                results.append((item_id, slot, output))
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "generate_ideas_into_plan.item_failed",
-                    plan_id=plan_id,
-                    idea=idea_text,
-                    error=str(exc),
-                )
-                # Item stays as bare idea — partial success is fine.
-
-    if work and not results:
-        # Every item failed — surface error and allow retry.
-        _mark_failed_if_terminal()
-        raise self.retry(exc=RuntimeError("all idea expansions failed")) from None
-
-    # Write expansions back to the existing items.
-    with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is None:
-            return
-
-        for item_id, slot in schedule_only:
-            item = session.get(PlanItem, item_id)
-            if item is not None:
-                item.day_index = slot
-
-        for item_id, slot, output in results:
-            item = session.get(PlanItem, item_id)
-            if item is None:
-                continue
-            item.theme = output.theme
-            item.filming_suggestion = output.filming_suggestion or None
-            item.rationale = output.rationale or None
-            item.day_index = slot
-            item.filming_guide = [
-                {**s.model_dump(), "shot_id": uuid.uuid4().hex}
-                for s in (output.filming_guide or [])
-            ]
-            flag_modified(item, "filming_guide")
-
-        plan.plan_status = "ready"
-        session.commit()
-
-    log.info(
-        "generate_ideas_into_plan.done",
-        plan_id=plan_id,
-        expanded=len(results),
-        scheduled_without_expansion=len(schedule_only),
-        skipped=len(work) - len(results),
-    )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "generate_ideas_into_plan.fresh_failed",
+            plan_id=plan_id,
+            error=str(exc),
+        )
+        _mark_failed()
+        raise

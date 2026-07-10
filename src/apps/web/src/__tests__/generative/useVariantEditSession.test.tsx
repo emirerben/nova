@@ -44,6 +44,12 @@ const baselineDraft: EditDraft = {
   fontFamily: null,
   animation: null,
   textColor: null,
+  clusterHeroFont: null,
+  clusterBodyFont: null,
+  clusterAccentFont: null,
+  clusterHeroSizePx: null,
+  clusterBodySizePx: null,
+  clusterAccentSizePx: null,
 };
 
 describe("buildEditPayload", () => {
