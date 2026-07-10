@@ -163,6 +163,32 @@ class Settings(BaseSettings):
     # Generate button; flip Fly first, then Vercel. Default OFF.
     narrated_self_narration_enabled: bool = False
 
+    silence_cut_enabled: bool = Field(
+        default=False,
+        description="Automatic silence/filler cutting for speech render paths "
+        "(plans/010): subtitled today, talking_head when T6 lands. When true, the "
+        "clip's own audio is transcribed verbatim (whisper bias prompt), silences "
+        "are detected, and dead air + filler vocalizations are cut inside the "
+        "reframe (alternating punch-in jump cuts); captions are built from the "
+        "remapped transcript minus filler tokens. Fail-open by design: any stage "
+        "failure or safety-rail bailout renders today's uncut video. Per-item "
+        'opt-out: assembly_plan["silence_cut_disabled"] = true on the Job. '
+        "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
+        "+ worker restart — byte-identical to pre-feature behavior.",
+    )
+
+    retake_cut_enabled: bool = Field(
+        default=False,
+        description="Retake/restart cutting inside the silence-cut stage "
+        "(plans/010): the retake_detector agent flags abandoned takes and their "
+        "spans merge into the same CutPlan. Independent of SILENCE_CUT_ENABLED "
+        "(silence cutting ships and validates first); only meaningful when that "
+        "flag is also on. Detector failure degrades to zero retake cuts "
+        "(`retake_detector_failed` event) — never blocks silence/filler cutting. "
+        "Kill switch: `fly secrets set RETAKE_CUT_ENABLED=false --app nova-video` "
+        "+ worker restart.",
+    )
+
     # "Get a transcript" helper for narrated-walkthrough voiceovers. When False,
     # the transcript routes (POST/GET /plan-items/{id}/transcript/*) return 404 and
     # the frontend entry link is hidden (mirror flag NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED

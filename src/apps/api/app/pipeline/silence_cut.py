@@ -57,6 +57,16 @@ from dataclasses import dataclass
 from itertools import pairwise, product
 from typing import Any, NamedTuple
 
+# Whisper bias prompt for the CUT path: passed as whisper-1's ``prompt`` /
+# faster-whisper's ``initial_prompt`` (transcribe(..., verbatim_prompt=…)) so the
+# ASR keeps filler vocalizations as tokens instead of politely dropping them —
+# rule 1 needs the tokens to cut them, and caption hygiene needs them to strip
+# them from cue input. TR + EN because the product ships both; the trailing
+# "dur baştan alayım" also primes restart phrasing for the retake detector.
+# Both integrations (subtitled + talking_head) import THIS constant — a caller
+# inlining its own copy would silently diverge the two paths' transcripts.
+SILENCE_CUT_VERBATIM_PROMPT = "Iıı, eee, şey, yani... uh, um, hmm, dur baştan alayım."
+
 # -- removal reasons (persisted in Job.assembly_plan — treat as API) --------------
 REASON_SILENCE = "silence"
 REASON_FILLER_LEXICAL = "filler_lexical"
