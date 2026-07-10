@@ -206,10 +206,27 @@ function formatLoc(loc: unknown): string {
   return typeof loc === "string" ? loc : "detail";
 }
 
+/** Friendly copy for the timeline-validation machine codes the save endpoint
+ * can 409/422 with (`_timeline_error` in generative_jobs.py). Codes not
+ * listed here fall through to the raw string — better than nothing, but add
+ * new codes here as they're discovered surfacing verbatim to users. */
+const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
+  TIMELINE_TOO_SHORT: "That clip would be shorter than the minimum (0.6s).",
+  TIMELINE_TOO_LONG: "That timeline is longer than the maximum allowed length.",
+  TIMELINE_OUT_OF_BOUNDS:
+    "One of the clips ran out of footage for this edit. Try trimming it or picking a different clip.",
+  TIMELINE_BEATS_EXHAUSTED: "Ran out of song to sync clips to — try removing a clip.",
+  TIMELINE_INVALID_DURATION: "One of the clips has an invalid length.",
+  TIMELINE_EMPTY: "The timeline needs at least one clip.",
+  TIMELINE_UNKNOWN_CLIP: "One of the clips isn't part of this edit anymore.",
+  TIMELINE_STALE: "This video changed in another tab — reload to continue.",
+  sources_expired: "One of the clips has expired and needs to be re-uploaded.",
+};
+
 function formatDetailValue(detail: unknown, fallback: string): string {
   if (typeof detail === "string") {
-    if (detail === "TIMELINE_TOO_SHORT") {
-      return "That clip would be shorter than the minimum (0.6s).";
+    if (detail in TIMELINE_ERROR_MESSAGES) {
+      return TIMELINE_ERROR_MESSAGES[detail];
     }
     const match = detail.match(
       /^Text element ([^:]+): field ([^ ]+) has invalid value [\s\S]*: (.+)$/,
