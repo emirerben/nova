@@ -172,7 +172,8 @@ class Settings(BaseSettings):
         "reframe (alternating punch-in jump cuts); captions are built from the "
         "remapped transcript minus filler tokens. Fail-open by design: any stage "
         "failure or safety-rail bailout renders today's uncut video. Per-item "
-        'opt-out: assembly_plan["silence_cut_disabled"] = true on the Job. '
+        "opt-out: POST /admin/jobs/{job_id}/silence-cut-disable (takes effect on "
+        "the next FULL re-render only). "
         "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
         "+ worker restart — byte-identical to pre-feature behavior.",
     )

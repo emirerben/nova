@@ -36,7 +36,9 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.audio.song_classifier", "app.agents.song_classifier", "SongClassifierAgent"),
     ("nova.audio.song_sections", "app.agents.song_sections", "SongSectionsAgent"),
     ("nova.audio.music_matcher", "app.agents.music_matcher", "MusicMatcherAgent"),
-    # plans/010 T7: abandoned-take spans for the CutPlan (integration lands in T5)
+    # plans/010: abandoned-take spans merged into the silence-cut CutPlan — wired
+    # into generative_build._silence_cut_retake_spans behind RETAKE_CUT_ENABLED,
+    # failure-isolated (detector failure ⇒ zero retake cuts, never a failed job).
     ("nova.audio.retake_detector", "app.agents.retake_detector", "RetakeDetectorAgent"),
     (
         "nova.audio.lyric_style_selector",

@@ -7,14 +7,22 @@ Pins the `_render_subtitled_variant` wiring of the silence-cut stage:
   as test_generative_build_sequence's kill-switch pins
 - has_audio gate short-circuits BEFORE any ASR call (eng review 3A)
 - per-item `silence_cut_disabled` skips the stage entirely, retakes included
-- safety-rail bailout renders uncut + `silence_cut_bailout` event
+- safety-rail bailout renders uncut + `silence_cut_bailout` event; a clip
+  below MIN_CLIP_S bails BEFORE any whisper/silencedetect spend (P3) and
+  captions fall back to the base-transcription path
 - happy path: keep_segments + the KEEP_SEGMENTS_PUNCH_IN constant reach the
   reframe; captions come from remap_words minus filler tokens (15A), NO second
   transcription of the base; `silence_cut` persisted on the variant
+- cut-apply failure fails OPEN (R3a): uncut retry, `silence_cut_apply_failed`
+  event, no persisted summary; analysis failure is cached once (7A) and both
+  renders caption from the base path
 - retake isolation: detector failure ⇒ zero retake cuts, silence cuts proceed;
   RETAKE_CUT_ENABLED off ⇒ detector never constructed
 - per-job cache (7A): one whisper + one silencedetect + one cut encode across
-  two variant renders of the same clip
+  two variant renders of the same clip; locking is per-key (R3c) so distinct
+  clips never serialize behind each other's compute
+- regenerate hygiene (A1): a montage-path full re-render NULLs the stale
+  `silence_cut` blob through the entry merge
 - `_finalize_job` whitelist preserves `silence_cut` (the strip class pinned by
   test_finalize_job_preserves_ai_timeline)
 
@@ -43,7 +51,9 @@ import pytest
 
 import app.tasks.generative_build as gb
 from app.pipeline.silence_cut import (
+    BAILOUT_CLIP_TOO_SHORT,
     KEEP_SEGMENTS_PUNCH_IN,
+    MIN_CLIP_S,
     SILENCE_CUT_VERBATIM_PROMPT,
     build_cut_plan,
     is_filler_token,
@@ -88,6 +98,21 @@ BAILOUT_DURATION = 10.0
 
 # 12 words / 12s, no silences (rule 2/3 inert) — a (0,1) retake span maps to
 # the single removal (0.0, 1.88, "retake").
+# 10 tightly-packed words / 6.5s, no fillers, no silencedetect ranges (rule 2
+# self-disables) → a clean plan with ZERO removals and no bailout.
+NO_CUT_WORDS = [
+    Word(text="we", start_s=0.5, end_s=0.7, confidence=1.0),
+    Word(text="built", start_s=0.8, end_s=1.1, confidence=1.0),
+    Word(text="the", start_s=1.2, end_s=1.4, confidence=1.0),
+    Word(text="thing", start_s=1.5, end_s=1.9, confidence=1.0),
+    Word(text="and", start_s=2.0, end_s=2.3, confidence=1.0),
+    Word(text="it", start_s=2.4, end_s=2.6, confidence=1.0),
+    Word(text="works", start_s=2.7, end_s=3.2, confidence=1.0),
+    Word(text="great", start_s=3.3, end_s=3.9, confidence=1.0),
+    Word(text="today", start_s=4.0, end_s=4.6, confidence=1.0),
+    Word(text="friends.", start_s=4.7, end_s=5.9, confidence=1.0),
+]
+
 RETAKE_WORDS = [
     Word(text="hello", start_s=0.5, end_s=1.0, confidence=1.0),
     Word(text="world", start_s=1.2, end_s=1.8, confidence=1.0),
@@ -218,8 +243,11 @@ def _events_named(calls, name):
     return [e for e in calls["events"] if e[1] == name]
 
 
-def _render(monkeypatch, tmp_path, *, disabled=False, cache=None):
-    vdir = tmp_path / "variant"
+def _render(monkeypatch, tmp_path, *, disabled=False, cache=None, subdir="variant"):
+    # `subdir` mirrors prod: every variant render gets its OWN variant_dir
+    # (variant_{rank}) — multi-render tests must not share one, or the cache's
+    # hardlinked cut base would collide with its own inode on reuse.
+    vdir = tmp_path / subdir
     vdir.mkdir(exist_ok=True)
     return gb._render_subtitled_variant(
         job_id=JOB_ID,
@@ -324,6 +352,73 @@ def test_bailout_renders_uncut_with_event(monkeypatch, tmp_path):
     assert res["silence_cut"] is None
 
 
+def test_short_clip_bails_before_any_asr_spend(monkeypatch, tmp_path):
+    """P3: below MIN_CLIP_S the plan can never cut — the analysis returns the
+    no-op bailout plan BEFORE whisper/silencedetect/retakes run, and (empty-
+    words consumer guard) captions come from the base-transcription fallback,
+    never as zero cues from the empty verbatim entry."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", True, raising=False)
+    assert 3.0 < MIN_CLIP_S  # fixture guard: keep the duration under the floor
+    calls = _patch_pipeline(monkeypatch, duration=3.0)
+    _bomb_retake_detector(monkeypatch)
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    events = _events_named(calls, "silence_cut_bailout")
+    assert events and events[0][2]["reason"] == BAILOUT_CLIP_TOO_SHORT
+    # ZERO analysis spend: the only transcription is the base-captioning
+    # fallback (no verbatim pass on the original clip, no silencedetect).
+    assert len(calls["transcribe"]) == 1
+    assert calls["transcribe"][0]["path"].endswith("final_base.mp4")
+    assert calls["transcribe"][0]["verbatim_prompt"] is None
+    assert calls["detect"] == []
+    assert "keep_segments" not in calls["reframe"][0]
+    assert res["silence_cut"] is None  # bailouts stay event-only
+
+
+def test_analysis_failure_fails_open_and_caches_failure_once(monkeypatch, tmp_path):
+    """Analysis blow-up (whisper 500) fails OPEN to the uncut flow, and the
+    failure is cached (7A): a sibling render never re-spends the failing call
+    — both variants caption from the base-transcription fallback."""
+    import app.pipeline.transcribe as transcribe_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+
+    verbatim_calls = {"n": 0}
+
+    def _flaky_transcribe(path, *, language=None, verbatim_prompt=None, **kw):
+        calls["transcribe"].append(
+            {"path": path, "language": language, "verbatim_prompt": verbatim_prompt}
+        )
+        if verbatim_prompt is not None:  # the analysis pass only
+            verbatim_calls["n"] += 1
+            raise RuntimeError("whisper 500")
+        return types.SimpleNamespace(
+            words=list(_cut_words()), language="en", low_confidence=False, full_text=""
+        )
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper", _flaky_transcribe, raising=False)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    first = _render(monkeypatch, tmp_path, cache=cache)
+    second = _render(monkeypatch, tmp_path, cache=cache, subdir="variant2")
+
+    assert first["ok"] is True and second["ok"] is True
+    assert first["silence_cut"] is None and second["silence_cut"] is None
+    # The failing verbatim call was spent ONCE across both renders …
+    assert verbatim_calls["n"] == 1
+    assert len(_events_named(calls, "silence_cut_analysis_failed")) == 1
+    # … and each render captions from its own base pass, uncut.
+    base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
+    assert len(base_calls) == 2
+    assert all(c["path"].endswith("final_base.mp4") for c in base_calls)
+    assert all("keep_segments" not in r for r in calls["reframe"])
+
+
 # ── Happy path ───────────────────────────────────────────────────────────────────
 
 
@@ -362,7 +457,8 @@ def test_happy_path_cuts_captions_and_persists(monkeypatch, tmp_path):
     assert [w.end_s for w in got] == pytest.approx([w["end_s"] for w in expected])
     assert max(w.end_s for w in got) <= DURATION - plan.time_saved_s + 1e-6
 
-    # Persistence: plain dicts + version, ready for the finalize whitelist.
+    # Persistence: plain dicts + version, ready for the finalize whitelist
+    # (plan_summary shape — M2; original_duration_s feeds the admin strip).
     assert res["silence_cut"] == {
         "removed": [
             {"start_s": 0.88, "end_s": 1.42, "reason": "filler_lexical"},
@@ -370,11 +466,82 @@ def test_happy_path_cuts_captions_and_persists(monkeypatch, tmp_path):
         ],
         "time_saved_s": 2.44,
         "version": 1,
+        "original_duration_s": 6.5,
     }
     events = _events_named(calls, "silence_cut_plan")
     assert events and events[0][2]["removed_count"] == 2
     assert events[0][2]["time_saved_s"] == 2.44
     assert res["caption_language"] == "en"
+
+
+def test_zero_removal_plan_persists_empty_summary(monkeypatch, tmp_path):
+    """A clean plan with NOTHING to cut is not a bailout: "nothing to cut" is
+    information — persisted with removed=[] + the plan event (applied False),
+    and the already-paid-for verbatim transcript still drives the captions."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch, words=NO_CUT_WORDS, silences=[])
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    # Exactly ONE whisper call — the verbatim analysis pass; captions reuse it
+    # (no second transcription of the base).
+    assert len(calls["transcribe"]) == 1
+    assert calls["transcribe"][0]["verbatim_prompt"] == SILENCE_CUT_VERBATIM_PROMPT
+    # Zero removals ⇒ no segmented encode …
+    assert "keep_segments" not in calls["reframe"][0]
+    # … but the summary + event still land (admin strip shows "0 cuts").
+    assert res["silence_cut"] == {
+        "removed": [],
+        "time_saved_s": 0.0,
+        "version": 1,
+        "original_duration_s": 6.5,
+    }
+    events = _events_named(calls, "silence_cut_plan")
+    assert events and events[0][2]["applied"] is False
+    assert events[0][2]["removed_count"] == 0
+    assert not _events_named(calls, "silence_cut_bailout")
+
+
+def test_cut_apply_failure_falls_open_to_uncut(monkeypatch, tmp_path):
+    """R3a: a cut-applying reframe failure costs the CUTS, never the variant —
+    uncut retry (no keep_segments), `silence_cut_apply_failed` event, captions
+    from the base-transcription fallback, and NO persisted summary (a
+    removed[] blob on an uncut video lies to the admin viewer)."""
+    import app.pipeline.reframe as reframe_mod
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+
+    def _flaky_reframe(input_path, start_s, end_s, aspect, ass, output_path, **kw):
+        calls["reframe"].append({"input": input_path, "out": output_path, **kw})
+        if "keep_segments" in kw:
+            raise RuntimeError("segment select filter blew up")
+        with open(output_path, "wb") as f:
+            f.write(b"\x00" * 16)
+
+    monkeypatch.setattr(reframe_mod, "reframe_and_export", _flaky_reframe, raising=False)
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True  # fail-open: never a variant failure
+    # First attempt carried the plan; the retry is the plain uncut reframe.
+    assert len(calls["reframe"]) == 2
+    assert "keep_segments" in calls["reframe"][0]
+    assert "keep_segments" not in calls["reframe"][1]
+    events = _events_named(calls, "silence_cut_apply_failed")
+    assert events and events[0][2]["variant_id"] == "subtitled"
+    assert "blew up" in events[0][2]["error"]
+    # No summary, no plan event — the shipped video is uncut.
+    assert res["silence_cut"] is None
+    assert not _events_named(calls, "silence_cut_plan")
+    # Captions fall back to the base-transcription path (the remapped verbatim
+    # words describe a cut timeline that no longer exists).
+    base_calls = [c for c in calls["transcribe"] if c["verbatim_prompt"] is None]
+    assert len(base_calls) == 1
+    assert base_calls[0]["path"].endswith("final_base.mp4")
 
 
 # ── Retakes ──────────────────────────────────────────────────────────────────────
@@ -459,7 +626,7 @@ def test_cache_computes_once_and_reuses_cut_output(monkeypatch, tmp_path):
     cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
 
     first = _render(monkeypatch, tmp_path, cache=cache)
-    second = _render(monkeypatch, tmp_path, cache=cache)
+    second = _render(monkeypatch, tmp_path, cache=cache, subdir="variant2")
 
     assert first["ok"] is True and second["ok"] is True
     # ONE whisper call, ONE silencedetect pass, ONE cut encode across both
@@ -471,6 +638,127 @@ def test_cache_computes_once_and_reuses_cut_output(monkeypatch, tmp_path):
     assert first["silence_cut"] == second["silence_cut"]
     entry = cache.clips[str(tmp_path / "clip.mp4")]
     assert entry["cut_video_path"] and entry["cut_video_path"].startswith(str(tmp_path))
+
+
+def test_cache_per_key_locking_never_serializes_distinct_keys(monkeypatch, tmp_path):
+    """R3c: a slow compute on one key must NOT block a different key — the
+    global lock only guards slot get-or-insert; computes run outside it.
+    Pure event choreography: no sleeps, no wall-clock races."""
+    import threading
+
+    import app.pipeline.transcribe as transcribe_mod
+    import app.services.clip_speech as clip_speech_mod
+
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    monkeypatch.setattr(clip_speech_mod, "detect_silences", lambda path, **kw: [], raising=False)
+
+    key1_started = threading.Event()
+    release_key1 = threading.Event()
+    key2_done = threading.Event()
+
+    def _gated_transcribe(path, *, language=None, verbatim_prompt=None, **kw):
+        if path.endswith("clip1.mp4"):
+            key1_started.set()
+            assert release_key1.wait(timeout=10), "test deadlock: key1 never released"
+        return types.SimpleNamespace(
+            words=list(_cut_words()), language="en", low_confidence=False, full_text=""
+        )
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_whisper", _gated_transcribe, raising=False)
+
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+    results: dict = {}
+
+    def _worker1():
+        results["k1"] = gb._silence_cut_analysis("clip1.mp4", DURATION, job_id=JOB_ID, cache=cache)
+
+    def _worker2():
+        # Enter only once key1 is provably mid-compute (its slot inserted, the
+        # global lock long released).
+        assert key1_started.wait(timeout=10)
+        results["k2"] = gb._silence_cut_analysis("clip2.mp4", DURATION, job_id=JOB_ID, cache=cache)
+        key2_done.set()
+
+    t1 = threading.Thread(target=_worker1)
+    t2 = threading.Thread(target=_worker2)
+    t1.start()
+    t2.start()
+    # THE assertion: key2 completes WHILE key1 is still parked in its compute.
+    # Under compute-under-global-lock this wait can only time out.
+    assert key2_done.wait(timeout=10), "key2 serialized behind key1's slow compute"
+    assert not release_key1.is_set()  # key1 really was still blocked
+    release_key1.set()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+    assert not t1.is_alive() and not t2.is_alive()
+
+    assert results["k1"]["failed"] is False and results["k2"]["failed"] is False
+    assert set(cache.clips) == {"clip1.mp4", "clip2.mp4"}
+    assert cache.pending == {}  # slots cleaned up after publish
+
+
+def test_cache_store_oserror_degrades_gracefully(monkeypatch, tmp_path):
+    """P2 store hygiene: hardlink AND copy both refused (exotic tmp mount) —
+    the variant still ships (ok True) and `cut_video_path` stays None, so the
+    next variant simply pays its own encode. Never a job failure."""
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", True, raising=False)
+    monkeypatch.setattr(gb.settings, "retake_cut_enabled", False, raising=False)
+    calls = _patch_pipeline(monkeypatch)
+    cache = gb._SilenceCutCache(str(tmp_path / "silence_cut"))
+
+    def _refuse(*a, **k):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(gb.os, "link", _refuse)
+    monkeypatch.setattr(gb.shutil, "copy2", _refuse)
+
+    res = _render(monkeypatch, tmp_path, cache=cache)
+
+    assert res["ok"] is True
+    # The cut itself applied — only the sibling-reuse stash was lost.
+    assert "keep_segments" in calls["reframe"][0]
+    assert res["silence_cut"] is not None and res["silence_cut"]["removed"]
+    entry = cache.clips[str(tmp_path / "clip.mp4")]
+    assert entry["cut_video_path"] is None
+
+
+# ── Regenerate hygiene (A1) ───────────────────────────────────────────────────────
+
+
+def test_regenerate_full_render_clears_stale_silence_cut(monkeypatch):
+    """A1: a montage-path full re-render (talking_head regen, timeline edit)
+    never runs the cut stage — the ok-branch must write silence_cut=None into
+    the merge patch or the admin strip keeps describing the PREVIOUS video's
+    cuts. Reuses the timeline-render harness (persisted user_timeline ⇒ the
+    override path, no ingest/Gemini)."""
+    from tests.tasks.test_generative_timeline_render import (
+        JOB_ID as TLR_JOB_ID,
+    )
+    from tests.tasks.test_generative_timeline_render import (
+        _existing_variant,
+        _regen_setup,
+        _tl_slot,
+    )
+
+    stale = {
+        "removed": [{"start_s": 0.88, "end_s": 1.42, "reason": "filler_lexical"}],
+        "time_saved_s": 0.54,
+        "version": 1,
+        "original_duration_s": 6.5,
+    }
+    variant = _existing_variant(
+        user_timeline={"slots": [_tl_slot(0)]},
+        silence_cut=stale,
+    )
+    _job, updates, _dl = _regen_setup(monkeypatch, variants=[variant])
+
+    gb._run_regenerate_variant(TLR_JOB_ID, "original_text", None, None, False)
+
+    final = updates[-1]
+    assert final["ok"] is True
+    # Key PRESENT and None — a missing key would merge the stale blob through.
+    assert "silence_cut" in final
+    assert final["silence_cut"] is None
 
 
 # ── Finalization whitelist (the silent-strip class) ──────────────────────────────
@@ -612,8 +900,10 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
 
     seen: dict = {}
 
-    def _fake_analysis(path, duration_s, *, job_id, cache):
-        seen.update(path=path, duration_s=duration_s, job_id=job_id, cache=cache)
+    def _fake_analysis(path, duration_s, *, job_id, cache, cache_key=None):
+        seen.update(
+            path=path, duration_s=duration_s, job_id=job_id, cache=cache, cache_key=cache_key
+        )
         return {"failed": True, "plan": None, "retake_span_count": 0}
 
     monkeypatch.setattr(gb, "_silence_cut_analysis", _fake_analysis)
@@ -623,13 +913,19 @@ def test_talking_head_cut_fn_routes_shared_analysis_with_cache(monkeypatch, tmp_
     assert res["ok"] is True
     fn = calls["assemble"][0]["silence_cut_fn"]
     assert callable(fn)
-    fn("spine.mp4", 42.0)
+    # The assembler keys a pre-capped analysis WAV by its SOURCE spine (+cap) —
+    # the closure must forward cache_key through to the shared analysis.
+    fn("spine_cut_analysis.wav", 42.0, cache_key="spine.mp4::cap=120.0")
     assert seen == {
-        "path": "spine.mp4",
+        "path": "spine_cut_analysis.wav",
         "duration_s": 42.0,
         "job_id": JOB_ID,
         "cache": cache,
+        "cache_key": "spine.mp4::cap=120.0",
     }
+    # cache_key is optional — omitted ⇒ None (analysis keys by the path itself).
+    fn("spine.mp4", 42.0)
+    assert seen["cache_key"] is None
 
 
 def test_talking_head_summary_from_assembler_is_persisted(monkeypatch, tmp_path):
@@ -766,7 +1062,8 @@ def test_talking_head_happy_path_cuts_spine_and_anchors_broll(monkeypatch, tmp_p
     assert "trim=0:4.060" in joined
     assert "enable='between(t,1.500,4.060)'" in joined
 
-    # Persistence + the plan event, exactly like the subtitled path.
+    # Persistence + the plan event, exactly like the subtitled path (shared
+    # plan_summary shape — original_duration_s is the analysis window).
     assert res["silence_cut"] == {
         "removed": [
             {"start_s": 0.88, "end_s": 1.42, "reason": "filler_lexical"},
@@ -774,6 +1071,7 @@ def test_talking_head_happy_path_cuts_spine_and_anchors_broll(monkeypatch, tmp_p
         ],
         "time_saved_s": 2.44,
         "version": 1,
+        "original_duration_s": 6.5,
     }
     events = _events_named(calls, "silence_cut_plan")
     assert events and events[0][2]["applied"] is True

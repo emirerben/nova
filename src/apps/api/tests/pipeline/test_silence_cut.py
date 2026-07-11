@@ -25,6 +25,7 @@ from app.pipeline.silence_cut import (
     BAILOUT_OUTPUT_TOO_SHORT,
     KEPT_GAP_S,
     MAX_REMOVAL_FRAC,
+    MAX_REMOVALS,
     MIN_CLIP_S,
     MIN_CUT_S,
     MIN_KEEP_SEGMENT_S,
@@ -40,6 +41,8 @@ from app.pipeline.silence_cut import (
     build_cut_plan,
     is_filler_token,
     no_op_plan,
+    plan_event_payload,
+    plan_summary,
     remap_words,
 )
 
@@ -129,6 +132,13 @@ class TestFillerLexicon:
             "oo",
             "ooo",
             "oooo",
+            # Turkish dotless-I casing (R1): capital 'I' folds to 'ı' (never
+            # 'i' — str.lower() alone would miss the ıı/ııı/ıh entries)
+            "Iıı,",
+            "Iıı",
+            "Ih.",
+            "Iı",
+            "IH",
         ],
     )
     def test_filler_tokens_match(self, token):
@@ -156,6 +166,12 @@ class TestFillerLexicon:
             "umbrella",
             "hummus",
             "o",  # Turkish pronoun — bare "o" must NEVER match (only "oo"+)
+            # English capital-I words — the I→ı Turkish fold must not create
+            # false positives (safety pin: lexicon has no i-initial entries)
+            "I",
+            "It",
+            "Im",
+            "IT",
             # junk
             "",
             "   ",
@@ -750,3 +766,171 @@ class TestMicroFragmentAbsorb:
         assert last_hi - last_lo >= MIN_KEEP_SEGMENT_S - 1e-9 or last_hi == pytest.approx(22.7)
         for lo, hi in plan.keep_segments:
             assert hi - lo >= MIN_KEEP_SEGMENT_S - 1e-9, plan.keep_segments
+
+
+# ---------------------------------------------------------------------------------
+# Removal-count cap (MAX_REMOVALS — filter-graph arg-length defense)
+# ---------------------------------------------------------------------------------
+
+
+def stutter_fixture(n: int, period: float = 2.0) -> tuple[list[dict], float]:
+    """``n`` isolated lexical-filler removals with strictly increasing sizes.
+
+    Unit i: real word [t, t+0.5], filler [t+1.0, t+1.0+d_i] with
+    d_i = 0.15 + 0.002*i, silences=[] (rules 2+3 off) — each filler yields
+    exactly one PAD_S-flanked removal of size d_i + 2*PAD_S, never clamped or
+    merged (all inter-cut gaps stay well above PAD_S and MIN_KEEP_SEGMENT_S).
+    """
+    words: list[dict] = []
+    for i in range(n):
+        t = i * period
+        words.append(w(f"word{i}", t, t + 0.5))
+        words.append(w("um", t + 1.0, t + 1.0 + 0.15 + 0.002 * i))
+    duration = n * period + 1.0
+    words.append(w("tail", duration - 0.8, duration - 0.4))
+    return words, duration
+
+
+class TestRemovalCountCap:
+    def test_150_removals_capped_to_100_largest(self):
+        words, duration = stutter_fixture(150)
+        plan = build_cut_plan(words, [], duration)
+        assert plan.bailout_reason is None
+        assert len(plan.removed) == MAX_REMOVALS == 100
+
+        # largest survive: every kept removal is at least as long as the
+        # 100th-largest synthetic cut (i=50 → 0.15 + 0.1 + 2*PAD_S)
+        smallest_kept = min(r.end_s - r.start_s for r in plan.removed)
+        assert smallest_kept >= 0.25 + 2 * PAD_S - 1e-9
+        # ...and the single largest cut (i=149) is among the survivors
+        largest = max(r.end_s - r.start_s for r in plan.removed)
+        assert largest == pytest.approx(0.15 + 0.002 * 149 + 2 * PAD_S, abs=1e-9)
+
+        # re-sorted by time after the cap
+        starts = [r.start_s for r in plan.removed]
+        assert starts == sorted(starts)
+        for r_prev, r_next in zip(plan.removed, plan.removed[1:]):
+            assert r_next.start_s > r_prev.end_s
+
+        # plan validity: keep + removed exactly partitions [0, duration],
+        # time_saved recomputed from the CAPPED set
+        total_removed = sum(r.end_s - r.start_s for r in plan.removed)
+        kept_total = sum(hi - lo for lo, hi in plan.keep_segments)
+        assert kept_total + total_removed == pytest.approx(duration, abs=1e-6)
+        assert plan.time_saved_s == pytest.approx(total_removed, abs=1e-9)
+        assert total_removed <= MAX_REMOVAL_FRAC * duration + 1e-9
+        for (_, prev_hi), (nxt_lo, _) in zip(plan.keep_segments, plan.keep_segments[1:]):
+            assert nxt_lo > prev_hi
+
+    def test_at_cap_no_removal_dropped(self, monkeypatch):
+        monkeypatch.setattr(silence_cut, "MAX_REMOVALS", 10)
+        words, duration = stutter_fixture(10)
+        plan = build_cut_plan(words, [], duration)
+        assert plan.bailout_reason is None
+        assert len(plan.removed) == 10  # exactly at the cap — untouched
+
+    def test_tiebreak_equal_durations_keeps_earliest(self, monkeypatch):
+        monkeypatch.setattr(silence_cut, "MAX_REMOVALS", 3)
+        # Five BITWISE-identical-size filler cuts — every boundary clamps to a
+        # neighboring word edge on an exact binary fraction (multiples of
+        # 1/16), so each removal is exactly (t+1.0, t+1.5625): duration
+        # 0.5625 with no per-unit float drift. Tiebreak must keep the
+        # EARLIEST three by start_s.
+        words: list[dict] = []
+        for i in range(5):
+            t = i * 4.0
+            words.append(w(f"word{i}a", t, t + 1.0))  # ends AT the filler start
+            words.append(w("um", t + 1.0, t + 1.5))
+            words.append(w(f"word{i}b", t + 1.5625, t + 2.0))  # gap 0.0625 < PAD_S
+        plan = build_cut_plan(words, [], 21.0)
+        assert plan.bailout_reason is None
+        assert len(plan.removed) == 3
+        assert_spans(
+            [(r.start_s, r.end_s) for r in plan.removed],
+            [(t + 1.0, t + 1.5625) for t in (0.0, 4.0, 8.0)],  # earliest three
+        )
+
+
+# ---------------------------------------------------------------------------------
+# Task-layer serialization helpers (plan_summary / plan_event_payload)
+# ---------------------------------------------------------------------------------
+
+
+def summary_fixture_plan() -> CutPlan:
+    return CutPlan(
+        keep_segments=[(0.0, 1.234567), (1.9876543, 3.0), (3.5, 10.0)],
+        removed=[
+            Removal(start_s=1.234567, end_s=1.9876543, reason=REASON_SILENCE),
+            Removal(start_s=3.0, end_s=3.5, reason=REASON_FILLER_LEXICAL),
+        ],
+        time_saved_s=1.2530873,
+    )
+
+
+class TestPlanSummary:
+    def test_shape_and_rounding(self):
+        summary = plan_summary(summary_fixture_plan(), original_duration_s=10.0000456)
+        assert summary == {
+            "removed": [
+                {"start_s": 1.235, "end_s": 1.988, "reason": REASON_SILENCE},
+                {"start_s": 3.0, "end_s": 3.5, "reason": REASON_FILLER_LEXICAL},
+            ],
+            "time_saved_s": 1.253,
+            "version": 1,
+            "original_duration_s": 10.0,
+        }
+
+    def test_original_duration_defaults_to_none(self):
+        summary = plan_summary(no_op_plan(5.0))
+        assert summary == {
+            "removed": [],
+            "time_saved_s": 0.0,
+            "version": 1,
+            "original_duration_s": None,
+        }
+
+
+class TestPlanEventPayload:
+    def test_shape_and_reasons_histogram(self):
+        plan = CutPlan(
+            keep_segments=[(0.0, 20.0)],
+            removed=[
+                Removal(start_s=1.0, end_s=1.5, reason=REASON_SILENCE),
+                Removal(start_s=2.0, end_s=2.5, reason=REASON_FILLER_LEXICAL),
+                Removal(start_s=3.0, end_s=3.5, reason=REASON_SILENCE),
+                Removal(start_s=4.0, end_s=4.5, reason=REASON_RETAKE),
+            ],
+            time_saved_s=2.0004567,
+        )
+        payload = plan_event_payload(plan, variant_id="song_text", retake_spans=2, applied=True)
+        assert payload == {
+            "variant_id": "song_text",
+            "removed_count": 4,
+            "time_saved_s": 2.0,
+            "reasons": {REASON_SILENCE: 2, REASON_FILLER_LEXICAL: 1, REASON_RETAKE: 1},
+            "retake_spans": 2,
+            "applied": True,
+            "cut_reused": False,  # default
+        }
+
+    def test_noop_plan_empty_histogram(self):
+        payload = plan_event_payload(
+            no_op_plan(8.0), variant_id="original_text", retake_spans=0, applied=False
+        )
+        assert payload["removed_count"] == 0
+        assert payload["reasons"] == {}
+        assert payload["time_saved_s"] == 0.0
+        assert payload["applied"] is False
+
+    def test_extra_merges_and_overrides_last(self):
+        payload = plan_event_payload(
+            no_op_plan(8.0),
+            variant_id="v1",
+            retake_spans=0,
+            applied=False,
+            cut_reused=True,
+            extra={"bailout_reason": "no_words", "applied": True},
+        )
+        assert payload["cut_reused"] is True
+        assert payload["bailout_reason"] == "no_words"  # extra key merged in
+        assert payload["applied"] is True  # extra wins over the base field

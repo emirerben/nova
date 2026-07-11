@@ -5,16 +5,20 @@
  * retake cut plan (plans/010) persisted by the render task at
  * Job.assembly_plan.variants[i].silence_cut:
  *
- *   { removed: [{ start_s, end_s, reason }], time_saved_s, version }
+ *   { removed: [{ start_s, end_s, reason }], time_saved_s,
+ *     original_duration_s, version }
  *
  * The strip spans the ORIGINAL (pre-cut) duration; each removed range is a
- * band colored by reason, positioned proportionally. Hover a band for the
- * reason + exact seconds.
+ * band colored by reason, positioned proportionally. A header legend names
+ * every reason present in the data so color is not the only channel; hover
+ * a band for the reason + exact seconds.
  *
  * Version-skew safe by construction: every field is optional in the TS
- * mirror, and the component renders null when silence_cut is absent or has
- * no removed ranges — old jobs (no blob) and old APIs (key stripped) simply
- * show nothing. The debug payload carries assembly_plan as raw JSONB
+ * mirror, and the component renders null ONLY when silence_cut is absent —
+ * old jobs (no blob) and old APIs (key stripped) simply show nothing. A
+ * present blob with no renderable cuts (the pass ran but removed nothing)
+ * renders the header with a quiet "no cuts made" note instead.
+ * The debug payload carries assembly_plan as raw JSONB
  * (admin_jobs.py JobPayload.assembly_plan: Any), so no backend change is
  * needed for the blob to reach this component.
  */
@@ -31,6 +35,12 @@ export interface SilenceCutRemovedRange {
 export interface SilenceCut {
   removed?: SilenceCutRemovedRange[];
   time_saved_s?: number;
+  /**
+   * True pre-cut source duration in seconds, persisted by newer backends.
+   * OPTIONAL (version skew): old blobs lack it, and the backend may persist
+   * null when probing failed.
+   */
+  original_duration_s?: number | null;
   version?: number;
 }
 
@@ -58,20 +68,28 @@ export interface SilenceCutBandLayout {
 /**
  * Compute proportional band positions for a silence_cut blob.
  *
- * Original (pre-cut) duration is inferred as `variantDurationS` (the CUT
- * output duration, when known) + the summed removed durations; without a
- * variant duration it falls back to the last removed end. The max of both
- * is used so inconsistent inputs can never push a band past 100%.
+ * Overlapping ranges are merged before band generation so bands never
+ * stack/blend: same-reason overlaps merge into a single range; a
+ * different-reason overlap clips the later range to start where the earlier
+ * one ends (a later range fully contained in an earlier one drops).
+ *
+ * The strip's total duration prefers the persisted `original_duration_s`
+ * (newer backends) when it is finite and can contain every cut. Otherwise
+ * it is inferred as `variantDurationS` (the CUT output duration, when
+ * known) + the summed removed durations; without a variant duration it
+ * falls back to the last removed end. The max of both is used so
+ * inconsistent inputs can never push a band past 100%.
  *
  * Returns null when the blob is absent or carries no usable removed range —
- * callers render nothing (old jobs / old APIs / no-op plans).
+ * the component renders the "no cuts made" header for a present-but-empty
+ * blob, and nothing at all when the blob itself is absent.
  */
 export function layoutSilenceCutBands(
   cut: SilenceCut | null | undefined,
   variantDurationS?: number | null,
 ): SilenceCutBandLayout | null {
   if (!cut || typeof cut !== "object") return null;
-  const ranges = (Array.isArray(cut.removed) ? cut.removed : [])
+  const sorted = (Array.isArray(cut.removed) ? cut.removed : [])
     .map((r) => ({
       startS: Number(r?.start_s),
       endS: Number(r?.end_s),
@@ -88,16 +106,39 @@ export function layoutSilenceCutBands(
         r.endS > 0,
     )
     .sort((a, b) => a.startS - b.startS);
-  if (ranges.length === 0) return null;
+  if (sorted.length === 0) return null;
+
+  // Merge overlaps (see doc comment). The merged list is non-overlapping
+  // with strictly increasing ends, so only the last entry needs checking.
+  const ranges: typeof sorted = [];
+  for (const r of sorted) {
+    const last = ranges[ranges.length - 1];
+    if (!last || r.startS >= last.endS) {
+      ranges.push({ ...r });
+    } else if (r.reason === last.reason) {
+      last.endS = Math.max(last.endS, r.endS);
+    } else if (r.endS > last.endS) {
+      ranges.push({ ...r, startS: last.endS });
+    }
+  }
 
   const removedTotalS = ranges.reduce((acc, r) => acc + (r.endS - r.startS), 0);
   const maxEndS = ranges.reduce((acc, r) => Math.max(acc, r.endS), 0);
-  const originalDurationS =
+  const inferredDurationS =
     variantDurationS != null &&
     Number.isFinite(variantDurationS) &&
     variantDurationS > 0
       ? Math.max(variantDurationS + removedTotalS, maxEndS)
       : maxEndS;
+  // Prefer the persisted true duration (newer backends); ignore it when it
+  // is missing, non-finite, or too small to contain the last cut
+  // (version skew / bad probe) — the old inference then applies unchanged.
+  const originalDurationS =
+    typeof cut.original_duration_s === "number" &&
+    Number.isFinite(cut.original_duration_s) &&
+    cut.original_duration_s >= maxEndS
+      ? cut.original_duration_s
+      : inferredDurationS;
   if (originalDurationS <= 0) return null;
 
   const bands: SilenceCutBand[] = [];
@@ -153,19 +194,55 @@ export function SilenceCutStrip({
   /** CUT output duration in seconds, when the caller knows it. */
   variantDurationS?: number | null;
 }): JSX.Element | null {
-  const layout = layoutSilenceCutBands(readSilenceCut(variant), variantDurationS);
-  if (!layout) return null;
+  const cut = readSilenceCut(variant);
+  // Null ONLY when the blob itself is absent (version skew / old jobs).
+  if (!cut) return null;
+
+  const layout = layoutSilenceCutBands(cut, variantDurationS);
+  if (!layout) {
+    // The cut pass ran (blob present) but removed nothing renderable.
+    return (
+      <div className="mt-2" data-testid="silence-cut-strip">
+        <div className="mb-1 flex items-baseline justify-between gap-2 text-[10px] uppercase tracking-wider text-zinc-500">
+          <span>Silence cut</span>
+          <span className="normal-case text-zinc-500">no cuts made</span>
+        </div>
+      </div>
+    );
+  }
+
+  // One legend entry per reason PRESENT in the data (band order) so color
+  // is not the only channel distinguishing cut types.
+  const reasons = Array.from(new Set(layout.bands.map((b) => b.reason)));
+  const ariaLabel = `Silence cut: ${layout.bands
+    .map((b) => `${b.reason} ${b.startS.toFixed(1)}–${b.endS.toFixed(1)}s`)
+    .join(", ")}, saved ${layout.timeSavedS.toFixed(1)}s`;
 
   return (
     <div className="mt-2" data-testid="silence-cut-strip">
-      <div className="mb-1 flex items-baseline justify-between gap-2 text-[10px] uppercase tracking-wider text-zinc-500">
+      <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[10px] uppercase tracking-wider text-zinc-500">
         <span>Silence cut</span>
-        <span className="normal-case text-zinc-400">
+        {reasons.map((reason) => (
+          <span
+            key={reason}
+            data-testid="silence-cut-legend"
+            className="inline-flex items-center gap-1 normal-case text-zinc-500"
+          >
+            <span
+              aria-hidden="true"
+              className={`h-1.5 w-1.5 rounded-[2px] ${REASON_COLOR[reason] ?? REASON_FALLBACK_COLOR}`}
+            />
+            {reason}
+          </span>
+        ))}
+        <span className="ml-auto normal-case text-zinc-400">
           saved {layout.timeSavedS.toFixed(1)}s · {layout.bands.length} cut
           {layout.bands.length === 1 ? "" : "s"}
         </span>
       </div>
       <div
+        role="img"
+        aria-label={ariaLabel}
         className="relative h-3 overflow-hidden rounded border border-zinc-800 bg-zinc-900/60"
         title={`Original ~${layout.originalDurationS.toFixed(1)}s — colored bands were removed`}
       >

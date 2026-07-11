@@ -54,7 +54,7 @@ import structlog
 
 from app.pipeline.probe import probe_video
 from app.pipeline.reframe import _encoding_args, reframe_and_export, resolve_output_fit
-from app.pipeline.silence_cut import KEEP_SEGMENTS_PUNCH_IN
+from app.pipeline.silence_cut import KEEP_SEGMENTS_PUNCH_IN, plan_event_payload, plan_summary
 from app.services.clip_speech import speech_coverage
 from app.services.pipeline_trace import record_pipeline_event
 
@@ -231,7 +231,7 @@ def _spine_silence_cut_plan(
     spine_probe: object | None,
     target_duration_s: float | None,
     tmpdir: str,
-    silence_cut_fn: Callable[[str, float], dict[str, Any]],
+    silence_cut_fn: Callable[..., dict[str, Any]],
     job_id: str | None,
 ) -> tuple[Any, float, int]:
     """Spine silence-cut ANALYSIS (plans/010 T6): gates → pre-cap → shared analysis.
@@ -258,12 +258,24 @@ def _spine_silence_cut_plan(
 
     # Spine pre-cap (14A): bound the working window BEFORE detection so the
     # analysis WAV stays under whisper-1's 25 MB limit. A spine shorter than
-    # the cap analyzes the original clip directly — nothing changes (and the
-    # per-job cache entry stays keyed by the clip's own path).
+    # the cap analyzes the original clip directly — nothing changes.
+    #
+    # Job-scoped cache key (review P1): the capped analysis WAV lives under the
+    # VARIANT tmpdir, so keying the shared per-job cache by the WAV path would
+    # make a second cut-capable variant cache-miss and re-pay whisper + the
+    # retake LLM. Key by ORIGINAL spine path + cap instead — stable across
+    # variants, distinct across caps. Uncapped analyses pass the spine path
+    # itself (the same value the path-keyed cache used; explicit for symmetry).
+    # The WAV may stay under the variant tmpdir: it is consumed only during the
+    # first compute; later hits read the cached entry. Its double audio-extract
+    # (source → 16k mono WAV, then transcribe re-extracts 16k mono from it) is
+    # an accepted cost — a precise -t re-encode is what bounds the window.
     cap = spine_cut_cap_s(target_duration_s)
     analysis_dur = min(float(spine_dur), cap)
     analysis_path = spine_path
+    cache_key = spine_path
     if float(spine_dur) > cap:
+        cache_key = f"{spine_path}::cap={cap:.1f}"
         analysis_path = f"{tmpdir}/spine_cut_analysis_{_safe_stem(spine_path)}.wav"
         try:
             _extract_capped_audio(spine_path, cap, analysis_path)
@@ -274,7 +286,7 @@ def _spine_silence_cut_plan(
             )
             return None, spine_dur, 0
 
-    entry = silence_cut_fn(analysis_path, analysis_dur)
+    entry = silence_cut_fn(analysis_path, analysis_dur, cache_key=cache_key)
     if not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None:
         return None, analysis_dur, 0
     return entry["plan"], analysis_dur, int(entry.get("retake_span_count") or 0)
@@ -424,7 +436,7 @@ def assemble_talking_head(
     job_id: str | None = None,
     spine_clip_id: str | None = None,
     landscape_fit: str = "fill",
-    silence_cut_fn: Callable[[str, float], dict[str, Any]] | None = None,
+    silence_cut_fn: Callable[..., dict[str, Any]] | None = None,
     silence_cut_out: dict[str, Any] | None = None,
 ) -> str:
     """Render a talking-head edit: spine audio under B-roll cutaways.
@@ -440,9 +452,11 @@ def assemble_talking_head(
         job_id: for log context; pipeline_trace events are bound by the caller's
             `pipeline_trace_for(job_id)` block (Lane D), no-op without one.
         spine_clip_id: explicit spine override (user "set as spine" action).
-        silence_cut_fn: optional ``(analysis_path, duration_s) → analysis entry``
-            hook (the caller wraps ``generative_build._silence_cut_analysis`` so
-            the per-job cache + retake wiring stay in the tasks layer). When set,
+        silence_cut_fn: optional ``(analysis_path, duration_s, *, cache_key=None)
+            → analysis entry`` hook (the caller wraps
+            ``generative_build._silence_cut_analysis`` so the per-job cache +
+            retake wiring stay in the tasks layer); ``cache_key`` is the
+            job-stable cache identity (original spine path [+ cap]). When set,
             the SPINE gets the plans/010 silence/filler/retake cut: pre-cap →
             analyze → ``reframe(keep_segments + punch-in)`` → re-probed
             ``usable_s`` → b-roll windows anchored onto the cut points. B-roll
@@ -573,36 +587,29 @@ def assemble_talking_head(
             removed_before += r.end_s - r.start_s
 
     if sc_plan is not None and sc_plan.bailout_reason is None:
-        # Same persistence contract as the subtitled path: non-bailout plans
-        # (zero-removal included — "nothing to cut" is information) emit the
-        # plan event; bailouts are event-only upstream in the analysis. A plan
-        # whose APPLY failed is event-only too (the video shipped uncut, so a
-        # persisted removed[] would lie to the admin cut-plan viewer).
-        reasons: dict[str, int] = {}
-        for r in sc_plan.removed:
-            reasons[r.reason] = reasons.get(r.reason, 0) + 1
-        payload: dict[str, Any] = {
-            "variant_id": "talking_head",
-            "removed_count": len(sc_plan.removed),
-            "time_saved_s": round(sc_plan.time_saved_s, 3),
-            "reasons": reasons,
-            "retake_spans": sc_retake_count,
-            "applied": sc_apply,
-            "cut_reused": False,
-            "broll_anchors": len(anchors or []),
-        }
+        # Same persistence contract as the subtitled path (shared helpers, M2):
+        # non-bailout plans (zero-removal included — "nothing to cut" is
+        # information) emit the plan event; bailouts are event-only upstream in
+        # the analysis. A plan whose APPLY failed is event-only too (the video
+        # shipped uncut, so a persisted removed[] would lie to the admin
+        # cut-plan viewer).
+        extra: dict[str, Any] = {"broll_anchors": len(anchors or [])}
         if sc_apply_error is not None:
-            payload["apply_error"] = sc_apply_error
-        record_pipeline_event("silence_cut", "silence_cut_plan", payload)
+            extra["apply_error"] = sc_apply_error
+        record_pipeline_event(
+            "silence_cut",
+            "silence_cut_plan",
+            plan_event_payload(
+                sc_plan,
+                variant_id="talking_head",
+                retake_spans=sc_retake_count,
+                applied=sc_apply,
+                cut_reused=False,
+                extra=extra,
+            ),
+        )
         if sc_apply_error is None and silence_cut_out is not None:
-            silence_cut_out["summary"] = {
-                "removed": [
-                    {"start_s": round(r.start_s, 3), "end_s": round(r.end_s, 3), "reason": r.reason}
-                    for r in sc_plan.removed
-                ],
-                "time_saved_s": round(sc_plan.time_saved_s, 3),
-                "version": sc_plan.version,
-            }
+            silence_cut_out["summary"] = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
 
     # ── B-roll: reframe each; a failure drops that clip (best-effort). ──
     broll_sources: list[BrollSource] = []

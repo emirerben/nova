@@ -256,6 +256,42 @@ class TestKeepSegmentsCommand:
             f",crop={settings.output_width}:{settings.output_height}[v1]"
         ) in chains["vs1"]
 
+    def test_punch_in_16x9_uses_portrait_output_dims(self) -> None:
+        # T4s geometry pin (review 2026-07-11): aspect_ratio describes the
+        # INPUT — the 16:9 vf branch still outputs portrait W:H
+        # (scale=-2:H, crop=W:H), so punch dims must be the SAME portrait
+        # pair as the 9:16 case. The earlier swapped-dims branch emitted
+        # landscape odd segments against portrait even ones → concat abort
+        # on landscape sources; this pins the corrected geometry.
+        cmd = _capture_cmd(
+            **_base_kwargs(
+                aspect_ratio="16:9",
+                keep_segments=SEGMENTS,
+                keep_segments_punch_in=1.08,
+            )
+        )
+        fc = cmd[cmd.index("-filter_complex") + 1]
+        chains = {p.split("]", 1)[0].lstrip("["): p for p in fc.split(";")}
+        # The [base] chain is the 16:9 vf variant, not the 9:16 EXPECTED_VF.
+        expected_vf_16x9 = (
+            "colorspace=all=bt709:iall=bt709"
+            f",framerate=fps={settings.output_fps}"
+            f",scale=-2:{settings.output_height}"
+            f",crop={settings.output_width}:{settings.output_height}"
+        )
+        assert chains["0:v"] == f"[0:v]{expected_vf_16x9}[base]"
+        # Even segments keep plain trim chains — no punch.
+        assert "scale=" not in chains["vs0"]
+        assert "scale=" not in chains["vs2"]
+        # Odd segment: portrait punch dims — identical to the 9:16 case, and
+        # crop returns to the vf chain's actual output geometry.
+        expected_w = int(round(settings.output_width * 1.08 / 2)) * 2
+        expected_h = int(round(settings.output_height * 1.08 / 2)) * 2
+        assert (
+            f",scale={expected_w}:{expected_h}"
+            f",crop={settings.output_width}:{settings.output_height}[v1]"
+        ) in chains["vs1"]
+
     def test_punch_in_default_none_leaves_segment_chains_plain(self) -> None:
         cmd = _capture_cmd(**_base_kwargs(keep_segments=SEGMENTS))
         fc = cmd[cmd.index("-filter_complex") + 1]

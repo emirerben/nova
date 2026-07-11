@@ -1,8 +1,9 @@
-"""Unit tests for RetakeDetectorAgent (plans/010 T7) — pure span helpers
-(normalize/clamp/merge + structural invariants), input contiguity validation,
+"""Unit tests for RetakeDetectorAgent (plans/010) — pure span helpers
+(normalize/drop/merge + structural invariants), input contiguity validation,
 prompt rendering (words + language hint present, no unfilled placeholders),
 parse() conservatism, and the sync/async entrypoints' failure semantics
-(TerminalError is catchable so T5 can degrade to zero retake cuts).
+(TerminalError is catchable so generative_build._silence_cut_retake_spans
+can degrade to zero retake cuts).
 
 The LLM is mocked via MockModelClient (tests/agents/conftest.py) for the
 end-to-end run() tests; parse()/render_prompt() tests use the bare-instance
@@ -81,11 +82,15 @@ def test_normalize_tiny_transcript_drops_everything() -> None:
     assert normalize_retake_spans([_span(0, 0)], n_words=1) == []
 
 
-def test_normalize_clamps_out_of_bounds_indices() -> None:
-    spans = normalize_retake_spans([_span(-5, 7)], n_words=22)
-    assert [(s.start_word, s.end_word) for s in spans] == [(0, 7)]
-    # end clamps to the last index (21) which then trips the final-word rule.
+def test_normalize_drops_out_of_bounds_indices_entirely() -> None:
+    # An out-of-range index means the model hallucinated positions — the whole
+    # span is dropped, never clamped/repaired into a cut.
+    assert normalize_retake_spans([_span(-3, 10)], n_words=22) == []
+    assert normalize_retake_spans([_span(5, 26)], n_words=22) == []
     assert normalize_retake_spans([_span(0, 99)], n_words=22) == []
+    # A valid span alongside out-of-bounds ones survives untouched.
+    spans = normalize_retake_spans([_span(-3, 10), _span(0, 7), _span(5, 26)], n_words=22)
+    assert [(s.start_word, s.end_word) for s in spans] == [(0, 7)]
 
 
 def test_normalize_drops_reversed_span() -> None:
@@ -275,6 +280,16 @@ def test_run_retake_detector_uses_injected_client(mock_client) -> None:
     out = run_retake_detector(RetakeDetectorInput(words=_words()), client=mock_client)
     assert out.retakes == []
     assert len(mock_client.invocations) == 1
+
+
+def test_run_retake_detector_short_circuits_tiny_transcripts(mock_client) -> None:
+    # The floor lives in the SYNC entrypoint so both entrypoints and the task
+    # wiring (_silence_cut_retake_spans) share it.
+    words = _words(["one", "two", "three"])
+    assert len(words) < _MIN_WORDS_FOR_DETECTION
+    out = run_retake_detector(RetakeDetectorInput(words=words), client=mock_client)
+    assert out.retakes == []
+    assert mock_client.invocations == []  # no model call spent
 
 
 async def test_detect_retakes_accepts_dicts_and_returns_spans(mock_client) -> None:

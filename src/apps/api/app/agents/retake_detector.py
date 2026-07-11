@@ -1,14 +1,16 @@
 """nova.audio.retake_detector — flag abandoned takes in a talk-to-camera transcript.
 
-Part of plans/010 (silence + filler + retake cutting), task T7. Detection ONLY:
-this module is deliberately NOT wired into any orchestrator yet — T5 merges its
-spans into the CutPlan (word ranges → time ranges → ``removed[]`` entries with
-``reason: "retake"``) behind ``RETAKE_CUT_ENABLED``.
+Part of plans/010 (silence + filler + retake cutting). Wired into
+``generative_build._silence_cut_retake_spans`` (sync ``run_retake_detector``)
+behind ``RETAKE_CUT_ENABLED``: the returned spans merge into the CutPlan
+(word ranges → time ranges → ``removed[]`` entries with ``reason: "retake"``),
+failure-isolated from the base silence/filler cuts.
 
-Contract for the T5 integration:
-  - entrypoint: ``await detect_retakes(words, language=...)`` (async; wraps the
-    sync ``Agent.run`` in a worker thread the same way routes wrap sibling
-    agents) or the sync ``run_retake_detector(inp)``.
+Integration contract:
+  - entrypoints: the sync ``run_retake_detector(inp)`` (the one the orchestrator
+    calls) or ``await detect_retakes(words, language=...)`` (thin async wrapper
+    running the sync path in a worker thread the same way routes wrap sibling
+    agents). Both share the ``_MIN_WORDS_FOR_DETECTION`` short-circuit.
   - input words are the VERBATIM transcript as 0-based contiguous indexed
     entries ``[{"i": int, "text": str, "start_s": float, "end_s": float}, …]``.
   - output spans are INCLUSIVE word-index ranges identifying the ABANDONED
@@ -18,6 +20,7 @@ Contract for the T5 integration:
     and degrade to ZERO retake cuts (pipeline event ``retake_detector_failed``)
     — a retake-detector failure can never fail the job or block the
     silence/filler cuts (plans/010 "Failure isolation").
+    ``_silence_cut_retake_spans`` does exactly this.
 
 Conservative by construction: ``parse()`` funnels every model-returned span
 through ``normalize_retake_spans`` which DROPS anything malformed, out of
@@ -44,8 +47,8 @@ from app.pipeline.prompt_loader import load_prompt
 log = structlog.get_logger()
 
 # A retake needs an abandoned delivery AND a kept re-delivery after it; below
-# this floor there is nothing to detect, so the async entrypoint returns the
-# empty output without spending an LLM call.
+# this floor there is nothing to detect, so ``run_retake_detector`` (and with
+# it every entrypoint) returns the empty output without spending an LLM call.
 _MIN_WORDS_FOR_DETECTION = 4
 
 # Reasons render in the admin cut-plan viewer — keep them one line and short.
@@ -104,15 +107,17 @@ class RetakeDetectorOutput(BaseModel):
 
 
 def normalize_retake_spans(raw_entries: Sequence[Any], n_words: int) -> list[RetakeSpan]:
-    """Validate, clamp, and merge model-returned span entries.
+    """Validate, filter, and merge model-returned span entries.
 
     Conservative default (plans/010): anything ambiguous is DROPPED, never
     repaired into a cut. Rules:
 
       - fewer than 2 words ⇒ no span can have a kept take after it ⇒ ``[]``
       - non-dict entries and non-integer indices are dropped
-      - indices are clamped into ``[0, n_words - 1]``
-      - reversed spans (start > end after clamping) are dropped
+      - spans with any index outside ``[0, n_words - 1]`` are dropped entirely
+        — an out-of-range index means the model hallucinated positions, so
+        the whole span is untrustworthy (never clamped into a cut)
+      - reversed spans (start > end) are dropped
       - spans reaching the FINAL word (``end_word >= n_words - 1``) are dropped
         — an abandoned take must be followed by its kept re-delivery, so a
         span touching the last word can never be a retake (protects the
@@ -134,8 +139,8 @@ def normalize_retake_spans(raw_entries: Sequence[Any], n_words: int) -> list[Ret
             end = int(entry.get("end_word"))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
-        start = max(0, min(start, n_words - 1))
-        end = max(0, min(end, n_words - 1))
+        if not (0 <= start <= n_words - 1 and 0 <= end <= n_words - 1):
+            continue
         if start > end:
             continue
         if end >= n_words - 1:
@@ -301,8 +306,18 @@ def run_retake_detector(
     client: ModelClient | None = None,
     ctx: RunContext | None = None,
 ) -> RetakeDetectorOutput:
-    """Synchronous entrypoint (mirrors ``run_shot_list_writer``). Raises
-    ``TerminalError`` on agent failure — callers degrade to zero retake cuts."""
+    """Synchronous entrypoint (mirrors ``run_shot_list_writer``) — the one
+    ``generative_build._silence_cut_retake_spans`` calls.
+
+    Short-circuits to the empty output (no LLM call) when the transcript is
+    too short to contain an abandoned take plus its re-delivery — the single
+    floor shared by every entrypoint and the task wiring.
+
+    Raises ``TerminalError`` on agent failure — callers degrade to zero
+    retake cuts."""
+    if len(inp.words) < _MIN_WORDS_FOR_DETECTION:
+        return RetakeDetectorOutput(retakes=[])
+
     from app.agents._model_client import default_client  # noqa: PLC0415
 
     agent = RetakeDetectorAgent(client or default_client())
@@ -316,22 +331,18 @@ async def detect_retakes(
     client: ModelClient | None = None,
     ctx: RunContext | None = None,
 ) -> RetakeDetectorOutput:
-    """Async entrypoint for the T5 CutPlan integration.
+    """Thin async wrapper over ``run_retake_detector``: validates the input,
+    then runs the sync entrypoint in a worker thread — the same
+    ``asyncio.to_thread`` pattern the routes use for sibling agents. The
+    too-short-transcript short-circuit lives in ``run_retake_detector``.
 
     ``words`` is the verbatim transcript as indexed entries
     ``[{"i": int, "text": str, "start_s": float, "end_s": float}, …]`` (dicts
     or ``IndexedWord`` instances); ``language`` is an optional ISO 639-1 hint.
-
-    Short-circuits to the empty output (no LLM call) when the transcript is too
-    short to contain an abandoned take plus its re-delivery. Otherwise runs the
-    sync agent in a worker thread — the same ``asyncio.to_thread`` pattern the
-    routes use for sibling agents.
 
     Raises ``ValidationError`` on malformed input and ``TerminalError`` when
     the agent exhausts its retries. Callers MUST catch and proceed with zero
     retake cuts (plans/010: agent failure ⇒ never job failure).
     """
     inp = RetakeDetectorInput.model_validate({"words": list(words), "language": language})
-    if len(inp.words) < _MIN_WORDS_FOR_DETECTION:
-        return RetakeDetectorOutput(retakes=[])
     return await asyncio.to_thread(run_retake_detector, inp, client=client, ctx=ctx)

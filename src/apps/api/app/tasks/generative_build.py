@@ -244,10 +244,13 @@ def _run_generative_job(job_id: str) -> None:
         landscape_fit: str = (all_candidates or {}).get("landscape_fit") or "fill"
         # Per-item silence-cut opt-out (plans/010 10A — support's per-item remedy).
         # Surface: Job.assembly_plan["silence_cut_disabled"] = true, set via
-        # scripts/admin.py on the job row; a retried/redelivered render of THIS job
-        # then skips the whole cut stage (retakes included). Job-scoped by design —
-        # top-level assembly_plan keys survive every variant upsert/finalize merge
-        # (_set_status merges, _finalize_job only replaces "variants").
+        # POST /admin/jobs/{id}/silence-cut-disable (admin_jobs.py). Read HERE at
+        # render time, so only a FULL re-render (or a retried/redelivered render
+        # of THIS job) picks the flag up — a caption reburn re-encodes the
+        # already-cut base and keeps its cuts. Skips the whole cut stage
+        # (retakes included). Job-scoped by design — top-level assembly_plan
+        # keys survive every variant upsert/finalize merge (_set_status merges,
+        # _finalize_job only replaces "variants").
         silence_cut_disabled: bool = (job.assembly_plan or {}).get("silence_cut_disabled") is True
 
     if not clip_paths_gcs:
@@ -3172,6 +3175,13 @@ def _run_regenerate_variant(
             result["media_overlays"] = persisted_media_overlays
             result["pre_media_overlay_video_path"] = None
             result["pre_sfx_video_path"] = None
+        # Regenerate hygiene (A1): this full re-render runs the MONTAGE path,
+        # which never runs the silence-cut stage, so `result` carries no
+        # summary key — without an explicit None the entry merge would keep
+        # the previous render's blob and the admin cut-plan strip would
+        # describe cuts that don't exist in the new video. (Caption archetypes
+        # are rejected above, so no fresh subtitled summary is clobbered.)
+        result["silence_cut"] = None
         if not _update_variant_entry(
             job_id,
             variant_id,
@@ -5137,11 +5147,19 @@ def _render_talking_head_variant(
                 )
             else:
 
-                def silence_cut_fn(analysis_path: str, duration_s: float) -> dict[str, Any]:
+                def silence_cut_fn(
+                    analysis_path: str, duration_s: float, *, cache_key: str | None = None
+                ) -> dict[str, Any]:
                     # Shared analysis (7A): per-job cache ⇒ a clip analyzed for
-                    # one variant is never re-analyzed for another.
+                    # one variant is never re-analyzed for another. `cache_key`
+                    # lets the assembler key a pre-capped analysis WAV by its
+                    # SOURCE spine (+cap), so the entry stays clip-addressed.
                     return _silence_cut_analysis(
-                        analysis_path, duration_s, job_id=job_id, cache=silence_cut_cache
+                        analysis_path,
+                        duration_s,
+                        job_id=job_id,
+                        cache=silence_cut_cache,
+                        cache_key=cache_key,
                     )
 
         assemble_talking_head(
@@ -5544,12 +5562,21 @@ class _SilenceCutCache:
     timeline. Entries are keyed by the clip's LOCAL path (post pre-tonemap
     repoint) and shaped by `_silence_cut_analysis` — talking_head (T6) shares
     this cache via the same helper.
+
+    Locking is PER KEY (review R3c): the global lock is held only long enough
+    to get-or-insert a key's in-flight event; the expensive compute (whisper +
+    silencedetect + retake detection) runs OUTSIDE it, so two DIFFERENT clips
+    analyzed concurrently never serialize behind each other's network calls.
+    Same-key arrivals wait on the key's event and read the shared entry.
     """
 
     def __init__(self, cache_dir: str) -> None:
         self.dir = cache_dir  # under the job tmpdir; created only on first cut
         self.lock = threading.Lock()
         self.clips: dict[str, dict[str, Any]] = {}
+        # key → Event, present only while that key's first compute is in
+        # flight; set (and removed) once the entry is published to `clips`.
+        self.pending: dict[str, threading.Event] = {}
 
 
 def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int]]:  # noqa: ANN001
@@ -5570,7 +5597,6 @@ def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int
     try:
         from app.agents._runtime import RunContext  # noqa: PLC0415
         from app.agents.retake_detector import (  # noqa: PLC0415
-            _MIN_WORDS_FOR_DETECTION,
             RetakeDetectorInput,
             run_retake_detector,
         )
@@ -5579,10 +5605,8 @@ def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int
             {"i": i, "text": w.text, "start_s": w.start_s, "end_s": w.end_s}
             for i, w in enumerate(transcript.words)
         ]
-        # Same short-circuit as the async entrypoint: below the floor there is
-        # nothing to detect, so don't spend an LLM call.
-        if len(indexed) < _MIN_WORDS_FOR_DETECTION:
-            return []
+        # Too-short-transcript short-circuit lives INSIDE run_retake_detector
+        # (the single floor shared by every entrypoint) — no duplicate here.
         out = run_retake_detector(
             RetakeDetectorInput.model_validate(
                 {"words": indexed, "language": transcript.language or ""}
@@ -5602,6 +5626,7 @@ def _silence_cut_analysis(
     *,
     job_id: str,
     cache: _SilenceCutCache | None,
+    cache_key: str | None = None,
 ) -> dict[str, Any]:
     """Detection inputs + CutPlan for one clip, computed once per job (7A).
 
@@ -5616,6 +5641,10 @@ def _silence_cut_analysis(
     variants don't re-spend a failing whisper call and can never disagree).
     ``cut_video_path`` is filled by the render path after its first cut encode
     so later variants copy the file instead of re-running ffmpeg.
+
+    ``cache_key`` overrides the cache key (default: ``clip_path``) — the
+    talking_head assembler analyzes a pre-capped WAV derived from the spine and
+    keys the entry by the SOURCE spine (+cap) so it stays clip-addressed.
 
     Callers gate has_audio BEFORE calling (eng review 3A — whisper on injected
     digital silence hallucinates); this helper assumes a real audio stream.
@@ -5636,11 +5665,27 @@ def _silence_cut_analysis(
         }
         try:
             from app.pipeline.silence_cut import (  # noqa: PLC0415
+                BAILOUT_CLIP_TOO_SHORT,
+                MIN_CLIP_S,
                 SILENCE_CUT_VERBATIM_PROMPT,
                 build_cut_plan,
+                no_op_plan,
             )
             from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
             from app.services.clip_speech import detect_silences  # noqa: PLC0415
+
+            # P3: below the cutting floor build_cut_plan would bail anyway —
+            # return the no-op plan BEFORE spending whisper + silencedetect +
+            # retake detection on a clip that can never be cut. `words` stays
+            # empty, so consumers MUST caption from their own fallback path
+            # (never from this entry).
+            if duration_s < MIN_CLIP_S:
+                plan = no_op_plan(duration_s, bailout_reason=BAILOUT_CLIP_TOO_SHORT)
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_bailout", {"reason": plan.bailout_reason}
+                )
+                entry["plan"] = plan
+                return entry
 
             # Detection runs on the ORIGINAL clip, never the rendered base — the
             # verbatim bias prompt keeps fillers as tokens so rule 1 can see them.
@@ -5687,14 +5732,49 @@ def _silence_cut_analysis(
 
     if cache is None:
         return _compute()
-    # Compute under the lock: serializes whisper per job (1× per clip regardless
-    # of variant count — 7A) and makes the entry the single source of truth.
+    key = cache_key or clip_path
+    # Per-key locking (R3c): hold the global lock only to get-or-insert the
+    # key's slot. The first arrival computes OUTSIDE the lock (whisper +
+    # silencedetect + retakes are seconds of network/CPU) and then publishes;
+    # later arrivals for the SAME key wait on its event and read the shared
+    # entry — still 1× per clip regardless of variant count (7A), failures
+    # cached too. Different keys never block each other.
     with cache.lock:
-        hit = cache.clips.get(clip_path)
-        if hit is None:
-            hit = _compute()
-            cache.clips[clip_path] = hit
-        return hit
+        hit = cache.clips.get(key)
+        if hit is not None:
+            return hit
+        event = cache.pending.get(key)
+        is_owner = event is None
+        if is_owner:
+            event = threading.Event()
+            cache.pending[key] = event
+    if not is_owner:
+        event.wait()
+        with cache.lock:
+            # Always present: the owner's finally publishes an entry (a failed
+            # one at worst) before setting the event.
+            return cache.clips[key]
+    entry: dict[str, Any] | None = None
+    try:
+        entry = _compute()
+        return entry
+    finally:
+        # _compute fail-opens internally and never raises an Exception, but a
+        # BaseException (task abort/kill) must still unblock waiters with a
+        # failed entry rather than deadlock them on the event.
+        if entry is None:
+            entry = {
+                "failed": True,
+                "words": [],
+                "language": "",
+                "plan": None,
+                "retake_span_count": 0,
+                "cut_video_path": None,
+            }
+        with cache.lock:
+            cache.clips[key] = entry
+            cache.pending.pop(key, None)
+        event.set()
 
 
 def _render_subtitled_variant(
@@ -5851,6 +5931,8 @@ def _render_subtitled_variant(
             from app.pipeline.silence_cut import (  # noqa: PLC0415
                 KEEP_SEGMENTS_PUNCH_IN,
                 is_filler_token,
+                plan_event_payload,
+                plan_summary,
                 remap_words,
             )
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
@@ -5871,7 +5953,11 @@ def _render_subtitled_variant(
                 sc_entry = _silence_cut_analysis(
                     clip_path, float(probe.duration_s), job_id=job_id, cache=silence_cut_cache
                 )
-                if not sc_entry["failed"]:
+                # `words` must be non-empty to adopt the verbatim transcript:
+                # an empty-words bailout (e.g. clip_too_short — P3 returns
+                # before whisper runs) must caption from the base-transcription
+                # fallback below, NOT produce zero cues.
+                if not sc_entry["failed"] and sc_entry["words"]:
                     sc_words = sc_entry["words"]
                     sc_language = sc_entry["language"]
                     sc_plan = sc_entry["plan"]
@@ -5902,17 +5988,57 @@ def _render_subtitled_variant(
                 shutil.copy2(cached_cut, base_path)
                 cut_reused = True
         if not cut_reused:
-            reframe_and_export(
-                clip_path,
-                0.0,
-                float(probe.duration_s),
-                aspect,
-                None,  # no ASS at this stage — captions are burned in a second pass
-                base_path,
-                output_fit=fit,
-                has_audio=probe.has_audio,
-                **reframe_kwargs,
-            )
+            try:
+                reframe_and_export(
+                    clip_path,
+                    0.0,
+                    float(probe.duration_s),
+                    aspect,
+                    None,  # no ASS at this stage — captions are burned in a second pass
+                    base_path,
+                    output_fit=fit,
+                    has_audio=probe.has_audio,
+                    **reframe_kwargs,
+                )
+            except Exception as exc:
+                if not sc_apply:
+                    raise
+                # Fail-open on the CUT apply (R3a, mirroring talking_head's
+                # uncut retry): a segment-filter failure must cost the cuts,
+                # never the variant. Clear every plan-derived state so captions
+                # fall back to the base-transcription path below (the remapped
+                # verbatim words describe a cut timeline that no longer
+                # exists), drop the partial output, and re-run the reframe
+                # WITHOUT keep_segments. No summary is persisted on this path —
+                # a removed[] blob on an uncut video lies to the admin viewer.
+                log.warning(
+                    "silence_cut_apply_failed",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:200],
+                )
+                record_pipeline_event(
+                    "silence_cut",
+                    "silence_cut_apply_failed",
+                    {"variant_id": variant_id, "error": str(exc)[:200]},
+                )
+                sc_apply = False
+                sc_plan = None
+                sc_words = None
+                sc_language = ""
+                sc_entry = None
+                if os.path.exists(base_path):
+                    os.remove(base_path)
+                reframe_and_export(
+                    clip_path,
+                    0.0,
+                    float(probe.duration_s),
+                    aspect,
+                    None,
+                    base_path,
+                    output_fit=fit,
+                    has_audio=probe.has_audio,
+                )
         if not os.path.exists(base_path) or os.path.getsize(base_path) == 0:
             raise RuntimeError("subtitled base render produced empty output")
         if sc_apply and not cut_reused and silence_cut_cache is not None:
@@ -5923,7 +6049,13 @@ def _render_subtitled_variant(
                 cached_cut = os.path.join(
                     silence_cut_cache.dir, f"{os.path.basename(clip_path)}.cut.mp4"
                 )
-                shutil.copy2(base_path, cached_cut)
+                # Same filesystem (both live under the job tmpdir): a hardlink
+                # is free — no byte copy. Fall back to a real copy if the FS
+                # refuses the link (P2).
+                try:
+                    os.link(base_path, cached_cut)
+                except OSError:
+                    shutil.copy2(base_path, cached_cut)
                 sc_entry["cut_video_path"] = cached_cut
             except OSError as exc:
                 log.warning("silence_cut_cache_store_failed", job_id=job_id, error=str(exc))
@@ -6009,34 +6141,24 @@ def _render_subtitled_variant(
 
         # Silence-cut summary (plans/010): persisted whenever the stage ran to a
         # non-bailout plan (zero-removal plans included — "nothing to cut" is
-        # information). Plain dicts only: this lands in Job.assembly_plan JSON and
-        # the admin cut-plan viewer (T9) renders removed[] directly. Bailouts are
-        # event-only (the silence_cut_bailout event carries the reason).
+        # information). `plan_summary`/`plan_event_payload` are the single
+        # source of truth for both shapes (shared with talking_head — M2/M6);
+        # plain dicts land in Job.assembly_plan JSON and the admin cut-plan
+        # viewer (T9) renders removed[] directly. Bailouts are event-only (the
+        # silence_cut_bailout event carries the reason).
         silence_cut_summary: dict[str, Any] | None = None
         if sc_plan is not None and sc_plan.bailout_reason is None:
-            silence_cut_summary = {
-                "removed": [
-                    {"start_s": round(r.start_s, 3), "end_s": round(r.end_s, 3), "reason": r.reason}
-                    for r in sc_plan.removed
-                ],
-                "time_saved_s": round(sc_plan.time_saved_s, 3),
-                "version": sc_plan.version,
-            }
-            reasons: dict[str, int] = {}
-            for r in sc_plan.removed:
-                reasons[r.reason] = reasons.get(r.reason, 0) + 1
+            silence_cut_summary = plan_summary(sc_plan, original_duration_s=float(probe.duration_s))
             record_pipeline_event(
                 "silence_cut",
                 "silence_cut_plan",
-                {
-                    "variant_id": variant_id,
-                    "removed_count": len(sc_plan.removed),
-                    "time_saved_s": round(sc_plan.time_saved_s, 3),
-                    "reasons": reasons,
-                    "retake_spans": sc_entry["retake_span_count"] if sc_entry else 0,
-                    "applied": sc_apply,
-                    "cut_reused": cut_reused,
-                },
+                plan_event_payload(
+                    sc_plan,
+                    variant_id=variant_id,
+                    retake_spans=sc_entry["retake_span_count"] if sc_entry else 0,
+                    applied=sc_apply,
+                    cut_reused=cut_reused,
+                ),
             )
         return {
             **base,

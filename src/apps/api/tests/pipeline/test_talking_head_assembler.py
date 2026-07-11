@@ -402,13 +402,16 @@ def _run_assemble_with_cut(
     reframe=None,
     cut_probe_dur=4.06,
     tmpdir="/tmp",
+    run=None,
+    probe=None,
 ):
     """Drive assemble_talking_head with everything ffmpeg-shaped stubbed.
 
     Returns (reframe_calls, subprocess_cmds, events, silence_cut_out).
     Spine is 'a'; 'b' is the single b-roll. `select_spine` is stubbed directly
     (its `coverage_fn` default binds the real speech_coverage at import time,
-    so patching the module attribute would not divert it).
+    so patching the module attribute would not divert it). `run` overrides the
+    subprocess result per command; `probe` overrides the probe_video stub.
     """
     metas = [_meta("a", "talking_head", "dialogue"), _meta("b")]
     paths = {"a": "a.mp4", "b": "b.mp4"}
@@ -422,6 +425,8 @@ def _run_assemble_with_cut(
 
     def _fake_run(cmd, **kwargs):
         cmds.append(cmd)
+        if run is not None:
+            return run(cmd)
         return SimpleNamespace(returncode=0, stderr=b"")
 
     events: list[tuple] = []
@@ -433,7 +438,7 @@ def _run_assemble_with_cut(
         patch.object(
             tha,
             "probe_video",
-            lambda p: SimpleNamespace(duration_s=cut_probe_dur, has_audio=True),
+            probe or (lambda p: SimpleNamespace(duration_s=cut_probe_dur, has_audio=True)),
         ),
         patch.object(
             tha,
@@ -460,8 +465,8 @@ def test_assemble_spine_cut_happy_path():
     plan = _cut_plan_6_5()
     seen: dict = {}
 
-    def _fn(path, dur):
-        seen["analysis"] = (path, dur)
+    def _fn(path, dur, *, cache_key=None):
+        seen["analysis"] = (path, dur, cache_key)
         return _entry(plan)
 
     reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
@@ -471,7 +476,8 @@ def test_assemble_spine_cut_happy_path():
         cut_probe_dur=4.06,  # re-probe of the CUT spine
     )
 
-    assert seen["analysis"] == ("a.mp4", 6.5)
+    # Uncapped analysis keys the per-job cache by the spine path itself (P1).
+    assert seen["analysis"] == ("a.mp4", 6.5, "a.mp4")
     # The cut executes inside the spine reframe with the plan's exact segments
     # and the punch-in CONSTANT (never a literal).
     spine = reframe_calls[0]
@@ -487,7 +493,9 @@ def test_assemble_spine_cut_happy_path():
     joined = " ".join(composite)
     assert "trim=0:4.060" in joined
     assert "enable='between(t,1.500,4.060)'" in joined
-    # Summary handed back for variant persistence + the plan event emitted.
+    # Summary handed back for variant persistence (plan_summary shape, M2 —
+    # original_duration_s is the spine's ANALYSIS duration) + the plan event
+    # emitted with the exact shared plan_event_payload fields.
     assert out_ctx["summary"] == {
         "removed": [
             {"start_s": 0.88, "end_s": 1.42, "reason": "filler_lexical"},
@@ -495,11 +503,20 @@ def test_assemble_spine_cut_happy_path():
         ],
         "time_saved_s": 2.44,
         "version": 1,
+        "original_duration_s": 6.5,
     }
     plan_events = [e for e in events if e[1] == "silence_cut_plan"]
-    assert plan_events and plan_events[0][2]["applied"] is True
-    assert plan_events[0][2]["removed_count"] == 2
-    assert plan_events[0][2]["broll_anchors"] == 2  # 0.88 and 1.96 (cut timeline)
+    assert len(plan_events) == 1
+    assert plan_events[0][2] == {
+        "variant_id": "talking_head",
+        "removed_count": 2,
+        "time_saved_s": 2.44,
+        "reasons": {"filler_lexical": 1, "silence": 1},
+        "retake_spans": 0,
+        "applied": True,
+        "cut_reused": False,
+        "broll_anchors": 2,  # 0.88 and 1.96 (cut timeline)
+    }
 
 
 def test_assemble_spine_cut_no_audio_gate_short_circuits():
@@ -510,7 +527,7 @@ def test_assemble_spine_cut_no_audio_gate_short_circuits():
         "b": SimpleNamespace(duration_s=10.0, has_audio=True),
     }
 
-    def _bomb(path, dur):
+    def _bomb(path, dur, *, cache_key=None):
         raise AssertionError("analysis must not run for an audio-less spine")
 
     reframe_calls, _cmds, events, out_ctx = _run_assemble_with_cut(
@@ -525,7 +542,7 @@ def test_assemble_spine_cut_no_audio_gate_short_circuits():
 
 def test_assemble_spine_cut_analysis_failure_renders_uncut():
     reframe_calls, _cmds, events, out_ctx = _run_assemble_with_cut(
-        silence_cut_fn=lambda p, d: _entry(None, failed=True),
+        silence_cut_fn=lambda p, d, **kw: _entry(None, failed=True),
         probe_map=_probe_map("a", "b", dur=10.0),
     )
     assert "keep_segments" not in reframe_calls[0]
@@ -539,7 +556,7 @@ def test_assemble_spine_cut_bailout_renders_uncut():
     # event-only upstream (in the shared analysis), so no plan event here.
     bail = no_op_plan(10.0, bailout_reason="max_removal_exceeded")
     reframe_calls, _cmds, events, out_ctx = _run_assemble_with_cut(
-        silence_cut_fn=lambda p, d: _entry(bail),
+        silence_cut_fn=lambda p, d, **kw: _entry(bail),
         probe_map=_probe_map("a", "b", dur=10.0),
     )
     assert "keep_segments" not in reframe_calls[0]
@@ -560,7 +577,7 @@ def test_assemble_spine_cut_ffmpeg_failure_falls_back_to_uncut():
             raise RuntimeError("cut filtergraph boom")
 
     calls, _cmds, events, out_ctx = _run_assemble_with_cut(
-        silence_cut_fn=lambda p, d: _entry(plan),
+        silence_cut_fn=lambda p, d, **kw: _entry(plan),
         probe_map=_probe_map("a", "b", dur=6.5),
         reframe=_reframe,
     )
@@ -598,7 +615,7 @@ def test_assemble_spine_cut_uncut_reframe_failure_still_degrades():
                 probe_map=_probe_map("a", "b", dur=6.5),
                 output_path="out.mp4",
                 tmpdir="/tmp",
-                silence_cut_fn=lambda p, d: _entry(plan),
+                silence_cut_fn=lambda p, d, **kw: _entry(plan),
             )
 
 
@@ -613,8 +630,8 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
     )
     seen: dict = {}
 
-    def _fn(path, dur):
-        seen["analysis"] = (path, dur)
+    def _fn(path, dur, *, cache_key=None):
+        seen["analysis"] = (path, dur, cache_key)
         return _entry(plan)
 
     reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
@@ -625,9 +642,12 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
         tmpdir=str(tmp_path),
     )
 
-    analysis_path, analysis_dur = seen["analysis"]
+    analysis_path, analysis_dur, cache_key = seen["analysis"]
     assert analysis_path.endswith(".wav") and analysis_path.startswith(str(tmp_path))
     assert analysis_dur == pytest.approx(120.0)
+    # Capped analyses key the per-job cache by ORIGINAL path + cap (P1) — never
+    # by the per-variant WAV path.
+    assert cache_key == "a.mp4::cap=120.0"
     # First subprocess call is the precise -t re-encode to whisper-native WAV.
     extract = cmds[0]
     assert extract[extract.index("-t") + 1] == "120.000"
@@ -640,6 +660,111 @@ def test_assemble_spine_precap_bounds_detection_and_cut(tmp_path):
     # usable_s = min(cut duration 110, target 60) → the composite trims to 60.
     assert "trim=0:60.000" in " ".join(cmds[1])
     assert out_ctx["summary"]["time_saved_s"] == 10.0
+    assert out_ctx["summary"]["original_duration_s"] == 120.0  # the ANALYSIS window
+
+
+def test_assemble_spine_cut_capped_cache_key_shared_across_variants(tmp_path):
+    # P1: two cut-capable variants share one job cache. The capped analysis is
+    # keyed by the ORIGINAL spine path + cap — NOT the per-variant WAV path —
+    # so the second variant reuses the cached entry instead of re-paying
+    # whisper + the retake LLM. (The WAV re-extract per variant is accepted
+    # cost; it is only consumed on the first compute.)
+    plan = CutPlan(
+        keep_segments=[(0.0, 50.0), (60.0, 120.0)],
+        removed=[Removal(start_s=50.0, end_s=60.0, reason="silence")],
+        time_saved_s=10.0,
+    )
+    keys_seen: list[str] = []
+    cache: dict[str, dict] = {}
+    computed_paths: list[str] = []
+
+    def _fn(path, dur, *, cache_key=None):
+        keys_seen.append(cache_key)
+        if cache_key not in cache:
+            computed_paths.append(path)  # the expensive whisper+LLM compute
+            cache[cache_key] = _entry(plan)
+        return cache[cache_key]
+
+    for variant in ("variant_a", "variant_b"):
+        _run_assemble_with_cut(
+            silence_cut_fn=_fn,
+            probe_map=_probe_map("a", "b", dur=400.0),
+            target_duration_s=60.0,
+            cut_probe_dur=110.0,
+            tmpdir=str(tmp_path / variant),
+        )
+
+    # Same stable key from both variants despite per-variant WAV tmpdirs …
+    assert keys_seen == ["a.mp4::cap=120.0", "a.mp4::cap=120.0"]
+    # … so the analysis computed exactly once, on the FIRST variant's WAV.
+    assert len(computed_paths) == 1
+    assert computed_paths[0].startswith(str(tmp_path / "variant_a"))
+
+
+def test_assemble_spine_precap_extraction_failure_renders_uncut():
+    # T3: spine 400s > cap 120 and the WAV pre-cap ffmpeg FAILS (returncode 1)
+    # → analysis-failed event, the analysis fn never runs, spine renders
+    # full-length uncut, and no summary is persisted (fail-open).
+    def _bomb(path, dur, *, cache_key=None):
+        raise AssertionError("analysis must not run when the pre-cap extract fails")
+
+    def _run(cmd):
+        if str(cmd[-1]).endswith(".wav"):  # the pre-cap extract writes the WAV
+            return SimpleNamespace(returncode=1, stderr=b"wav boom")
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    reframe_calls, cmds, events, out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=_bomb,
+        probe_map=_probe_map("a", "b", dur=400.0),
+        target_duration_s=60.0,
+        run=_run,
+    )
+
+    sc_events = [e for e in events if e[0] == "silence_cut"]
+    assert [e[1] for e in sc_events] == ["silence_cut_analysis_failed"]
+    assert "wav boom" in sc_events[0][2]["error"]
+    assert "keep_segments" not in reframe_calls[0]
+    assert reframe_calls[0]["end"] == pytest.approx(400.0)  # full uncut spine
+    assert "summary" not in out_ctx
+    assert len(cmds) == 2  # failed WAV extract + the composite (job still renders)
+
+
+def test_assemble_spine_cut_probe_failure_skips_stage():
+    # T3: probe_map carries no has_audio for the spine AND probe_video raises
+    # → the whole stage is skipped (fail-open): the analysis fn never runs and
+    # the spine renders uncut with no silence_cut events.
+    probe_map = {
+        "a": SimpleNamespace(duration_s=10.0),  # no has_audio attribute
+        "b": SimpleNamespace(duration_s=10.0),
+    }
+
+    def _bomb(path, dur, *, cache_key=None):
+        raise AssertionError("analysis must not run when the audio probe fails")
+
+    def _probe(path):
+        raise RuntimeError("probe boom")
+
+    reframe_calls, _cmds, events, out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=_bomb, probe_map=probe_map, probe=_probe
+    )
+
+    assert not [e for e in events if e[0] == "silence_cut"]
+    assert "keep_segments" not in reframe_calls[0]
+    assert reframe_calls[0]["end"] == pytest.approx(10.0)  # full uncut spine
+    assert "summary" not in out_ctx
+
+
+def test_assemble_spine_cut_garbage_entry_renders_uncut():
+    # T3: a non-dict analysis entry must never crash the render — uncut flow,
+    # no plan event, no summary.
+    reframe_calls, _cmds, events, out_ctx = _run_assemble_with_cut(
+        silence_cut_fn=lambda p, d, **kw: "garbage",
+        probe_map=_probe_map("a", "b", dur=10.0),
+    )
+    assert "keep_segments" not in reframe_calls[0]
+    assert reframe_calls[0]["end"] == pytest.approx(10.0)
+    assert not [e for e in events if e[1] == "silence_cut_plan"]
+    assert "summary" not in out_ctx
 
 
 def test_assemble_without_cut_fn_is_uncut_flow():

@@ -399,8 +399,9 @@ function GenerativeVariants({
                   </div>
                 )}
               </div>
-              {/* Renders null unless the variant carries a silence_cut blob
-                  with removed ranges (plans/010) — old jobs show nothing. */}
+              {/* Renders null only when the variant has no silence_cut blob
+                  (plans/010) — old jobs show nothing. A blob with no cuts
+                  shows the header with a "no cuts made" note. */}
               <SilenceCutStrip variant={v} />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 <button

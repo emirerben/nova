@@ -95,6 +95,7 @@ ACOUSTIC_GAP_MAX_S = 1.2  # soundful gaps longer than this are left alone (laugh
 AVG_LOGPROB_MIN = -1.0  # segment avg_logprob below this blocks lexical cuts
 NO_SPEECH_PROB_MAX = 0.5  # segment no_speech_prob above this blocks lexical cuts
 MIN_KEEP_SEGMENT_S = 0.25  # word-free keep fragments shorter than this are absorbed
+MAX_REMOVALS = 100  # ffmpeg -filter_complex arg-length defense; pathological stutter clips
 KEEP_SEGMENTS_PUNCH_IN = 1.08  # alternating punch-in factor — user-validated 2026-07-09;
 # integrations pass this to reframe_and_export(keep_segments_punch_in=…) so every
 # render path produces the approved jump-cut style from one constant.
@@ -181,14 +182,21 @@ _FILLER_MATCH_SET = (
 def is_filler_token(text: str) -> bool:
     """True when a raw whisper token is a lexicon filler (incl. elongations).
 
-    Normalization: lowercase, strip everything non-alphabetic (punctuation,
-    digits, whitespace), collapse character runs to ``_MAX_LEXICON_RUN``,
-    then membership-check against the precomputed elongation images.
-    "Uh," / "uhhh" / "ıııı" match; "ee" / "aa" / real words never do.
-    Public so caption hygiene (plans/010 15A) can strip filler tokens from
-    cue input even when they were not cut.
+    Normalization: fold Turkish capitals, lowercase, strip everything
+    non-alphabetic (punctuation, digits, whitespace), collapse character runs
+    to ``_MAX_LEXICON_RUN``, then membership-check against the precomputed
+    elongation images. "Uh," / "uhhh" / "ıııı" / "Iıı," match; "ee" / "aa" /
+    real words never do. Public so caption hygiene (plans/010 15A) can strip
+    filler tokens from cue input even when they were not cut.
     """
-    normalized = "".join(ch for ch in str(text).lower() if ch.isalpha())
+    # Turkish casing: str.lower() maps 'I'→'i' and NEVER 'ı', so "Iıı," would
+    # normalize to "iıı" and miss the "ııı" lexicon entry. Fold the Turkish
+    # capitals explicitly BEFORE lowercasing: 'İ' (dotted) → 'i', 'I'
+    # (dotless in Turkish) → 'ı'. Safe for English input because the lexicon
+    # has no i-initial entries, so English capital-I words ("I", "It", "Im")
+    # can never collapse onto a filler image.
+    folded = str(text).replace("İ", "i").replace("I", "ı")
+    normalized = "".join(ch for ch in folded.lower() if ch.isalpha())
     if not normalized:
         return False
     return _collapse_runs(normalized) in _FILLER_MATCH_SET
@@ -250,7 +258,15 @@ class _CutWord(NamedTuple):
 
 
 def _field(word: Any, names: tuple[str, ...]) -> Any:
-    """First non-None value among ``names``, via dict key OR attribute access."""
+    """First non-None value among ``names``, via dict key OR attribute access.
+
+    Sibling copy: ``app/pipeline/phrase_sequence.py`` ``_field`` — same helper,
+    but the two callers pass OPPOSITE key preferences: ``_normalize_words``
+    here prefers ``start_s`` over ``start``; phrase_sequence prefers ``start``
+    over ``start_s``. That divergence is deliberate (each matches its own
+    persisted-record shape) but fragile — a record carrying BOTH keys with
+    different values normalizes differently in the two modules.
+    """
     for name in names:
         if isinstance(word, dict):
             value = word.get(name)
@@ -267,6 +283,8 @@ def _normalize_words(words: Sequence[Any] | None) -> list[_CutWord]:
     Accepts transcribe.Word-style objects (``start_s``/``end_s``) and
     persisted plain dicts (``start_s``/``end_s`` or ``start``/``end``).
     Words with missing timestamps or empty text are skipped (defensive).
+    Key preference (``start_s`` first) deliberately diverges from the
+    phrase_sequence.py sibling — see the ``_field`` docstring above.
     """
     if not words:
         return []
@@ -616,6 +634,16 @@ def build_cut_plan(
 
     removals = _merge_removals(raw, duration)
     removals = _absorb_micro_fragments(removals, cut_words, duration)
+    if len(removals) > MAX_REMOVALS:
+        # Cap the segment count (each removal splits the keep list, and every
+        # keep segment becomes a trim/atrim pair in the caller's single
+        # -filter_complex graph): keep the MAX_REMOVALS largest-duration
+        # removals, deterministic tiebreak by start_s, then restore time
+        # order. Dropping a removal only ever ENLARGES adjacent keep
+        # fragments, so no new micro-fragments can appear and the safety
+        # rails below still see the final removal set.
+        removals = sorted(removals, key=lambda r: (-(r.end_s - r.start_s), r.start_s))
+        removals = sorted(removals[:MAX_REMOVALS], key=lambda r: (r.start_s, r.end_s))
     total_removed = sum(r.end_s - r.start_s for r in removals)
 
     if total_removed > MAX_REMOVAL_FRAC * duration:
@@ -665,3 +693,54 @@ def remap_words(words: Sequence[Any] | None, plan: CutPlan) -> list[dict]:
     for prev, nxt in pairwise(remapped):
         assert nxt["start_s"] >= prev["start_s"] - _EPS, "remap broke start monotonicity"
     return remapped
+
+
+# ---------------------------------------------------------------------------------
+# Task-layer serialization — persisted summary + pipeline-event payload
+# ---------------------------------------------------------------------------------
+
+
+def plan_summary(plan: CutPlan, *, original_duration_s: float | None = None) -> dict[str, Any]:
+    """Persisted ``variants[i]['silence_cut']`` shape — single source of truth
+    (admin strip contract)."""
+    return {
+        "removed": [
+            {"start_s": round(r.start_s, 3), "end_s": round(r.end_s, 3), "reason": r.reason}
+            for r in plan.removed
+        ],
+        "time_saved_s": round(plan.time_saved_s, 3),
+        "version": plan.version,
+        "original_duration_s": (
+            round(original_duration_s, 3) if original_duration_s is not None else None
+        ),
+    }
+
+
+def plan_event_payload(
+    plan: CutPlan,
+    *,
+    variant_id: str,
+    retake_spans: int,
+    applied: bool,
+    cut_reused: bool = False,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """``record_pipeline_event`` payload shared by every silence-cut caller.
+
+    Both task-layer integrations (subtitled + talking_head) emit through THIS
+    helper so the admin job-debug view sees one payload shape; ``extra`` merges
+    caller-specific keys last and may override the base fields.
+    """
+    reasons: dict[str, int] = {}
+    for removal in plan.removed:
+        reasons[removal.reason] = reasons.get(removal.reason, 0) + 1
+    return {
+        "variant_id": variant_id,
+        "removed_count": len(plan.removed),
+        "time_saved_s": round(plan.time_saved_s, 3),
+        "reasons": reasons,
+        "retake_spans": retake_spans,
+        "applied": applied,
+        "cut_reused": cut_reused,
+        **(extra or {}),
+    }

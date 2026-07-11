@@ -248,7 +248,7 @@ def reframe_and_export(
     color_hint: color grading preset -- "warm", "cool", "high-contrast", etc.
     keep_segments: optional [(start_s, end_s), ...] in the OUTPUT clip timeline
         (post -ss/-t, 0-based) — render only these spans, concatenated in
-        order, with 5ms audio declick fades at cut-adjacent edges
+        order, with _DECLICK_FADE_S audio declick fades at cut-adjacent edges
         (plans/010 silence cut). Validated fail-loud (sorted,
         non-overlapping, within [0, duration]); raises ValueError on
         violation — callers own the uncut fallback. Not combinable with
@@ -341,11 +341,13 @@ def reframe_and_export(
         )
         # Punch-in needs the chain's exact output dims so every segment
         # returns to identical geometry before concat (mixed dims abort).
-        punch_dims = (
-            (settings.output_width, settings.output_height)
-            if aspect_ratio == "9:16"
-            else (settings.output_height, settings.output_width)
-        )
+        # ALWAYS portrait: `aspect_ratio` describes the INPUT — every
+        # _build_video_filter branch (16:9 included: scale=-2:H, crop=W:H)
+        # emits settings.output_width x output_height. The earlier
+        # swapped-dims branch here produced 1920x1080 odd segments against
+        # 1080x1920 even ones on landscape sources → concat abort at render
+        # (caught in review, 2026-07-11).
+        punch_dims = (settings.output_width, settings.output_height)
         cmd = _build_keep_segments_cmd(
             input_path,
             start_s,
@@ -435,7 +437,8 @@ def reframe_and_export(
             grid_highlight_windows=grid_highlight_windows,
             color_trc=color_trc,
             has_audio=has_audio,
-            keep_segments=keep_segments,
+            # keep_segments is provably None here — the mutual-exclusion
+            # check above raises before any subprocess run.
         )
 
     if result.returncode != 0:
@@ -556,12 +559,12 @@ def _build_overlay_cmd(
     return cmd
 
 
-# 5ms declick fade at cut-adjacent keep-segment edges (plans/010, eng review
+# 12ms declick fade at cut-adjacent keep-segment edges (plans/010, eng review
 # T3=C). Long enough to kill the step discontinuity (click) an arbitrary
 # waveform cut produces, short enough to be inaudible as a fade. Never applied
 # at the clip's true start/end — those edges are not cuts.
 # 12ms: still imperceptible as a fade but kills boundary clicks more reliably
-# than 5ms on real phone audio (local-test round 2, 2026-07-09).
+# than the original 5ms on real phone audio (local-test round 2, 2026-07-09).
 _DECLICK_FADE_S = 0.012
 
 
@@ -615,13 +618,13 @@ def _build_keep_segments_cmd(
 
     Chain: [0:v] -> vf filters -> [base] -> split -> per-segment
     trim + setpts=PTS-STARTPTS; audio -> asplit -> per-segment
-    atrim + asetpts=PTS-STARTPTS + 5ms afade declick at CUT-ADJACENT edges
-    only (a segment starting at the clip's true start gets no fade-in; one
-    ending at the clip's true end gets no fade-out) -> concat. Per-segment
-    concat re-syncs A/V at every joint (shorter audio is silence-padded to
-    the segment max), so cumulative drift is structurally impossible — the
-    30-cut drift e2e in tests/pipeline/test_reframe_keep_segments.py is the
-    permanent guard.
+    atrim + asetpts=PTS-STARTPTS + _DECLICK_FADE_S afade declick at
+    CUT-ADJACENT edges only (a segment starting at the clip's true start gets
+    no fade-in; one ending at the clip's true end gets no fade-out) -> concat.
+    Per-segment concat re-syncs A/V at every joint (shorter audio is
+    silence-padded to the segment max), so cumulative drift is structurally
+    impossible — the 30-cut drift e2e in
+    tests/pipeline/test_reframe_keep_segments.py is the permanent guard.
 
     Sources with no audio track mirror the uncut silent-audio contract:
     lavfi anullsrc input after the main input, concat v=1:a=0, and
