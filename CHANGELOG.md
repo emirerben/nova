@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.21.0] — 2026-07-11
+
+### Added
+- **Glowing keyword text.** Burned text overlays can now carry a colored outer glow (`glow_color` + `glow_strength` on the burn dict) — a soft halo drawn behind the glyphs, matching the yellow glowing-keyword look in reference explainer edits. Absent fields render byte-identically; Skia renderer only.
+
 ## [0.7.18.0] — 2026-07-11
 
 ### Changed
