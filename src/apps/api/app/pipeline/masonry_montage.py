@@ -36,6 +36,7 @@ class MasonryTile:
     width: int
     height: int
     mask_path: str
+    is_image: bool = False
 
 
 _MASONRY_LAYOUT: tuple[tuple[int, int, int, int], ...] = (
@@ -102,19 +103,23 @@ def build_masonry_tiles(
     count = min(max_tiles, len(_MASONRY_LAYOUT))
     cycled_ids = list(islice(cycle(ordered_clip_ids), count))
     tiles: list[MasonryTile] = []
+    from app.pipeline.image_clip import is_image_file  # noqa: PLC0415
+
     for idx, (clip_id, (x, y, width, height)) in enumerate(zip(cycled_ids, _MASONRY_LAYOUT)):
+        local_path = clip_id_to_local[clip_id]
         mask_path = os.path.join(mask_dir, f"mask_{width}x{height}.png")
         _write_mask(mask_path, width, height)
         tiles.append(
             MasonryTile(
                 input_index=idx + 1,
                 clip_id=clip_id,
-                local_path=clip_id_to_local[clip_id],
+                local_path=local_path,
                 x=x,
                 y=y,
                 width=width,
                 height=height,
                 mask_path=mask_path,
+                is_image=is_image_file(local_path),
             )
         )
     return tiles
@@ -150,7 +155,10 @@ def build_masonry_command(
         f"color=c=white:s={output_w}x{output_h}:r={output_fps}",
     ]
     for tile in tiles:
-        cmd.extend(["-stream_loop", "-1", "-t", f"{duration:.3f}", "-i", tile.local_path])
+        if tile.is_image:
+            cmd.extend(["-loop", "1", "-t", f"{duration:.3f}", "-i", tile.local_path])
+        else:
+            cmd.extend(["-stream_loop", "-1", "-t", f"{duration:.3f}", "-i", tile.local_path])
     for tile in tiles:
         cmd.extend(["-loop", "1", "-t", f"{duration:.3f}", "-i", tile.mask_path])
 

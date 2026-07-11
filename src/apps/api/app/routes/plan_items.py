@@ -88,6 +88,8 @@ router = APIRouter()
 _MAX_CLIPS_PER_ITEM = 20
 _MAX_BYTES_PER_FILE = 4 * 1024 * 1024 * 1024  # 4GB
 _ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime"}
+_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+_IMAGE_FILE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 # Allowed content types for media-overlay card uploads (images + short video).
 _OVERLAY_ALLOWED_CONTENT_TYPES = {
@@ -125,6 +127,22 @@ _JOB_FAILED = {
     "posting_failed",
     "cancelled",
 }
+
+
+def _is_image_clip_path(path: str) -> bool:
+    """Best-effort uploaded-clip kind check from the durable object name."""
+    clean = (path or "").split("?", 1)[0].lower()
+    return any(clean.endswith(ext) for ext in _IMAGE_FILE_EXTS)
+
+
+def _item_uses_masonry(item: PlanItem) -> bool:
+    return coerce_montage_preset(getattr(item, "montage_preset", None)) == "masonry"
+
+
+def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
+    if _item_uses_masonry(item):
+        return _ALLOWED_CONTENT_TYPES | _IMAGE_CONTENT_TYPES
+    return _ALLOWED_CONTENT_TYPES
 
 
 def derive_item_status(item: PlanItem) -> str:
@@ -647,11 +665,16 @@ async def create_upload_urls(
             detail=f"Provide 1-{_MAX_CLIPS_PER_ITEM} files",
         )
     urls: list[UploadUrlItem] = []
+    allowed_types = _allowed_item_upload_content_types(item)
     for f in body.files:
-        if f.content_type not in _ALLOWED_CONTENT_TYPES:
+        if f.content_type not in allowed_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported content type: {f.content_type}",
+                detail=(
+                    "Photos require Masonry collage"
+                    if f.content_type in _IMAGE_CONTENT_TYPES
+                    else f"Unsupported content type: {f.content_type}"
+                ),
             )
         if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_BYTES_PER_FILE:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
@@ -802,11 +825,16 @@ async def attach_clips(
             )
         )
         kind_by_path = {row.gcs_path: row.kind for row in asset_rows.scalars()}
+        allowed_asset_kinds = {"video", "image"} if _item_uses_masonry(item) else {"video"}
         for p in new_pool_paths:
-            if kind_by_path.get(p) != "video":
+            if kind_by_path.get(p) not in allowed_asset_kinds:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Only video visuals from the pool can be used in the edit",
+                    detail=(
+                        "Photos require Masonry collage"
+                        if kind_by_path.get(p) == "image"
+                        else "Only video visuals from the pool can be used in the edit"
+                    ),
                 )
 
     try:
@@ -1283,6 +1311,13 @@ async def generate_item(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
+        )
+    if not _item_uses_masonry(item) and any(
+        _is_image_clip_path(p) for p in (item.clip_gcs_paths or [])
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Photos require Masonry collage",
         )
     # Idempotency guard (dogfood: double-clicking Generate minted two render
     # jobs). The Job is created async by the task, so also reject while the

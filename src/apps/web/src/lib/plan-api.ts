@@ -445,6 +445,18 @@ interface UploadUrl {
   gcs_path: string;
 }
 
+function uploadContentTypeForFile(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
 /** Ask the API for signed PUT URLs (lands under users/{uid}/plan/{itemId}/). */
 export async function requestUploadUrls(
   itemId: string,
@@ -462,7 +474,7 @@ export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> 
   try {
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": file.type },
+      headers: { "Content-Type": uploadContentTypeForFile(file) },
       body: file,
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
@@ -483,7 +495,7 @@ async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("signed_url", signedUrl);
-  form.append("content_type", file.type || "application/octet-stream");
+  form.append("content_type", uploadContentTypeForFile(file));
   const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form });
   if (res.status === 401) throw new NotAuthenticatedError();
   if (!res.ok) {
@@ -544,7 +556,7 @@ export function uploadToGcsWithProgress(
     }
 
     xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", file.type);
+    xhr.setRequestHeader("Content-Type", uploadContentTypeForFile(file));
     xhr.send(file);
   });
 }
