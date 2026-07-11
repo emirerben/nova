@@ -271,7 +271,7 @@ export default function AssetPool({
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0"
               >
                 Add visuals
               </button>
@@ -284,7 +284,7 @@ export default function AssetPool({
                 if (!atCap) handleFiles(e.dataTransfer.files);
               }}
             >
-              <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-5">
                 {assets.map((asset) => (
                   <AssetTile
                     key={asset.id}
@@ -375,7 +375,7 @@ function AssetTile({
           type="button"
           onClick={onRemove}
           aria-label={`Remove ${label}`}
-          className="mt-1 min-h-[28px] min-w-[28px] text-[12px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="mt-1 min-h-11 min-w-11 text-[12px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-[28px] sm:min-w-[28px]"
         >
           Remove
         </button>
@@ -412,7 +412,7 @@ function AssetTile({
               onClick={onUseInEdit}
               disabled={promotionDisabled}
               aria-label={`Use ${label} in the edit`}
-              className="-my-1 flex min-h-[28px] min-w-[28px] shrink-0 items-center px-1 text-lime-700 underline underline-offset-2 transition-colors hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-lime-700"
+              className="-my-1 flex min-h-11 min-w-11 shrink-0 items-center px-1 text-lime-700 underline underline-offset-2 transition-colors hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-lime-700 sm:min-h-[28px] sm:min-w-[28px]"
             >
               Use in edit
             </button>
@@ -423,7 +423,7 @@ function AssetTile({
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-[#3f3f46] opacity-0 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 group-hover:opacity-100"
+        className="absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-[#3f3f46] opacity-100 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:h-7 sm:w-7 sm:opacity-0 sm:group-hover:opacity-100"
       >
         ×
       </button>

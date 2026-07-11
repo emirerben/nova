@@ -936,7 +936,7 @@ export default function OverlayLane({
             <button
               type="button"
               onClick={onClearOverlays}
-              className="mt-1 text-[10px] text-white/30 hover:text-white/60 transition-colors"
+              className="mt-1 min-h-11 px-2 text-[10px] text-white/30 transition-colors hover:text-white/60 sm:min-h-0 sm:px-0"
             >
               Clear all overlays
             </button>
