@@ -163,7 +163,7 @@ export default function StyleAgentInterview({ onDone }: { onDone?: () => void })
         <div
           className="mt-5 flex items-center gap-2"
           role="status"
-          aria-label="Nova is thinking"
+          aria-label="Kria is thinking"
         >
           <span className="h-1.5 w-1.5 motion-safe:animate-ping rounded-full bg-lime-600" />
           <span className="text-sm text-[#71717a]">Thinking…</span>

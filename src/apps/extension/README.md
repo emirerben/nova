@@ -1,7 +1,7 @@
-# Nova Music Ingest extension
+# Kria Music Ingest extension
 
-Production Chrome extension that lets admins ingest YouTube tracks into Nova
-through their **own browser** instead of through Nova's data-center IP. Fly.io
+Production Chrome extension that lets admins ingest YouTube tracks into Kria
+through their **own browser** instead of through Kria's data-center IP. Fly.io
 gets flagged by YouTube as automated traffic; admin residential IPs do not.
 
 Plan: `~/.claude/plans/sen-k-demli-bir-yaz-l-m-rosy-acorn.md`
@@ -9,14 +9,14 @@ Plan: `~/.claude/plans/sen-k-demli-bir-yaz-l-m-rosy-acorn.md`
 ## Architecture (one paragraph)
 
 The extension is two contexts. A Manifest V3 **service worker** routes messages
-between the Nova SPA (via `externally_connectable`) and an **offscreen
+between the Kria SPA (via `externally_connectable`) and an **offscreen
 document** that does the heavy work. Offscreen runs `youtubei.js` (web build,
 pure-JS AST interpreter — MV3 CSP friendly) to extract the audio stream URL,
 fetches the bytes from `*.googlevideo.com` (CORS bypassed via the manifest's
 `host_permissions`), POSTs `/api/admin/music-tracks/upload-init` through the
-Nova proxy to mint a signed GCS PUT URL, uploads the blob directly to GCS, and
+Kria proxy to mint a signed GCS PUT URL, uploads the blob directly to GCS, and
 calls `/upload-confirm` to trigger the Celery analysis task. Total touch points
-on Nova itself: two tiny JSON requests through the existing admin proxy. The
+on Kria itself: two tiny JSON requests through the existing admin proxy. The
 bytes never see Vercel.
 
 The offscreen doc, not the service worker, holds the network operation —
@@ -50,7 +50,7 @@ npm run build
 Then open `chrome://extensions`, enable Developer mode, click "Load unpacked",
 and pick `src/apps/extension/dist/`.
 
-After loading, click the extension icon to open the popup and enter the Nova
+After loading, click the extension icon to open the popup and enter the Kria
 admin BasicAuth username + password (same creds the browser prompts you for on
 `/admin/*` pages). The "Test connection" button validates them locally without
 making a network request to non-allowlisted origins. Without creds set, every
@@ -72,7 +72,7 @@ match), (3) zips `dist/*` with `manifest.json` at archive root, (4) asserts
 the packaged manifest version equals the source manifest version, and (5)
 writes `src/apps/web/public/admin/extension/extension-info.json` with version,
 build timestamp, and source commit. Output goes to
-`src/apps/web/public/admin/extension/nova-extension.zip` (committed).
+`src/apps/web/public/admin/extension/kria-extension.zip` (committed).
 
 The install page itself lives behind the BasicAuth middleware gate, so only
 authenticated admins can download the zip.
@@ -83,11 +83,11 @@ intentionally deferred; when Phase 2 distribution lands, the middleware's
 `chrome-extension://*` CSRF allowance can lock to a single deterministic
 extension ID.
 
-For dev with the Nova SPA at `http://localhost:3000`:
+For dev with the Kria SPA at `http://localhost:3000`:
 
-1. Open `chrome://extensions`, click the Nova extension's "Details", and copy
+1. Open `chrome://extensions`, click the Kria extension's "Details", and copy
    the extension ID.
-2. In Nova: `window.__NOVA_EXTENSION_ID__ = "<extension-id>"` (set via a dev
+2. In Kria: `window.__NOVA_EXTENSION_ID__ = "<extension-id>"` (set via a dev
    helper, or by injecting a content script — Phase 2 packaging makes this
    automatic via a deterministic `key`-derived ID).
 3. Hit the admin music page → URL tab → "Ingest via extension".
@@ -97,7 +97,7 @@ For dev with the Nova SPA at `http://localhost:3000`:
 Self-hosted CRX + `update_url` is the deploy story (see plan §"Phase 2"):
 
 - `scripts/package-extension.sh` produces `.crx` + `updates.xml` from `dist/`.
-- Files get served from `public/admin/extension/` on `nova-video.vercel.app`.
+- Files get served from `public/admin/extension/` on `usekria.com`.
 - The manifest's `update_url` points at the served `updates.xml`; Chrome
   auto-checks daily.
 

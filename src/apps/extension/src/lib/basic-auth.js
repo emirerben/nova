@@ -1,4 +1,4 @@
-// UTF-8-safe BasicAuth header builder for the Nova Music Ingest extension.
+// UTF-8-safe BasicAuth header builder for the Kria Music Ingest extension.
 //
 // btoa() is strictly Latin-1: passing a string with non-ASCII characters
 // throws `InvalidCharacterError`. For BasicAuth we MUST send UTF-8 bytes

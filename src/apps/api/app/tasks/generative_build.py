@@ -219,7 +219,7 @@ def _run_generative_job(job_id: str) -> None:
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
         voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
-        # Original-audio bed level for the narrated archetype (0..1; None → Nova's
+        # Original-audio bed level for the narrated archetype (0..1; None → Kria's
         # default). Plumbed into the narrated spec; ignored by other archetypes.
         _raw_bed = all_candidates.get("voiceover_bed_level")
         voiceover_bed_level: float | None = float(_raw_bed) if _raw_bed is not None else None
@@ -5776,7 +5776,7 @@ def _render_narrated_variant(
         "voiceover_caption_font": caption_font,
         "ai_timeline": None,
         "resolved_archetype": "narrated",
-        # Background-sound level this variant rendered with (None → Nova's
+        # Background-sound level this variant rendered with (None → Kria's
         # default). Editable post-gen via the BackgroundSoundControl reburn —
         # persisted here so the editor shows the TRUE current value, not a guess.
         "voiceover_bed_level": bed_level,
@@ -5900,7 +5900,7 @@ def _render_narrated_variant(
             # text IS the spoken voiceover). Reuses the transcript already
             # computed above — no second Whisper pass.
             transcript=transcript,
-            # Original-audio bed under the voice (None → Nova's default level).
+            # Original-audio bed under the voice (None → Kria's default level).
             bed_level=bed_level,
             base_output_path=base_path,
             # "sentence" (default) or "word" (qbuilder one-word-at-a-time).

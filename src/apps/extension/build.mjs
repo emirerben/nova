@@ -1,11 +1,11 @@
-// esbuild bundler for the Nova Music Ingest extension.
+// esbuild bundler for the Kria Music Ingest extension.
 //
 // Mirrors the Phase 0 spike's bundler (validated MV3-CSP-safe — youtubei.js
 // web build uses a pure-JS AST interpreter, no native eval/Function), with
 // these production-grade tweaks:
 //
 //   - sourcemap: "inline" so production stack traces map to src/ lines.
-//   - icon copy so the toolbar action renders the Nova mark.
+//   - icon copy so the toolbar action renders the Kria mark.
 //   - manifest.json minified-passthrough (no transformation; would otherwise
 //     end up unparseable if we ran it through esbuild as JSON).
 

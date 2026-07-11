@@ -1,4 +1,4 @@
-# Nova
+# Kria
 
 AI-powered tool that transforms raw real-life videos into viral-ready short-form content (TikTok, Reels, YouTube Shorts).
 

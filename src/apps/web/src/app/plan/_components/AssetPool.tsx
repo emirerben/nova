@@ -266,7 +266,7 @@ export default function AssetPool({
                 Drop the screenshots you mention in your script
               </p>
               <p className="mt-1 text-[12px] text-[#71717a]">
-                Screenshots and screen recordings — Nova will place them on your video for you.
+                Screenshots and screen recordings — Kria will place them on your video for you.
               </p>
               <button
                 type="button"

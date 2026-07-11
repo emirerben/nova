@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * AskNovaPanel — per-item "Ask Nova" filming advisor (dogfood feedback #2).
+ * AskKriaPanel — per-item "Ask Kria" filming advisor (dogfood feedback #2).
  *
  * Editorial interview, not a chat app (DESIGN.md §2/§9): left-aligned Playfair
  * question, lime left-border pull-quote of the user's last message, suggestion
@@ -34,16 +34,16 @@ const OPENERS: Record<string, string> = {
 
 const DEFAULT_CHIPS = ["Which of my clips fits shot 1?", "What should I film instead?"];
 
-export interface AskNovaPanelProps {
+export interface AskKriaPanelProps {
   item: PlanItem;
-  /** "contest" when opened via "Looks wrong? Tell Nova" on the verdict tile. */
+  /** "contest" when opened via "Looks wrong? Tell Kria" on the verdict tile. */
   mode: "default" | "contest";
   onClose: () => void;
   /** Refetch the item after a note is applied (conformance re-runs). */
   onItemChanged: () => void;
 }
 
-export default function AskNovaPanel({ item, mode, onClose, onItemChanged }: AskNovaPanelProps) {
+export default function AskKriaPanel({ item, mode, onClose, onItemChanged }: AskKriaPanelProps) {
   const [turns, setTurns] = useState<Turn[]>([
     { role: "agent", content: OPENERS[mode] ?? OPENERS.default },
   ]);
@@ -86,7 +86,7 @@ export default function AskNovaPanel({ item, mode, onClose, onItemChanged }: Ask
       setSuggestions(res.suggestions.length > 0 ? res.suggestions : []);
       setSuggestedNote(res.suggested_note ?? "");
     } catch {
-      setError("Nova couldn't think that through — try again.");
+      setError("Kria couldn't think that through — try again.");
       setInput(message); // give their words back
       setTurns(turns);
     } finally {
@@ -119,10 +119,10 @@ export default function AskNovaPanel({ item, mode, onClose, onItemChanged }: Ask
   const lastUser = [...turns].reverse().find((t) => t.role === "user");
 
   return (
-    <div className="mt-3 border-t border-zinc-200 pt-4" data-testid="ask-nova-panel">
+    <div className="mt-3 border-t border-zinc-200 pt-4" data-testid="ask-kria-panel">
       <div className="flex items-baseline justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-lime-700">
-          Ask Nova
+          Ask Kria
         </span>
         <button
           type="button"
@@ -208,14 +208,14 @@ export default function AskNovaPanel({ item, mode, onClose, onItemChanged }: Ask
           void send(input);
         }}
       >
-        <label className="sr-only" htmlFor="ask-nova-input">
-          Tell Nova about your clips
+        <label className="sr-only" htmlFor="ask-kria-input">
+          Tell Kria about your clips
         </label>
         <input
-          id="ask-nova-input"
+          id="ask-kria-input"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Tell Nova about your clips…"
+          placeholder="Tell Kria about your clips…"
           disabled={thinking}
           className="min-h-11 w-full rounded-full border border-zinc-200 bg-white px-4 text-sm text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-600 focus:outline-none"
         />

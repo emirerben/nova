@@ -2016,7 +2016,7 @@ def render_dashboard() -> str:
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Nova · Agent Evals</title>
+  <title>Kria · Agent Evals</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2025,7 +2025,7 @@ def render_dashboard() -> str:
 <body data-build="{ts}">
   <header class="topbar">
     <div class="topbar-inner">
-      <div class="brand">Nova<span class="dot"> · </span>Agent Evals</div>
+      <div class="brand">Kria<span class="dot"> · </span>Agent Evals</div>
       <nav class="nav">
         <button class="active" data-tab="overview">Overview</button>
         <button data-tab="agents">Agents</button>
@@ -2044,7 +2044,7 @@ def render_dashboard() -> str:
         <div class="eyebrow">Issue 02 · 2026-05-15 · agentic templates land</div>
         <h1>Inspect every <em>agent</em> in the pipeline.</h1>
         <p class="lede">
-          Twelve agents shape every Nova video. This dashboard reads their stored outputs
+          Twelve agents shape every Kria video. This dashboard reads their stored outputs
           across {n_templates} production templates — prompts, schemas, fixtures, tests — so
           quality regressions are visible before they ship. Today the <em>agentic</em>
           template-build path graduates from shadow mode: <code>text_designer</code> and

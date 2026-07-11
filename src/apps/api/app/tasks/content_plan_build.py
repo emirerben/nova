@@ -486,7 +486,7 @@ def _dispatch_item_render(
             # Montage visual preset. Defaults to "classic"; the builder omits it
             # from all_candidates unless the user selected the masonry preset.
             montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
-            # Original-audio bed level for the narrated archetype (None → Nova default).
+            # Original-audio bed level for the narrated archetype (None → Kria default).
             voiceover_bed_level=(
                 float(item.voiceover_bed_level) if item.voiceover_bed_level is not None else None
             ),

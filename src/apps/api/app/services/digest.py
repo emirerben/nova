@@ -162,19 +162,19 @@ def build_digest(
 def digest_subject(data: DigestData) -> str:
     """The email subject line — leads with the alarm when one fires."""
     if data.dead_mans_switch:
-        return "[Nova loop] ⚠️ DEAD-MAN'S-SWITCH — zero activity when the loop should have run"
+        return "[Kria loop] ⚠️ DEAD-MAN'S-SWITCH — zero activity when the loop should have run"
     if data.stale_gating > 0:
         return (
-            f"[Nova loop] ⚠️ gate tick stalled — {data.stale_gating} built task(s) "
+            f"[Kria loop] ⚠️ gate tick stalled — {data.stale_gating} built task(s) "
             f"not gated; check the gate_runner schedule"
         )
     if data.resilience.has_concern:
         return (
-            f"[Nova loop] ⚠️ needs a look — "
+            f"[Kria loop] ⚠️ needs a look — "
             f"{data.resilience.blocked} blocked, {data.escalated} to review"
         )
     return (
-        f"[Nova loop] built {data.built} · {data.awaiting_approval} to merge · "
+        f"[Kria loop] built {data.built} · {data.awaiting_approval} to merge · "
         f"{data.escalated} to review · ${data.grader_spend_usd:.2f}"
     )
 
@@ -218,7 +218,7 @@ def digest_html(data: DigestData) -> str:
     return f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
                 max-width:520px;margin:0 auto;padding:32px 20px;">
-        <h1 style="font-size:20px;margin-bottom:4px;">Nova dev-loop heartbeat</h1>
+        <h1 style="font-size:20px;margin-bottom:4px;">Kria dev-loop heartbeat</h1>
         <p style="color:#999;font-size:12px;margin-top:0;">
             Last {data.window_hours}h · generated {data.generated_at.strftime("%Y-%m-%d %H:%M UTC")}
         </p>
@@ -247,7 +247,7 @@ def digest_html(data: DigestData) -> str:
         </table>
         <hr style="border:none;border-top:1px solid #eee;margin:28px 0;" />
         <p style="color:#bbb;font-size:11px;">
-            Nova autonomous dev loop · review escalations at /admin/review
+            Kria autonomous dev loop · review escalations at /admin/review
         </p>
     </div>
     """

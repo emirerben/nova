@@ -53,7 +53,7 @@ if (DEV_LOGIN_ENABLED) {
       id: "dev-login",
       name: "Dev login (local only)",
       credentials: { email: { label: "Email", type: "email" } },
-      // Mirror the Google path: upsert the user in Nova's DB and hand the UUID
+      // Mirror the Google path: upsert the user in Kria's DB and hand the UUID
       // back as `dbId` so the jwt callback embeds it just like a Google sign-in.
       async authorize(credentials) {
         const email = credentials?.email?.trim();
@@ -82,7 +82,7 @@ export const authOptions: NextAuthOptions = {
   providers,
   callbacks: {
     async signIn({ user, account }) {
-      // On first sign-in: upsert the user in the Nova DB and store the UUID.
+      // On first sign-in: upsert the user in the Kria DB and store the UUID.
       if (account?.provider === "google" && user.email) {
         try {
           const res = await fetch(`${API_BASE}/auth/google-upsert`, {
@@ -115,7 +115,7 @@ export const authOptions: NextAuthOptions = {
 
     async session({ session, token }) {
       if (session.user) {
-        // Use ONLY the Nova DB uuid (token.userId). Do NOT fall back to
+        // Use ONLY the Kria DB uuid (token.userId). Do NOT fall back to
         // token.sub: that is the raw Google OAuth id, which the backend rejects
         // as a non-UUID anyway — forwarding it just masks a failed google-upsert
         // behind a confusing 401 instead of an empty (clearly unauthenticated) id.

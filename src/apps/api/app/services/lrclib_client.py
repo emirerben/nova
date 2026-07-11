@@ -95,7 +95,7 @@ _RETRY_DELAYS_S: tuple[float, ...] = (0.5, 1.5, 4.5)
 
 # LRCLIB asks for a descriptive User-Agent in their docs. Costs nothing and
 # helps them debug bad clients. Matches the format the Genius client uses.
-_USER_AGENT = "Nova/1.0 (+https://nova-video.vercel.app)"
+_USER_AGENT = "Kria/1.0 (+https://usekria.com)"
 
 # Match one [mm:ss(.xxx)?] timestamp. We apply this REPEATEDLY at the start
 # of each LRC line to handle the common chorus shorthand
@@ -230,7 +230,7 @@ def get_lrclib_by_id(lrclib_id: int) -> LrclibLyrics:
     """Fetch an LRCLIB row by its exact numeric ID.
 
     Used by the admin manual-override path: an admin who knows the correct
-    row (e.g. found it on lrclib.net) pastes the ID or URL and Nova
+    row (e.g. found it on lrclib.net) pastes the ID or URL and Kria
     re-extracts against that specific row, bypassing the title-search step.
 
     Single shot, same headers + retry behavior as `search_lrclib`. The

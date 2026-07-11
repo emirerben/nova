@@ -43,7 +43,7 @@ def main() -> int:
         "--bed-level",
         type=float,
         default=None,
-        help="original-audio bed under the voice: 0=off, 1=loudest (default: Nova's level)",
+        help="original-audio bed under the voice: 0=off, 1=loudest (default: Kria's level)",
     )
     args = ap.parse_args()
 
@@ -115,7 +115,7 @@ def main() -> int:
         f"durations={[round(t.end_s - t.start_s, 1) for t in step_timings]}"
     )
 
-    bed_desc = "Nova default" if args.bed_level is None else f"{args.bed_level:.2f}"
+    bed_desc = "Kria default" if args.bed_level is None else f"{args.bed_level:.2f}"
     print(f"[3/4] assembling (reflow + captions + voice + ducked bed @ {bed_desc})…")
     with tempfile.TemporaryDirectory() as tmp:
         assemble_narrated(

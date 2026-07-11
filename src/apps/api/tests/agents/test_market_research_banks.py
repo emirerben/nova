@@ -222,9 +222,9 @@ def test_persona_bank_version_couples_to_prompt_version():
     #                  outputs (interview fork + Buenos Aires grounding fix); banks untouched.
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
-    # Bump 2026-07-09: persona prompt/schema removed an unused output field; banks untouched.
+    # Bump 2026-07-11-kria: product rename only; banks untouched.
     assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-09"
+    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -247,7 +247,7 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
     assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -263,10 +263,10 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # Bump 2026-06-14: weekly research refresh — added 2 corpus factors
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
-    # Persona bumped to 2026-07-09: prompt/schema removed an unused output field; banks untouched.
+    # Persona/content plan bumped to 2026-07-11-kria: product rename only; banks untouched.
     assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-09"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
+    assert PERSONA_PROMPT_VERSION == "2026-07-11-kria"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11-kria"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
 
 

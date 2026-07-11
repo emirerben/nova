@@ -37,7 +37,7 @@ describe("AdminAuthGate", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText("Nova Admin")).toBeInTheDocument();
+      expect(screen.getByText("Kria Admin")).toBeInTheDocument();
       expect(screen.getByPlaceholderText("Admin token")).toBeInTheDocument();
     });
 

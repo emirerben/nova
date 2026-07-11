@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Waka Waka text-overlay diff analyzer.
 
-Compares a Nova-pipeline output video against the original recipe video it
+Compares a Kria-pipeline output video against the original recipe video it
 was meant to match. Focuses on the first 4 seconds and the three known
 intro overlays: "This" / "is" / country-name. Detects per-overlay text
 identity, position, size, color, animation, and audio-cue alignment.

@@ -1,7 +1,7 @@
 """Schemas for the weekly TikTok market-research artifact banks.
 
 These are the typed shapes of the reference data the research agent mines from
-public TikTok accounts and Nova's plan agents few-shot off at runtime:
+public TikTok accounts and Kria's plan agents few-shot off at runtime:
 
 - `PersonaArchetype` -> prompts/persona_archetypes.json  (the "persona pool" /
   "style types" injected into generate_persona.txt)

@@ -23,7 +23,7 @@ export default function BackgroundSoundControl({
 }: {
   itemId: string;
   variantId: string;
-  /** Persisted `voiceover_bed_level` — null means Nova's render-time default. */
+  /** Persisted `voiceover_bed_level` — null means Kria's render-time default. */
   initialBedLevel: number | null;
   rendering?: boolean;
   /** Called once the reburn actually dispatches (parent flips render_status). */
@@ -69,7 +69,7 @@ export default function BackgroundSoundControl({
         Background sound
       </p>
       <p className="mb-3 text-sm text-[#71717a]">
-        How loud your original clip audio plays under your voice. Nova ducks it
+        How loud your original clip audio plays under your voice. Kria ducks it
         automatically while you&apos;re talking.
       </p>
       <div className="flex items-center gap-3">

@@ -91,7 +91,7 @@ const FOOTAGE_OPTIONS: FootageOption[] = [
   {
     value: "mixed",
     label: "Mixed",
-    description: "A bit of everything — Nova will adapt",
+    description: "A bit of everything — Kria will adapt",
   },
 ];
 
@@ -134,7 +134,7 @@ function StepRail({
 }) {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white px-8 py-10">
-      <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Nova</p>
+      <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Kria</p>
 
       <ol className="mt-10 flex flex-col gap-6">
         {([1, 2, 3, 4] as OnboardingStep[]).map((n) => {
@@ -235,7 +235,7 @@ function WhatYouMakeStep({
         What do you make?
       </h1>
       <p className="mt-3 text-[#71717a]">
-        Pick all that apply — Nova adapts edits to your style.
+        Pick all that apply — Kria adapts edits to your style.
       </p>
 
       <div className="mt-10 grid grid-cols-2 gap-4">
