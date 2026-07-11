@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.23.0] — 2026-07-11
+
+### Added
+- **Sticker hook bursts.** AI overlay suggestions can now stack up to five confident image stickers in the first 12 seconds (staggered entrances), matching the accumulating-sticker hook style of reference explainer edits.
+- Clip and image analysis now record visible brand/mascot identities, and the overlay matcher stops wishlisting assets you already uploaded.
+
+### Fixed
+- Transparent stickers matched to a fullscreen slot are demoted to pip instead of rendering flattened garbage.
+- Caption correction restores mangled brand names ("Kokokolu" → "Coca-Cola").
+- Gemini clip analysis no longer hard-fails when the model wraps its response in a one-element JSON array.
+- `dev-auto.sh` fails fast with a clear message when the local ffmpeg lacks libass (previously every caption burn failed with a misleading parse error).
+
+## [0.7.22.0] — 2026-07-11
+
+### Added
+- **Two-tone editorial titles.** Cluster-block intro/sequence text can now mix an accent color with the base color per block, flipping with the same parity as the accent font (so font and color change together), plus explicit keyword emphasis via `word_roles` (own block, accent color, optional glow). Current output is unchanged unless a style opts in.
 ## [0.7.21.0] — 2026-07-11
 
 ### Added

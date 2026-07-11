@@ -484,6 +484,7 @@ def test_editorial_style_documents_its_contract_keys():
         "hero_font",
         "body_font",
         "accent_font",
+        "accent_color",
         "hero_ratio",
         "connector_ratio",
         "closer_ratio",
@@ -501,6 +502,7 @@ def test_editorial_style_documents_its_contract_keys():
     assert EDITORIAL_STYLE["hero_font"] == "Great Vibes"
     assert EDITORIAL_STYLE["body_font"] == "Playfair Display Regular"
     assert EDITORIAL_STYLE["accent_font"] == "Playfair Display Italic"
+    assert EDITORIAL_STYLE["accent_color"] == "#FFFFFF"
     assert {"alpha", "blur", "dy"} <= set(EDITORIAL_STYLE["shadow"])
 
 
@@ -734,6 +736,16 @@ def test_editorial_blocks_keep_exact_legacy_keys():
         }
 
 
+def test_editorial_default_accent_color_emits_byte_stable_blocks():
+    no_accent_style = {k: v for k, v in EDITORIAL_STYLE.items() if k != "accent_color"}
+    default = _compute_styled(_REFERENCE_TEXT, word_roles=None, style=EDITORIAL_STYLE)
+    without_key = _compute_styled(_REFERENCE_TEXT, word_roles=None, style=no_accent_style)
+    assert default == without_key
+    assert default is not None
+    assert all("text_color" not in block for block in default)
+    assert all("glow_color" not in block and "glow_strength" not in block for block in default)
+
+
 def test_editorial_layout_is_deterministic():
     a = _compute_styled(_REFERENCE_TEXT)
     b = _compute_styled(_REFERENCE_TEXT)
@@ -791,6 +803,42 @@ def test_editorial_accent_parity_shifts_which_block_is_italic():
     ]
     # Parity is mod-2: scene 2 is byte-identical to scene 0.
     assert _compute_styled(_REFERENCE_TEXT, accent_parity=2) == even
+
+
+def test_editorial_accent_color_follows_accent_font_parity():
+    style = {**EDITORIAL_STYLE, "accent_color": "#D9F65A"}
+    for parity in (0, 1):
+        blocks = _compute_styled(_REFERENCE_TEXT, accent_parity=parity, style=style)
+        assert blocks is not None
+        for block in blocks:
+            if block["font_family"] == EDITORIAL_STYLE["accent_font"]:
+                assert block["text_color"] == "#D9F65A"
+            else:
+                assert "text_color" not in block
+
+
+def test_editorial_word_role_emphasis_forces_own_accent_block_with_glow():
+    style = {**EDITORIAL_STYLE, "accent_color": "#D9F65A"}
+    blocks = _compute_styled(
+        "good timing wins",
+        word_roles=[
+            {"role": "connector"},
+            {
+                "role": "hero",
+                "emphasis": True,
+                "glow_color": "#7CFF8A",
+                "glow_strength": 0.6,
+            },
+            {"role": "hero"},
+        ],
+        style=style,
+    )
+    assert blocks is not None
+    assert [b["text"] for b in blocks] == ["good", "timing", "wins"]
+    keyword = blocks[1]
+    assert keyword["text_color"] == "#D9F65A"
+    assert keyword["glow_color"] == "#7CFF8A"
+    assert keyword["glow_strength"] == 0.6
 
 
 def test_editorial_hero_never_takes_accent_face():

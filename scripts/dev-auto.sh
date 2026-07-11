@@ -55,6 +55,12 @@ if [[ ! -d "$REPO/src/apps/web/node_modules" ]]; then
   exit 1
 fi
 
+if ! ffmpeg -hide_banner -h filter=subtitles >/dev/null 2>&1; then
+  log "ERROR: ffmpeg was built without libass subtitles filter support."
+  log "Fix: brew install ffmpeg-full and prepend /opt/homebrew/opt/ffmpeg-full/bin to PATH"
+  exit 1
+fi
+
 # ── 3. Start infra (redis + postgres only) ───────────────────────────────────
 log "Starting redis + postgres via docker-compose..."
 (cd "$REPO" && docker-compose up -d redis db) > "$DEV_DIR/infra.log" 2>&1

@@ -376,7 +376,7 @@ def _build_cluster_intro_overlays(
         common = {
             "position": "center",  # overridden by the explicit fracs below
             "text_anchor": "center",
-            "text_color": text_color,
+            "text_color": block.get("text_color") or text_color,
             "highlight_color": highlight_color,
             "font_family": block["font_family"],
             "stroke_width": stroke_width,
@@ -393,6 +393,9 @@ def _build_cluster_intro_overlays(
             **common,
         )
         if reveal is not None:
+            for key in ("glow_color", "glow_strength"):
+                if key in block:
+                    reveal[key] = block[key]
             overlays.append(reveal)
         hold = build_intro_overlay(
             block["text"],
@@ -402,6 +405,9 @@ def _build_cluster_intro_overlays(
             **common,
         )
         if hold is not None:
+            for key in ("glow_color", "glow_strength"):
+                if key in block:
+                    hold[key] = block[key]
             overlays.append(hold)
     return overlays or None
 
@@ -748,7 +754,7 @@ def build_sequence_overlays(
             common = {
                 "position": "center",  # overridden by the explicit fracs below
                 "text_anchor": "center",
-                "text_color": text_color,
+                "text_color": block.get("text_color") or text_color,
                 "font_family": block["font_family"],
                 "text_size_px": block["text_size_px"],
                 "position_x_frac": block["position_x_frac"],
@@ -772,6 +778,9 @@ def build_sequence_overlays(
             if overlay is None:
                 continue
             overlay["role"] = sequence_role
+            for key in ("glow_color", "glow_strength"):
+                if key in block:
+                    overlay[key] = block[key]
             if fade_out_scene:
                 overlay["fade_out_ms"] = SEQUENCE_FADE_OUT_MS
             overlays.append(overlay)

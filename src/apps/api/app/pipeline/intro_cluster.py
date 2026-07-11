@@ -127,6 +127,11 @@ EDITORIAL_STYLE: dict = {
     "hero_font": "Great Vibes",
     "body_font": "Playfair Display Regular",
     "accent_font": "Playfair Display Italic",
+    # Default matches the existing uniform sequence overlay color. The styled
+    # engine treats this as "unused" and emits no block-level text_color key,
+    # preserving current block/overlay dicts unless callers opt into a real
+    # two-tone accent color.
+    "accent_color": "#FFFFFF",
     # Restrained size ratios (vs legacy 2.6/0.9/1.4): the editorial look gets
     # its contrast from the face change, not from scale alone.
     "hero_ratio": 1.7,
@@ -614,7 +619,71 @@ def _styled_role_px(role: str, base_size_px: int, scale: float, style: dict) -> 
     return max(_RENDERER_MIN_FONT_PX, px)
 
 
-def _group_styled_blocks(words: list[str], roles: list[str], style: dict) -> list[dict] | None:
+def _is_hex_color(value: object) -> bool:
+    v = str(value or "").strip()
+    if not (v.startswith("#") and len(v) in (4, 7)):
+        return False
+    try:
+        int(v[1:], 16)
+    except ValueError:
+        return False
+    return True
+
+
+def _active_accent_color(style: dict) -> str | None:
+    color = str(style.get("accent_color") or "").strip()
+    if not _is_hex_color(color) or color.upper() == "#FFFFFF":
+        return None
+    return color
+
+
+def _parse_word_role_specs(word_roles: list | None) -> tuple[list[str], list[dict]] | None:
+    if word_roles is None:
+        return None
+    roles: list[str] = []
+    metas: list[dict] = []
+    for entry in word_roles:
+        meta: dict = {}
+        if isinstance(entry, str):
+            role = entry
+        elif isinstance(entry, dict):
+            role = str(entry.get("role") or entry.get("word_role") or "")
+            emphasized = bool(
+                entry.get("emphasis")
+                or entry.get("emphasized")
+                or entry.get("accent")
+                or entry.get("keyword")
+            )
+            glow_color = entry.get("glow_color")
+            glow_strength = entry.get("glow_strength")
+            if _is_hex_color(glow_color):
+                meta["glow_color"] = str(glow_color).strip()
+                emphasized = True
+            if glow_strength is not None:
+                try:
+                    strength = max(0.0, min(1.0, float(glow_strength)))
+                except (TypeError, ValueError):
+                    strength = None
+                if strength is not None:
+                    meta["glow_strength"] = strength
+                    emphasized = True
+            if emphasized:
+                meta["emphasis"] = True
+        else:
+            return None
+        if role not in VALID_ROLES:
+            return None
+        roles.append(role)
+        metas.append(meta)
+    return roles, metas
+
+
+def _group_styled_blocks(
+    words: list[str],
+    roles: list[str],
+    style: dict,
+    word_meta: list[dict] | None = None,
+) -> list[dict] | None:
     """Group words into reading-order blocks for the editorial cascade.
 
     Differences from legacy `_group_blocks` (both deliberate):
@@ -625,6 +694,7 @@ def _group_styled_blocks(words: list[str], roles: list[str], style: dict) -> lis
       is one block, not one block per word.
     """
     effective = list(roles)
+    effective_meta = list(word_meta or [{} for _ in words])
     seen_hero_run = False
     in_hero_run = False
     for i, role in enumerate(effective):
@@ -638,11 +708,23 @@ def _group_styled_blocks(words: list[str], roles: list[str], style: dict) -> lis
             in_hero_run = False
 
     blocks: list[dict] = []
-    for word, role in zip(words, effective, strict=True):
-        if blocks and blocks[-1]["role"] == role:
+    for word, role, meta in zip(words, effective, effective_meta, strict=True):
+        force_own = bool(meta.get("emphasis"))
+        if (
+            blocks
+            and blocks[-1]["role"] == role
+            and not force_own
+            and not blocks[-1].get("_force_own_block")
+        ):
             blocks[-1]["text"] += f" {word}"
         else:
-            blocks.append({"role": role, "text": word})
+            block = {"role": role, "text": word}
+            if force_own:
+                block["_force_own_block"] = True
+            for key in ("glow_color", "glow_strength"):
+                if key in meta:
+                    block[key] = meta[key]
+            blocks.append(block)
 
     if not any(b["role"] == ROLE_HERO for b in blocks):
         # Single-block scenes ARE their own emphasis; multi-block scenes still
@@ -657,11 +739,18 @@ def _group_styled_blocks(words: list[str], roles: list[str], style: dict) -> lis
     max_blocks = int(style.get("max_blocks", 3))
     while len(blocks) > max_blocks:
         for i in range(len(blocks) - 1, 0, -1):
-            if blocks[i]["role"] != ROLE_HERO and blocks[i - 1]["role"] != ROLE_HERO:
+            if (
+                blocks[i]["role"] != ROLE_HERO
+                and blocks[i - 1]["role"] != ROLE_HERO
+                and not blocks[i].get("_force_own_block")
+                and not blocks[i - 1].get("_force_own_block")
+            ):
                 blocks[i - 1]["text"] += f" {blocks[i]['text']}"
                 del blocks[i]
                 break
         else:
+            if blocks[-2].get("_force_own_block") or blocks[-1].get("_force_own_block"):
+                break
             blocks[-2]["text"] += f" {blocks[-1]['text']}"
             del blocks[-1]
     return blocks
@@ -692,17 +781,16 @@ def _compute_styled_blocks(
         return None
 
     input_roles = list(word_roles) if word_roles is not None else None
+    parsed_roles = _parse_word_role_specs(word_roles)
     # Same validation as legacy minus the closer-strictly-final rule: the
     # cascade lays blocks in text order, so a mid-text closer cannot stack.
-    if (
-        word_roles is None
-        or len(word_roles) != len(words)
-        or not set(word_roles) <= set(VALID_ROLES)
-    ):
+    if parsed_roles is None or len(parsed_roles[0]) != len(words):
         invalid_roles_rederived = word_roles is not None
         word_roles, heuristic_guarantees = _derive_word_roles_with_guarantees(words)
+        word_meta = [{} for _ in words]
         role_source = "heuristic"
     else:
+        word_roles, word_meta = parsed_roles
         invalid_roles_rederived = False
         heuristic_guarantees = {
             "hero_present_enforced": False,
@@ -724,7 +812,7 @@ def _compute_styled_blocks(
         },
     )
 
-    blocks = _group_styled_blocks(words, word_roles, style)
+    blocks = _group_styled_blocks(words, word_roles, style, word_meta=word_meta)
     if not blocks:
         return None
 
@@ -746,6 +834,7 @@ def _compute_styled_blocks(
     hero_face = style["hero_font"]
     body_face = style["body_font"]
     accent_face = style.get("accent_font")
+    accent_color = _active_accent_color(style)
     typeface_cache: dict[str, object] = {}
 
     def _typeface(family: str):
@@ -771,6 +860,7 @@ def _compute_styled_blocks(
     # chosen face, so the no-clip contract is preserved through any fallback.
     non_hero_k = 0
     for block in blocks:
+        wants_accent = False
         if block["role"] == ROLE_HERO:
             preferred = hero_face
         else:
@@ -796,6 +886,10 @@ def _compute_styled_blocks(
             )
             return None
         block["family"] = face
+        if accent_color and (
+            (wants_accent and face == accent_face) or block.get("_force_own_block")
+        ):
+            block["text_color"] = accent_color
 
     def _measure(block: dict, scale: float) -> dict:
         px = _styled_role_px(block["role"], base_size_px, scale, style)
@@ -892,6 +986,9 @@ def _compute_styled_blocks(
                 "reveal_s": round(max(_MIN_REVEAL_S, reveal_end - start), 3),
             }
         )
+        for key in ("text_color", "glow_color", "glow_strength"):
+            if key in b:
+                out[-1][key] = b[key]
     return out
 
 

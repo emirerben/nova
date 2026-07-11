@@ -768,6 +768,72 @@ def test_sequence_overlays_carry_block_typography_and_skia_schema(monkeypatch):
         assert "text_size" not in o
 
 
+def test_sequence_overlay_without_block_color_is_byte_stable(monkeypatch):
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    _patch_seq_engine(monkeypatch)
+    overlays = build_sequence_overlays([_seq_scenes()[0]], base_size_px=78, text_color="#FFEEDD")
+    assert overlays == [
+        {
+            "role": "generative_sequence",
+            "text": "when the days#0",
+            "effect": "static",
+            "start_s": 0.0,
+            "end_s": 2.25,
+            "position": "center",
+            "text_anchor": "center",
+            "text_color": "#FFEEDD",
+            "highlight_color": "#FFD24A",
+            "subject_substitute": False,
+            "font_family": "Great Vibes",
+            "text_size_px": 78,
+            "position_x_frac": 0.4,
+            "position_y_frac": 0.42,
+        }
+    ]
+
+
+def test_sequence_overlays_use_block_text_color_and_plumb_glow(monkeypatch):
+    import app.pipeline.intro_cluster as ic
+    from app.pipeline.generative_overlays import build_sequence_overlays
+
+    def _fake_blocks(*args, **kwargs):
+        return [
+            {
+                "text": "when",
+                "role": "connector",
+                "text_size_px": 78,
+                "font_family": "Playfair Display Regular",
+                "position_x_frac": 0.4,
+                "position_y_frac": 0.44,
+                "start_offset_s": 9.9,
+                "reveal_s": 9.9,
+            },
+            {
+                "text": "days",
+                "role": "hero",
+                "text_size_px": 96,
+                "font_family": "Great Vibes",
+                "position_x_frac": 0.5,
+                "position_y_frac": 0.5,
+                "start_offset_s": 9.9,
+                "reveal_s": 9.9,
+                "text_color": "#D9F65A",
+                "glow_color": "#7CFF8A",
+                "glow_strength": 0.6,
+            },
+        ]
+
+    monkeypatch.setattr(ic, "compute_cluster_blocks", _fake_blocks)
+    overlays = build_sequence_overlays([_seq_scenes()[0]], base_size_px=78, text_color="#FFEEDD")
+    assert overlays is not None
+    assert overlays[0]["text_color"] == "#FFEEDD"
+    assert "glow_color" not in overlays[0]
+    assert overlays[1]["text_color"] == "#D9F65A"
+    assert overlays[1]["glow_color"] == "#7CFF8A"
+    assert overlays[1]["glow_strength"] == 0.6
+
+
 def test_sequence_overlays_skip_declined_scene(monkeypatch):
     from app.pipeline.generative_overlays import build_sequence_overlays
 

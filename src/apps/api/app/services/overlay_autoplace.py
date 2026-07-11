@@ -44,6 +44,9 @@ _MAX_H_FRAC = 0.60  # a card never dominates more than ~60% of the canvas height
 _MIN_ON_SCREEN_S = 1.5
 _MAX_ON_SCREEN_S = 10.0
 _HOOK_WINDOW_S = 2.5
+_HOOK_BURST_WINDOW_S = 12.0
+_HOOK_BURST_MIN_STAGGER_S = 0.8
+_HOOK_BURST_MAX_CONCURRENT = 5
 _DENSITY_WINDOW_S = 5.0  # max 1 suggestion per 5s of runtime (decision 11A)
 _CEILING = 10
 _SNAP_TOLERANCE_S = 0.75  # snap start to the nearest word start within this window
@@ -88,6 +91,38 @@ def resolve_slot(slot: str, aspect: float | None) -> ResolvedPlacement:
 
 def _overlaps(a_start: float, a_end: float, intervals: list[tuple[float, float]]) -> bool:
     return any(a_start < e and s < a_end for s, e in intervals)
+
+
+def _is_hook_burst_card(*, kind: str, tier: str, start: float, end: float) -> bool:
+    return (
+        kind == "image"
+        and tier == "confident"
+        and start >= 0.0
+        and start < _HOOK_BURST_WINDOW_S
+        and end <= _HOOK_BURST_WINDOW_S
+    )
+
+
+def _hook_burst_reject_reason(
+    *,
+    start: float,
+    end: float,
+    taken: list[tuple[float, float, bool]],
+) -> str | None:
+    concurrent = 0
+    for s, e, is_hook in taken:
+        if not (start < e and s < end):
+            continue
+        if not is_hook:
+            return "overlap"
+        concurrent += 1
+    if concurrent >= _HOOK_BURST_MAX_CONCURRENT:
+        return "hook_burst_concurrency"
+    if any(
+        is_hook and abs(start - s) < (_HOOK_BURST_MIN_STAGGER_S - 1e-6) for s, _, is_hook in taken
+    ):
+        return "hook_burst_stagger"
+    return None
 
 
 def _snap_to_word_start(start_s: float, words: list[dict]) -> float:
@@ -329,9 +364,10 @@ def build_suggestions(
         ),
     )
 
-    taken: list[tuple[float, float]] = list(occupied)
+    taken: list[tuple[float, float, bool]] = [(s, e, False) for s, e in occupied]
     out: list[dict] = []
     fullscreen_count = 0
+    density_count = 0
     for p in candidates:
         asset_id = str(getattr(p, "asset_id", ""))
         asset = assets_by_id.get(asset_id)
@@ -350,18 +386,22 @@ def build_suggestions(
 
         # ── Fullscreen branch (plan 009): BEFORE resolve_slot, mode-aware ────
         slot = getattr(p, "slot", "top")
+        kind = "video" if asset.get("kind") == "video" else "image"
         is_fs = bool(fullscreen_enabled) and slot == "full"
         if is_fs:
-            shaped = _shape_fullscreen_window(
-                start=start,
-                end=end,
-                asset=asset,
-                duration_s=duration_s,
-                intro_windows=list(intro_windows or []),
-                caption_cues=list(caption_cues or []),
-                fullscreen_count=fullscreen_count,
-                taken=taken,
-            )
+            if bool((asset.get("analysis") or {}).get("has_alpha")):
+                shaped = "alpha"
+            else:
+                shaped = _shape_fullscreen_window(
+                    start=start,
+                    end=end,
+                    asset=asset,
+                    duration_s=duration_s,
+                    intro_windows=list(intro_windows or []),
+                    caption_cues=list(caption_cues or []),
+                    fullscreen_count=fullscreen_count,
+                    taken=[(s, e) for s, e, _ in taken],
+                )
             if isinstance(shaped, str):
                 # Demote to a centered pip — the MATCH is good, the takeover isn't.
                 is_fs, slot = False, "center"
@@ -391,15 +431,29 @@ def build_suggestions(
         if not is_fs and start < _HOOK_WINDOW_S and tier != "confident":
             _trace("autoplace_item_dropped", reason="hook_window", asset_id=asset_id)
             continue
+        if not is_fs and kind == "image" and tier == "confident" and start < _HOOK_BURST_WINDOW_S:
+            window_len = max(0.0, end - start)
+            for s, _, is_hook in sorted(taken):
+                if is_hook and abs(start - s) < _HOOK_BURST_MIN_STAGGER_S:
+                    start = round(s + _HOOK_BURST_MIN_STAGGER_S, 3)
+                    end = min(start + window_len, duration_s)
         # Fullscreen already checked the PADDED interval inside shaping.
-        if not is_fs and _overlaps(start, end, taken):
-            _trace("autoplace_item_dropped", reason="overlap", asset_id=asset_id)
-            continue
-        if len(out) >= budget:
+        is_hook_burst = (not is_fs) and _is_hook_burst_card(
+            kind=kind, tier=tier, start=start, end=end
+        )
+        if not is_fs:
+            if is_hook_burst:
+                reject_reason = _hook_burst_reject_reason(start=start, end=end, taken=taken)
+                if reject_reason is not None:
+                    _trace("autoplace_item_dropped", reason=reject_reason, asset_id=asset_id)
+                    continue
+            elif _overlaps(start, end, [(s, e) for s, e, _ in taken]):
+                _trace("autoplace_item_dropped", reason="overlap", asset_id=asset_id)
+                continue
+        if not is_hook_burst and density_count >= budget:
             _trace("autoplace_item_dropped", reason="density_cap", asset_id=asset_id)
             continue
 
-        kind = "video" if asset.get("kind") == "video" else "image"
         if is_fs:
             overlay = {
                 "id": uuid.uuid4().hex,
@@ -470,13 +524,19 @@ def build_suggestions(
         if is_fs:
             # Reserve the re-anchor gap (rule d) so later cards keep distance.
             taken.append(
-                (max(0.0, start - _FS_REANCHOR_GAP_S), min(duration_s, end + _FS_REANCHOR_GAP_S))
+                (
+                    max(0.0, start - _FS_REANCHOR_GAP_S),
+                    min(duration_s, end + _FS_REANCHOR_GAP_S),
+                    False,
+                )
             )
             fullscreen_count += 1
             if stats is not None:
                 stats["fullscreen_emitted"] = stats.get("fullscreen_emitted", 0) + 1
         else:
-            taken.append((start, end))
+            taken.append((start, end, is_hook_burst))
+        if not is_hook_burst:
+            density_count += 1
         out.append(suggestion.model_dump())
 
     # Timeline order for the rail (10B was rejected — rows read as the video plays).
@@ -499,6 +559,49 @@ def _tokens(text: str) -> set[str]:
         for t in re.findall(r"[a-zA-Z0-9']+", (text or "").lower())
         if len(t) > 2 and t not in _STOPWORDS
     }
+
+
+def _match_tokens(text: str) -> set[str]:
+    return {
+        t
+        for t in re.findall(r"\w+", (text or "").casefold(), flags=re.UNICODE)
+        if len(t) > 2 and t not in _STOPWORDS
+    }
+
+
+def filter_wishlist_against_assets(wishlist: list[str], assets: list[dict]) -> list[str]:
+    """Drop wishlist rows that are already satisfied by an analyzed pool asset."""
+    asset_token_sets: list[tuple[set[str], set[str]]] = []
+    for asset in assets:
+        analysis = asset.get("analysis") or {}
+        brands = analysis.get("brands") if isinstance(analysis.get("brands"), list) else []
+        brand_tokens = _match_tokens(" ".join(str(b or "") for b in brands))
+        text_tokens = _match_tokens(
+            " ".join(
+                str(x or "")
+                for x in (
+                    analysis.get("subject"),
+                    analysis.get("description"),
+                    analysis.get("on_screen_text"),
+                    asset.get("source_filename", "").rsplit(".", 1)[0].replace("-", " "),
+                )
+            )
+        )
+        if brand_tokens or text_tokens:
+            asset_token_sets.append((brand_tokens, text_tokens))
+
+    out: list[str] = []
+    for wish in wishlist or []:
+        wish_tokens = _match_tokens(str(wish or ""))
+        if not wish_tokens:
+            continue
+        satisfied = any(
+            bool(wish_tokens & brand_tokens) or len(wish_tokens & text_tokens) >= 2
+            for brand_tokens, text_tokens in asset_token_sets
+        )
+        if not satisfied:
+            out.append(str(wish).strip())
+    return out
 
 
 def heuristic_match(
