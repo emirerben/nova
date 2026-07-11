@@ -16,9 +16,9 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, status
 from fastapi import UploadFile as MultipartFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1277,7 +1277,7 @@ async def generate_item(
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Record or upload your voiceover before generating a narrated walkthrough",
+            detail="Record or upload your voiceover before generating a Voiceover edit",
         )
     if not (item.clip_gcs_paths or []):
         raise HTTPException(
@@ -1741,10 +1741,40 @@ class IdeaExpandResponse(BaseModel):
     rationale: str
 
 
+class IdeaExpandRequest(BaseModel):
+    """Optional creator context for a stronger propose-only expansion."""
+
+    creator_context: str | None = Field(default=None, max_length=800)
+
+    @field_validator("creator_context", mode="before")
+    @classmethod
+    def _clean_context(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+
+def _expand_video_type(edit_format: str | None) -> str:
+    if edit_format in {"narrated", "narrated_planned", "narrated_ready"}:
+        return "voiceover"
+    if edit_format in {"subtitled", "talking_head"}:
+        return "talking_to_camera"
+    return "montage"
+
+
+def _normalize_content_mode(value: object) -> str:
+    mode = str(value or "create_new")
+    if mode in {"create_new", "existing_footage", "mixed"}:
+        return mode
+    return "create_new"
+
+
 @router.post("/{item_id}/expand", response_model=IdeaExpandResponse)
 async def expand_idea(
     item_id: str,
     user: CurrentUser,
+    body: IdeaExpandRequest | None = Body(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> IdeaExpandResponse:
     """Propose an AI-expanded plan item (theme, shots, rationale).
@@ -1761,12 +1791,15 @@ async def expand_idea(
     # Gather persona context for richer expansion.
     persona_summary = ""
     content_pillars: list[str] = []
+    content_mode = _normalize_content_mode(getattr(item, "content_mode", None))
     plan = await db.get(ContentPlan, item.content_plan_id)
     if plan is not None:
         persona = await db.get(Persona, plan.persona_id)
         if persona is not None and isinstance(persona.persona, dict):
             persona_summary = str(persona.persona.get("summary", ""))
             content_pillars = list(persona.persona.get("content_pillars") or [])
+            if getattr(item, "content_mode", None) is None:
+                content_mode = _normalize_content_mode(persona.persona.get("content_mode"))
 
     agent = IdeaExpanderAgent(default_client())
     try:
@@ -1775,6 +1808,9 @@ async def expand_idea(
                 idea=item.idea or "",
                 persona_summary=persona_summary,
                 content_pillars=content_pillars,
+                creator_context=body.creator_context if body and body.creator_context else "",
+                video_type=_expand_video_type(getattr(item, "edit_format", None)),
+                content_mode=content_mode,
             ),
             ctx=RunContext(job_id=None),
         )

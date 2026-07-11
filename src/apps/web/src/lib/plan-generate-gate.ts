@@ -98,11 +98,11 @@ export interface ArchetypeFallback {
 }
 
 export const NO_SPEECH_BANNER =
-  "We couldn't hear narration in your clips, so we made a montage instead — record a voiceover, or upload a clip where you speak, to get the narrated style.";
+  "We couldn't hear narration in your clips, so we made a montage instead — record a voiceover, or upload a clip where you speak, to get the voiceover style.";
 export const SPINE_FAILED_BANNER =
   "One of your clips couldn't be read, so we made a montage instead. Re-uploading that clip usually fixes it.";
 export const GENERIC_FALLBACK_BANNER =
-  "We made a montage instead of the narrated style this time — record a voiceover to make sure narration drives the edit.";
+  "We made a montage instead of the voiceover style this time — record a voiceover to make sure narration drives the edit.";
 
 /**
  * Banner copy for a narrated item whose render fell back to montage.
