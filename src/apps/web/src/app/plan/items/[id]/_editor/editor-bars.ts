@@ -155,7 +155,7 @@ export function seedBarsFromVariant(
   if (variant.text_elements_user_edited) {
     return convertApiTextElements(variant.text_elements);
   }
-  if (variant.caption_cues?.length)
+  if (variant.resolved_archetype !== "subtitled" && variant.caption_cues?.length)
     return convertCaptionCues(variant.caption_cues);
   if (variant.text_elements?.length)
     return convertApiTextElements(variant.text_elements);

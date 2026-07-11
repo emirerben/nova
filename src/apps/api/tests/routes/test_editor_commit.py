@@ -1194,6 +1194,9 @@ def test_capabilities_narrated_caption_archetype_text_elements_on(monkeypatch):
 
 def test_capabilities_subtitled_caption_archetype_text_elements_off(monkeypatch):
     _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
     job = _job(
         variant_id="subtitled",
         text_mode="none",
@@ -1207,6 +1210,25 @@ def test_capabilities_subtitled_caption_archetype_text_elements_off(monkeypatch)
     assert caps["overlays"] is False
     assert caps["sfx_reason"] == "caption_archetype"
     assert caps["overlays_reason"] == "caption_archetype"
+
+
+def test_capabilities_subtitled_caption_archetype_text_elements_on(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", True, raising=False)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    caps = _caps(job, "subtitled")
+    assert caps["text_elements"] is True
+    assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
+    assert caps["sfx"] is False
+    assert caps["overlays"] is False
 
 
 def test_capabilities_expired_sources(monkeypatch):

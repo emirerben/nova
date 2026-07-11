@@ -100,7 +100,7 @@ import {
   useVariantEditSession,
   type VariantEditSession,
 } from "@/lib/variant-editor/useVariantEditSession";
-import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
+import { isInstantEditEligible, isTextLaneEligible } from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
@@ -2067,6 +2067,7 @@ function FocusedResults({
     refetch();
   });
   const instantEligible = variant ? isInstantEditEligible(variant) : false;
+  const textLaneEligible = variant ? isTextLaneEligible(variant) : false;
 
   useEffect(() => {
     if (instantEligible && !editSession.isEditing) editSession.enterEdit();
@@ -2405,8 +2406,8 @@ function FocusedResults({
                   if (hasCaptions && tab.id === "song") return null;
                   // Hide Song tab when no song is swappable
                   if (tab.id === "song" && (tracks.length === 0 || !variant?.music_track_id)) return null;
-                  // Timeline: only when SFX is enabled.
-                  if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED) return null;
+                  // Timeline: show when SFX is enabled or this variant has a text lane.
+                  if (tab.id === "timeline" && !SOUND_EFFECTS_ENABLED && !textLaneEligible) return null;
                   const isActive = activeTab === tab.id;
                   return (
                     <button
@@ -2706,6 +2707,7 @@ function FocusedVariantControls({
     ? variant.editor_capabilities.timeline !== false &&
       variant.editor_capabilities.split_clips !== false
     : true;
+  const textLaneEligible = isTextLaneEligible(variant);
 
   // 009 T5: intro-text keep-out window for the Overlays lane (hatched band +
   // "Covers your intro text" warning) — derived from the variant's persisted
@@ -3127,7 +3129,7 @@ function FocusedVariantControls({
   }, []);
 
   const showSongSection = activeTab === "song";
-  const showTimelineSection = activeTab === "timeline" && SOUND_EFFECTS_ENABLED;
+  const showTimelineSection = activeTab === "timeline" && (SOUND_EFFECTS_ENABLED || textLaneEligible);
 
   return (
     <>
@@ -3203,6 +3205,7 @@ function FocusedVariantControls({
               resolveAssetMeta={resolveAssetMeta}
               fullscreenDisabledReason={fullscreenDisabledReason}
               fullscreenPromoteEnabled={FULLSCREEN_CUTAWAYS_ENABLED}
+              showTextLane={textLaneEligible}
               textElements={textElements}
               onTextElementsChange={handleTextElementsChange}
               onTextApply={(bars) => {

@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user
+from app.config import settings
 from app.database import get_db
 from app.main import app
 
@@ -134,6 +135,16 @@ NO_BASE_VARIANT = {
     # No base_video_path
 }
 
+SUBTITLED_VARIANT = {
+    "variant_id": "subtitled",
+    "text_mode": "none",
+    "resolved_archetype": "subtitled",
+    "render_status": "ready",
+    "rank": 1,
+    "style_set_id": "default",
+    "base_video_path": "generative-jobs/abc/subtitled_base.mp4",
+}
+
 
 # ── guard: lyrics variant → 422 (A16) ────────────────────────────────────────
 
@@ -191,6 +202,45 @@ def test_render_without_base_rejected(client: TestClient) -> None:
     )
     assert resp.status_code == 422
     assert "base" in resp.json()["detail"].lower()
+
+
+def test_subtitled_text_elements_rejected_when_lane_flag_off(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    resp = client.put(
+        f"/plan-items/{item.id}/variants/subtitled/text-elements",
+        json={"elements": [_VALID_ELEMENT], "render": True},
+    )
+    assert resp.status_code == 404
+    assert "subtitled" in resp.json()["detail"].lower()
+
+
+def test_subtitled_text_elements_happy_path_when_lane_flag_on(
+    client: TestClient, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", True, raising=False)
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)
+    _override(user, db)
+    with patch(REGEN) as regen:
+        regen.apply_async = MagicMock()
+        resp = client.put(
+            f"/plan-items/{item.id}/variants/subtitled/text-elements",
+            json={"elements": [_VALID_ELEMENT], "render": True},
+        )
+    assert resp.status_code == 200
+    variant = job.assembly_plan["variants"][0]
+    assert variant["render_status"] == "rendering"
+    assert variant["text_elements_user_edited"] is True
+    regen.apply_async.assert_called_once()
 
 
 # ── happy path: valid elements, render=True ───────────────────────────────────

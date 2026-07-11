@@ -1685,6 +1685,22 @@ def validate_text_elements_payload(
             detail="Text elements cannot be edited on a lyrics variant.",
         )
 
+    if variant.get("resolved_archetype") == "subtitled":
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        if not _settings.subtitled_text_lane_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Text element editing is not available for subtitled variants.",
+            )
+        if not variant.get("base_video_path"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "No cached base video for subtitled text reburn; regenerate the variant first."
+                ),
+            )
+
     # A—: payload size cap (50 elements comfortably covers the longest short-form edit)
     if len(elements) > _TEXT_ELEMENTS_MAX:
         raise HTTPException(
@@ -2242,7 +2258,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "text_elements": (
             _TEXT_ELEMENTS_ENABLED
             and variant.get("text_mode") != "lyrics"
-            and (caption_reason is None or archetype == "narrated")
+            and (
+                caption_reason is None
+                or archetype == "narrated"
+                or (archetype == "subtitled" and settings.subtitled_text_lane_enabled)
+            )
         ),
         "timeline": timeline_ok,
         # Splitting a clip is a timeline-override operation — same eligibility.
