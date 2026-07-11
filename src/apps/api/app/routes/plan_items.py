@@ -33,6 +33,7 @@ from app.routes.generative_jobs import (
     BedLevelRequest,
     CaptionFontRequest,
     CaptionLanguageRequest,
+    CaptionPositionRequest,
     CaptionsEnabledRequest,
     CaptionsRequest,
     CaptionStyleRequest,
@@ -58,6 +59,7 @@ from app.routes.generative_jobs import (
     dispatch_reset_timeline,
     dispatch_retext,
     dispatch_retranscribe_captions,
+    dispatch_set_caption_position,
     dispatch_set_intro_size,
     dispatch_set_intro_timing,
     dispatch_set_media_overlays,
@@ -1451,6 +1453,28 @@ async def set_item_caption_font(
         item_id=item_id,
         variant_id=variant_id,
         font=req.caption_font,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/caption-position", response_model=PlanItemResponse)
+async def set_item_caption_position(
+    item_id: str,
+    variant_id: str,
+    req: CaptionPositionRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set caption vertical position and reburn the captioned variant (async)."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    margin_v = dispatch_set_caption_position(job, variant_id, y_frac=req.y_frac)
+    await db.commit()
+    log.info(
+        "plan_item_set_caption_position",
+        item_id=item_id,
+        variant_id=variant_id,
+        y_frac=req.y_frac,
+        margin_v=margin_v,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

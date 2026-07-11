@@ -895,6 +895,9 @@ export interface PlanItemVariant {
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;
+  // ASS MarginV for captioned variants after the caption-position control is used.
+  // Null/absent means legacy default: subtitled 384, narrated 180.
+  caption_margin_v?: number | null;
   // Language the subtitled captions were transcribed in ("en" | "tr"). Shown as the
   // editor chip; changing it re-transcribes (setPlanItemCaptionLanguage). Absent for
   // narrated/montage variants.
@@ -1056,6 +1059,22 @@ export function setPlanItemCaptionFont(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ caption_font: font }),
+  });
+}
+
+/**
+ * Set caption vertical position and reburn the captioned variant.
+ * `yFrac` is normalized from the top of the 9:16 frame.
+ */
+export function setPlanItemCaptionPosition(
+  itemId: string,
+  variantId: string,
+  yFrac: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/caption-position`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ y_frac: yFrac }),
   });
 }
 

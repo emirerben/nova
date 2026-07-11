@@ -2458,9 +2458,16 @@ function FocusedResults({
                       // audio — nudge review before Apply (D6). Narrated (own voiceover)
                       // doesn't need it.
                       reviewFirst={variant.resolved_archetype === "subtitled"}
-                      // Preview offset mirrors the burn: subtitled burns at the
-                      // platform-safe MarginV 384/1920 (20%); narrated at 180 (9.4%).
-                      previewBottomCqh={variant.resolved_archetype === "subtitled" ? 20 : 9.4}
+                      // Preview offset mirrors the burn. A stored caption_margin_v
+                      // wins; absent legacy rows keep subtitled=384/1920 (20%) and
+                      // narrated=180/1920 (9.4%).
+                      previewBottomCqh={
+                        variant.caption_margin_v != null
+                          ? (variant.caption_margin_v / 1920) * 100
+                          : variant.resolved_archetype === "subtitled"
+                            ? 20
+                            : 9.4
+                      }
                       // D5 language override — chip + re-transcribe, subtitled only.
                       captionLanguage={
                         variant.resolved_archetype === "subtitled"

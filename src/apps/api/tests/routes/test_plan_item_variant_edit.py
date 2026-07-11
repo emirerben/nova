@@ -1006,6 +1006,56 @@ def test_set_caption_font_409_while_rendering(client: TestClient) -> None:
     assert resp.status_code == 409
 
 
+def test_caption_position_request_validates_bounds_and_rounds() -> None:
+    from pydantic import ValidationError
+
+    from app.routes.generative_jobs import CaptionPositionRequest
+
+    assert CaptionPositionRequest(y_frac=0.66).caption_margin_v == 653
+    assert CaptionPositionRequest(y_frac=0.80).caption_margin_v == 384
+    with pytest.raises(ValidationError):
+        CaptionPositionRequest(y_frac=0.29)
+    with pytest.raises(ValidationError):
+        CaptionPositionRequest(y_frac=0.91)
+
+
+def test_set_caption_position_persists_rounding_and_enqueues_reburn(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)  # load item → reload item
+    _override(user, db)
+    with patch(REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/caption-position",
+            json={"y_frac": 0.66},
+        )
+    assert resp.status_code == 200
+    patched = job.assembly_plan["variants"][0]
+    assert patched["caption_margin_v"] == 653
+    assert patched["render_status"] == "rendering"
+    reburn.delay.assert_called_once_with(str(job.id), "subtitled")
+    assert db.commit.await_count >= 1
+
+
+def test_set_caption_position_rejects_out_of_bounds(client: TestClient) -> None:
+    user = _user()
+    job = _job([dict(SUBTITLED_VARIANT)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan)
+    _override(user, db)
+    with patch(REBURN) as reburn:
+        reburn.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/subtitled/caption-position",
+            json={"y_frac": 0.91},
+        )
+    assert resp.status_code == 422
+    assert "caption_margin_v" not in job.assembly_plan["variants"][0]
+    reburn.delay.assert_not_called()
+
+
 def test_edit_captions_409_while_rendering(client: TestClient) -> None:
     user = _user()
     job = _job([{**NARRATED_VARIANT, "render_status": "rendering"}])

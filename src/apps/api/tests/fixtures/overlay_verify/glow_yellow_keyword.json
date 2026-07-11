@@ -1,0 +1,17 @@
+{
+  "overlays": [
+    {
+      "text": "GLOW",
+      "effect": "none",
+      "text_size_px": 128,
+      "position_x_frac": 0.5,
+      "position_y_frac": 0.5,
+      "text_color": "#FFD24A",
+      "glow_color": "#FFD24A",
+      "glow_strength": 0.8,
+      "text_anchor": "center",
+      "start_s": 0.0,
+      "end_s": 2.0
+    }
+  ]
+}
