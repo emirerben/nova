@@ -1383,6 +1383,11 @@ def test_capabilities_narrated_caption_archetype_lanes_on_text_elements_on(monke
 def test_capabilities_subtitled_caption_archetype_lanes_on_text_elements_off(monkeypatch):
     _arm(monkeypatch)
     _arm_autoplace(monkeypatch)
+    from app.config import settings
+
+    # #625: the styled-text lane re-opens subtitled text behind this flag — pin
+    # it off so the text_elements assertion below is deterministic.
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
     job = _job(
         variant_id="subtitled",
         text_mode="none",
@@ -1401,6 +1406,25 @@ def test_capabilities_subtitled_caption_archetype_lanes_on_text_elements_off(mon
     assert caps["overlays_reason"] is None
     assert caps["suggestions"] is False
     assert caps["suggestions_reason"] == "caption_archetype"
+
+
+def test_capabilities_subtitled_text_lane_flag_reopens_text_elements(monkeypatch):
+    """#625 × OV-1 lockstep: with SUBTITLED_TEXT_LANE_ENABLED on, the shared
+    _text_elements_allowed predicate re-opens subtitled text in BOTH the
+    capability map and the editor-commit 422 guard."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", True, raising=False)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        mix=1.0,
+    )
+    caps = _caps(job, "subtitled")
+    assert caps["text_elements"] is True
+    assert gj._text_elements_allowed(job.assembly_plan["variants"][0]) is True
 
 
 def test_capabilities_caption_archetype_flags_off_report_disabled_reasons(monkeypatch):
@@ -1422,6 +1446,25 @@ def test_capabilities_caption_archetype_flags_off_report_disabled_reasons(monkey
     assert caps["overlays"] is False
     assert caps["sfx_reason"] == "sound_effects_disabled"
     assert caps["overlays_reason"] == "media_overlays_disabled"
+
+
+def test_capabilities_subtitled_caption_archetype_text_elements_on(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", True, raising=False)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    caps = _caps(job, "subtitled")
+    assert caps["text_elements"] is True
+    assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
+    assert caps["sfx"] is False
+    assert caps["overlays"] is False
 
 
 def test_capabilities_expired_sources(monkeypatch):

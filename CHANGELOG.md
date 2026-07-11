@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.23.0] — 2026-07-11
+## [0.7.25.0] — 2026-07-11
 
 ### Added
 - **Sound effects + media overlays on captioned edits.** The Sounds and Overlays lanes are now available on subtitled (talk-to-camera) and narrated edits — previously disabled because caption re-renders rebuilt the video from a caption-free base and silently wiped composited effects. Every caption re-render path (caption edit, background-sound change, language re-transcribe) now re-applies persisted lanes onto the fresh burn, and lane saves on captioned edits render through the caption reburn so the newest save always carries the current captions. AI overlay suggestions stay off on captioned edits pending a speech-content quality eval; text and mix editing remain honestly gated (disabled tools explain why, with a Captions-tab deep link). Effects lanes remain behind `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED`.
@@ -12,6 +12,25 @@ All notable changes to this project will be documented in this file.
 - Caption-position saves (`/caption-position`, v0.7.20.0) 500'd after the caption dispatcher became async in this branch — the position save now rides the same locked, token-checked reburn as its siblings.
 - The item-page "Place visuals for me" rail is gated by the variant's editor capabilities and recognizes the caption-archetype unavailability wording instead of dead-ending in a failed state.
 - Editor tool-rail a11y: disabled tools are focusable with screen-reader-readable reasons (`aria-disabled` + `aria-describedby`); the toast is a polite live region.
+## [0.7.24.0] — 2026-07-11
+
+### Added
+- **Text on talk-to-camera edits.** Subtitled edits can now carry styled titles, keywords, and numbers — added in the editor and burned under the captions (captions always stay on top). Behind `SUBTITLED_TEXT_LANE_ENABLED` + `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED`.
+
+### Fixed
+- Text edits on subtitled variants publish to a fresh video URL so CDNs can never serve the stale pre-edit render.
+
+## [0.7.23.0] — 2026-07-11
+
+### Added
+- **Sticker hook bursts.** AI overlay suggestions can now stack up to five confident image stickers in the first 12 seconds (staggered entrances), matching the accumulating-sticker hook style of reference explainer edits.
+- Clip and image analysis now record visible brand/mascot identities, and the overlay matcher stops wishlisting assets you already uploaded.
+
+### Fixed
+- Transparent stickers matched to a fullscreen slot are demoted to pip instead of rendering flattened garbage.
+- Caption correction restores mangled brand names ("Kokokolu" → "Coca-Cola").
+- Gemini clip analysis no longer hard-fails when the model wraps its response in a one-element JSON array.
+- `dev-auto.sh` fails fast with a clear message when the local ffmpeg lacks libass (previously every caption burn failed with a misleading parse error).
 
 ## [0.7.22.0] — 2026-07-11
 

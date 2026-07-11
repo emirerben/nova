@@ -291,6 +291,18 @@ def check_clip_metadata(
     if output.hook_score < 0 or output.hook_score > 10:
         failures.append(f"hook_score={output.hook_score} outside [0, 10]")
 
+    # Prompt contract (analyze_clip.txt, 2026-07-11.1): "brands" lists visible
+    # brand/mascot identities, [] when none. Empty is always legitimate; the
+    # schema validator caps at 10 entries of ≤80 chars, so anything else here
+    # means the parse threading regressed.
+    if len(output.brands) > 10:
+        failures.append(f"brands has {len(output.brands)} entries; schema caps at 10")
+    for i, b in enumerate(output.brands):
+        if not (b or "").strip():
+            failures.append(f"brands[{i}] is empty/whitespace")
+        elif len(b) > 80:
+            failures.append(f"brands[{i}] exceeds 80 chars")
+
     # Prompt contract (analyze_clip.txt):
     #   - "list of 2-5 objects" in the schema description, AND
     #   - "An empty best_moments list is a valid output when the segment has no

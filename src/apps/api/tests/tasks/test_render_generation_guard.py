@@ -667,3 +667,78 @@ def test_full_render_success_reburns_persisted_text_elements_after_new_base(monk
     ready = [u for u in updates if u.get("render_status") == "ready"]
     assert ready[-1]["video_path"] == "generative-jobs/reburned.mp4"
     assert ready[-1]["output_url"] == "https://signed/reburned"
+
+
+def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(monkeypatch):
+    elements = [
+        {
+            "id": "title",
+            "text": "TITLE",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "role": "generative_intro",
+            "position": "middle",
+        }
+    ]
+    original = _variant(
+        "tok-sub",
+        variant_id="subtitled",
+        rank=1,
+        text_mode="none",
+        resolved_archetype="subtitled",
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_subtitled_old.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/variant_1_subtitled_base.mp4",
+        intro_text=None,
+        text_elements=elements,
+        text_elements_user_edited=True,
+        caption_cues=[{"text": "old caption", "start_s": 0.0, "end_s": 1.0}],
+    )
+    job = _FakeJob([original])
+    _patch_sessions(monkeypatch, job)
+    updates = _capture_updates(monkeypatch, job)
+    deleted: list[str] = []
+    compose_variants: list[dict] = []
+
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_reapply_persisted_media_overlays_if_any", lambda **kw: False)
+    monkeypatch.setattr(gb, "_reapply_persisted_sfx_if_any", lambda **kw: None)
+
+    def _download(_src, dst):
+        with open(dst, "wb") as f:
+            f.write(b"base")
+        job.assembly_plan["variants"][0] = {
+            **job.assembly_plan["variants"][0],
+            "caption_cues": [{"text": "latest caption", "start_s": 0.0, "end_s": 1.0}],
+        }
+
+    def _compose(_base_local, variant, tmpdir):
+        compose_variants.append(dict(variant))
+        out = f"{tmpdir}/out.mp4"
+        with open(out, "wb") as f:
+            f.write(b"composed")
+        return out
+
+    monkeypatch.setattr("app.storage.download_to_file", _download)
+    monkeypatch.setattr(
+        "app.storage.upload_public_read", lambda _local, gcs: f"https://signed/{gcs}"
+    )
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort",
+        lambda path: deleted.append(path) or True,
+    )
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
+
+    gb._run_regenerate_variant(
+        JOB_ID,
+        "subtitled",
+        None,
+        None,
+        False,
+        render_gen_id="tok-sub",
+    )
+
+    ready = updates[-1]
+    assert ready["video_path"] != original["video_path"]
+    assert "_text_" in ready["video_path"]
+    assert deleted == [original["video_path"]]
+    assert compose_variants[0]["caption_cues"][0]["text"] == "latest caption"

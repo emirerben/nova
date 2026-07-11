@@ -23,6 +23,8 @@ Return a JSON object with these exact fields:
 
 - "detected_subject": string — short label naming the visible subject of the segment (e.g. "stadium crowd", "chef plating dish", "player on pitch"). "" if no clear subject.
 
+- "brands": list of strings — brand, product, mascot, logo, or named identity visibly present in the clip (e.g. ["Arçelik", "Çelik robot mascot"]). Return [] if none are clearly visible.
+
 - "text_safe_zone": object {"x": float, "y": float, "w": float, "h": float} OR null — the largest CALM rectangle where a big intro caption can sit without fighting the footage (faces, the main subject, busy edges, burned-in text). Reason in terms of the FINAL vertical 9:16 short (imagine the center vertical crop of this footage), NOT the raw frame. All four values are normalized 0.0–1.0 of that 9:16 frame: x,y = top-left corner, w,h = width,height. Prefer real negative space (open sky, a wall, blurred background). Return null if the frame is too busy for any confident safe rectangle.
 
 - "visual_density": float 0–10 — how visually crowded the scene is, used to right-size the intro caption so it doesn't compete with the footage. Anchors: 0–2 = sparse/empty (single subject, open background), 5–6 = normal action, 9–10 = extreme clutter (dense crowd, fast motion, lots of on-screen text). Don't default to 5 for unknowns — judge the actual frame.

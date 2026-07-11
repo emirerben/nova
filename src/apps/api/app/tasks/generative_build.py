@@ -2459,17 +2459,40 @@ def _reburn_text_on_base(
         # Skip the legacy size / style / intro-writer resolution path and
         # compile the elements directly to burn dicts.
         if _TEXT_ELEMENTS_ENABLED and existing.get("text_elements_user_edited"):
-            from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
-            from app.pipeline.generative_overlays import (  # noqa: PLC0415
-                build_overlays_from_text_elements,
-            )
+            if existing.get("resolved_archetype") == "subtitled" and getattr(
+                settings, "subtitled_text_lane_enabled", False
+            ):
+                _fresh_existing = _fresh_variant_snapshot(job_id, variant_id) or existing
+                _te_final_path = _compose_subtitled_final(local_base, _fresh_existing, tmpdir)
+                # Subtitled text edits must not overwrite the current key. Signed URLs and
+                # CDN layers may keep serving that object, so mint a new key and delete the old.
+                _rank = int(_fresh_existing.get("rank") or existing.get("rank") or 1)
+                _te_gcs_key = (
+                    f"generative-jobs/{job_id}/variant_{_rank}_{variant_id}_text_"
+                    f"{uuid.uuid4().hex[:8]}.mp4"
+                )
+                _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
+                _old_video_path = _fresh_existing.get("video_path") or existing.get("video_path")
+                return {
+                    "render_status": "ready",
+                    "ok": True,
+                    "render_finished_at": datetime.utcnow().isoformat() + "Z",
+                    "video_path": _te_gcs_key,
+                    "output_url": _te_output_url,
+                    "text_mode": text_mode,
+                    "style_set_id": resolved_style_set_id,
+                    "intro_text_size_px": existing.get("intro_text_size_px"),
+                    "intro_size_source": existing.get("intro_size_source"),
+                    "text_elements": _fresh_existing.get("text_elements") or [],
+                    "text_elements_user_edited": True,
+                    "_old_video_path_for_delete": (
+                        _old_video_path
+                        if _old_video_path and _old_video_path != _te_gcs_key
+                        else None
+                    ),
+                }
 
-            _te_raw = existing.get("text_elements") or []
-            _te_elements = coerce_text_elements(_te_raw) or []
-            _te_burn_dicts = build_overlays_from_text_elements(
-                _te_elements,
-                video_duration_s=float(existing.get("duration_s") or 10.0),
-            )
+            _te_burn_dicts = _text_element_burn_dicts(existing)
             _te_final_path = os.path.join(tmpdir, "final.mp4")
             burn_text_overlays_skia(local_base, _te_burn_dicts, _te_final_path, tmpdir)
             _te_gcs_key = (existing.get("video_path") or "").lstrip("/")
@@ -3067,7 +3090,36 @@ def _run_regenerate_variant(
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
             return
-        if existing.get("resolved_archetype") in _CAPTION_REBURN_ARCHETYPES:
+        _is_subtitled_text_reburn = (
+            existing.get("resolved_archetype") == "subtitled"
+            and getattr(settings, "subtitled_text_lane_enabled", False)
+            and _TEXT_ELEMENTS_ENABLED
+            and existing.get("text_elements_user_edited")
+            and new_track_id is None
+            and mix_override is None
+            and timeline_override is None
+            and media_overlays_override is None
+            and sfx_override is None
+            and override_text is None
+            and not remove_text
+            and style_set_id is None
+            and size_override_px is None
+            and layout_override is None
+            and font_family_override is None
+            and effect_override is None
+            and text_color_override is None
+            and cluster_hero_font_override is None
+            and cluster_body_font_override is None
+            and cluster_accent_font_override is None
+            and cluster_hero_size_px_override is None
+            and cluster_body_size_px_override is None
+            and cluster_accent_size_px_override is None
+            and intro_start_s_override is None
+            and intro_end_s_override is None
+        )
+        if existing.get("resolved_archetype") in _CAPTION_REBURN_ARCHETYPES and not (
+            _is_subtitled_text_reburn
+        ):
             # Defense-in-depth (mirrors the reburn guard): the generic re-render funnels
             # into the MONTAGE path — running it on a narrated/subtitled variant would
             # overwrite resolved_archetype/video_path and orphan the captions the user
@@ -3360,6 +3412,7 @@ def _run_regenerate_variant(
             else:
                 raise
         if _used_fast_path:
+            _old_video_path_for_delete = result.pop("_old_video_path_for_delete", None)
             # A20/E1: stale-write guard for reburns.  A subsequent editor commit
             # (or PUT /text-elements) overwrites `render_generation_id` in the DB;
             # if it differs from the token we were launched with, our result is
@@ -3372,6 +3425,10 @@ def _run_regenerate_variant(
                 outcome="reburn",
             ):
                 return
+            if _old_video_path_for_delete:
+                from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+                delete_object_best_effort(_old_video_path_for_delete)
             # A text/style reburn overwrites video_path from the cached text-free
             # base, so any persisted user media layers must be rebuilt.
             _reapply_user_media_layers(
@@ -6507,6 +6564,9 @@ def _render_subtitled_variant(
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
         "silence_cut": None,
     }
+    if getattr(settings, "subtitled_text_lane_enabled", False):
+        base["text_elements"] = []
+        base["text_elements_user_edited"] = False
     try:
         # Subtitled is single-clip: the first uploaded clip (order-preserving). The
         # uploader caps new subtitled items at ONE clip, but an item switched from
@@ -6733,7 +6793,17 @@ def _render_subtitled_variant(
         cues = resplit_cues_into_sentences(cues)
 
         final_path = os.path.join(variant_dir, "final.mp4")
-        if cues:
+        if getattr(settings, "subtitled_text_lane_enabled", False):
+            final_path = _compose_subtitled_final(
+                base_path,
+                {
+                    **base,
+                    "caption_cues": cues or None,
+                    "caption_language": detected_lang,
+                },
+                variant_dir,
+            )
+        elif cues:
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
             if caption_style == "word":
@@ -6757,10 +6827,11 @@ def _render_subtitled_variant(
 
         output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
         output_url = upload_public_read(final_path, output_gcs)
-        # Persist the caption-free base ONLY when captions exist — that's what the
-        # on-video editor + reburn edit. A no-speech clip has no base (nothing to edit).
+        # Persist the caption-free base when captions exist. With the text lane on,
+        # persist it even for cue-less clips so later user-authored text can fast-reburn.
         base_gcs: str | None = None
-        if cues and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
+        should_upload_base = bool(cues) or getattr(settings, "subtitled_text_lane_enabled", False)
+        if should_upload_base and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
             base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
             upload_public_read(base_path, base_gcs)
 
@@ -6918,6 +6989,45 @@ def _resolve_caption_margin_v(variant: dict) -> int:
     return SUBTITLED_CAPTION_MARGIN_V
 
 
+def _fresh_variant_snapshot(job_id: str, variant_id: str) -> dict | None:
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None:
+            return None
+        variants = (job.assembly_plan or {}).get("variants") or []
+        fresh = next((v for v in variants if v.get("variant_id") == variant_id), None)
+        return dict(fresh) if isinstance(fresh, dict) else None
+
+
+def _text_element_burn_dicts(variant: dict) -> list[dict]:
+    from app.agents._schemas.text_element import coerce_text_elements  # noqa: PLC0415
+    from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
+
+    elements = coerce_text_elements(variant.get("text_elements") or []) or []
+    if not elements:
+        return []
+    return build_overlays_from_text_elements(
+        elements,
+        video_duration_s=float(variant.get("duration_s") or 10.0),
+    )
+
+
+def _compose_subtitled_final(base_local: str, variant: dict, tmpdir: str) -> str:
+    """Compose a subtitled final: authored text first, persisted captions last."""
+    from app.pipeline.text_overlay_skia import burn_text_overlays_skia  # noqa: PLC0415
+
+    text_overlays = _text_element_burn_dicts(variant)
+    captions_input = base_local
+    if text_overlays:
+        text_burned = os.path.join(tmpdir, "subtitled_text_underlay.mp4")
+        burn_text_overlays_skia(base_local, text_overlays, text_burned, tmpdir)
+        captions_input = text_burned
+
+    final_path = os.path.join(tmpdir, "subtitled_final.mp4")
+    _burn_persisted_captions_onto_base(captions_input, final_path, variant, tmpdir)
+    return final_path
+
+
 def _burn_persisted_captions_onto_base(
     base_local: str, out_local: str, variant: dict, tmpdir: str
 ) -> None:
@@ -7036,8 +7146,12 @@ def _run_reburn_narrated_captions(
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(base_path, base_local)
-        out_local = os.path.join(tmpdir, "out.mp4")
-        _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
+        if archetype == "subtitled" and getattr(settings, "subtitled_text_lane_enabled", False):
+            variant = _fresh_variant_snapshot(job_id, variant_id) or variant
+            out_local = _compose_subtitled_final(base_local, variant, tmpdir)
+        else:
+            out_local = os.path.join(tmpdir, "out.mp4")
+            _burn_persisted_captions_onto_base(base_local, out_local, variant, tmpdir)
         # New key so CDN / signed-URL caches never serve the pre-edit captions.
         new_gcs = (
             f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_cap_{uuid.uuid4().hex[:8]}.mp4"
@@ -7557,20 +7671,28 @@ def _run_retranscribe_subtitled(
                 outcome="subtitled_retranscribe_empty",
             )
             return
-        out_local = os.path.join(tmpdir, "out.mp4")
-        ass_path = os.path.join(tmpdir, "captions.ass")
-        if word_pop:
-            generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
+        if getattr(settings, "subtitled_text_lane_enabled", False):
+            variant = {
+                **variant,
+                "caption_cues": cues or None,
+                "caption_language": lang,
+            }
+            out_local = _compose_subtitled_final(base_local, variant, tmpdir)
         else:
-            generate_ass_from_cues(
-                cues,
-                ass_path,
-                font_name=ass_font,
-                style="plain",
-                margin_v=caption_margin_v,
-                pop_in=True,
-            )
-        burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
+            out_local = os.path.join(tmpdir, "out.mp4")
+            ass_path = os.path.join(tmpdir, "captions.ass")
+            if word_pop:
+                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
+            else:
+                generate_ass_from_cues(
+                    cues,
+                    ass_path,
+                    font_name=ass_font,
+                    style="plain",
+                    margin_v=caption_margin_v,
+                    pop_in=True,
+                )
+            burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
         new_gcs = (
             f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_lang_{uuid.uuid4().hex[:8]}.mp4"
         )
@@ -8168,6 +8290,10 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor
                     # chip shows it and the re-transcribe override reads the current one.
                     "caption_language": r.get("caption_language"),
+                    # TextElement lane state — MUST survive finalization for any variant
+                    # whose authored text is edited through PUT /text-elements.
+                    "text_elements": r.get("text_elements"),
+                    "text_elements_user_edited": r.get("text_elements_user_edited"),
                     # render fingerprint — the caption editor's remount key reads it, so
                     # stripping it here would silently degrade re-seeding after reburns.
                     "render_finished_at": r.get("render_finished_at"),

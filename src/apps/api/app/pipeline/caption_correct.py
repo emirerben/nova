@@ -40,8 +40,11 @@ _SYSTEM_PROMPT = (
     "mishearings and spelling, AND wrong word forms — especially WRONG CASE/SUFFIX endings "
     "that don't fit the sentence. For example, in Turkish fix a wrong case ending like "
     "'nereye' -> 'nereyi' when the sentence needs the object (accusative), or a mis-heard "
-    "vowel like 'Kaçer' -> 'Kaçar'. You MAY change words within a line to make it correct, "
-    "but you MUST: keep the SAME number of lines in the SAME order, never move words "
+    "vowel like 'Kaçer' -> 'Kaçar'. Restore mangled brand names, product names, and proper "
+    "nouns to canonical spelling when phonetics clearly match a well-known brand, e.g. "
+    "'Kokokolu' -> 'Coca-Cola', while keeping the surrounding language. You MAY change "
+    "words within a line to make it correct, but you MUST: keep the SAME number of lines "
+    "in the SAME order, never move words "
     "between lines, never translate, never add commentary or punctuation-only lines. "
     'Return ONLY JSON: {{"lines": [...]}} with exactly the same length as the input.'
 )

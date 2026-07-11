@@ -1126,9 +1126,16 @@ def _text_elements_allowed(variant: dict) -> bool:
     Single source for BOTH `_editor_capabilities`' text_elements derivation and
     `prepare_editor_commit`'s 422 guard (OV-1): subtitled captions own the
     on-video text; narrated keeps text_elements (its captions ride a separate
-    voiceover lane). Lyrics/flag gating lives in `validate_text_elements_payload`.
+    voiceover lane). PR #625's styled-text lane re-opens subtitled text behind
+    SUBTITLED_TEXT_LANE_ENABLED — folding the flag HERE keeps the capability map
+    and the commit 422 guard in lockstep. Lyrics/flag gating lives in
+    `validate_text_elements_payload`.
     """
-    return variant.get("resolved_archetype") != "subtitled"
+    if variant.get("resolved_archetype") != "subtitled":
+        return True
+    from app.config import settings  # noqa: PLC0415
+
+    return settings.subtitled_text_lane_enabled
 
 
 def _is_editable_caption_variant(variant: dict) -> bool:
@@ -1833,6 +1840,22 @@ def validate_text_elements_payload(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Text elements cannot be edited on a lyrics variant.",
         )
+
+    if variant.get("resolved_archetype") == "subtitled":
+        from app.config import settings as _settings  # noqa: PLC0415
+
+        if not _settings.subtitled_text_lane_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Text element editing is not available for subtitled variants.",
+            )
+        if not variant.get("base_video_path"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "No cached base video for subtitled text reburn; regenerate the variant first."
+                ),
+            )
 
     # A—: payload size cap (50 elements comfortably covers the longest short-form edit)
     if len(elements) > _TEXT_ELEMENTS_MAX:

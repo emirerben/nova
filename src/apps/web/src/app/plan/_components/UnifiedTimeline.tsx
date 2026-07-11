@@ -183,6 +183,7 @@ export interface UnifiedTimelineProps {
    * parent can conditionally show/hide other right-panel content.
    */
   onTextBarSelect?: (id: string | null) => void;
+  showTextLane?: boolean;
   /**
    * Editor-shell mode (plan §6, T4). When provided, UnifiedTimeline renders the
    * scale-driven editor timeline (Text → Video → Sound → Overlays, zoom, scrub,
@@ -232,6 +233,7 @@ export default function UnifiedTimeline({
   onClipBodyClick,
   textPanelPortalTarget,
   onTextBarSelect,
+  showTextLane = true,
   editorMode,
 }: UnifiedTimelineProps) {
   // ── Editor-shell mode: delegate to the scale-driven editor timeline ──────────
@@ -301,18 +303,20 @@ export default function UnifiedTimeline({
       )}
 
       {/* ── Text lane ── */}
-      <TextLane
-        textElements={textElements ?? []}
-        durationSeconds={totalDurationS}
-        currentTime={currentTimeS}
-        onTextElementsChange={onTextElementsChange ?? (() => {})}
-        expandedBarId={textExpandedBarId}
-        onBarSelect={setTextExpandedBarId}
-        onApply={onTextApply}
-        onTrimClamped={onTextTrimClamped}
-        isFirstSequenceEdit={isFirstSequenceEdit}
-        textPanelPortalTarget={textPanelPortalTarget}
-      />
+      {showTextLane && (
+        <TextLane
+          textElements={textElements ?? []}
+          durationSeconds={totalDurationS}
+          currentTime={currentTimeS}
+          onTextElementsChange={onTextElementsChange ?? (() => {})}
+          expandedBarId={textExpandedBarId}
+          onBarSelect={setTextExpandedBarId}
+          onApply={onTextApply}
+          onTrimClamped={onTextTrimClamped}
+          isFirstSequenceEdit={isFirstSequenceEdit}
+          textPanelPortalTarget={textPanelPortalTarget}
+        />
+      )}
 
       {/* ── Overlays lane ── */}
       {(overlayCards.length > 0 ||

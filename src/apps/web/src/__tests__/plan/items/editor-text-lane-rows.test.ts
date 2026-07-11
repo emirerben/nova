@@ -153,6 +153,29 @@ describe("seedBarsFromVariant", () => {
       }),
     ]);
   });
+
+  it("uses subtitled text_elements instead of caption cues for the text lane", () => {
+    const variant = {
+      variant_id: "subtitled",
+      resolved_archetype: "subtitled",
+      text_elements_user_edited: false,
+      caption_cues: [{ text: "caption words", start_s: 0, end_s: 1 }],
+      text_elements: [
+        {
+          id: "title",
+          text: "Big title",
+          start_s: 0,
+          end_s: 2,
+          role: "generative_intro",
+          position: "middle",
+        },
+      ],
+    } as unknown as PlanItemVariant;
+
+    expect(seedBarsFromVariant(variant)).toEqual([
+      expect.objectContaining({ id: "title", text: "Big title", role: "generative_intro" }),
+    ]);
+  });
 });
 
 describe("deriveLaneRows", () => {
