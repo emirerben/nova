@@ -12,10 +12,10 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 |---|---|---|---|---|
 | Landing (`/`) | cream `#fafaf8` | lime-700 family | Fraunces headings | light editorial |
 | Light product (`/plan`, `/plan/items/`, `/library`, `/generative`) | cream `#fafaf8` / ink / lime | lime-700 | Fraunces headings | light editorial |
-| Dark render system (`/template/[id]`, `/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
+| Dark render system (`/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = template flow (`/template/*`, `/template-jobs/*`) + `/admin/*` only. ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for template flow + admin). Intentional, not drift.
+**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
 
 ---
 
