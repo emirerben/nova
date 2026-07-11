@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Caption-position saves (`/caption-position`, v0.7.20.0) 500'd after the caption dispatcher became async in this branch — the position save now rides the same locked, token-checked reburn as its siblings.
 - The item-page "Place visuals for me" rail is gated by the variant's editor capabilities and recognizes the caption-archetype unavailability wording instead of dead-ending in a failed state.
 - Editor tool-rail a11y: disabled tools are focusable with screen-reader-readable reasons (`aria-disabled` + `aria-describedby`); the toast is a polite live region.
+
 ## [0.7.24.0] — 2026-07-11
 
 ### Added

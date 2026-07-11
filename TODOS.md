@@ -27,6 +27,7 @@ ingested_via: put_page
 **Context:** Gate added in `_editor_capabilities` (`suggestions_reason = "caption_archetype"`) + the suggest-overlays route guard in `routes/plan_items.py`. Eval harness pattern: `src/apps/api/tests/evals/`. Decision trail: plans/010-subtitled-sfx-overlay-lanes.md (OV-5).
 **Depends on:** plan 010 shipping; sample subtitled/narrated jobs with ready assets.
 **Effort:** M (CC: ~1-2 h incl. eval fixtures)
+
 ## Generative photos — re-plan (PR #476 closed 2026-07-11)
 
 ### Photo support in generative edits (re-plan against current stack)

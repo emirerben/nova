@@ -84,6 +84,60 @@ AI's assembly decisions, not pixels.
 - **Guards:** window-parity test (`tests/pipeline/test_exact_window_steps.py`) pins that
   an unmodified override render reproduces the original assembly windows AND framing.
 
+## SFX + media-overlay lanes on caption archetypes (plan 010, v0.7.25.0)
+
+Caption archetypes (`CAPTION_EDIT_ARCHETYPES = {"narrated", "subtitled"}`,
+public in `routes/generative_jobs.py`) carry the Sounds and Overlays editor
+lanes, same as montage variants — still behind `SOUND_EFFECTS_ENABLED` /
+`MEDIA_OVERLAYS_ENABLED`. Two contracts make that safe:
+
+- **Reapply-after-reburn:** every caption re-render path (caption Apply, caption
+  position, narrated background-sound slider, subtitled re-transcribe) rebuilds
+  `video_path` from the caption-free `base_video_path`, then
+  `_reapply_user_media_layers` (`tasks/generative_build.py`) composites the
+  persisted SFX/overlay lanes onto the fresh burn. Before plan 010 the lanes
+  were disabled here precisely because these paths silently wiped composited
+  effects. A no-op reapply still finalizes the terminal status, so a variant
+  can never strand in "rendering".
+- **Lane saves render through the caption reburn:** an SFX/overlay-only commit
+  on a caption variant with a cached base enqueues `reburn_narrated_captions`
+  on the `overlay-jobs` queue (solo worker — serializes the CLIP fork hazard)
+  instead of the fast composite pass. The fast pass composites onto the
+  CURRENT video, so a save racing an in-flight caption reburn could silently
+  drop the caption edit. Legacy variants without a cached base fall through to
+  the fast pass.
+
+Supersession discipline: every caption dispatch mints a `render_generation_id`
+and commits BEFORE enqueue (R1-1) — the reburn's start write is token-checked,
+so an enqueue that outran the commit would read the old generation and strand
+the variant. Superseded runs discard their terminal write and skip old-blob
+deletes. Retired pre-effect snapshot blobs are freed by
+`_free_media_snapshot_keys`, prefix-confined to `generative-jobs/*` (curated
+`music/*` / `templates/*` are never deleted), and only after the accepted
+terminal write. Caption tasks ride the standard render ceilings
+(`soft_time_limit=1740`, `time_limit=1800`, under the 1900s broker
+visibility_timeout).
+
+Editor gating (`_editor_capabilities` in `routes/generative_jobs.py`, mirrored
+by `src/apps/web/src/app/plan/items/[id]/_editor/editor-capabilities.ts`):
+
+- AI overlay suggestions stay OFF on caption archetypes
+  (`suggestions_reason = "caption_archetype"`) pending a speech-content
+  quality eval (TODOS.md T-CAPFX-2).
+- Text and mix are dual-gated (capability `false` + 422 on commit). Text goes
+  through the shared `_text_elements_allowed` predicate, which folds in #625's
+  `SUBTITLED_TEXT_LANE_ENABLED`. `CAPTION_TAB_COPY` is byte-stable —
+  EditorShell string-compares it (`CAPTIONS_TAB_REASON`) to deep-link the
+  Captions tab from disabled tools.
+
+**Deploy skew (one-deploy window, accepted R3-B):** during the rolling
+restart, a caption save from an upgraded API can hit an old worker →
+TypeError on the new kwarg → the failure is ACKED
+(`task_acks_on_failure_or_timeout` defaults True), NO redelivery self-heal.
+The variant sits "rendering" until the 60-min reaper (`tasks/reaper.py`)
+converts it to a failed badge; the user recovers by re-tapping Apply. See
+agents/DECISIONS.md (2026-07-11) for the reusable rule.
+
 ## Local smoke test
 
 ```bash
