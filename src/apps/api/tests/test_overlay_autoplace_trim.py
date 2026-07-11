@@ -185,6 +185,30 @@ def test_current_real_analysis_is_fresh() -> None:
     )
 
 
+def test_v3_video_analysis_is_not_stale_for_image_only_alpha_bump() -> None:
+    assert (
+        analysis_is_stale({"source": "clip_metadata", "analysis_version": 3}, kind="video") is False
+    )
+
+
+def test_v3_image_analysis_is_stale_for_alpha_bump() -> None:
+    assert (
+        analysis_is_stale({"source": "image_metadata", "analysis_version": 3}, kind="image") is True
+    )
+
+
+def test_v2_analysis_is_stale_for_any_kind() -> None:
+    assert analysis_is_stale({"source": "clip_metadata", "analysis_version": 2}, kind="video")
+    assert analysis_is_stale({"source": "image_metadata", "analysis_version": 2}, kind="image")
+
+
+def test_v4_image_analysis_is_fresh() -> None:
+    assert (
+        analysis_is_stale({"source": "image_metadata", "analysis_version": 4}, kind="image")
+        is False
+    )
+
+
 # ── MediaOverlay cross-field trim sanitizer (decision B) ──────────────────────
 
 
