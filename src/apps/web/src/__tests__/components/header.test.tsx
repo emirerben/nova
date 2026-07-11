@@ -2,7 +2,7 @@
  * Header isLight predicate tests (D21 — light unification).
  *
  * Verifies that the light editorial design system is applied to all user-facing
- * routes (/plan, /library, /generative) and NOT to dark render routes (/template).
+ * routes (/plan, /library, /generative) and NOT to dark render job routes.
  */
 
 // @ts-nocheck
@@ -63,13 +63,6 @@ describe("Header — isLight predicate", () => {
     const { container } = renderWithPathname("/generative");
     const header = container.querySelector("header");
     expect(header!.className).toContain("bg-[#fafaf8]");
-  });
-
-  it("test_header_dark_on_template: /template/[id] is NOT light (no cream bg class)", () => {
-    const { container } = renderWithPathname("/template/abc123");
-    const header = container.querySelector("header");
-    // Dark header has no static background class — it's applied via inline style.
-    expect(header!.className).not.toContain("bg-[#fafaf8]");
   });
 
   it("test_header_dark_on_template_jobs: /template-jobs/x is NOT light", () => {

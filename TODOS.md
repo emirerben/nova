@@ -27,7 +27,7 @@ Re-renders still inherit from `all_candidates` (editable-post-render deferred by
 These were deliberately deferred from the initial slice to keep scope tight.
 
 ### T-MOTION-1 — Extract `useNextFrameCallback` hook
-**What:** The `requestAnimationFrame(() => setState(...)) / return () => cancelAnimationFrame(raf)` pattern is copy-pasted in `TemplatePreviewModal.tsx`, `OnboardingShell.tsx` (StepSlide), and `VariantRenderCard.tsx`. Extract into `src/apps/web/src/lib/hooks.ts` as `useNextFrameCallback(fn, deps)`.
+**What:** The `requestAnimationFrame(() => setState(...)) / return () => cancelAnimationFrame(raf)` pattern is copy-pasted in `OnboardingShell.tsx` (StepSlide) and `VariantRenderCard.tsx` (a third copy in `TemplatePreviewModal.tsx` was deleted with the dead `/template` route, v0.7.8.2). Extract into `src/apps/web/src/lib/hooks.ts` as `useNextFrameCallback(fn, deps)`.
 **Effort:** XS (CC: ~10 min)
 
 ### T-MOTION-2 — Wire `t-stagger` exit via IntersectionObserver

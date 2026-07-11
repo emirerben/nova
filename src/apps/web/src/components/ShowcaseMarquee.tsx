@@ -18,7 +18,7 @@
  * Mobile (<768 px): only the single most-visible card plays at a time
  * (battery / bandwidth on the horizontal scroll lane).
  *
- * Guardrails (mirroring TemplateTile.tsx):
+ * Guardrails:
  *   - typeof IntersectionObserver === "undefined" → skip IO entirely (SSR /
  *     jsdom). Cards stay in their gradient/poster state.
  *   - window.matchMedia("prefers-reduced-motion: reduce") → never autoplay.
