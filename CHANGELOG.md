@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.10.1] — 2026-07-11
+
+### Fixed
+- **Full-tree pytest no longer inherits the developer's real `.env`.** `scripts/diff_lyric_sync.py` merged the nearest `.env` into `os.environ` at import time; full-tree collection imports it via its test module, so any pydantic-invalid value on a Settings-typed key (e.g. `GENERATIVE_FAST_REBURN_ENABLED=true   # comment`) failed exactly the 7 tests that build a fresh `Settings()` — in full runs only, never in isolation. The load now happens inside `main()` (CLI behavior unchanged), pinned by `test_import_does_not_mutate_environ`.
+- **`diff_lyric_sync` .env parser now follows dotenv comment semantics.** Inline comments after unquoted values are stripped (`FLAG=true  # note` → `true`), quoted values drop trailing comments and their quotes (`KEY="abc"  # note` → `abc`), `KEY= # note` reads as empty, and `abc#def` keeps its `#` — so a hand-annotated `.env` can no longer poison typed Settings fields or crash the CLI at startup. Pinned by canary lines in `test_main_loads_env_and_strips_inline_comments`.
 ## [0.7.9.0] — 2026-07-11
 
 ### Added
