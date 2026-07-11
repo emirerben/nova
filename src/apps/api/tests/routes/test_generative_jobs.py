@@ -763,6 +763,41 @@ def test_variants_for_response_base_does_not_mutate_stored_dicts(monkeypatch):
     assert "base_video_url" not in stored
 
 
+def test_variants_for_response_scene_timings_fall_back_to_words():
+    """Sequence scenes commonly persist words without a flat text field.
+    scene_timings must still expose readable text for legacy editor fallbacks."""
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "text_mode": "agent_text",
+                    "intro_mode": "sequence",
+                    "intro_layout": "cluster",
+                    "render_status": "ready",
+                    "scenes": [
+                        {
+                            "words": ["This", "is", "visible"],
+                            "start_s": 0.3,
+                            "end_s": 1.8,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    [variant] = gj._variants_for_response(job)
+
+    assert variant["scene_timings"] == [{"text": "This is visible", "start_s": 0.3, "end_s": 1.8}]
+
+
 # ── Instant edit: combined /edit dispatch ────────────────────────────────────────
 # One commit → ONE regenerate_generative_variant enqueue carrying all overrides.
 

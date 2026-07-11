@@ -867,7 +867,13 @@ def _variants_for_response(job: Job) -> list[dict]:
         v.pop("transcript", None)
         raw_scenes = v.pop("scenes", None) or []
         v["scene_timings"] = [
-            {"text": s.get("text", ""), "start_s": s.get("start_s"), "end_s": s.get("end_s")}
+            {
+                "text": s.get("text")
+                or " ".join(str(word) for word in (s.get("words") or []) if word)
+                or "",
+                "start_s": s.get("start_s"),
+                "end_s": s.get("end_s"),
+            }
             for s in raw_scenes
             if s.get("start_s") is not None and s.get("end_s") is not None
         ]
@@ -2138,6 +2144,8 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
         return "voiceover_bed_fit"  # slots are fit to the voice bed, not user cuts
     if variant.get("resolved_archetype") == "talking_head":
         return "no_slot_timeline"  # talking_head renders have no slot layout
+    if variant.get("montage_preset_rendered") == "masonry":
+        return "masonry_preset"  # collage tiles do not map to a linear slot timeline
     if vid not in _TIMELINE_EDITABLE_VARIANTS:
         return "unsupported_variant"
     ai_slots, _, _ = _timeline_parts(variant)

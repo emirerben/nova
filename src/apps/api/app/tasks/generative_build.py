@@ -41,6 +41,10 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS, coerce_edit_f
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
+from app.schemas.montage_preset import (
+    MASONRY_MONTAGE_PRESET,
+    coerce_montage_preset,
+)
 from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
 
@@ -252,6 +256,9 @@ def _run_generative_job(job_id: str) -> None:
         # keys survive every variant upsert/finalize merge (_set_status merges,
         # _finalize_job only replaces "variants").
         silence_cut_disabled: bool = (job.assembly_plan or {}).get("silence_cut_disabled") is True
+        # Montage visual preset. Absent means classic so public/legacy jobs keep
+        # byte-identical render behavior.
+        montage_preset = coerce_montage_preset((all_candidates or {}).get("montage_preset"))
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -576,6 +583,7 @@ def _run_generative_job(job_id: str) -> None:
                         author_quote_fn=_author_quote,
                         language=language,
                         landscape_fit=landscape_fit,
+                        montage_preset=montage_preset,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -2670,6 +2678,11 @@ def _run_regenerate_variant(
         # Re-renders inherit the landscape-fit preference too — otherwise the
         # toggle would silently revert to crop on the first song-swap / retext.
         landscape_fit_regen: str = (job.all_candidates or {}).get("landscape_fit") or "fill"
+        # Re-renders inherit the montage visual preset too — otherwise a
+        # song-swap/retext would silently snap a masonry item back to classic.
+        montage_preset_regen = coerce_montage_preset(
+            (job.all_candidates or {}).get("montage_preset")
+        )
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -3133,6 +3146,7 @@ def _run_regenerate_variant(
             cluster_body_size_px_override=resolved_cluster_body_size_override,
             cluster_accent_size_px_override=resolved_cluster_accent_size_override,
             landscape_fit=landscape_fit_regen,
+            montage_preset=montage_preset_regen,
         )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -4453,6 +4467,7 @@ def _render_generative_variant(
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
     landscape_fit: str = "fill",
+    montage_preset: str = "classic",
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -4514,6 +4529,7 @@ def _render_generative_variant(
     track: MusicTrack | None = spec["track"]
     track_id = track.id if track else None
     track_title = track.title if track else None
+    resolved_montage_preset = coerce_montage_preset(montage_preset)
     # Voiceover variants: the user's audio is the narration bed, footage tiles as
     # visuals. `mix` is the voice-prominence slider (persisted so the UI slider and
     # re-renders can read it back). Absent on song/original/talking_head specs.
@@ -4588,6 +4604,16 @@ def _render_generative_variant(
         "intro_cluster_body_size_px": cluster_body_size_px_override,
         "intro_cluster_accent_size_px": cluster_accent_size_px_override,
     }
+    if resolved_montage_preset == MASONRY_MONTAGE_PRESET:
+        # User-selected preset + actual renderer outcome. Only present when the
+        # user opted in so classic jobs keep their historical variant shape.
+        base.update(
+            {
+                "montage_preset": MASONRY_MONTAGE_PRESET,
+                "montage_preset_rendered": None,
+                "montage_preset_fallback": None,
+            }
+        )
     try:
         beats: list[float] = []
         voiceover_local: str | None = None
@@ -4604,6 +4630,15 @@ def _render_generative_variant(
                 job_id=job_id,
                 variant_id=variant_id,
             )
+
+        masonry_requested = (
+            resolved_montage_preset == MASONRY_MONTAGE_PRESET and not voiceover_gcs_path
+        )
+        effective_available_footage_s = available_footage_s
+        if masonry_requested:
+            from app.pipeline.masonry_montage import clamp_masonry_duration  # noqa: PLC0415
+
+            effective_available_footage_s = clamp_masonry_duration(available_footage_s)
 
         if voiceover_gcs_path:
             # Voiceover edit: download the voice, then size the footage montage to
@@ -4633,7 +4668,7 @@ def _render_generative_variant(
             # beat-snapped slots, so capping the window here is what keeps a
             # music variant from ever running longer than the content exists for.
             track_config = _fit_section_to_footage(
-                track_config_with_rank_one(track), available_footage_s
+                track_config_with_rank_one(track), effective_available_footage_s
             )
             track_data = {
                 "beat_timestamps_s": track.beat_timestamps_s or [],
@@ -4649,7 +4684,10 @@ def _render_generative_variant(
             )
         else:
             recipe_dict = _build_no_music_recipe(
-                clip_metas, available_footage_s, filming_guide=filming_guide, min_slots=min_slots
+                clip_metas,
+                effective_available_footage_s,
+                filming_guide=filming_guide,
+                min_slots=min_slots,
             )
 
         # Text injection per mode. The chosen style set styles BOTH the lyric
@@ -4761,6 +4799,44 @@ def _render_generative_variant(
             landscape_fit=landscape_fit,
         )
 
+        masonry_applied = False
+        if masonry_requested:
+            from app.pipeline.masonry_montage import assemble_masonry_montage  # noqa: PLC0415
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            masonry_path = os.path.join(variant_dir, "masonry.mp4")
+            try:
+                assemble_masonry_montage(
+                    steps=steps,
+                    clip_id_to_local=clip_id_to_local,
+                    output_path=masonry_path,
+                    tmpdir=variant_dir,
+                    duration_s=effective_available_footage_s,
+                    audio_source_path=assembled_path,
+                    job_id=job_id,
+                )
+                assembled_path = masonry_path
+                masonry_applied = True
+                base["montage_preset_rendered"] = MASONRY_MONTAGE_PRESET
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_preset_applied",
+                    {"variant_id": variant_id, "duration_s": effective_available_footage_s},
+                )
+            except Exception as exc:  # noqa: BLE001
+                base["montage_preset_fallback"] = "classic_render_failed"
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_preset_fallback",
+                    {"variant_id": variant_id, "error": str(exc)[:300]},
+                )
+                log.warning(
+                    "masonry_preset_fallback_classic",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc),
+                )
+
         # ai_timeline persistence (clip timeline editor): rewritten on every
         # FRESH montage assembly (first render, swap-song, mix re-render), so
         # the stored AI cut tracks what the matcher actually produced.
@@ -4774,7 +4850,11 @@ def _render_generative_variant(
         # {**v, **patch} merge carries the variant's persisted ai_timeline
         # forward untouched (writing None instead would null the stored
         # timeline and flip the variant uneditable).
-        if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and not voiceover_gcs_path:
+        if (
+            settings.GENERATIVE_TIMELINE_EDITOR_ENABLED
+            and not voiceover_gcs_path
+            and not masonry_applied
+        ):
             if assembly_steps_override is not None:
                 base.pop("ai_timeline", None)
             else:
@@ -4786,6 +4866,8 @@ def _render_generative_variant(
                     probe_map=probe_map,
                     beat_grid=beats,
                 )
+        elif masonry_applied:
+            base.pop("ai_timeline", None)
 
         # audio_mixed_path: the assembled+audio-mixed video before text burn.
         # For agent_text variants this becomes the cached base.
@@ -7289,6 +7371,18 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # that isn't re-listed here; pinned by
                     # test_finalize_job_preserves_ai_timeline.
                     "ai_timeline": r.get("ai_timeline"),
+                    # Montage visual preset/capability gating. MUST survive
+                    # finalization or masonry variants look like classic variants
+                    # to the editor and expose a misleading clip timeline.
+                    **(
+                        {
+                            "montage_preset": r.get("montage_preset"),
+                            "montage_preset_rendered": r.get("montage_preset_rendered"),
+                            "montage_preset_fallback": r.get("montage_preset_fallback"),
+                        }
+                        if r.get("montage_preset")
+                        else {}
+                    ),
                     # voiceover variants: mix must survive or the voice/bed slider
                     # resets after the first completed render (same strip class).
                     "mix": r.get("mix"),

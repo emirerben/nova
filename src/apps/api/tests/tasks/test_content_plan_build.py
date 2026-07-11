@@ -1229,3 +1229,36 @@ def test_landscape_fit_fill_forwarded() -> None:
 
     kwargs = mock_build.call_args.kwargs
     assert kwargs["landscape_fit"] == "fill"
+
+
+def test_masonry_preset_forwarded_to_build_generative_job() -> None:
+    """generate_plan_item_videos must pass item.montage_preset to build_generative_job."""
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = ["users/u/plan/i/a.mp4"]
+    item.theme = "training prep"
+    item.idea = "make a collage wall"
+    item.landscape_fit = "fit"
+    item.montage_preset = "masonry"
+
+    plan = MagicMock()
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+
+    persona_row = MagicMock()
+    persona_row.persona = {"tone": "focused", "content_pillars": []}
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+
+    ctx = _session_with(item, plan, persona_row)
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        generate_plan_item_videos.run(str(item.id))
+
+    kwargs = mock_build.call_args.kwargs
+    assert kwargs["montage_preset"] == "masonry"

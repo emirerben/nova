@@ -73,6 +73,7 @@ from app.routes.generative_jobs import (
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
 )
+from app.schemas.montage_preset import coerce_montage_preset
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -206,6 +207,9 @@ class PlanItemResponse(BaseModel):
     # Render archetype assigned at plan-generation time (e.g. "montage",
     # "talking_head"). Null for items generated before this field shipped.
     edit_format: str | None = None
+    # Montage visual preset. "classic" preserves today's sequential montage;
+    # "masonry" opts into the collage-wall assembler.
+    montage_preset: Literal["classic", "masonry"] = "classic"
     # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
@@ -286,6 +290,7 @@ def plan_item_response(
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
         edit_format=item.edit_format,
+        montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
         voiceover_gcs_path=item.voiceover_gcs_path,
         landscape_fit=(
             # Membership check (not just isinstance) guards against arbitrary strings
@@ -402,6 +407,8 @@ class PlanItemEdit(BaseModel):
     # Landscape-clip render preference: "fit" (letterbox) | "fill" (crop-to-fill).
     # Ignored for portrait/square clips — they always crop regardless.
     landscape_fit: Literal["fit", "fill"] | None = None
+    # Montage visual preset. Only affects montage renders; default classic.
+    montage_preset: Literal["classic", "masonry"] | None = None
     # Per-item content_mode override (montage plan-vs-have toggle, 0058+).
     # When set, supersedes the persona-level content_mode for this item only.
     # "create_new" = "Planning to film"; "existing_footage" = "I already have footage".
@@ -449,6 +456,8 @@ async def edit_plan_item(
         _flag(item, "filming_guide")
     if "landscape_fit" in updates and updates["landscape_fit"] is not None:
         item.landscape_fit = updates["landscape_fit"]  # Pydantic Literal already validates
+    if "montage_preset" in updates and updates["montage_preset"] is not None:
+        item.montage_preset = updates["montage_preset"]  # Pydantic Literal already validates
     if "content_mode" in updates and updates["content_mode"] is not None:
         item.content_mode = updates["content_mode"]  # Pydantic Literal already validates
     if updates:

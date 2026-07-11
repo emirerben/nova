@@ -51,6 +51,8 @@ research/tiktok/raw/
 # gbrain per-worktree pin (machine-local, not shared)
 .gbrain-source
 .cluster-e2e/
+playwright-report/
+test-results/
 
 # Test virtualenv (separate dir from .venv/, shared across worktrees)
 .venv-test/
