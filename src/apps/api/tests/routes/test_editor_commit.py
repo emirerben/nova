@@ -1332,6 +1332,23 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["overlays"] is True
 
 
+def test_capabilities_masonry_preset_disables_clip_timeline(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="song_text",
+        montage_preset="masonry",
+        montage_preset_rendered="masonry",
+        mix=None,
+    )
+    caps = _caps(job, "song_text")
+    assert caps["timeline"] is False
+    assert caps["split_clips"] is False
+    assert caps["reason"] == "masonry_preset"
+    assert caps["text_elements"] is True
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
+
+
 def test_capabilities_narrated_caption_archetype_lanes_on_text_elements_on(monkeypatch):
     _arm(monkeypatch)
     _arm_autoplace(monkeypatch)

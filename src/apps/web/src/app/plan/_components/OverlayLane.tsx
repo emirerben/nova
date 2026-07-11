@@ -33,7 +33,7 @@
  *    end_s (snap, not freeze, for manual fullscreen).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { MediaOverlay } from "@/lib/plan-api";
 import { Playhead } from "@/lib/timeline/Playhead";
 import type {
@@ -65,6 +65,12 @@ const THUMB_COUNT = 10;
 /** Below this rendered chip width (px) a fullscreen chip drops its glyph and
  *  edge handles — the solid ink fill is the identifier (009 T3). */
 const TINY_CHIP_PX = 24;
+const COARSE_TINY_CHIP_PX = 48;
+const TOUCH_TAP_SLOP_PX = 8;
+const MOUSE_TAP_SLOP_PX = 3;
+const HANDLE_HIT_PX = 44;
+const FINE_HANDLE_HIT_PX = 12;
+const MIN_COARSE_CHIP_BODY_PX = 16;
 
 /** Solid ink fill for fullscreen chips (DESIGN.md §2 --ink). */
 const INK = "#0c0c0e";
@@ -189,7 +195,11 @@ export interface OverlayLaneProps {
   overlayUploading: boolean;
   localPreviewUrls: Record<string, string>;
   onOverlayUploadRequest: (files: UploadFile[]) => void;
-  onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
+  onUpdateCard: (
+    id: string,
+    patch: Partial<MediaOverlay>,
+    options?: { record?: boolean },
+  ) => void;
   onRemoveCard: (id: string) => void;
   onClearOverlays: () => void;
   /** Pending AI suggestions rendered as editable provenance cards (006 T3). */
@@ -241,6 +251,39 @@ interface LaneCardEntry {
   /** Envelope id when this entry is an AI suggestion; null for manual cards. */
   suggestionId: string | null;
   staged: boolean;
+}
+
+type ActiveOverlayDrag = OverlayDragState & {
+  pointerId: number;
+  pointerType: string;
+  startY: number;
+  latestX: number;
+  latestY: number;
+  intent: "pending" | "dragging";
+  livePatch: Partial<MediaOverlay>;
+};
+
+function tapSlopFor(pointerType: string): number {
+  return pointerType === "touch" ? TOUCH_TAP_SLOP_PX : MOUSE_TAP_SLOP_PX;
+}
+
+function handleHitStyle(
+  side: "left" | "right",
+  chipPx: number,
+  coarsePointer: boolean,
+): CSSProperties {
+  if (!coarsePointer) {
+    return side === "left"
+      ? { width: FINE_HANDLE_HIT_PX, left: 0 }
+      : { width: FINE_HANDLE_HIT_PX, right: 0 };
+  }
+  const measured = Number.isFinite(chipPx) ? chipPx : HANDLE_HIT_PX;
+  const width = measured < HANDLE_HIT_PX
+    ? HANDLE_HIT_PX / 2 + measured / 2
+    : HANDLE_HIT_PX;
+  return side === "left"
+    ? { width, left: -HANDLE_HIT_PX / 2 }
+    : { width, right: -HANDLE_HIT_PX / 2 };
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -305,134 +348,197 @@ export default function OverlayLane({
 
   // ── Overlay drag ─────────────────────────────────────────────────────────────
 
-  const [overlayDrag, setOverlayDrag] = useState<OverlayDragState | null>(null);
+  const [overlayDrag, setOverlayDrag] = useState<ActiveOverlayDrag | null>(null);
   const overlayLaneRef = useRef<HTMLDivElement | null>(null);
   // Fullscreen hard-stop bounds, frozen at gesture start (blockers don't move
   // during a drag). A ref so mid-drag effect re-subscriptions can't lose it.
   const gapBoundsRef = useRef<{ lower: number; upper: number }>({ lower: 0, upper: Infinity });
-  // True once the pointer actually moved — a still click on a chip body
-  // toggles its popover instead (tiny fullscreen chips have no label to click).
-  const dragMovedRef = useRef(false);
+  const activePointerIdRef = useRef<number | null>(null);
+  // History-owning parents snapshot state BEFORE applying a record:true patch
+  // (EditorShell.history.record, timeline reducers), so the FIRST patch of a
+  // gesture must carry record:true (capturing the pre-drag state) and every
+  // later patch — including the pointerup/pointercancel commit — record:false.
+  // A ref, not drag.intent: burst moves in one task see a stale closure intent.
+  const dragRecordedRef = useRef(false);
+
+  const patchForOverlayDrag = useCallback((drag: ActiveOverlayDrag, clientX: number): Partial<MediaOverlay> => {
+    const MIN_DUR = 0.1;
+    const dx = clientX - drag.startX;
+    const ds = drag.containerWidth > 0
+      ? (dx / drag.containerWidth) * drag.scaleDuration
+      : 0;
+    const clipDur = drag.clipDurationS;
+    const bounds = gapBoundsRef.current;
+
+    switch (drag.handle) {
+      case "move": {
+        const dur = drag.origEnd - drag.origStart;
+        const lo = Math.max(0, bounds.lower);
+        const hi = Math.max(lo, Math.min(totalDurationS - dur, bounds.upper - dur));
+        const ns = Math.max(lo, Math.min(hi, drag.origStart + ds));
+        return {
+          start_s: Math.round(ns * 10) / 10,
+          end_s: Math.round((ns + dur) * 10) / 10,
+        };
+      }
+      case "left": {
+        const minStart = Math.max(
+          bounds.lower,
+          Math.max(0, clipDur != null ? drag.origEnd - drag.origTrimEnd : 0),
+        );
+        const ns = Math.max(minStart, Math.min(drag.origEnd - MIN_DUR, drag.origStart + ds));
+        if (clipDur != null) {
+          const newTrimStart = Math.max(0, drag.origTrimEnd - (drag.origEnd - ns));
+          return { start_s: Math.round(ns * 10) / 10, clip_trim_start_s: Math.round(newTrimStart * 10) / 10 };
+        }
+        return { start_s: Math.round(ns * 10) / 10 };
+      }
+      case "right": {
+        const maxEnd = Math.min(
+          bounds.upper,
+          clipDur != null
+            ? Math.min(totalDurationS, drag.origStart + (clipDur - drag.origTrimStart))
+            : totalDurationS,
+        );
+        const ne = Math.min(maxEnd, Math.max(drag.origStart + MIN_DUR, drag.origEnd + ds));
+        if (clipDur != null) {
+          const newTrimEnd = Math.min(clipDur, drag.origTrimStart + (ne - drag.origStart));
+          return { end_s: Math.round(ne * 10) / 10, clip_trim_end_s: Math.round(newTrimEnd * 10) / 10 };
+        }
+        return { end_s: Math.round(ne * 10) / 10 };
+      }
+      case "trim-left": {
+        const ns = Math.max(0, Math.min(drag.origTrimEnd - MIN_DUR, drag.origTrimStart + ds));
+        const newDur = drag.origTrimEnd - ns;
+        const newEnd = Math.min(totalDurationS, bounds.upper, drag.origStart + newDur);
+        const actualDur = newEnd - drag.origStart;
+        const actualTrimStart = Math.max(0, drag.origTrimEnd - actualDur);
+        return { clip_trim_start_s: Math.round(actualTrimStart * 10) / 10, end_s: Math.round(newEnd * 10) / 10 };
+      }
+      case "trim-right": {
+        const ne = Math.min(
+          drag.scaleDuration,
+          Math.max(drag.origTrimStart + MIN_DUR, drag.origTrimEnd + ds),
+        );
+        const newDur = ne - drag.origTrimStart;
+        const newEnd = Math.min(totalDurationS, bounds.upper, drag.origStart + newDur);
+        const actualDur = newEnd - drag.origStart;
+        const actualTrimEnd = drag.origTrimStart + actualDur;
+        return { clip_trim_end_s: Math.round(actualTrimEnd * 10) / 10, end_s: Math.round(newEnd * 10) / 10 };
+      }
+    }
+  }, [totalDurationS]);
+
+  const applyOverlayDragPatch = useCallback((
+    drag: ActiveOverlayDrag,
+    patch: Partial<MediaOverlay>,
+    options: { record?: boolean } = {},
+  ) => {
+    // Suggestion drags patch the staged envelope (no manual-state mutation,
+    // no network); manual drags keep the original onUpdateCard path.
+    if (drag.suggestionId != null) {
+      onSuggestionEdit?.(drag.suggestionId, patch);
+    } else {
+      onUpdateCard(drag.cardId, patch, options);
+    }
+  }, [onSuggestionEdit, onUpdateCard]);
 
   useEffect(() => {
     if (!overlayDrag) return;
-    const MIN_DUR = 0.1;
+    const drag = overlayDrag;
 
-    function onMove(e: MouseEvent) {
-      if (!overlayDrag) return;
-      const dx = e.clientX - overlayDrag.startX;
-      if (Math.abs(dx) > 2) dragMovedRef.current = true;
-      const ds = overlayDrag.containerWidth > 0
-        ? (dx / overlayDrag.containerWidth) * overlayDrag.scaleDuration
-        : 0;
-      const clipDur = overlayDrag.clipDurationS;
-      const bounds = gapBoundsRef.current;
-      let patch: Partial<MediaOverlay> = {};
+    function onMove(e: PointerEvent) {
+      if (activePointerIdRef.current !== e.pointerId) return;
+      if (e.pointerId !== drag.pointerId) return;
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      const distance = Math.hypot(dx, dy);
+      const slop = tapSlopFor(drag.pointerType);
+      const nextBase = { latestX: e.clientX, latestY: e.clientY };
 
-      switch (overlayDrag.handle) {
-        case "move": {
-          const dur = overlayDrag.origEnd - overlayDrag.origStart;
-          const lo = Math.max(0, bounds.lower);
-          const hi = Math.max(lo, Math.min(totalDurationS - dur, bounds.upper - dur));
-          const ns = Math.max(lo, Math.min(hi, overlayDrag.origStart + ds));
-          patch = {
-            start_s: Math.round(ns * 10) / 10,
-            end_s: Math.round((ns + dur) * 10) / 10,
-          };
-          break;
+      if (drag.intent === "pending") {
+        if (distance < slop) {
+          setOverlayDrag((cur) => cur?.pointerId === e.pointerId ? { ...cur, ...nextBase } : cur);
+          return;
         }
-        case "left": {
-          const minStart = Math.max(
-            bounds.lower,
-            Math.max(0, clipDur != null ? overlayDrag.origEnd - overlayDrag.origTrimEnd : 0),
-          );
-          const ns = Math.max(minStart, Math.min(overlayDrag.origEnd - MIN_DUR, overlayDrag.origStart + ds));
-          if (clipDur != null) {
-            const newTrimStart = Math.max(0, overlayDrag.origTrimEnd - (overlayDrag.origEnd - ns));
-            patch = { start_s: Math.round(ns * 10) / 10, clip_trim_start_s: Math.round(newTrimStart * 10) / 10 };
-          } else {
-            patch = { start_s: Math.round(ns * 10) / 10 };
-          }
-          break;
-        }
-        case "right": {
-          const maxEnd = Math.min(
-            bounds.upper,
-            clipDur != null
-              ? Math.min(totalDurationS, overlayDrag.origStart + (clipDur - overlayDrag.origTrimStart))
-              : totalDurationS,
-          );
-          const ne = Math.min(maxEnd, Math.max(overlayDrag.origStart + MIN_DUR, overlayDrag.origEnd + ds));
-          if (clipDur != null) {
-            const newTrimEnd = Math.min(clipDur, overlayDrag.origTrimStart + (ne - overlayDrag.origStart));
-            patch = { end_s: Math.round(ne * 10) / 10, clip_trim_end_s: Math.round(newTrimEnd * 10) / 10 };
-          } else {
-            patch = { end_s: Math.round(ne * 10) / 10 };
-          }
-          break;
-        }
-        case "trim-left": {
-          const ns = Math.max(0, Math.min(overlayDrag.origTrimEnd - MIN_DUR, overlayDrag.origTrimStart + ds));
-          const newDur = overlayDrag.origTrimEnd - ns;
-          const newEnd = Math.min(totalDurationS, bounds.upper, overlayDrag.origStart + newDur);
-          const actualDur = newEnd - overlayDrag.origStart;
-          const actualTrimStart = Math.max(0, overlayDrag.origTrimEnd - actualDur);
-          patch = { clip_trim_start_s: Math.round(actualTrimStart * 10) / 10, end_s: Math.round(newEnd * 10) / 10 };
-          break;
-        }
-        case "trim-right": {
-          const ne = Math.min(
-            overlayDrag.scaleDuration,
-            Math.max(overlayDrag.origTrimStart + MIN_DUR, overlayDrag.origTrimEnd + ds),
-          );
-          const newDur = ne - overlayDrag.origTrimStart;
-          const newEnd = Math.min(totalDurationS, bounds.upper, overlayDrag.origStart + newDur);
-          const actualDur = newEnd - overlayDrag.origStart;
-          const actualTrimEnd = overlayDrag.origTrimStart + actualDur;
-          patch = { clip_trim_end_s: Math.round(actualTrimEnd * 10) / 10, end_s: Math.round(newEnd * 10) / 10 };
-          break;
+        if (drag.handle === "move" && drag.pointerType === "touch" && Math.abs(dx) <= Math.abs(dy)) {
+          activePointerIdRef.current = null;
+          setOverlayDrag(null);
+          return;
         }
       }
-      // Suggestion drags patch the staged envelope (no manual-state mutation,
-      // no network); manual drags keep the original onUpdateCard path.
-      if (overlayDrag.suggestionId != null) {
-        onSuggestionEdit?.(overlayDrag.suggestionId, patch);
-      } else {
-        onUpdateCard(overlayDrag.cardId, patch);
-      }
+
+      const patch = patchForOverlayDrag(drag, e.clientX);
+      const record = !dragRecordedRef.current;
+      if (record) dragRecordedRef.current = true;
+      applyOverlayDragPatch(drag, patch, { record });
+      setOverlayDrag((cur) =>
+        cur?.pointerId === e.pointerId
+          ? { ...cur, ...nextBase, intent: "dragging", livePatch: patch }
+          : cur,
+      );
     }
 
-    function onUp() {
-      // A body press that never moved is a click — toggle the popover so
-      // glyph-less tiny fullscreen chips still have an open path.
-      if (overlayDrag && overlayDrag.handle === "move" && !dragMovedRef.current) {
-        const id = overlayDrag.cardId;
+    function finish(e: PointerEvent) {
+      if (activePointerIdRef.current !== e.pointerId) return;
+      if (e.pointerId !== drag.pointerId) return;
+      const dx = e.clientX - drag.startX;
+      const dy = e.clientY - drag.startY;
+      const distance = Math.hypot(dx, dy);
+      const slop = tapSlopFor(drag.pointerType);
+      const isTap = distance < slop;
+      const reachedHorizontalIntent =
+        distance >= slop &&
+        (drag.handle !== "move" || drag.pointerType !== "touch" || Math.abs(dx) > Math.abs(dy));
+
+      if (drag.intent === "dragging" || reachedHorizontalIntent) {
+        const patch = Object.keys(drag.livePatch).length > 0
+          ? drag.livePatch
+          : patchForOverlayDrag(drag, e.clientX);
+        const record = !dragRecordedRef.current;
+        if (record) dragRecordedRef.current = true;
+        applyOverlayDragPatch(drag, patch, { record });
+      } else if (e.type !== "pointercancel" && drag.handle === "move" && isTap) {
+        // A body press that stayed within pointer-type slop is a tap — toggle
+        // the popover so glyph-less tiny chips still have an open path.
+        const id = drag.cardId;
         setOpenCardId((prev) => (prev === id ? null : id));
       }
+      activePointerIdRef.current = null;
       setOverlayDrag(null);
     }
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
     return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
     };
-  }, [overlayDrag, onUpdateCard, onSuggestionEdit, totalDurationS]);
+  }, [applyOverlayDragPatch, overlayDrag, patchForOverlayDrag]);
 
   function startOverlayDrag(
-    e: React.MouseEvent,
+    e: React.PointerEvent<HTMLElement>,
     cardId: string,
     handle: OverlayDragState["handle"],
     card: MediaOverlay,
     containerEl: HTMLElement | null,
     suggestionId: string | null = null,
   ) {
-    e.preventDefault();
+    if (activePointerIdRef.current != null) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    if (e.pointerType !== "touch" || handle !== "move") e.preventDefault();
     e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
     const rect = (containerEl ?? overlayLaneRef.current)?.getBoundingClientRect();
     const isTrim = handle === "trim-left" || handle === "trim-right";
     const clipDur = card.kind === "video" ? (card.clip_duration_s ?? null) : null;
-    dragMovedRef.current = false;
+    activePointerIdRef.current = e.pointerId;
+    dragRecordedRef.current = false;
     // 009 T3: freeze the fullscreen hard-stop bounds for this gesture.
     gapBoundsRef.current = fullscreenGapBounds({
       movingId: card.id,
@@ -445,7 +551,14 @@ export default function OverlayLane({
     setOverlayDrag({
       cardId,
       handle,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
       startX: e.clientX,
+      startY: e.clientY,
+      latestX: e.clientX,
+      latestY: e.clientY,
+      intent: "pending",
+      livePatch: {},
       origStart: card.start_s,
       origEnd: card.end_s,
       origTrimStart: card.clip_trim_start_s ?? 0,
@@ -495,6 +608,7 @@ export default function OverlayLane({
   // ── Lane pixel width (tiny-chip degradation, 009 T3) ─────────────────────────
 
   const [laneWidthPx, setLaneWidthPx] = useState(0);
+  const [coarsePointer, setCoarsePointer] = useState(false);
   useEffect(() => {
     const el = overlayLaneRef.current;
     if (!el) return;
@@ -507,6 +621,15 @@ export default function OverlayLane({
     }
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const media = window.matchMedia("(pointer: coarse)");
+    const update = () => setCoarsePointer(media.matches);
+    update();
+    media.addEventListener?.("change", update);
+    return () => media.removeEventListener?.("change", update);
   }, []);
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -522,7 +645,7 @@ export default function OverlayLane({
         </div>
         <div
           ref={overlayLaneRef}
-          className="relative flex-1 bg-zinc-800/15 border-y border-zinc-700/30 h-full"
+          className="relative flex-1 touch-pan-y bg-zinc-800/15 border-y border-zinc-700/30 h-full"
         >
           {/* 009 T3: hatched zinc keep-out band over the intro-text window —
               fullscreen cards placed here trigger "Covers your intro text". */}
@@ -563,7 +686,22 @@ export default function OverlayLane({
             // Below ~24px a fullscreen chip drops its glyph (the ink fill is
             // the identifier) and its edge handles (timing edits via popover).
             const tinyFullscreen = isFullscreen && chipPx < TINY_CHIP_PX;
-            const isDragging = overlayDrag?.cardId === card.id && !overlayDrag.handle.startsWith("trim");
+            const coarseTinyChip =
+              coarsePointer &&
+              chipPx < Math.max(COARSE_TINY_CHIP_PX, HANDLE_HIT_PX + MIN_COARSE_CHIP_BODY_PX);
+            const suppressChipControls = tinyFullscreen || coarseTinyChip;
+            const activeHandle = overlayDrag?.cardId === card.id ? overlayDrag.handle : null;
+            const activePatch = overlayDrag?.cardId === card.id ? overlayDrag.livePatch : null;
+            const liveStart = activePatch?.start_s ?? card.start_s;
+            const liveEnd = activePatch?.end_s ?? card.end_s;
+            const liveDuration = Math.max(0, liveEnd - liveStart);
+            const liveThumbPct =
+              activeHandle === "right" || activeHandle === "trim-right"
+                ? 100
+                : activeHandle === "left" || activeHandle === "trim-left"
+                  ? 0
+                  : 50;
+            const isCardPointerActive = overlayDrag?.cardId === card.id;
             const isOpen = openCardId === card.id;
 
             return (
@@ -577,8 +715,8 @@ export default function OverlayLane({
                     // 009 T3: the provenance treatment layers over either display
                     // mode unchanged — lime stays exclusively provenance; the
                     // fullscreen identifier is the solid ink fill, never lime.
-                    className={`absolute top-0 h-full rounded flex items-center overflow-hidden transition-opacity ${
-                      isDragging ? "opacity-100" : "opacity-70 hover:opacity-90"
+                    className={`absolute top-0 h-full touch-pan-y rounded flex items-center overflow-visible transition-opacity ${
+                      isCardPointerActive ? "opacity-100" : "opacity-70 hover:opacity-90"
                     } focus-visible:outline focus-visible:outline-2${
                       isSuggestion
                         ? ` border-[1.5px] border-lime-600${isFullscreen ? "" : " bg-lime-600/30"} focus-visible:outline-lime-500 ${
@@ -604,7 +742,7 @@ export default function OverlayLane({
                     data-suggestion-card={suggestionId ?? undefined}
                     data-overlay-chip={card.id}
                     data-display-mode={isFullscreen ? "fullscreen" : "pip"}
-                    onMouseDown={(e) => startOverlayDrag(e, card.id, "move", card, overlayLaneRef.current, suggestionId)}
+                    onPointerDown={(e) => startOverlayDrag(e, card.id, "move", card, overlayLaneRef.current, suggestionId)}
                     onKeyDown={(e) => {
                       const t = e.target as HTMLElement;
                       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
@@ -634,22 +772,30 @@ export default function OverlayLane({
                       }
                     }}
                   >
-                    {!tinyFullscreen && (
+                    {!suppressChipControls && (
                       <div
-                        className="absolute left-0 top-0 h-full w-2.5 flex items-center justify-center hover:bg-black/30 z-10"
-                        style={{ cursor: "ew-resize" }}
+                        className={`absolute top-1/2 z-10 flex ${
+                          coarsePointer ? "h-11" : "h-full"
+                        } -translate-y-1/2 touch-none items-center justify-center hover:bg-black/30 ${
+                          activeHandle === "left" ? "z-20 scale-105 bg-black/40" : ""
+                        }`}
+                        style={{ ...handleHitStyle("left", chipPx, coarsePointer), cursor: "ew-resize" }}
+                        aria-label="Trim overlay start"
+                        role="button"
+                        tabIndex={-1}
                         data-chip-handle={`left-${card.id}`}
-                        onMouseDown={(e) => {
+                        onPointerDown={(e) => {
                           e.stopPropagation();
                           startOverlayDrag(e, card.id, "left", card, overlayLaneRef.current, suggestionId);
                         }}
                       >
-                        <div className="w-px h-3 bg-white/70 rounded-full" />
+                        <div className={`h-4 w-3 rounded-sm ${activeHandle === "left" ? "bg-white" : "bg-white/70"}`} />
                       </div>
                     )}
                     <span
-                      className="text-[10px] text-white font-medium px-3 truncate"
+                      className="min-w-0 truncate px-3 text-[10px] font-medium text-white"
                       onMouseDown={(e) => e.stopPropagation()}
+                      onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => { e.stopPropagation(); setOpenCardId(isOpen ? null : card.id); }}
                     >
                       {isSuggestion && (
@@ -663,23 +809,40 @@ export default function OverlayLane({
                           ✦{" "}
                         </span>
                       )}
-                      {isFullscreen
-                        ? tinyFullscreen
-                          ? null
-                          : "⛶ Full"
-                        : `${card.kind === "video" ? "▶" : "⊞"} ${card.id.slice(0, 6)}`}
+                      {suppressChipControls
+                        ? null
+                        : isFullscreen
+                          ? "⛶ Full"
+                          : `${card.kind === "video" ? "▶" : "⊞"} ${card.id.slice(0, 6)}`}
                     </span>
-                    {!tinyFullscreen && (
+                    {!suppressChipControls && (
                       <div
-                        className="absolute right-0 top-0 h-full w-2.5 flex items-center justify-center hover:bg-black/30 z-10"
-                        style={{ cursor: "ew-resize" }}
+                        className={`absolute top-1/2 z-10 flex ${
+                          coarsePointer ? "h-11" : "h-full"
+                        } -translate-y-1/2 touch-none items-center justify-center hover:bg-black/30 ${
+                          activeHandle === "right" ? "z-20 scale-105 bg-black/40" : ""
+                        }`}
                         data-chip-handle={`right-${card.id}`}
-                        onMouseDown={(e) => {
+                        aria-label="Trim overlay end"
+                        role="button"
+                        tabIndex={-1}
+                        onPointerDown={(e) => {
                           e.stopPropagation();
                           startOverlayDrag(e, card.id, "right", card, overlayLaneRef.current, suggestionId);
                         }}
+                        style={{ ...handleHitStyle("right", chipPx, coarsePointer), cursor: "ew-resize" }}
                       >
-                        <div className="w-px h-3 bg-white/70 rounded-full" />
+                        <div className={`h-4 w-3 rounded-sm ${activeHandle === "right" ? "bg-white" : "bg-white/70"}`} />
+                      </div>
+                    )}
+                    {overlayDrag?.cardId === card.id && overlayDrag.intent === "dragging" && (
+                      <div
+                        className="pointer-events-none absolute bottom-full mb-1 -translate-x-1/2 rounded-full bg-[#0c0c0e] px-2 py-1 font-mono text-[10px] text-white shadow-lg"
+                        style={{
+                          left: `${Math.max(0, Math.min(100, liveThumbPct))}%`,
+                        }}
+                      >
+                        {fmtTime(liveStart)}–{fmtTime(liveEnd)} · {liveDuration.toFixed(1)}s
                       </div>
                     )}
                   </div>
@@ -717,6 +880,8 @@ export default function OverlayLane({
                       overlayDrag?.cardId === card.id &&
                       (overlayDrag.handle === "trim-left" || overlayDrag.handle === "trim-right")
                     }
+                    activeHandle={activeHandle}
+                    coarsePointer={coarsePointer}
                     onTrimLeftDown={(e) => startOverlayDrag(e, card.id, "trim-left", card, null, suggestionId)}
                     onTrimRightDown={(e) => startOverlayDrag(e, card.id, "trim-right", card, null, suggestionId)}
                   />
@@ -749,13 +914,29 @@ export default function OverlayLane({
               className="hidden"
               onChange={(e) => { handleOverlayFiles(e.target.files); e.target.value = ""; }}
             />
-            {overlayUploading ? "Uploading…" : "Drop image/video overlay or click to browse"}
+            {overlayUploading ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="flex min-h-11 items-center justify-center gap-2 text-lime-700"
+              >
+                <span className="relative flex h-2.5 w-2.5" aria-hidden>
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-lime-600 opacity-70 motion-safe:animate-ping" />
+                  <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lime-600" />
+                </span>
+                <span className="font-display text-sm text-white/70">
+                  Uploading your clip…
+                </span>
+              </div>
+            ) : (
+              "Drop image/video overlay or click to browse"
+            )}
           </div>
           {overlayCards.length > 0 && (
             <button
               type="button"
               onClick={onClearOverlays}
-              className="mt-1 text-[10px] text-white/30 hover:text-white/60 transition-colors"
+              className="mt-1 min-h-11 px-2 text-[10px] text-white/30 transition-colors hover:text-white/60 sm:min-h-0 sm:px-0"
             >
               Clear all overlays
             </button>
@@ -775,8 +956,10 @@ interface TrimLaneProps {
   trimStart: number;
   trimEnd: number;
   isTrimDragging: boolean;
-  onTrimLeftDown: (e: React.MouseEvent) => void;
-  onTrimRightDown: (e: React.MouseEvent) => void;
+  activeHandle: ActiveOverlayDrag["handle"] | null;
+  coarsePointer: boolean;
+  onTrimLeftDown: (e: React.PointerEvent<HTMLElement>) => void;
+  onTrimRightDown: (e: React.PointerEvent<HTMLElement>) => void;
 }
 
 function TrimLane({
@@ -786,6 +969,8 @@ function TrimLane({
   trimStart,
   trimEnd,
   isTrimDragging,
+  activeHandle,
+  coarsePointer,
   onTrimLeftDown,
   onTrimRightDown,
 }: TrimLaneProps) {
@@ -814,24 +999,28 @@ function TrimLane({
         <div className="absolute top-0 left-0 h-full bg-black/60 pointer-events-none" style={{ width: `${lPct}%` }} />
         <div className="absolute top-0 right-0 h-full bg-black/60 pointer-events-none" style={{ width: `${100 - lPct - wPct}%` }} />
         <div
-          className={`absolute top-0 h-full border-2 rounded transition-colors ${isTrimDragging ? "border-white" : "border-white/60"}`}
+          className={`absolute top-0 h-full overflow-visible border-2 rounded transition-colors ${isTrimDragging ? "border-white" : "border-white/60"}`}
           style={{ left: `${lPct}%`, width: `${wPct}%` }}
         >
           <div
-            className="absolute left-0 top-0 h-full w-3 bg-white/20 flex items-center justify-center"
-            style={{ cursor: "ew-resize" }}
+            className={`absolute top-1/2 flex h-11 -translate-y-1/2 touch-none items-center justify-center ${
+              activeHandle === "trim-left" ? "z-20 scale-105 bg-white/30" : "z-10 bg-white/20"
+            }`}
+            style={{ ...handleHitStyle("left", Number.POSITIVE_INFINITY, coarsePointer), cursor: "ew-resize" }}
             data-trim-handle={`left-${card.id}`}
-            onMouseDown={onTrimLeftDown}
+            onPointerDown={onTrimLeftDown}
           >
-            <div className="w-0.5 h-5 bg-white rounded-full" />
+            <div className={`h-5 w-3 rounded-sm ${activeHandle === "trim-left" ? "bg-white" : "bg-white/80"}`} />
           </div>
           <div
-            className="absolute right-0 top-0 h-full w-3 bg-white/20 flex items-center justify-center"
-            style={{ cursor: "ew-resize" }}
+            className={`absolute top-1/2 flex h-11 -translate-y-1/2 touch-none items-center justify-center ${
+              activeHandle === "trim-right" ? "z-20 scale-105 bg-white/30" : "z-10 bg-white/20"
+            }`}
+            style={{ ...handleHitStyle("right", Number.POSITIVE_INFINITY, coarsePointer), cursor: "ew-resize" }}
             data-trim-handle={`right-${card.id}`}
-            onMouseDown={onTrimRightDown}
+            onPointerDown={onTrimRightDown}
           >
-            <div className="w-0.5 h-5 bg-white rounded-full" />
+            <div className={`h-5 w-3 rounded-sm ${activeHandle === "trim-right" ? "bg-white" : "bg-white/80"}`} />
           </div>
         </div>
       </div>

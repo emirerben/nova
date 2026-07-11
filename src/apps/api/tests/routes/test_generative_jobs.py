@@ -341,6 +341,128 @@ def test_variants_for_response_signing_failure_falls_back(monkeypatch):
     assert ready["output_url"] == "https://stale.example/expired?X-Goog-Expires=86400"
 
 
+# ── Lazy HEIC overlay-preview backfill persists under a row lock ────────────────
+# The status GET computes previews from an UNLOCKED assembly_plan snapshot.
+# Committing that snapshot's whole plan would clobber a concurrent worker write
+# (finalize / render / SFX pass). The backfill must instead re-fetch FOR UPDATE
+# and merge ONLY the preview stamps onto the fresh row.
+
+
+def _backfill_job(variants):
+    import types
+    import uuid
+
+    return types.SimpleNamespace(id=uuid.uuid4(), assembly_plan={"variants": variants})
+
+
+def test_collect_media_overlay_preview_stamps_maps_src_to_preview():
+    import app.routes.generative_jobs as gj
+
+    job = _backfill_job(
+        [
+            {
+                "variant_id": "song_text",
+                "media_overlays": [
+                    {"src_gcs_path": "a.heic", "preview_gcs_path": "a.jpg"},
+                    {"src_gcs_path": "b.mp4"},  # no preview yet → not collected
+                    "not-a-dict",
+                ],
+            },
+            {"variant_id": "original_text"},  # no overlays → skipped
+        ]
+    )
+    assert gj._collect_media_overlay_preview_stamps(job) == {"a.heic": "a.jpg"}
+
+
+async def test_persist_backfill_relocks_and_merges_stamp():
+    from unittest.mock import AsyncMock
+
+    import app.routes.generative_jobs as gj
+
+    fresh = _backfill_job(
+        [{"variant_id": "song_text", "media_overlays": [{"src_gcs_path": "a.heic"}]}]
+    )
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=fresh)
+    db.commit = AsyncMock()
+
+    await gj._persist_media_overlay_preview_backfill(db, fresh.id, {"a.heic": "a.jpg"})
+
+    db.get.assert_awaited_once_with(gj.Job, fresh.id, with_for_update=True)
+    card = fresh.assembly_plan["variants"][0]["media_overlays"][0]
+    assert card["preview_gcs_path"] == "a.jpg"
+    db.commit.assert_awaited_once()
+
+
+async def test_persist_backfill_does_not_clobber_concurrent_worker_write():
+    """The defining guard: the FRESH (locked) row reflects a worker write that landed
+    after the unlocked status read (a second variant finalized). Re-reading under the
+    lock — instead of committing the stale snapshot — preserves that write."""
+    from unittest.mock import AsyncMock
+
+    import app.routes.generative_jobs as gj
+
+    fresh = _backfill_job(
+        [
+            {
+                "variant_id": "song_text",
+                "render_status": "ready",  # worker set this after the unlocked read
+                "media_overlays": [{"src_gcs_path": "a.heic"}],
+            },
+            {"variant_id": "original_text", "render_status": "ready"},  # worker appended
+        ]
+    )
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=fresh)
+    db.commit = AsyncMock()
+
+    await gj._persist_media_overlay_preview_backfill(db, fresh.id, {"a.heic": "a.jpg"})
+
+    variants = fresh.assembly_plan["variants"]
+    assert [v["variant_id"] for v in variants] == ["song_text", "original_text"]
+    assert variants[0]["render_status"] == "ready"
+    assert variants[1]["render_status"] == "ready"  # concurrent append survives
+    assert variants[0]["media_overlays"][0]["preview_gcs_path"] == "a.jpg"
+
+
+async def test_persist_backfill_noop_when_no_stamps():
+    import uuid
+    from unittest.mock import AsyncMock
+
+    import app.routes.generative_jobs as gj
+
+    db = AsyncMock()
+    await gj._persist_media_overlay_preview_backfill(db, uuid.uuid4(), {})
+    db.get.assert_not_awaited()
+    db.commit.assert_not_awaited()
+
+
+async def test_persist_backfill_skips_card_already_stamped():
+    """If a concurrent backfill already stamped the fresh row's card, don't overwrite
+    it and don't emit a redundant commit."""
+    from unittest.mock import AsyncMock
+
+    import app.routes.generative_jobs as gj
+
+    fresh = _backfill_job(
+        [
+            {
+                "variant_id": "song_text",
+                "media_overlays": [{"src_gcs_path": "a.heic", "preview_gcs_path": "existing.jpg"}],
+            }
+        ]
+    )
+    db = AsyncMock()
+    db.get = AsyncMock(return_value=fresh)
+    db.commit = AsyncMock()
+
+    await gj._persist_media_overlay_preview_backfill(db, fresh.id, {"a.heic": "new.jpg"})
+
+    card = fresh.assembly_plan["variants"][0]["media_overlays"][0]
+    assert card["preview_gcs_path"] == "existing.jpg"
+    db.commit.assert_not_awaited()
+
+
 # ── Phase tracking fields (PR2) ─────────────────────────────────────────────────
 
 
@@ -639,6 +761,41 @@ def test_variants_for_response_base_does_not_mutate_stored_dicts(monkeypatch):
 
     stored = job.assembly_plan["variants"][0]
     assert "base_video_url" not in stored
+
+
+def test_variants_for_response_scene_timings_fall_back_to_words():
+    """Sequence scenes commonly persist words without a flat text field.
+    scene_timings must still expose readable text for legacy editor fallbacks."""
+    import types
+    import uuid
+
+    import app.routes.generative_jobs as gj
+
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        assembly_plan={
+            "variants": [
+                {
+                    "variant_id": "original_text",
+                    "text_mode": "agent_text",
+                    "intro_mode": "sequence",
+                    "intro_layout": "cluster",
+                    "render_status": "ready",
+                    "scenes": [
+                        {
+                            "words": ["This", "is", "visible"],
+                            "start_s": 0.3,
+                            "end_s": 1.8,
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+
+    [variant] = gj._variants_for_response(job)
+
+    assert variant["scene_timings"] == [{"text": "This is visible", "start_s": 0.3, "end_s": 1.8}]
 
 
 # ── Instant edit: combined /edit dispatch ────────────────────────────────────────

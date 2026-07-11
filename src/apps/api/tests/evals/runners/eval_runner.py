@@ -220,6 +220,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.music_matcher import MusicMatcherAgent
 
         return MusicMatcherAgent
+    if agent_name == "nova.audio.retake_detector":
+        from app.agents.retake_detector import RetakeDetectorAgent
+
+        return RetakeDetectorAgent
     if agent_name == "nova.video.clip_router":
         from app.agents.clip_router import ClipRouterAgent
 
@@ -264,6 +268,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.content_plan_generator import ContentPlanGeneratorAgent
 
         return ContentPlanGeneratorAgent
+    if agent_name == "nova.plan.idea_expander":
+        from app.agents.idea_expander import IdeaExpanderAgent
+
+        return IdeaExpanderAgent
     if agent_name == "nova.plan.clip_plan_matcher":
         from app.agents.clip_plan_matcher import ClipPlanMatcherAgent
 

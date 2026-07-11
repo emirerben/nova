@@ -56,6 +56,9 @@ export interface GenerativeVariant {
   // The archetype that actually rendered this variant (Lane D). null on montage
   // variants. Carried for verification + Lane E UI; current UI ignores it.
   resolved_archetype?: string | null;
+  montage_preset?: "masonry" | null;
+  montage_preset_rendered?: "masonry" | null;
+  montage_preset_fallback?: string | null;
   // PR2 instrumentation fields — optional so older API builds degrade gracefully.
   render_started_at?: string | null;
   render_finished_at?: string | null;
@@ -359,6 +362,7 @@ export type TimelineUneditableReason =
   | "voiceover_bed_fit"
   | "unsupported_variant"
   | "no_timeline"
+  | "masonry_preset"
   | "sources_expired";
 
 /** Machine codes the timeline POST can reject with (409/422). */
@@ -373,6 +377,7 @@ export type TimelineErrorCode =
   | "TIMELINE_UNKNOWN_CLIP"
   | "TIMELINE_BEATS_EXHAUSTED"
   | "TIMELINE_TOO_LONG"
+  | "masonry_preset"
   | "sources_expired";
 
 export interface TimelineSlot {

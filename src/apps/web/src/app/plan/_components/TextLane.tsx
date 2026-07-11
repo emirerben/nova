@@ -370,7 +370,7 @@ export default function TextLane({
               type="button"
               onClick={handleAdd}
               disabled={readOnly}
-              className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-400 hover:text-amber-500 transition-colors disabled:pointer-events-none disabled:cursor-default"
+              className="absolute inset-0 flex min-h-11 items-center justify-center text-[10px] text-zinc-400 transition-colors hover:text-amber-500 disabled:pointer-events-none disabled:cursor-default sm:min-h-0"
             >
               No text yet — ＋ Add text
             </button>
@@ -453,7 +453,7 @@ export default function TextLane({
               onClick={(e) => { e.stopPropagation(); handleAdd(); }}
               title="Add text block"
               aria-label="Add text block"
-              className={`absolute top-0.5 right-0.5 h-5 w-5 flex items-center justify-center rounded text-xs transition-colors leading-none z-20 ${bars[0]?.role === "narrated_caption" ? "text-teal-400/50 hover:text-teal-300 hover:bg-teal-500/10" : "text-amber-400/50 hover:text-amber-300 hover:bg-amber-500/10"}`}
+              className={`absolute right-0.5 top-0.5 z-20 flex h-11 w-8 items-center justify-center rounded text-xs leading-none transition-colors sm:h-5 sm:w-5 ${bars[0]?.role === "narrated_caption" ? "text-teal-400/50 hover:bg-teal-500/10 hover:text-teal-300" : "text-amber-400/50 hover:bg-amber-500/10 hover:text-amber-300"}`}
             >
               +
             </button>
@@ -495,7 +495,7 @@ export default function TextLane({
             onClick={() => dispatch({ type: "UNDO" })}
             disabled={!canUndo}
             title="Undo"
-            className="px-2 py-0.5 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
+            className="min-h-11 min-w-11 px-2 py-0.5 text-sm text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-25 sm:min-h-0 sm:min-w-0"
           >
             ↩
           </button>
@@ -504,7 +504,7 @@ export default function TextLane({
             onClick={() => dispatch({ type: "REDO" })}
             disabled={!canRedo}
             title="Redo"
-            className="px-2 py-0.5 text-sm text-zinc-400 hover:text-zinc-700 disabled:opacity-25 transition-colors"
+            className="min-h-11 min-w-11 px-2 py-0.5 text-sm text-zinc-400 transition-colors hover:text-zinc-700 disabled:opacity-25 sm:min-h-0 sm:min-w-0"
           >
             ↪
           </button>
@@ -671,7 +671,7 @@ function TextPropertyPanel({
             onClick={() =>
               patch({ size_px: Math.max(8, (sizePx ?? 72) - 1), size_class: undefined })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
+            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Decrease font size"
           >
             −
@@ -684,7 +684,7 @@ function TextPropertyPanel({
             onClick={() =>
               patch({ size_px: Math.min(300, (sizePx ?? 72) + 1), size_class: undefined })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
+            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Increase font size"
           >
             ＋
@@ -698,7 +698,7 @@ function TextPropertyPanel({
               type="button"
               onClick={() => patch({ size_class: p.value, size_px: undefined })}
               aria-pressed={bar.size_class === p.value}
-              className={`flex-1 text-[10px] rounded py-1 transition-colors ${
+              className={`min-h-11 flex-1 rounded py-1 text-[10px] transition-colors sm:min-h-0 ${
                 bar.size_class === p.value
                   ? "bg-lime-400 text-black font-semibold"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -768,7 +768,7 @@ function TextPropertyPanel({
             <button
               type="button"
               onClick={() => { setHlDraft(""); patch({ highlight_color: undefined }); }}
-              className="text-zinc-400 hover:text-red-500 text-xs px-1 leading-none"
+              className="min-h-11 min-w-11 px-1 text-xs leading-none text-zinc-400 hover:text-red-500 sm:min-h-0 sm:min-w-0"
               aria-label="Clear highlight color"
             >
               ✕
@@ -796,7 +796,7 @@ function TextPropertyPanel({
               onClick={() => patch({ alignment: a })}
               aria-pressed={bar.alignment === a}
               aria-label={`Align ${a}`}
-              className={`flex-1 text-sm py-1 rounded transition-colors ${
+              className={`min-h-11 flex-1 rounded py-1 text-sm transition-colors sm:min-h-0 ${
                 bar.alignment === a
                   ? "bg-lime-400 text-black font-semibold"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -821,7 +821,7 @@ function TextPropertyPanel({
                 stroke_width: Math.max(0, parseFloat((strokeW - 0.5).toFixed(1))),
               })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
+            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Decrease stroke width"
           >
             −
@@ -836,7 +836,7 @@ function TextPropertyPanel({
                 stroke_width: Math.min(20, parseFloat((strokeW + 0.5).toFixed(1))),
               })
             }
-            className="w-6 h-6 flex items-center justify-center rounded bg-zinc-100 text-zinc-700 hover:bg-zinc-200 leading-none select-none"
+            className="flex h-11 w-11 items-center justify-center rounded bg-zinc-100 text-zinc-700 leading-none select-none hover:bg-zinc-200 sm:h-6 sm:w-6"
             aria-label="Increase stroke width"
           >
             ＋
@@ -856,7 +856,7 @@ function TextPropertyPanel({
               type="button"
               onClick={() => patch({ effect: opt.value })}
               aria-pressed={bar.effect === opt.value}
-              className={`text-[10px] px-2 py-1 rounded transition-colors ${
+              className={`min-h-11 rounded px-2 py-1 text-[10px] transition-colors sm:min-h-0 ${
                 bar.effect === opt.value
                   ? "bg-lime-400 text-black font-semibold"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -881,7 +881,7 @@ function TextPropertyPanel({
               onClick={() => patch({ font_family: f.name })}
               aria-pressed={bar.font_family === f.name}
               style={{ fontFamily: f.cssFamily, fontWeight: f.weight }}
-              className={`text-[11px] px-2 py-1.5 rounded transition-colors text-left truncate ${
+              className={`min-h-11 truncate rounded px-2 py-1.5 text-left text-[11px] transition-colors sm:min-h-0 ${
                 bar.font_family === f.name
                   ? "bg-lime-400 text-black"
                   : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
@@ -910,7 +910,7 @@ function TextPropertyPanel({
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              className={`flex-1 text-xs py-2 capitalize transition-colors ${
+              className={`min-h-11 flex-1 py-2 text-xs capitalize transition-colors ${
                 tab === t
                   ? "text-zinc-900 font-semibold border-b-2 border-amber-500"
                   : "text-zinc-500 hover:text-zinc-700"
@@ -941,14 +941,14 @@ function TextPropertyPanel({
           <button
             type="button"
             onClick={() => dispatch({ type: "UNDO" })}
-            className="text-xs text-zinc-400 hover:text-zinc-700 transition-colors px-2 py-1 rounded hover:bg-zinc-100"
+            className="min-h-11 min-w-11 rounded px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 sm:min-h-0 sm:min-w-0"
           >
             ↩ Undo
           </button>
           <button
             type="button"
             onClick={() => onApply?.(bars)}
-            className="text-xs px-4 py-1.5 rounded-full bg-lime-400 text-black font-semibold hover:bg-lime-300 active:bg-lime-500 transition-colors"
+            className="min-h-11 rounded-full bg-lime-400 px-4 py-1.5 text-xs font-semibold text-black transition-colors hover:bg-lime-300 active:bg-lime-500 sm:min-h-0"
           >
             Apply
           </button>

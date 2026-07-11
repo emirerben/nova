@@ -29,9 +29,12 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import threading
 import time
 import uuid
+from dataclasses import is_dataclass, replace
 from datetime import datetime
+from itertools import cycle
 from typing import Any
 
 import structlog
@@ -41,6 +44,10 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS, coerce_edit_f
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
+from app.schemas.montage_preset import (
+    MASONRY_MONTAGE_PRESET,
+    coerce_montage_preset,
+)
 from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
 
@@ -242,6 +249,19 @@ def _run_generative_job(job_id: str) -> None:
         # chose letterbox; absent = fill (the legacy crop default). Use (or {})
         # to guard the rare in-flight job where all_candidates is None.
         landscape_fit: str = (all_candidates or {}).get("landscape_fit") or "fill"
+        # Per-item silence-cut opt-out (plans/010 10A — support's per-item remedy).
+        # Surface: Job.assembly_plan["silence_cut_disabled"] = true, set via
+        # POST /admin/jobs/{id}/silence-cut-disable (admin_jobs.py). Read HERE at
+        # render time, so only a FULL re-render (or a retried/redelivered render
+        # of THIS job) picks the flag up — a caption reburn re-encodes the
+        # already-cut base and keeps its cuts. Skips the whole cut stage
+        # (retakes included). Job-scoped by design — top-level assembly_plan
+        # keys survive every variant upsert/finalize merge (_set_status merges,
+        # _finalize_job only replaces "variants").
+        silence_cut_disabled: bool = (job.assembly_plan or {}).get("silence_cut_disabled") is True
+        # Montage visual preset. Absent means classic so public/legacy jobs keep
+        # byte-identical render behavior.
+        montage_preset = coerce_montage_preset((all_candidates or {}).get("montage_preset"))
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths in all_candidates")
@@ -473,6 +493,14 @@ def _run_generative_job(job_id: str) -> None:
                 filming_guide=filming_guide_candidates,
             )
 
+        # Once-per-clip silence-cut artifacts (plans/010 7A): verbatim transcript,
+        # CutPlan, and the cut base render are computed on first need and cached
+        # here for the whole job, so every cut-capable variant shares ONE whisper
+        # call and ONE cut encode (subtitled + the talking_head spine). Lives
+        # under the job tmpdir — per-variant scratch cleanup
+        # (shutil.rmtree(variant_dir)) never touches it.
+        silence_cut_cache = _SilenceCutCache(os.path.join(tmpdir, "silence_cut"))
+
         def _render_one_spec(rank: int, spec: dict[str, Any], spine: str | None) -> dict[str, Any]:
             """Render a single (already non-resumable) spec: mark rendering →
             render → stamp finished → persist → free scratch. A talking_head
@@ -510,6 +538,8 @@ def _run_generative_job(job_id: str) -> None:
                         user_style_knobs=user_style_knobs,
                         language=language,
                         landscape_fit=landscape_fit,
+                        silence_cut_disabled=silence_cut_disabled,
+                        silence_cut_cache=silence_cut_cache,
                     )
                 elif spec.get("archetype") == "narrated":
                     result = _render_narrated_variant(
@@ -531,6 +561,8 @@ def _run_generative_job(job_id: str) -> None:
                         variant_dir=variant_dir,
                         language=language,
                         landscape_fit=landscape_fit,
+                        silence_cut_disabled=silence_cut_disabled,
+                        silence_cut_cache=silence_cut_cache,
                     )
                 else:
                     result = _render_generative_variant(
@@ -554,6 +586,7 @@ def _run_generative_job(job_id: str) -> None:
                         author_quote_fn=_author_quote,
                         language=language,
                         landscape_fit=landscape_fit,
+                        montage_preset=montage_preset,
                     )
 
                 # Per-variant render_finished_at on success (D6 tile clock).
@@ -1326,6 +1359,159 @@ def _is_fast_reburn_eligible(
     return True
 
 
+def _is_masonry_audio_only_swap_eligible(existing: dict, new_track_id: str | None) -> bool:
+    """True when a song swap can preserve the rendered masonry visuals exactly."""
+    if new_track_id is None:
+        return False
+    if existing.get("montage_preset_rendered") != MASONRY_MONTAGE_PRESET:
+        return False
+    if not existing.get("video_path"):
+        return False
+    if existing.get("variant_id") == "song_lyrics" or existing.get("text_mode") == "lyrics":
+        return False
+    return existing.get("music_track_id") is not None
+
+
+def _mux_track_audio_preserve_video(
+    *,
+    video_gcs_path: str,
+    track: MusicTrack,
+    output_gcs_path: str,
+    tmpdir: str,
+    label: str,
+) -> str:
+    """Replace a finished video's audio with ``track`` while stream-copying video."""
+    import subprocess  # noqa: PLC0415
+
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
+
+    if not track.audio_gcs_path:
+        raise ValueError(f"Track {track.id} has no audio_gcs_path")
+
+    video_local = os.path.join(tmpdir, f"{label}_video.mp4")
+    audio_local = os.path.join(tmpdir, f"{label}_audio.m4a")
+    out_local = os.path.join(tmpdir, f"{label}_out.mp4")
+    download_to_file(video_gcs_path, video_local)
+    download_to_file(track.audio_gcs_path, audio_local)
+
+    video_dur = _probe_duration(video_local)
+    if video_dur <= 0:
+        raise ValueError(f"Cannot audio-swap {video_gcs_path}: duration probe failed")
+
+    audio_dur = _probe_duration(audio_local)
+    cfg = track.track_config or {}
+    safe_offset = max(0.0, float(cfg.get("best_start_s", 0.0) or 0.0))
+    if audio_dur > 0 and safe_offset > 0:
+        safe_offset = min(safe_offset, max(0.0, audio_dur - 5.0))
+
+    fade_start = max(0.0, video_dur - 0.5)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_local,
+        "-stream_loop",
+        "-1",
+        *(["-ss", f"{safe_offset:.3f}"] if safe_offset > 0 else []),
+        "-i",
+        audio_local,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-af",
+        f"afade=t=out:st={fade_start:.3f}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
+        "-t",
+        f"{video_dur:.3f}",
+        "-movflags",
+        "+faststart",
+        out_local,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=180, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace")[-800:]
+        raise RuntimeError(
+            f"masonry audio-only song swap failed (rc={result.returncode}): {stderr}"
+        )
+    if not os.path.exists(out_local) or os.path.getsize(out_local) == 0:
+        raise RuntimeError("masonry audio-only song swap produced empty output")
+    return upload_public_read(out_local, output_gcs_path, content_type="video/mp4")
+
+
+def _run_masonry_audio_only_song_swap(
+    *,
+    job_id: str,
+    variant_id: str,
+    existing: dict,
+    track: MusicTrack,
+    expected_render_gen_id: str | None = None,
+) -> bool:
+    """Fast song swap for masonry variants: video bytes are stream-copied."""
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    token = uuid.uuid4().hex
+    path_fields = (
+        "video_path",
+        "base_video_path",
+        "pre_media_overlay_video_path",
+        "pre_sfx_video_path",
+    )
+    patch: dict[str, Any] = {
+        "music_track_id": track.id,
+        "track_title": track.title,
+        "ok": True,
+        "error": None,
+        "render_error": None,
+        "render_status": "ready",
+        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+    }
+    with tempfile.TemporaryDirectory(prefix="nova_masonry_audio_swap_") as tmpdir:
+        for field in path_fields:
+            source_gcs = existing.get(field)
+            if not source_gcs:
+                continue
+            out_gcs = f"generative-jobs/{job_id}/audio-swap/{variant_id}_{token}_{field}.mp4"
+            signed_url = _mux_track_audio_preserve_video(
+                video_gcs_path=source_gcs,
+                track=track,
+                output_gcs_path=out_gcs,
+                tmpdir=tmpdir,
+                label=field,
+            )
+            patch[field] = out_gcs
+            if field == "video_path":
+                patch["output_url"] = signed_url
+
+    if "video_path" not in patch or "output_url" not in patch:
+        raise ValueError("masonry audio-only song swap missing current video_path")
+
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        patch,
+        expected_render_gen_id=expected_render_gen_id,
+        outcome="masonry_audio_swap",
+    ):
+        return False
+
+    record_pipeline_event(
+        "audio_mix",
+        "masonry_audio_only_swap",
+        {"variant_id": variant_id, "track_id": track.id},
+    )
+    _reapply_persisted_sfx_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+    )
+    return True
+
+
 def _run_media_overlay_pass(
     *,
     job_id: str,
@@ -1790,7 +1976,8 @@ def _reapply_persisted_media_overlays_if_any(
     try:
         with _sync_session() as db:
             # F4: row-locked RMW — the gen compare, the snapshot-null staging,
-            # and the commit happen under ONE lock; blob deletes run after.
+            # and the commit happen under ONE lock; blob deletes run after
+            # (mirrors _upsert_variant_entry, same clobber class as PR #595).
             job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
                 return False
@@ -2870,6 +3057,11 @@ def _run_regenerate_variant(
         # Re-renders inherit the landscape-fit preference too — otherwise the
         # toggle would silently revert to crop on the first song-swap / retext.
         landscape_fit_regen: str = (job.all_candidates or {}).get("landscape_fit") or "fill"
+        # Re-renders inherit the montage visual preset too — otherwise a
+        # song-swap/retext would silently snap a masonry item back to classic.
+        montage_preset_regen = coerce_montage_preset(
+            (job.all_candidates or {}).get("montage_preset")
+        )
         variants = ((job.assembly_plan or {}).get("variants")) or []
         existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
         if existing is None:
@@ -2988,6 +3180,62 @@ def _run_regenerate_variant(
         resolved_size_override_px = int(existing_size_px)
     else:
         resolved_size_override_px = None
+
+    audio_only_song_swap = (
+        _is_masonry_audio_only_swap_eligible(existing, new_track_id)
+        and override_text is None
+        and not remove_text
+        and style_set_id is None
+        and size_override_px is None
+        and mix_override is None
+        and layout_override is None
+        and timeline_override is None
+        and font_family_override is None
+        and effect_override is None
+        and text_color_override is None
+        and cluster_hero_font_override is None
+        and cluster_body_font_override is None
+        and cluster_accent_font_override is None
+        and cluster_hero_size_px_override is None
+        and cluster_body_size_px_override is None
+        and cluster_accent_size_px_override is None
+        and media_overlays_override is None
+        and sfx_override is None
+        and intro_start_s_override is None
+        and intro_end_s_override is None
+    )
+    if audio_only_song_swap and new_track_id is not None:
+        with _sync_session() as db:
+            track = db.get(MusicTrack, new_track_id)
+        if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
+            raise ValueError(f"Track {new_track_id} is not available for audio-only swap")
+        if not _update_variant_entry(
+            job_id,
+            variant_id,
+            {"render_status": "rendering", "ok": False, "error": None},
+            expected_render_gen_id=render_gen_id,
+            outcome="masonry_audio_swap_start",
+        ):
+            return
+        try:
+            completed = _run_masonry_audio_only_song_swap(
+                job_id=job_id,
+                variant_id=variant_id,
+                existing=existing,
+                track=track,
+                expected_render_gen_id=render_gen_id,
+            )
+            if completed:
+                return
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "masonry_audio_only_swap_fallback_full_render",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+                exc_info=True,
+            )
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")
@@ -3326,6 +3574,7 @@ def _run_regenerate_variant(
             cluster_body_size_px_override=resolved_cluster_body_size_override,
             cluster_accent_size_px_override=resolved_cluster_accent_size_override,
             landscape_fit=landscape_fit_regen,
+            montage_preset=montage_preset_regen,
         )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -3375,6 +3624,13 @@ def _run_regenerate_variant(
             # must never delete the winning render's snapshot blobs).
             result["media_overlays"] = persisted_media_overlays
             retired_snapshot_keys = _stage_media_snapshot_nulls(result, existing)
+        # Regenerate hygiene (A1): this full re-render runs the MONTAGE path,
+        # which never runs the silence-cut stage, so `result` carries no
+        # summary key — without an explicit None the entry merge would keep
+        # the previous render's blob and the admin cut-plan strip would
+        # describe cuts that don't exist in the new video. (Caption archetypes
+        # are rejected above, so no fresh subtitled summary is clobbered.)
+        result["silence_cut"] = None
         if not _update_variant_entry(
             job_id,
             variant_id,
@@ -4601,6 +4857,59 @@ def _classify_error(exc: BaseException) -> str:
     return "unknown"
 
 
+def _replace_step_clip(step: Any, clip_id: str) -> Any:
+    """Return a copy of an AssemblyStep-like object pointed at another clip."""
+    target_s = float((getattr(step, "slot", {}) or {}).get("target_duration_s", 0.5) or 0.5)
+    moment = {"start_s": 0.0, "end_s": max(0.5, target_s)}
+    if is_dataclass(step):
+        return replace(step, clip_id=clip_id, moment=moment)
+    copied = type("AssemblyStepLike", (), {})()
+    copied.slot = dict(getattr(step, "slot", {}) or {})
+    copied.clip_id = clip_id
+    copied.moment = moment
+    return copied
+
+
+def _masonry_classic_safe_inputs(
+    *,
+    steps: list,
+    clip_id_to_local: dict[str, str],
+    clip_id_to_gcs: dict[str, str],
+    probe_map: dict,
+    clip_metas: list,
+) -> tuple[list, dict[str, str], dict[str, str], dict, list, int]:
+    """Build video-only inputs for classic fallback/audio-bed assembly.
+
+    Masonry accepts still photos as visual tiles. The classic montage assembler
+    does not: raw JPG/HEIC inputs can hit the video reframe path and fail before
+    the collage has a chance to render. For fallback and original-audio beds we
+    keep the slot structure but substitute photo slots with available videos.
+    """
+    from app.pipeline.image_clip import is_image_file  # noqa: PLC0415
+
+    video_ids = [cid for cid, path in clip_id_to_local.items() if not is_image_file(path)]
+    image_ids = {cid for cid, path in clip_id_to_local.items() if is_image_file(path)}
+    if not image_ids:
+        return steps, clip_id_to_local, clip_id_to_gcs, probe_map, clip_metas, 0
+    if not video_ids:
+        return [], {}, {}, {}, [], len(image_ids)
+
+    replacements = cycle(video_ids)
+    safe_steps = [
+        step
+        if getattr(step, "clip_id", None) not in image_ids
+        else _replace_step_clip(step, next(replacements))
+        for step in steps
+    ]
+    safe_local = {cid: clip_id_to_local[cid] for cid in video_ids}
+    safe_gcs = {cid: path for cid, path in clip_id_to_gcs.items() if cid in video_ids}
+    safe_paths = set(safe_local.values())
+    safe_probe_map = {path: probe for path, probe in probe_map.items() if path in safe_paths}
+    safe_video_ids = set(video_ids)
+    safe_metas = [meta for meta in clip_metas if getattr(meta, "clip_id", None) in safe_video_ids]
+    return safe_steps, safe_local, safe_gcs, safe_probe_map, safe_metas, len(image_ids)
+
+
 def _render_generative_variant(
     *,
     job_id: str,
@@ -4635,6 +4944,7 @@ def _render_generative_variant(
     cluster_body_size_px_override: int | None = None,
     cluster_accent_size_px_override: int | None = None,
     landscape_fit: str = "fill",
+    montage_preset: str = "classic",
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -4696,6 +5006,7 @@ def _render_generative_variant(
     track: MusicTrack | None = spec["track"]
     track_id = track.id if track else None
     track_title = track.title if track else None
+    resolved_montage_preset = coerce_montage_preset(montage_preset)
     # Voiceover variants: the user's audio is the narration bed, footage tiles as
     # visuals. `mix` is the voice-prominence slider (persisted so the UI slider and
     # re-renders can read it back). Absent on song/original/talking_head specs.
@@ -4770,6 +5081,16 @@ def _render_generative_variant(
         "intro_cluster_body_size_px": cluster_body_size_px_override,
         "intro_cluster_accent_size_px": cluster_accent_size_px_override,
     }
+    if resolved_montage_preset == MASONRY_MONTAGE_PRESET:
+        # User-selected preset + actual renderer outcome. Only present when the
+        # user opted in so classic jobs keep their historical variant shape.
+        base.update(
+            {
+                "montage_preset": MASONRY_MONTAGE_PRESET,
+                "montage_preset_rendered": None,
+                "montage_preset_fallback": None,
+            }
+        )
     try:
         beats: list[float] = []
         voiceover_local: str | None = None
@@ -4786,6 +5107,15 @@ def _render_generative_variant(
                 job_id=job_id,
                 variant_id=variant_id,
             )
+
+        masonry_requested = (
+            resolved_montage_preset == MASONRY_MONTAGE_PRESET and not voiceover_gcs_path
+        )
+        effective_available_footage_s = available_footage_s
+        if masonry_requested:
+            from app.pipeline.masonry_montage import clamp_masonry_duration  # noqa: PLC0415
+
+            effective_available_footage_s = clamp_masonry_duration(available_footage_s)
 
         if voiceover_gcs_path:
             # Voiceover edit: download the voice, then size the footage montage to
@@ -4815,7 +5145,7 @@ def _render_generative_variant(
             # beat-snapped slots, so capping the window here is what keeps a
             # music variant from ever running longer than the content exists for.
             track_config = _fit_section_to_footage(
-                track_config_with_rank_one(track), available_footage_s
+                track_config_with_rank_one(track), effective_available_footage_s
             )
             track_data = {
                 "beat_timestamps_s": track.beat_timestamps_s or [],
@@ -4831,7 +5161,10 @@ def _render_generative_variant(
             )
         else:
             recipe_dict = _build_no_music_recipe(
-                clip_metas, available_footage_s, filming_guide=filming_guide, min_slots=min_slots
+                clip_metas,
+                effective_available_footage_s,
+                filming_guide=filming_guide,
+                min_slots=min_slots,
             )
 
         # Text injection per mode. The chosen style set styles BOTH the lyric
@@ -4919,29 +5252,126 @@ def _render_generative_variant(
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []
-        _assemble_clips(
-            steps,
-            clip_id_to_local,
-            probe_map,
-            assembled_path,
-            variant_dir,
-            beat_timestamps_s=recipe.beat_timestamps_s,
-            clip_metas=clip_metas,
-            global_color_grade=recipe.color_grade,
-            job_id=f"{job_id}#v{rank}",
-            user_subject="",
-            interstitials=[],
-            force_single_pass=False,
-            is_agentic=True,  # route overlays through the Skia renderer
-            # Generative edits must never stretch footage to fill a slot. When a
-            # clip is shorter than its slot, shrink the slot instead of slowing
-            # the clip down — the output stays bounded by real footage length.
-            allow_slowdown_fill=False,
-            # Post-resolution source windows per slot — the clip editor's
-            # ground truth for what each slot actually rendered.
-            resolved_plans_out=resolved_plans,
-            landscape_fit=landscape_fit,
-        )
+        classic_steps = steps
+        classic_clip_id_to_local = clip_id_to_local
+        classic_clip_id_to_gcs = clip_id_to_gcs
+        classic_probe_map = probe_map
+        classic_clip_metas = clip_metas
+        classic_image_substitutions = 0
+        if masonry_requested:
+            (
+                classic_steps,
+                classic_clip_id_to_local,
+                classic_clip_id_to_gcs,
+                classic_probe_map,
+                classic_clip_metas,
+                classic_image_substitutions,
+            ) = _masonry_classic_safe_inputs(
+                steps=steps,
+                clip_id_to_local=clip_id_to_local,
+                clip_id_to_gcs=clip_id_to_gcs,
+                probe_map=probe_map,
+                clip_metas=clip_metas,
+            )
+
+        # Masonry song variants replace footage audio with the matched track later
+        # in the normal audio-mix branch. Rendering a full classic montage first is
+        # therefore pure waste and can consume the whole Celery budget on heavy
+        # uploads before the collage compositor even starts. Original-audio masonry
+        # still needs this pass because it derives its audio bed from source clips.
+        skip_classic_assembly_for_masonry_song = masonry_requested and track is not None
+        classic_assembly_done = False
+
+        def _assemble_classic_montage() -> None:
+            nonlocal classic_assembly_done
+            if masonry_requested and (not classic_steps or not classic_clip_id_to_local):
+                raise RuntimeError("classic montage fallback unavailable: no video clips")
+            _assemble_clips(
+                classic_steps,
+                classic_clip_id_to_local,
+                classic_probe_map,
+                assembled_path,
+                variant_dir,
+                beat_timestamps_s=recipe.beat_timestamps_s,
+                clip_metas=classic_clip_metas,
+                global_color_grade=recipe.color_grade,
+                job_id=f"{job_id}#v{rank}",
+                user_subject="",
+                interstitials=[],
+                force_single_pass=False,
+                is_agentic=True,  # route overlays through the Skia renderer
+                # Generative edits must never stretch footage to fill a slot. When a
+                # clip is shorter than its slot, shrink the slot instead of slowing
+                # the clip down — the output stays bounded by real footage length.
+                allow_slowdown_fill=False,
+                # Post-resolution source windows per slot — the clip editor's
+                # ground truth for what each slot actually rendered.
+                resolved_plans_out=resolved_plans,
+                landscape_fit=landscape_fit,
+            )
+            classic_assembly_done = True
+
+        if not skip_classic_assembly_for_masonry_song:
+            if masonry_requested and not classic_steps:
+                log.info(
+                    "masonry_original_audio_bed_skipped_no_video",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    image_clips=classic_image_substitutions,
+                )
+            else:
+                _assemble_classic_montage()
+
+        masonry_applied = False
+        if masonry_requested:
+            from app.pipeline.masonry_montage import assemble_masonry_montage  # noqa: PLC0415
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            if classic_image_substitutions:
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_classic_inputs_sanitized",
+                    {
+                        "variant_id": variant_id,
+                        "image_clips": classic_image_substitutions,
+                        "video_clips": len(classic_clip_id_to_local),
+                    },
+                )
+
+            masonry_path = os.path.join(variant_dir, "masonry.mp4")
+            try:
+                assemble_masonry_montage(
+                    steps=steps,
+                    clip_id_to_local=clip_id_to_local,
+                    output_path=masonry_path,
+                    tmpdir=variant_dir,
+                    duration_s=effective_available_footage_s,
+                    audio_source_path=assembled_path if classic_assembly_done else None,
+                    job_id=job_id,
+                )
+                assembled_path = masonry_path
+                masonry_applied = True
+                base["montage_preset_rendered"] = MASONRY_MONTAGE_PRESET
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_preset_applied",
+                    {"variant_id": variant_id, "duration_s": effective_available_footage_s},
+                )
+            except Exception as exc:  # noqa: BLE001
+                base["montage_preset_fallback"] = "classic_render_failed"
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_preset_fallback",
+                    {"variant_id": variant_id, "error": str(exc)[:300]},
+                )
+                log.warning(
+                    "masonry_preset_fallback_classic",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc),
+                )
+                if not classic_assembly_done:
+                    _assemble_classic_montage()
 
         # ai_timeline persistence (clip timeline editor): rewritten on every
         # FRESH montage assembly (first render, swap-song, mix re-render), so
@@ -4956,18 +5386,26 @@ def _render_generative_variant(
         # {**v, **patch} merge carries the variant's persisted ai_timeline
         # forward untouched (writing None instead would null the stored
         # timeline and flip the variant uneditable).
-        if settings.GENERATIVE_TIMELINE_EDITOR_ENABLED and not voiceover_gcs_path:
+        if (
+            settings.GENERATIVE_TIMELINE_EDITOR_ENABLED
+            and not voiceover_gcs_path
+            and not masonry_applied
+        ):
             if assembly_steps_override is not None:
                 base.pop("ai_timeline", None)
             else:
                 base["ai_timeline"] = _build_ai_timeline(
-                    steps=steps,
+                    steps=classic_steps if masonry_requested else steps,
                     resolved_plans=resolved_plans,
-                    clip_id_to_gcs=clip_id_to_gcs,
-                    clip_id_to_local=clip_id_to_local,
-                    probe_map=probe_map,
+                    clip_id_to_gcs=classic_clip_id_to_gcs if masonry_requested else clip_id_to_gcs,
+                    clip_id_to_local=(
+                        classic_clip_id_to_local if masonry_requested else clip_id_to_local
+                    ),
+                    probe_map=classic_probe_map if masonry_requested else probe_map,
                     beat_grid=beats,
                 )
+        elif masonry_applied:
+            base.pop("ai_timeline", None)
 
         # audio_mixed_path: the assembled+audio-mixed video before text burn.
         # For agent_text variants this becomes the cached base.
@@ -5246,6 +5684,8 @@ def _render_talking_head_variant(
     user_style_knobs: dict | None = None,
     language: str = "en",
     landscape_fit: str = "fill",
+    silence_cut_disabled: bool = False,
+    silence_cut_cache: _SilenceCutCache | None = None,
 ) -> dict[str, Any]:
     """Render the talking_head variant: spine audio + B-roll, then burn the AI intro.
 
@@ -5257,6 +5697,14 @@ def _render_talking_head_variant(
     the composite via the standalone Skia path (`burn_text_overlays_skia`) — the
     assembler itself draws no text. Shape-compatible with `_render_generative_variant`
     plus a `resolved_archetype` field.
+
+    Silence/filler/retake cut (plans/010 T6, behind SILENCE_CUT_ENABLED): the SPINE
+    clip gets the same cut stage as subtitled — the flag/per-item gates live here,
+    the mechanics (pre-cap, has_audio gate, keep_segments reframe, b-roll cut-point
+    anchors) live in the assembler, and the analysis routes through the shared
+    `_silence_cut_analysis` + per-job cache so a clip is never re-analyzed. Every
+    gate/failure falls OPEN to the uncut flow; flag off is byte-identical
+    (kill-switch pinned).
     """
     from app.pipeline.generative_overlays import build_persistent_intro_overlays  # noqa: PLC0415
     from app.pipeline.probe import probe_video  # noqa: PLC0415
@@ -5297,6 +5745,9 @@ def _render_talking_head_variant(
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
+        # Silence-cut summary {removed, time_saved_s, version} (plans/010 T6) — set
+        # only when the stage ran to a plan; drives the admin cut-plan viewer.
+        "silence_cut": None,
     }
 
     try:
@@ -5305,6 +5756,38 @@ def _render_talking_head_variant(
         # upload failure — becomes a per-variant failure record (the never-raise
         # contract `_render_generative_variant` also honors).
         base_path = os.path.join(variant_dir, "base.mp4")
+
+        # ── Silence/filler/retake cut gates (plans/010 T6) ──────────────────
+        # Flag off / per-item disable ⇒ silence_cut_fn stays None and the
+        # assembler runs its pre-T6 flow byte-identically. The has_audio gate
+        # needs the SPINE probe, so it lives inside the assembler (same event).
+        silence_cut_fn = None
+        silence_cut_out: dict[str, Any] = {}
+        if settings.silence_cut_enabled:
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            if silence_cut_disabled:
+                # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_skipped_disabled", {"variant_id": variant_id}
+                )
+            else:
+
+                def silence_cut_fn(
+                    analysis_path: str, duration_s: float, *, cache_key: str | None = None
+                ) -> dict[str, Any]:
+                    # Shared analysis (7A): per-job cache ⇒ a clip analyzed for
+                    # one variant is never re-analyzed for another. `cache_key`
+                    # lets the assembler key a pre-capped analysis WAV by its
+                    # SOURCE spine (+cap), so the entry stays clip-addressed.
+                    return _silence_cut_analysis(
+                        analysis_path,
+                        duration_s,
+                        job_id=job_id,
+                        cache=silence_cut_cache,
+                        cache_key=cache_key,
+                    )
+
         assemble_talking_head(
             clip_paths=clip_id_to_local,
             clip_metas=clip_metas,
@@ -5315,7 +5798,10 @@ def _render_talking_head_variant(
             job_id=job_id,
             spine_clip_id=spine_clip_id,
             landscape_fit=landscape_fit,
+            silence_cut_fn=silence_cut_fn,
+            silence_cut_out=silence_cut_out,
         )
+        base["silence_cut"] = silence_cut_out.get("summary")
 
         final_path = base_path
         if agent_text is not None:
@@ -5689,6 +6175,234 @@ def _render_narrated_variant(
         }
 
 
+# ── Silence/filler/retake cut (plans/010 T5) ─────────────────────────────────────
+
+
+class _SilenceCutCache:
+    """Per-job once-per-clip cache for the silence-cut stage (plans/010 7A).
+
+    Mirrors `_pretonemap_hdr_clips`' compute-once-per-clip intent, lazily: the
+    first variant that needs a clip's cut pays for whisper + silencedetect +
+    the CutPlan (and stashes the cut base render under `dir`); every later
+    variant reads the same entry, so variants can never disagree on the cut
+    timeline. Entries are keyed by the clip's LOCAL path (post pre-tonemap
+    repoint) and shaped by `_silence_cut_analysis` — talking_head (T6) shares
+    this cache via the same helper.
+
+    Locking is PER KEY (review R3c): the global lock is held only long enough
+    to get-or-insert a key's in-flight event; the expensive compute (whisper +
+    silencedetect + retake detection) runs OUTSIDE it, so two DIFFERENT clips
+    analyzed concurrently never serialize behind each other's network calls.
+    Same-key arrivals wait on the key's event and read the shared entry.
+    """
+
+    def __init__(self, cache_dir: str) -> None:
+        self.dir = cache_dir  # under the job tmpdir; created only on first cut
+        self.lock = threading.Lock()
+        self.clips: dict[str, dict[str, Any]] = {}
+        # key → Event, present only while that key's first compute is in
+        # flight; set (and removed) once the entry is published to `clips`.
+        self.pending: dict[str, threading.Event] = {}
+
+
+def _silence_cut_retake_spans(transcript, *, job_id: str) -> list[tuple[int, int]]:  # noqa: ANN001
+    """Retake spans for the CutPlan (plans/010 T7 wiring), failure-isolated.
+
+    Behind RETAKE_CUT_ENABLED (own kill switch, independent of
+    SILENCE_CUT_ENABLED). Invoked sync — same celery-context pattern as the
+    sibling agents in this file (`run_*` + RunContext(job_id=…)). ANY detector
+    failure — TerminalError after retries, ValidationError on malformed words,
+    anything else — degrades to ZERO retake spans with the
+    `retake_detector_failed` event; silence/filler cutting proceeds unharmed
+    (plans/010 failure isolation).
+    """
+    if not settings.retake_cut_enabled:
+        return []
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    try:
+        from app.agents._runtime import RunContext  # noqa: PLC0415
+        from app.agents.retake_detector import (  # noqa: PLC0415
+            RetakeDetectorInput,
+            run_retake_detector,
+        )
+
+        indexed = [
+            {"i": i, "text": w.text, "start_s": w.start_s, "end_s": w.end_s}
+            for i, w in enumerate(transcript.words)
+        ]
+        # Too-short-transcript short-circuit lives INSIDE run_retake_detector
+        # (the single floor shared by every entrypoint) — no duplicate here.
+        out = run_retake_detector(
+            RetakeDetectorInput.model_validate(
+                {"words": indexed, "language": transcript.language or ""}
+            ),
+            ctx=RunContext(job_id=job_id),
+        )
+        return [(span.start_word, span.end_word) for span in out.retakes]
+    except Exception as exc:  # noqa: BLE001 — retakes can never block the base feature
+        log.warning("retake_detector_failed", job_id=job_id, error=str(exc)[:200])
+        record_pipeline_event("silence_cut", "retake_detector_failed", {"error": str(exc)[:200]})
+        return []
+
+
+def _silence_cut_analysis(
+    clip_path: str,
+    duration_s: float,
+    *,
+    job_id: str,
+    cache: _SilenceCutCache | None,
+    cache_key: str | None = None,
+) -> dict[str, Any]:
+    """Detection inputs + CutPlan for one clip, computed once per job (7A).
+
+    Returns the per-clip cache entry::
+
+        {"failed": bool, "words": list[Word], "language": str,
+         "plan": CutPlan | None, "retake_span_count": int,
+         "cut_video_path": str | None}
+
+    ``failed`` True ⇒ transcription/detection blew up — the caller renders
+    today's uncut flow (fail-open; the failure is cached too, so sibling
+    variants don't re-spend a failing whisper call and can never disagree).
+    ``cut_video_path`` is filled by the render path after its first cut encode
+    so later variants copy the file instead of re-running ffmpeg.
+
+    ``cache_key`` overrides the cache key (default: ``clip_path``) — the
+    talking_head assembler analyzes a pre-capped WAV derived from the spine and
+    keys the entry by the SOURCE spine (+cap) so it stays clip-addressed.
+
+    Callers gate has_audio BEFORE calling (eng review 3A — whisper on injected
+    digital silence hallucinates); this helper assumes a real audio stream.
+    Analysis-scoped pipeline events (rule-2 calibration gate, bailout, retake
+    failure) fire here exactly once per clip; per-variant events stay with the
+    render functions.
+    """
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    def _compute() -> dict[str, Any]:
+        entry: dict[str, Any] = {
+            "failed": False,
+            "words": [],
+            "language": "",
+            "plan": None,
+            "retake_span_count": 0,
+            "cut_video_path": None,
+        }
+        try:
+            from app.pipeline.silence_cut import (  # noqa: PLC0415
+                BAILOUT_CLIP_TOO_SHORT,
+                MIN_CLIP_S,
+                SILENCE_CUT_VERBATIM_PROMPT,
+                build_cut_plan,
+                no_op_plan,
+            )
+            from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
+            from app.services.clip_speech import detect_silences  # noqa: PLC0415
+
+            # P3: below the cutting floor build_cut_plan would bail anyway —
+            # return the no-op plan BEFORE spending whisper + silencedetect +
+            # retake detection on a clip that can never be cut. `words` stays
+            # empty, so consumers MUST caption from their own fallback path
+            # (never from this entry).
+            if duration_s < MIN_CLIP_S:
+                plan = no_op_plan(duration_s, bailout_reason=BAILOUT_CLIP_TOO_SHORT)
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_bailout", {"reason": plan.bailout_reason}
+                )
+                entry["plan"] = plan
+                return entry
+
+            # Detection runs on the ORIGINAL clip, never the rendered base — the
+            # verbatim bias prompt keeps fillers as tokens so rule 1 can see them.
+            transcript = transcribe_whisper(
+                clip_path, language=None, verbatim_prompt=SILENCE_CUT_VERBATIM_PROMPT
+            )
+            # d=0.1 (NOT speech_coverage's 0.3 default): the cut path needs short
+            # real silences visible to the intersection rule (round 2 / 9A).
+            silences = detect_silences(clip_path, min_silence_s=0.1)
+            if not silences:
+                # Calibration gate visibility: zero silencedetect ranges means
+                # rule 2 self-disables inside build_cut_plan (noisy footage —
+                # aggressiveness must never scale WITH background noise).
+                record_pipeline_event(
+                    "silence_cut",
+                    "silence_cut_rule2_disabled",
+                    {"clip": os.path.basename(clip_path)},
+                )
+            retake_spans = _silence_cut_retake_spans(transcript, job_id=job_id)
+            plan = build_cut_plan(transcript.words, silences, duration_s, retake_spans=retake_spans)
+            if plan.bailout_reason:
+                # Safety rail tripped → the plan is a no-op; callers render uncut.
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_bailout", {"reason": plan.bailout_reason}
+                )
+            entry.update(
+                words=list(transcript.words),
+                language=transcript.language or "",
+                plan=plan,
+                retake_span_count=len(retake_spans),
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open: worst case is today's uncut render
+            log.warning(
+                "silence_cut_analysis_failed",
+                job_id=job_id,
+                clip=os.path.basename(clip_path),
+                error=str(exc)[:200],
+            )
+            record_pipeline_event(
+                "silence_cut", "silence_cut_analysis_failed", {"error": str(exc)[:200]}
+            )
+            entry["failed"] = True
+        return entry
+
+    if cache is None:
+        return _compute()
+    key = cache_key or clip_path
+    # Per-key locking (R3c): hold the global lock only to get-or-insert the
+    # key's slot. The first arrival computes OUTSIDE the lock (whisper +
+    # silencedetect + retakes are seconds of network/CPU) and then publishes;
+    # later arrivals for the SAME key wait on its event and read the shared
+    # entry — still 1× per clip regardless of variant count (7A), failures
+    # cached too. Different keys never block each other.
+    with cache.lock:
+        hit = cache.clips.get(key)
+        if hit is not None:
+            return hit
+        event = cache.pending.get(key)
+        is_owner = event is None
+        if is_owner:
+            event = threading.Event()
+            cache.pending[key] = event
+    if not is_owner:
+        event.wait()
+        with cache.lock:
+            # Always present: the owner's finally publishes an entry (a failed
+            # one at worst) before setting the event.
+            return cache.clips[key]
+    entry: dict[str, Any] | None = None
+    try:
+        entry = _compute()
+        return entry
+    finally:
+        # _compute fail-opens internally and never raises an Exception, but a
+        # BaseException (task abort/kill) must still unblock waiters with a
+        # failed entry rather than deadlock them on the event.
+        if entry is None:
+            entry = {
+                "failed": True,
+                "words": [],
+                "language": "",
+                "plan": None,
+                "retake_span_count": 0,
+                "cut_video_path": None,
+            }
+        with cache.lock:
+            cache.clips[key] = entry
+            cache.pending.pop(key, None)
+        event.set()
+
+
 def _render_subtitled_variant(
     *,
     job_id: str,
@@ -5698,6 +6412,8 @@ def _render_subtitled_variant(
     variant_dir: str,
     language: str = "en",
     landscape_fit: str = "fill",
+    silence_cut_disabled: bool = False,
+    silence_cut_cache: _SilenceCutCache | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
@@ -5714,6 +6430,13 @@ def _render_subtitled_variant(
     so the finalize whitelist, the on-video CaptionEditor, and the reburn all work
     unchanged. Both caption styles ship: "sentence" (default; pop-in blocks) and "word"
     (line-visible lime word-pop), selected via the item's caption-style toggle.
+
+    Silence/filler/retake cut (plans/010, behind SILENCE_CUT_ENABLED): the ORIGINAL
+    clip is transcribed verbatim + silence-scanned, the CutPlan executes inside the
+    reframe (`keep_segments` + alternating punch-in), and captions come from the
+    remapped transcript minus filler tokens — no second whisper call on the base.
+    Every gate/failure falls OPEN to the flag-off flow above; flag off is
+    byte-identical to pre-feature behavior (kill-switch pinned).
     """
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
@@ -5779,6 +6502,9 @@ def _render_subtitled_variant(
         "resolved_archetype": "subtitled",
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
+        # Silence-cut summary {removed, time_saved_s, version} (plans/010) — set
+        # only when the stage ran to a plan; drives the admin cut-plan viewer.
+        "silence_cut": None,
     }
     try:
         # Subtitled is single-clip: the first uploaded clip (order-preserving). The
@@ -5815,35 +6541,183 @@ def _render_subtitled_variant(
         aspect = "16:9" if getattr(probe, "aspect_ratio", "") == "16:9" else "9:16"
         fit = resolve_output_fit(probe, landscape_fit=landscape_fit)
 
+        # ── Silence/filler/retake cut (plans/010 T5) ────────────────────────────
+        # Detection runs on the ORIGINAL clip BEFORE the reframe. The base renders
+        # start=0 / full duration / speed 1.0, so clip timeline == base timeline:
+        # the plan's keep_segments apply directly inside the reframe and the
+        # remapped word times are natively base-relative. Every gate below fails
+        # OPEN to the flag-off flow — this stage may shorten the video, never
+        # fail the job.
+        sc_entry: dict[str, Any] | None = None  # per-clip cache entry (7A)
+        sc_words: list | None = None  # verbatim original-clip words for captions
+        sc_language = ""
+        sc_plan = None  # CutPlan captions remap against (no-op when nothing cut)
+        sc_apply = False  # True ⇒ pass keep_segments into the reframe
+        if settings.silence_cut_enabled:
+            from app.pipeline.silence_cut import (  # noqa: PLC0415
+                KEEP_SEGMENTS_PUNCH_IN,
+                is_filler_token,
+                plan_event_payload,
+                plan_summary,
+                remap_words,
+            )
+            from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            if silence_cut_disabled:
+                # Per-item opt-out (10A) — skips the WHOLE stage, retakes included.
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_skipped_disabled", {"variant_id": variant_id}
+                )
+            elif not probe.has_audio:
+                # No real audio stream: the reframe injects silent AAC, and whisper
+                # on digital silence hallucinates plausible words — skip BEFORE any
+                # ASR call (eng review 3A).
+                record_pipeline_event(
+                    "silence_cut", "silence_cut_skipped_no_audio", {"variant_id": variant_id}
+                )
+            else:
+                sc_entry = _silence_cut_analysis(
+                    clip_path, float(probe.duration_s), job_id=job_id, cache=silence_cut_cache
+                )
+                # `words` must be non-empty to adopt the verbatim transcript:
+                # an empty-words bailout (e.g. clip_too_short — P3 returns
+                # before whisper runs) must caption from the base-transcription
+                # fallback below, NOT produce zero cues.
+                if not sc_entry["failed"] and sc_entry["words"]:
+                    sc_words = sc_entry["words"]
+                    sc_language = sc_entry["language"]
+                    sc_plan = sc_entry["plan"]
+                    # A bailed-out plan is a no-op (render uncut); a clean plan
+                    # with zero removals skips the segmented encode too. Captions
+                    # still come from the already-paid-for verbatim transcript.
+                    sc_apply = sc_plan.bailout_reason is None and bool(sc_plan.removed)
+
         # Caption-free 9:16 base with the clip's own audio (LUFS-normalized). start=0,
         # end=duration, speed=1.0 → base timeline == clip timeline, so transcript word
         # times map directly onto the base (no rebasing needed).
         base_path = os.path.join(variant_dir, "final_base.mp4")
-        reframe_and_export(
-            clip_path,
-            0.0,
-            float(probe.duration_s),
-            aspect,
-            None,  # no ASS at this stage — captions are burned in a second pass
-            base_path,
-            output_fit=fit,
-            has_audio=probe.has_audio,
-        )
+        reframe_kwargs: dict[str, Any] = {}
+        if sc_apply:
+            # The punch factor comes from silence_cut's constant (user-approved
+            # jump-cut idiom) — NEVER a literal here, so every render path cuts
+            # in the same style from one source of truth.
+            reframe_kwargs = {
+                "keep_segments": sc_plan.keep_segments,
+                "keep_segments_punch_in": KEEP_SEGMENTS_PUNCH_IN,
+            }
+        # Cut-output reuse (7A): a sibling variant may have already paid for the
+        # cut encode of this exact clip — copy it instead of re-running ffmpeg.
+        cut_reused = False
+        if sc_apply and silence_cut_cache is not None:
+            cached_cut = sc_entry.get("cut_video_path")
+            if cached_cut and os.path.exists(cached_cut):
+                shutil.copy2(cached_cut, base_path)
+                cut_reused = True
+        if not cut_reused:
+            try:
+                reframe_and_export(
+                    clip_path,
+                    0.0,
+                    float(probe.duration_s),
+                    aspect,
+                    None,  # no ASS at this stage — captions are burned in a second pass
+                    base_path,
+                    output_fit=fit,
+                    has_audio=probe.has_audio,
+                    **reframe_kwargs,
+                )
+            except Exception as exc:
+                if not sc_apply:
+                    raise
+                # Fail-open on the CUT apply (R3a, mirroring talking_head's
+                # uncut retry): a segment-filter failure must cost the cuts,
+                # never the variant. Clear every plan-derived state so captions
+                # fall back to the base-transcription path below (the remapped
+                # verbatim words describe a cut timeline that no longer
+                # exists), drop the partial output, and re-run the reframe
+                # WITHOUT keep_segments. No summary is persisted on this path —
+                # a removed[] blob on an uncut video lies to the admin viewer.
+                log.warning(
+                    "silence_cut_apply_failed",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:200],
+                )
+                record_pipeline_event(
+                    "silence_cut",
+                    "silence_cut_apply_failed",
+                    {"variant_id": variant_id, "error": str(exc)[:200]},
+                )
+                sc_apply = False
+                sc_plan = None
+                sc_words = None
+                sc_language = ""
+                sc_entry = None
+                if os.path.exists(base_path):
+                    os.remove(base_path)
+                reframe_and_export(
+                    clip_path,
+                    0.0,
+                    float(probe.duration_s),
+                    aspect,
+                    None,
+                    base_path,
+                    output_fit=fit,
+                    has_audio=probe.has_audio,
+                )
         if not os.path.exists(base_path) or os.path.getsize(base_path) == 0:
             raise RuntimeError("subtitled base render produced empty output")
+        if sc_apply and not cut_reused and silence_cut_cache is not None:
+            # Stash the cut base for sibling variants (best-effort — a copy
+            # failure only costs the next variant a re-encode, never the job).
+            try:
+                os.makedirs(silence_cut_cache.dir, exist_ok=True)
+                cached_cut = os.path.join(
+                    silence_cut_cache.dir, f"{os.path.basename(clip_path)}.cut.mp4"
+                )
+                # Same filesystem (both live under the job tmpdir): a hardlink
+                # is free — no byte copy. Fall back to a real copy if the FS
+                # refuses the link (P2).
+                try:
+                    os.link(base_path, cached_cut)
+                except OSError:
+                    shutil.copy2(base_path, cached_cut)
+                sc_entry["cut_video_path"] = cached_cut
+            except OSError as exc:
+                log.warning("silence_cut_cache_store_failed", job_id=job_id, error=str(exc))
 
-        # Subtitled captions the SPOKEN language of the clip: auto-detect (language=None),
-        # NOT the plan's content language — a Turkish clip must get Turkish captions even
-        # in an English plan. The user can still override the detected language via the D5
-        # chip (re-transcribe). Persist the detected language so the chip shows it.
-        transcript = transcribe_whisper(base_path, language=None)
-        detected_lang = transcript.language or (language or "en")
-        # Word mode attaches each cue's real per-word timings so the highlight (and any
-        # reburn of an UNedited cue) stays locked to the audio.
-        # Always attach real word timings (both styles): the sentence re-split lands
-        # boundaries on word times when the correction leaves a cue untouched, and the
-        # word-pop burn keeps its highlight audio-locked from the carried words.
-        cues = build_plain_cues(transcript.words, attach_words=True)
+        if sc_words is not None:
+            # NO second transcription (plans/010): cues come from the verbatim
+            # original-clip transcript remapped into the cut timeline (exact
+            # arithmetic — see silence_cut.remap_words), MINUS every lexicon
+            # filler token. Caption hygiene (15A): fillers never reach captions
+            # even when they were NOT cut from the video (e.g. blocked by the
+            # segment-signal guard or below MIN_CUT_S).
+            from app.pipeline.transcribe import Word  # noqa: PLC0415
+
+            caption_words = [
+                Word(text=w["text"], start_s=w["start_s"], end_s=w["end_s"], confidence=1.0)
+                for w in remap_words(sc_words, sc_plan)
+                if not is_filler_token(w["text"])
+            ]
+            detected_lang = sc_language or (language or "en")
+            cues = build_plain_cues(caption_words, attach_words=True)
+        else:
+            # Flag-off / gated / analysis-failed path — today's flow, unchanged.
+            # Subtitled captions the SPOKEN language of the clip: auto-detect
+            # (language=None), NOT the plan's content language — a Turkish clip must
+            # get Turkish captions even in an English plan. The user can still
+            # override the detected language via the D5 chip (re-transcribe).
+            # Persist the detected language so the chip shows it.
+            transcript = transcribe_whisper(base_path, language=None)
+            detected_lang = transcript.language or (language or "en")
+            # Word mode attaches each cue's real per-word timings so the highlight
+            # (and any reburn of an UNedited cue) stays locked to the audio.
+            # Always attach real word timings (both styles): the sentence re-split
+            # lands boundaries on word times when the correction leaves a cue
+            # untouched, and the word-pop burn keeps its highlight audio-locked
+            # from the carried words.
+            cues = build_plain_cues(transcript.words, attach_words=True)
         # Fix whisper's spelling/grammar mishearings (esp. Turkish morphology) while
         # keeping cue timing. Best-effort — a failure leaves the raw cues.
         cues = correct_caption_cues(
@@ -5890,6 +6764,28 @@ def _render_subtitled_variant(
         if cues and os.path.exists(base_path) and os.path.getsize(base_path) > 0:
             base_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_base.mp4"
             upload_public_read(base_path, base_gcs)
+
+        # Silence-cut summary (plans/010): persisted whenever the stage ran to a
+        # non-bailout plan (zero-removal plans included — "nothing to cut" is
+        # information). `plan_summary`/`plan_event_payload` are the single
+        # source of truth for both shapes (shared with talking_head — M2/M6);
+        # plain dicts land in Job.assembly_plan JSON and the admin cut-plan
+        # viewer (T9) renders removed[] directly. Bailouts are event-only (the
+        # silence_cut_bailout event carries the reason).
+        silence_cut_summary: dict[str, Any] | None = None
+        if sc_plan is not None and sc_plan.bailout_reason is None:
+            silence_cut_summary = plan_summary(sc_plan, original_duration_s=float(probe.duration_s))
+            record_pipeline_event(
+                "silence_cut",
+                "silence_cut_plan",
+                plan_event_payload(
+                    sc_plan,
+                    variant_id=variant_id,
+                    retake_spans=sc_entry["retake_span_count"] if sc_entry else 0,
+                    applied=sc_apply,
+                    cut_reused=cut_reused,
+                ),
+            )
         return {
             **base,
             "ok": True,
@@ -5902,6 +6798,7 @@ def _render_subtitled_variant(
             "caption_language": detected_lang,
             "media_overlays": base["media_overlays"],
             "pre_media_overlay_video_path": base["pre_media_overlay_video_path"],
+            "silence_cut": silence_cut_summary,
         }
     except Exception as exc:
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
@@ -7271,12 +8168,30 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # that isn't re-listed here; pinned by
                     # test_finalize_job_preserves_ai_timeline.
                     "ai_timeline": r.get("ai_timeline"),
+                    # Montage visual preset/capability gating. MUST survive
+                    # finalization or masonry variants look like classic variants
+                    # to the editor and expose a misleading clip timeline.
+                    **(
+                        {
+                            "montage_preset": r.get("montage_preset"),
+                            "montage_preset_rendered": r.get("montage_preset_rendered"),
+                            "montage_preset_fallback": r.get("montage_preset_fallback"),
+                        }
+                        if r.get("montage_preset")
+                        else {}
+                    ),
                     # voiceover variants: mix must survive or the voice/bed slider
                     # resets after the first completed render (same strip class).
                     "mix": r.get("mix"),
                     # narrated step alignment (diagnostic): keep it through finalize
                     # so the admin job-debug view + re-render diagnostics can read it.
                     "narrated_timings": r.get("narrated_timings"),
+                    # silence/filler cut summary (plans/010) — MUST survive
+                    # finalization or the admin cut-plan viewer (T9) and the
+                    # per-variant time-saved stat silently lose their data the
+                    # moment the job completes. Pinned by
+                    # test_finalize_job_preserves_silence_cut.
+                    "silence_cut": r.get("silence_cut"),
                 }
                 for r in results
             ],
@@ -7318,8 +8233,13 @@ def _persist_archetype_fallback(job_id: str, declared: str, reason: str | None) 
 
 
 def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = None) -> None:
+    # Row-locked RMW (mirrors _upsert_variant_entry / _update_variant_entry).
+    # `extra_plan` merges into assembly_plan — _finalize_job writes the WHOLE
+    # variants list here. Sibling regenerate/reapply tasks and the status route's
+    # lazy overlay-preview backfill read-modify-write the same JSONB concurrently,
+    # so without SELECT ... FOR UPDATE a stale read silently clobbers their state.
     with _sync_session() as db:
-        job = db.get(Job, uuid.UUID(job_id))
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None:
             return
         job.status = status
@@ -7332,7 +8252,11 @@ def _set_status(job_id: str, status: str, extra_plan: dict[str, Any] | None = No
 def _fail_job(job_id: str, error_detail: str, failure_reason: str | None = None) -> None:
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            # Row-locked: reconciling variant render_status below is a
+            # read-modify-write of assembly_plan. Without SELECT ... FOR UPDATE a
+            # concurrent variant/finalize write can be clobbered by this stale read
+            # (mirrors _upsert_variant_entry).
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job:
                 job.status = "processing_failed"
                 job.error_detail = error_detail[:MAX_ERROR_DETAIL_LEN]

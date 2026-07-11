@@ -27,6 +27,16 @@ ingested_via: put_page
 **Context:** Gate added in `_editor_capabilities` (`suggestions_reason = "caption_archetype"`) + the suggest-overlays route guard in `routes/plan_items.py`. Eval harness pattern: `src/apps/api/tests/evals/`. Decision trail: plans/010-subtitled-sfx-overlay-lanes.md (OV-5).
 **Depends on:** plan 010 shipping; sample subtitled/narrated jobs with ready assets.
 **Effort:** M (CC: ~1-2 h incl. eval fixtures)
+## Generative photos — re-plan (PR #476 closed 2026-07-11)
+
+### Photo support in generative edits (re-plan against current stack)
+**What:** Let users include photos (stills) in generative edits — pacing, Ken-Burns-style motion or static holds, and slot assembly for mixed photo/video clip pools.
+**Why:** Real creator footage is photo-heavy; today photos are rejected or mishandled by the clip pipeline. PR #476 (June 7) built this against a pre-format-aware stack and drifted 140 commits behind — closed as unlandable, but the demand stands.
+**How:** Re-plan rather than rebase: the agent stack has since gained format-aware edit intents, editorial sequences, and clip_metadata parse-threading (new fields must be threaded into parse() explicitly). Use branch `feat/generative-photos-2026-06-07` as the reference implementation for the photo_pacing agent shape and upload handling; re-derive the assembler integration from `docs/pipelines/generative.md` as it exists now.
+**Effort:** L (human: ~1w / CC+Codex: ~1-2 days)
+**Priority:** P2
+**Depends on:** nothing hard; benefits from the format-aware Lane D dispatch work if it lands first.
+
 
 ## Landscape-fit — Follow-ups (from PR landscape-fit-2026-06-26, v0.5.3.0)
 
@@ -1063,6 +1073,14 @@ Surfaced by prod generative job `d30c61fe-dab3-417d-998a-3a81535f7b50`, which sa
 **Priority:** P3
 **Depends on:** this PR's editor suggestion section.
 
+### Bottom-sheet overlay editor
+**What:** If phone usage shows the inline overlay popover is clumsy, rebuild overlay editing on touch as a `dvh`-capped bottom sheet with safe-area padding, a sticky action row, and `t-modal` motion tokens.
+**Why:** Decision 6A from the 2026-07-11 plan-design-review chose the lighter popover path for now; a sheet is the next move only if user feedback or session recordings show touch users abandoning the popover.
+**How:** Keep the desktop popover. On touch/editor-light layouts, mount the same controls in a bottom sheet capped to the viewport, with `env(safe-area-inset-bottom)` padding and sticky Apply/Close actions.
+**Effort:** M
+**Priority:** P3
+**Depends on:** user feedback or session recordings showing popover abandonment on touch.
+
 ## Review follow-ups — informational findings (from /review of plans 005-009, 2026-07-03)
 
 The /review army (31 agents) confirmed 20 criticals — all fixed inline or by the
@@ -1084,8 +1102,11 @@ Grouped by area; none block ship.
 - **T-REV-8 (P3)** — stale PR0-era docstrings contradict shipped code (register_pool_asset "dispatch lands in PR1a" but it dispatches now; delete_pool_asset "PR0 has no suggestions yet"). `_persist_variant_fields` docstring promises a return all 4 callers ignore. Refresh.
 
 ### Frontend / design (informational)
-- **T-REV-9 (P3)** — touch targets: several new secondary controls (× remove-sound strip, etc.) fall below the 44px floor; NumField focus outline is a weak zinc border shift. Audit against DESIGN.md a11y.
 - **T-REV-10 (P3)** — pre-existing (flagged because the lane is now the suggestion showcase): manual pip chips cycle a rainbow TRACK_COLORS palette starting violet #8B5CF6 (AI-slop signal per DESIGN.md); consider a calmer palette.
 - **T-REV-11 (P3)** — lost-update asymmetry: the autoplace TASK takes row locks for assembly_plan writes, but the 4 new suggestion ROUTES do read-modify-write without with_for_update (a concurrent manual edit + task write can lose one). Low frequency; add row locks to the route writers if it surfaces.
 - **T-REV-12 (P3)** — a transiently failed pool-asset analysis (one GCS blip / Gemini 500) marks status="failed" permanently; the matcher backfill only re-touches stale-but-ready video assets, so a failed asset is a dead end with no retry path. Add a re-analyze affordance or a bounded auto-retry.
 - **T-REV-13 (P3)** — autoplace tasks land on the default "celery" queue drained by prod's ONE concurrency=1 worker alongside 30-min renders (generate-first-week enqueues 7 at once), so match_overlay_suggestions can queue behind a long render. Consider a dedicated autoplace queue/process group in prod (local dev already uses a separate queue).
+
+### Completed
+- **T-REV-9 (P3)** — touch targets: several new secondary controls (× remove-sound strip, etc.) fell below the 44px floor; NumField focus outline was a weak zinc border shift.
+  **Completed:** v0.7.13.0 (2026-07-11)

@@ -370,15 +370,99 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     ]
     mock_output.rationale = "Creates curiosity"
 
-    with patch("app.agents.idea_expander.IdeaExpanderAgent.run", return_value=mock_output):
+    with patch("app.agents.idea_expander.IdeaExpanderAgent.run", return_value=mock_output) as run:
         resp = client.post(f"/plan-items/{item.id}/expand")
 
     assert resp.status_code == 200
+    agent_input = run.call_args.args[0]
+    assert agent_input.creator_context == ""
+    assert agent_input.video_type == "montage"
+    assert agent_input.content_mode == "create_new"
     data = resp.json()
     assert data["theme"] == "Coffee shop first visit"
     assert 2 <= len(data["filming_guide"]) <= 4
     assert all(shot["shot_id"] for shot in data["filming_guide"])
     # No DB writes.
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+def test_expand_trims_context_and_derives_voiceover_type_and_content_mode(
+    client: TestClient,
+) -> None:
+    """Optional request body is sanitized and threaded to the propose-only agent."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    persona = _persona()
+    item.edit_format = "narrated_ready"
+    item.content_mode = "existing_footage"
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
+    db.get = AsyncMock(side_effect=[plan, plan, persona])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    mock_output = MagicMock()
+    mock_output.theme = "Coffee shop first visit"
+    mock_output.filming_suggestion = "Find the entrance and first sip in your clips"
+    mock_output.filming_guide = [
+        FilmingShot(what="Entrance clip", how="Use the widest saved angle", duration_s=4),
+        FilmingShot(what="First sip", how="Use the close-up", duration_s=3),
+    ]
+    mock_output.rationale = "Creates curiosity"
+
+    with patch("app.agents.idea_expander.IdeaExpanderAgent.run", return_value=mock_output) as run:
+        resp = client.post(
+            f"/plan-items/{item.id}/expand",
+            json={"creator_context": "  I want people to save this for Sunday.  "},
+        )
+
+    assert resp.status_code == 200
+    agent_input = run.call_args.args[0]
+    assert agent_input.creator_context == "I want people to save this for Sunday."
+    assert agent_input.video_type == "voiceover"
+    assert agent_input.content_mode == "existing_footage"
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.parametrize("payload", [{}, {"creator_context": "   "}])
+def test_expand_empty_context_becomes_empty_agent_context(
+    client: TestClient,
+    payload: dict[str, str],
+) -> None:
+    """Empty request bodies keep the old behavior while accepting explicit JSON."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    persona = _persona()
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
+    db.get = AsyncMock(side_effect=[plan, plan, persona])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    mock_output = MagicMock()
+    mock_output.theme = "Coffee shop first visit"
+    mock_output.filming_suggestion = "Film the entrance and your first sip"
+    mock_output.filming_guide = [
+        FilmingShot(what="Walk up to the shop", how="Wide shot", duration_s=4),
+        FilmingShot(what="Take the first sip", how="Close-up", duration_s=3),
+    ]
+    mock_output.rationale = "Creates curiosity"
+
+    with patch("app.agents.idea_expander.IdeaExpanderAgent.run", return_value=mock_output) as run:
+        resp = client.post(f"/plan-items/{item.id}/expand", json=payload)
+
+    assert resp.status_code == 200
+    assert run.call_args.args[0].creator_context == ""
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
 
@@ -410,7 +494,7 @@ def test_expand_empty_guide_after_retry_returns_502_and_does_not_write(
     assert resp.status_code == 502
     assert resp.json()["detail"] == "Couldn't plan this idea — try again."
     assert len(model_client.invocations) == 2
-    assert "2-4 non-empty shots" in model_client.invocations[1]["prompt"]
+    assert "montage/voiceover need 2-4" in model_client.invocations[1]["prompt"]
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
     assert item.filming_guide == []

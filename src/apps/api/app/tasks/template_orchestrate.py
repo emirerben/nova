@@ -57,6 +57,7 @@ from app.pipeline.agents.gemini_analyzer import (
     build_recipe,
     gemini_upload_and_wait,
 )
+from app.pipeline.image_clip import is_image_file
 from app.pipeline.orientation import OrientationError, normalize_orientation
 from app.pipeline.reframe import ReframeError, resolve_output_fit
 from app.pipeline.single_pass import (
@@ -1797,7 +1798,15 @@ def _download_clips_parallel(
     The instrumentation cost is ~50 microseconds of `time.monotonic()` calls
     per clip — negligible vs the second-scale download itself.
     """
-    local_paths = [os.path.join(tmpdir, f"clip_{i}.mp4") for i in range(len(gcs_paths))]
+
+    def _local_path_for(idx: int, gcs_path: str) -> str:
+        clean = gcs_path.split("?", 1)[0]
+        ext = os.path.splitext(clean)[1].lower()
+        if ext in {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}:
+            return os.path.join(tmpdir, f"clip_{idx}{ext}")
+        return os.path.join(tmpdir, f"clip_{idx}.mp4")
+
+    local_paths = [_local_path_for(i, g) for i, g in enumerate(gcs_paths)]
     per_clip_stats: list[dict] = []
     stats_lock = threading.Lock()
 
@@ -1806,16 +1815,19 @@ def _download_clips_parallel(
         t0 = time.monotonic()
         download_to_file(gcs_path, local_path)
         elapsed_ms = int((time.monotonic() - t0) * 1000)
-        # Strip Display-Matrix rotation if the file is a phone-recorded
-        # landscape-with-portrait-flag (iPhone HEVC etc). No-op for true
-        # landscape, true portrait, or any file without the metadata flag.
-        # Must run BEFORE probe + Gemini upload (which both happen in
-        # parallel after this function returns) so all downstream
-        # consumers agree on pixel orientation.
-        # See pipeline/orientation.py for the why.
-        normalize_t0 = time.monotonic()
-        normalize_orientation(local_path)
-        normalize_ms = int((time.monotonic() - normalize_t0) * 1000)
+        if is_image_file(local_path):
+            normalize_ms = 0
+        else:
+            # Strip Display-Matrix rotation if the file is a phone-recorded
+            # landscape-with-portrait-flag (iPhone HEVC etc). No-op for true
+            # landscape, true portrait, or any file without the metadata flag.
+            # Must run BEFORE probe + Gemini upload (which both happen in
+            # parallel after this function returns) so all downstream
+            # consumers agree on pixel orientation.
+            # See pipeline/orientation.py for the why.
+            normalize_t0 = time.monotonic()
+            normalize_orientation(local_path)
+            normalize_ms = int((time.monotonic() - normalize_t0) * 1000)
         # Best-effort size read; failure to stat is non-fatal because the
         # download already succeeded — we just lose the bytes-per-second
         # signal for that clip.
@@ -1864,6 +1876,47 @@ def _download_clips_parallel(
     return local_paths
 
 
+def _synthetic_image_probe(path: str):
+    """Probe substitute for still images used as masonry visual tiles."""
+    from app.pipeline.masonry_montage import MASONRY_MAX_DURATION_S  # noqa: PLC0415
+    from app.pipeline.probe import VideoProbe  # noqa: PLC0415
+
+    width = int(settings.output_width)
+    height = int(settings.output_height)
+    try:
+        from PIL import Image  # noqa: PLC0415
+
+        with Image.open(path) as img:
+            width, height = img.size
+    except Exception:  # noqa: BLE001
+        log.info("image_probe_dimension_fallback", path=os.path.basename(path))
+
+    if width <= 0 or height <= 0:
+        width = int(settings.output_width)
+        height = int(settings.output_height)
+    ratio = width / height
+    if 1.7 <= ratio <= 1.8:
+        aspect_ratio = "16:9"
+    elif 0.5 <= ratio <= 0.6:
+        aspect_ratio = "9:16"
+    else:
+        aspect_ratio = "other"
+    try:
+        size_bytes = os.path.getsize(path)
+    except OSError:
+        size_bytes = 0
+    return VideoProbe(
+        duration_s=MASONRY_MAX_DURATION_S,
+        fps=float(settings.output_fps),
+        width=width,
+        height=height,
+        has_audio=False,
+        codec="image",
+        aspect_ratio=aspect_ratio,
+        file_size_bytes=size_bytes,
+    )
+
+
 def _probe_clips(local_paths: list[str]) -> dict:
     """Return {local_path: VideoProbe} for each clip. Raises on probe failure.
 
@@ -1877,7 +1930,10 @@ def _probe_clips(local_paths: list[str]) -> dict:
     result: dict = {}
     for path in local_paths:
         try:
-            result[path] = probe_video(path)
+            if is_image_file(path):
+                result[path] = _synthetic_image_probe(path)
+            else:
+                result[path] = probe_video(path)
         except Exception as exc:
             # Re-raise: silently fabricating 1920×1080/30fps/30s defaults makes
             # downstream FFmpeg operate on lies (wrong trim points, wrong
@@ -1940,6 +1996,14 @@ def _upload_clips_parallel(
     def _upload_one(idx_path: tuple[int, str]) -> tuple[int, object | None]:
         idx, path = idx_path
         t0 = time.monotonic()
+        if is_image_file(path):
+            log.info(
+                "gemini_upload_skipped_still_image",
+                clip_idx=idx,
+                clip_path=os.path.basename(path),
+                job_id=job_id,
+            )
+            return idx, None
         try:
             ref = gemini_upload_and_wait(path)
         except (GeminiAnalysisError, GeminiRefusalError, PollingTimeoutError) as exc:
@@ -2139,6 +2203,38 @@ def _analyze_clips_parallel(
         idx, ref, path = args
         t0 = time.monotonic()
         try:
+            if is_image_file(path):
+                clip_dur = probe_map[path].duration_s if probe_map and path in probe_map else 15.0
+                image_meta = ClipMeta(
+                    clip_id=f"clip_{idx}",
+                    transcript="",
+                    hook_text="Still photo",
+                    hook_score=5.0,
+                    best_moments=[
+                        {
+                            "start_s": 0.0,
+                            "end_s": float(clip_dur),
+                            "energy": 5.0,
+                            "description": "Still photo visual tile",
+                        }
+                    ],
+                    detected_subject="still photo",
+                    analysis_degraded=True,
+                    clip_path=path,
+                )
+                setattr(image_meta, "is_image", True)
+                if record_sub_phases and job_id is not None:
+                    record_sub_phase(
+                        job_id,
+                        PHASE_ANALYZE_CLIPS,
+                        "still_image_metadata",
+                        elapsed_ms=int((time.monotonic() - t0) * 1000),
+                        detail={
+                            "clip_idx": idx,
+                            "clip_path": os.path.basename(path),
+                        },
+                    )
+                return image_meta, None
             if ref is None:
                 # Upload failed earlier — skip Gemini, go straight to the
                 # Whisper-fallback path in the except branch so the clip

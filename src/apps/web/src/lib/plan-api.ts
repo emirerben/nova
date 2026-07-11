@@ -286,6 +286,10 @@ export interface PlanItem {
   user_edited: boolean;
   /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
   edit_format?: string | null;
+  /** Montage visual preset. "classic" keeps the sequential montage; "masonry" renders a collage wall. */
+  montage_preset?: "classic" | "masonry";
+  /** Per-item/persona content-mode resolved by the API for upload flow selection. */
+  content_mode?: "existing_footage" | "create_new" | "mixed";
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
   voiceover_gcs_path?: string | null;
   /**
@@ -397,8 +401,14 @@ export function reorderItems(planId: string, itemIds: string[]): Promise<Content
 }
 
 /** Propose an AI expansion for a bare idea (propose-only, never writes DB). */
-export function expandIdea(itemId: string): Promise<IdeaExpandProposal> {
-  return request<IdeaExpandProposal>(`/plan-items/${itemId}/expand`, { method: "POST" });
+export function expandIdea(
+  itemId: string,
+  input: { creator_context?: string | null } = {},
+): Promise<IdeaExpandProposal> {
+  return request<IdeaExpandProposal>(`/plan-items/${itemId}/expand`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function updatePlanItem(
@@ -411,6 +421,7 @@ export function updatePlanItem(
     scenes?: SceneBlock[];
     scheduled_date?: string | null;
     edit_format?: string | null;
+    montage_preset?: "classic" | "masonry";
     filming_guide?: FilmingShot[];
     landscape_fit?: "fit" | "fill";
     /** Per-item content_mode override (montage plan-vs-have toggle, 0058+). */
@@ -442,6 +453,18 @@ interface UploadUrl {
   gcs_path: string;
 }
 
+function uploadContentTypeForFile(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
 /** Ask the API for signed PUT URLs (lands under users/{uid}/plan/{itemId}/). */
 export async function requestUploadUrls(
   itemId: string,
@@ -459,7 +482,7 @@ export async function uploadToGcs(uploadUrl: string, file: File): Promise<void> 
   try {
     const res = await fetch(uploadUrl, {
       method: "PUT",
-      headers: { "Content-Type": file.type },
+      headers: { "Content-Type": uploadContentTypeForFile(file) },
       body: file,
     });
     if (!res.ok) throw new Error(`Upload failed (${res.status})`);
@@ -480,7 +503,7 @@ async function relaySignedUpload(signedUrl: string, file: File): Promise<void> {
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("signed_url", signedUrl);
-  form.append("content_type", file.type || "application/octet-stream");
+  form.append("content_type", uploadContentTypeForFile(file));
   const res = await fetch(`${PLAN_BASE}/uploads/relay`, { method: "POST", body: form });
   if (res.status === 401) throw new NotAuthenticatedError();
   if (!res.ok) {
@@ -541,7 +564,7 @@ export function uploadToGcsWithProgress(
     }
 
     xhr.open("PUT", uploadUrl);
-    xhr.setRequestHeader("Content-Type", file.type);
+    xhr.setRequestHeader("Content-Type", uploadContentTypeForFile(file));
     xhr.send(file);
   });
 }
@@ -881,6 +904,12 @@ export interface PlanItemVariant {
   // the hero shows the burned output, so it is NOT instant-edit-eligible. Absent
   // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
   resolved_archetype?: string | null;
+  /** Montage preset selected at generation time. Present only for non-classic presets. */
+  montage_preset?: "masonry" | null;
+  /** Visual assembler that actually rendered; "masonry" disables clip-timeline editing. */
+  montage_preset_rendered?: "masonry" | null;
+  /** Best-effort fallback reason when a selected preset rendered via classic montage. */
+  montage_preset_fallback?: string | null;
   render_generation_id?: string | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;

@@ -61,6 +61,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.edit_format = None
+    item.montage_preset = "classic"
     item.voiceover_gcs_path = None
     item.voiceover_bed_level = None
     item.voiceover_caption_style = None
@@ -119,6 +120,18 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
         resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 200
     task.delay.assert_called_once_with(str(item.id))
+
+
+def test_generate_rejects_photo_clip_for_classic_montage(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/still.jpg"])
+    item.montage_preset = "classic"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "Photos require Masonry collage"
 
 
 def test_generate_blocks_narrated_without_voiceover(monkeypatch, client: TestClient) -> None:
@@ -307,7 +320,7 @@ def test_attach_clips_rejects_non_video_pool_asset(client: TestClient) -> None:
         json={"clip_gcs_paths": [pool_path]},
     )
     assert resp.status_code == 422
-    assert "video" in resp.json()["detail"].lower()
+    assert resp.json()["detail"] == "Photos require Masonry collage"
 
 
 def test_attach_clips_rejects_pool_path_without_asset_row(client: TestClient) -> None:
@@ -371,6 +384,68 @@ def test_upload_urls_returns_signed_puts(client: TestClient) -> None:
     body = resp.json()
     assert len(body["urls"]) == 1
     assert body["urls"][0]["gcs_path"].startswith(f"users/{user.id}/plan/")
+
+
+def test_upload_urls_rejects_images_for_classic_montage(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.montage_preset = "classic"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(
+        f"/plan-items/{item.id}/upload-urls",
+        json={
+            "files": [{"filename": "x.jpg", "content_type": "image/jpeg", "file_size_bytes": 1000}]
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Photos require Masonry collage"
+
+
+def test_upload_urls_accepts_images_for_masonry_montage(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "montage"
+    item.montage_preset = "masonry"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch(
+        "app.storage.presigned_put_url_for_plan_item",
+        return_value=("https://signed.example/put", f"users/{user.id}/plan/{item.id}/x.jpg"),
+    ) as signed:
+        resp = client.post(
+            f"/plan-items/{item.id}/upload-urls",
+            json={
+                "files": [
+                    {"filename": "x.jpg", "content_type": "image/jpeg", "file_size_bytes": 1000}
+                ]
+            },
+        )
+    assert resp.status_code == 200
+    signed.assert_called_once()
+    assert signed.call_args.kwargs["content_type"] == "image/jpeg"
+
+
+def test_upload_urls_rejects_images_when_stale_masonry_preset_is_not_montage(
+    client: TestClient,
+) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "narrated_ready"
+    item.montage_preset = "masonry"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(
+        f"/plan-items/{item.id}/upload-urls",
+        json={
+            "files": [{"filename": "x.jpg", "content_type": "image/jpeg", "file_size_bytes": 1000}]
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Photos require Masonry collage"
 
 
 # ── filming_guide serialization ───────────────────────────────────────────────
@@ -573,6 +648,43 @@ def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
     assert item.landscape_fit == "fit"  # unchanged
 
 
+def test_patch_montage_preset_persists_masonry(client: TestClient) -> None:
+    """PATCH montage_preset='masonry' must be written to the item row."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.montage_preset = "classic"
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"montage_preset": "masonry"},
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 200
+    assert item.montage_preset == "masonry"
+    assert resp.json()["montage_preset"] == "masonry"
+
+
+def test_patch_montage_preset_rejects_junk(client: TestClient) -> None:
+    """Invalid montage_preset values must be rejected with 422."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.montage_preset = "classic"
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"montage_preset": "polaroid"},
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 422
+    assert item.montage_preset == "classic"
+
+
 def test_plan_item_response_surface_landscape_fit() -> None:
     """plan_item_response() must expose landscape_fit; fallback to 'fit' for MagicMock."""
     from app.models import PlanItem  # noqa: PLC0415
@@ -600,6 +712,7 @@ def test_plan_item_response_surface_landscape_fit() -> None:
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.edit_format = None
+    item.montage_preset = "masonry"
     item.voiceover_gcs_path = None
     item.landscape_fit = "fill"  # explicitly set
     item.voiceover_bed_level = None
@@ -607,6 +720,7 @@ def test_plan_item_response_surface_landscape_fit() -> None:
 
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fill"
+    assert resp.montage_preset == "masonry"
 
 
 def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
@@ -636,6 +750,7 @@ def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.edit_format = None
+    item.montage_preset = None
     item.voiceover_gcs_path = None
     item.landscape_fit = None  # pre-migration row: None → should default to "fit"
     item.voiceover_bed_level = None
@@ -643,3 +758,4 @@ def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
 
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fit"
+    assert resp.montage_preset == "classic"

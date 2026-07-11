@@ -41,6 +41,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
   - Eyebrows: `text-[11px] font-semibold uppercase tracking-[0.18em]` (dominant, 5× in section cards); hero eyebrow uses `tracking-[0.24em]` — see §10 ledger
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
   **Single-primary-CTA rule on landing:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
+- **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
@@ -198,8 +199,19 @@ Celebrate then recede.
 - **Visible focus** on every interactive element: product `focus:border-amber-400/60` or amber ring; landing ink outline (`outline-lime-500` for selection states).
 - **Contrast floor:** text meets 4.5:1 against its surface. `zinc-600`-on-black fails — faint zinc is decorative only, never for content that must be read.
 - **Touch targets** ≥44px on mobile.
+- **Touch inputs:** inputs on touch viewports are ≥44px tall with ≥16px font to prevent iOS Safari zoom-on-focus.
+- **User scaling:** never disable zoom. Do not set `maximumScale` or `user-scalable=no`.
 - **Mobile-first:** single column default, `sm:`/`md:` enhance; landing display type scales via `clamp()`; phone tiles use mobile radii (§2).
 - **Reduced-motion** honored globally — `prefers-reduced-motion` zeroes entrances (globals.css); new shimmer/ping uses `motion-safe:` prefix until D17 lands (see §6).
+
+| Tier | Width | Canonical use |
+|---|---:|---|
+| base | <640px | Phone-first single column; 44px touch targets; 16px focused inputs. |
+| `sm` | ≥640px | Tailwind small-tablet enhancement tier. |
+| `md` | ≥768px | Tailwind tablet enhancement tier. |
+| light editor | <1024px | `useEditorLayoutMode.ts` light mode. |
+| `lg` / overlay editor | ≥1024px to <1280px | Tailwind desktop tier; editor overlay mode. |
+| `xl` / full editor | ≥1280px | Tailwind wide tier; editor full mode. |
 
 ---
 
@@ -255,11 +267,13 @@ Rules here supplement §2 (light editorial system).
 - **Failed plan:** quiet dashed `border-zinc-200` tile between composer and ledger, zinc copy "That idea didn't come through. Try again"; no red.
 - **Initial load:** SHIMMER tier — header ghost plus 4 ghost rows.
 
-### Expand-with-AI proposal card (item detail page; trigger "✦ Plan this for me")
+### Expand-with-AI context + proposal card (item detail page; trigger "✦ Plan this for me")
 - Shown only while the item has no `filming_guide`; trigger button matches Generate-with-AI token pattern.
+- Trigger opens an inline context panel before generation. Panel card: `rounded-xl border border-zinc-200 bg-white p-4`, Fraunces `text-lg` title "A little context helps.", visible textarea label tailored to the selected edit style, `text-base` textarea, primary `bg-lime-600 text-white` "Generate plan", secondary zinc "Skip and generate". The context ask is skippable; never block planning on form completion.
 - Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`.
 - Shot list renders inside the card: italic Fraunces numerals `text-[17px] text-lime-600`, shot `what` `text-[15px] font-medium text-[#0c0c0e]`, `how` `text-[13.5px] text-[#3f3f46]`, duration chip `text-[11px] border-zinc-200 bg-white text-[#3f3f46]`.
 - Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold` copy "Use this plan". Dismiss: `border-zinc-200 bg-white text-[#71717a]`. Rationale `text-xs italic text-[#71717a]` under the card.
+- Non-slot accepted plans (existing-footage montage, Voiceover "I have the videos", talking-to-camera) show a compact white `Plan summary` reference above the uploader instead of converting the flow to shot slots.
 
 ---
 

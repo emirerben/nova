@@ -2,6 +2,122 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.17.2] — 2026-07-11
+
+### Fixed
+- **Masonry collage now renders HEIC/HEIF photo tiles instead of falling back to classic.** The compositor normalizes still images into temp PNGs before FFmpeg input construction, so iPhone photos never hit FFmpeg's unsupported HEIC `-loop` path.
+- **Queued plan-item renders no longer show a false "didn't register" error after 45 seconds.** The item page now waits through the plan-render queue window before surfacing a registration failure.
+
+## [0.7.17.1] — 2026-07-11
+
+### Fixed
+- **Masonry collage renders no longer fail when a mixed upload includes photos.** Still-image tiles now enter the FFmpeg compositor through an RGBA-safe path, and the emergency classic audio/fallback assembly swaps photo slots onto available videos instead of handing raw JPG/HEIC files to the classic video renderer.
+
+## [0.7.17.0] — 2026-07-11
+
+### Added
+- **Masonry collage items can use photos as tiles.** Masonry montage uploads now accept JPG, PNG, WebP, HEIC, and HEIF files alongside videos; classic montage still requires video clips, with a clear error when photos are used without the Masonry collage preset.
+
+### Changed
+- **Masonry preview text now matches the editor.** Item previews and the edit canvas share the same text-element renderer, so generated text keeps the same font, casing, stroke, anchoring, spacing, and placement in both views.
+- **Changing the song on non-lyrics Masonry variants keeps the video fixed.** Song swaps now remux the new track under the existing masonry render instead of re-ingesting clips, rebuilding the board, or reburning text.
+
+### Fixed
+- **Still images flow through masonry ingest without video-only analysis.** Photos now get synthetic clip/probe metadata and are looped as still tile inputs in the compositor, so mixed photo/video masonry renders stay on the rounded white-canvas layout.
+
+## [0.7.16.0] — 2026-07-11
+
+### Added
+- **Plan This now asks for creator context before generating.** The item-page "Plan this for me" action opens a skippable inline context step with prompts tailored to Montage, Voiceover, and Talking-to-camera items, then sends that context into the idea-expander agent so proposed plans match the selected video type and content mode.
+- **Accepted non-slot plans stay visible above uploaders.** Existing-footage montage, Voiceover "I have the videos", and Talking-to-camera flows now show a compact plan summary instead of losing the accepted guide when they stay on pool or single-clip upload.
+
+### Changed
+- **Narrated walkthrough is now labeled Voiceover in the edit-style UI.** Internal `narrated_*` values stay unchanged, but user-facing item-page copy now says Voiceover and clarifies the two sub-modes.
+- **Idea expansion understands context, video type, and footage mode.** `POST /plan-items/{id}/expand` accepts optional `creator_context`, keeps empty/no-body calls backward compatible, and the prompt now differentiates visual montage shots, narration-led voiceover beats, one-shot talking-to-camera plans, and existing-footage guidance.
+
+## [0.7.15.3] — 2026-07-11
+
+### Fixed
+- **Editor saves no longer fail with `TIMELINE_OUT_OF_BOUNDS` on legacy song-text timelines.** The API now lets unchanged saved clip windows round-trip when older renders already stored a source window past the probed clip end, while still rejecting newly edited out-of-bounds windows.
+
+## [0.7.15.2] — 2026-07-11
+
+### Fixed
+- **Generative variant state can no longer be silently clobbered by a concurrent write.** Several `Job.assembly_plan` read-modify-writers in the generative pipeline (`_set_status`/finalize, `_fail_job`, and the media-overlay / SFX re-apply prep passes) updated the whole JSONB column without `SELECT … FOR UPDATE`, while sibling regenerate tasks (worker `--concurrency=4`) and the status route's lazy HEIC-preview backfill mutate the same column concurrently. A stale read in any unlocked writer overwrote another writer's variants — lost render state, lost preview stamps. All four worker writers now row-lock (mirroring `_upsert_variant_entry`), and the status route persists its preview backfill by re-reading the row `FOR UPDATE` and merging only the stamps instead of committing an unlocked snapshot. Regression-tested (lock-spy on the writers + a route test proving a concurrent worker append survives the backfill).
+
+## [0.7.15.0] — 2026-07-11
+
+### Added
+- **Mobile regression net in CI.** Every web pull request now runs a Playwright suite on three phone viewports (375/390/430, touch enabled) covering the things unit tests can't see: no horizontal overflow, 44px touch targets, trim-drag/undo round-trips, tap-vs-drag slop, cancelled-tap safety, and page scroll surviving gestures on the editing rails. Backed by env-gated fixture pages that 404 in production.
+
+## [0.7.14.0] — 2026-07-11
+
+### Added
+- **Montage items can now render as a Masonry collage preset.** Plan items persist a `montage_preset` (`classic` by default, `masonry` when explicitly selected) and the item page exposes a Classic / Masonry collage picker only for montage generation. The render contract stores only the non-default preset so legacy montage jobs keep their byte-compatible shape.
+- **Masonry collage rendering path.** Selected montage items compose uploaded user clips into a 1080x1920 white-canvas collage with rounded video tiles, mixed tile ratios, white gutters, slow board motion, a ~15s cap, and final-output `preset=fast` encoding. `song_lyrics`, `song_text`, and `original_text` stay in the existing montage variant set while `original_text` muxes an audio bed from the normal montage assembly; compositor failure falls back to classic montage and records the reason.
+
+### Changed
+- Masonry-rendered variants disable timeline / split-clip editing because the visual is a simultaneous tile board, while current text/style editing surfaces remain available.
+
+## [0.7.13.0] — 2026-07-11
+
+### Added
+- **Explicit mobile viewport policy:** the app declares its viewport (device-width, cream theme color for browser chrome; the dark render-status flow keeps matching black chrome). Pinch-zoom is never disabled.
+- DESIGN.md now carries the canonical breakpoint tiers, the touch pressed-state rule, and the ≥44px/≥16px touch-input rules the mobile work shipped this week.
+
+### Changed
+- **Phone-friendly grids and controls across upload and editing flows:** onboarding clip grids and the visuals pool show 2 columns on phones (larger, legible thumbnails); dozens of small controls (remove ×, retry, caption toggle, text-lane tools, "Clear all overlays") now meet the 44px touch floor on phones while keeping their compact desktop look.
+- Number fields in the overlay editor show a proper amber focus ring.
+
+### Fixed
+- The visuals-pool remove button is now visible on phones (it was hover-revealed — invisible but still tappable on touch, deleting without warning).
+
+## [0.7.12.0] — 2026-07-11
+
+### Added
+- **Media overlays are now editable by touch.** Tapping an overlay card opens its editor (previously dead on phones — touch taps were misread as drags), moving and trimming overlays works with your finger, and very small cards degrade gracefully on touch screens: edge handles hide and a tap opens the editor where timing can be typed precisely. Vertical swipes over the timeline still scroll the page.
+- **Overlay editor works at phone sizes:** number fields are 44px tall with 16px text on small screens (no more iOS zoom-jump when tapping a field) and the focused field scrolls into view above the keyboard on touch devices.
+- **Upload feedback:** while an overlay clip uploads, a pulsing dot and status line replace the previous bare text.
+
+### Fixed
+- On desktop, small overlay cards keep their slim trim handles — clicking a short overlay opens/moves it as before (touch-sized handles apply only to touch screens).
+- Scrolling the page with a finger over an overlay card no longer opens its editor as a side effect.
+
+## [0.7.11.0] — 2026-07-11
+
+### Added
+- **The clip trim editor now works on phones.** Every trim gesture (start, end, whole-range, source in/out) responds to touch: handles have 44px hit areas with slim visual grips, a floating readout shows In/Out/Duration while your thumb covers the handle, and ±0.1s nudge steppers (±1 beat on beat-synced edits) make fine trims possible on a small screen. Dragging never hijacks page scroll — vertical swipes still scroll, horizontal drags on handles trim.
+- **Mobile layout for the trim editor:** below tablet width the preview video sits pinned above a full-width timeline (no more squeezed rail), with no horizontal page overflow at 375px.
+
+### Changed
+- The trim editor now matches the light editorial design system (cream/ink/lime) instead of the old dark styling, and failed saves show a quiet plain-language notice instead of red error text.
+
+### Fixed
+- Undo after a trim drag now restores the pre-drag value (history recorded at gesture start, one entry per gesture).
+- Trim handles no longer overlap neighboring clips' bars; short clips split the shared zone at the midpoint.
+
+## [0.7.10.1] — 2026-07-11
+
+### Fixed
+- **`scripts/admin.py` no longer breaks auth when a `.env` value carries an inline comment.** The CLI's tiny .env reader treated everything after `=` as the value, so `ADMIN_API_KEY=abc  # my note` (or the quoted form `="abc" # note`) silently sent a corrupted token and every `/admin/*` call 401'd with no visible cause — the `-v` flag masks the token by design. `load_env()` now follows dotenv semantics, matching how pydantic-settings reads the same file for the local API: an unquoted value is cut at the first whitespace-preceded `#`, and a quoted value ends at its closing quote (so `#` inside quotes stays literal, and a comment may follow the closing quote). Verified byte-for-byte against python-dotenv on the affected shapes; pinned by 15 unit tests in `tests/scripts/test_admin_cli_load_env.py` covering every parser branch (quoting, CRLF, tab-before-`#`, unterminated quotes, missing file).
+- **Full-tree pytest no longer inherits the developer's real `.env`.** `scripts/diff_lyric_sync.py` merged the nearest `.env` into `os.environ` at import time; full-tree collection imports it via its test module, so any pydantic-invalid value on a Settings-typed key (e.g. `GENERATIVE_FAST_REBURN_ENABLED=true   # comment`) failed exactly the 7 tests that build a fresh `Settings()` — in full runs only, never in isolation. The load now happens inside `main()` (CLI behavior unchanged), pinned by `test_import_does_not_mutate_environ`.
+- **`diff_lyric_sync` .env parser now follows dotenv comment semantics.** Inline comments after unquoted values are stripped (`FLAG=true  # note` → `true`), quoted values drop trailing comments and their quotes (`KEY="abc"  # note` → `abc`), `KEY= # note` reads as empty, and `abc#def` keeps its `#` — so a hand-annotated `.env` can no longer poison typed Settings fields or crash the CLI at startup. Pinned by canary lines in `test_main_loads_env_and_strips_inline_comments`.
+
+## [0.7.9.0] — 2026-07-11
+
+### Added
+- **Automatic silence + filler-sound cutting for speech edits** (behind `SILENCE_CUT_ENABLED`, default off; plans/010). Speech render paths (subtitled + the talking_head spine; narrated self-narration inherits) now auto-tighten pauses and remove filler vocalizations ("uh", "um", "ııı", "eee") — detection = whisper word timings (verbatim-bias prompt) cross-checked against ffmpeg `silencedetect` (pause cuts require silence agreement; whisper end-times drift), applied inside the reframe filtergraph as per-segment trim/concat with 12ms declick fades and an alternating 1.08× punch-in so cuts read as intentional jump-cut style. Captions rebuild from the remapped transcript with fillers stripped. Fail-open by design: any gate/failure renders today's uncut video, never fails the job. Behavior is pinned by a golden test derived from the user-validated reference clip. Music/template/montage paths are structurally excluded (guard test) — cutting would corrupt beat maps.
+- **Retake detection** (behind `RETAKE_CUT_ENABLED`, default off, independent kill switch): a Gemini agent flags abandoned takes ("dur baştan alayım" / "let me start over") as word-index spans, merged into the same cut plan with boundary snapping and shared removal caps; agent failure degrades to zero retake cuts, never blocking silence cutting. Live evals required before the flag flips.
+- **Admin cut-plan viewer**: `/admin/jobs/{id}` renders a per-variant timeline strip of removed ranges (reason-colored bands + legend, hover detail, aria summary, true-timeline scaling via persisted `original_duration_s`) driven by the persisted `variants[i].silence_cut` blob (finalize-whitelist entry + preserve pin).
+- **Per-item opt-out**: `POST /admin/jobs/{id}/silence-cut-disable` (via `scripts/admin.py`) sets `assembly_plan["silence_cut_disabled"]`; the next FULL re-render skips the stage — support's one-item remedy instead of a global flag flip.
+- `reframe_and_export(keep_segments=…)`: per-segment cutting inside the existing filtergraph after CFR normalization (raw phone VFR never sees frame math), declick fades, optional punch-in; pinned byte-identical when unused, plus real-ffmpeg micro-e2e and a 30-cut A/V drift e2e (<40ms).
+- `detect_silences(path, noise_db, min_silence_s)` extracted from `speech_coverage` (which keeps its 0.3s default and byte-identical results — regression-pinned); the cut path uses d=0.1.
+- whisper transcription: optional `verbatim_prompt` passthrough + segment-level `avg_logprob`/`no_speech_prob` mapped onto words (whisper-1 has no per-word confidence — prod quality gates ride segment signals).
+
+### Fixed
+- Turkish sentence-initial fillers ("Iıı,") now match the filler lexicon — Python `lower()` never maps `I→ı`; a Turkish case-fold runs first (English `I`/`It`/`Im` pinned safe).
+- Punch-in on landscape (16:9-input) sources used swapped dims and would abort the concat — punch geometry is always the chain's portrait output now (pinned).
+
 ## [0.7.8.2] — 2026-07-11
 
 ### Removed

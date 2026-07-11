@@ -696,6 +696,70 @@ def _lazy_backfill_media_overlay_previews(job: Job) -> bool:
     return changed
 
 
+def _collect_media_overlay_preview_stamps(job: Job) -> dict[str, str]:
+    """Map `src_gcs_path -> preview_gcs_path` for cards the lazy backfill just stamped.
+
+    Read straight off the in-memory (post-backfill) job so the stamps can be
+    re-applied onto a freshly row-locked row — see
+    `_persist_media_overlay_preview_backfill`.
+    """
+    stamps: dict[str, str] = {}
+    for v in _variants_of(job):
+        if not isinstance(v, dict):
+            continue
+        for card in v.get("media_overlays") or []:
+            if not isinstance(card, dict):
+                continue
+            src = nonblank_str(card.get("src_gcs_path"))
+            preview = nonblank_str(card.get("preview_gcs_path"))
+            if src and preview:
+                stamps[src] = preview
+    return stamps
+
+
+async def _persist_media_overlay_preview_backfill(
+    db: AsyncSession, job_id: uuid.UUID, preview_by_src: dict[str, str]
+) -> None:
+    """Persist lazily-backfilled HEIC overlay preview paths under a row lock.
+
+    The status read computes these previews from an UNLOCKED snapshot; committing
+    that snapshot's whole `assembly_plan` back would clobber any concurrent worker
+    write (a completing render / finalize / SFX pass) that landed in between — the
+    lost-update the worker-side `with_for_update` locks now prevent. So we re-fetch
+    FOR UPDATE and merge ONLY the preview stamps onto the fresh row (mirrors
+    `persist_user_timeline` / the worker's `_update_variant_entry`). The caller must
+    have discarded the unlocked snapshot's pending mutation first (db.rollback()).
+    """
+    if not preview_by_src:
+        return
+    job = await db.get(Job, job_id, with_for_update=True)
+    if job is None:
+        return
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    changed = False
+    next_variants: list[dict] = []
+    for v in variants:
+        if not isinstance(v, dict) or not v.get("media_overlays"):
+            next_variants.append(v)
+            continue
+        next_cards: list[object] = []
+        variant_changed = False
+        for card in v.get("media_overlays") or []:
+            if isinstance(card, dict):
+                src = nonblank_str(card.get("src_gcs_path"))
+                if src and not nonblank_str(card.get("preview_gcs_path")) and src in preview_by_src:
+                    card = {**card, "preview_gcs_path": preview_by_src[src]}
+                    variant_changed = True
+            next_cards.append(card)
+        if variant_changed:
+            v = {**v, "media_overlays": next_cards}
+            changed = True
+        next_variants.append(v)
+    if changed:
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": next_variants}
+        await db.commit()
+
+
 def _variants_for_response(job: Job) -> list[dict]:
     """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
@@ -804,7 +868,13 @@ def _variants_for_response(job: Job) -> list[dict]:
         v.pop("transcript", None)
         raw_scenes = v.pop("scenes", None) or []
         v["scene_timings"] = [
-            {"text": s.get("text", ""), "start_s": s.get("start_s"), "end_s": s.get("end_s")}
+            {
+                "text": s.get("text")
+                or " ".join(str(word) for word in (s.get("words") or []) if word)
+                or "",
+                "start_s": s.get("start_s"),
+                "end_s": s.get("end_s"),
+            }
             for s in raw_scenes
             if s.get("start_s") is not None and s.get("end_s") is not None
         ]
@@ -2214,6 +2284,8 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
         return "voiceover_bed_fit"  # slots are fit to the voice bed, not user cuts
     if variant.get("resolved_archetype") == "talking_head":
         return "no_slot_timeline"  # talking_head renders have no slot layout
+    if variant.get("montage_preset_rendered") == "masonry":
+        return "masonry_preset"  # collage tiles do not map to a linear slot timeline
     if vid not in _TIMELINE_EDITABLE_VARIANTS:
         return "unsupported_variant"
     ai_slots, _, _ = _timeline_parts(variant)
@@ -2497,6 +2569,7 @@ def resolve_timeline_slots_for_edit(
         return round(max(0.5, round(float(duration_s) * 2) / 2), 3)
 
     for order, e in enumerate(slots):
+        window_changed = _window_changed(e)
         duration_s = e.duration_s
         duration_beats = e.duration_beats
         src_dur = src_dur_by_idx.get(e.clip_index)
@@ -2505,7 +2578,7 @@ def resolve_timeline_slots_for_edit(
             if (
                 beat_grid
                 and duration_beats is None
-                and not _window_changed(e)
+                and not window_changed
                 and e.duration_s is not None
                 and e.duration_s > 0
             ):
@@ -2519,7 +2592,7 @@ def resolve_timeline_slots_for_edit(
                 # duration is grid[offset+beats] - grid[offset]; the offset then
                 # advances, so the same beat count can yield different seconds at
                 # different positions (non-uniform grids).
-                if is_song_variant and _window_changed(e):
+                if is_song_variant and window_changed:
                     requested_end = grid_offset + duration_beats
                     if requested_end <= len(beat_grid) - 1:
                         requested_duration_s = beat_grid[requested_end] - beat_grid[grid_offset]
@@ -2536,19 +2609,34 @@ def resolve_timeline_slots_for_edit(
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
                 # Reclamp on a sub-floor span ONLY when the user actually changed
                 # this slot (the worker legitimately emits sub-floor beat spans on
-                # untouched slots) — but reclamp on a footage-overflowing span
-                # REGARDLESS of _window_changed. An upstream delete/edit shifts
-                # this slot's cumulative grid_offset on the non-uniform grid
-                # without the user ever touching THIS slot; deleting a clip must
-                # never fail the save (the worker itself never overflows footage —
-                # it trims to the real window — so the save-time reconstruction
-                # must match that behavior instead of rejecting it).
+                # untouched slots). Footage-overflow handling is three-way:
+                #  - UNTOUCHED slot whose recomputed span differs from its stored
+                #    one: an upstream delete/edit shifted this slot's cumulative
+                #    grid_offset on the non-uniform grid — reclamp to fit, because
+                #    deleting a clip must never fail the save (the worker never
+                #    overflows footage; it trims to the real window).
+                #  - UNTOUCHED slot whose recomputed span EQUALS its stored one:
+                #    a legacy timeline whose saved window already exceeded the
+                #    probed source. The worker clamps these at render; an
+                #    unrelated save must round-trip them unchanged, not 422.
+                #  - USER-CHANGED slot that overflows: fall through to the final
+                #    bounds check, which rejects with TIMELINE_OUT_OF_BOUNDS
+                #    (readable copy), not a TOO_SHORT reclamp failure.
                 overflows_footage = (
                     max_source_window_s is not None and duration_s > max_source_window_s + 1e-6
                 )
-                if (
-                    _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9
-                ) or overflows_footage:
+                # Compare against the SAVED baseline span (the edit payload may
+                # post beats without duration_s); tolerance matches the worker's
+                # 0.05s beat-span drift allowance in _window_changed's rationale.
+                _base_span = (baseline_by_id.get(e.slot_id) or {}).get("duration_s")
+                legacy_unshifted = (
+                    not window_changed
+                    and _base_span is not None
+                    and abs(duration_s - float(_base_span)) <= 5e-2
+                )
+                if (window_changed and duration_s < TIMELINE_MIN_SLOT_S - 1e-9) or (
+                    overflows_footage and not window_changed and not legacy_unshifted
+                ):
                     duration_beats = _smallest_beat_count_clearing_floor(
                         grid_offset,
                         max_source_window_s=max_source_window_s,
@@ -2586,7 +2674,7 @@ def resolve_timeline_slots_for_edit(
                 # round-trip can carry the AI's original non-stepped timings; keep
                 # unchanged slots byte-stable so Save does not dirty a baseline.
                 duration_s = (
-                    _snap_half_second(e.duration_s) if _window_changed(e) else float(e.duration_s)
+                    _snap_half_second(e.duration_s) if window_changed else float(e.duration_s)
                 )
                 duration_beats = None
             else:
@@ -2594,12 +2682,17 @@ def resolve_timeline_slots_for_edit(
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
                 )
-            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9 and _window_changed(e):
+            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9 and window_changed:
                 raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
             total += duration_s
             # Bounds against the probed source duration. New clips the AI never
             # probed have no known duration — skip; the worker's probe will clamp.
-            if e.in_s < 0 or (src_dur is not None and e.in_s + duration_s > src_dur + 1e-6):
+            # Older saved timelines can already exceed the source by a few frames;
+            # the worker clamps those unchanged windows, so only newly changed
+            # source windows should hard-fail here.
+            if e.in_s < 0 or (
+                window_changed and src_dur is not None and e.in_s + duration_s > src_dur + 1e-6
+            ):
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS"
                 )
@@ -3181,7 +3274,15 @@ async def get_generative_job_status(
         archetype_fallback=archetype_fallback,
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
-        await db.commit()
+        # `_variants_for_response` mutated an UNLOCKED snapshot of assembly_plan.
+        # Committing it as-is would clobber a concurrent worker write (finalize /
+        # render / SFX pass) that landed since the unlocked read. Capture the
+        # computed stamps, discard the stale snapshot's pending mutation, and
+        # re-apply under a row lock.
+        stamps = _collect_media_overlay_preview_stamps(job)
+        job_pk = job.id
+        await db.rollback()
+        await _persist_media_overlay_preview_backfill(db, job_pk, stamps)
     return response
 
 

@@ -25,6 +25,13 @@ class Word:
     start_s: float
     end_s: float
     confidence: float
+    # Segment-level quality signals: whisper-1 verbose_json `segments[]` and
+    # faster-whisper segments both report avg_logprob + no_speech_prob, mapped
+    # onto words in _apply_segment_signals(). None → the backend returned no
+    # segments or the word fell outside all of them. Defaults keep every
+    # existing construction site (positional or keyword) source-compatible.
+    segment_avg_logprob: float | None = None
+    segment_no_speech_prob: float | None = None
 
 
 @dataclass
@@ -82,6 +89,7 @@ def transcribe(
     *,
     job_id: str | None = None,
     language: str | None = None,
+    verbatim_prompt: str | None = None,
 ) -> Transcript:
     """Transcribe audio from video_path. Returns Transcript (may be low_confidence).
 
@@ -97,6 +105,12 @@ def transcribe(
     know the language (e.g. the subtitled style's language chip) should pass it —
     this is what makes Turkish transcription reliable. Forwarded to the Whisper
     backends; the Gemini path is already multilingual and detects on its own.
+
+    `verbatim_prompt` biases Whisper toward a verbatim transcript that keeps
+    filler vocalizations ("Uh, um, ııı, eee…") as tokens — the silence-cut stage
+    needs them for lexical filler detection. Whisper-only (the Gemini path
+    ignores it); None (default) leaves every Whisper request byte-identical to
+    the pre-verbatim behavior (regression-pinned).
     """
     if file_ref is not None and settings.transcriber_backend == "gemini":
         try:
@@ -113,11 +127,15 @@ def transcribe(
         except Exception as exc:
             log.warning("gemini_transcribe_failed_falling_back", error=str(exc))
 
-    return transcribe_whisper(video_path, language=language)
+    return transcribe_whisper(video_path, language=language, verbatim_prompt=verbatim_prompt)
 
 
 def transcribe_whisper(
-    video_path: str, *, model: str | None = None, language: str | None = None
+    video_path: str,
+    *,
+    model: str | None = None,
+    language: str | None = None,
+    verbatim_prompt: str | None = None,
 ) -> Transcript:
     """Transcribe via Whisper (OpenAI API or local). Always returns a Transcript.
 
@@ -127,6 +145,12 @@ def transcribe_whisper(
 
     ``language`` is an optional ISO-639-1 hint ("tr", "en"); None → auto-detect.
     Passed to whisper-1's ``language`` arg (prod) and faster-whisper (local dev).
+
+    ``verbatim_prompt`` is an optional bias prompt ("Uh, um, ııı, eee…") that
+    makes Whisper keep filler vocalizations as tokens (silence-cut lexical
+    detection). Passed as whisper-1's ``prompt`` (prod) and faster-whisper's
+    ``initial_prompt`` (local dev) ONLY when not None — the default path stays
+    byte-identical (regression-pinned).
     """
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         audio_path = tmp.name
@@ -135,9 +159,13 @@ def transcribe_whisper(
         _extract_audio(video_path, audio_path)
 
         if settings.whisper_backend == "openai-api":
-            return _transcribe_openai(audio_path, language=language)
+            return _transcribe_openai(
+                audio_path, language=language, verbatim_prompt=verbatim_prompt
+            )
         else:
-            return _transcribe_local(audio_path, model=model, language=language)
+            return _transcribe_local(
+                audio_path, model=model, language=language, verbatim_prompt=verbatim_prompt
+            )
     finally:
         if os.path.exists(audio_path):
             os.unlink(audio_path)
@@ -160,7 +188,44 @@ def _extract_audio(video_path: str, audio_path: str) -> None:
         raise TranscribeError(f"Audio extraction failed: {result.stderr.decode()[:300]}")
 
 
-def _transcribe_openai(audio_path: str, *, language: str | None = None) -> Transcript:
+def _apply_segment_signals(words: list[Word], segments: list) -> None:
+    """Map segment-level quality signals onto each contained word (both backends).
+
+    Neither backend gives usable per-word confidence in prod (whisper-1 returns
+    none at all), but both report per-segment ``avg_logprob`` + ``no_speech_prob``
+    — whisper-1 in verbose_json ``segments[]``, faster-whisper on its Segment
+    objects. A word belongs to the first segment whose [start, end] contains the
+    word's midpoint ((start_s + end_s) / 2); words outside every segment keep
+    their None defaults.
+    """
+    spans: list[tuple[float, float, object, object]] = []
+    for seg in segments:
+        start = getattr(seg, "start", None)
+        end = getattr(seg, "end", None)
+        if start is None or end is None:
+            continue
+        spans.append(
+            (
+                float(start),
+                float(end),
+                getattr(seg, "avg_logprob", None),
+                getattr(seg, "no_speech_prob", None),
+            )
+        )
+    for word in words:
+        midpoint = (word.start_s + word.end_s) / 2
+        for start, end, avg_logprob, no_speech_prob in spans:
+            if start <= midpoint <= end:
+                if avg_logprob is not None:
+                    word.segment_avg_logprob = float(avg_logprob)  # type: ignore[arg-type]
+                if no_speech_prob is not None:
+                    word.segment_no_speech_prob = float(no_speech_prob)  # type: ignore[arg-type]
+                break
+
+
+def _transcribe_openai(
+    audio_path: str, *, language: str | None = None, verbatim_prompt: str | None = None
+) -> Transcript:
     import openai
 
     client = openai.OpenAI(api_key=settings.openai_api_key)
@@ -172,6 +237,11 @@ def _transcribe_openai(audio_path: str, *, language: str | None = None) -> Trans
     lang = (language or "").strip().lower()
     if lang:
         extra["language"] = lang
+    # Verbatim-bias prompt (silence-cut): keeps filler vocalizations as tokens.
+    # Added ONLY when not None so the default request stays byte-identical
+    # (regression-pinned in tests/pipeline/test_transcribe_verbatim_segments.py).
+    if verbatim_prompt is not None:
+        extra["prompt"] = verbatim_prompt
 
     log.info("whisper_api_start", path=audio_path, language=lang or "auto")
     with open(audio_path, "rb") as f:
@@ -189,10 +259,15 @@ def _transcribe_openai(audio_path: str, *, language: str | None = None) -> Trans
             text=w.word,
             start_s=w.start,
             end_s=w.end,
-            confidence=1.0,  # OpenAI API doesn't return per-word confidence
+            # OpenAI API doesn't return per-word confidence — the segment-level
+            # signals mapped below are the only quality info on this path.
+            confidence=1.0,
         )
         for w in (response.words or [])
     ]
+    # verbose_json also reports per-segment avg_logprob/no_speech_prob — map
+    # them onto words (defensive: absent/None segments leave the fields None).
+    _apply_segment_signals(words, list(getattr(response, "segments", None) or []))
 
     transcript = Transcript(
         words=words,
@@ -211,7 +286,11 @@ def _transcribe_openai(audio_path: str, *, language: str | None = None) -> Trans
 
 
 def _transcribe_local(
-    audio_path: str, *, model: str | None = None, language: str | None = None
+    audio_path: str,
+    *,
+    model: str | None = None,
+    language: str | None = None,
+    verbatim_prompt: str | None = None,
 ) -> Transcript:
     """Local faster-whisper backend — dev use only.
 
@@ -219,6 +298,9 @@ def _transcribe_local(
     lets it auto-detect. NOTE: the English-only ``*.en`` models cannot decode other
     languages regardless of this hint — use a multilingual model (``small`` etc.)
     for Turkish in local dev.
+
+    ``verbatim_prompt`` is passed as ``initial_prompt`` ONLY when not None — the
+    default call stays byte-identical (regression-pinned).
     """
     try:
         from faster_whisper import WhisperModel
@@ -229,13 +311,20 @@ def _transcribe_local(
 
     model_name = (model or "").strip() or settings.whisper_model
     lang = (language or "").strip().lower() or None
+    extra: dict[str, str] = {}
+    if verbatim_prompt is not None:
+        extra["initial_prompt"] = verbatim_prompt
     log.info("whisper_local_start", model=model_name, path=audio_path, language=lang or "auto")
     whisper_model = WhisperModel(model_name, device="cpu", compute_type="int8")
-    segments, info = whisper_model.transcribe(audio_path, word_timestamps=True, language=lang)
+    segments, info = whisper_model.transcribe(
+        audio_path, word_timestamps=True, language=lang, **extra
+    )
 
     words: list[Word] = []
     text_parts: list[str] = []
+    seen_segments: list = []  # generator — materialize for _apply_segment_signals
     for segment in segments:
+        seen_segments.append(segment)
         text_parts.append(segment.text)
         if segment.words:
             for w in segment.words:
@@ -245,6 +334,8 @@ def _transcribe_local(
                     end_s=w.end,
                     confidence=w.probability,
                 ))
+    # faster-whisper segments expose the same avg_logprob/no_speech_prob signals.
+    _apply_segment_signals(words, seen_segments)
 
     detected = _normalize_lang(getattr(info, "language", "") or lang or "")
     transcript = Transcript(

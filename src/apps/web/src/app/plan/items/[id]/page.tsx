@@ -94,6 +94,7 @@ import { InlineClipsEditor } from "../../_components/InlineClipsEditor";
 import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import { barsToTextElements, seedBarsFromVariant } from "./_editor/editor-bars";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -103,18 +104,23 @@ import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
-import { resolveTextElementsLayout } from "@/lib/overlay-layout";
 import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 import {
   parsePlanItemEditorReturnSignal,
   stripPlanItemEditorReturnParams,
 } from "@/lib/editor-return";
-import { needsFormatPersist, resolvePickerFormat } from "@/lib/edit-format";
+import {
+  needsFormatPersist,
+  resolvePickerFormat,
+  type PickerEditFormat,
+} from "@/lib/edit-format";
+import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 
 // How long a dispatched render may take to register its Job before we admit
-// failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
-// queue waits can too. Keep this comfortably above both.
-const RENDER_REGISTER_TIMEOUT_MS = 45_000;
+// failure. Plan-item renders are queued behind a single worker, and the Job row
+// is minted when that worker picks the task up; a real render can sit queued for
+// several minutes before current_job_id appears.
+const RENDER_REGISTER_TIMEOUT_MS = 15 * 60_000;
 
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
 // Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
@@ -172,7 +178,7 @@ type PendingEdit = {
 // merge these two label maps — they answer different questions.
 const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
   montage: { label: "Montage", desc: "Multiple clips cut to music" },
-  narrated_planned: { label: "Narrated walkthrough", desc: "Footage explained by voiceover or a script" },
+  narrated_planned: { label: "Voiceover", desc: "Tell the story with narration" },
   subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
 };
 
@@ -183,6 +189,64 @@ const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: strin
   { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
 ];
 
+const MONTAGE_PRESET_OPTIONS: { value: "classic" | "masonry"; label: string; desc: string }[] = [
+  { value: "classic", label: "Classic", desc: "Full-screen cuts in sequence" },
+  { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
+];
+
+const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
+const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
+
+function uploadContentType(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
+function expandContextPrompt(format: PickerEditFormat): string {
+  if (format === "narrated_planned") {
+    return "What should your voiceover explain, reveal, or make people feel?";
+  }
+  if (format === "subtitled") {
+    return "Who is this for, and what point are you trying to make?";
+  }
+  return "What should this edit make people feel or notice?";
+}
+
+function CompactPlanSummary({ item }: { item: PlanItem }) {
+  const shots = item.filming_guide ?? [];
+  if (shots.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-zinc-400">
+        Plan summary
+      </p>
+      {item.filming_suggestion && (
+        <p className="mt-1 text-sm text-[#3f3f46]">{item.filming_suggestion}</p>
+      )}
+      <ol className="mt-3 space-y-2">
+        {shots.map((shot, index) => (
+          <li key={shot.shot_id ?? `${shot.what}-${index}`} className="flex gap-2">
+            <span className="font-display text-[15px] italic text-zinc-300">
+              {index + 1}.
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-[#0c0c0e]">{shot.what}</p>
+              {shot.how && <p className="text-xs text-[#71717a]">{shot.how}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 // Reads each file's video dimensions via a detached <video> element and resolves
 // true iff ANY is landscape (width > height). Fails safe (resolves false, never
 // rejects/throws) on metadata timeout or an unsupported codec — the caller's
@@ -192,7 +256,7 @@ const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: strin
 // this page) — only the PoolUploadCard-based flows (narrated_ready, talking-to-
 // camera, existing_footage) funnel through handleFiles today.
 function detectLandscapeClip(files: File[]): Promise<boolean> {
-  const checks = files.map(
+  const checks = files.filter((file) => uploadContentType(file).startsWith("video/")).map(
     (file) =>
       new Promise<boolean>((resolve) => {
         const video = document.createElement("video");
@@ -258,6 +322,8 @@ export default function PlanItemPage() {
   const [uploaderBusy, setUploaderBusy] = useState(false);
   // Idea-centric: propose-only AI plan state.
   const [expandProposal, setExpandProposal] = useState<IdeaExpandProposal | null>(null);
+  const [expandContextOpen, setExpandContextOpen] = useState(false);
+  const [expandContext, setExpandContext] = useState("");
   const [expanding, setExpanding] = useState(false);
   const [acceptingExpand, setAcceptingExpand] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
@@ -643,20 +709,24 @@ export default function PlanItemPage() {
   // ShotSlotUploader. existing_footage items keep the legacy pool upload.
   // instruction_level no longer gates the upload UI — it only affects copy/tone.
   const contentMode = item?.content_mode ?? "create_new";
-  const isFilmThis = contentMode !== "existing_footage";
-  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
-  const isInstructed = isFilmThis && hasGuide;
-
   // Narrated sub-modes:
   //   "narrated" | "narrated_planned" → step-guided flow (plan first, then film)
   //   "narrated_ready"               → have-videos flow (audio first, pool clips)
   const rawEditFormat = item?.edit_format ?? "montage";
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
+  const montagePreset = item?.montage_preset ?? "classic";
+  const itemUploadAccept =
+    resolvedFormat === "montage" && montagePreset === "masonry"
+      ? MASONRY_UPLOAD_ACCEPT
+      : VIDEO_UPLOAD_ACCEPT;
   const isNarrated = resolvedFormat === "narrated_planned";
   const isNarratedReady = isNarrated && rawEditFormat === "narrated_ready";
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
   // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
   const isSubtitled = resolvedFormat === "subtitled";
+  const isFilmThis = contentMode !== "existing_footage";
+  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
+  const isInstructed = isFilmThis && hasGuide && !isSubtitled && !isNarratedReady;
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -673,7 +743,7 @@ export default function PlanItemPage() {
         itemId,
         list.map((f) => ({
           filename: f.name,
-          content_type: f.type || "video/mp4",
+          content_type: uploadContentType(f),
           file_size_bytes: f.size,
         })),
       );
@@ -766,6 +836,29 @@ export default function PlanItemPage() {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
     } finally {
       setVoiceoverSaving(false);
+    }
+  }
+
+  async function handleExpandIdea(creatorContext: string | null) {
+    if (!item) return;
+    setExpanding(true);
+    setExpandError(null);
+    setAcceptExpandError(null);
+    try {
+      const proposal = await expandIdea(item.id, {
+        creator_context: creatorContext,
+      });
+      if ((proposal.filming_guide?.length ?? 0) === 0) {
+        setExpandError("Couldn't plan this idea — try again.");
+        return;
+      }
+      setExpandProposal(proposal);
+      setExpandContextOpen(false);
+      setExpandError(null);
+    } catch {
+      setExpandError("Couldn't plan this idea — try again.");
+    } finally {
+      setExpanding(false);
     }
   }
 
@@ -989,8 +1082,8 @@ export default function PlanItemPage() {
                   <div className="mt-3 flex gap-2">
                     {(
                       [
-                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, film each shot" },
-                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload audio + clips, we match them" },
+                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, then film each shot" },
+                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload clips and we'll match them to your voice" },
                       ] as { value: string; label: string; desc: string }[]
                     ).map(({ value, label, desc }) => {
                       const active = isNarratedReady
@@ -1026,40 +1119,74 @@ export default function PlanItemPage() {
                     generation and go straight to the pool uploader. Only shown when Montage
                     is the active style (narrated + subtitled have no content_mode sub-modes). */}
                 {!isNarrated && !isSubtitled && (
-                  <div className="mt-3 flex gap-2">
-                    {(
-                      [
-                        { value: "create_new",       label: "Planning to film",        desc: "Get a shot plan, film each shot" },
-                        { value: "existing_footage", label: "I already have footage",  desc: "Skip the plan — just upload your footage" },
-                      ] as { value: "create_new" | "existing_footage"; label: string; desc: string }[]
-                    ).map(({ value, label, desc }) => {
-                      // "I already have footage" is active when content_mode is explicitly
-                      // existing_footage; otherwise "Planning to film" is the default.
-                      const active = value === "existing_footage"
-                        ? contentMode === "existing_footage"
-                        : contentMode !== "existing_footage";
-                      return (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={async () => {
-                            if (active) return;
-                            await updatePlanItem(item.id, { content_mode: value }).catch(() => null);
-                            refetch();
-                          }}
-                          className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
-                            active
-                              ? "border-zinc-900 bg-zinc-900"
-                              : "border-zinc-200 bg-white hover:border-zinc-300"
-                          }`}
-                        >
-                          <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
-                            {label}
-                          </span>
-                          <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
-                        </button>
-                      );
-                    })}
+                  <div className="mt-3 space-y-3">
+                    <div className="flex gap-2">
+                      {(
+                        [
+                          { value: "create_new",       label: "Planning to film",        desc: "Get a shot plan, film each shot" },
+                          { value: "existing_footage", label: "I already have footage",  desc: "Skip the plan — just upload your footage" },
+                        ] as { value: "create_new" | "existing_footage"; label: string; desc: string }[]
+                      ).map(({ value, label, desc }) => {
+                        // "I already have footage" is active when content_mode is explicitly
+                        // existing_footage; otherwise "Planning to film" is the default.
+                        const active = value === "existing_footage"
+                          ? contentMode === "existing_footage"
+                          : contentMode !== "existing_footage";
+                        return (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={async () => {
+                              if (active) return;
+                              await updatePlanItem(item.id, { content_mode: value }).catch(() => null);
+                              refetch();
+                            }}
+                            className={`flex flex-1 flex-col rounded-xl border px-3 py-2 text-left transition-colors ${
+                              active
+                                ? "border-zinc-900 bg-zinc-900"
+                                : "border-zinc-200 bg-white hover:border-zinc-300"
+                            }`}
+                          >
+                            <span className={`text-xs font-semibold ${active ? "text-white" : "text-[#0c0c0e]"}`}>
+                              {label}
+                            </span>
+                            <span className={`mt-0.5 text-[11px] ${active ? "text-zinc-400" : "text-zinc-400"}`}>{desc}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                        Preset
+                      </p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {MONTAGE_PRESET_OPTIONS.map(({ value, label, desc }) => {
+                          const active = montagePreset === value;
+                          return (
+                            <button
+                              key={value}
+                              type="button"
+                              onClick={async () => {
+                                if (active) return;
+                                await updatePlanItem(item.id, { montage_preset: value }).catch(() => null);
+                                refetch();
+                              }}
+                              className={`flex min-h-[68px] flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                                active
+                                  ? "border-lime-400 bg-lime-50"
+                                  : "border-zinc-200 bg-white hover:border-zinc-300"
+                              }`}
+                            >
+                              <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                                {label}
+                              </span>
+                              <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1125,46 +1252,70 @@ export default function PlanItemPage() {
             })()}
 
             {/* AI plan proposal — available only until the item has a shot list. */}
-            {totalShots === 0 && !expandProposal && (
+            {totalShots === 0 && !expandProposal && !expandContextOpen && (
               <div className="mb-4">
                 <button
                   type="button"
                   disabled={expanding}
-                  onClick={async () => {
-                    setExpanding(true);
+                  onClick={() => {
+                    setExpandContextOpen(true);
                     setExpandError(null);
                     setAcceptExpandError(null);
-                    try {
-                      const proposal = await expandIdea(item.id);
-                      if ((proposal.filming_guide?.length ?? 0) === 0) {
-                        setExpandError("Couldn't plan this idea — try again.");
-                        return;
-                      }
-                      setExpandProposal(proposal);
-                      setExpandError(null);
-                    } catch {
-                      setExpandError("Couldn't plan this idea — try again.");
-                    } finally {
-                      setExpanding(false);
-                    }
                   }}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {expanding ? (
-                    <>
-                      <span
-                        aria-hidden
-                        className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
-                      />
-                      Thinking…
-                    </>
-                  ) : (
-                    <>
-                      <span aria-hidden>✦</span>
-                      Plan this for me
-                    </>
-                  )}
+                  <span aria-hidden>✦</span>
+                  Plan this for me
                 </button>
+                {expandError && (
+                  <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
+                )}
+              </div>
+            )}
+
+            {totalShots === 0 && !expandProposal && expandContextOpen && (
+              <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+                <p className="font-display text-lg font-medium text-[#0c0c0e]">
+                  A little context helps.
+                </p>
+                <label className="mt-3 block text-sm text-[#3f3f46]">
+                  <span>{expandContextPrompt(resolvedFormat)}</span>
+                  <textarea
+                    value={expandContext}
+                    onChange={(e) => setExpandContext(e.currentTarget.value)}
+                    maxLength={800}
+                    rows={3}
+                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+                    placeholder="A rough goal or detail is enough..."
+                  />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={expanding}
+                    onClick={() => handleExpandIdea(expandContext)}
+                    className="rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {expanding ? "Thinking…" : "Generate plan"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={expanding}
+                    onClick={() => handleExpandIdea(null)}
+                    className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Skip and generate
+                  </button>
+                </div>
+                {expanding && (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-[#71717a]">
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
+                    />
+                    Turning this into a plan…
+                  </p>
+                )}
                 {expandError && (
                   <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
                 )}
@@ -1218,6 +1369,8 @@ export default function PlanItemPage() {
                             filming_guide: expandProposal.filming_guide,
                           });
                           setExpandProposal(null);
+                          setExpandContext("");
+                          setExpandContextOpen(false);
                           setFocusShotListAfterAccept(true);
                           refetch();
                         } catch {
@@ -1251,6 +1404,8 @@ export default function PlanItemPage() {
                 )}
               </div>
             )}
+
+            {hasGuide && !isInstructed && <CompactPlanSummary item={item} />}
 
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
@@ -1320,6 +1475,7 @@ export default function PlanItemPage() {
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
                   maxClips={1}
+                  accept={itemUploadAccept}
                 />
               </div>
             ) : isNarratedReady ? (
@@ -1342,6 +1498,7 @@ export default function PlanItemPage() {
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
                 />
               </div>
             ) : isInstructed ? (
@@ -1358,7 +1515,7 @@ export default function PlanItemPage() {
             ) : (
               /* existing_footage — pool upload (find the footage you already have) */
               <>
-                {item.filming_suggestion ? (
+                {!hasGuide && item.filming_suggestion ? (
                   <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
                 ) : null}
                 <PoolUploadCard
@@ -1368,6 +1525,7 @@ export default function PlanItemPage() {
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
                 />
               </>
             )}
@@ -2444,70 +2602,6 @@ function FocusedResults({
   );
 }
 
-// ── T6: TextElement ↔ TextElementBar conversion helpers ──────────────────────
-
-/**
- * Convert API TextElement[] → TextElementBar[] for the reducer initial state.
- * Only the fields that TextElementBar carries are mapped; position / x_frac /
- * y_frac / highlight_color / stroke_width / fade_out_ms / reveal_s / z /
- * word_timings are API-only and will be re-applied by the compiler at render time
- * (they're preserved in source_params).
- */
-function convertApiTextElements(
-  apiElements: TextElement[] | null | undefined,
-): import("@/lib/timeline/text-timeline-reducer").TextElementBar[] {
-  return (apiElements ?? []).map((el) => ({
-    id: el.id,
-    text: el.text,
-    start_s: el.start_s,
-    end_s: el.end_s,
-    role: el.role,
-    font_family: el.font_family ?? undefined,
-    size_px: el.size_px ?? undefined,
-    size_class: el.size_class ?? undefined,
-    color: el.color ?? undefined,
-    effect: el.effect ?? undefined,
-    alignment: el.alignment ?? undefined,
-    source_params: el.source_params ?? undefined,
-  }));
-}
-
-/**
- * PR-B: Convert narrated CaptionCue[] → TextElementBar[] for the Text lane.
- * Uses stable index-based IDs ("caption-0", "caption-1", …) so re-syncs from
- * the server don't thrash the reducer's undo/redo identity tracking.
- */
-function convertCaptionCues(
-  cues: CaptionCue[] | null | undefined,
-): import("@/lib/timeline/text-timeline-reducer").TextElementBar[] {
-  return (cues ?? []).map((c, i) => ({
-    id: `caption-${i}`,
-    text: c.text,
-    start_s: c.start_s,
-    end_s: c.end_s,
-    role: "narrated_caption" as const,
-  }));
-}
-
-/**
- * PR-E: Convert scene_timings[] → TextElementBar[] for the Text lane.
- * Uses stable index-based IDs ("scene-0", "scene-1", …). Only scenes with
- * non-null start_s and end_s are included (scenes lacking timing data are skipped).
- */
-function convertSceneTimings(
-  scenes: Array<{ text: string; start_s: number | null; end_s: number | null }>,
-): import("@/lib/timeline/text-timeline-reducer").TextElementBar[] {
-  return scenes
-    .filter((s) => s.start_s != null && s.end_s != null)
-    .map((s, i) => ({
-      id: `scene-${i}`,
-      text: s.text,
-      start_s: s.start_s as number,
-      end_s: s.end_s as number,
-      role: "generative_sequence" as const,
-    }));
-}
-
 /**
  * Controls-only column for the focused variant. Receives the edit session as a
  * prop (the parent owns it, keyed by variant_id) — it does NOT create one.
@@ -2604,6 +2698,10 @@ function FocusedVariantControls({
   // Shared clip-timeline data: owned here so ClipsLane header bars and the
   // InlineClipsEditor expanded panel read/write one draft (no double fetch).
   const clipTimeline = useClipTimeline(itemId, variant.variant_id, "plan-item");
+  const clipTimelineEditable = variant.editor_capabilities
+    ? variant.editor_capabilities.timeline !== false &&
+      variant.editor_capabilities.split_clips !== false
+    : true;
 
   // 009 T5: intro-text keep-out window for the Overlays lane (hatched band +
   // "Covers your intro text" warning) — derived from the variant's persisted
@@ -2845,21 +2943,11 @@ function FocusedVariantControls({
   //   • variant.text_elements (generative variants, T6) — amber bars
   // Updated on every reducer mutation; used to derive State 5 (text too long) warning.
   const [textElements, setTextElements] = useState<TextElementBar[]>(() => {
-    if (variant.caption_cues?.length) return convertCaptionCues(variant.caption_cues);
-    if (variant.scene_timings?.length) return convertSceneTimings(variant.scene_timings);
-    return convertApiTextElements(variant.text_elements);
+    return seedBarsFromVariant(variant);
   });
   // Re-sync from API data when a render completes (render_finished_at advances).
   useEffect(() => {
-    if (variant.caption_cues?.length) {
-      // Narrated: re-sync from fresh caption data after a reburn.
-      setTextElements(convertCaptionCues(variant.caption_cues));
-    } else if (variant.scene_timings?.length) {
-      // Sequence: re-sync from scene_timings when they update.
-      setTextElements(convertSceneTimings(variant.scene_timings));
-    } else if (!variant.text_elements_user_edited) {
-      setTextElements(convertApiTextElements(variant.text_elements));
-    }
+    setTextElements(seedBarsFromVariant(variant));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [variant.render_finished_at]);
   // Debounce timer ref for the auto-apply after text-element edits.
@@ -2942,27 +3030,13 @@ function FocusedVariantControls({
       setOptimisticRenderStatus((prev) => ({ ...prev, [variantId]: "rendering" }));
       setTextApplyError(null);
       try {
-        // Convert TextElementBar → TextElement for the API.
+        // Convert TextElementBar → TextElement for the API. Existing API
+        // elements are the merge base so renderer-only fields survive.
         // narrated_caption bars are handled by setPlanItemCaptions — filter them out here.
-        const apiElements: TextElement[] = elements
-          .filter((bar) => bar.role !== "narrated_caption")
-          .map((bar) => ({
-          id: bar.id,
-          text: bar.text,
-          start_s: bar.start_s,
-          end_s: bar.end_s,
-          role: bar.role as TextElement["role"],
-          font_family: bar.font_family ?? null,
-          size_px: bar.size_px ?? null,
-          size_class: (bar.size_class as TextElement["size_class"]) ?? null,
-          color: bar.color ?? null,
-          highlight_color: bar.highlight_color ?? null,
-          stroke_width: bar.stroke_width ?? null,
-          effect: (bar.effect as TextElement["effect"]) ?? null,
-          alignment: (bar.alignment as TextElement["alignment"]) ?? null,
-          source_params: bar.source_params ?? null,
-          position: "middle" as const,
-        }));
+        const apiElements: TextElement[] = barsToTextElements(
+          elements,
+          new Map((variant.text_elements ?? []).map((el) => [el.id, el])),
+        );
         await putTextElements(itemId, variantId, apiElements);
         markVariantRendering(variantId, variant.render_finished_at ?? null);
       } catch (err) {
@@ -2983,7 +3057,14 @@ function FocusedVariantControls({
         }
       }
     },
-    [setLocalPreviewUrls, markVariantRendering, variant.render_finished_at, refetch, itemId],
+    [
+      setLocalPreviewUrls,
+      markVariantRendering,
+      variant.render_finished_at,
+      variant.text_elements,
+      refetch,
+      itemId,
+    ],
   );
 
   /**
@@ -3155,21 +3236,24 @@ function FocusedVariantControls({
               isFirstSequenceEdit={
                 variant.intro_mode === "sequence" && !variant.text_elements_user_edited
               }
-              clipTimelineHandle={clipTimeline}
+              showClipsLane={clipTimelineEditable}
+              clipTimelineHandle={clipTimelineEditable ? clipTimeline : undefined}
               clipsPanel={
-                <InlineClipsEditor
-                  ownerId={itemId}
-                  variantId={variant.variant_id}
-                  base="plan-item"
-                  onRenderEnqueued={() => {
-                    markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
-                    refetch();
-                  }}
-                  externalState={clipTimeline.state}
-                  externalDispatch={clipTimeline.dispatch}
-                  externalClips={clipTimeline.clips}
-                  onReload={clipTimeline.reload}
-                />
+                clipTimelineEditable ? (
+                  <InlineClipsEditor
+                    ownerId={itemId}
+                    variantId={variant.variant_id}
+                    base="plan-item"
+                    onRenderEnqueued={() => {
+                      markVariantRendering(variant.variant_id, variant.render_finished_at ?? null);
+                      refetch();
+                    }}
+                    externalState={clipTimeline.state}
+                    externalDispatch={clipTimeline.dispatch}
+                    externalClips={clipTimeline.clips}
+                    onReload={clipTimeline.reload}
+                  />
+                ) : null
               }
             />
           </div>
@@ -3356,13 +3440,7 @@ function LiveEditPreview({
     return () => el.removeEventListener("timeupdate", onTimeUpdate);
   }, [mountedSrcKind]);
 
-  // N-element preview: use the text_elements array when available (T6).
-  // Each element is positioned by its API-persisted x_frac/y_frac or named
-  // position preset.  Font size scales by the rendered box height via CSS.
-  const textLayouts =
-    !burnedSrc && textElements && textElements.length > 0
-      ? resolveTextElementsLayout(textElements)
-      : null;
+  const hasTextElements = !burnedSrc && Boolean(textElements && textElements.length > 0);
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
@@ -3399,32 +3477,8 @@ function LiveEditPreview({
         </div>
       )}
       {/* N-element text overlay (T6): shows all text_elements from the API. */}
-      {textLayouts ? (
-        textLayouts.map((layout) => (
-          <div
-            key={layout.id}
-            className="pointer-events-none absolute"
-            style={{
-              left: `${layout.xFrac * 100}%`,
-              top: `${layout.yFrac * 100}%`,
-              transform: "translate(-50%, -50%)",
-              textAlign: layout.alignment,
-              color: layout.color,
-              // Scale from 1920-px canvas to the 9:16 preview box via vH-equivalent.
-              // The preview box is aspect-[9/16]; its height drives the font scale.
-              fontSize: `${(layout.sizePx / 1920) * 100}cqh`,
-              fontFamily: `"${layout.fontFamily}", serif`,
-              fontWeight: 700,
-              lineHeight: 1.15,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              maxWidth: "90%",
-              textShadow: "0 2px 8px rgba(0,0,0,0.7)",
-            }}
-          >
-            {layout.text}
-          </div>
-        ))
+      {hasTextElements && textElements ? (
+        <TextElementOverlayLayer elements={textElements} />
       ) : (
         // Legacy single-element preview: driven by the instant-editor draft.
         !burnedSrc && (
@@ -3957,6 +4011,7 @@ function PoolUploadCard({
   onRemove,
   onNoteChange,
   maxClips,
+  accept = VIDEO_UPLOAD_ACCEPT,
 }: {
   clips: ClipAssignment[];
   uploading: boolean;
@@ -3966,6 +4021,7 @@ function PoolUploadCard({
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
   /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
   maxClips?: number;
+  accept?: string;
 }) {
   const atCap = maxClips != null && clips.length >= maxClips;
   return (
@@ -4029,7 +4085,7 @@ function PoolUploadCard({
           <span className="sr-only">Upload video clips for this idea</span>
           <input
             type="file"
-            accept="video/mp4,video/quicktime"
+            accept={accept}
             multiple={maxClips !== 1}
             disabled={uploading}
             onChange={(e) => onFiles(e.target.files)}

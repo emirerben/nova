@@ -16,14 +16,15 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, status
 from fastapi import UploadFile as MultipartFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
+from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
@@ -74,6 +75,7 @@ from app.routes.generative_jobs import (
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
 )
+from app.schemas.montage_preset import coerce_montage_preset
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -88,6 +90,8 @@ router = APIRouter()
 _MAX_CLIPS_PER_ITEM = 20
 _MAX_BYTES_PER_FILE = 4 * 1024 * 1024 * 1024  # 4GB
 _ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime"}
+_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+_IMAGE_FILE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 # Allowed content types for media-overlay card uploads (images + short video).
 _OVERLAY_ALLOWED_CONTENT_TYPES = {
@@ -125,6 +129,25 @@ _JOB_FAILED = {
     "posting_failed",
     "cancelled",
 }
+
+
+def _is_image_clip_path(path: str) -> bool:
+    """Best-effort uploaded-clip kind check from the durable object name."""
+    clean = (path or "").split("?", 1)[0].lower()
+    return any(clean.endswith(ext) for ext in _IMAGE_FILE_EXTS)
+
+
+def _item_uses_masonry(item: PlanItem) -> bool:
+    return (
+        coerce_edit_format(getattr(item, "edit_format", None)) == "montage"
+        and coerce_montage_preset(getattr(item, "montage_preset", None)) == "masonry"
+    )
+
+
+def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
+    if _item_uses_masonry(item):
+        return _ALLOWED_CONTENT_TYPES | _IMAGE_CONTENT_TYPES
+    return _ALLOWED_CONTENT_TYPES
 
 
 def derive_item_status(item: PlanItem) -> str:
@@ -207,6 +230,9 @@ class PlanItemResponse(BaseModel):
     # Render archetype assigned at plan-generation time (e.g. "montage",
     # "talking_head"). Null for items generated before this field shipped.
     edit_format: str | None = None
+    # Montage visual preset. "classic" preserves today's sequential montage;
+    # "masonry" opts into the collage-wall assembler.
+    montage_preset: Literal["classic", "masonry"] = "classic"
     # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
@@ -287,6 +313,7 @@ def plan_item_response(
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
         edit_format=item.edit_format,
+        montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
         voiceover_gcs_path=item.voiceover_gcs_path,
         landscape_fit=(
             # Membership check (not just isinstance) guards against arbitrary strings
@@ -403,6 +430,8 @@ class PlanItemEdit(BaseModel):
     # Landscape-clip render preference: "fit" (letterbox) | "fill" (crop-to-fill).
     # Ignored for portrait/square clips — they always crop regardless.
     landscape_fit: Literal["fit", "fill"] | None = None
+    # Montage visual preset. Only affects montage renders; default classic.
+    montage_preset: Literal["classic", "masonry"] | None = None
     # Per-item content_mode override (montage plan-vs-have toggle, 0058+).
     # When set, supersedes the persona-level content_mode for this item only.
     # "create_new" = "Planning to film"; "existing_footage" = "I already have footage".
@@ -450,6 +479,8 @@ async def edit_plan_item(
         _flag(item, "filming_guide")
     if "landscape_fit" in updates and updates["landscape_fit"] is not None:
         item.landscape_fit = updates["landscape_fit"]  # Pydantic Literal already validates
+    if "montage_preset" in updates and updates["montage_preset"] is not None:
+        item.montage_preset = updates["montage_preset"]  # Pydantic Literal already validates
     if "content_mode" in updates and updates["content_mode"] is not None:
         item.content_mode = updates["content_mode"]  # Pydantic Literal already validates
     if updates:
@@ -639,11 +670,16 @@ async def create_upload_urls(
             detail=f"Provide 1-{_MAX_CLIPS_PER_ITEM} files",
         )
     urls: list[UploadUrlItem] = []
+    allowed_types = _allowed_item_upload_content_types(item)
     for f in body.files:
-        if f.content_type not in _ALLOWED_CONTENT_TYPES:
+        if f.content_type not in allowed_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported content type: {f.content_type}",
+                detail=(
+                    "Photos require Masonry collage"
+                    if f.content_type in _IMAGE_CONTENT_TYPES
+                    else f"Unsupported content type: {f.content_type}"
+                ),
             )
         if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_BYTES_PER_FILE:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
@@ -794,11 +830,16 @@ async def attach_clips(
             )
         )
         kind_by_path = {row.gcs_path: row.kind for row in asset_rows.scalars()}
+        allowed_asset_kinds = {"video", "image"} if _item_uses_masonry(item) else {"video"}
         for p in new_pool_paths:
-            if kind_by_path.get(p) != "video":
+            if kind_by_path.get(p) not in allowed_asset_kinds:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Only video visuals from the pool can be used in the edit",
+                    detail=(
+                        "Photos require Masonry collage"
+                        if kind_by_path.get(p) == "image"
+                        else "Only video visuals from the pool can be used in the edit"
+                    ),
                 )
 
     try:
@@ -1269,12 +1310,19 @@ async def generate_item(
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Record or upload your voiceover before generating a narrated walkthrough",
+            detail="Record or upload your voiceover before generating a Voiceover edit",
         )
     if not (item.clip_gcs_paths or []):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
+        )
+    if not _item_uses_masonry(item) and any(
+        _is_image_clip_path(p) for p in (item.clip_gcs_paths or [])
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Photos require Masonry collage",
         )
     # Idempotency guard (dogfood: double-clicking Generate minted two render
     # jobs). The Job is created async by the task, so also reject while the
@@ -1732,10 +1780,40 @@ class IdeaExpandResponse(BaseModel):
     rationale: str
 
 
+class IdeaExpandRequest(BaseModel):
+    """Optional creator context for a stronger propose-only expansion."""
+
+    creator_context: str | None = Field(default=None, max_length=800)
+
+    @field_validator("creator_context", mode="before")
+    @classmethod
+    def _clean_context(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+
+def _expand_video_type(edit_format: str | None) -> str:
+    if edit_format in {"narrated", "narrated_planned", "narrated_ready"}:
+        return "voiceover"
+    if edit_format in {"subtitled", "talking_head"}:
+        return "talking_to_camera"
+    return "montage"
+
+
+def _normalize_content_mode(value: object) -> str:
+    mode = str(value or "create_new")
+    if mode in {"create_new", "existing_footage", "mixed"}:
+        return mode
+    return "create_new"
+
+
 @router.post("/{item_id}/expand", response_model=IdeaExpandResponse)
 async def expand_idea(
     item_id: str,
     user: CurrentUser,
+    body: IdeaExpandRequest | None = Body(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> IdeaExpandResponse:
     """Propose an AI-expanded plan item (theme, shots, rationale).
@@ -1752,12 +1830,15 @@ async def expand_idea(
     # Gather persona context for richer expansion.
     persona_summary = ""
     content_pillars: list[str] = []
+    content_mode = _normalize_content_mode(getattr(item, "content_mode", None))
     plan = await db.get(ContentPlan, item.content_plan_id)
     if plan is not None:
         persona = await db.get(Persona, plan.persona_id)
         if persona is not None and isinstance(persona.persona, dict):
             persona_summary = str(persona.persona.get("summary", ""))
             content_pillars = list(persona.persona.get("content_pillars") or [])
+            if getattr(item, "content_mode", None) is None:
+                content_mode = _normalize_content_mode(persona.persona.get("content_mode"))
 
     agent = IdeaExpanderAgent(default_client())
     try:
@@ -1766,6 +1847,9 @@ async def expand_idea(
                 idea=item.idea or "",
                 persona_summary=persona_summary,
                 content_pillars=content_pillars,
+                creator_context=body.creator_context if body and body.creator_context else "",
+                video_type=_expand_video_type(getattr(item, "edit_format", None)),
+                content_mode=content_mode,
             ),
             ctx=RunContext(job_id=None),
         )

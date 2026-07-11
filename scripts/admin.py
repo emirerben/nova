@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -32,7 +33,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def load_env(path: Path) -> dict[str, str]:
-    """Tiny .env reader — KEY=VALUE lines, optional quotes, # comments. No deps."""
+    """Tiny .env reader — KEY=VALUE lines, optional quotes, # comments. No deps.
+
+    dotenv-style inline comments, matching how pydantic-settings reads the same
+    file for the local API: an unquoted value is cut at the first
+    whitespace-preceded `#`; a quoted value ends at its closing quote, so `#`
+    inside quotes is literal and a comment may follow the closing quote.
+    Malformed quoting (unterminated or mismatched) is handled best-effort,
+    not dotenv-parity.
+    """
     if not path.exists():
         return {}
     out: dict[str, str] = {}
@@ -43,10 +52,14 @@ def load_env(path: Path) -> dict[str, str]:
         key, _, val = line.partition("=")
         key = key.strip()
         val = val.strip()
-        if (val.startswith('"') and val.endswith('"')) or (
-            val.startswith("'") and val.endswith("'")
+        quote = val[:1]
+        end = val.find(quote, 1) if quote in {'"', "'"} else -1
+        if end != -1 and (
+            end == len(val) - 1 or val[end + 1].isspace() or val[end + 1] == "#"
         ):
-            val = val[1:-1]
+            val = val[1:end]
+        else:
+            val = re.split(r"\s#", val, maxsplit=1)[0].rstrip()
         out[key] = val
     return out
 

@@ -384,6 +384,8 @@ export interface TextElementLayout {
   maxWidthFrac: number;
   /** Maximum wrap-box width in 1080px-canvas coordinates. */
   maxWidthPx: number;
+  /** Stroke width in 1080x1920 canvas pixels. */
+  strokeWidth: number;
   start_s: number;
   end_s: number;
 }
@@ -417,6 +419,7 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       lineSpacing: resolveLineSpacing(el.line_spacing),
       maxWidthFrac: resolveMaxWidthFrac(el.max_width_frac),
       maxWidthPx: CANVAS_W * resolveMaxWidthFrac(el.max_width_frac),
+      strokeWidth: el.stroke_width ?? 0,
       start_s: el.start_s,
       end_s: el.end_s,
     };

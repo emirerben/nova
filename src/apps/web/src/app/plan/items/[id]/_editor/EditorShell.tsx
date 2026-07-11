@@ -1020,9 +1020,9 @@ export default function EditorShell({
   );
 
   const patchOverlay = useCallback(
-    (id: string, patch: Partial<MediaOverlay>) => {
+    (id: string, patch: Partial<MediaOverlay>, options: { record?: boolean } = {}) => {
       if (readOnly || capabilities?.overlays === false) return;
-      history.record();
+      if (options.record !== false) history.record();
       setLocalOverlays((cur) => cur.map((o) => (o.id === id ? { ...o, ...patch } : o)));
       setOverlaysDirty(true);
     },

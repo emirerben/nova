@@ -360,15 +360,19 @@ export default function CaptionEditor({
           aria-label="Subtitles"
           disabled={busy}
           onClick={() => chooseCaptionsEnabled(!captionsEnabled)}
-          className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-            captionsEnabled ? "bg-lime-600" : "bg-zinc-300"
-          }`}
+          className="flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-6 sm:w-11 sm:min-h-0 sm:min-w-0"
         >
           <span
-            className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
-              captionsEnabled ? "translate-x-[22px]" : "translate-x-0.5"
+            className={`relative h-6 w-11 rounded-full transition-colors ${
+              captionsEnabled ? "bg-lime-600" : "bg-zinc-300"
             }`}
-          />
+          >
+            <span
+              className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                captionsEnabled ? "translate-x-[22px]" : "translate-x-0.5"
+              }`}
+            />
+          </span>
         </button>
       </div>
 
@@ -621,7 +625,7 @@ export default function CaptionEditor({
                     stopEditing();
                   }
                 }}
-                className="flex-1 rounded border border-lime-400 px-1 py-0.5 text-[#18181b] outline-none"
+                className="min-h-11 flex-1 rounded border border-lime-400 px-2 py-1 text-base text-[#18181b] outline-none sm:min-h-0 sm:px-1 sm:py-0.5 sm:text-sm"
                 aria-label={`Edit caption at ${formatTime(c.start_s)}`}
               />
             </li>
