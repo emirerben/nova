@@ -1462,9 +1462,12 @@ def test_capabilities_subtitled_caption_archetype_text_elements_on(monkeypatch):
     )
     caps = _caps(job, "subtitled")
     assert caps["text_elements"] is True
+    # The reason sentence still points at the Captions tab — the text lane
+    # unlocks text tools, not the captions surface (#625 × plan 010).
     assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
-    assert caps["sfx"] is False
-    assert caps["overlays"] is False
+    # Plan 010: manual SFX/overlay lanes are open on caption archetypes.
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
 
 
 def test_capabilities_expired_sources(monkeypatch):

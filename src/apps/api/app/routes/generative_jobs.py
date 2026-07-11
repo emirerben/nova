@@ -2390,7 +2390,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     timeline_reason = _timeline_ineligibility(job, variant)
     timeline_ok = timeline_reason is None
     archetype = variant.get("resolved_archetype")
-    caption_reason = CAPTION_TAB_COPY if not _text_elements_allowed(variant) else None
+    # Decoupled from _text_elements_allowed (#625): the styled-text lane can
+    # unlock text tools while CAPTIONS still live in the Captions tab — the
+    # reason sentence describes the captions surface, not the text lock.
+    caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
 
     # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
