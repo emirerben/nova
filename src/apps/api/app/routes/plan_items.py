@@ -1467,8 +1467,9 @@ async def set_item_caption_position(
 ) -> PlanItemResponse:
     """Set caption vertical position and reburn the captioned variant (async)."""
     job = await _owned_item_render_job(item_id, user.id, db)
-    margin_v = dispatch_set_caption_position(job, variant_id, y_frac=req.y_frac)
-    await db.commit()
+    # The dispatcher row-locks, commits the margin + gen mint, then enqueues
+    # (R1-1 commit-before-enqueue) — no route-side commit needed.
+    margin_v = await dispatch_set_caption_position(job.id, variant_id, y_frac=req.y_frac, db=db)
     log.info(
         "plan_item_set_caption_position",
         item_id=item_id,

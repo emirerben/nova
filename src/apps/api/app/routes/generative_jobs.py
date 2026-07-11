@@ -1220,31 +1220,46 @@ async def persist_variant_caption_font(
     await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
 
 
-def dispatch_set_caption_position(job: Job, variant_id: str, *, y_frac: float) -> int:
-    """Persist caption position and enqueue the caption reburn in one JSONB rewrite."""
+async def dispatch_set_caption_position(
+    job_id: uuid.UUID, variant_id: str, *, y_frac: float, db: AsyncSession
+) -> int:
+    """Persist caption position and enqueue the caption reburn (one locked write).
+
+    Same discipline as `dispatch_apply_captions` (plan 010 R1-1): row-locked
+    fetch, margin merge + gen mint in ONE JSONB rewrite, COMMIT BEFORE the
+    enqueue — the reburn's start write is token-checked, so an enqueue that
+    outruns the commit would strand the variant in "rendering" forever.
+    """
     req = CaptionPositionRequest(y_frac=y_frac)
-    plan = dict(job.assembly_plan or {})
-    variants = list(plan.get("variants") or [])
-    target = next((v for v in variants if v.get("variant_id") == variant_id), None)
-    if target is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if not _is_editable_caption_variant(target):
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    if not _is_editable_caption_variant(variant):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Captions can only be edited on captioned variants.",
         )
-    if target.get("render_status") == "rendering":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Captions are being applied — try again once the render finishes.",
-        )
+    plan = dict(job.assembly_plan or {})
+    variants = list(plan.get("variants") or [])
     for i, v in enumerate(variants):
         if v.get("variant_id") == variant_id:
             variants[i] = {**v, "caption_margin_v": req.caption_margin_v}
             break
     plan["variants"] = variants
     job.assembly_plan = plan
-    dispatch_apply_captions(job, variant_id)
+    render_gen_id = _mark_variant_rendering(job, variant_id)
+    await db.commit()
+    from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+    # Caption tasks inline-run the overlay/SFX reapply passes, which the solo
+    # overlay-jobs worker exists to serialize (macOS prefork CLIP fork hazard).
+    reburn_narrated_captions.apply_async(
+        args=[str(job_id), variant_id],
+        kwargs={"render_gen_id": render_gen_id},
+        queue="overlay-jobs",
+    )
     return req.caption_margin_v
 
 
@@ -3417,8 +3432,9 @@ async def set_caption_position(
 ) -> GenerativeJobResponse:
     """Set caption vertical position and reburn the captioned variant."""
     job = await _load_generative_job(job_id, db, current_user)
-    margin_v = dispatch_set_caption_position(job, variant_id, y_frac=req.y_frac)
-    await db.commit()
+    # The dispatcher row-locks, commits the margin + gen mint, then enqueues
+    # (R1-1 commit-before-enqueue) — no route-side commit needed.
+    margin_v = await dispatch_set_caption_position(job.id, variant_id, y_frac=req.y_frac, db=db)
     log.info(
         "generative_set_caption_position",
         job_id=str(job.id),

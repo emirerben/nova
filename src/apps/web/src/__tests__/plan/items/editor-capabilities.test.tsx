@@ -56,6 +56,10 @@ describe("editorReasonCopy", () => {
     expect(editorReasonCopy("some_future_reason")).toBe("some_future_reason");
   });
 
+  it("pins the Captions-tab sentence byte-for-byte (server contract — CAPTION_TAB_COPY in generative_jobs.py sends this literal; rewording either side silently drops the deep link)", () => {
+    expect(CAPTIONS_TAB_REASON).toBe("Captions for this edit are managed in the Captions tab");
+  });
+
   it("keeps the existing mappings and the empty-reason fallback", () => {
     expect(editorReasonCopy("caption_archetype")).toBe(CAPTIONS_TAB_REASON);
     expect(editorReasonCopy("locked_to_voiceover")).toBe("locked to your voiceover");

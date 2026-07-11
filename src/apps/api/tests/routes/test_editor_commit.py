@@ -1633,3 +1633,12 @@ def test_commit_keeps_envelope_when_accepted_card_not_committed(monkeypatch):
     v = job.assembly_plan["variants"][0]
     assert [s["id"] for s in v["overlay_suggestions"]] == ["sug-1"]
     assert v["overlay_suggest_status"] == "ready"
+
+
+def test_caption_tab_copy_literal_is_byte_stable():
+    """The FE string-compares this sentence (CAPTIONS_TAB_REASON in
+    editor-capabilities.ts) to decide whether to render the Captions-tab deep
+    link. Rewording EITHER side silently drops the link — this pin makes the
+    backend half of the contract fail loudly instead. Mirror pin lives in
+    src/apps/web/src/__tests__/plan/items/editor-capabilities.test.tsx."""
+    assert gj.CAPTION_TAB_COPY == "Captions for this edit are managed in the Captions tab"

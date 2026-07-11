@@ -1118,10 +1118,10 @@ def test_set_caption_position_persists_rounding_and_enqueues_reburn(client: Test
     user = _user()
     job = _job([dict(SUBTITLED_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item, item], plan)  # load item → reload item
+    db = _db([item, job, item], plan)  # load item → locked job re-fetch → reload item
     _override(user, db)
     with patch(REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/subtitled/caption-position",
             json={"y_frac": 0.66},
@@ -1130,7 +1130,13 @@ def test_set_caption_position_persists_rounding_and_enqueues_reburn(client: Test
     patched = job.assembly_plan["variants"][0]
     assert patched["caption_margin_v"] == 653
     assert patched["render_status"] == "rendering"
-    reburn.delay.assert_called_once_with(str(job.id), "subtitled")
+    # Plan 010 R1-1: the position save rides the token-checked reburn on the
+    # solo overlay-jobs queue, carrying the freshly minted generation.
+    reburn.apply_async.assert_called_once_with(
+        args=[str(job.id), "subtitled"],
+        kwargs={"render_gen_id": patched["render_generation_id"]},
+        queue="overlay-jobs",
+    )
     assert db.commit.await_count >= 1
 
 
