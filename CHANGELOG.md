@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.20.0] — 2026-07-11
+
+### Added
+- **Caption position control.** Captioned edits (talk-to-camera and voiceover) can now place captions low, middle, or high on the frame; the choice sticks across caption edits, font changes, and re-transcribes. Behind `NEXT_PUBLIC_CAPTION_POSITION_ENABLED`.
+
+### Fixed
+- `tsc --noEmit` was red on main: the Playwright e2e specs imported `@playwright/test` without it being declared; it is now a devDependency.
+
 ## [0.7.18.0] — 2026-07-11
 
 ### Changed
