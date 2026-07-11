@@ -256,6 +256,15 @@ describe("UnifiedTimeline — expandable lanes", () => {
     expect(onClipsPanelChange).toHaveBeenCalledWith(true);
   });
 
+  it("can hide the Clips lane while keeping text-level editing visible", () => {
+    render(<UnifiedTimeline {...makeProps({ showClipsLane: false, textElements: [] })} />);
+    expect(screen.queryByText("Clips")).toBeNull();
+    expect(screen.queryByText(/Edit clips/i)).toBeNull();
+    expect(screen.queryByText(/Clips lane/i)).toBeNull();
+    expect(screen.getByText("Text")).toBeInTheDocument();
+    expect(screen.getByText(/No text yet/i)).toBeInTheDocument();
+  });
+
   it("Text lane shown with textElements; T5 interactive lane renders bars and empty state", async () => {
     // T5: TextLane is always rendered (no hasText gate). With empty textElements, shows empty state.
     render(<UnifiedTimeline {...makeProps({ textElements: [] })} />);

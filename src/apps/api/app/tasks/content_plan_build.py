@@ -438,6 +438,7 @@ def _dispatch_item_render(
 
     `item.clip_gcs_paths` must already be set on the session before calling.
     """
+    from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
     from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
     from app.services.job_dispatch import enqueue_orchestrator_sync  # noqa: PLC0415
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
@@ -482,6 +483,9 @@ def _dispatch_item_render(
             # Landscape-clip preference (plan-item editor). Defaults to "fit" via the
             # column server_default; getattr guard tolerates pre-column in-flight rows.
             landscape_fit=str(getattr(item, "landscape_fit", "fit") or "fit"),
+            # Montage visual preset. Defaults to "classic"; the builder omits it
+            # from all_candidates unless the user selected the masonry preset.
+            montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
             # Original-audio bed level for the narrated archetype (None → Nova default).
             voiceover_bed_level=(
                 float(item.voiceover_bed_level) if item.voiceover_bed_level is not None else None

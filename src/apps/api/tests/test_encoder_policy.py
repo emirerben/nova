@@ -87,6 +87,9 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # the bytes that ship for a talking_head job. include_audio=False because the
     # audio is built by the filtergraph (loudnorm + 48k), not the slot-layout args.
     ("app/pipeline/talking_head_assembler.py", "build_talking_head_command"),
+    # Masonry montage preset. This is the final visible collage encode before
+    # optional text burn/audio replacement, so use the final-output budget.
+    ("app/pipeline/masonry_montage.py", "build_masonry_command"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter
@@ -112,6 +115,7 @@ FILES_TO_AUDIT: list[str] = [
     "app/pipeline/lyrics_preview.py",
     "app/pipeline/transitions.py",
     "app/pipeline/talking_head_assembler.py",
+    "app/pipeline/masonry_montage.py",
 ]
 
 
