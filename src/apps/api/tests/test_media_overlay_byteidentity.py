@@ -128,6 +128,23 @@ class TestVariantFinalizeKeys:
         src = (repo_root / "src/apps/api/app/tasks/generative_build.py").read_text()
         tree = ast.parse(src)
 
+        # OV-2 (plan 010): _update_variant_entry MERGE patches (locals named
+        # `patch`) deliberately omit media_overlays — the row-locked merge keeps
+        # the DB's current cards, so naming the key would round-trip a stale
+        # task-start snapshot (the save-during-render wipe). This guard applies
+        # only to finalize/result dicts, which _finalize_job rebuilds through a
+        # whitelist that strips unnamed keys.
+        merge_patch_dicts: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Dict):
+                targets = node.targets
+            elif isinstance(node, ast.AnnAssign) and isinstance(node.value, ast.Dict):
+                targets = [node.target]
+            else:
+                continue
+            if any(isinstance(t, ast.Name) and t.id == "patch" for t in targets):
+                merge_patch_dicts.add(id(node.value))
+
         # Find all dict literals that contain "base_video_path" (the finalize dicts)
         # and check that "media_overlays" and "pre_media_overlay_video_path" are also present.
         found_base = 0
@@ -135,7 +152,7 @@ class TestVariantFinalizeKeys:
         found_pre_overlay = 0
 
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Dict):
+            if not isinstance(node, ast.Dict) or id(node) in merge_patch_dicts:
                 continue
             keys = [k.value if isinstance(k, ast.Constant) else None for k in node.keys]
             if "base_video_path" in keys:

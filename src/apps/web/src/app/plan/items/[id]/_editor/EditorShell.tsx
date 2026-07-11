@@ -62,6 +62,12 @@ import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import { barsToCaptionCues, barsToTextElements, seedBarsFromVariant } from "./editor-bars";
+import {
+  CAPTIONS_TAB_REASON,
+  computeToolDisabledReasons,
+  editorReasonCopy,
+  textElementsLockedCopy,
+} from "./editor-capabilities";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
   applyClipTimingInput,
@@ -105,21 +111,6 @@ const NEW_TEXT_DURATION_S = 2.0;
 const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
-
-const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Captions tab";
-
-function editorReasonCopy(reason: string | null | undefined): string {
-  if (!reason) return "This version can't be edited.";
-  if (reason === "voiceover_bed_fit" || reason === "locked_to_voiceover") {
-    return "locked to your voiceover";
-  }
-  if (reason === "lyrics_sync") return "lyrics are synced to the song";
-  if (reason === "no_slot_timeline") return "this edit has no clip timeline";
-  if (reason === "masonry_preset") return "collage presets do not use a clip timeline";
-  if (reason === "sources_expired") return "the source clips are no longer available";
-  if (reason === "caption_archetype") return CAPTIONS_TAB_REASON;
-  return reason;
-}
 
 function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   if (!deleteKeyAllowed(target)) return false;
@@ -170,6 +161,19 @@ function SaveSpinner() {
       aria-hidden="true"
       className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
     />
+  );
+}
+
+/** The Captions-tab deep link — shared by the read-only banner and the
+ * text-locked notice so both surfaces point at the same target identically. */
+function CaptionsTabLink({ itemId }: { itemId: string }) {
+  return (
+    <a
+      href={`/plan/items/${itemId}`}
+      className="font-semibold underline decoration-zinc-300 underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+    >
+      Open the item page Captions tab
+    </a>
   );
 }
 
@@ -414,6 +418,10 @@ export default function EditorShell({
     capabilities.sfx === false &&
     capabilities.overlays === false;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
+  // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
+  // subtitled variants the shell is editable, but on-video text still lives
+  // in the Captions tab — every add-text path must stay blocked.
+  const textElementsLocked = !readOnly && capabilities?.text_elements === false;
   const clipLockedToVoiceover =
     capabilities?.timeline === false &&
     (capabilities?.reason === "voiceover_bed_fit" ||
@@ -1161,6 +1169,13 @@ export default function EditorShell({
   const addTextAtPlayhead = useCallback(
     (preset: TextPreset = DEFAULT_TEXT_PRESET) => {
       if (readOnly) return;
+      if (textElementsLocked) {
+        // OV-1: the rail disables the Text/Styles buttons, but this callback
+        // is also reachable via preset picks — same gate, honest toast. The
+        // copy is text-specific (never the whole-shell "can't be edited").
+        setToast(textElementsLockedCopy(capabilities));
+        return;
+      }
       history.record();
       setTextDirty(true);
       const start = Math.max(0, Math.round(currentTime * 10) / 10);
@@ -1188,7 +1203,15 @@ export default function EditorShell({
       dispatch({ type: "ADD_TEXT", bar });
       selectText(bar.id);
     },
-    [currentTime, previewDuration, selectText, readOnly, history],
+    [
+      currentTime,
+      previewDuration,
+      selectText,
+      readOnly,
+      textElementsLocked,
+      capabilities,
+      history,
+    ],
   );
 
   // Restyle ALL text bars with a style set — ONE undoable command with instant
@@ -1244,24 +1267,10 @@ export default function EditorShell({
     capabilities?.split_clips !== undefined
       ? capabilities.split_clips !== false
       : variant?.text_mode === "agent_text";
-  const toolDisabledReasons = useMemo<Partial<Record<EditorTool, string>>>(() => {
-    const out: Partial<Record<EditorTool, string>> = {};
-    if (readOnly) {
-      out.text = readOnlyReason;
-      out.styles = readOnlyReason;
-    }
-    if (capabilities?.sfx === false) {
-      out.sounds = editorReasonCopy(
-        capabilities.sfx_reason ?? "Sound effects are not available",
-      );
-    }
-    if (capabilities?.overlays === false) {
-      out.overlays = editorReasonCopy(
-        capabilities.overlays_reason ?? "Media overlays are not available",
-      );
-    }
-    return out;
-  }, [capabilities, readOnly, readOnlyReason]);
+  const toolDisabledReasons = useMemo<Partial<Record<EditorTool, string>>>(
+    () => computeToolDisabledReasons({ capabilities, readOnly, readOnlyReason }),
+    [capabilities, readOnly, readOnlyReason],
+  );
 
   const deleteSelected = useCallback(() => {
     if (!selection || readOnly) return;
@@ -1991,7 +2000,7 @@ export default function EditorShell({
             allowManipulation={false}
             stageHeightCss="100dvh - 152px"
           />
-          {state.bars.length === 0 && !readOnly && (
+          {state.bars.length === 0 && !readOnly && !textElementsLocked && (
             <button
               type="button"
               onClick={() => addTextAtPlayhead()}
@@ -2205,7 +2214,11 @@ export default function EditorShell({
           />
         </div>
         {toast && (
-          <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-[#0c0c0e] px-3 py-1.5 text-[12px] text-white shadow-lg">
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-lg bg-[#0c0c0e] px-3 py-1.5 text-[12px] text-white shadow-lg"
+          >
             {toast}
           </div>
         )}
@@ -2241,12 +2254,29 @@ export default function EditorShell({
             {readOnlyReason === CAPTIONS_TAB_REASON && (
               <>
                 {" "}
-                <a
-                  href={`/plan/items/${itemId}`}
-                  className="font-semibold underline decoration-zinc-300 underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-                >
-                  Open the item page Captions tab
-                </a>
+                <CaptionsTabLink itemId={itemId} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Captions-tab pointer (plan 010 review round) ── Post-lift subtitled
+             shells are editable (no read-only banner), but on-video text still
+             lives in the Captions tab — keep the deep-link discoverable. Quiet
+             notice line (DESIGN.md §2 tokens), outside the layout branches so
+             both the full editor and the light layout show it. */}
+      {textElementsLocked && (
+        <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
+          <div
+            data-testid="captions-tab-notice"
+            className="rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm"
+          >
+            {textElementsLockedCopy(capabilities)}.
+            {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
+              <>
+                {" "}
+                <CaptionsTabLink itemId={itemId} />
               </>
             )}
           </div>

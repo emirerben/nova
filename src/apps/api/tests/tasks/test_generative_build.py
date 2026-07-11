@@ -13,6 +13,8 @@ import types
 
 import app.tasks.generative_build as gb
 from app.agents.lyrics import LyricsExtractionAgent
+from tests.tasks.conftest import FakeJob as _FakeJob
+from tests.tasks.conftest import patch_job_session as _patch_job_session
 
 
 class _Meta:
@@ -1524,29 +1526,8 @@ def test_run_generative_job_forwards_masonry_preset_to_montage_renderer(monkeypa
 # ── Resumable variants (survive deploy/OOM kills) ──────────────────────────────
 
 
-class _FakeJob:
-    def __init__(self, assembly_plan=None):
-        self.assembly_plan = assembly_plan
-        self.status = "rendering"
-
-
-def _patch_job_session(monkeypatch, job):
-    """Make gb._sync_session() yield a session whose .get() returns `job`."""
-
-    class _Sess:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def get(self, model, pk, **kw):
-            return job
-
-        def commit(self):
-            pass
-
-    monkeypatch.setattr(gb, "_sync_session", lambda: _Sess())
+# _FakeJob / _patch_job_session moved to tests/tasks/conftest.py (shared with
+# test_caption_reapply.py) — imported at the top of this module.
 
 
 def test_upsert_variant_appends_then_replaces(monkeypatch):
@@ -3762,8 +3743,8 @@ def test_reburn_bed_level_happy_path_uses_auto_segment_assignment(monkeypatch):
     assert v["voiceover_bed_level"] == 0.6
     assert v["video_path"] != "generative-jobs/j/variant_1_narrated.mp4"
     assert v["base_video_path"] != "generative-jobs/j/variant_1_narrated_base.mp4"
-    # Media-overlay keys round-trip untouched (narrated never has any, but the
-    # byte-identity guard requires every base_video_path-carrying dict to name them).
+    # media_overlays is absent from the terminal patch (OV-2) — the merge keeps
+    # the DB value; the snapshot is explicitly reset (it pointed at the old burn).
     assert v["media_overlays"] is None
     assert v["pre_media_overlay_video_path"] is None
     # Captions untouched by a bed-level change.

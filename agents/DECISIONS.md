@@ -244,3 +244,21 @@ three invariants worth knowing before touching `phrase_sequence.py` / `text_over
   inputs took 525s and flirted with the 600s subprocess timeout; the composite is 11.3s. Unique
   frames render only at pops/fade ramps; holds are hard-linked. Never emit sequence blocks as
   separate FFmpeg inputs.
+
+## [2026-07-11] Celery task failures are ACKED — no redelivery self-heal (plan 010, PR #627)
+
+**Fact:** a Celery task that RAISES is acked even with `task_acks_late=True` —
+`task_acks_on_failure_or_timeout` defaults True. Late-ack redelivery only covers worker
+DEATH (`task_reject_on_worker_lost=True` in `app/worker.py`), not task failures.
+
+**Where it bit (accepted, R3-B / OV-9 in plans/010-subtitled-sfx-overlay-lanes.md):**
+during PR #627's rolling deploy, a caption save from an upgraded API can land on an old
+worker that TypeErrors on the new task kwarg. The failed message is acked — no
+redelivery. The variant sits "rendering" until the 60-min reaper (`app/tasks/reaper.py`)
+converts it to a failed badge; the user recovers by re-tapping Apply. Judged a
+one-deploy, minutes-wide window; a two-phase kwarg rollout was rejected as
+over-engineering.
+
+**Reusable rule:** adding a required kwarg to an existing Celery task always opens this
+window. Either accept it consciously (document it + confirm the reaper backstop covers
+the queue) or ship the kwarg with a server-side default the old worker tolerates.

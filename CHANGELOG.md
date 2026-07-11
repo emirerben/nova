@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.25.0] — 2026-07-11
+
+### Added
+- **Sound effects + media overlays on captioned edits.** The Sounds and Overlays lanes are now available on subtitled (talk-to-camera) and narrated edits — previously disabled because caption re-renders rebuilt the video from a caption-free base and silently wiped composited effects. Every caption re-render path (caption edit, background-sound change, language re-transcribe) now re-applies persisted lanes onto the fresh burn, and lane saves on captioned edits render through the caption reburn so the newest save always carries the current captions. AI overlay suggestions stay off on captioned edits pending a speech-content quality eval; text and mix editing remain honestly gated (disabled tools explain why, with a Captions-tab deep link). Effects lanes remain behind `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED`.
+
+### Fixed
+- Caption re-renders join the render-supersession model: generation tokens on all three caption paths, dispatch commits before enqueue, superseded runs skip blob deletes and clean up their uploads, and a no-op reapply can no longer strand a variant in "rendering". Retired pre-effect snapshot blobs are now freed (prefix-confined to `generative-jobs/*`) instead of leaking forever.
+- Caption-position saves (`/caption-position`, v0.7.20.0) 500'd after the caption dispatcher became async in this branch — the position save now rides the same locked, token-checked reburn as its siblings.
+- The item-page "Place visuals for me" rail is gated by the variant's editor capabilities and recognizes the caption-archetype unavailability wording instead of dead-ending in a failed state.
+- Editor tool-rail a11y: disabled tools are focusable with screen-reader-readable reasons (`aria-disabled` + `aria-describedby`); the toast is a polite live region.
+
 ## [0.7.24.0] — 2026-07-11
 
 ### Added

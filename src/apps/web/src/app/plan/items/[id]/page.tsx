@@ -1542,10 +1542,13 @@ export default function PlanItemPage() {
 
             {/* Suggestion rail — AI overlay auto-placement review for the
                 focused variant (plans/005 PR2). Same flag gate as AssetPool;
-                renders nothing until a variant exists. */}
+                renders nothing until a variant exists, and nothing when the
+                variant's editor_capabilities report suggestions=false (plan
+                010 OV-5 — caption archetypes, song/lyric variants). */}
             <SuggestionRail
               itemId={itemId}
               variantId={focused?.variant_id ?? null}
+              suggestionsCapability={focused?.editor_capabilities?.suggestions ?? null}
               previewUrl={focused?.output_url ?? focused?.base_video_url ?? null}
               rows={overlaySuggestions.rows}
               onRowsChange={overlaySuggestions.setRows}

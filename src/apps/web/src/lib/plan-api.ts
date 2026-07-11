@@ -841,7 +841,8 @@ export interface EditorCapabilities {
   reason?: string;
   sfx_reason?: string | null;
   overlays_reason?: string | null;
-  /** "autoplace_disabled" | "song_or_lyric_variant" | inherited overlay reasons. */
+  /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
+   *  | inherited overlay reasons. */
   suggestions_reason?: string | null;
 }
 

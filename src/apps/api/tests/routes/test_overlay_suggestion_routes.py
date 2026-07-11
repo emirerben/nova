@@ -186,6 +186,21 @@ def test_suggest_overlays_lyric_variant_guard(client: TestClient):
     assert "song or lyric variants" in resp.json()["detail"]
 
 
+@pytest.mark.parametrize("archetype", ["narrated", "subtitled"])
+def test_suggest_overlays_caption_archetype_guard(client: TestClient, archetype: str):
+    """OV-5 (plan 010): manual lanes are open on caption archetypes, but the AI
+    suggest route stays rejected pending a speech-content quality eval."""
+    user = _user()
+    job = _job([_variant(variant_id=archetype, resolved_archetype=archetype)])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([_scalar_result(item), _scalar_result(item)], plan)
+    _override(user, db)
+    with patch(f"{SETTINGS}.overlay_autoplace_enabled", True):
+        resp = client.post(f"/plan-items/{item.id}/variants/{archetype}/suggest-overlays")
+    assert resp.status_code == 400
+    assert "edit format" in resp.json()["detail"]
+
+
 def test_suggest_overlays_happy_path_commits_and_enqueues(
     client: TestClient, _no_real_broker_publish
 ):

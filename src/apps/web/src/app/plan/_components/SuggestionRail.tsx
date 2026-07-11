@@ -65,10 +65,16 @@ const STALE_NOTICE_MS = 8000;
 
 type Phase = "idle" | "matching" | "ready" | "zero" | "failed" | "applied";
 
-/** Backend flag off → routes 404 (dual-flag trap, same detection as AssetPool). */
+/**
+ * Backend flag off → routes 404 (dual-flag trap, same detection as AssetPool).
+ * Also matches capability rejects like the plan-010 caption-archetype 400
+ * ("Auto-placement isn't available on this edit format.") — both wordings map
+ * to the calm "unavailable" state (rail hides), never to failed+Retry.
+ */
 function isUnavailableError(err: unknown): boolean {
   return (
-    err instanceof Error && (/not available/i.test(err.message) || err.message.includes("(404)"))
+    err instanceof Error &&
+    (/(isn['’]?t|not) available/i.test(err.message) || err.message.includes("(404)"))
   );
 }
 
@@ -137,6 +143,7 @@ function safePlay(video: HTMLVideoElement) {
 export default function SuggestionRail({
   itemId,
   variantId,
+  suggestionsCapability,
   previewUrl,
   onApplied,
   rows: rowsProp,
@@ -149,6 +156,13 @@ export default function SuggestionRail({
   itemId: string;
   /** Currently focused variant — null before any variant renders. */
   variantId: string | null;
+  /**
+   * The focused variant's `editor_capabilities.suggestions` (plan 010 OV-5):
+   * `false` (caption archetypes, song/lyric variants) hides the rail entirely
+   * — its suggest CTA would only dead-end into the backend's 400. Omitted /
+   * null (legacy payloads without the capability map) keeps the rail.
+   */
+  suggestionsCapability?: boolean | null;
   /** Playback URL of the selected variant, for the in-card mini-preview. */
   previewUrl?: string | null;
   /** Called after a successful apply so the page can mark the variant rendering + refetch. */
@@ -175,7 +189,9 @@ export default function SuggestionRail({
    */
   applyReceipt?: OverlayApplyReceipt | null;
 }) {
-  const enabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
+  const enabled =
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" &&
+    suggestionsCapability !== false;
 
   const [phase, setPhase] = useState<Phase>("idle");
   const phaseRef = useRef<Phase>("idle");

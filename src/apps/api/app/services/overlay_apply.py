@@ -173,7 +173,17 @@ def apply_suggestions_to_variant(
 
     # Single chain (005-10A): one overlay dispatch; its terminal
     # _reapply_persisted_sfx_if_any bakes the SFX in the same re-encode.
-    dispatch_set_media_overlays(job, variant_id, overlays_raw=merged_overlays, user_id=user_id)
+    # The montage branch enqueues inline and returns None — byte-identical to
+    # the pre-R1-1 behavior on this path. The caption branch returns a deferred
+    # enqueue thunk instead, but AI applies are gated OFF on caption archetypes
+    # (OV-5), so it is unreachable here; invoke defensively if a future guard
+    # change opens it (this caller's commit follows immediately — the same
+    # accepted millisecond race as the montage branch, never a dropped enqueue).
+    enqueue = dispatch_set_media_overlays(
+        job, variant_id, overlays_raw=merged_overlays, user_id=user_id
+    )
+    if enqueue is not None:
+        enqueue()
     return {
         "applied": len(accepted),
         "dropped": dropped,

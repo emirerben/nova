@@ -92,6 +92,11 @@ def _extract_visibility_timeout(worker_src: str) -> int:
 _RENDER_ORCHESTRATORS = [
     ("app/tasks/generative_build.py", "orchestrate_generative_job"),
     ("app/tasks/generative_build.py", "regenerate_generative_variant"),
+    # Caption re-renders inline-run the overlay+SFX reapply chain (plan 010, 5A),
+    # so they ride the standard render ceiling and join this invariant.
+    ("app/tasks/generative_build.py", "reburn_narrated_captions"),
+    ("app/tasks/generative_build.py", "reburn_narrated_bed_level"),
+    ("app/tasks/generative_build.py", "retranscribe_subtitled_captions"),
     ("app/tasks/auto_music_orchestrate.py", "tasks.orchestrate_auto_music_job"),
     # Footage-pool ingest: downloads + Gemini-uploads + analyzes up to 40 clips,
     # so it's in the same acks_late redelivery double-run risk class.

@@ -78,10 +78,41 @@ _TIMEOUT_FULLSCREEN_S = 900
 # Hard ceiling on attempt+retry combined, kept under soft_time_limit(1740) minus
 # the download/normalise/upload overhead around the ffmpeg call.
 _FULLSCREEN_TOTAL_BUDGET_S = 1500
+# R4-2: entering the pass with less wall-clock than this cannot fit even the
+# veryfast retry — fail fast with a clear error instead of tripping the Celery
+# hard limit mid-encode. Only consulted when a caller threads a deadline.
+_DEADLINE_FLOOR_S = 120
 
 
 class MediaOverlayError(Exception):
     """Raised when the overlay apply-pass fails unrecoverably."""
+
+
+def _resolve_pass_budget(
+    fullscreen_pass: bool, deadline_monotonic: float | None
+) -> tuple[int, float]:
+    """(per-attempt subprocess timeout_s, total attempt+retry budget_s).
+
+    Default (deadline_monotonic=None) is byte-identical to the standalone-task
+    numbers — the plans/009 preset/timeout pins stay untouched. Caption tasks
+    enter this pass MID-task (after a burn that may have consumed minutes), so
+    _FULLSCREEN_TOTAL_BUDGET_S sized for a task that STARTS with the pass can
+    deterministically exceed the 1740s soft ceiling; the deadline clamps both
+    the shared budget and the per-attempt timeout to the wall clock actually
+    left, and raises when less than _DEADLINE_FLOOR_S remains.
+    """
+    timeout_s = _TIMEOUT_FULLSCREEN_S if fullscreen_pass else _TIMEOUT_PIP_S
+    budget_s = float(_FULLSCREEN_TOTAL_BUDGET_S)
+    if deadline_monotonic is not None:
+        remaining = deadline_monotonic - time.monotonic()
+        if remaining < _DEADLINE_FLOOR_S:
+            raise MediaOverlayError(
+                f"media-overlay pass skipped: {remaining:.0f}s left before the task "
+                f"deadline (needs at least {_DEADLINE_FLOOR_S}s) — retry the edit"
+            )
+        budget_s = min(budget_s, remaining)
+        timeout_s = min(timeout_s, int(budget_s))
+    return timeout_s, budget_s
 
 
 def _has_fullscreen(cards: list[MediaOverlay]) -> bool:
@@ -275,6 +306,7 @@ def apply_media_overlays(
     cards: list[MediaOverlay],
     output_gcs_path: str,
     job_id: str | None = None,
+    deadline_monotonic: float | None = None,
 ) -> str:
     """Download base variant, composite cards on top, upload result.
 
@@ -290,6 +322,9 @@ def apply_media_overlays(
         output_gcs_path: GCS key for the composited output (typically the same
             as base, overwriting it, or a new key for the carded variant).
         job_id: for structured log context.
+        deadline_monotonic: optional time.monotonic() wall-clock ceiling from a
+            caller that entered this pass mid-task (R4-2) — clamps the encode
+            budget via _resolve_pass_budget. None keeps behavior byte-identical.
     """
     if not cards:
         raise MediaOverlayError("apply_media_overlays called with empty card list")
@@ -387,10 +422,12 @@ def apply_media_overlays(
         fullscreen_pass = _has_fullscreen(list(final_cards))
         # Shared wall-clock budget (review C6): fast attempt + veryfast retry must
         # together stay under the render task's soft_time_limit. The retry gets
-        # only the time left, so worst-case ffmpeg wall time is _FULLSCREEN_TOTAL
-        # _BUDGET_S, not 2× the per-attempt ceiling.
-        deadline = time.monotonic() + _FULLSCREEN_TOTAL_BUDGET_S
-        timeout_s = _TIMEOUT_FULLSCREEN_S if fullscreen_pass else _TIMEOUT_PIP_S
+        # only the time left, so worst-case ffmpeg wall time is the shared budget,
+        # not 2× the per-attempt ceiling. R4-2: the budget shrinks further when a
+        # mid-task caller threads its own deadline (and raises when too little is
+        # left — the render fails fast with a clear error, not a hard-limit kill).
+        timeout_s, budget_s = _resolve_pass_budget(fullscreen_pass, deadline_monotonic)
+        deadline = time.monotonic() + budget_s
         cmd = build_media_overlay_command(
             base_local,
             list(final_cards),

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from typing import Literal
 
@@ -1108,7 +1109,33 @@ class CaptionLanguageRequest(BaseModel):
 # worker's `_CAPTION_REBURN_ARCHETYPES` (generative_build) — the route gate and the
 # reburn guard must accept exactly the same archetypes or an edit 200s here then 500s
 # in the worker.
-_CAPTION_EDIT_ARCHETYPES = frozenset({"narrated", "subtitled"})
+CAPTION_EDIT_ARCHETYPES = frozenset({"narrated", "subtitled"})
+# Compat alias — import the public name; kept so pre-rename importers don't break.
+_CAPTION_EDIT_ARCHETYPES = CAPTION_EDIT_ARCHETYPES
+
+# Single copy for every "captions own this surface" capability reason / 422 detail.
+# EditorShell string-compares this exact copy (CAPTIONS_TAB_REASON in
+# editor-capabilities.ts) to route users to the Captions tab — byte-stable
+# contract; never reword without updating the frontend constant in lockstep.
+CAPTION_TAB_COPY = "Captions for this edit are managed in the Captions tab"
+
+
+def _text_elements_allowed(variant: dict) -> bool:
+    """Text/Styles elements are editable on this variant (caption-archetype rule).
+
+    Single source for BOTH `_editor_capabilities`' text_elements derivation and
+    `prepare_editor_commit`'s 422 guard (OV-1): subtitled captions own the
+    on-video text; narrated keeps text_elements (its captions ride a separate
+    voiceover lane). PR #625's styled-text lane re-opens subtitled text behind
+    SUBTITLED_TEXT_LANE_ENABLED — folding the flag HERE keeps the capability map
+    and the commit 422 guard in lockstep. Lyrics/flag gating lives in
+    `validate_text_elements_payload`.
+    """
+    if variant.get("resolved_archetype") != "subtitled":
+        return True
+    from app.config import settings  # noqa: PLC0415
+
+    return settings.subtitled_text_lane_enabled
 
 
 def _is_editable_caption_variant(variant: dict) -> bool:
@@ -1120,7 +1147,7 @@ def _is_editable_caption_variant(variant: dict) -> bool:
     archetypes (narrated voiceover, subtitled single-clip) ship `caption_cues`, so
     require one of those.
     """
-    return variant.get("resolved_archetype") in _CAPTION_EDIT_ARCHETYPES and bool(
+    return variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES and bool(
         variant.get("base_video_path")
     )
 
@@ -1200,31 +1227,46 @@ async def persist_variant_caption_font(
     await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
 
 
-def dispatch_set_caption_position(job: Job, variant_id: str, *, y_frac: float) -> int:
-    """Persist caption position and enqueue the caption reburn in one JSONB rewrite."""
+async def dispatch_set_caption_position(
+    job_id: uuid.UUID, variant_id: str, *, y_frac: float, db: AsyncSession
+) -> int:
+    """Persist caption position and enqueue the caption reburn (one locked write).
+
+    Same discipline as `dispatch_apply_captions` (plan 010 R1-1): row-locked
+    fetch, margin merge + gen mint in ONE JSONB rewrite, COMMIT BEFORE the
+    enqueue — the reburn's start write is token-checked, so an enqueue that
+    outruns the commit would strand the variant in "rendering" forever.
+    """
     req = CaptionPositionRequest(y_frac=y_frac)
-    plan = dict(job.assembly_plan or {})
-    variants = list(plan.get("variants") or [])
-    target = next((v for v in variants if v.get("variant_id") == variant_id), None)
-    if target is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
-    if not _is_editable_caption_variant(target):
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
+    if not _is_editable_caption_variant(variant):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Captions can only be edited on captioned variants.",
         )
-    if target.get("render_status") == "rendering":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Captions are being applied — try again once the render finishes.",
-        )
+    plan = dict(job.assembly_plan or {})
+    variants = list(plan.get("variants") or [])
     for i, v in enumerate(variants):
         if v.get("variant_id") == variant_id:
             variants[i] = {**v, "caption_margin_v": req.caption_margin_v}
             break
     plan["variants"] = variants
     job.assembly_plan = plan
-    dispatch_apply_captions(job, variant_id)
+    render_gen_id = _mark_variant_rendering(job, variant_id)
+    await db.commit()
+    from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+    # Caption tasks inline-run the overlay/SFX reapply passes, which the solo
+    # overlay-jobs worker exists to serialize (macOS prefork CLIP fork hazard).
+    reburn_narrated_captions.apply_async(
+        args=[str(job_id), variant_id],
+        kwargs={"render_gen_id": render_gen_id},
+        queue="overlay-jobs",
+    )
     return req.caption_margin_v
 
 
@@ -1258,44 +1300,81 @@ async def persist_variant_captions_enabled(
     await _patch_narrated_variant(job_id, variant_id, {"captions_enabled": bool(enabled)}, db)
 
 
-def _mark_variant_rendering(job: Job, variant_id: str) -> None:
+def _mark_variant_rendering(job: Job, variant_id: str) -> str:
     """Persist render_status="rendering" synchronously at dispatch (the swap-song
     pattern) so the 409 gate closes IMMEDIATELY — without it, two dispatches in the
     enqueue→dequeue window both pass the gate and race to a last-writer-wins state
-    (e.g. a reburn of old cues landing after a re-transcribe)."""
+    (e.g. a reburn of old cues landing after a re-transcribe).
+
+    Also mints and stamps a fresh `render_generation_id` (2A/OV-3, plan 010) so
+    every caption re-render joins the editor-commit supersession model — pass the
+    returned token to the task as `render_gen_id` so a superseded run discards
+    its terminal write (and its old-blob deletes, OV-4).
+    """
+    render_gen_id = uuid.uuid4().hex
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
+            v["render_generation_id"] = render_gen_id
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+    return render_gen_id
 
 
-def dispatch_apply_captions(job: Job, variant_id: str) -> None:
+async def dispatch_apply_captions(job_id: uuid.UUID, variant_id: str, *, db: AsyncSession) -> None:
     """Reburn the variant's (persisted, hand-edited) caption cues onto its
-    caption-free base — the Apply step of the on-video caption editor."""
+    caption-free base — the Apply step of the on-video caption editor.
+
+    Row-locked re-fetch + COMMIT BEFORE the enqueue (mirrors
+    `dispatch_set_narrated_bed_level`): the reburn's start write is token-checked
+    against the just-minted `render_generation_id`, so a worker that dequeues
+    before the commit would read the OLD gen, discard its start write, and
+    strand the variant in "rendering" forever.
+    """
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
     variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
     if not _is_editable_caption_variant(variant):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Captions can only be applied on captioned variants.",
         )
-    _mark_variant_rendering(job, variant_id)
+    render_gen_id = _mark_variant_rendering(job, variant_id)
+    await db.commit()
     from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
 
-    reburn_narrated_captions.delay(str(job.id), variant_id)
+    # Caption tasks inline-run the overlay/SFX reapply passes, which the solo
+    # overlay-jobs worker exists to serialize (macOS prefork CLIP fork hazard).
+    reburn_narrated_captions.apply_async(
+        args=[str(job_id), variant_id],
+        kwargs={"render_gen_id": render_gen_id},
+        queue="overlay-jobs",
+    )
 
 
-def dispatch_retranscribe_captions(job: Job, variant_id: str, *, language: str) -> None:
+async def dispatch_retranscribe_captions(
+    job_id: uuid.UUID, variant_id: str, *, language: str, db: AsyncSession
+) -> None:
     """Re-transcribe a subtitled variant's own audio in a new language and reburn (D5
     override). Subtitled-only — narrated captions come from a separate voiceover. This
-    REPLACES the current cues + any hand-edits; the frontend confirms first."""
+    REPLACES the current cues + any hand-edits; the frontend confirms first.
+
+    Row-locked re-fetch + COMMIT BEFORE the enqueue — same rationale as
+    `dispatch_apply_captions` (the task's start write is token-checked).
+    """
     lang = (language or "").strip().lower()
     if lang not in _SUBTITLED_CAPTION_LANGUAGES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Unsupported caption language.",
         )
+    result = await db.execute(select(Job).where(Job.id == job_id).with_for_update())
+    job = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
     variant = require_editable_variant(job, variant_id)  # 404 unknown / 409 if rendering
     if variant.get("resolved_archetype") != "subtitled":
         raise HTTPException(
@@ -1309,10 +1388,16 @@ def dispatch_retranscribe_captions(job: Job, variant_id: str, *, language: str) 
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This video has no captions to re-transcribe.",
         )
-    _mark_variant_rendering(job, variant_id)
+    render_gen_id = _mark_variant_rendering(job, variant_id)
+    await db.commit()
     from app.tasks.generative_build import retranscribe_subtitled_captions  # noqa: PLC0415
 
-    retranscribe_subtitled_captions.delay(str(job.id), variant_id, lang)
+    # Caption tasks inline-run the overlay/SFX reapply passes — overlay-jobs queue.
+    retranscribe_subtitled_captions.apply_async(
+        args=[str(job_id), variant_id, lang],
+        kwargs={"render_gen_id": render_gen_id},
+        queue="overlay-jobs",
+    )
 
 
 def dispatch_change_style(job: Job, variant_id: str, *, style_set_id: str) -> None:
@@ -1522,13 +1607,39 @@ def validate_sound_effects_for_user(*, sfx_raw: list[dict], user_id: str) -> lis
     return validated
 
 
+def _caption_reburn_enqueue_thunk(
+    job_id: str, variant_id: str, render_gen_id: str
+) -> Callable[[], None]:
+    """Deferred enqueue for the lane dispatchers' caption branch (R1-1).
+
+    The reburn's start write is token-checked against `render_gen_id`, so the
+    caller MUST commit the gate/gen/lane write before invoking this — otherwise
+    a fast worker reads the pre-commit generation, discards its start write,
+    and strands the variant in "rendering" behind the 409 gate.
+    """
+
+    def _enqueue() -> None:
+        from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+        # Caption tasks inline-run the overlay/SFX reapply passes — the solo
+        # overlay-jobs worker exists to serialize those (macOS prefork CLIP fork
+        # hazard), so every caption-task enqueue rides that queue.
+        reburn_narrated_captions.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": render_gen_id},
+            queue="overlay-jobs",
+        )
+
+    return _enqueue
+
+
 def dispatch_set_media_overlays(
     job: Job,
     variant_id: str,
     *,
     overlays_raw: list[dict],
     user_id: str,
-) -> None:
+) -> Callable[[], None] | None:
     """Validate + enqueue a media-overlay card apply-pass for one variant.
 
     Full-replace semantics: the caller sends the entire new card list.
@@ -1538,6 +1649,14 @@ def dispatch_set_media_overlays(
     Persists render_status="rendering" on the variant BEFORE enqueuing so the
     frontend immediately reflects the in-progress state — same pattern as
     dispatch_edit_timeline (persist first, enqueue second).
+
+    Returns None on the montage fast-pass branch (enqueued inline, as before).
+    On the caption-reburn branch it returns a deferred-enqueue thunk INSTEAD of
+    enqueuing (R1-1): `reburn_narrated_captions`' start write is token-checked
+    against the just-minted `render_generation_id`, so async routes MUST
+    `await db.commit()` before invoking the thunk — a worker dequeuing before
+    the commit would read the old generation, discard its start write, and
+    strand the variant in "rendering" behind the 409 gate.
     """
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -1567,19 +1686,37 @@ def dispatch_set_media_overlays(
 
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
+    # R2 (plan 010 review): on caption archetypes a lane save must render through
+    # the caption reburn + reapply chain — the fast pass composites onto the
+    # CURRENT video, so an in-flight caption reburn superseded by this save would
+    # silently lose the caption edit. Persist the validated lane in the SAME
+    # write as the gate/gen (the reburn renders from persisted state, not
+    # overrides); legacy variants without a base keep the fast pass.
+    caption_reburn_route = variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES and bool(
+        variant.get("base_video_path")
+    )
+
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             v["render_generation_id"] = render_gen_id
+            if caption_reburn_route:
+                v["media_overlays"] = validated or None
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
-    # NOTE: .delay() sends to Redis immediately (synchronously). The DB commit
-    # in the caller's route (`await db.commit()`) happens after this function
-    # returns. The window where the task sees an uncommitted row is milliseconds —
-    # the same accepted race as other dispatch_* functions in this module.
-    # (Celery's ALWAYS_EAGER test mode is the exception — tasks run inline.)
+    # NOTE (montage branch only): the enqueue sends to Redis immediately
+    # (synchronously). The DB commit in the caller's route (`await db.commit()`)
+    # happens after this function returns. The window where the task sees an
+    # uncommitted row is milliseconds — the same accepted race as other
+    # dispatch_* functions in this module. (Celery's ALWAYS_EAGER test mode is
+    # the exception — tasks run inline.) The caption branch is NOT allowed that
+    # race: the reburn's start write is token-gated, so it returns a thunk the
+    # caller invokes after its commit (R1-1).
+
+    if caption_reburn_route:
+        return _caption_reburn_enqueue_thunk(str(job.id), variant_id, render_gen_id)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1593,6 +1730,7 @@ def dispatch_set_media_overlays(
         kwargs={"media_overlays_override": validated, "render_gen_id": render_gen_id},
         queue="overlay-jobs",
     )
+    return None
 
 
 def dispatch_set_sound_effects(
@@ -1602,7 +1740,7 @@ def dispatch_set_sound_effects(
     sfx_raw: list[dict],
     user_id: str,
     db_for_glossary,  # AsyncSession for resolving sound_effect_id references
-) -> None:
+) -> Callable[[], None] | None:
     """Validate + enqueue a sound-effects apply-pass for one variant.
 
     Full-replace semantics: the caller sends the entire new placement list.
@@ -1612,6 +1750,11 @@ def dispatch_set_sound_effects(
     Persists render_status="rendering" on the variant BEFORE enqueuing.
     Routes to the overlay-jobs queue (same as media overlays — solo worker,
     no CLIP model fork hazard).
+
+    Return contract mirrors dispatch_set_media_overlays: None on the montage
+    fast-pass branch (enqueued inline); on the caption-reburn branch a
+    deferred-enqueue thunk the caller MUST invoke only after `await
+    db.commit()` (R1-1 — the reburn's start write is token-checked).
     """
     from app.config import settings as _settings  # noqa: PLC0415
 
@@ -1621,7 +1764,7 @@ def dispatch_set_sound_effects(
             detail="Sound effects are not available.",
         )
 
-    require_editable_variant(job, variant_id)
+    variant = require_editable_variant(job, variant_id)
 
     validated = validate_sound_effects_for_user(sfx_raw=sfx_raw, user_id=user_id)
 
@@ -1631,14 +1774,26 @@ def dispatch_set_sound_effects(
 
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
+    # R2 (plan 010 review): caption archetypes render lane saves through the
+    # caption reburn + reapply chain — see dispatch_set_media_overlays.
+    caption_reburn_route = variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES and bool(
+        variant.get("base_video_path")
+    )
+
     variants = list((job.assembly_plan or {}).get("variants") or [])
     for v in variants:
         if v.get("variant_id") == variant_id:
             v["render_status"] = "rendering"
             v["render_generation_id"] = render_gen_id
+            if caption_reburn_route:
+                v["sound_effects"] = validated or None
             break
     job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
     flag_modified(job, "assembly_plan")
+
+    if caption_reburn_route:
+        # R1-1: deferred enqueue — the caller commits the gate write first.
+        return _caption_reburn_enqueue_thunk(str(job.id), variant_id, render_gen_id)
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -1647,6 +1802,7 @@ def dispatch_set_sound_effects(
         kwargs={"sfx_override": validated, "render_gen_id": render_gen_id},
         queue="overlay-jobs",
     )
+    return None
 
 
 def validate_text_elements_payload(
@@ -2152,11 +2308,17 @@ async def dispatch_set_narrated_bed_level(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Background sound can only be adjusted on narrated videos.",
         )
-    _mark_variant_rendering(job, variant_id)
+    render_gen_id = _mark_variant_rendering(job, variant_id)
     await db.commit()
     from app.tasks.generative_build import reburn_narrated_bed_level  # noqa: PLC0415
 
-    reburn_narrated_bed_level.delay(str(job_id), variant_id, float(bed_level))
+    # Caption tasks inline-run the overlay/SFX reapply passes, which the solo
+    # overlay-jobs worker exists to serialize (macOS prefork CLIP fork hazard).
+    reburn_narrated_bed_level.apply_async(
+        args=[str(job_id), variant_id, float(bed_level)],
+        kwargs={"render_gen_id": render_gen_id},
+        queue="overlay-jobs",
+    )
 
 
 # ── Timeline editor: eligibility + GET/POST/DELETE dispatch ─────────────────────
@@ -2228,17 +2390,16 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     timeline_reason = _timeline_ineligibility(job, variant)
     timeline_ok = timeline_reason is None
     archetype = variant.get("resolved_archetype")
-    caption_reason = (
-        "Captions for this edit are managed in the Captions tab"
-        if archetype == "subtitled"
-        else None
-    )
+    # Decoupled from _text_elements_allowed (#625): the styled-text lane can
+    # unlock text tools while CAPTIONS still live in the Captions tab — the
+    # reason sentence describes the captions surface, not the text lock.
+    caption_reason = CAPTION_TAB_COPY if archetype == "subtitled" else None
     from app.config import settings  # noqa: PLC0415
 
+    # Plan 010: caption archetypes get the manual SFX/overlay lanes — the caption
+    # re-render terminals reapply persisted lanes, so effects survive caption edits.
     effects_reason = None
-    if variant.get("resolved_archetype") in _CAPTION_EDIT_ARCHETYPES:
-        effects_reason = "caption_archetype"
-    elif not variant.get("video_path") and not variant.get("output_url"):
+    if not variant.get("video_path") and not variant.get("output_url"):
         effects_reason = "no_video"
     sfx_reason = "sound_effects_disabled" if not settings.sound_effects_enabled else effects_reason
     overlays_reason = (
@@ -2249,6 +2410,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     # cheap-by-design; the editor's pool strip owns the empty-pool state locally.
     if not settings.overlay_autoplace_enabled:
         suggestions_reason = "autoplace_disabled"
+    elif archetype in CAPTION_EDIT_ARCHETYPES:
+        # OV-5: manual lanes are open on caption archetypes, but AI suggestions
+        # stay off pending a speech-content quality eval. Keep in lockstep with
+        # the suggest-overlays route guard (plan_items.py).
+        suggestions_reason = "caption_archetype"
     elif variant.get("music_track_id") is not None or variant.get("text_mode") == "lyrics":
         suggestions_reason = "song_or_lyric_variant"
     else:
@@ -2258,19 +2424,22 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "text_elements": (
             _TEXT_ELEMENTS_ENABLED
             and variant.get("text_mode") != "lyrics"
-            and (
-                caption_reason is None
-                or archetype == "narrated"
-                or (archetype == "subtitled" and settings.subtitled_text_lane_enabled)
-            )
+            and _text_elements_allowed(variant)
         ),
         "timeline": timeline_ok,
         # Splitting a clip is a timeline-override operation — same eligibility.
         "split_clips": timeline_ok,
         # Mirrors dispatch_set_mix: only variants carrying a voice bed can rebalance.
+        # R1-4: caption archetypes hard-code mix=1.0 at render time but have no
+        # montage mix lane — narrated's real knob is the bed-level dispatch on the
+        # item page; subtitled has no bed at all. Without this a mix save funnels
+        # into the montage regenerate → caption reject → silent no-op "ready".
         "mix": (
-            variant.get("mix") is not None
-            or str(variant.get("variant_id") or "").startswith("voiceover")
+            archetype not in CAPTION_EDIT_ARCHETYPES
+            and (
+                variant.get("mix") is not None
+                or str(variant.get("variant_id") or "").startswith("voiceover")
+            )
         ),
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
@@ -2768,6 +2937,15 @@ def prepare_editor_commit(
     materialized_from_sequence = False
     text_requires_full_render = False
     if payload.text_elements is not None:
+        # OV-1 (plan 010): the API half of the dual text-elements gate —
+        # `_text_elements_allowed` is the same predicate `_editor_capabilities`
+        # derives `text_elements` from (lyrics/flag-off are 422/404 in
+        # validate_text_elements_payload).
+        if not _text_elements_allowed(variant):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{CAPTION_TAB_COPY}.",
+            )
         # The fast-reburn base is only required when this commit will take the
         # reburn path (no timeline change → no full re-assembly).
         text_requires_full_render = payload.timeline_slots is None and not bool(
@@ -2787,7 +2965,7 @@ def prepare_editor_commit(
         ):
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Captions for this edit are managed in the Captions tab.",
+                detail=f"{CAPTION_TAB_COPY}.",
             )
         validated_caption_cues = [
             CaptionCue.model_validate(c).model_dump(exclude_none=True) for c in payload.caption_cues
@@ -2799,6 +2977,15 @@ def prepare_editor_commit(
 
     mix_override: float | None = None
     if payload.mix is not None:
+        # R1-4: caption archetypes persist mix=1.0 but have no montage mix lane —
+        # narrated's knob is the item-page bed-level dispatch; subtitled has no
+        # bed. Reject loudly instead of funneling into the montage regenerate,
+        # whose caption reject would land a silent no-op "ready".
+        if variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Background sound for this edit is adjusted on the item page.",
+            )
         # Same rule as dispatch_set_mix: only voiceover variants carry a voice
         # bed to rebalance.
         if variant.get("mix") is None and not str(variant_id).startswith("voiceover"):
@@ -2924,6 +3111,10 @@ def prepare_editor_commit(
         "media_overlays_override": validated_overlays,
         "caption_cues_override": validated_caption_cues,
         "text_requires_full_render": text_requires_full_render,
+        # R2: lets enqueue_editor_commit_render route caption-archetype lane-only
+        # commits through the caption reburn + reapply chain.
+        "resolved_archetype": variant.get("resolved_archetype"),
+        "has_caption_base": bool(variant.get("base_video_path")),
         "sections": {
             "text_elements": payload.text_elements is not None,
             "caption_cues": payload.caption_cues is not None,
@@ -2949,7 +3140,43 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     if prep["sections"].get("caption_cues") is True:
         from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
 
-        reburn_narrated_captions.apply_async(args=[job_id, variant_id])
+        # 2A: the reburn carries the freshly-bumped token so a superseded run
+        # discards its terminal write (and old-blob deletes) like every render.
+        # Caption tasks inline-run the overlay/SFX reapply passes, which the solo
+        # overlay-jobs worker exists to serialize (macOS prefork CLIP fork hazard).
+        reburn_narrated_captions.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": prep["generation"]},
+            queue="overlay-jobs",
+        )
+        return
+    # R2 (plan 010 review): on caption archetypes an SFX/overlay-only Save must
+    # render through the caption reburn + reapply chain — the fast pass would
+    # composite onto the CURRENT video, so an in-flight caption reburn superseded
+    # by this Save would silently lose the caption edit. The commit already
+    # persisted the lanes atomically; the reburn burns the persisted cues onto
+    # the base and _reapply_user_media_layers composites the persisted lanes on
+    # top. Legacy variants without a cached base fall through to the fast pass.
+    sections = prep["sections"]
+    lane_only_commit = (
+        sections.get("sound_effects") is True or sections.get("media_overlays") is True
+    ) and not (
+        sections.get("text_elements") is True
+        or sections.get("timeline") is True
+        or sections.get("mix") is True
+    )
+    if (
+        lane_only_commit
+        and prep.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES
+        and prep.get("has_caption_base")
+    ):
+        from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+        reburn_narrated_captions.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": prep["generation"]},
+            queue="overlay-jobs",
+        )
         return
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
@@ -3231,8 +3458,9 @@ async def set_caption_position(
 ) -> GenerativeJobResponse:
     """Set caption vertical position and reburn the captioned variant."""
     job = await _load_generative_job(job_id, db, current_user)
-    margin_v = dispatch_set_caption_position(job, variant_id, y_frac=req.y_frac)
-    await db.commit()
+    # The dispatcher row-locks, commits the margin + gen mint, then enqueues
+    # (R1-1 commit-before-enqueue) — no route-side commit needed.
+    margin_v = await dispatch_set_caption_position(job.id, variant_id, y_frac=req.y_frac, db=db)
     log.info(
         "generative_set_caption_position",
         job_id=str(job.id),
