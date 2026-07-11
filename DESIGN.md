@@ -12,10 +12,10 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 |---|---|---|---|---|
 | Landing (`/`) | cream `#fafaf8` | lime-700 family | Fraunces headings | light editorial |
 | Light product (`/plan`, `/plan/items/`, `/library`, `/generative`) | cream `#fafaf8` / ink / lime | lime-700 | Fraunces headings | light editorial |
-| Dark render system (`/template/[id]`, `/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
+| Dark render system (`/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = template flow (`/template/*`, `/template-jobs/*`) + `/admin/*` only. ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for template flow + admin). Intentional, not drift.
+**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
 
 ---
 
@@ -41,6 +41,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
   - Eyebrows: `text-[11px] font-semibold uppercase tracking-[0.18em]` (dominant, 5× in section cards); hero eyebrow uses `tracking-[0.24em]` — see §10 ledger
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
   **Single-primary-CTA rule on landing:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
+- **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
@@ -48,9 +49,9 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 
 ---
 
-## §3 Dark render system (template flow + admin)
+## §3 Dark render system (/template-jobs + admin)
 
-Token source: `src/apps/web/src/app/template/`, `template-jobs/` on origin/main. Admin is a separate variant (§4).
+Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/template/[id]` config flow was deleted in v0.7.8.2). Admin is a separate variant (§4).
 
 - **Canvas:** `bg-black text-white`; `min-h-[calc(100vh-3.5rem)]` under the h-14 header.
 - **Zinc scale roles:**
@@ -112,7 +113,7 @@ closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/
 
 | Token group | CSS vars | Usage |
 |---|---|---|
-| `t-modal` (#6) | `--modal-open-dur: 250ms`, `--modal-close-dur: 150ms`, `--modal-scale: 0.96`, `--modal-ease` | `TemplatePreviewModal` scale-up in / scale-down out. Pattern template for all future modals. |
+| `t-modal` (#6) | `--modal-open-dur: 250ms`, `--modal-close-dur: 150ms`, `--modal-scale: 0.96`, `--modal-ease` | Pattern template for all future modals. No current consumer (last user `TemplatePreviewModal` removed with the dead `/template` route, 2026-07-11). |
 | step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | `OnboardingShell` `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
 | `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
 | `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Landing hero `<section class="t-stagger is-shown">` — 4 lines stagger in on page load. |
@@ -198,14 +199,25 @@ Celebrate then recede.
 - **Visible focus** on every interactive element: product `focus:border-amber-400/60` or amber ring; landing ink outline (`outline-lime-500` for selection states).
 - **Contrast floor:** text meets 4.5:1 against its surface. `zinc-600`-on-black fails — faint zinc is decorative only, never for content that must be read.
 - **Touch targets** ≥44px on mobile.
+- **Touch inputs:** inputs on touch viewports are ≥44px tall with ≥16px font to prevent iOS Safari zoom-on-focus.
+- **User scaling:** never disable zoom. Do not set `maximumScale` or `user-scalable=no`.
 - **Mobile-first:** single column default, `sm:`/`md:` enhance; landing display type scales via `clamp()`; phone tiles use mobile radii (§2).
 - **Reduced-motion** honored globally — `prefers-reduced-motion` zeroes entrances (globals.css); new shimmer/ping uses `motion-safe:` prefix until D17 lands (see §6).
+
+| Tier | Width | Canonical use |
+|---|---:|---|
+| base | <640px | Phone-first single column; 44px touch targets; 16px focused inputs. |
+| `sm` | ≥640px | Tailwind small-tablet enhancement tier. |
+| `md` | ≥768px | Tailwind tablet enhancement tier. |
+| light editor | <1024px | `useEditorLayoutMode.ts` light mode. |
+| `lg` / overlay editor | ≥1024px to <1280px | Tailwind desktop tier; editor overlay mode. |
+| `xl` / full editor | ≥1280px | Tailwind wide tier; editor full mode. |
 
 ---
 
 ## §9 Anti-slop rules (Nova-specific)
 
-- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template/*`, `/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
+- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
 - No candy gradients, no rainbow palettes, no purple/violet defaults.
 - No 3-column icon-in-circle feature grids; no centered-everything; no decorative blobs/wavy dividers; no emoji as design elements.
 - **Serif display (Fraunces) is the brand voice;** system-ui display type is the "gave up" signal.

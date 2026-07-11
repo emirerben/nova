@@ -272,7 +272,7 @@ export default function GenerativePage() {
               <span>Couldn&apos;t load text styles — the style picker is hidden.</span>
               <button
                 onClick={loadStyleSets}
-                className="rounded border border-zinc-300 px-2 py-0.5 text-xs text-[#3f3f46] hover:bg-zinc-100"
+                className="min-h-11 rounded border border-zinc-300 px-3 py-0.5 text-xs text-[#3f3f46] hover:bg-zinc-100 sm:min-h-0 sm:px-2"
               >
                 Retry
               </button>

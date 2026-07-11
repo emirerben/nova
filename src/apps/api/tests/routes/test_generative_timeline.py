@@ -678,6 +678,90 @@ async def test_edit_negative_in_s_out_of_bounds(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_edit_delete_shifts_beat_cursor_clamps_instead_of_422(monkeypatch):
+    # Deleting a clip must NEVER fail the save. Removing s1 frees its 2 beats
+    # from the cumulative walk, so downstream s2 (itself UNCHANGED) lands on
+    # an earlier, wider interval of this non-uniform grid: 2 beats from offset
+    # 0 span 1.7s (grid[2]-grid[0]), which overflows clip 1's 0.8s footage.
+    # The server must shrink s2's beat count to fit (1 beat -> 0.7s) instead
+    # of rejecting the whole edit with TIMELINE_OUT_OF_BOUNDS.
+    fast_grid = [0.0, 0.7, 1.7, 1.9, 2.2]  # spacings: 0.7, 1.0, 0.2, 0.3
+    job = _timeline_job(beat_grid=fast_grid, src_dur=10.0)
+    variant = job.assembly_plan["variants"][0]
+    variant["music_track_id"] = "track-1"
+    variant["ai_timeline"]["slots"][0].update(
+        {"duration_beats": 2, "duration_s": 1.7, "source_duration_s": 10.0}
+    )
+    variant["ai_timeline"]["slots"][1].update(
+        {"in_s": 0.0, "duration_beats": 2, "duration_s": 0.5, "source_duration_s": 0.8}
+    )
+    seq, _, delays = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        job,
+        "song_text",
+        _req(
+            [
+                {
+                    "slot_id": "s1",
+                    "clip_index": 0,
+                    "in_s": 0.0,
+                    "duration_beats": 2,
+                    "removed": True,
+                },
+                # s2 is posted byte-identical to its baseline — the user never
+                # touched this slot, only deleted the one before it.
+                {"slot_id": "s2", "clip_index": 1, "in_s": 0.0, "duration_beats": 2},
+            ]
+        ),
+        db=None,
+    )
+    assert seq == ["persist", "enqueue"]
+    override = delays[0][1]["timeline_override"]
+    s2 = next(s for s in override if s["slot_id"] == "s2")
+    assert s2["duration_beats"] == 1
+    assert s2["duration_s"] == pytest.approx(0.7)
+    assert s2["in_s"] + s2["duration_s"] <= 0.8 + 1e-6
+
+
+@pytest.mark.asyncio
+async def test_edit_nearest_beat_round_up_clamps_instead_of_422(monkeypatch):
+    # A footage-trimmed slot whose window the user drags (duration_beats=None,
+    # target 1.5s) nearest-snaps to 2 beats (1.7s) — which overflows this
+    # clip's 0.75s footage. Must clamp down to 1 beat (0.7s), not 422.
+    fast_grid = [0.0, 0.7, 1.7, 1.9, 2.2]
+    job = _timeline_job(beat_grid=fast_grid, src_dur=10.0, n_clips=1)
+    variant = job.assembly_plan["variants"][0]
+    variant["music_track_id"] = "track-1"
+    variant["ai_timeline"]["slots"] = [
+        {
+            "slot_id": "s1",
+            "clip_index": 0,
+            "source_gcs_path": f"generative-jobs/{job.id}/sources/clip_0.mp4",
+            "source_duration_s": 0.75,
+            "in_s": 0.0,
+            "duration_s": 0.4,
+            "duration_beats": None,
+            "order": 0,
+            "moment_energy": None,
+            "moment_description": None,
+        }
+    ]
+    seq, _, delays = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        job,
+        "song_text",
+        _req([{"slot_id": "s1", "clip_index": 0, "in_s": 0.0, "duration_s": 1.5}]),
+        db=None,
+    )
+    assert seq == ["persist", "enqueue"]
+    override = delays[0][1]["timeline_override"]
+    s1 = next(s for s in override if s["slot_id"] == "s1")
+    assert s1["duration_beats"] == 1
+    assert s1["duration_s"] == pytest.approx(0.7)
+    assert s1["in_s"] + s1["duration_s"] <= 0.75 + 1e-6
+
+
+@pytest.mark.asyncio
 async def test_edit_new_slot_unknown_source_skips_bounds(monkeypatch):
     # clip 2 was never probed by the AI: no source_duration_s → bounds skipped
     # (the worker's probe clamps), source falls back to the pool path, and the
