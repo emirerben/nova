@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.17.2] — 2026-07-11
+
+### Fixed
+- **Masonry collage now renders HEIC/HEIF photo tiles instead of falling back to classic.** The compositor normalizes still images into temp PNGs before FFmpeg input construction, so iPhone photos never hit FFmpeg's unsupported HEIC `-loop` path.
+- **Queued plan-item renders no longer show a false "didn't register" error after 45 seconds.** The item page now waits through the plan-render queue window before surfacing a registration failure.
+
 ## [0.7.17.1] — 2026-07-11
 
 ### Fixed

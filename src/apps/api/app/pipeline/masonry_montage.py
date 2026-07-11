@@ -84,12 +84,38 @@ def _write_mask(path: str, width: int, height: int, radius: int = MASONRY_TILE_R
     image.save(path)
 
 
+def _normalize_image_for_ffmpeg(input_path: str, output_path: str) -> str:
+    """Decode a still image with Pillow and write an FFmpeg-friendly PNG."""
+    if os.path.exists(output_path):
+        return output_path
+    try:
+        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
+
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass
+    from PIL import Image, ImageOps  # noqa: PLC0415
+
+    try:
+        with Image.open(input_path) as image:
+            normalized = ImageOps.exif_transpose(image)
+            if normalized.mode not in {"RGB", "RGBA"}:
+                normalized = normalized.convert("RGB")
+            normalized.save(output_path, format="PNG", optimize=False)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            f"masonry image normalization failed for {os.path.basename(input_path)}: {exc}"
+        ) from exc
+    return output_path
+
+
 def build_masonry_tiles(
     *,
     steps: list,
     clip_id_to_local: dict[str, str],
     mask_dir: str,
     max_tiles: int = MASONRY_MAX_TILES,
+    normalize_images: bool = False,
 ) -> list[MasonryTile]:
     """Return deterministic tile specs, cycling uploaded clips when needed."""
     ordered_clip_ids = [str(getattr(step, "clip_id", "") or "") for step in steps]
@@ -100,6 +126,9 @@ def build_masonry_tiles(
         raise ValueError("masonry montage requires at least one local clip")
 
     os.makedirs(mask_dir, exist_ok=True)
+    image_dir = os.path.join(os.path.dirname(mask_dir), "masonry_images")
+    if normalize_images:
+        os.makedirs(image_dir, exist_ok=True)
     count = min(max_tiles, len(_MASONRY_LAYOUT))
     cycled_ids = list(islice(cycle(ordered_clip_ids), count))
     tiles: list[MasonryTile] = []
@@ -107,6 +136,12 @@ def build_masonry_tiles(
 
     for idx, (clip_id, (x, y, width, height)) in enumerate(zip(cycled_ids, _MASONRY_LAYOUT)):
         local_path = clip_id_to_local[clip_id]
+        is_image = is_image_file(local_path)
+        if normalize_images and is_image:
+            local_path = _normalize_image_for_ffmpeg(
+                local_path,
+                os.path.join(image_dir, f"tile_{idx}.png"),
+            )
         mask_path = os.path.join(mask_dir, f"mask_{width}x{height}.png")
         _write_mask(mask_path, width, height)
         tiles.append(
@@ -119,7 +154,7 @@ def build_masonry_tiles(
                 width=width,
                 height=height,
                 mask_path=mask_path,
-                is_image=is_image_file(local_path),
+                is_image=is_image,
             )
         )
     return tiles
@@ -233,6 +268,7 @@ def assemble_masonry_montage(
         steps=steps,
         clip_id_to_local=clip_id_to_local,
         mask_dir=mask_dir,
+        normalize_images=True,
     )
     board_width = max(tile.x + tile.width for tile in tiles) + 34
     cmd = build_masonry_command(
