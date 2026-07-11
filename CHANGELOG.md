@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.15.3] — 2026-07-11
+
+### Fixed
+- **Editor saves no longer fail with `TIMELINE_OUT_OF_BOUNDS` on legacy song-text timelines.** The API now lets unchanged saved clip windows round-trip when older renders already stored a source window past the probed clip end, while still rejecting newly edited out-of-bounds windows.
+
 ## [0.7.15.2] — 2026-07-11
 
 ### Fixed
