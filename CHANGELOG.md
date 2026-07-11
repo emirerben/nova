@@ -15,6 +15,14 @@ All notable changes to this project will be documented in this file.
 - Undo after a trim drag now restores the pre-drag value (history recorded at gesture start, one entry per gesture).
 - Trim handles no longer overlap neighboring clips' bars; short clips split the shared zone at the midpoint.
 
+## [0.7.8.2] — 2026-07-11
+
+### Removed
+- **Legacy `/template/[id]` configuration flow.** The old template-config → render-job page and its component chain (`TemplateGrid`, `TemplateTile`, `TemplatePreviewModal`, slot-bound uploads, Google Drive batch import, client-side batch recovery) were unreachable — no page has mounted the template grid since the product moved to the plan/generative flows — and are now deleted (~2,970 lines). The render-status page `/template-jobs/[id]` is unaffected and stays (it backs the admin job views).
+
+### Changed
+- `t-modal` motion token relabeled as an unconsumed pattern template (its last consumer left with the dead route); DESIGN.md §6 updated to match.
+
 ## [0.7.8.1] — 2026-07-10
 
 ### Fixed
