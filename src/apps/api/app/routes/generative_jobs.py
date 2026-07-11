@@ -203,7 +203,7 @@ class GenerativeVariant(BaseModel):
     intro_size_source: str | None = None
     resolved_archetype: str | None = None
     mix: float | None = None
-    # Background-sound (voice/bed) level for narrated variants — None means Nova's
+    # Background-sound (voice/bed) level for narrated variants — None means Kria's
     # render-time default. Editable post-gen via the BackgroundSoundControl reburn
     # (NOT `mix`, which is scoped to voiceover_only/voiceover_music variants).
     voiceover_bed_level: float | None = None

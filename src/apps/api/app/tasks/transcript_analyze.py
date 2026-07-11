@@ -2,7 +2,7 @@
 
 Runs off the request path (clip download + ffprobe + optional Gemini summary are too
 slow/heavy for a synchronous route — clip analysis lives in Celery everywhere else in
-Nova). Probes total footage duration and produces a light footage summary, then writes
+Kria). Probes total footage duration and produces a light footage summary, then writes
 the result to the transcript store for the poll route to read.
 
 Best-effort: any failure still writes a usable result (a default duration, no summary)

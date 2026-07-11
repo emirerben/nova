@@ -13,7 +13,7 @@
 import StyleAgentInterview from "@/app/plan/_components/StyleAgentInterview";
 
 export const metadata = {
-  title: "Your Style — Nova",
+  title: "Your Style — Kria",
 };
 
 export default function StylePage() {

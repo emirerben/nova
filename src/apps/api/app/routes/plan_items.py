@@ -16,14 +16,15 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, status
 from fastapi import UploadFile as MultipartFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
+from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
@@ -88,6 +89,8 @@ router = APIRouter()
 _MAX_CLIPS_PER_ITEM = 20
 _MAX_BYTES_PER_FILE = 4 * 1024 * 1024 * 1024  # 4GB
 _ALLOWED_CONTENT_TYPES = {"video/mp4", "video/quicktime"}
+_IMAGE_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+_IMAGE_FILE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
 
 # Allowed content types for media-overlay card uploads (images + short video).
 _OVERLAY_ALLOWED_CONTENT_TYPES = {
@@ -125,6 +128,25 @@ _JOB_FAILED = {
     "posting_failed",
     "cancelled",
 }
+
+
+def _is_image_clip_path(path: str) -> bool:
+    """Best-effort uploaded-clip kind check from the durable object name."""
+    clean = (path or "").split("?", 1)[0].lower()
+    return any(clean.endswith(ext) for ext in _IMAGE_FILE_EXTS)
+
+
+def _item_uses_masonry(item: PlanItem) -> bool:
+    return (
+        coerce_edit_format(getattr(item, "edit_format", None)) == "montage"
+        and coerce_montage_preset(getattr(item, "montage_preset", None)) == "masonry"
+    )
+
+
+def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
+    if _item_uses_masonry(item):
+        return _ALLOWED_CONTENT_TYPES | _IMAGE_CONTENT_TYPES
+    return _ALLOWED_CONTENT_TYPES
 
 
 def derive_item_status(item: PlanItem) -> str:
@@ -217,7 +239,7 @@ class PlanItemResponse(BaseModel):
     # Only affects clips where width > height; portrait/square always crop.
     landscape_fit: Literal["fit", "fill"] = "fit"
     # Original-audio bed level for narrated. 0 = voice only, 1 = loudest.
-    # NULL = Nova's default level. Set via PATCH /{id}/voiceover-bed-level.
+    # NULL = Kria's default level. Set via PATCH /{id}/voiceover-bed-level.
     voiceover_bed_level: float | None = None
     # Narrated caption style: "sentence" (sentence-block) or "word" (one big word
     # at a time). NULL = "sentence". PATCH /{id}/voiceover-caption-style.
@@ -647,11 +669,16 @@ async def create_upload_urls(
             detail=f"Provide 1-{_MAX_CLIPS_PER_ITEM} files",
         )
     urls: list[UploadUrlItem] = []
+    allowed_types = _allowed_item_upload_content_types(item)
     for f in body.files:
-        if f.content_type not in _ALLOWED_CONTENT_TYPES:
+        if f.content_type not in allowed_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported content type: {f.content_type}",
+                detail=(
+                    "Photos require Masonry collage"
+                    if f.content_type in _IMAGE_CONTENT_TYPES
+                    else f"Unsupported content type: {f.content_type}"
+                ),
             )
         if f.file_size_bytes <= 0 or f.file_size_bytes > _MAX_BYTES_PER_FILE:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Bad file size")
@@ -802,11 +829,16 @@ async def attach_clips(
             )
         )
         kind_by_path = {row.gcs_path: row.kind for row in asset_rows.scalars()}
+        allowed_asset_kinds = {"video", "image"} if _item_uses_masonry(item) else {"video"}
         for p in new_pool_paths:
-            if kind_by_path.get(p) != "video":
+            if kind_by_path.get(p) not in allowed_asset_kinds:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Only video visuals from the pool can be used in the edit",
+                    detail=(
+                        "Photos require Masonry collage"
+                        if kind_by_path.get(p) == "image"
+                        else "Only video visuals from the pool can be used in the edit"
+                    ),
                 )
 
     try:
@@ -1037,7 +1069,7 @@ async def set_item_voiceover(
 
 
 class VoiceoverBedLevelBody(BaseModel):
-    # 0.0 = voice only, 1.0 = original audio loudest. null → Nova's default level.
+    # 0.0 = voice only, 1.0 = original audio loudest. null → Kria's default level.
     voiceover_bed_level: float | None = None
 
 
@@ -1050,7 +1082,7 @@ async def set_item_voiceover_bed_level(
 ) -> PlanItemResponse:
     """Set how loud the original clip audio plays under the narration.
 
-    0.0 = voice only, 1.0 = loudest; null clears the override (Nova's default).
+    0.0 = voice only, 1.0 = loudest; null clears the override (Kria's default).
     Consumed at generate time (the footage bed is side-chain ducked under the
     voice). No re-render is triggered — the user still clicks Generate.
     """
@@ -1086,7 +1118,7 @@ async def set_item_voiceover_caption_style(
     """Choose how the narrated voiceover captions render.
 
     "sentence" = sentence-block captions (default); "word" = the qbuilder
-    word-by-word look (one big word at a time). null clears the override (Nova's
+    word-by-word look (one big word at a time). null clears the override (Kria's
     default, "sentence"). Consumed at generate time — no re-render is triggered.
     """
     if (
@@ -1128,7 +1160,7 @@ async def contest_conformance(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """'Looks wrong? Tell Nova' — mark the verdict contested. From here on,
+    """'Looks wrong? Tell Kria' — mark the verdict contested. From here on,
     only high-confidence (≥0.8) verdicts may render on this footage."""
     item = await _load_owned_item(item_id, user.id, db)
     if item.conformance:
@@ -1139,7 +1171,7 @@ async def contest_conformance(
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
-# ── Ask Nova (per-item filming advisor) ───────────────────────────────────────
+# ── Ask Kria (per-item filming advisor) ───────────────────────────────────────
 
 
 class AdvisorTurnBody(BaseModel):
@@ -1167,7 +1199,7 @@ async def plan_item_advisor_turn(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> AdvisorTurnResponse:
-    """One "Ask Nova" turn on this item: which clip fits, what to film instead,
+    """One "Ask Kria" turn on this item: which clip fits, what to film instead,
     or contesting the brief read. Read-only — advice, never writes."""
     from app.config import settings  # noqa: PLC0415
 
@@ -1277,12 +1309,19 @@ async def generate_item(
     ):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Record or upload your voiceover before generating a narrated walkthrough",
+            detail="Record or upload your voiceover before generating a Voiceover edit",
         )
     if not (item.clip_gcs_paths or []):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
+        )
+    if not _item_uses_masonry(item) and any(
+        _is_image_clip_path(p) for p in (item.clip_gcs_paths or [])
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Photos require Masonry collage",
         )
     # Idempotency guard (dogfood: double-clicking Generate minted two render
     # jobs). The Job is created async by the task, so also reject while the
@@ -1741,10 +1780,40 @@ class IdeaExpandResponse(BaseModel):
     rationale: str
 
 
+class IdeaExpandRequest(BaseModel):
+    """Optional creator context for a stronger propose-only expansion."""
+
+    creator_context: str | None = Field(default=None, max_length=800)
+
+    @field_validator("creator_context", mode="before")
+    @classmethod
+    def _clean_context(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+
+def _expand_video_type(edit_format: str | None) -> str:
+    if edit_format in {"narrated", "narrated_planned", "narrated_ready"}:
+        return "voiceover"
+    if edit_format in {"subtitled", "talking_head"}:
+        return "talking_to_camera"
+    return "montage"
+
+
+def _normalize_content_mode(value: object) -> str:
+    mode = str(value or "create_new")
+    if mode in {"create_new", "existing_footage", "mixed"}:
+        return mode
+    return "create_new"
+
+
 @router.post("/{item_id}/expand", response_model=IdeaExpandResponse)
 async def expand_idea(
     item_id: str,
     user: CurrentUser,
+    body: IdeaExpandRequest | None = Body(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> IdeaExpandResponse:
     """Propose an AI-expanded plan item (theme, shots, rationale).
@@ -1761,12 +1830,15 @@ async def expand_idea(
     # Gather persona context for richer expansion.
     persona_summary = ""
     content_pillars: list[str] = []
+    content_mode = _normalize_content_mode(getattr(item, "content_mode", None))
     plan = await db.get(ContentPlan, item.content_plan_id)
     if plan is not None:
         persona = await db.get(Persona, plan.persona_id)
         if persona is not None and isinstance(persona.persona, dict):
             persona_summary = str(persona.persona.get("summary", ""))
             content_pillars = list(persona.persona.get("content_pillars") or [])
+            if getattr(item, "content_mode", None) is None:
+                content_mode = _normalize_content_mode(persona.persona.get("content_mode"))
 
     agent = IdeaExpanderAgent(default_client())
     try:
@@ -1775,6 +1847,9 @@ async def expand_idea(
                 idea=item.idea or "",
                 persona_summary=persona_summary,
                 content_pillars=content_pillars,
+                creator_context=body.creator_context if body and body.creator_context else "",
+                video_type=_expand_video_type(getattr(item, "edit_format", None)),
+                content_mode=content_mode,
             ),
             ctx=RunContext(job_id=None),
         )
@@ -2478,7 +2553,7 @@ async def transcript_analyze(
     analyze_id = uuid.uuid4().hex
     from app.tasks.transcript_analyze import analyze_transcript_footage  # noqa: PLC0415
 
-    # Default `celery` queue via .delay(), like every other task in Nova — prod
+    # Default `celery` queue via .delay(), like every other task in Kria — prod
     # workers already drain it, so no fly.toml -Q change is needed. (Registered in
     # app/worker.py `include` so workers know the task.)
     analyze_transcript_footage.delay(analyze_id, clip_paths, item_id)

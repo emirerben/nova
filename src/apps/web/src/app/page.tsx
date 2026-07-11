@@ -137,7 +137,7 @@ export default async function HomePage() {
           <em className="not-italic text-lime-600">the rest.</em>
         </h1>
         <p className="t-stagger-line t-stagger-line--3 mx-auto mb-9 max-w-[500px] text-[17px] leading-relaxed text-[#71717a]">
-          Nova plans your month, scripts every day, edits your footage, and
+          Kria plans your month, scripts every day, edits your footage, and
           learns what works. Your content career, on autopilot.
         </p>
         {/* CTA wrapped in a block so t-stagger-line display:block centres the
@@ -172,7 +172,7 @@ export default async function HomePage() {
               <em className="italic text-lime-600">everything.</em>
             </h2>
             <p className="mt-3 text-sm text-[#71717a]">
-              The more Nova learns about you, the more specific your plan gets.
+              The more Kria learns about you, the more specific your plan gets.
             </p>
           </div>
         </FadeInOnScroll>
@@ -490,7 +490,7 @@ export default async function HomePage() {
 
       {/* ── FOOTER ── */}
       <footer className="border-t border-zinc-200 bg-white px-6 py-8 text-center text-[13px] text-[#a1a1aa] md:px-12">
-        <span>© Nova</span>
+        <span>© Kria</span>
       </footer>
     </main>
   );

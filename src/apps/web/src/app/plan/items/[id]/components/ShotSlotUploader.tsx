@@ -48,6 +48,7 @@ interface SlotState {
   abortController?: AbortController;
   // filled phase
   objectUrl?: string; // only when local file is still available
+  mediaKind?: "video" | "image";
   durationLabel?: string; // "0:18"
   gcsPaths?: string; // the committed gcs_path
   /** Creator context note on this clip ("" = none). */
@@ -84,6 +85,25 @@ function probeVideoDuration(file: File): Promise<string | null> {
   });
 }
 
+const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
+const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
+
+function uploadContentType(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
+function uploadMediaKind(file: File): "video" | "image" {
+  return uploadContentType(file).startsWith("image/") ? "image" : "video";
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface ShotSlotUploaderProps {
@@ -101,6 +121,9 @@ interface ShotSlotUploaderProps {
 
 export default function ShotSlotUploader({ item, onAttached, onBusyChange }: ShotSlotUploaderProps) {
   const shots = useMemo(() => item.filming_guide ?? [], [item.filming_guide]);
+  const isMasonryMontage =
+    (item.edit_format ?? "montage") === "montage" && item.montage_preset === "masonry";
+  const uploadAccept = isMasonryMontage ? MASONRY_UPLOAD_ACCEPT : VIDEO_UPLOAD_ACCEPT;
 
   // Per-slot state keyed by shot_id (or "__pool__" for pool uploads in progress).
   // Filled-from-reload state is derived from item.clip_assignments initially.
@@ -191,9 +214,11 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     setAnnouncement(`Shot ${shots.indexOf(shot) + 1} uploading…`);
 
     let gcsPath: string;
+    const contentType = uploadContentType(file);
+    const mediaKind = uploadMediaKind(file);
     try {
       const urls = await requestUploadUrls(item.id, [
-        { filename: file.name, content_type: file.type || "video/mp4", file_size_bytes: file.size },
+        { filename: file.name, content_type: contentType, file_size_bytes: file.size },
       ]);
       gcsPath = urls[0].gcs_path;
 
@@ -224,7 +249,8 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     }
 
     // GCS PUT succeeded — probe duration while committing.
-    const durationLabel = await probeVideoDuration(file).catch(() => null);
+    const durationLabel =
+      mediaKind === "video" ? await probeVideoDuration(file).catch(() => null) : null;
     const objectUrl = URL.createObjectURL(file);
 
     // Transition to committing.
@@ -233,7 +259,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
       [sid]: { phase: "committing", filename: file.name, progress: 1, gcsPaths: gcsPath },
     }));
 
-    await commitAttach(sid, gcsPath, objectUrl, durationLabel ?? undefined, file.name);
+    await commitAttach(sid, gcsPath, objectUrl, durationLabel ?? undefined, file.name, mediaKind);
   }
 
   // ── Pool upload ───────────────────────────────────────────────────────────
@@ -246,7 +272,11 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     try {
       urls = await requestUploadUrls(
         item.id,
-        fileList.map((f) => ({ filename: f.name, content_type: f.type || "video/mp4", file_size_bytes: f.size })),
+        fileList.map((f) => ({
+          filename: f.name,
+          content_type: uploadContentType(f),
+          file_size_bytes: f.size,
+        })),
       );
     } catch {
       return;
@@ -301,6 +331,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
     objectUrl: string,
     durationLabel: string | undefined,
     filename: string,
+    mediaKind: "video" | "image" = "video",
   ) {
     // Capture the latest state synchronously using flushSync.
     // React functional updaters are called lazily during reconciliation, not
@@ -313,7 +344,10 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
 
     flushSync(() => {
       setSlotState((prev) => {
-        latestSlots = { ...prev, [sid]: { phase: "committing", filename, progress: 1, gcsPaths: gcsPath } };
+        latestSlots = {
+          ...prev,
+          [sid]: { phase: "committing", filename, progress: 1, gcsPaths: gcsPath, mediaKind },
+        };
         return latestSlots;
       });
       setPoolPaths((prev) => {
@@ -329,14 +363,22 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
         const updated = await attachClips(item.id, gcsPaths, assignments);
         setSlotState((prev) => ({
           ...prev,
-          [sid]: { phase: "filled", filename, gcsPaths: gcsPath, objectUrl, durationLabel },
+          [sid]: { phase: "filled", filename, gcsPaths: gcsPath, objectUrl, durationLabel, mediaKind },
         }));
         setAnnouncement(`Shot ${shots.findIndex((s) => s.shot_id === sid) + 1} uploaded`);
         onAttached(updated);
       } catch {
         setSlotState((prev) => ({
           ...prev,
-          [sid]: { phase: "error", errorPhase: "attach", filename, pendingGcsPath: gcsPath },
+          [sid]: {
+            phase: "error",
+            errorPhase: "attach",
+            filename,
+            pendingGcsPath: gcsPath,
+            objectUrl,
+            durationLabel,
+            mediaKind,
+          },
         }));
         setAnnouncement(`Shot ${shots.findIndex((s) => s.shot_id === sid) + 1} upload failed`);
       }
@@ -356,12 +398,13 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
       const objectUrl = s.objectUrl;
       const durationLabel = s.durationLabel;
       const filename = s.filename ?? "";
+      const mediaKind = s.mediaKind ?? "video";
       const gcsPath = s.pendingGcsPath;
       setSlotState((prev) => ({
         ...prev,
-        [sid]: { phase: "committing", filename, progress: 1, gcsPaths: gcsPath },
+        [sid]: { phase: "committing", filename, progress: 1, gcsPaths: gcsPath, mediaKind },
       }));
-      void commitAttach(sid, gcsPath, objectUrl ?? "", durationLabel, filename);
+      void commitAttach(sid, gcsPath, objectUrl ?? "", durationLabel, filename, mediaKind);
     }
     // Upload-phase retry: re-trigger file input (handled by onChange in the slot).
   }
@@ -470,7 +513,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
         item.id,
         fileList.map((f) => ({
           filename: f.name,
-          content_type: f.type || "video/mp4",
+          content_type: uploadContentType(f),
           file_size_bytes: f.size,
         })),
       );
@@ -698,6 +741,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                 shotIndex={i}
                 state={state}
                 anyFilled={anyFilled}
+                accept={uploadAccept}
                 onFile={(file) => handleSlotFile(shot, file)}
                 onCancel={() => handleCancel(sid)}
                 onReplace={() => handleReplace(sid)}
@@ -748,7 +792,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
                           <span>+ Add {remaining > 1 ? `${remaining} more` : "1 more"}</span>
                           <input
                             type="file"
-                            accept="video/mp4,video/quicktime"
+                            accept={uploadAccept}
                             multiple
                             className="sr-only"
                             onChange={(e) => void handleExtraClipFiles(shot, e.target.files)}
@@ -802,7 +846,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
           <span>+ Add clips</span>
           <input
             type="file"
-            accept="video/mp4,video/quicktime"
+            accept={uploadAccept}
             multiple
             className="sr-only"
             onChange={(e) => handlePoolFiles(e.target.files)}
@@ -820,6 +864,7 @@ interface SlotWellProps {
   shotIndex: number;
   state: SlotState;
   anyFilled: boolean;
+  accept: string;
   onFile: (file: File) => void;
   onCancel: () => void;
   onReplace: () => void;
@@ -828,7 +873,7 @@ interface SlotWellProps {
   onSaveNote: (note: string) => Promise<void>;
 }
 
-function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onReplace, onRetry, onKeepMatch, onSaveNote }: SlotWellProps) {
+function SlotWell({ shot, shotIndex, state, anyFilled, accept, onFile, onCancel, onReplace, onRetry, onKeepMatch, onSaveNote }: SlotWellProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const ariaLabel = `Upload shot ${shotIndex + 1}: ${shot.what}`;
@@ -855,7 +900,7 @@ function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onRepla
         <input
           ref={inputRef}
           type="file"
-          accept="video/mp4,video/quicktime"
+          accept={accept}
           className="sr-only"
           aria-label={ariaLabel}
           onChange={(e) => {
@@ -909,14 +954,18 @@ function SlotWell({ shot, shotIndex, state, anyFilled, onFile, onCancel, onRepla
           {/* Thumbnail only available when local file is in memory (fresh upload, not reload) */}
           {state.objectUrl && (
             <div className="h-10 w-16 shrink-0 overflow-hidden rounded border border-zinc-200 bg-zinc-100">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <video
-                src={state.objectUrl}
-                className="h-full w-full object-cover"
-                muted
-                playsInline
-                preload="metadata"
-              />
+              {state.mediaKind === "image" ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={state.objectUrl} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <video
+                  src={state.objectUrl}
+                  className="h-full w-full object-cover"
+                  muted
+                  playsInline
+                  preload="metadata"
+                />
+              )}
             </div>
           )}
           {/* Chip — provisional (machine-matched) reads dashed, "keep?" pending;

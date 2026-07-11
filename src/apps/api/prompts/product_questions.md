@@ -1,6 +1,6 @@
-# Product Questions — Nova's Rubric Spine
+# Product Questions — Kria's Rubric Spine
 
-The questions Nova must answer "yes" to for users. Single source of truth that feeds:
+The questions Kria must answer "yes" to for users. Single source of truth that feeds:
 
 - the **discovery gap-finder** (`/audit-product-questions`) — grades the live PRODUCT
   against the §A–C questions, then mints candidate build tasks for unanswered ones.
@@ -16,7 +16,7 @@ and which consumer it feeds.
 ## A. Comprehension & Trust   (→ discovery gap-finder)
 
 ### A1 — Does the user understand what the product does?
-Answered well when: a first-time visitor can state in one sentence that Nova turns
+Answered well when: a first-time visitor can state in one sentence that Kria turns
 raw videos into short-form content — within ~10s of landing, no docs.
 Evaluated by: landing/onboarding copy inspection; first-session drop-off.
 

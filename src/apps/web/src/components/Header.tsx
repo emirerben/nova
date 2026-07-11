@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 
+import { BRAND_NAME } from "@/lib/brand";
 import { resetPersona } from "@/lib/plan-api";
 
 export default function Header() {
@@ -57,10 +58,10 @@ export default function Header() {
       <div className="mx-auto flex h-full max-w-6xl items-center justify-between px-4">
         <Link
           href="/"
-          aria-label="Nova — home"
+          aria-label={`${BRAND_NAME} — home`}
           className={`font-semibold tracking-tight ${isLight ? "text-[#0c0c0e]" : "text-white"}`}
         >
-          Nova
+          {BRAND_NAME}
         </Link>
         <nav className="flex items-center gap-2 sm:gap-4">
           {authStatus === "authenticated" && (

@@ -31,7 +31,9 @@ import shutil
 import tempfile
 import threading
 import uuid
+from dataclasses import is_dataclass, replace
 from datetime import datetime
+from itertools import cycle
 from typing import Any
 
 import structlog
@@ -217,7 +219,7 @@ def _run_generative_job(job_id: str) -> None:
         # narration bed and the job renders voiceover variants instead of song/original
         # — resolved in _resolve_archetype below, ahead of the footage-speech logic.
         voiceover_gcs_path: str | None = all_candidates.get("voiceover_gcs_path") or None
-        # Original-audio bed level for the narrated archetype (0..1; None → Nova's
+        # Original-audio bed level for the narrated archetype (0..1; None → Kria's
         # default). Plumbed into the narrated spec; ignored by other archetypes.
         _raw_bed = all_candidates.get("voiceover_bed_level")
         voiceover_bed_level: float | None = float(_raw_bed) if _raw_bed is not None else None
@@ -1353,6 +1355,159 @@ def _is_fast_reburn_eligible(
     text_mode = existing.get("text_mode")
     if text_mode not in ("agent_text", "none"):
         return False  # lyrics variants: full path in v1
+    return True
+
+
+def _is_masonry_audio_only_swap_eligible(existing: dict, new_track_id: str | None) -> bool:
+    """True when a song swap can preserve the rendered masonry visuals exactly."""
+    if new_track_id is None:
+        return False
+    if existing.get("montage_preset_rendered") != MASONRY_MONTAGE_PRESET:
+        return False
+    if not existing.get("video_path"):
+        return False
+    if existing.get("variant_id") == "song_lyrics" or existing.get("text_mode") == "lyrics":
+        return False
+    return existing.get("music_track_id") is not None
+
+
+def _mux_track_audio_preserve_video(
+    *,
+    video_gcs_path: str,
+    track: MusicTrack,
+    output_gcs_path: str,
+    tmpdir: str,
+    label: str,
+) -> str:
+    """Replace a finished video's audio with ``track`` while stream-copying video."""
+    import subprocess  # noqa: PLC0415
+
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
+
+    if not track.audio_gcs_path:
+        raise ValueError(f"Track {track.id} has no audio_gcs_path")
+
+    video_local = os.path.join(tmpdir, f"{label}_video.mp4")
+    audio_local = os.path.join(tmpdir, f"{label}_audio.m4a")
+    out_local = os.path.join(tmpdir, f"{label}_out.mp4")
+    download_to_file(video_gcs_path, video_local)
+    download_to_file(track.audio_gcs_path, audio_local)
+
+    video_dur = _probe_duration(video_local)
+    if video_dur <= 0:
+        raise ValueError(f"Cannot audio-swap {video_gcs_path}: duration probe failed")
+
+    audio_dur = _probe_duration(audio_local)
+    cfg = track.track_config or {}
+    safe_offset = max(0.0, float(cfg.get("best_start_s", 0.0) or 0.0))
+    if audio_dur > 0 and safe_offset > 0:
+        safe_offset = min(safe_offset, max(0.0, audio_dur - 5.0))
+
+    fade_start = max(0.0, video_dur - 0.5)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_local,
+        "-stream_loop",
+        "-1",
+        *(["-ss", f"{safe_offset:.3f}"] if safe_offset > 0 else []),
+        "-i",
+        audio_local,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-af",
+        f"afade=t=out:st={fade_start:.3f}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
+        "-t",
+        f"{video_dur:.3f}",
+        "-movflags",
+        "+faststart",
+        out_local,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=180, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace")[-800:]
+        raise RuntimeError(
+            f"masonry audio-only song swap failed (rc={result.returncode}): {stderr}"
+        )
+    if not os.path.exists(out_local) or os.path.getsize(out_local) == 0:
+        raise RuntimeError("masonry audio-only song swap produced empty output")
+    return upload_public_read(out_local, output_gcs_path, content_type="video/mp4")
+
+
+def _run_masonry_audio_only_song_swap(
+    *,
+    job_id: str,
+    variant_id: str,
+    existing: dict,
+    track: MusicTrack,
+    expected_render_gen_id: str | None = None,
+) -> bool:
+    """Fast song swap for masonry variants: video bytes are stream-copied."""
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    token = uuid.uuid4().hex
+    path_fields = (
+        "video_path",
+        "base_video_path",
+        "pre_media_overlay_video_path",
+        "pre_sfx_video_path",
+    )
+    patch: dict[str, Any] = {
+        "music_track_id": track.id,
+        "track_title": track.title,
+        "ok": True,
+        "error": None,
+        "render_error": None,
+        "render_status": "ready",
+        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+    }
+    with tempfile.TemporaryDirectory(prefix="nova_masonry_audio_swap_") as tmpdir:
+        for field in path_fields:
+            source_gcs = existing.get(field)
+            if not source_gcs:
+                continue
+            out_gcs = f"generative-jobs/{job_id}/audio-swap/{variant_id}_{token}_{field}.mp4"
+            signed_url = _mux_track_audio_preserve_video(
+                video_gcs_path=source_gcs,
+                track=track,
+                output_gcs_path=out_gcs,
+                tmpdir=tmpdir,
+                label=field,
+            )
+            patch[field] = out_gcs
+            if field == "video_path":
+                patch["output_url"] = signed_url
+
+    if "video_path" not in patch or "output_url" not in patch:
+        raise ValueError("masonry audio-only song swap missing current video_path")
+
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        patch,
+        expected_render_gen_id=expected_render_gen_id,
+        outcome="masonry_audio_swap",
+    ):
+        return False
+
+    record_pipeline_event(
+        "audio_mix",
+        "masonry_audio_only_swap",
+        {"variant_id": variant_id, "track_id": track.id},
+    )
+    _reapply_persisted_sfx_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+    )
     return True
 
 
@@ -2801,6 +2956,62 @@ def _run_regenerate_variant(
         resolved_size_override_px = int(existing_size_px)
     else:
         resolved_size_override_px = None
+
+    audio_only_song_swap = (
+        _is_masonry_audio_only_swap_eligible(existing, new_track_id)
+        and override_text is None
+        and not remove_text
+        and style_set_id is None
+        and size_override_px is None
+        and mix_override is None
+        and layout_override is None
+        and timeline_override is None
+        and font_family_override is None
+        and effect_override is None
+        and text_color_override is None
+        and cluster_hero_font_override is None
+        and cluster_body_font_override is None
+        and cluster_accent_font_override is None
+        and cluster_hero_size_px_override is None
+        and cluster_body_size_px_override is None
+        and cluster_accent_size_px_override is None
+        and media_overlays_override is None
+        and sfx_override is None
+        and intro_start_s_override is None
+        and intro_end_s_override is None
+    )
+    if audio_only_song_swap and new_track_id is not None:
+        with _sync_session() as db:
+            track = db.get(MusicTrack, new_track_id)
+        if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
+            raise ValueError(f"Track {new_track_id} is not available for audio-only swap")
+        if not _update_variant_entry(
+            job_id,
+            variant_id,
+            {"render_status": "rendering", "ok": False, "error": None},
+            expected_render_gen_id=render_gen_id,
+            outcome="masonry_audio_swap_start",
+        ):
+            return
+        try:
+            completed = _run_masonry_audio_only_song_swap(
+                job_id=job_id,
+                variant_id=variant_id,
+                existing=existing,
+                track=track,
+                expected_render_gen_id=render_gen_id,
+            )
+            if completed:
+                return
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "masonry_audio_only_swap_fallback_full_render",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+                exc_info=True,
+            )
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")
@@ -4433,6 +4644,59 @@ def _classify_error(exc: BaseException) -> str:
     return "unknown"
 
 
+def _replace_step_clip(step: Any, clip_id: str) -> Any:
+    """Return a copy of an AssemblyStep-like object pointed at another clip."""
+    target_s = float((getattr(step, "slot", {}) or {}).get("target_duration_s", 0.5) or 0.5)
+    moment = {"start_s": 0.0, "end_s": max(0.5, target_s)}
+    if is_dataclass(step):
+        return replace(step, clip_id=clip_id, moment=moment)
+    copied = type("AssemblyStepLike", (), {})()
+    copied.slot = dict(getattr(step, "slot", {}) or {})
+    copied.clip_id = clip_id
+    copied.moment = moment
+    return copied
+
+
+def _masonry_classic_safe_inputs(
+    *,
+    steps: list,
+    clip_id_to_local: dict[str, str],
+    clip_id_to_gcs: dict[str, str],
+    probe_map: dict,
+    clip_metas: list,
+) -> tuple[list, dict[str, str], dict[str, str], dict, list, int]:
+    """Build video-only inputs for classic fallback/audio-bed assembly.
+
+    Masonry accepts still photos as visual tiles. The classic montage assembler
+    does not: raw JPG/HEIC inputs can hit the video reframe path and fail before
+    the collage has a chance to render. For fallback and original-audio beds we
+    keep the slot structure but substitute photo slots with available videos.
+    """
+    from app.pipeline.image_clip import is_image_file  # noqa: PLC0415
+
+    video_ids = [cid for cid, path in clip_id_to_local.items() if not is_image_file(path)]
+    image_ids = {cid for cid, path in clip_id_to_local.items() if is_image_file(path)}
+    if not image_ids:
+        return steps, clip_id_to_local, clip_id_to_gcs, probe_map, clip_metas, 0
+    if not video_ids:
+        return [], {}, {}, {}, [], len(image_ids)
+
+    replacements = cycle(video_ids)
+    safe_steps = [
+        step
+        if getattr(step, "clip_id", None) not in image_ids
+        else _replace_step_clip(step, next(replacements))
+        for step in steps
+    ]
+    safe_local = {cid: clip_id_to_local[cid] for cid in video_ids}
+    safe_gcs = {cid: path for cid, path in clip_id_to_gcs.items() if cid in video_ids}
+    safe_paths = set(safe_local.values())
+    safe_probe_map = {path: probe for path, probe in probe_map.items() if path in safe_paths}
+    safe_video_ids = set(video_ids)
+    safe_metas = [meta for meta in clip_metas if getattr(meta, "clip_id", None) in safe_video_ids]
+    return safe_steps, safe_local, safe_gcs, safe_probe_map, safe_metas, len(image_ids)
+
+
 def _render_generative_variant(
     *,
     job_id: str,
@@ -4775,6 +5039,27 @@ def _render_generative_variant(
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []
+        classic_steps = steps
+        classic_clip_id_to_local = clip_id_to_local
+        classic_clip_id_to_gcs = clip_id_to_gcs
+        classic_probe_map = probe_map
+        classic_clip_metas = clip_metas
+        classic_image_substitutions = 0
+        if masonry_requested:
+            (
+                classic_steps,
+                classic_clip_id_to_local,
+                classic_clip_id_to_gcs,
+                classic_probe_map,
+                classic_clip_metas,
+                classic_image_substitutions,
+            ) = _masonry_classic_safe_inputs(
+                steps=steps,
+                clip_id_to_local=clip_id_to_local,
+                clip_id_to_gcs=clip_id_to_gcs,
+                probe_map=probe_map,
+                clip_metas=clip_metas,
+            )
 
         # Masonry song variants replace footage audio with the matched track later
         # in the normal audio-mix branch. Rendering a full classic montage first is
@@ -4786,14 +5071,16 @@ def _render_generative_variant(
 
         def _assemble_classic_montage() -> None:
             nonlocal classic_assembly_done
+            if masonry_requested and (not classic_steps or not classic_clip_id_to_local):
+                raise RuntimeError("classic montage fallback unavailable: no video clips")
             _assemble_clips(
-                steps,
-                clip_id_to_local,
-                probe_map,
+                classic_steps,
+                classic_clip_id_to_local,
+                classic_probe_map,
                 assembled_path,
                 variant_dir,
                 beat_timestamps_s=recipe.beat_timestamps_s,
-                clip_metas=clip_metas,
+                clip_metas=classic_clip_metas,
                 global_color_grade=recipe.color_grade,
                 job_id=f"{job_id}#v{rank}",
                 user_subject="",
@@ -4812,12 +5099,31 @@ def _render_generative_variant(
             classic_assembly_done = True
 
         if not skip_classic_assembly_for_masonry_song:
-            _assemble_classic_montage()
+            if masonry_requested and not classic_steps:
+                log.info(
+                    "masonry_original_audio_bed_skipped_no_video",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    image_clips=classic_image_substitutions,
+                )
+            else:
+                _assemble_classic_montage()
 
         masonry_applied = False
         if masonry_requested:
             from app.pipeline.masonry_montage import assemble_masonry_montage  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            if classic_image_substitutions:
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_classic_inputs_sanitized",
+                    {
+                        "variant_id": variant_id,
+                        "image_clips": classic_image_substitutions,
+                        "video_clips": len(classic_clip_id_to_local),
+                    },
+                )
 
             masonry_path = os.path.join(variant_dir, "masonry.mp4")
             try:
@@ -4876,11 +5182,13 @@ def _render_generative_variant(
                 base.pop("ai_timeline", None)
             else:
                 base["ai_timeline"] = _build_ai_timeline(
-                    steps=steps,
+                    steps=classic_steps if masonry_requested else steps,
                     resolved_plans=resolved_plans,
-                    clip_id_to_gcs=clip_id_to_gcs,
-                    clip_id_to_local=clip_id_to_local,
-                    probe_map=probe_map,
+                    clip_id_to_gcs=classic_clip_id_to_gcs if masonry_requested else clip_id_to_gcs,
+                    clip_id_to_local=(
+                        classic_clip_id_to_local if masonry_requested else clip_id_to_local
+                    ),
+                    probe_map=classic_probe_map if masonry_requested else probe_map,
                     beat_grid=beats,
                 )
         elif masonry_applied:
@@ -5468,7 +5776,7 @@ def _render_narrated_variant(
         "voiceover_caption_font": caption_font,
         "ai_timeline": None,
         "resolved_archetype": "narrated",
-        # Background-sound level this variant rendered with (None → Nova's
+        # Background-sound level this variant rendered with (None → Kria's
         # default). Editable post-gen via the BackgroundSoundControl reburn —
         # persisted here so the editor shows the TRUE current value, not a guess.
         "voiceover_bed_level": bed_level,
@@ -5592,7 +5900,7 @@ def _render_narrated_variant(
             # text IS the spoken voiceover). Reuses the transcript already
             # computed above — no second Whisper pass.
             transcript=transcript,
-            # Original-audio bed under the voice (None → Nova's default level).
+            # Original-audio bed under the voice (None → Kria's default level).
             bed_level=bed_level,
             base_output_path=base_path,
             # "sentence" (default) or "word" (qbuilder one-word-at-a-time).

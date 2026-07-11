@@ -1,5 +1,5 @@
 /**
- * Architecture Config — single source of truth for the Nova system topology.
+ * Architecture Config — single source of truth for the Kria system topology.
  *
  * MODULE GRAPH (L1 → L2):
  *
@@ -354,7 +354,7 @@ const deliveryChildren: Record<string, Module> = {
     produces: ["posted content on platforms"],
     business: {
       userFacing: "One button posts the video to Instagram, YouTube, and TikTok simultaneously.",
-      businessImpact: "THE differentiator. This is why Nova exists. No other tool closes the loop to 'posted'.",
+      businessImpact: "THE differentiator. This is why Kria exists. No other tool closes the loop to 'posted'.",
       metric: "Posting success rate, platforms per post",
       status: "planned",
     },
@@ -405,7 +405,7 @@ export const modules: Record<string, Module> = {
     children: processingChildren,
     business: {
       userFacing: "AI watches the video and finds the best moments. The user waits 2-5 min.",
-      businessImpact: "This is the core AI magic. Quality of clip selection determines if users trust Nova over manual editing.",
+      businessImpact: "This is the core AI magic. Quality of clip selection determines if users trust Kria over manual editing.",
       metric: "Processing time <8 min (SLA), clip quality score vs human baseline",
       status: "live",
     },
@@ -427,7 +427,7 @@ export const modules: Record<string, Module> = {
     children: clipsChildren,
     business: {
       userFacing: "Turns raw moments into ready-to-post shorts with captions and platform-specific copy.",
-      businessImpact: "This is where 'raw footage' becomes 'content'. The output quality here is what users judge Nova by.",
+      businessImpact: "This is where 'raw footage' becomes 'content'. The output quality here is what users judge Kria by.",
       metric: "% of users who post without editing copy (target: >70%)",
       status: "live",
     },

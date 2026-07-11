@@ -612,7 +612,7 @@ async def upload_music_track(
 
 # ── Browser-side ingest (signed-URL flow) ─────────────────────────────────────
 #
-# Two-phase upload that lets the Nova admin Chrome extension extract YouTube
+# Two-phase upload that lets the Kria admin Chrome extension extract YouTube
 # audio in the admin's browser (residential IP, real cookies — see eng-review
 # plan "Hybrid Route iii + Signed URL") and PUT the resulting blob straight to
 # GCS. Vercel and FastAPI never see the bytes, sidestepping Vercel's function

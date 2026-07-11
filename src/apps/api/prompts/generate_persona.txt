@@ -51,7 +51,7 @@ the JSON):
 
 Rules:
 - Ground every field in the input. If a field is empty, infer gently from the rest; never invent a different person.
-- content_pillars and sample_topics must be concrete and filmable — a real activity, place, craft, or recurring moment in THIS person's life. Never abstract concepts or skills ("Analytical Thinking", "Strategic Insights", "Business Lessons"). Nova films real life: if you can't picture the footage, it's wrong. For a professional/abstract answer (founder, consultant, analyst), anchor on what they can actually show on camera — building the product, a day at work, their city, their hobbies — not a thought-leadership lane.
+- content_pillars and sample_topics must be concrete and filmable — a real activity, place, craft, or recurring moment in THIS person's life. Never abstract concepts or skills ("Analytical Thinking", "Strategic Insights", "Business Lessons"). Kria films real life: if you can't picture the footage, it's wrong. For a professional/abstract answer (founder, consultant, analyst), anchor on what they can actually show on camera — building the product, a day at work, their city, their hobbies — not a thought-leadership lane.
 - content_pillars: 3 to 5 items. sample_topics: 5 to 8 items. Keep each item short.
 - posts_per_week: an integer from 1 to 7. Must be consistent with the posting_cadence prose (e.g. "3-4 posts/week" → 4; "daily" → 7; "once a week" → 1). This number drives how many content ideas appear in the creator's 30-day plan.
 - rationale: 1-2 sentences, concrete to THIS person, naming a real lever — not generic ("this will do well"). It is shown to the creator, so make it encouraging and clear.

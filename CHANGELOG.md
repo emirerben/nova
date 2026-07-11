@@ -2,13 +2,51 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.17.0] — 2026-07-11
+## [0.7.19.0] — 2026-07-11
 
 ### Added
 - **Transparent sticker overlays.** Image overlay cards with real transparency (mascot cutouts, badges) now composite with clean edges instead of opaque black rectangles, behind the `MEDIA_OVERLAY_ALPHA_ENABLED` flag (default off; off is byte-identical). Alpha applies to pip cards only — fullscreen cutaways still flatten, and video cards are unaffected.
 
 ### Changed
 - Pool-asset analysis records whether an image has transparency (`has_alpha`, analysis v4). Only image analyses re-run to pick the field up — existing video analyses stay valid, so no re-analysis wave.
+
+## [0.7.18.0] — 2026-07-11
+
+### Changed
+- **The product is now branded Kria on the shipped website, API, emails, prompts, and admin extension.** The web app uses `https://usekria.com` as its canonical origin, keeps the old Vercel URL as a temporary accepted legacy origin, and ships a rebuilt `kria-extension.zip` package whose manifest allows the new domain.
+
+## [0.7.17.2] — 2026-07-11
+
+### Fixed
+- **Masonry collage now renders HEIC/HEIF photo tiles instead of falling back to classic.** The compositor normalizes still images into temp PNGs before FFmpeg input construction, so iPhone photos never hit FFmpeg's unsupported HEIC `-loop` path.
+- **Queued plan-item renders no longer show a false "didn't register" error after 45 seconds.** The item page now waits through the plan-render queue window before surfacing a registration failure.
+
+## [0.7.17.1] — 2026-07-11
+
+### Fixed
+- **Masonry collage renders no longer fail when a mixed upload includes photos.** Still-image tiles now enter the FFmpeg compositor through an RGBA-safe path, and the emergency classic audio/fallback assembly swaps photo slots onto available videos instead of handing raw JPG/HEIC files to the classic video renderer.
+
+## [0.7.17.0] — 2026-07-11
+
+### Added
+- **Masonry collage items can use photos as tiles.** Masonry montage uploads now accept JPG, PNG, WebP, HEIC, and HEIF files alongside videos; classic montage still requires video clips, with a clear error when photos are used without the Masonry collage preset.
+
+### Changed
+- **Masonry preview text now matches the editor.** Item previews and the edit canvas share the same text-element renderer, so generated text keeps the same font, casing, stroke, anchoring, spacing, and placement in both views.
+- **Changing the song on non-lyrics Masonry variants keeps the video fixed.** Song swaps now remux the new track under the existing masonry render instead of re-ingesting clips, rebuilding the board, or reburning text.
+
+### Fixed
+- **Still images flow through masonry ingest without video-only analysis.** Photos now get synthetic clip/probe metadata and are looped as still tile inputs in the compositor, so mixed photo/video masonry renders stay on the rounded white-canvas layout.
+
+## [0.7.16.0] — 2026-07-11
+
+### Added
+- **Plan This now asks for creator context before generating.** The item-page "Plan this for me" action opens a skippable inline context step with prompts tailored to Montage, Voiceover, and Talking-to-camera items, then sends that context into the idea-expander agent so proposed plans match the selected video type and content mode.
+- **Accepted non-slot plans stay visible above uploaders.** Existing-footage montage, Voiceover "I have the videos", and Talking-to-camera flows now show a compact plan summary instead of losing the accepted guide when they stay on pool or single-clip upload.
+
+### Changed
+- **Narrated walkthrough is now labeled Voiceover in the edit-style UI.** Internal `narrated_*` values stay unchanged, but user-facing item-page copy now says Voiceover and clarifies the two sub-modes.
+- **Idea expansion understands context, video type, and footage mode.** `POST /plan-items/{id}/expand` accepts optional `creator_context`, keeps empty/no-body calls backward compatible, and the prompt now differentiates visual montage shots, narration-led voiceover beats, one-shot talking-to-camera plans, and existing-footage guidance.
 
 ## [0.7.15.3] — 2026-07-11
 

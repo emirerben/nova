@@ -78,7 +78,7 @@ class TestBuildDigestContent:
             loop_should_have_run=True,
         )
         html = digest_html(data)
-        assert "Nova dev-loop heartbeat" in html
+        assert "Kria dev-loop heartbeat" in html
         assert ">4<" in html  # built
         assert ">9<" in html  # graded
         assert ">3<" in html  # escalated
@@ -237,7 +237,11 @@ class TestSendDailyDigestTask:
         }
 
         with (
-            patch.dict("os.environ", {"DIGEST_RECIPIENT_EMAIL": "founder@nova.video"}, clear=False),
+            patch.dict(
+                "os.environ",
+                {"DIGEST_RECIPIENT_EMAIL": "founder@usekria.com"},
+                clear=False,
+            ),
             patch("app.config.settings") as mock_settings,
             patch("app.database.sync_session", return_value=fake_session),
             patch("app.tasks.send_daily_digest._gather_stats", return_value=stats),
@@ -250,9 +254,9 @@ class TestSendDailyDigestTask:
 
             mock_post.assert_called_once()
             payload = mock_post.call_args[1]["json"]
-            assert payload["to"] == ["founder@nova.video"]
-            assert "Nova loop" in payload["subject"]
-            assert "Nova dev-loop heartbeat" in payload["html"]
+            assert payload["to"] == ["founder@usekria.com"]
+            assert "Kria loop" in payload["subject"]
+            assert "Kria dev-loop heartbeat" in payload["html"]
             # the session was closed (no leak)
             fake_session.close.assert_called_once()
 

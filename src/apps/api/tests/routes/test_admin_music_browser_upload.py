@@ -1,6 +1,6 @@
 """Tests for the browser-side ingest endpoints.
 
-These cover the two-phase signed-URL upload flow used by the Nova Chrome
+These cover the two-phase signed-URL upload flow used by the Kria Chrome
 extension to push YouTube audio bytes directly to GCS, bypassing both the
 Vercel function body cap and the Fly.io data-center IP that YouTube flags
 as automated traffic. Plan: ``~/.claude/plans/sen-k-demli-bir-yaz-l-m-rosy-acorn.md``.

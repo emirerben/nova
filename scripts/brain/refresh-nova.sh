@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/brain/refresh-nova.sh — keep Nova's company brain fresh.
+# scripts/brain/refresh-nova.sh — keep Kria's company brain fresh.
 #
 # Replaces the machine-local ~/.gbrain/refresh-nova.sh.
 # Install via the launchd plist at scripts/brain/com.nova.gbrain-refresh.plist.
@@ -51,7 +51,7 @@ if [ ! -d "$REPO" ]; then
   exit 0
 fi
 
-# Pin the Supabase connection; keep Nova's DATABASE_URL out of gbrain's env.
+# Pin the Supabase connection; keep Kria's DATABASE_URL out of gbrain's env.
 source "$HOME/.gbrain/supabase.env"
 unset DATABASE_URL
 

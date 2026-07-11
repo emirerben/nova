@@ -1,4 +1,4 @@
-"""nova.plan.plan_item_advisor — per-item "Ask Nova" filming advice.
+"""nova.plan.plan_item_advisor — per-item "Ask Kria" filming advice.
 
 Stateless per turn (the full conversation history rides in each call), mirrors
 InterviewerAgent. Read-only by design: the agent only ever proposes — the one
@@ -26,7 +26,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-ADVISOR_PROMPT_VERSION = "2026-06-11"
+ADVISOR_PROMPT_VERSION = "2026-07-11-kria"
 
 _MAX_SUGGESTED_NOTE = 140
 

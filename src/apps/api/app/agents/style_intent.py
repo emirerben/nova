@@ -27,7 +27,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-STYLE_INTENT_PROMPT_VERSION = "2026-06-07-v2"
+STYLE_INTENT_PROMPT_VERSION = "2026-07-11-kria"
 
 # The exactly 10 parity-safe knob keys (must match StyleKnobs in _schemas/user_style.py)
 _PARITY_SAFE_KNOBS: frozenset[str] = frozenset(

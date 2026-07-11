@@ -1,4 +1,4 @@
-// Nova Music Ingest — content script.
+// Kria Music Ingest — content script.
 //
 // MV3 doesn't let extensions push messages directly to a webpage's `window`
 // (chrome.runtime.sendMessage works only inside extension contexts; the
@@ -8,10 +8,10 @@
 //   extension SW / offscreen
 //      |  chrome.runtime.sendMessage / chrome.tabs.sendMessage
 //      ↓
-//   THIS content script (runs in the Nova SPA's tab, isolated world)
+//   THIS content script (runs in the Kria SPA's tab, isolated world)
 //      |  window.postMessage  (page can listen via 'message' event)
 //      ↓
-//   Nova SPA (music-api.ts extensionIngest)
+//   Kria SPA (music-api.ts extensionIngest)
 //
 // Without this bridge, every "extracting / uploading / analyzing" progress
 // event the offscreen doc emits is silently dropped before reaching the
@@ -35,11 +35,11 @@ chrome.runtime.onMessage.addListener((msg) => {
   );
 });
 
-// Expose the extension ID to the Nova SPA via the DOM.
+// Expose the extension ID to the Kria SPA via the DOM.
 //
 // Content scripts run in an isolated JavaScript world: globals written to
 // `window` here are not visible to the page's own scripts. DOM mutations
-// (attributes, elements) ARE visible to both worlds. The Nova SPA reads
+// (attributes, elements) ARE visible to both worlds. The Kria SPA reads
 // `document.documentElement.getAttribute("data-nova-extension-id")` from
 // music-api.ts's detectExtension to know which extension ID to ping. This
 // matters because the manifest's `key` is deferred — unpacked installs get

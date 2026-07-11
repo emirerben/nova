@@ -1,7 +1,7 @@
 name: Extension zip-freshness guard
 
 # Any PR that changes Chrome extension source / build inputs MUST also update
-# the prebuilt zip at src/apps/web/public/admin/extension/nova-extension.zip
+# the prebuilt zip at src/apps/web/public/admin/extension/kria-extension.zip
 # (and its extension-info.json sidecar). Otherwise admins downloading from
 # /admin/extension/install get the stale zip — see PR #348 + #350. The check
 # logic + escape hatch live in scripts/check_extension_zip_fresh.sh.
@@ -15,7 +15,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Require nova-extension.zip rebuild on extension source changes
+      - name: Require kria-extension.zip rebuild on extension source changes
         run: bash scripts/check_extension_zip_fresh.sh
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}

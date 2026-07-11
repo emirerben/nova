@@ -120,7 +120,7 @@ function AuthGate({ onAuth }: { onAuth: () => void }) {
   return (
     <main className="min-h-screen bg-black text-white flex items-center justify-center px-4">
       <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
-        <h1 className="text-xl font-semibold text-center">Nova Admin</h1>
+        <h1 className="text-xl font-semibold text-center">Kria Admin</h1>
         <p className="text-sm text-zinc-500 text-center">Enter your admin token to continue</p>
         <input
           type="password"
@@ -152,7 +152,7 @@ function AdminNav({ onLogout }: { onLogout: () => void }) {
     <nav className="border-b border-zinc-800 px-6 py-3 flex items-center justify-between">
       <div className="flex items-center gap-6">
         <Link href="/admin" className="text-sm font-semibold text-white">
-          Nova Admin
+          Kria Admin
         </Link>
         <div className="flex items-center gap-1">
           <NavLink href="/admin" active={pathname === "/admin"}>

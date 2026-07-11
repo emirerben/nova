@@ -549,7 +549,7 @@ async def attach_seed_clips(
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
-# ── Footage pool ("dump the trip — Nova sorts it") ────────────────────────────
+# ── Footage pool ("dump the trip — Kria sorts it") ────────────────────────────
 
 _MAX_POOL_CLIPS = 40
 
