@@ -61,11 +61,11 @@ def _record(event: str, **fields) -> None:
 # v3 (plan 009 E1): pixel width/height persisted into the analysis JSONB —
 # rule (g)'s fail-closed resolution gate and the FE low-res warning both need
 # real dims, and the self-healing backfill now covers IMAGE assets too.
-# v4 (G1): image alpha presence persisted for UI/debug visibility. Image v3
-# analyses are stale so they self-heal this field; video v3 analyses stay fresh
-# because alpha support is image-only. Apply-time detection in media_overlay.py
-# remains authoritative.
-ANALYSIS_VERSION = 4
+# v4 (G1): image alpha presence persisted for UI/debug visibility.
+# v5 (TikTok E2E follow-up): image + video analyses persist brand/mascot
+# identities in `brands`; v3/v4 real analyses are stale for both kinds so the
+# matcher can suppress already-satisfied brand wishlist rows.
+ANALYSIS_VERSION = 5
 
 
 def _stub_analysis(asset: PlanItemAsset) -> dict:
@@ -77,6 +77,7 @@ def _stub_analysis(asset: PlanItemAsset) -> dict:
         "description": "",
         "on_screen_text": "",
         "kind_hint": "other",
+        "brands": [],
         "source": "stub",
         "analysis_version": ANALYSIS_VERSION,
     }
@@ -93,19 +94,7 @@ def analysis_is_stale(analysis: dict | None, *, kind: str | None = None) -> bool
         version = int(a.get("analysis_version") or 1)
     except (TypeError, ValueError):
         return True
-    if version < 3:
-        return True
     if version >= ANALYSIS_VERSION:
-        return False
-    asset_kind = (kind or "").lower()
-    if asset_kind == "image":
-        return True
-    if asset_kind == "video":
-        return False
-    source = a.get("source")
-    if source == "image_metadata":
-        return True
-    if source == "clip_metadata":
         return False
     return True
 
@@ -239,6 +228,7 @@ def _analyze_video(
             "kind_hint": "screenshot",
             "source": "clip_metadata",
             "best_moments": best_moments,
+            "brands": list(getattr(meta, "brands", None) or [])[:10],
             "duration_s": duration,
             "analysis_version": ANALYSIS_VERSION,
         }
@@ -413,7 +403,11 @@ def match_overlay_suggestions(
     conditions degrade to suggest-only with a trace, never an error.
     """
     from app.config import settings  # noqa: PLC0415
-    from app.services.overlay_autoplace import build_suggestions, heuristic_match  # noqa: PLC0415
+    from app.services.overlay_autoplace import (  # noqa: PLC0415
+        build_suggestions,
+        filter_wishlist_against_assets,
+        heuristic_match,
+    )
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
     from app.services.transcript_source import (  # noqa: PLC0415
         transcript_source,
@@ -477,12 +471,11 @@ def match_overlay_suggestions(
                     )
                 return
 
-            # Self-healing backfill (006 decision C, widened by 009 E1/G1):
-            # stale REAL analyses — v1/v2 missing trim/dims signals, plus v3
-            # IMAGE analyses missing has_alpha — re-analyze in the background
-            # (refresh keeps the asset ready); THIS run suggests without the
-            # newer signals for them. v3 VIDEO analyses stay fresh because G1
-            # alpha support is image-only. Stubs never trigger
+            # Self-healing backfill (006 decision C, widened by 009 E1/G1/v5):
+            # stale REAL analyses — v1/v2 missing trim/dims signals, plus v3/v4
+            # analyses missing brands — re-analyze in the background (refresh
+            # keeps the asset ready); THIS run suggests without the newer
+            # signals for them. Stubs never trigger
             # (analysis_is_stale excludes them — keyless-loop guard).
             for a in assets:
                 if analysis_is_stale(a["analysis"], kind=a.get("kind")):
@@ -547,6 +540,7 @@ def match_overlay_suggestions(
                                     on_screen_text=str(
                                         (a["analysis"] or {}).get("on_screen_text", "")
                                     ),
+                                    brands=list((a["analysis"] or {}).get("brands") or []),
                                     duration_s=a["duration_s"],
                                     aspect=a["aspect"],
                                     width=(a["analysis"] or {}).get("width"),
@@ -564,6 +558,7 @@ def match_overlay_suggestions(
                     log.warning("autoplace.agent_failed", job_id=job_id, error=str(exc)[:200])
             if matcher == "heuristic":
                 raw = heuristic_match(words, assets, duration_s=duration_s)
+            wishlist = filter_wishlist_against_assets(wishlist, assets)
 
             # 4. Persist under the row lock, validating against FRESH occupied
             #    intervals (finding 8 — the user may have dragged cards mid-match).

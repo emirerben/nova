@@ -14,6 +14,7 @@ from app.agents._schemas.media_overlay import MediaOverlay
 from app.agents.overlay_placement import RawPlacement
 from app.services.overlay_autoplace import (
     build_suggestions,
+    filter_wishlist_against_assets,
     pacing_cap_s,
     pick_trim_window,
 )
@@ -80,13 +81,26 @@ def _asset(kind: str = "video", duration: float | None = 30.0, moments=None) -> 
     }
 
 
-def _placement(start: float = 5.0, end: float = 11.0) -> RawPlacement:
+def _asset_with_id(asset_id: str, *, kind: str = "image") -> dict:
+    asset = _asset(kind=kind, duration=None if kind == "image" else 30.0)
+    asset["id"] = asset_id
+    return asset
+
+
+def _placement(
+    start: float = 5.0,
+    end: float = 11.0,
+    *,
+    asset_id: str = "a1",
+    slot: str = "top",
+    tier: str = "confident",
+) -> RawPlacement:
     return RawPlacement(
-        asset_id="a1",
-        slot="top",
+        asset_id=asset_id,
+        slot=slot,
         start_s=start,
         end_s=end,
-        confidence_tier="confident",
+        confidence_tier=tier,
         reason="r",
         transcript_anchor="a",
         sfx_intent="none",
@@ -165,6 +179,91 @@ def test_video_without_moments_gets_no_trim() -> None:
     assert out[0]["overlay"]["clip_trim_end_s"] is None
 
 
+def test_hook_burst_allows_five_confident_image_overlaps() -> None:
+    placements = [_placement(0.0, 4.0, asset_id=f"a{i}", tier="confident") for i in range(5)]
+    out = build_suggestions(
+        placements,
+        assets_by_id={f"a{i}": _asset_with_id(f"a{i}", kind="image") for i in range(5)},
+        words=[],
+        duration_s=20.0,
+        occupied=[],
+        glossary=[],
+    )
+    assert len(out) == 5
+    assert [s["overlay"]["start_s"] for s in out] == [0.0, 0.8, 1.6, 2.4, 3.2]
+
+
+def test_overlap_still_rejected_outside_hook_burst_window() -> None:
+    out = build_suggestions(
+        [
+            _placement(13.0, 17.0, asset_id="a1"),
+            _placement(14.0, 18.0, asset_id="a2"),
+        ],
+        assets_by_id={
+            "a1": _asset_with_id("a1", kind="image"),
+            "a2": _asset_with_id("a2", kind="image"),
+        },
+        words=[],
+        duration_s=30.0,
+        occupied=[],
+        glossary=[],
+    )
+    assert len(out) == 1
+
+
+def test_video_cards_never_use_hook_burst_overlap() -> None:
+    out = build_suggestions(
+        [
+            _placement(3.0, 7.0, asset_id="a1"),
+            _placement(4.0, 8.0, asset_id="a2"),
+        ],
+        assets_by_id={
+            "a1": _asset_with_id("a1", kind="video"),
+            "a2": _asset_with_id("a2", kind="video"),
+        },
+        words=[],
+        duration_s=20.0,
+        occupied=[],
+        glossary=[],
+    )
+    assert len(out) == 1
+
+
+def test_hook_burst_stagger_is_enforced() -> None:
+    out = build_suggestions(
+        [
+            _placement(3.0, 7.0, asset_id="a1"),
+            _placement(3.5, 7.5, asset_id="a2"),
+        ],
+        assets_by_id={
+            "a1": _asset_with_id("a1", kind="image"),
+            "a2": _asset_with_id("a2", kind="image"),
+        },
+        words=[],
+        duration_s=20.0,
+        occupied=[],
+        glossary=[],
+    )
+    assert len(out) == 2
+    starts = [s["overlay"]["start_s"] for s in out]
+    assert starts == [3.0, 3.8]
+
+
+def test_wishlist_drops_brand_already_present_in_pool() -> None:
+    wishlist = ["an Arçelik ad clip", "a close-up of the receipt"]
+    assets = [
+        {
+            "source_filename": "arcelik_ad.mp4",
+            "analysis": {
+                "subject": "ad spot",
+                "description": "A white robot mascot waves in a kitchen",
+                "brands": ["Arçelik", "Çelik robot mascot"],
+            },
+        }
+    ]
+    assert filter_wishlist_against_assets(wishlist, assets) == ["a close-up of the receipt"]
+
+
 # ── analysis_is_stale (decision C — the loop guard) ───────────────────────────
 
 
@@ -185,10 +284,8 @@ def test_current_real_analysis_is_fresh() -> None:
     )
 
 
-def test_v3_video_analysis_is_not_stale_for_image_only_alpha_bump() -> None:
-    assert (
-        analysis_is_stale({"source": "clip_metadata", "analysis_version": 3}, kind="video") is False
-    )
+def test_v3_video_analysis_is_stale_for_brands_bump() -> None:
+    assert analysis_is_stale({"source": "clip_metadata", "analysis_version": 3}, kind="video")
 
 
 def test_v3_image_analysis_is_stale_for_alpha_bump() -> None:
@@ -202,11 +299,9 @@ def test_v2_analysis_is_stale_for_any_kind() -> None:
     assert analysis_is_stale({"source": "image_metadata", "analysis_version": 2}, kind="image")
 
 
-def test_v4_image_analysis_is_fresh() -> None:
-    assert (
-        analysis_is_stale({"source": "image_metadata", "analysis_version": 4}, kind="image")
-        is False
-    )
+def test_v4_image_and_video_analyses_are_stale_for_brands_bump() -> None:
+    assert analysis_is_stale({"source": "image_metadata", "analysis_version": 4}, kind="image")
+    assert analysis_is_stale({"source": "clip_metadata", "analysis_version": 4}, kind="video")
 
 
 # ── MediaOverlay cross-field trim sanitizer (decision B) ──────────────────────

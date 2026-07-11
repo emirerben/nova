@@ -18,6 +18,7 @@ import json
 import math
 from typing import Any, ClassVar, Literal
 
+import structlog
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from app.agents._runtime import (
@@ -26,6 +27,8 @@ from app.agents._runtime import (
     SchemaError,
 )
 from app.pipeline.prompt_loader import load_prompt
+
+log = structlog.get_logger()
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -67,6 +70,7 @@ class ClipMetadataOutput(BaseModel):
     hook_score: float = Field(..., ge=0, le=10)
     best_moments: list[Moment] = Field(default_factory=list)
     detected_subject: str = ""
+    brands: list[str] = Field(default_factory=list)
     # Composition signal for agent-decided overlay sizing (see overlay_sizing.py).
     # Deliberately loose-typed: generative is best-effort and must never hard-fail
     # parsing on a drifted value, so a bad safe_zone/density is tolerated here and
@@ -78,6 +82,11 @@ class ClipMetadataOutput(BaseModel):
     # fields stay authoritative and a missing/drifted label can't break parsing.
     content_type: ClipContentType = "broll"
     audio_type: ClipAudioType = "ambient"
+
+    @field_validator("brands")
+    @classmethod
+    def _brands(cls, v: list[str]) -> list[str]:
+        return [(s or "").strip()[:80] for s in v if (s or "").strip()][:10]
 
     @field_validator("content_type", mode="before")
     @classmethod
@@ -285,7 +294,7 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         # engine), layered on the composition fields above. New fields default +
         # coerce, so a hook_score regression here is attributable; D4 eval gate
         # compares hook_score against the prior baseline before merge.
-        prompt_version="2026-05-31.1",
+        prompt_version="2026-07-11.1",
         model="gemini-2.5-flash",
         # Gemini pricing as of 2026 — input ~$0.075/M, output ~$0.30/M (2.5 Flash).
         cost_per_1k_input_usd=0.000075,
@@ -378,6 +387,10 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
         except (ValueError, TypeError) as exc:
             raise SchemaError(f"clip_metadata: invalid JSON — {exc}") from exc
 
+        if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+            log.info("clip_metadata_unwrapped_single_object_array")
+            data = data[0]
+
         if not isinstance(data, dict):
             raise SchemaError("clip_metadata: response is not a JSON object")
 
@@ -437,6 +450,7 @@ class ClipMetadataAgent(Agent[ClipMetadataInput, ClipMetadataOutput]):
                 hook_score=hook_score,
                 best_moments=moments,
                 detected_subject=str(data.get("detected_subject", "") or ""),
+                brands=data.get("brands") if isinstance(data.get("brands"), list) else [],
                 # Composition fields drive overlay_sizing. parse() reconstructs the
                 # output field-by-field, so these MUST be threaded explicitly or the
                 # model's values are silently dropped (the inert-feature bug caught by

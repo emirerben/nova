@@ -28,10 +28,13 @@ def _asset(
     height=1920,
     duration_s=None,
     with_dims=True,
+    has_alpha=False,
 ) -> dict:
     analysis = {"subject": "demo", "analysis_version": 3}
     if with_dims:
         analysis["width"], analysis["height"] = width, height
+    if has_alpha:
+        analysis["has_alpha"] = True
     return {
         "id": "a1",
         "gcs_path": "users/u/plan/p/pool/x.png",
@@ -198,6 +201,23 @@ class TestBuildSuggestionsFullscreen:
         assert ov["y_frac"] == pytest.approx(centered.y_frac)
         assert stats["fullscreen_demoted"] == 1
         assert stats["demote_reasons"] == ["no_dims"]
+
+    def test_alpha_asset_full_slot_demotes_to_pip(self):
+        stats = {}
+        out = _build([_raw(start=10.0, end=14.0)], assets=_asset(has_alpha=True), stats=stats)
+        assert len(out) == 1
+        ov = out[0]["overlay"]
+        assert ov["display_mode"] == "pip"
+        centered = resolve_slot("center", 0.5625)
+        assert ov["scale"] == pytest.approx(centered.scale)
+        assert ov["start_s"] == pytest.approx(10.0)
+        assert ov["end_s"] == pytest.approx(14.0)
+        assert stats["fullscreen_demoted"] == 1
+        assert stats["demote_reasons"] == ["alpha"]
+
+    def test_opaque_asset_full_slot_stays_fullscreen(self):
+        out = _build([_raw()], assets=_asset(has_alpha=False))
+        assert out[0]["overlay"]["display_mode"] == "fullscreen"
 
     def test_max_two_takeovers_third_demotes(self):
         stats = {}

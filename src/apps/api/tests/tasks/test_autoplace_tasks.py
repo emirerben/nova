@@ -225,6 +225,7 @@ def test_analyze_pool_asset_image_gemini_success_persists_has_alpha(monkeypatch)
                             "subject": "alpha card",
                             "description": "transparent sticker",
                             "on_screen_text": "",
+                            "brands": ["Arçelik", "Çelik robot mascot"],
                             "kind_hint": "photo",
                         }
                     )
@@ -242,6 +243,7 @@ def test_analyze_pool_asset_image_gemini_success_persists_has_alpha(monkeypatch)
     assert asset.status == "ready"
     assert asset.analysis["source"] == "image_metadata"
     assert asset.analysis["has_alpha"] is True
+    assert asset.analysis["brands"] == ["Arçelik", "Çelik robot mascot"]
     assert asset.analysis["width"] == 4
     assert asset.analysis["height"] == 2
 
@@ -257,6 +259,35 @@ def test_analyze_pool_asset_image_no_gemini_key_persists_has_alpha_on_stub(monke
     assert asset.analysis["has_alpha"] is True
     assert asset.analysis["width"] == 4
     assert asset.analysis["height"] == 2
+
+
+def test_analyze_pool_asset_video_persists_brands(monkeypatch):
+    asset = _PoolAsset(kind="video")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+    monkeypatch.setattr(
+        ap,
+        "_analyze_video",
+        lambda *_a, **_kw: (
+            {
+                "subject": "appliance ad",
+                "description": "Arçelik spot with a robot mascot",
+                "on_screen_text": "",
+                "brands": ["Arçelik", "Çelik robot mascot"],
+                "source": "clip_metadata",
+                "analysis_version": ap.ANALYSIS_VERSION,
+            },
+            1.7778,
+            6.0,
+            (1920, 1080),
+        ),
+    )
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.analysis["brands"] == ["Arçelik", "Çelik robot mascot"]
+    assert asset.analysis["width"] == 1920
+    assert asset.analysis["height"] == 1080
 
 
 # ── no transcript → failed ────────────────────────────────────────────────────
