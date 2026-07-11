@@ -1,0 +1,43 @@
+{
+  "agent": "nova.plan.idea_expander",
+  "prompt_version": "2026-07-11",
+  "input": {
+    "idea": "the first week after opening my pottery studio",
+    "persona_summary": "A ceramic artist who teaches beginners and shares honest studio moments.",
+    "content_pillars": [
+      "studio diary",
+      "beginner pottery lessons",
+      "small business behind the scenes"
+    ],
+    "creator_context": "I already have clips from the first week. I want the voiceover to explain that the messy shelf is the part that made the studio feel real.",
+    "video_type": "voiceover",
+    "content_mode": "existing_footage"
+  },
+  "raw_text": "{\"theme\":\"The studio felt real when it got messy\",\"filming_suggestion\":\"Use existing clips as voiceover evidence: quiet before-opening shelves, hands trimming clay, the messy shelf, and the first finished mug. Let the narration reveal why the imperfect shelf mattered.\",\"filming_guide\":[{\"what\":\"Find the calm before-opening shelf clip\",\"how\":\"Use it under the first voiceover line as the neat expectation before the week begins.\",\"duration_s\":3},{\"what\":\"Find hands working clay or cleaning tools\",\"how\":\"Use close clips under narration about the work becoming real through repetition.\",\"duration_s\":4},{\"what\":\"Find the messy shelf clip\",\"how\":\"Hold it longest while the voiceover explains that the mess meant students were finally using the space.\",\"duration_s\":5}],\"rationale\":\"A narration-led beat makes existing footage feel intentional: the shelf shifts from visual clutter to the emotional proof of opening week.\"}",
+  "output": {
+    "theme": "The studio felt real when it got messy",
+    "filming_suggestion": "Use existing clips as voiceover evidence: quiet before-opening shelves, hands trimming clay, the messy shelf, and the first finished mug. Let the narration reveal why the imperfect shelf mattered.",
+    "filming_guide": [
+      {
+        "what": "Find the calm before-opening shelf clip",
+        "how": "Use it under the first voiceover line as the neat expectation before the week begins.",
+        "duration_s": 3
+      },
+      {
+        "what": "Find hands working clay or cleaning tools",
+        "how": "Use close clips under narration about the work becoming real through repetition.",
+        "duration_s": 4
+      },
+      {
+        "what": "Find the messy shelf clip",
+        "how": "Hold it longest while the voiceover explains that the mess meant students were finally using the space.",
+        "duration_s": 5
+      }
+    ],
+    "rationale": "A narration-led beat makes existing footage feel intentional: the shelf shifts from visual clutter to the emotional proof of opening week."
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "context-aware voiceover on existing footage; guidance should say what to find/use in existing clips, not ask the creator to film new shots."
+  }
+}

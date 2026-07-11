@@ -29,6 +29,7 @@ from app.agents.clip_metadata import (
 from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipPlanMatcherOutput
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
 )
@@ -1400,6 +1401,49 @@ def check_content_plan_generator(
     return failures
 
 
+def check_idea_expander(
+    output: IdeaExpanderOutput,
+    input: IdeaExpanderInput,  # noqa: A002
+) -> list[str]:
+    """Structural floor for context-aware idea expansion.
+
+    Pins the contract this PR introduced: montage/voiceover plans need enough
+    shot guidance, talking-to-camera can be one shot, voiceover plans should be
+    narration-led, and existing-footage guidance should not tell users to go
+    film new material.
+    """
+    failures: list[str] = []
+    min_shots = 1 if input.video_type == "talking_to_camera" else 2
+    shot_count = len(output.filming_guide)
+    if shot_count < min_shots or shot_count > 4:
+        expected = "1-4" if min_shots == 1 else "2-4"
+        failures.append(f"filming_guide has {shot_count} shots; expected {expected}")
+
+    combined = " ".join(
+        [
+            output.filming_suggestion,
+            output.rationale,
+            *[shot.what for shot in output.filming_guide],
+            *[shot.how for shot in output.filming_guide],
+        ]
+    ).lower()
+
+    if input.video_type == "voiceover" and not any(
+        term in combined for term in ("voiceover", "voice-over", "narration", "narrate")
+    ):
+        failures.append("voiceover plan does not reference narration or voiceover")
+
+    if input.content_mode == "existing_footage":
+        banned = ("go film", "film a new", "record a new", "shoot a new")
+        found = [term for term in banned if term in combined]
+        if found:
+            failures.append(
+                "existing-footage plan asks for new filming: " + ", ".join(sorted(found))
+            )
+
+    return failures
+
+
 def check_style_derivation(output: Any) -> list[str]:
     """Structural floor for nova.plan.style_derivation.
 
@@ -1839,6 +1883,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_persona_generator(output)
     if agent_name == "nova.plan.content_plan_generator":
         return check_content_plan_generator(output, input)
+    if agent_name == "nova.plan.idea_expander":
+        return check_idea_expander(output, input)
     if agent_name == "nova.plan.tiktok_analyzer":
         return check_tiktok_analyzer(output)
     if agent_name == "nova.plan.style_derivation":
