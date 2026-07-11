@@ -462,6 +462,9 @@ class Settings(BaseSettings):
     # When False: upload-urls + set-media-overlays routes return 404; the
     # worker apply-pass branch never fires.
     media_overlays_enabled: bool = False
+    # Alpha-preserving image overlays for the media-overlay lane. When False,
+    # image cards still flatten through JPEG exactly as before.
+    media_overlay_alpha_enabled: bool = False
 
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.

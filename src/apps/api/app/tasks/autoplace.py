@@ -61,7 +61,11 @@ def _record(event: str, **fields) -> None:
 # v3 (plan 009 E1): pixel width/height persisted into the analysis JSONB —
 # rule (g)'s fail-closed resolution gate and the FE low-res warning both need
 # real dims, and the self-healing backfill now covers IMAGE assets too.
-ANALYSIS_VERSION = 3
+# v4 (G1): image alpha presence persisted for UI/debug visibility. Image v3
+# analyses are stale so they self-heal this field; video v3 analyses stay fresh
+# because alpha support is image-only. Apply-time detection in media_overlay.py
+# remains authoritative.
+ANALYSIS_VERSION = 4
 
 
 def _stub_analysis(asset: PlanItemAsset) -> dict:
@@ -78,7 +82,7 @@ def _stub_analysis(asset: PlanItemAsset) -> dict:
     }
 
 
-def analysis_is_stale(analysis: dict | None) -> bool:
+def analysis_is_stale(analysis: dict | None, *, kind: str | None = None) -> bool:
     """True for pre-006 REAL analyses (no best_moments persisted). Stubs are
     never stale — re-analyzing them on a keyless machine yields another stub
     (the infinite-loop class the outside voice flagged, plan 006 finding 2)."""
@@ -86,31 +90,50 @@ def analysis_is_stale(analysis: dict | None) -> bool:
     if a.get("source") == "stub":
         return False
     try:
-        return int(a.get("analysis_version") or 1) < ANALYSIS_VERSION
+        version = int(a.get("analysis_version") or 1)
     except (TypeError, ValueError):
         return True
+    if version < 3:
+        return True
+    if version >= ANALYSIS_VERSION:
+        return False
+    asset_kind = (kind or "").lower()
+    if asset_kind == "image":
+        return True
+    if asset_kind == "video":
+        return False
+    source = a.get("source")
+    if source == "image_metadata":
+        return True
+    if source == "clip_metadata":
+        return False
+    return True
 
 
 def _analyze_image(
     local_path: str, job_scope: str
-) -> tuple[dict | None, float | None, tuple[int, int] | None]:
-    """(analysis, aspect, (width, height)) for a still image."""
+) -> tuple[dict | None, float | None, tuple[int, int] | None, bool]:
+    """(analysis, aspect, (width, height), has_alpha) for a still image."""
     aspect: float | None = None
     dims: tuple[int, int] | None = None
+    has_alpha = False
     try:
         from PIL import Image  # noqa: PLC0415
+
+        from app.pipeline.image_clip import image_has_alpha  # noqa: PLC0415
 
         with Image.open(local_path) as im:
             if im.height:
                 aspect = round(im.width / im.height, 4)
                 dims = (int(im.width), int(im.height))
+        has_alpha = image_has_alpha(local_path)
     except Exception as exc:  # noqa: BLE001
         log.warning("autoplace.image_size_failed", error=str(exc)[:160])
 
     from app.config import settings  # noqa: PLC0415
 
     if not settings.gemini_api_key:
-        return None, aspect, dims
+        return None, aspect, dims, has_alpha
     try:
         # INLINE bytes, not the Gemini File API: still images are small, and the
         # File API's processing step intermittently 500s on PNGs (observed
@@ -150,13 +173,15 @@ def _analyze_image(
                 **out.model_dump(),
                 "source": "image_metadata",
                 "analysis_version": ANALYSIS_VERSION,
+                "has_alpha": has_alpha,
             },
             aspect,
             dims,
+            has_alpha,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("autoplace.image_analysis_failed", error=str(exc)[:200])
-        return None, aspect, dims
+        return None, aspect, dims, has_alpha
 
 
 def _analyze_video(
@@ -249,6 +274,7 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
         aspect: float | None = None
         duration: float | None = None
         dims: tuple[int, int] | None = None
+        has_alpha: bool | None = None
         failed = False
         try:
             with _sync_session() as db:
@@ -263,7 +289,7 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
                 if kind == "video":
                     analysis, aspect, duration, dims = _analyze_video(local, scope)
                 else:
-                    analysis, aspect, dims = _analyze_image(local, scope)
+                    analysis, aspect, dims, has_alpha = _analyze_image(local, scope)
         except Exception as exc:  # noqa: BLE001
             log.warning("autoplace.analysis_failed", asset_id=asset_id, error=str(exc)[:200])
             failed = True
@@ -291,6 +317,8 @@ def analyze_pool_asset(asset_id: str, refresh: bool = False) -> None:
                     # migration) — rule (g) + the FE low-res warning read them.
                     if dims:
                         final["width"], final["height"] = dims
+                    if has_alpha is not None:
+                        final["has_alpha"] = has_alpha
                     asset.analysis = final
                 if aspect:
                     asset.aspect = aspect
@@ -449,13 +477,15 @@ def match_overlay_suggestions(
                     )
                 return
 
-            # Self-healing backfill (006 decision C, widened by 009 E1): stale
-            # REAL analyses — videos missing best_moments AND any asset missing
-            # v3 pixel dims — re-analyze in the background (refresh keeps the
-            # asset ready); THIS run suggests without trim/dims for them. Stubs
-            # never trigger (analysis_is_stale excludes them — keyless-loop guard).
+            # Self-healing backfill (006 decision C, widened by 009 E1/G1):
+            # stale REAL analyses — v1/v2 missing trim/dims signals, plus v3
+            # IMAGE analyses missing has_alpha — re-analyze in the background
+            # (refresh keeps the asset ready); THIS run suggests without the
+            # newer signals for them. v3 VIDEO analyses stay fresh because G1
+            # alpha support is image-only. Stubs never trigger
+            # (analysis_is_stale excludes them — keyless-loop guard).
             for a in assets:
-                if analysis_is_stale(a["analysis"]):
+                if analysis_is_stale(a["analysis"], kind=a.get("kind")):
                     _record("autoplace_stale_analysis", asset_id=a["id"])
                     try:
                         analyze_pool_asset.apply_async(
