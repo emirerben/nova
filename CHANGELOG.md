@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.16.0] — 2026-07-11
+
+### Added
+- **Plan This now asks for creator context before generating.** The item-page "Plan this for me" action opens a skippable inline context step with prompts tailored to Montage, Voiceover, and Talking-to-camera items, then sends that context into the idea-expander agent so proposed plans match the selected video type and content mode.
+- **Accepted non-slot plans stay visible above uploaders.** Existing-footage montage, Voiceover "I have the videos", and Talking-to-camera flows now show a compact plan summary instead of losing the accepted guide when they stay on pool or single-clip upload.
+
+### Changed
+- **Narrated walkthrough is now labeled Voiceover in the edit-style UI.** Internal `narrated_*` values stay unchanged, but user-facing item-page copy now says Voiceover and clarifies the two sub-modes.
+- **Idea expansion understands context, video type, and footage mode.** `POST /plan-items/{id}/expand` accepts optional `creator_context`, keeps empty/no-body calls backward compatible, and the prompt now differentiates visual montage shots, narration-led voiceover beats, one-shot talking-to-camera plans, and existing-footage guidance.
+
 ## [0.7.15.3] — 2026-07-11
 
 ### Fixed

@@ -29,6 +29,8 @@ Object.defineProperty(window, "matchMedia", {
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
+process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
+
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
@@ -104,8 +106,8 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
   default: () => <div data-testid="feedback-buttons" />,
 }));
 
-import PlanItemPage from "@/app/plan/items/[id]/page";
 import { expandIdea, generatePlanItem, updatePlanItem, type PlanItemJobStatus } from "@/lib/plan-api";
+const PlanItemPage = require("@/app/plan/items/[id]/page").default;
 const mockExpandIdea = expandIdea as jest.MockedFunction<typeof expandIdea>;
 const mockGeneratePlanItem = generatePlanItem as jest.MockedFunction<typeof generatePlanItem>;
 const mockUpdatePlanItem = updatePlanItem as jest.MockedFunction<typeof updatePlanItem>;
@@ -125,6 +127,7 @@ function makeItem(overrides = {}) {
     status: "idea",
     current_job_id: null,
     user_edited: false,
+    content_mode: "create_new",
     instruction_level: "full" as const,
     conformance: null,
     ...overrides,
@@ -474,7 +477,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
     });
 
-    mockUpdatePlanItem.mockResolvedValue({ ...item, edit_format: "montage" });
+    mockUpdatePlanItem.mockResolvedValue({ ...item, edit_format: "subtitled" });
     mockGeneratePlanItem.mockResolvedValue(item);
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
@@ -491,7 +494,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     await waitFor(() => {
-      expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", { edit_format: "montage" });
+      expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", { edit_format: "subtitled" });
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
     });
     expect(mockUpdatePlanItem.mock.invocationCallOrder[0]).toBeLessThan(
@@ -507,7 +510,28 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     mockRefetch.mockReset();
   });
 
-  it("renders the AI proposal card with shot list details", async () => {
+  it("opens a context panel before calling the proposal API", async () => {
+    const item = makeItem({ theme: null, filming_guide: [], status: "ready" });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
+    });
+
+    expect(screen.getByText("A little context helps.")).toBeInTheDocument();
+    expect(screen.getByText("What should this edit make people feel or notice?")).toBeInTheDocument();
+    expect(mockExpandIdea).not.toHaveBeenCalled();
+  });
+
+  it("renders the AI proposal card with shot list details after context submit", async () => {
     const item = makeItem({ theme: null, filming_guide: [], status: "ready" });
     mockExpandIdea.mockResolvedValue({
       theme: "A calmer morning reset",
@@ -541,8 +565,18 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
     });
+    await act(async () => {
+      fireEvent.change(
+        screen.getByPlaceholderText("A rough goal or detail is enough..."),
+        { target: { value: "Make people feel like they can reset quickly." } },
+      );
+      fireEvent.click(screen.getByRole("button", { name: /Generate plan/i }));
+    });
 
     expect(await screen.findByText("AI SUGGESTION")).toBeInTheDocument();
+    expect(mockExpandIdea).toHaveBeenCalledWith("test-item-id", {
+      creator_context: "Make people feel like they can reset quickly.",
+    });
     expect(screen.getByText("A calmer morning reset")).toBeInTheDocument();
     expect(screen.getByText("Film it as three quiet beats.")).toBeInTheDocument();
     expect(screen.getByText("Open on the messy counter")).toBeInTheDocument();
@@ -570,9 +604,49 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
     });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Generate plan/i }));
+    });
 
     expect(await screen.findByText("Couldn't plan this idea — try again.")).toBeInTheDocument();
     expect(screen.queryByText("AI SUGGESTION")).toBeNull();
+  });
+
+  it("skips context and sends null context to the proposal API", async () => {
+    const item = makeItem({ theme: null, filming_guide: [] });
+    mockExpandIdea.mockResolvedValue({
+      theme: "Packing reveal",
+      filming_suggestion: "Make the plan feel tactile.",
+      rationale: "The shot progression creates curiosity.",
+      filming_guide: [
+        {
+          shot_id: "shot-1",
+          what: "Start with the packed bag",
+          how: "Shoot from above",
+          duration_s: 5,
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Skip and generate/i }));
+    });
+
+    expect(await screen.findByText("Packing reveal")).toBeInTheDocument();
+    expect(mockExpandIdea).toHaveBeenCalledWith("test-item-id", {
+      creator_context: null,
+    });
   });
 
   it("shows accept failure, preserves the card, and sends shot_ids through untouched", async () => {
@@ -604,6 +678,9 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
     });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Generate plan/i }));
+    });
     expect(await screen.findByText("Packing reveal")).toBeInTheDocument();
 
     await act(async () => {
@@ -617,6 +694,90 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
       filming_suggestion: "Make the plan feel tactile.",
       filming_guide: filmingGuide,
     });
+  });
+
+  it("shows accepted plan summary above existing-footage uploader", async () => {
+    const item = makeItem({
+      theme: "Packing reveal",
+      content_mode: "existing_footage",
+      filming_suggestion: "Find the bag reveal in your existing clips.",
+      filming_guide: [
+        {
+          shot_id: "shot-existing",
+          what: "Packed bag reveal",
+          how: "Use the cleanest close-up",
+          duration_s: 5,
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Plan summary")).toBeInTheDocument();
+    expect(screen.getByText("Find the bag reveal in your existing clips.")).toBeInTheDocument();
+    expect(screen.getByText("Packed bag reveal")).toBeInTheDocument();
+    expect(screen.getByText("Use the cleanest close-up")).toBeInTheDocument();
+  });
+
+  it("keeps narrated-ready items on pool upload even when a plan exists", async () => {
+    const item = makeItem({
+      edit_format: "narrated_ready",
+      filming_guide: [
+        {
+          shot_id: "voice-shot",
+          what: "Show the messy counter",
+          how: "Use the before clip",
+          duration_s: 4,
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Plan summary")).toBeInTheDocument();
+    expect(screen.getByText("Your clips")).toBeInTheDocument();
+    expect(screen.queryByText(/shot left/i)).toBeNull();
+  });
+
+  it("keeps talking-to-camera items on single-clip upload even when a plan exists", async () => {
+    const item = makeItem({
+      edit_format: "subtitled",
+      filming_guide: [
+        {
+          shot_id: "talking-shot",
+          what: "Creator explains the lesson",
+          how: "Eye-level phone shot",
+          duration_s: 8,
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Plan summary")).toBeInTheDocument();
+    expect(screen.getByText("Your clip")).toBeInTheDocument();
+    expect(screen.queryByText(/shot left/i)).toBeNull();
   });
 
   it("hides Plan this for me when a post-render item already has a filming guide", async () => {

@@ -288,6 +288,8 @@ export interface PlanItem {
   edit_format?: string | null;
   /** Montage visual preset. "classic" keeps the sequential montage; "masonry" renders a collage wall. */
   montage_preset?: "classic" | "masonry";
+  /** Per-item/persona content-mode resolved by the API for upload flow selection. */
+  content_mode?: "existing_footage" | "create_new" | "mixed";
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
   voiceover_gcs_path?: string | null;
   /**
@@ -399,8 +401,14 @@ export function reorderItems(planId: string, itemIds: string[]): Promise<Content
 }
 
 /** Propose an AI expansion for a bare idea (propose-only, never writes DB). */
-export function expandIdea(itemId: string): Promise<IdeaExpandProposal> {
-  return request<IdeaExpandProposal>(`/plan-items/${itemId}/expand`, { method: "POST" });
+export function expandIdea(
+  itemId: string,
+  input: { creator_context?: string | null } = {},
+): Promise<IdeaExpandProposal> {
+  return request<IdeaExpandProposal>(`/plan-items/${itemId}/expand`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function updatePlanItem(
