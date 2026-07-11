@@ -7,6 +7,9 @@ and that a corrected cue drops its stale per-word timings so word-pop re-synthes
 
 from __future__ import annotations
 
+import sys
+from types import SimpleNamespace
+
 import app.pipeline.caption_correct as cc
 
 _CUES = [
@@ -88,3 +91,30 @@ def test_language_name_mapping():
     assert cc._language_name("tr") == "Turkish"
     assert cc._language_name("en") == "English"
     assert cc._language_name("es") == "es"
+
+
+def test_llm_prompt_includes_brand_name_hint(monkeypatch):
+    captured = {}
+
+    class _Completions:
+        def create(self, **kwargs):
+            captured["messages"] = kwargs["messages"]
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(content='{"lines":["Coca-Cola ayıcık"]}')
+                    )
+                ]
+            )
+
+    class _Client:
+        chat = SimpleNamespace(completions=_Completions())
+
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(OpenAI=lambda api_key: _Client()))
+    monkeypatch.setattr(cc.settings, "openai_api_key", "test-key", raising=False)
+
+    assert cc._llm_correct_lines(["Kokokolu ayıcık"], "tr", model="gpt-4o") == ["Coca-Cola ayıcık"]
+    system_prompt = captured["messages"][0]["content"]
+    assert "Restore mangled brand names, product names, and proper nouns" in system_prompt
+    assert "Kokokolu" in system_prompt
+    assert "Coca-Cola" in system_prompt
