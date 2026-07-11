@@ -70,7 +70,12 @@ export interface UnifiedTimelineProps {
   overlayUploading: boolean;
   localPreviewUrls: Record<string, string>;
   onOverlayUploadRequest: (files: UploadFile[]) => void;
-  onUpdateCard: (id: string, patch: Partial<MediaOverlay>) => void;
+  /** record:false marks interim drag patches so history-owning parents can coalesce. */
+  onUpdateCard: (
+    id: string,
+    patch: Partial<MediaOverlay>,
+    options?: { record?: boolean },
+  ) => void;
   onRemoveCard: (id: string) => void;
   onClearOverlays: () => void;
   /**

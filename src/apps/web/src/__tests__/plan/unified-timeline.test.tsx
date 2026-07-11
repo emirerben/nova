@@ -21,6 +21,22 @@ import type { SoundEffectPlacement } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import type { MediaOverlay } from "@/lib/plan-api";
 
+class PointerEventPolyfill extends MouseEvent {
+  pointerId: number;
+  pointerType: string;
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 0;
+    this.pointerType = init.pointerType ?? "mouse";
+  }
+}
+
+beforeAll(() => {
+  (window as unknown as Record<string, unknown>).PointerEvent = PointerEventPolyfill;
+  HTMLElement.prototype.setPointerCapture = jest.fn();
+  HTMLElement.prototype.releasePointerCapture = jest.fn();
+});
+
 // ── Minimal fixtures ──────────────────────────────────────────────────────────
 
 function makePlacement(override: Partial<SoundEffectPlacement> = {}): SoundEffectPlacement {
@@ -606,9 +622,9 @@ describe("OverlayLane — suggestion provenance cards (006 T3)", () => {
     );
 
     const bar = screen.getByRole("button", { name: /suggested overlay/i });
-    fireEvent.mouseDown(bar, { clientX: 0 });
-    fireEvent.mouseMove(window, { clientX: 40 });
-    fireEvent.mouseUp(window);
+    fireEvent.pointerDown(bar, { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0, button: 0 });
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 40, clientY: 0 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 40, clientY: 0 });
 
     expect(onSuggestionEdit).toHaveBeenCalledWith(
       "sug-1",
@@ -640,10 +656,10 @@ describe("OverlayLane — suggestion provenance cards (006 T3)", () => {
 
     const handle = document.querySelector('[data-trim-handle="left-ov-sug-1"]')!;
     expect(handle).toBeTruthy();
-    fireEvent.mouseDown(handle, { clientX: 0 });
+    fireEvent.pointerDown(handle, { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0, button: 0 });
     // 50px over a 100px strip on a 6s clip → +3s trim-in.
-    fireEvent.mouseMove(window, { clientX: 50 });
-    fireEvent.mouseUp(window);
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 50, clientY: 0 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 50, clientY: 0 });
 
     expect(onSuggestionEdit).toHaveBeenCalledWith(
       "sug-1",

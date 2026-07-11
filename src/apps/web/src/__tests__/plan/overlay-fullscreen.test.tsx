@@ -25,6 +25,22 @@ import {
 } from "@/app/plan/_components/OverlayCardPopover";
 import type { MediaOverlay } from "@/lib/plan-api";
 
+class PointerEventPolyfill extends MouseEvent {
+  pointerId: number;
+  pointerType: string;
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 0;
+    this.pointerType = init.pointerType ?? "mouse";
+  }
+}
+
+beforeAll(() => {
+  (window as unknown as Record<string, unknown>).PointerEvent = PointerEventPolyfill;
+  HTMLElement.prototype.setPointerCapture = jest.fn();
+  HTMLElement.prototype.releasePointerCapture = jest.fn();
+});
+
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
 function makeCard(override: Partial<MediaOverlay> = {}): MediaOverlay {
@@ -112,6 +128,31 @@ function mockRectWidth(width: number) {
   } as DOMRect);
 }
 
+function mockCoarsePointer(matches: boolean) {
+  const previous = window.matchMedia;
+  Object.defineProperty(window, "matchMedia", {
+    configurable: true,
+    writable: true,
+    value: jest.fn().mockImplementation((query: string) => ({
+      matches: query === "(pointer: coarse)" ? matches : false,
+      media: query,
+      onchange: null,
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    })),
+  });
+  return () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      writable: true,
+      value: previous,
+    });
+  };
+}
+
 // ── fullscreenGapBounds (drag hard-stop helper) ───────────────────────────────
 
 describe("fullscreenGapBounds — drag hard-stop clamp helper", () => {
@@ -194,13 +235,15 @@ describe("OverlayLane — drag hard-stops at fullscreen boundaries", () => {
     const fs = makeCard({ id: "b", start_s: 5, end_s: 10, display_mode: "fullscreen" });
     render(<OverlayLane {...laneProps({ overlayCards: [pip, fs], onUpdateCard })} />);
 
-    fireEvent.mouseDown(chipFor("a"), { clientX: 0 });
+    fireEvent.pointerDown(chipFor("a"), { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0, button: 0 });
     // 300px over a 300px lane on a 30s timeline → +30s, way past the blocker.
-    fireEvent.mouseMove(window, { clientX: 300 });
-    fireEvent.mouseUp(window);
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 300, clientY: 0 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 300, clientY: 0 });
 
-    // Hard-stop at the fullscreen boundary: end_s pinned to 5.
-    expect(onUpdateCard).toHaveBeenLastCalledWith("a", { start_s: 3, end_s: 5 });
+    // Hard-stop at the fullscreen boundary: end_s pinned to 5. The first patch
+    // of the gesture recorded history; the commit is record:false.
+    expect(onUpdateCard.mock.calls[0][2]).toEqual({ record: true });
+    expect(onUpdateCard).toHaveBeenLastCalledWith("a", { start_s: 3, end_s: 5 }, { record: false });
   });
 
   it("clamps a fullscreen chip dragged ONTO other cards", () => {
@@ -209,11 +252,94 @@ describe("OverlayLane — drag hard-stops at fullscreen boundaries", () => {
     const fs = makeCard({ id: "b", start_s: 5, end_s: 10, display_mode: "fullscreen" });
     render(<OverlayLane {...laneProps({ overlayCards: [pip, fs], onUpdateCard })} />);
 
-    fireEvent.mouseDown(chipFor("b"), { clientX: 300 });
-    fireEvent.mouseMove(window, { clientX: 0 });
-    fireEvent.mouseUp(window);
+    fireEvent.pointerDown(chipFor("b"), { pointerId: 1, pointerType: "mouse", clientX: 300, clientY: 0, button: 0 });
+    fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0 });
+    fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0 });
 
-    expect(onUpdateCard).toHaveBeenLastCalledWith("b", { start_s: 2, end_s: 7 });
+    expect(onUpdateCard.mock.calls[0][2]).toEqual({ record: true });
+    expect(onUpdateCard).toHaveBeenLastCalledWith("b", { start_s: 2, end_s: 7 }, { record: false });
+  });
+});
+
+// ── Mobile touch gestures ────────────────────────────────────────────────────
+
+describe("OverlayLane — touch gestures", () => {
+  let rectSpy: jest.SpyInstance;
+  beforeEach(() => {
+    rectSpy = mockRectWidth(300);
+  });
+  afterEach(() => rectSpy.mockRestore());
+
+  it("touch tap on a chip opens the popover and dispatches zero patches", () => {
+    const onUpdateCard = jest.fn();
+    render(<OverlayLane {...laneProps({ overlayCards: [makeCard()], onUpdateCard })} />);
+
+    const chip = chipFor("ov-1");
+    fireEvent.pointerDown(chip, { pointerId: 7, pointerType: "touch", clientX: 100, clientY: 10 });
+    fireEvent.pointerUp(window, { pointerId: 7, pointerType: "touch", clientX: 105, clientY: 14 });
+
+    expect(screen.getByTestId("overlay-popover-ov-1")).toBeInTheDocument();
+    expect(onUpdateCard).not.toHaveBeenCalled();
+  });
+
+  it("pointercancel within tap slop does not open the popover or dispatch patches", () => {
+    const onUpdateCard = jest.fn();
+    render(<OverlayLane {...laneProps({ overlayCards: [makeCard()], onUpdateCard })} />);
+
+    const chip = chipFor("ov-1");
+    fireEvent.pointerDown(chip, { pointerId: 11, pointerType: "touch", clientX: 100, clientY: 10 });
+    fireEvent.pointerCancel(window, { pointerId: 11, pointerType: "touch", clientX: 103, clientY: 13 });
+
+    expect(screen.queryByTestId("overlay-popover-ov-1")).toBeNull();
+    expect(onUpdateCard).not.toHaveBeenCalled();
+  });
+
+  it("touch drag past slop moves the overlay and does not open the popover", () => {
+    const onUpdateCard = jest.fn();
+    render(<OverlayLane {...laneProps({ overlayCards: [makeCard()], onUpdateCard })} />);
+
+    const chip = chipFor("ov-1");
+    fireEvent.pointerDown(chip, { pointerId: 8, pointerType: "touch", clientX: 0, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerId: 8, pointerType: "touch", clientX: 40, clientY: 12 });
+    fireEvent.pointerUp(window, { pointerId: 8, pointerType: "touch", clientX: 40, clientY: 12 });
+
+    expect(onUpdateCard.mock.calls[0][2]).toEqual({ record: true });
+    expect(onUpdateCard).toHaveBeenLastCalledWith(
+      "ov-1",
+      expect.objectContaining({ start_s: 10.2, end_s: 13 }),
+      { record: false },
+    );
+    expect(screen.queryByTestId("overlay-popover-ov-1")).toBeNull();
+  });
+
+  it("pointercancel mid-drag commits the current value (history recorded on the first patch)", () => {
+    const onUpdateCard = jest.fn();
+    render(<OverlayLane {...laneProps({ overlayCards: [makeCard()], onUpdateCard })} />);
+
+    const chip = chipFor("ov-1");
+    fireEvent.pointerDown(chip, { pointerId: 9, pointerType: "touch", clientX: 0, clientY: 10 });
+    fireEvent.pointerMove(window, { pointerId: 9, pointerType: "touch", clientX: 30, clientY: 10 });
+    fireEvent.pointerCancel(window, { pointerId: 9, pointerType: "touch", clientX: 30, clientY: 10 });
+
+    expect(onUpdateCard.mock.calls[0][2]).toEqual({ record: true });
+    expect(onUpdateCard).toHaveBeenLastCalledWith(
+      "ov-1",
+      expect.objectContaining({ start_s: 9.2, end_s: 12 }),
+      { record: false },
+    );
+  });
+
+  it("label-span touch toggles the popover exactly once", () => {
+    const onUpdateCard = jest.fn();
+    render(<OverlayLane {...laneProps({ overlayCards: [makeCard()], onUpdateCard })} />);
+
+    const label = screen.getByText(/ov-1/);
+    fireEvent.pointerDown(label, { pointerId: 10, pointerType: "touch", clientX: 100, clientY: 10 });
+    fireEvent.pointerUp(label, { pointerId: 10, pointerType: "touch", clientX: 100, clientY: 10 });
+    fireEvent.click(label);
+
+    expect(screen.getByTestId("overlay-popover-ov-1")).toBeInTheDocument();
+    expect(onUpdateCard).not.toHaveBeenCalled();
   });
 });
 
@@ -495,8 +621,47 @@ describe("OverlayLane — fullscreen chips", () => {
         })}
       />,
     );
-    expect(document.querySelector('[data-chip-handle="left-ov-1"]')).not.toBeNull();
+    const leftHandle = document.querySelector('[data-chip-handle="left-ov-1"]') as HTMLElement;
+    expect(leftHandle).not.toBeNull();
+    expect(leftHandle.style.left).toBe("0px");
+    expect(leftHandle.style.width).toBe("12px");
     rectSpy.mockRestore();
+  });
+
+  it("coarse pointer sub-48px chips hide edge handles and tap body opens the popover", () => {
+    const restoreMatchMedia = mockCoarsePointer(true);
+    const rectSpy = mockRectWidth(1000);
+    const onUpdateCard = jest.fn();
+    const tiny = makeCard({ start_s: 10, end_s: 14 });
+    const { unmount } = render(
+      <OverlayLane
+        {...laneProps({ totalDurationS: 100, overlayCards: [tiny], onUpdateCard })}
+      />,
+    );
+
+    expect(document.querySelector('[data-chip-handle="left-ov-1"]')).toBeNull();
+    expect(document.querySelector('[data-chip-handle="right-ov-1"]')).toBeNull();
+    expect(screen.queryByText(/ov-1/)).toBeNull();
+
+    fireEvent.pointerDown(chipFor("ov-1"), {
+      pointerId: 12,
+      pointerType: "touch",
+      clientX: 100,
+      clientY: 10,
+    });
+    fireEvent.pointerUp(window, {
+      pointerId: 12,
+      pointerType: "touch",
+      clientX: 100,
+      clientY: 10,
+    });
+
+    expect(screen.getByTestId("overlay-popover-ov-1")).toBeInTheDocument();
+    expect(onUpdateCard).not.toHaveBeenCalled();
+
+    unmount();
+    rectSpy.mockRestore();
+    restoreMatchMedia();
   });
 
   it("dashed lime + ✦ provenance layers over a fullscreen suggestion unchanged", () => {

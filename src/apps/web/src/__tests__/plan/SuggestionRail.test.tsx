@@ -24,6 +24,22 @@ import SuggestionRail from "@/app/plan/_components/SuggestionRail";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useOverlaySuggestionState } from "@/app/plan/_components/useOverlaySuggestions";
 
+class PointerEventPolyfill extends MouseEvent {
+  pointerId: number;
+  pointerType: string;
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 0;
+    this.pointerType = init.pointerType ?? "mouse";
+  }
+}
+
+beforeAll(() => {
+  (window as unknown as Record<string, unknown>).PointerEvent = PointerEventPolyfill;
+  HTMLElement.prototype.setPointerCapture = jest.fn();
+  HTMLElement.prototype.releasePointerCapture = jest.fn();
+});
+
 const FLAG = "NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED";
 
 const ASSETS_URL = "/api/plan/plan-items/item-1/assets";
@@ -745,10 +761,16 @@ describe("SuggestionRail — lane edits stage the row + ride the Apply (006 T3)"
     const handle = document.querySelector('[data-trim-handle="left-ov-sug-1"]')!;
     // Separate act ticks so the drag effect's window listeners attach between
     // mousedown and mousemove (same as real event timing).
-    await act(async () => { fireEvent.mouseDown(handle, { clientX: 0 }); });
+    await act(async () => {
+      fireEvent.pointerDown(handle, { pointerId: 1, pointerType: "mouse", clientX: 0, clientY: 0, button: 0 });
+    });
     // 50px over a 100px strip on a 6s clip → trim-in +3s.
-    await act(async () => { fireEvent.mouseMove(window, { clientX: 50 }); });
-    await act(async () => { fireEvent.mouseUp(window); });
+    await act(async () => {
+      fireEvent.pointerMove(window, { pointerId: 1, pointerType: "mouse", clientX: 50, clientY: 0 });
+    });
+    await act(async () => {
+      fireEvent.pointerUp(window, { pointerId: 1, pointerType: "mouse", clientX: 50, clientY: 0 });
+    });
     rectSpy.mockRestore();
 
     await act(async () => {

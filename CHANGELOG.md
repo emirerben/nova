@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.12.0] — 2026-07-11
+## [0.7.14.0] — 2026-07-11
 
 ### Added
 - **Montage items can now render as a Masonry collage preset.** Plan items persist a `montage_preset` (`classic` by default, `masonry` when explicitly selected) and the item page exposes a Classic / Masonry collage picker only for montage generation. The render contract stores only the non-default preset so legacy montage jobs keep their byte-compatible shape.
@@ -10,6 +10,30 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Masonry-rendered variants disable timeline / split-clip editing because the visual is a simultaneous tile board, while current text/style editing surfaces remain available.
+
+## [0.7.13.0] — 2026-07-11
+
+### Added
+- **Explicit mobile viewport policy:** the app declares its viewport (device-width, cream theme color for browser chrome; the dark render-status flow keeps matching black chrome). Pinch-zoom is never disabled.
+- DESIGN.md now carries the canonical breakpoint tiers, the touch pressed-state rule, and the ≥44px/≥16px touch-input rules the mobile work shipped this week.
+
+### Changed
+- **Phone-friendly grids and controls across upload and editing flows:** onboarding clip grids and the visuals pool show 2 columns on phones (larger, legible thumbnails); dozens of small controls (remove ×, retry, caption toggle, text-lane tools, "Clear all overlays") now meet the 44px touch floor on phones while keeping their compact desktop look.
+- Number fields in the overlay editor show a proper amber focus ring.
+
+### Fixed
+- The visuals-pool remove button is now visible on phones (it was hover-revealed — invisible but still tappable on touch, deleting without warning).
+
+## [0.7.12.0] — 2026-07-11
+
+### Added
+- **Media overlays are now editable by touch.** Tapping an overlay card opens its editor (previously dead on phones — touch taps were misread as drags), moving and trimming overlays works with your finger, and very small cards degrade gracefully on touch screens: edge handles hide and a tap opens the editor where timing can be typed precisely. Vertical swipes over the timeline still scroll the page.
+- **Overlay editor works at phone sizes:** number fields are 44px tall with 16px text on small screens (no more iOS zoom-jump when tapping a field) and the focused field scrolls into view above the keyboard on touch devices.
+- **Upload feedback:** while an overlay clip uploads, a pulsing dot and status line replace the previous bare text.
+
+### Fixed
+- On desktop, small overlay cards keep their slim trim handles — clicking a short overlay opens/moves it as before (touch-sized handles apply only to touch screens).
+- Scrolling the page with a finger over an overlay card no longer opens its editor as a side effect.
 
 ## [0.7.11.0] — 2026-07-11
 
@@ -27,6 +51,7 @@ All notable changes to this project will be documented in this file.
 ## [0.7.10.1] — 2026-07-11
 
 ### Fixed
+- **`scripts/admin.py` no longer breaks auth when a `.env` value carries an inline comment.** The CLI's tiny .env reader treated everything after `=` as the value, so `ADMIN_API_KEY=abc  # my note` (or the quoted form `="abc" # note`) silently sent a corrupted token and every `/admin/*` call 401'd with no visible cause — the `-v` flag masks the token by design. `load_env()` now follows dotenv semantics, matching how pydantic-settings reads the same file for the local API: an unquoted value is cut at the first whitespace-preceded `#`, and a quoted value ends at its closing quote (so `#` inside quotes stays literal, and a comment may follow the closing quote). Verified byte-for-byte against python-dotenv on the affected shapes; pinned by 15 unit tests in `tests/scripts/test_admin_cli_load_env.py` covering every parser branch (quoting, CRLF, tab-before-`#`, unterminated quotes, missing file).
 - **Full-tree pytest no longer inherits the developer's real `.env`.** `scripts/diff_lyric_sync.py` merged the nearest `.env` into `os.environ` at import time; full-tree collection imports it via its test module, so any pydantic-invalid value on a Settings-typed key (e.g. `GENERATIVE_FAST_REBURN_ENABLED=true   # comment`) failed exactly the 7 tests that build a fresh `Settings()` — in full runs only, never in isolation. The load now happens inside `main()` (CLI behavior unchanged), pinned by `test_import_does_not_mutate_environ`.
 - **`diff_lyric_sync` .env parser now follows dotenv comment semantics.** Inline comments after unquoted values are stripped (`FLAG=true  # note` → `true`), quoted values drop trailing comments and their quotes (`KEY="abc"  # note` → `abc`), `KEY= # note` reads as empty, and `abc#def` keeps its `#` — so a hand-annotated `.env` can no longer poison typed Settings fields or crash the CLI at startup. Pinned by canary lines in `test_main_loads_env_and_strips_inline_comments`.
 
