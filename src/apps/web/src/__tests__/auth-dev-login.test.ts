@@ -7,6 +7,8 @@
  * case re-imports the module under jest.resetModules with the env pre-set.
  */
 
+export {};
+
 const originalEnv = process.env;
 
 function loadProviders(): { id: string; type: string }[] {

@@ -84,8 +84,10 @@
    notes. CSS tokens declared in :root above. Reduced-motion guards on each.
    DESIGN.md §6 is the single source of truth — add new t-* tokens there. */
 
-/* #6 t-modal: scale-up dialog from center. Applied to TemplatePreviewModal's
-   inner card. State classes (.is-open / .is-closing) driven by React state. */
+/* #6 t-modal: scale-up dialog from center. Pattern token with no current
+   consumer (last user TemplatePreviewModal, removed with the dead /template
+   route) — kept as the template for all future modals per DESIGN.md §6.
+   State classes (.is-open / .is-closing) driven by React state. */
 .t-modal {
   transform-origin: center;
   transform: scale(var(--modal-scale));

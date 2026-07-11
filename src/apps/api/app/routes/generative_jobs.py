@@ -2386,7 +2386,21 @@ def resolve_timeline_slots_for_edit(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
-                if _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
+                # Reclamp on a sub-floor span ONLY when the user actually changed
+                # this slot (the worker legitimately emits sub-floor beat spans on
+                # untouched slots) — but reclamp on a footage-overflowing span
+                # REGARDLESS of _window_changed. An upstream delete/edit shifts
+                # this slot's cumulative grid_offset on the non-uniform grid
+                # without the user ever touching THIS slot; deleting a clip must
+                # never fail the save (the worker itself never overflows footage —
+                # it trims to the real window — so the save-time reconstruction
+                # must match that behavior instead of rejecting it).
+                overflows_footage = (
+                    max_source_window_s is not None and duration_s > max_source_window_s + 1e-6
+                )
+                if (
+                    _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9
+                ) or overflows_footage:
                     duration_beats = _smallest_beat_count_clearing_floor(
                         grid_offset,
                         max_source_window_s=max_source_window_s,
@@ -2406,6 +2420,16 @@ def resolve_timeline_slots_for_edit(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
+                # The nearest beat count can round UP past the clip's remaining
+                # footage; reclamp to the largest span that still fits (mirrors
+                # the explicit-beat-slot branch above).
+                if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
+                    duration_beats = _smallest_beat_count_clearing_floor(
+                        grid_offset,
+                        max_source_window_s=max_source_window_s,
+                    )
+                    end = grid_offset + duration_beats
+                    duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
             elif e.duration_s is not None and e.duration_s > 0:
                 # No-music variants snap to 0.5s steps server-side. The editor may

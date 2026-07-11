@@ -5,6 +5,8 @@
  * then test the GET handler logic directly.
  */
 
+export {};
+
 // Mock next/server before any imports
 jest.mock("next/server", () => {
   class MockNextResponse {

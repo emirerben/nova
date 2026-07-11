@@ -199,8 +199,9 @@ class PlanItemResponse(BaseModel):
     conformance: dict | None = None
     # Persona content mode (direction fork, 2026-06-11): drives the film-card
     # header copy — "HOW TO FILM THIS" (create_new/legacy) vs "WHAT TO LOOK FOR"
-    # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Populated on the item
-    # GET (the page's poll path); other responses default to create_new.
+    # (existing_footage) vs "FIND IT OR FILM IT" (mixed). Resolved on the item
+    # GET and on plan (list) responses via content_plans._resolve_item_content_mode
+    # so the two read paths agree; bare mutation responses default to create_new.
     content_mode: str = "create_new"
     # Render archetype assigned at plan-generation time (e.g. "montage",
     # "talking_head"). Null for items generated before this field shipped.
@@ -407,6 +408,10 @@ class PlanItemEdit(BaseModel):
     content_mode: Literal["existing_footage", "create_new", "mixed"] | None = None
 
 
+def _stamp_missing_filming_shot_ids(shots: list[dict]) -> list[dict]:
+    return [{**shot, "shot_id": shot.get("shot_id") or uuid.uuid4().hex} for shot in shots]
+
+
 @router.patch("/{item_id}", response_model=PlanItemResponse)
 async def edit_plan_item(
     item_id: str,
@@ -440,7 +445,7 @@ async def edit_plan_item(
     if "filming_guide" in updates:
         from sqlalchemy.orm.attributes import flag_modified as _flag  # noqa: PLC0415
 
-        item.filming_guide = list(updates["filming_guide"])
+        item.filming_guide = _stamp_missing_filming_shot_ids(list(updates["filming_guide"]))
         _flag(item, "filming_guide")
     if "landscape_fit" in updates and updates["landscape_fit"] is not None:
         item.landscape_fit = updates["landscape_fit"]  # Pydantic Literal already validates
@@ -1739,7 +1744,7 @@ async def expand_idea(
     the proposal in a card and calls PATCH /{item_id} if the user accepts.
     """
     from app.agents._model_client import default_client  # noqa: PLC0415
-    from app.agents._runtime import RunContext  # noqa: PLC0415
+    from app.agents._runtime import RunContext, TerminalError  # noqa: PLC0415
     from app.agents.idea_expander import IdeaExpanderAgent, IdeaExpanderInput  # noqa: PLC0415
 
     item = await _load_owned_item(item_id, user.id, db)
@@ -1755,19 +1760,27 @@ async def expand_idea(
             content_pillars = list(persona.persona.get("content_pillars") or [])
 
     agent = IdeaExpanderAgent(default_client())
-    output = agent.run(
-        IdeaExpanderInput(
-            idea=item.idea or "",
-            persona_summary=persona_summary,
-            content_pillars=content_pillars,
-        ),
-        ctx=RunContext(job_id=None),
-    )
+    try:
+        output = agent.run(
+            IdeaExpanderInput(
+                idea=item.idea or "",
+                persona_summary=persona_summary,
+                content_pillars=content_pillars,
+            ),
+            ctx=RunContext(job_id=None),
+        )
+    except TerminalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Couldn't plan this idea — try again.",
+        ) from exc
 
     return IdeaExpandResponse(
         theme=output.theme,
         filming_suggestion=output.filming_suggestion,
-        filming_guide=[s.model_dump() for s in output.filming_guide],
+        filming_guide=_stamp_missing_filming_shot_ids(
+            [s.model_dump() for s in output.filming_guide]
+        ),
         rationale=output.rationale,
     )
 

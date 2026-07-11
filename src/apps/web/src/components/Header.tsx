@@ -34,7 +34,7 @@ export default function Header() {
   if (isAdmin) return null;
 
   // Light surfaces: landing + all plan pages (incl. /plan/items) + library + generative.
-  // Dark: template render flow (/template, /template-jobs) and /admin (early-return above).
+  // Dark: template render job flow (/template-jobs) and /admin (early-return above).
   const isLight =
     pathname === "/" ||
     pathname.startsWith("/plan") ||
@@ -176,6 +176,13 @@ function AuthControl({ isLight = false }: { isLight?: boolean }) {
             className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
           >
             My videos
+          </Link>
+          <Link
+            href="/plan/persona"
+            onClick={() => setOpen(false)}
+            className={`block px-3 py-2 text-sm ${isLight ? "text-[#3f3f46] hover:bg-[#fafaf8]" : "text-zinc-200 hover:bg-zinc-900"}`}
+          >
+            Your persona
           </Link>
           {!confirming ? (
             <button

@@ -38,6 +38,10 @@ class IdeaExpanderOutput(BaseModel):
     rationale: str = Field(default="", max_length=400)
 
 
+class EmptyFilmingGuideError(RefusalError, SchemaError):
+    """Retryable empty-guide error: refusal semantics, schema retry path."""
+
+
 class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.idea_expander",
@@ -56,7 +60,7 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
     response_json = True
 
     def required_fields(self) -> list[str]:
-        return ["theme", "filming_suggestion"]
+        return ["theme", "filming_suggestion", "filming_guide"]
 
     def render_prompt(self, input: IdeaExpanderInput) -> str:  # noqa: A002
         pillars_block = (
@@ -95,6 +99,10 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             for s in output.filming_guide
             if s.what.strip()
         ][:4]
+        if not shots:
+            raise EmptyFilmingGuideError(
+                "idea_expander: filming_guide must contain 2-4 concrete shots"
+            )
         return IdeaExpanderOutput(
             theme=output.theme.strip(),
             filming_suggestion=output.filming_suggestion.strip(),
@@ -107,7 +115,8 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             "\n\nIMPORTANT: return ONLY valid JSON with keys: "
             "theme (string, ≤80 chars), "
             "filming_suggestion (string, ≤300 chars), "
-            "filming_guide (list of {what, how, duration_s}), "
+            "filming_guide (list of 2-4 non-empty shots; each shot MUST include "
+            "what, how, and duration_s), "
             "rationale (string, ≤400 chars). "
             "No markdown, no prose outside the JSON."
         )

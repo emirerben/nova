@@ -48,10 +48,6 @@ export interface PersonaContent {
   // The AI's "why this lane" — shown read-only in the dashboard. Optional:
   // personas generated before this field shipped won't have it.
   rationale?: string;
-  // The single most revealing thing the creator said in the chat interview —
-  // shown verbatim as "You said: '...'" on the persona reveal. Empty for
-  // personas generated from the old flat-field questionnaire.
-  signature_quote?: string;
   // "What kind of videos do you make?" onboarding signal.
   // talking_head | montage | day_vlog | mixed
   footage_type_bias?: string[];
@@ -370,10 +366,6 @@ export async function getContentPlan(): Promise<ContentPlan | null> {
  */
 export function regenerateContentPlan(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/regenerate`, { method: "POST" });
-}
-
-export function addIdeasToPlan(planId: string): Promise<ContentPlan> {
-  return request<ContentPlan>(`/content-plans/${planId}/add-ideas`, { method: "POST" });
 }
 
 /** Idea-centric: append AI-generated ideas to the plan (opt-in, never auto-runs). */
@@ -1369,7 +1361,7 @@ export async function getPlanItemJobStatusFresh(jobId: string): Promise<PlanItem
 
 // ── Creator Agent M1: Per-user style ─────────────────────────────────────────
 // Gated behind USER_STYLE_ENABLED on the backend (returns 404 when disabled).
-// Frontend: render StyleCard only when the style API returns non-404.
+// Frontend: render style surfaces only when the style API returns non-404.
 
 export interface StyleKnobs {
   font_family?: string | null;

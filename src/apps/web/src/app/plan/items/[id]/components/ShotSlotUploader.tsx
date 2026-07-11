@@ -416,7 +416,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
 
   // ── WS3: Inline shot text editing ────────────────────────────────────────
 
-  const [editingShotId, setEditingShotId] = useState<string | null>(null);
+  const [editingShotId, setEditingShotId] = useState<string | undefined>(undefined);
   const [editWhat, setEditWhat] = useState("");
   const [editHow, setEditHow] = useState("");
   const [shotEditError, setShotEditError] = useState<string | null>(null);
@@ -436,7 +436,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
         what: editWhat.trim() || shot.what,
         how: editHow.trim(),
       });
-      setEditingShotId(null);
+      setEditingShotId(undefined);
       setShotEditError(null);
       onAttached(updated);
     } catch {
@@ -445,7 +445,7 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
   }
 
   function handleCancelEditShot() {
-    setEditingShotId(null);
+    setEditingShotId(undefined);
     setShotEditError(null);
   }
 
@@ -550,7 +550,11 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
 
       {/* Header row (D12: typographic eyebrow, no emoji; mode-aware copy) */}
       <div className="mb-4 flex items-center justify-between">
-        <span className="text-xs font-medium uppercase tracking-[0.08em] text-lime-700">
+        <span
+          data-plan-shot-list-heading
+          tabIndex={-1}
+          className="text-xs font-medium uppercase tracking-[0.08em] text-lime-700"
+        >
           {HEADER_BY_MODE[item.content_mode ?? "create_new"] ?? HEADER_BY_MODE.create_new}
         </span>
         {/* Progress pill */}
@@ -582,7 +586,12 @@ export default function ShotSlotUploader({ item, onAttached, onBusyChange }: Sho
           const totalFilled = (state.phase === "filled" ? 1 : 0) + extraClips.length;
           const remaining = Math.max(0, clipCount - totalFilled);
           return (
-            <div key={sid} className="py-3 first:pt-0 last:pb-0">
+            <div
+              key={sid}
+              data-plan-shot-row={i}
+              tabIndex={i === 0 ? -1 : undefined}
+              className="py-3 first:pt-0 last:pb-0"
+            >
               {/* Shot header — WS3: inline editable */}
               {isEditing ? (
                 <div className="mb-2">
