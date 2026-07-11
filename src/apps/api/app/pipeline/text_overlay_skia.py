@@ -482,6 +482,24 @@ def _skia_color_from_hex(hex_color: str, alpha: int = 255) -> int:
     return skia.ColorSetARGB(alpha, r, g, b)
 
 
+def _clamp_byte(value: float) -> int:
+    return max(0, min(255, int(value)))
+
+
+def _resolve_glow_kwargs(overlay: dict, alpha: float = 1.0) -> dict[str, Any]:
+    """Skia-only outer text halo. Missing/zero fields preserve the legacy path."""
+    strength = _finite_float(overlay.get("glow_strength"), 0.0)
+    strength = max(0.0, min(1.0, strength)) * max(0.0, min(1.0, alpha))
+    color = overlay.get("glow_color")
+    if strength <= 0.0 or not isinstance(color, str) or not color:
+        return {}
+    try:
+        r, g, b, _ = _hex_to_rgba(color)
+    except Exception:  # noqa: BLE001 - invalid optional decoration should fail closed
+        return {}
+    return {"glow_rgb": (r, g, b), "glow_strength": strength}
+
+
 def _skia_gradient_shader(
     spec: dict,
     block_x: float,
@@ -919,6 +937,7 @@ def _draw_centered_text(
         draw_kwargs: dict[str, Any] = {"shader": gradient_shader}
         if letter_spacing_px != 0.0:
             draw_kwargs["letter_spacing_px"] = letter_spacing_px
+        draw_kwargs.update(_resolve_glow_kwargs(overlay, alpha))
         _draw_line_with_layers(
             canvas,
             line,
@@ -955,17 +974,34 @@ def _draw_line_with_layers(
     *,
     shader: Any = None,
     letter_spacing_px: float = 0.0,
+    glow_rgb: tuple[int, int, int] | None = None,
+    glow_strength: float = 0.0,
 ) -> None:
-    """Shadow → stroke → fill, in that order, matching Pillow's compositing.
+    """Optional glow → shadow → stroke → fill, matching Pillow's base compositing.
 
     When ``shader`` is provided (a ``skia.Shader`` from
     ``_skia_gradient_shader``), the fill paint uses it instead of the solid
     ``fill_color``.  Shadow and stroke remain solid black so the gradient
-    glyphs keep depth and legibility.
+    glyphs keep depth and legibility. ``glow_*`` is Skia-only and ignored by
+    Pillow by design; absent/zero values skip the glow passes entirely.
 
     ``letter_spacing_px`` applies per-character tracking to every layer
-    (shadow, stroke, fill share one advance model — see _draw_string_spaced).
+    (glow, shadow, stroke, fill share one advance model — see _draw_string_spaced).
     """
+    if glow_rgb is not None and glow_strength > 0.0:
+        r, g, b = glow_rgb
+        glow_strength = max(0.0, min(1.0, glow_strength))
+        for sigma, base_alpha in ((8.0, 120.0), (20.0, 220.0)):
+            glow_alpha = _clamp_byte(base_alpha * glow_strength)
+            if glow_alpha <= 0:
+                continue
+            glow_paint = skia.Paint(
+                AntiAlias=True,
+                Color=skia.ColorSetARGB(glow_alpha, r, g, b),
+                MaskFilter=skia.MaskFilter.MakeBlur(skia.kNormal_BlurStyle, sigma),
+            )
+            _draw_string_spaced(canvas, line, x, baseline_y, font, glow_paint, letter_spacing_px)
+
     # Shadow: soft black blur, offset 6px down (Pillow uses y+6, alpha 160).
     if shadow_alpha > 0:
         shadow_paint = skia.Paint(
@@ -1173,6 +1209,7 @@ def _draw_pop_in_with_suffix(
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
+    glow_kwargs = _resolve_glow_kwargs(overlay)
     static_lines: list[str] = []
     for i, line in enumerate(full_lines):
         if i == suffix_line_idx:
@@ -1198,6 +1235,7 @@ def _draw_pop_in_with_suffix(
             fill_color,
             stroke_px,
             shadow_alpha=160,
+            **glow_kwargs,
         )
 
     suffix_static_prefix = static_lines[suffix_line_idx]
@@ -1222,6 +1260,7 @@ def _draw_pop_in_with_suffix(
         fill_color,
         stroke_px,
         shadow_alpha=160,
+        **glow_kwargs,
     )
     canvas.restore()
 
@@ -1294,6 +1333,7 @@ def _draw_karaoke_line(
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
     highlight_color = _skia_color_from_hex(overlay.get("highlight_color") or "#FFD24A")
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
+    glow_kwargs = _resolve_glow_kwargs(overlay)
 
     for line_idx, line in enumerate(line_word_indices):
         line_w = sum(word_widths[i] for i in line) + space_w * max(0, len(line) - 1)
@@ -1305,6 +1345,7 @@ def _draw_karaoke_line(
             draw_kwargs: dict[str, Any] = {"shadow_alpha": 160}
             if spacing_px != 0.0:
                 draw_kwargs["letter_spacing_px"] = spacing_px
+            draw_kwargs.update(glow_kwargs)
             _draw_line_with_layers(
                 canvas,
                 words[i],
