@@ -16,6 +16,7 @@ jest.mock("@/lib/plan-api", () => ({
   setPlanItemCaptions: jest.fn().mockResolvedValue(undefined),
   applyPlanItemCaptions: jest.fn().mockResolvedValue(undefined),
   setPlanItemCaptionFont: jest.fn().mockResolvedValue(undefined),
+  setPlanItemCaptionPosition: jest.fn().mockResolvedValue(undefined),
   setPlanItemCaptionsEnabled: jest.fn().mockResolvedValue(undefined),
   setPlanItemVariantCaptionStyle: jest.fn().mockResolvedValue(undefined),
 }));
@@ -24,6 +25,7 @@ import CaptionEditor from "@/app/plan/_components/CaptionEditor";
 import {
   applyPlanItemCaptions,
   setPlanItemCaptionFont,
+  setPlanItemCaptionPosition,
   setPlanItemCaptions,
   setPlanItemCaptionsEnabled,
   setPlanItemVariantCaptionStyle,
@@ -40,6 +42,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  delete process.env.NEXT_PUBLIC_CAPTION_POSITION_ENABLED;
 });
 
 const CUES: CaptionCue[] = [
@@ -154,6 +157,25 @@ describe("CaptionEditor caption style (sentence/word)", () => {
     renderEditor();
     fireEvent.click(screen.getByRole("button", { name: /Word-by-word/ }));
     expect(setPlanItemVariantCaptionStyle).toHaveBeenCalledWith("item-1", "var-1", "word");
+  });
+});
+
+describe("CaptionEditor caption position", () => {
+  it("hides the position control unless the feature flag is on", () => {
+    renderEditor();
+    expect(screen.queryByText("Caption position")).not.toBeInTheDocument();
+  });
+
+  it("renders the position control behind the flag and sends y_frac", async () => {
+    process.env.NEXT_PUBLIC_CAPTION_POSITION_ENABLED = "true";
+    renderEditor();
+    expect(screen.getByText("Caption position")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Middle" }));
+    });
+
+    expect(setPlanItemCaptionPosition).toHaveBeenCalledWith("item-1", "var-1", 0.66);
   });
 });
 

@@ -1393,6 +1393,103 @@ def _pillow_rgba_image(overlay: dict) -> Image.Image:
         return Image.open(out).convert("RGBA").copy()
 
 
+# -- Skia-only colored glow ---------------------------------------------------
+
+
+def test_skia_text_glow_changes_rendered_pixels():
+    base = {
+        "text": "GLOW",
+        "effect": "none",
+        "text_size_px": 120,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFD24A",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+
+    without = _skia_rgba_image(base)
+    with_glow = _skia_rgba_image({**base, "glow_color": "#FFD24A", "glow_strength": 0.8})
+
+    assert with_glow.tobytes() != without.tobytes()
+    without_bbox = without.getbbox()
+    with_bbox = with_glow.getbbox()
+    assert without_bbox is not None and with_bbox is not None
+    assert with_bbox[0] < without_bbox[0]
+    assert with_bbox[2] > without_bbox[2]
+
+
+def test_skia_text_glow_strength_zero_matches_absent_bytes():
+    base = {
+        "text": "NO GLOW",
+        "effect": "none",
+        "text_size_px": 96,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFD24A",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+
+    absent = _skia_rgba_image(base)
+    zero = _skia_rgba_image({**base, "glow_color": "#FFD24A", "glow_strength": 0.0})
+
+    assert zero.tobytes() == absent.tobytes()
+
+
+def test_draw_line_glow_alpha_scales_with_strength():
+    font = skia.Font(tos._typeface_for_overlay({"font_family": "Inter"}), 80)
+    seen_colors: list[int] = []
+
+    def capture_draw(canvas, line, x, baseline_y, font, paint, letter_spacing_px):
+        seen_colors.append(paint.getColor())
+        return None
+
+    with mock.patch.object(tos, "_draw_string_spaced", side_effect=capture_draw):
+        tos._draw_line_with_layers(
+            mock.MagicMock(),
+            "GLOW",
+            100.0,
+            200.0,
+            font,
+            skia.ColorSetARGB(255, 255, 210, 74),
+            stroke_px=0,
+            shadow_alpha=160,
+            glow_rgb=(255, 210, 74),
+            glow_strength=0.5,
+        )
+
+    assert len(seen_colors) == 4
+    assert (seen_colors[0] >> 24) & 0xFF == 60
+    assert (seen_colors[1] >> 24) & 0xFF == 110
+    assert seen_colors[0] & 0xFFFFFF == 0xFFD24A
+    assert seen_colors[1] & 0xFFFFFF == 0xFFD24A
+    assert seen_colors[2] == skia.ColorSetARGB(160, 0, 0, 0)
+    assert seen_colors[3] == skia.ColorSetARGB(255, 255, 210, 74)
+
+
+def test_pillow_renderer_ignores_skia_only_glow_fields():
+    """Glow is a deliberate Skia-only decoration for burned agentic/generative
+    overlays. The Pillow preview/classic renderer must safely drop the unknown
+    fields without crashing or changing bytes; this is the explicit exception
+    to the renderer-parity convention for glow_color/glow_strength."""
+    base = {
+        "text": "PILLOW",
+        "effect": "none",
+        "text_size_px": 96,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "text_color": "#FFD24A",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+
+    without = _pillow_rgba_image(base)
+    with_glow_fields = _pillow_rgba_image({**base, "glow_color": "#FFD24A", "glow_strength": 0.8})
+
+    assert with_glow_fields.tobytes() == without.tobytes()
+
+
 # ── Renderer parity: display_text honored by both Skia and Pillow ────────────
 # Lock the CLAUDE.md renderer-parity invariant for the new `display_text`
 # field. Layer 2's `_finalize_lyric_audible_window` writes `display_text` on
