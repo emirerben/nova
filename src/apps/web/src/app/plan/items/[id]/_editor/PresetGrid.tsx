@@ -7,7 +7,7 @@
  * Each tile renders in the preset's REAL look (registry font via
  * resolveCssFont, fill color, stroke, highlight chip) on a near-black tile so
  * light fills read like they do over footage. Thumbnail word = the selected
- * text's first word (live), falling back to Nova-voiced samples — never "ART"
+ * text's first word (live), falling back to Kria-voiced samples — never "ART"
  * (plan Pass 4). The applied preset carries a lime selection ring.
  */
 
@@ -48,7 +48,7 @@ export default function PresetGrid({
   onPick,
 }: {
   presets: TextPreset[];
-  /** First word of the selected text, or null → Nova sample words. */
+  /** First word of the selected text, or null → Kria sample words. */
   sampleWord: string | null;
   appliedPresetId: string | null;
   favoritePresetIds?: string[];

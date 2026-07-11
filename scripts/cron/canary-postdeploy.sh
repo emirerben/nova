@@ -19,7 +19,7 @@ export PATH="$HOME/.fly/bin:$HOME/.local/bin:/opt/homebrew/bin:/opt/homebrew/sbi
 
 APP="nova-video"
 HEALTH_URL="https://nova-video.fly.dev/health"
-WEB_URL="https://nova-video.vercel.app"
+WEB_URL="https://usekria.com"
 STATE_FILE="$HOME/.nova/canary-last-release"
 LOG_DIR="$HOME/.nova/logs"
 mkdir -p "$LOG_DIR"
@@ -28,7 +28,7 @@ exec >>"$LOG" 2>&1
 
 alert() {
   echo "CANARY FAIL $(date '+%H:%M:%S'): $*"
-  osascript -e "display notification \"$*\" with title \"Nova canary\" sound name \"Basso\"" 2>/dev/null || true
+  osascript -e "display notification \"$*\" with title \"Kria canary\" sound name \"Basso\"" 2>/dev/null || true
 }
 
 echo "--- canary tick $(date) ---"

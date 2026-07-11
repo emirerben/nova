@@ -211,7 +211,7 @@ export default function OverlaySuggestions({
     <div className="mt-6 border-t border-zinc-200 pt-4" data-testid="overlay-suggestions">
       <p className="mb-1 text-[12px] font-semibold text-[#3f3f46]">AI suggestions</p>
       <p className="mb-3 text-[12px] text-[#71717a]">
-        Nova places your screenshots and clips where you talk about them.
+        Kria places your screenshots and clips where you talk about them.
       </p>
 
       <input

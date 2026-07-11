@@ -34,7 +34,7 @@ from app.services.audio_preprocess import (
 log = structlog.get_logger()
 
 # OpenAI Whisper API ceiling — uploads must be < 25 MB (real limit, not
-# a Nova-side choice). When over, _shrink_for_whisper transcodes in two
+# a Kria-side choice). When over, _shrink_for_whisper transcodes in two
 # stages (strip-video lossless, then mono-64k re-encode) before upload.
 _MAX_FILE_BYTES = 25 * 1024 * 1024
 

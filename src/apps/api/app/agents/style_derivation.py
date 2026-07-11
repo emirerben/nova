@@ -121,7 +121,7 @@ class StyleDerivationAgent(Agent[StyleDerivationInput, StyleDerivationOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.plan.style_derivation",
         prompt_id="derive_user_style",
-        prompt_version="2026-06-28",
+        prompt_version="2026-07-11-kria",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

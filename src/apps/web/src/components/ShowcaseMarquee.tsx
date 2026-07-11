@@ -132,7 +132,7 @@ export default function ShowcaseMarquee({ clips }: Props) {
           md+: flex-1 cards share the row width; pb-8 prevents shadow bleed. */}
       <section
         className="mt-[72px] flex items-end gap-[18px] overflow-x-auto md:overflow-visible px-9 pb-8 touch-pan-x"
-        aria-label="Videos created by Nova"
+        aria-label="Videos created by Kria"
       >
         {clips.map((clip, i) => (
           <div
@@ -158,7 +158,7 @@ export default function ShowcaseMarquee({ clips }: Props) {
                 loop
                 playsInline
                 preload="metadata"
-                aria-label={`${clip.title} — created with Nova`}
+                aria-label={`${clip.title} — created with Kria`}
                 onError={() => {
                   // Hide the video element on error; the gradient fallback shows.
                   const el = videoRefs.current[i];
@@ -176,13 +176,13 @@ export default function ShowcaseMarquee({ clips }: Props) {
 
             {/* Credit overlay */}
             <span className="absolute bottom-[14px] left-[15px] text-[9px] uppercase tracking-[0.14em] text-white/50">
-              created with nova
+              created with kria
             </span>
           </div>
         ))}
       </section>
       <p className="mt-[52px] text-center text-[11.5px] uppercase tracking-[0.2em] text-[#a1a1aa]">
-        Created by Nova — real videos, edited by the agent
+        Created by Kria — real videos, edited by the agent
       </p>
     </>
   );

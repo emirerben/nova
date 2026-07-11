@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <!-- Update this path after cloning to wherever your Nova worktree lives -->
+        <!-- Update this path after cloning to wherever your Kria worktree lives -->
         <string>/Users/emirerben/Projects/nova/scripts/brain/refresh-nova.sh</string>
     </array>
 

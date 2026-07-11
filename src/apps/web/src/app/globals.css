@@ -18,7 +18,7 @@
   --zinc2: #e4e4e7;
 
   /* ── transitions.dev motion tokens (DESIGN.md §6) ──────────────────────────
-     Reconciled with existing Nova values where possible. Nova's existing
+     Reconciled with existing Kria values where possible. Kria's existing
      keyframes (fade-up 0.35s, shimmer 2.2s) and constants.ts D14 values are
      the primary sources; these supplement only where no existing value fits.
      See §6 for the full token catalogue. */
@@ -80,7 +80,7 @@
 }
 
 /* ── transitions.dev CSS ────────────────────────────────────────────────────
-   Verbatim from transitions.dev skill (#6, #8, #14, #18) with Nova-specific
+   Verbatim from transitions.dev skill (#6, #8, #14, #18) with Kria-specific
    notes. CSS tokens declared in :root above. Reduced-motion guards on each.
    DESIGN.md §6 is the single source of truth — add new t-* tokens there. */
 

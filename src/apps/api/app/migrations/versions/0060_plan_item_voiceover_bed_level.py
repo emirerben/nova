@@ -9,9 +9,9 @@ Changes:
     level for narrated-walkthrough items (0.0 = voice only, 1.0 = loudest).
     Set via PATCH /plan-items/{id}/voiceover-bed-level; threaded to
     build_generative_job so the footage audio plays, side-chain ducked, under
-    the narration. NULL = use Nova's default level.
+    the narration. NULL = use Kria's default level.
 
-No backfill needed (existing rows stay NULL = Nova default at render time).
+No backfill needed (existing rows stay NULL = Kria default at render time).
 """
 
 import sqlalchemy as sa

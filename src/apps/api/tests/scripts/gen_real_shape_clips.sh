@@ -27,7 +27,7 @@
 #   tests/scripts/gen_real_shape_clips.sh /tmp/real-shape-clips
 #   PARITY_CLIPS_DIR=/tmp/real-shape-clips pytest tests/quality/
 #
-# Note: these are NOT actual Nova-user uploads. They're production-shape
+# Note: these are NOT actual Kria-user uploads. They're production-shape
 # synthetic content with encoder-stressing characteristics. For a true
 # production-grade parity sweep you still need real user-shot footage
 # staged in GCS — see tests/benchmarks/single_pass_rollout_runbook.md.

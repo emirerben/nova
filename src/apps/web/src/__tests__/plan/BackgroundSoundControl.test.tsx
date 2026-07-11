@@ -59,7 +59,7 @@ describe("BackgroundSoundControl", () => {
     expect(setPlanItemNarratedBedLevel).toHaveBeenCalledWith("item-1", "var-1", 0.9);
   });
 
-  it("falls back to the default level when initialBedLevel is null (Nova's default)", () => {
+  it("falls back to the default level when initialBedLevel is null (Kria's default)", () => {
     renderControl({ initialBedLevel: null });
     const slider = screen.getByLabelText(
       "Original video background sound level",

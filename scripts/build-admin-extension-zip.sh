@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build and package the Nova Chrome extension for the admin install page.
+# Build and package the Kria Chrome extension for the admin install page.
 #
 # Single-command rebuild used to refresh the zip that admins download from
 # /admin/extension/install. Run when src/apps/extension/src/** changes. Output:
-#   - src/apps/web/public/admin/extension/nova-extension.zip
+#   - src/apps/web/public/admin/extension/kria-extension.zip
 #   - src/apps/web/public/admin/extension/extension-info.json
 #
 # Asserts integrity before writing the zip:
@@ -23,7 +23,7 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 EXT_DIR="$REPO_ROOT/src/apps/extension"
 DIST_DIR="$EXT_DIR/dist"
 OUT_DIR="$REPO_ROOT/src/apps/web/public/admin/extension"
-ZIP_PATH="$OUT_DIR/nova-extension.zip"
+ZIP_PATH="$OUT_DIR/kria-extension.zip"
 INFO_PATH="$OUT_DIR/extension-info.json"
 
 manifest_version_of() {
@@ -61,7 +61,7 @@ if command -v gitleaks >/dev/null 2>&1; then
   # Scan the source tree, not the bundled dist/. Bundled vendor code (notably
   # youtubei.js) embeds YouTube's well-known public Innertube API key and the
   # literal token `client_secret` as JSON field names in OAuth scaffolding —
-  # both false positives. The threat we're guarding against here is a Nova
+  # both false positives. The threat we're guarding against here is a Kria
   # developer accidentally dropping a real key into the extension source.
   gitleaks detect --no-git --source="$EXT_DIR/src"
 else

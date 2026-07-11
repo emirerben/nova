@@ -321,13 +321,13 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       render(<PlanItemPage />);
     });
 
-    // Two-pane redesign: NovaHelper replaces the full ConformanceVerdictPanel tile.
-    // on_track shows a one-liner (lime dot + "Looks on-brief.") inside nova-helper.
-    expect(screen.getByTestId("nova-helper")).toBeInTheDocument();
+    // Two-pane redesign: KriaHelper replaces the full ConformanceVerdictPanel tile.
+    // on_track shows a one-liner (lime dot + "Looks on-brief.") inside kria-helper.
+    expect(screen.getByTestId("kria-helper")).toBeInTheDocument();
     expect(screen.getByText(/Looks on-brief/)).toBeInTheDocument();
   });
 
-  it("test_conformance_off_brief_tile: one-liner summary + Tell Nova + Hide", async () => {
+  it("test_conformance_off_brief_tile: one-liner summary + Tell Kria + Hide", async () => {
     const item = makeItem({
       status: "awaiting_clips",
       clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
@@ -352,12 +352,12 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
       render(<PlanItemPage />);
     });
 
-    // Two-pane redesign: NovaHelper shows the conformance summary as a one-liner
+    // Two-pane redesign: KriaHelper shows the conformance summary as a one-liner
     // (no label, no evidence line, no full-tile chrome) — calmer and less opinionated.
-    expect(screen.getByTestId("nova-helper")).toBeInTheDocument();
+    expect(screen.getByTestId("kria-helper")).toBeInTheDocument();
     expect(screen.getByText(/This reads as a guitar session/)).toBeInTheDocument();
     // Recourse buttons — condensed labels in the one-liner.
-    expect(screen.getByText(/Tell Nova/)).toBeInTheDocument();
+    expect(screen.getByText(/Tell Kria/)).toBeInTheDocument();
     expect(screen.getByText(/Hide/)).toBeInTheDocument();
     // Mismatch bullets and suggestions are data, not display.
     expect(screen.queryByText(/Expected kitchen footage/)).toBeNull();

@@ -52,11 +52,11 @@ class TestLegacyPersonaContract:
 class TestPromptDirection:
     def test_content_plan_prompt_includes_current_situation(self):
         p = _persona(
-            goal="grow Nova's TikTok audience",
+            goal="grow Kria's TikTok audience",
             current_situation="based in Istanbul; the Argentina footage is a past trip",
         )
         prompt = _render(p)
-        assert "goal: grow Nova's TikTok audience" in prompt
+        assert "goal: grow Kria's TikTok audience" in prompt
         assert "current situation: based in Istanbul" in prompt
 
     def test_legacy_persona_renders_no_direction_lines(self):

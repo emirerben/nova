@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 # Bump when prompts/analyze_tiktok_profile.txt changes.
 # 2026-06-06 — initial: enriched-fetch analysis for persona/plan/hook injection.
-TIKTOK_ANALYZER_PROMPT_VERSION = "2026-06-06"
+TIKTOK_ANALYZER_PROMPT_VERSION = "2026-07-11-kria"
 
 # Bounded so the summary can't bloat three downstream prompts.
 _MAX_SUMMARY_CHARS = 1200

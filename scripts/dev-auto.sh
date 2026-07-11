@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nova — one-command dev environment with hot reload
+# Kria — one-command dev environment with hot reload
 #
 # Starts:
 #   - redis + postgres via docker-compose (infra only)

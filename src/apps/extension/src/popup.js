@@ -1,10 +1,10 @@
-// Popup UI for the Nova Music Ingest extension. The primary entry point is the
-// Nova admin SPA itself (which calls in via externally_connectable); this popup
-// is a debugging / standalone fallback AND the place admins enter their Nova
+// Popup UI for the Kria Music Ingest extension. The primary entry point is the
+// Kria admin SPA itself (which calls in via externally_connectable); this popup
+// is a debugging / standalone fallback AND the place admins enter their Kria
 // admin BasicAuth credentials (used by offscreen.js when calling /api/admin/*).
 
 import {
-  isAllowedNovaApiOrigin,
+  isAllowedKriaApiOrigin,
   allowedOriginsList,
 } from "./lib/origin-allowlist.js";
 import { encodeBasicAuthHeader } from "./lib/basic-auth.js";
@@ -33,7 +33,7 @@ const $status = document.getElementById("status");
   const s = stored[STORAGE_KEY] || {};
   if (s.url) $url.value = s.url;
   if (s.title) $title.value = s.title;
-  $origin.value = stored[ORIGIN_KEY] || "https://nova-video.vercel.app";
+  $origin.value = stored[ORIGIN_KEY] || "https://usekria.com";
   $adminUser.value = stored[ADMIN_USER_KEY] || "";
   $adminPass.value = stored[ADMIN_PASS_KEY] || "";
 })();
@@ -49,7 +49,7 @@ function log(line, cls) {
 
 async function saveSettings() {
   await chrome.storage.local.set({
-    [ORIGIN_KEY]: $origin.value.trim() || "https://nova-video.vercel.app",
+    [ORIGIN_KEY]: $origin.value.trim() || "https://usekria.com",
     [ADMIN_USER_KEY]: $adminUser.value,
     [ADMIN_PASS_KEY]: $adminPass.value,
   });
@@ -73,15 +73,15 @@ $testConn.addEventListener("click", async () => {
   // offscreen.js (which has its own allowlist re-check, so credentials still
   // wouldn't leak, but stale bad state is a UX papercut and a foot-gun for
   // future code paths that might trust the stored origin).
-  if (!isAllowedNovaApiOrigin(origin)) {
+  if (!isAllowedKriaApiOrigin(origin)) {
     log(
-      `Nova API origin not allowlisted: ${origin}. Allowed: ${allowedOriginsList().join(", ")}.`,
+      `Kria API origin not allowlisted: ${origin}. Allowed: ${allowedOriginsList().join(", ")}.`,
       "err",
     );
     return;
   }
   if (!user || !pass) {
-    log("Enter Nova admin username AND password first.", "err");
+    log("Enter Kria admin username AND password first.", "err");
     return;
   }
   await saveSettings();
@@ -114,7 +114,7 @@ $run.addEventListener("click", async () => {
     log("Enter a YouTube URL first", "err");
     return;
   }
-  const origin = $origin.value.trim() || "https://nova-video.vercel.app";
+  const origin = $origin.value.trim() || "https://usekria.com";
   await chrome.storage.local.set({
     [STORAGE_KEY]: { url, title: $title.value },
     [ORIGIN_KEY]: origin,

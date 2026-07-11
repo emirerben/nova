@@ -178,6 +178,6 @@ def build_pr_body(
             else "Blocking gate(s) failed — this PR should not exist; investigate."
         ),
         "",
-        "_Opened by the Nova autonomous dev-loop. You are the merge gate._",
+        "_Opened by the Kria autonomous dev-loop. You are the merge gate._",
     ]
     return "\n".join(lines)

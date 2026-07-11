@@ -37,15 +37,22 @@ from app.routes import (
 
 log = structlog.get_logger()
 
-app = FastAPI(title="Nova API", version="0.1.0")
+app = FastAPI(title="Kria API", version="0.1.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _CORS_ALLOW_ORIGIN_REGEX = r"https://nova-.*-emirerbens-projects\.vercel\.app"
+_CANONICAL_WEB_ORIGIN = "https://usekria.com"
+_LEGACY_WEB_ORIGIN = "https://nova-video.vercel.app"
+_CODE_ALLOWED_ORIGINS = {_CANONICAL_WEB_ORIGIN, _LEGACY_WEB_ORIGIN}
+
+
+def _allowed_origins() -> list[str]:
+    return sorted(set(settings.allowed_origins) | _CODE_ALLOWED_ORIGINS)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=_allowed_origins(),
     allow_origin_regex=_CORS_ALLOW_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
@@ -68,7 +75,7 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
     origin = request.headers.get("origin")
     if not origin:
         return {}
-    allowed = origin in settings.allowed_origins or bool(
+    allowed = origin in _allowed_origins() or bool(
         re.fullmatch(_CORS_ALLOW_ORIGIN_REGEX, origin)
     )
     if not allowed:

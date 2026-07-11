@@ -59,7 +59,7 @@ import { useSfxPreview } from "../../_components/useSfxPreview";
 import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
-import AskNovaPanel from "./components/AskNovaPanel";
+import AskKriaPanel from "./components/AskKriaPanel";
 import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
@@ -395,8 +395,8 @@ export default function PlanItemPage() {
     (srcGcsPath: string) => suggestionAssetMetaBySrcPath.get(srcGcsPath),
     [suggestionAssetMetaBySrcPath],
   );
-  // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
-  const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
+  // Ask Kria advisor panel: closed | opened normally | opened via "Tell Kria".
+  const [askKria, setAskKria] = useState<null | "default" | "contest">(null);
   const pendingEdits = useRef<Map<string, PendingEdit>>(new Map());
   // Incremented whenever pendingEdits is mutated so the variants memo re-runs
   // immediately (useMemo only tracks reactive dependencies; the ref itself is not reactive).
@@ -1433,7 +1433,7 @@ export default function PlanItemPage() {
                     className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
                   >
                     <span aria-hidden>✦</span>
-                    Not sure what to say? Write a script with Nova
+                    Not sure what to say? Write a script with Kria
                   </Link>
                 )}
               </div>
@@ -1579,15 +1579,15 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Nova helper — inline, below Generate (WS1: moved from right rail) */}
+            {/* Kria helper — inline, below Generate (WS1: moved from right rail) */}
             <div className="mt-4">
-              <NovaHelper
+              <KriaHelper
                 item={item}
                 conformanceChecking={conformanceChecking}
-                askNova={askNova}
-                onOpen={() => setAskNova("default")}
-                onContest={() => setAskNova("contest")}
-                onClose={() => setAskNova(null)}
+                askKria={askKria}
+                onOpen={() => setAskKria("default")}
+                onContest={() => setAskKria("contest")}
+                onClose={() => setAskKria(null)}
                 onDismissConformance={async () => {
                   try {
                     await dismissConformance(itemId);
@@ -1764,9 +1764,9 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
   if (variant.text_mode === "lyrics" && track) return `Beat-synced to ${track}.`;
   if (variant.text_mode === "lyrics") return "Beat-synced lyrics overlay.";
   if (variant.text_mode === "agent_text" && track) return `Styled text over ${track}.`;
-  if (variant.text_mode === "agent_text") return "Nova-written intro, your original audio.";
+  if (variant.text_mode === "agent_text") return "Kria-written intro, your original audio.";
   if (variant.text_mode === "none") return "Your original audio, kept.";
-  return `Nova generated ${totalVariants} edit${totalVariants !== 1 ? "s" : ""}.`;
+  return `Kria generated ${totalVariants} edit${totalVariants !== 1 ? "s" : ""}.`;
 }
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
@@ -1785,7 +1785,7 @@ const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
  * Owns the focused variant's edit session and renders the Hero + rail layout.
  *
  * Layout:
- *   HERO — large 9/16 video player (active variant). "Nova's pick" lime badge
+ *   HERO — large 9/16 video player (active variant). "Kria's pick" lime badge
  *   on variants[0]; text_mode label pill below the video.
  *
  *   RIGHT (desktop) / BELOW (mobile):
@@ -2079,7 +2079,7 @@ function FocusedResults({
     return () => clearInterval(t);
   }, [editSession.isSaving, refetch]);
 
-  const downloadName = `nova-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
+  const downloadName = `kria-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
 
   useEffect(() => {
     if (!pendingDownloadRef.current) return;
@@ -2179,8 +2179,8 @@ function FocusedResults({
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
-  // "Nova's pick" is always the first variant (index 0 in the variants array)
-  const isNovaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
+  // "Kria's pick" is always the first variant (index 0 in the variants array)
+  const isKriaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
 
   // Text-mode label for the pill below the hero. Narrated variants carry the
   // creator's recorded voiceover (not the clips' original audio), so they get
@@ -2232,10 +2232,10 @@ function FocusedResults({
           {/* data-variant-preview: stable DOM hook for the SuggestionRail reveal
               (row click seeks this variant's preview video — plans/005 1A). */}
           <div className="relative" data-variant-preview={variant?.variant_id}>
-            {/* "Nova's pick" badge */}
-            {isNovaPick && variant?.output_url && (
+            {/* "Kria's pick" badge */}
+            {isKriaPick && variant?.output_url && (
               <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
-                Nova&apos;s pick
+                Kria&apos;s pick
               </span>
             )}
             {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
@@ -3784,7 +3784,7 @@ function slugify(s: string): string {
 // Display-only: never disables or blocks Generate. Redesigned per DESIGN.md §7-D10
 // after the wrong-brief incident: dashed zinc (no red walls), a READ AGAINST
 // evidence line so the user can SEE what was judged, advice voice, and real
-// recourse ("Tell Nova" re-reads the clip; "Hide this read" dismisses).
+// recourse ("Tell Kria" re-reads the clip; "Hide this read" dismisses).
 
 const VERDICT_LABEL: Record<"minor_drift" | "off_brief", string> = {
   minor_drift: "Close — one tweak",
@@ -3793,11 +3793,11 @@ const VERDICT_LABEL: Record<"minor_drift" | "off_brief", string> = {
 
 function ConformanceVerdictPanel({
   conformance,
-  onTellNova,
+  onTellKria,
   onDismiss,
 }: {
   conformance: ConformanceVerdict;
-  onTellNova: () => void;
+  onTellKria: () => void;
   onDismiss: () => void;
 }) {
   // Render gates: dismissed/suppressed verdicts and low-confidence reads show
@@ -3851,10 +3851,10 @@ function ConformanceVerdictPanel({
       <div className="mt-3 flex gap-4">
         <button
           type="button"
-          onClick={onTellNova}
+          onClick={onTellKria}
           className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
         >
-          Looks wrong? Tell Nova
+          Looks wrong? Tell Kria
         </button>
         <button
           type="button"
@@ -3871,16 +3871,16 @@ function ConformanceVerdictPanel({
   );
 }
 
-// ── Nova helper ─────────────────────────────────────────────────────────────────
+// ── Kria helper ─────────────────────────────────────────────────────────────────
 // One quiet line in the right action panel. Collapses the two pre-generate AI
-// surfaces (conformance critic + Ask Nova) into a single lime-dot row.
+// surfaces (conformance critic + Ask Kria) into a single lime-dot row.
 // States: checking (pulse) → on-track → off-brief one-liner → default prompt.
-// Expanding → AskNovaPanel (full advisor chat) replaces this row entirely.
+// Expanding → AskKriaPanel (full advisor chat) replaces this row entirely.
 
-function NovaHelper({
+function KriaHelper({
   item,
   conformanceChecking,
-  askNova,
+  askKria,
   onOpen,
   onContest,
   onClose,
@@ -3889,19 +3889,19 @@ function NovaHelper({
 }: {
   item: PlanItem;
   conformanceChecking: boolean;
-  askNova: null | "default" | "contest";
+  askKria: null | "default" | "contest";
   onOpen: () => void;
   onContest: () => void;
   onClose: () => void;
   onDismissConformance: () => void;
   onItemChanged: () => void;
 }) {
-  // AskNovaPanel is the full-expanded state — it takes over the row entirely.
-  if (askNova !== null) {
+  // AskKriaPanel is the full-expanded state — it takes over the row entirely.
+  if (askKria !== null) {
     return (
-      <AskNovaPanel
+      <AskKriaPanel
         item={item}
-        mode={askNova}
+        mode={askKria}
         onClose={onClose}
         onItemChanged={onItemChanged}
       />
@@ -3918,7 +3918,7 @@ function NovaHelper({
     (c.confidence ?? 0) >= 0.6;
 
   return (
-    <div role="status" aria-live="polite" className="space-y-1.5" data-testid="nova-helper">
+    <div role="status" aria-live="polite" className="space-y-1.5" data-testid="kria-helper">
       {conformanceChecking ? (
         <p className="flex items-start gap-2 text-sm text-[#71717a] motion-safe:animate-pulse">
           <span
@@ -3939,7 +3939,7 @@ function NovaHelper({
             onClick={onOpen}
             className="font-medium text-lime-700 underline-offset-2 hover:underline"
           >
-            Ask Nova ↗
+            Ask Kria ↗
           </button>
         </p>
       ) : hasVerdict ? (
@@ -3957,7 +3957,7 @@ function NovaHelper({
               onClick={onContest}
               className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
             >
-              Tell Nova
+              Tell Kria
             </button>
             <button
               type="button"
@@ -3971,7 +3971,7 @@ function NovaHelper({
               onClick={onOpen}
               className="text-xs text-[#71717a] underline-offset-2 hover:underline"
             >
-              Ask Nova ↗
+              Ask Kria ↗
             </button>
           </div>
         </div>
@@ -3987,7 +3987,7 @@ function NovaHelper({
             onClick={onOpen}
             className="font-medium text-lime-700 underline-offset-2 hover:underline"
           >
-            Ask Nova ↗
+            Ask Kria ↗
           </button>
         </p>
       )}

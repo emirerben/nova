@@ -217,7 +217,7 @@ function GeneratingLedgerRow() {
       </span>
       <div className="flex min-w-0 flex-col gap-2">
         <div className="h-4 w-2/3 rounded bg-[linear-gradient(110deg,#f4f4f5,45%,#e4e4e7,55%,#f4f4f5)] bg-[length:200%_100%] motion-safe:animate-shimmer" />
-        <span className="text-[12px] text-[#71717a]">Nova is writing an idea…</span>
+        <span className="text-[12px] text-[#71717a]">Kria is writing an idea…</span>
       </div>
       <span className="sr-only">Generating</span>
     </li>

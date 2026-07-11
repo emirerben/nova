@@ -5,7 +5,7 @@ pipeline. It watches one video from a creator's own catalog and extracts how
 they style on-screen text: font feel, colors, position, size, layout, and stroke.
 
 It deliberately emits **semantic vocabulary** (font_feel, size_class), never raw
-font names or pixel values — it can't know Nova's font registry or px envelope.
+font names or pixel values — it can't know Kria's font registry or px envelope.
 The class→knob mapping is handled downstream by ``style_derivation`` which already
 owns the font catalog, parity coercion, and style-set matching.
 
@@ -112,11 +112,11 @@ class VideoStyleObservation(BaseModel):
     drifted Gemini response never breaks aggregation.
 
     This is intentionally NOT ``StyleKnobs``/``UserStyle`` — it speaks
-    semantic classes that Gemini can observe visually, not Nova's internal
+    semantic classes that Gemini can observe visually, not Kria's internal
     pixel/font-registry vocabulary. The mapping is done by ``style_derivation``.
 
     extra="forbid" is the renderer-parity guard: it prevents an `effect` field
-    or any other Nova-internal key from being injected (mirrors StyleKnobs).
+    or any other Kria-internal key from being injected (mirrors StyleKnobs).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -179,7 +179,7 @@ class StyleObservationAgent(Agent[StyleObservationInput, VideoStyleObservation])
         prompt_id="observe_video_style",
         # Bump whenever the prompt or output vocabulary changes.
         # PR 3 (wire into style_derivation) should NOT change this version.
-        prompt_version="2026-06-28",
+        prompt_version="2026-07-11-kria",
         model="gemini-2.5-flash",
         # Pricing same as clip_metadata (same model).
         cost_per_1k_input_usd=0.000075,

@@ -1,7 +1,7 @@
 """Scoring quality evaluation — LAUNCH GATE.
 
 Loads ≥20 human-rated fixture clips from tests/fixtures/eval_set/.
-Asserts recall@3 >= 0.70 (human-chosen clip appears in Nova's top 3 in ≥70% of cases).
+Asserts recall@3 >= 0.70 (human-chosen clip appears in Kria's top 3 in ≥70% of cases).
 
 Each fixture in eval_set/ is a directory with:
   raw.mp4         — source video
@@ -45,7 +45,7 @@ def load_eval_cases() -> list[dict]:
     reason="eval_set requires ≥20 human-rated fixtures — see tests/fixtures/eval_set/README.md",
 )
 def test_recall_at_3_meets_launch_threshold():
-    """LAUNCH GATE: ≥70% of human-chosen clips must appear in Nova's top 3."""
+    """LAUNCH GATE: ≥70% of human-chosen clips must appear in Kria's top 3."""
 
     from app.pipeline import probe as probe_mod
     from app.pipeline import scene_detect

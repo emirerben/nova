@@ -87,7 +87,7 @@ def test_list_music_tracks_returns_published_tracks(client: TestClient) -> None:
     track = _make_track(
         track_id="t-abc",
         title="Beat Drop",
-        artist="DJ Nova",
+        artist="DJ Kria",
         thumbnail_url="https://img.youtube.com/vi/abc/default.jpg",
         track_config={
             "best_start_s": 20.0,
@@ -108,7 +108,7 @@ def test_list_music_tracks_returns_published_tracks(client: TestClient) -> None:
     t = data["tracks"][0]
     assert t["id"] == "t-abc"
     assert t["title"] == "Beat Drop"
-    assert t["artist"] == "DJ Nova"
+    assert t["artist"] == "DJ Kria"
     assert t["thumbnail_url"] == "https://img.youtube.com/vi/abc/default.jpg"
     assert t["section_duration_s"] == 30.0  # 50 - 20
     assert t["required_clips_min"] == 2

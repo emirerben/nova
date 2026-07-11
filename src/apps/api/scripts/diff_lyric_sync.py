@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-"""Diagnose lyric/audio sync drift for a Nova music job vs a YouTube reference.
+"""Diagnose lyric/audio sync drift for a Kria music job vs a YouTube reference.
 
-The headline question this answers — "where are Nova's burned-in lyrics off vs
-the YouTube reference, in milliseconds?" — needs no Nova credentials. Just
+The headline question this answers — "where are Kria's burned-in lyrics off vs
+the YouTube reference, in milliseconds?" — needs no Kria credentials. Just
 point the script at a local mp4 + a YouTube URL.
 
-When a Nova `--job-id` is supplied AND we can reach the admin API (or hit
+When a Kria `--job-id` is supplied AND we can reach the admin API (or hit
 postgres directly), the script also pulls the job's `lyrics_cached` + recipe
 and adds the per-pipeline-stage drift diagnostic columns.
 
 Outputs an HTML report at `.dev/lyric-sync-diffs/<id>_<ts>.html` with:
   - Drift summary cards per stage (whichever stages we could measure)
   - Color-coded line-by-line table
-  - Click-to-expand frame thumbnails (Nova + YouTube)
+  - Click-to-expand frame thumbnails (Kria + YouTube)
 
 Standalone-runnable — does NOT need the api venv. Uses:
   - system Python 3.11+ with `numpy` and (optionally) `openai`
@@ -120,9 +120,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    p.add_argument("--nova-mp4", help="Local path to the Nova-rendered output mp4.")
+    p.add_argument("--nova-mp4", help="Local path to the Kria-rendered output mp4.")
     p.add_argument("--youtube-url", required=True, help="YouTube URL to use as reference.")
-    p.add_argument("--job-id", help="Optional Nova job UUID — adds A/B/D diagnostic columns.")
+    p.add_argument("--job-id", help="Optional Kria job UUID — adds A/B/D diagnostic columns.")
     p.add_argument(
         "--admin-key",
         default=os.environ.get("ADMIN_PROD_API_KEY") or os.environ.get("ADMIN_API_KEY"),
@@ -149,7 +149,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument(
         "--nova-band",
         default="0.72,1.0",
-        help="Vertical band as y_start,y_end fractions of Nova frame to OCR. Default 0.72,1.0 (bottom 28%%, where Nova places lyrics). Pass 0,1 for full frame.",
+        help="Vertical band as y_start,y_end fractions of Kria frame to OCR. Default 0.72,1.0 (bottom 28%%, where Kria places lyrics). Pass 0,1 for full frame.",
     )
     p.add_argument(
         "--yt-band",
@@ -368,12 +368,12 @@ def _align_audio(
     best_start_hint_s: float | None,
     best_end_hint_s: float | None,
 ) -> tuple[float, float, float]:
-    """Find where the Nova mix appears in the YouTube reference.
+    """Find where the Kria mix appears in the YouTube reference.
 
     Returns (yt_t_at_nova_zero_s, confidence, search_window_start_s).
 
     `yt_t_at_nova_zero_s` is the YouTube absolute time that corresponds to
-    Nova section time 0. So: nova_t = yt_t - yt_t_at_nova_zero_s.
+    Kria section time 0. So: nova_t = yt_t - yt_t_at_nova_zero_s.
 
     `confidence` is normalized cross-correlation in [0, 1]. <0.4 likely
     means the YouTube clip isn't the same recording.
@@ -407,18 +407,18 @@ def _align_audio(
     b = _norm(yt_clip.astype(np.float64))
 
     # FFT cross-correlation: R[k] = sum_t a[t] * b[t+k]. Peak at k* means
-    # Nova (a) aligns with YouTube clip (b) starting at b[k*]. So Nova section
+    # Kria (a) aligns with YouTube clip (b) starting at b[k*]. So Kria section
     # time 0 ↔ YouTube clip time k*/sr ↔ YouTube absolute (win_start + k*/sr).
     # `conj(A) * B` (not `A * conj(B)`) is the correct sign convention; the
     # earlier code had it backwards which clipped the search range to
-    # max_lag = len(a) and missed alignments where Nova clips deep into the
+    # max_lag = len(a) and missed alignments where Kria clips deep into the
     # YouTube source (chorus pickups etc).
     nfft = 1 << int(math.ceil(math.log2(len(a) + len(b))))
     A = np.fft.rfft(a, n=nfft)
     B = np.fft.rfft(b, n=nfft)
     corr = np.fft.irfft(np.conj(A) * B, n=nfft)
-    # Valid lag range: Nova fits fully inside YouTube clip when
-    # k ∈ [0, len(b) - len(a)]. (k beyond that has Nova running past the
+    # Valid lag range: Kria fits fully inside YouTube clip when
+    # k ∈ [0, len(b) - len(a)]. (k beyond that has Kria running past the
     # end of b — circular wrap-around makes those peaks unreliable.)
     max_lag = max(1, len(b) - len(a) + 1)
     valid = corr[:max_lag]
@@ -502,7 +502,7 @@ def _ocr_phrases(
     """OCR the video frame-by-frame, return [{text, start_s, end_s}] phrases.
 
     `lyric_band=(y_start_frac, y_end_frac)` is the vertical strip where lyric
-    overlays live (default: bottom 28% — matches Nova's `bottom` position
+    overlays live (default: bottom 28% — matches Kria's `bottom` position
     and most YouTube lyric videos).
 
     A "phrase" is consecutive frames with the same normalized text.
@@ -858,7 +858,7 @@ class LineDiff:
 
     @property
     def drift_overlay_vs_audio_ms(self) -> int | None:
-        """Headline answer: does Nova's overlay land on Nova's vocal? C − D."""
+        """Headline answer: does Kria's overlay land on Kria's vocal? C − D."""
         if self.C_nova_ocr_section_s is None or self.D_nova_whisper_section_s is None:
             return None
         return int(round((self.C_nova_ocr_section_s - self.D_nova_whisper_section_s) * 1000))
@@ -954,15 +954,15 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
     ]
     doa = [d.drift_overlay_vs_audio_ms for d in diffs if d.drift_overlay_vs_audio_ms is not None]
 
-    # Headline: overlay-vs-audio drift (does Nova's overlay land on Nova's
+    # Headline: overlay-vs-audio drift (does Kria's overlay land on Kria's
     # own vocal?). This is the question the user is most likely asking.
     if doa:
         med = int(statistics.median(doa))
         p50 = statistics.median(abs(v) for v in doa)
         direction = "lag behind" if med > 0 else "lead"
         notes.append(
-            f"<b>📍 Headline — Overlay vs Nova audio (C − D)</b>: p50 = {p50:.0f} ms "
-            f"(signed median {med:+d} ms — Nova's overlays {direction} the vocal). "
+            f"<b>📍 Headline — Overlay vs Kria audio (C − D)</b>: p50 = {p50:.0f} ms "
+            f"(signed median {med:+d} ms — Kria's overlays {direction} the vocal). "
             f"This isolates ALL overlay-timing issues into one number, independent of "
             f"YouTube. If this is large, the overlay isn't landing on the word being sung — "
             f"regardless of how YouTube renders the same song."
@@ -973,7 +973,7 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
         notes.append(
             f"<b>Renderer drift</b> p50 = {statistics.median(abs(v) for v in dr):.0f} ms "
             f"(signed median {med:+d} ms). "
-            f"Nova's burned-in overlays appear "
+            f"Kria's burned-in overlays appear "
             f"{'later' if med > 0 else 'earlier'} than the recipe formula expects "
             f"(line.start_s − best_start_s − _LINE_PRE_ROLL_S). "
             "Suspect inject_lyric_overlays or text_overlay_skia.py."
@@ -984,7 +984,7 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
         notes.append(
             f"<b>Audio-mix drift</b> p50 = {statistics.median(abs(v) for v in da):.0f} ms "
             f"(signed median {med:+d} ms). "
-            "Nova's audio is sung "
+            "Kria's audio is sung "
             f"{med:+d} ms relative to where best_start_s would predict it — "
             "check _mix_template_audio's `audio_start_offset_s` in music_orchestrate.py:670."
         )
@@ -995,13 +995,13 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
         if std < 80:
             direction = "lag behind" if med > 0 else "lead"
             notes.append(
-                f"<b>Nova vs YouTube</b> shows a near-constant {med:+d} ms {direction} "
+                f"<b>Kria vs YouTube</b> shows a near-constant {med:+d} ms {direction} "
                 f"(σ={std:.0f} ms). Try bumping `_LINE_PRE_ROLL_S` in lyric_injector.py "
                 f"by {-med / 1000:+.2f} s — that absorbs the systemic offset in one knob."
             )
         else:
             notes.append(
-                f"<b>Nova vs YouTube</b> drift is variable: p50 = "
+                f"<b>Kria vs YouTube</b> drift is variable: p50 = "
                 f"{statistics.median(abs(v) for v in dy):.0f} ms, σ = {std:.0f} ms. "
                 "Not a simple constant offset — multiple drift sources stacking."
             )
@@ -1009,7 +1009,7 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
     if dyw and statistics.median(abs(v) for v in dyw) > 50:
         med = int(statistics.median(dyw))
         notes.append(
-            f"<b>Whisper sync (Nova vs YouTube)</b> p50 = "
+            f"<b>Whisper sync (Kria vs YouTube)</b> p50 = "
             f"{statistics.median(abs(v) for v in dyw):.0f} ms (signed {med:+d} ms). "
             f"This isolates audio-mix offset from overlay rendering — if it's near zero "
             f"while OCR drift is large, the audio is fine and the overlays are misplaced."
@@ -1031,7 +1031,7 @@ def _build_diagnosis(diffs: list[LineDiff], confidence: float, has_bundle: bool)
         notes.append(
             "<small>Note: --job-id was not provided (or admin API was unreachable). The "
             "<i>recipe-expected (A)</i>, <i>drift_render</i>, and <i>drift_audio_mix</i> columns "
-            "require Nova's cached lyric timings and were skipped.</small>"
+            "require Kria's cached lyric timings and were skipped.</small>"
         )
 
     return "<br><br>".join(notes)
@@ -1054,7 +1054,7 @@ def _render_html(
     title = (
         f"{bundle['track_title']} — {bundle['track_artist']}"
         if has_bundle
-        else f"Nova vs YouTube — {nova_video.name}"
+        else f"Kria vs YouTube — {nova_video.name}"
     )
 
     best_start = float((bundle or {}).get("track_config", {}).get("best_start_s", 0.0))
@@ -1094,7 +1094,7 @@ def _render_html(
     if confidence < 0.3:
         banner = (
             f'<div class="banner bad">⚠ Audio cross-correlation confidence is very low '
-            f"({confidence:.2f}). The YouTube reference probably isn't the same recording as Nova's mix. "
+            f"({confidence:.2f}). The YouTube reference probably isn't the same recording as Kria's mix. "
             f"The YouTube columns may be meaningless.</div>"
         )
     elif confidence < 0.5:
@@ -1121,7 +1121,7 @@ def _render_html(
         if nova_thumb or yt_thumb:
             thumbs_html = (
                 f'<tr class="row-thumbs" data-thumb-id="{thumb_id}"><td colspan="10"><div class="thumbs">'
-                f"<figure><figcaption>Nova @ {_fmt_s(d.C_nova_ocr_section_s)}s — OCR: "
+                f"<figure><figcaption>Kria @ {_fmt_s(d.C_nova_ocr_section_s)}s — OCR: "
                 f'"{_esc_html(d.matched_nova_ocr_text[:80])}"</figcaption>'
                 + (
                     f'<img src="{nova_thumb}" alt="">'
@@ -1281,9 +1281,9 @@ details pre {{ overflow-x: auto; font-size: 12px; }}
   <div class="card{cls_wh_vs_yt}"><h3>vs YouTube Whisper (D − F)</h3><div class="big">{p50_wh_vs_yt}<span class="sub"> ms p50</span></div><div class="sub">p95 {p95_wh_vs_yt} ms · n={n_wh_vs_yt}</div></div>
 </div>
 <p class="legend">
-  <b>A</b> = recipe-expected start (line.start − best_start − pre_roll). <b>C</b> = Nova OCR-detected start.
-  <b>D</b> = Nova Whisper sung-at, in Nova-section coords. <b>E</b> = YouTube OCR mapped to Nova-section coords.
-  <b>F</b> = YouTube Whisper mapped to Nova-section coords.<br>
+  <b>A</b> = recipe-expected start (line.start − best_start − pre_roll). <b>C</b> = Kria OCR-detected start.
+  <b>D</b> = Kria Whisper sung-at, in Kria-section coords. <b>E</b> = YouTube OCR mapped to Kria-section coords.
+  <b>F</b> = YouTube Whisper mapped to Kria-section coords.<br>
   Color: <span class="drift drift-ok">≤50 ms</span> · <span class="drift drift-warn">≤100 ms</span> · <span class="drift drift-bad">&gt;100 ms</span>.
 </p>
 
@@ -1342,10 +1342,10 @@ def main(argv: list[str]) -> int:
     cache_dir.mkdir(parents=True, exist_ok=True)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── [1] Try to enrich from Nova admin API
+    # ── [1] Try to enrich from Kria admin API
     bundle = _fetch_job_bundle_admin(args)
 
-    # ── [2] Resolve Nova mp4
+    # ── [2] Resolve Kria mp4
     if args.nova_mp4:
         nova_video = Path(args.nova_mp4).resolve()
         if not nova_video.exists():
@@ -1355,7 +1355,7 @@ def main(argv: list[str]) -> int:
         _http_download(bundle["output_url"], nova_video)
     else:
         raise SystemExit(
-            "No Nova video source: pass --nova-mp4 PATH or set up admin API access for --job-id."
+            "No Kria video source: pass --nova-mp4 PATH or set up admin API access for --job-id."
         )
 
     yt_id = hashlib.sha1(args.youtube_url.encode()).hexdigest()[:12]
@@ -1411,12 +1411,12 @@ def main(argv: list[str]) -> int:
     nova_ocr = _ocr_phrases(nova_video, fps=args.ocr_fps, cache_dir=cache_dir, lyric_band=nova_band)
     yt_ocr = _ocr_phrases(yt_video, fps=args.ocr_fps, cache_dir=cache_dir, lyric_band=yt_band)
     # YouTube-has-no-lyrics signal: if YT OCR finds drastically fewer phrases
-    # than Nova (or near-zero absolute), warn loudly. Likely an official music
+    # than Kria (or near-zero absolute), warn loudly. Likely an official music
     # video instead of a lyric video.
     yt_has_lyrics = len(yt_ocr) >= max(3, len(nova_ocr) * 2)
     if not yt_has_lyrics:
         _log(
-            f"⚠ YouTube OCR found only {len(yt_ocr)} phrases vs Nova's {len(nova_ocr)} — "
+            f"⚠ YouTube OCR found only {len(yt_ocr)} phrases vs Kria's {len(nova_ocr)} — "
             "the YouTube URL may be a music video without burned-in lyrics. "
             "For audio-based comparison, enable Whisper (--openai-key or env OPENAI_API_KEY)."
         )
@@ -1454,7 +1454,7 @@ def main(argv: list[str]) -> int:
         lines = bundle["lyrics_cached"]["lines"]
         line_source = "lyrics_cached"
     elif nova_ocr:
-        # Each Nova OCR phrase becomes a "line". Shift to pseudo-absolute.
+        # Each Kria OCR phrase becomes a "line". Shift to pseudo-absolute.
         track_anchor = best_start if best_start else yt_t_at_nova_zero
         lines = [
             {
@@ -1482,7 +1482,7 @@ def main(argv: list[str]) -> int:
             "No lyric source available. Provide one of:\n"
             "  --job-id <UUID> + --admin-key (or env ADMIN_PROD_API_KEY) — uses MusicTrack.lyrics_cached\n"
             "  --openai-key (or env OPENAI_API_KEY) — Whisper-transcribes the audio\n"
-            "  Or check that pytesseract is installed (`pip install --user pytesseract`) so the Nova-OCR fallback works."
+            "  Or check that pytesseract is installed (`pip install --user pytesseract`) so the Kria-OCR fallback works."
         )
 
     # ── [7] Diff per line
@@ -1498,10 +1498,10 @@ def main(argv: list[str]) -> int:
             continue
         first_word = words[0]
 
-        # A: recipe-expected start in Nova-section time. Meaningful only when
+        # A: recipe-expected start in Kria-section time. Meaningful only when
         # the line source carries true track-absolute timings (lyrics_cached).
         # In nova-ocr or whisper-derived modes the "line.start_s" was synthesized
-        # from Nova's own timeline — computing A from it would just recover
+        # from Kria's own timeline — computing A from it would just recover
         # (C ± constant) and the drift_render column would be a math artifact.
         if bundle and best_end > best_start and line_source == "lyrics_cached":
             in_section = best_start <= start_track_s <= best_end
@@ -1514,7 +1514,7 @@ def main(argv: list[str]) -> int:
         if not in_section:
             continue
 
-        # C: Nova OCR — search at A when available, else at line's section time.
+        # C: Kria OCR — search at A when available, else at line's section time.
         expected_c = (
             A
             if A is not None
@@ -1523,11 +1523,11 @@ def main(argv: list[str]) -> int:
         nova_ph = _nearest_ocr(words, nova_ocr, expected_t_s=expected_c)
         C = float(nova_ph["start_s"]) if nova_ph else None
 
-        # D: Nova Whisper first word (Nova-section coords)
+        # D: Kria Whisper first word (Kria-section coords)
         nova_w = _first_whisper_match(first_word, nova_whisper, expected_t_s=expected_c)
         D = float(nova_w["start_s"]) if nova_w else None
 
-        # E: YouTube OCR (mapped from YouTube absolute → Nova section)
+        # E: YouTube OCR (mapped from YouTube absolute → Kria section)
         # Expected YouTube absolute = start_track_s (lyrics_cached is in track time
         # which == YouTube absolute time for the source).
         yt_ph = _nearest_ocr(words, yt_ocr, expected_t_s=start_track_s, radius_s=3.0)
@@ -1560,10 +1560,10 @@ def main(argv: list[str]) -> int:
     if not yt_has_lyrics:
         diagnosis = (
             f"<b>⚠ YouTube has no detected on-screen lyrics</b> — found only "
-            f"{len(yt_ocr)} phrase(s) vs Nova's {len(nova_ocr)}. The provided URL "
+            f"{len(yt_ocr)} phrase(s) vs Kria's {len(nova_ocr)}. The provided URL "
             f"is most likely an official music video, not a lyric video. The OCR-vs-OCR "
             f"comparison columns (E, F, drift_vs_youtube) will be empty.<br><br>"
-            f"To compare Nova's overlay sync against the YouTube audio (when each "
+            f"To compare Kria's overlay sync against the YouTube audio (when each "
             f"word is SUNG), enable Whisper: re-run with "
             f"<code>--openai-key &lt;OPENAI_API_KEY&gt;</code> "
             f"(or <code>export OPENAI_API_KEY=…</code>). That populates the D + F "

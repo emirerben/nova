@@ -244,7 +244,7 @@ export function ArchitectureMap() {
     <div className="w-full h-full flex flex-col bg-gray-950">
       {/* Header bar */}
       <div className="h-12 flex items-center px-4 bg-gray-900 border-b border-gray-800 shrink-0">
-        <span className="text-sm text-gray-400">Nova</span>
+        <span className="text-sm text-gray-400">Kria</span>
         <span className="text-gray-600 mx-2">·</span>
         <span className="text-sm font-medium text-gray-200">Architecture Map</span>
         <span className="text-gray-600 mx-2">·</span>

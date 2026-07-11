@@ -10,7 +10,7 @@
  *
  * Consumed by the editor drawer's preset grid and the inspector's Presets
  * tab (_editor/PresetGrid.tsx). Thumbnails render the SELECTED text's first
- * word live, falling back to Nova-voiced samples — never "ART" (plan Pass 4).
+ * word live, falling back to Kria-voiced samples — never "ART" (plan Pass 4).
  */
 
 import { FONT_REGISTRY, TEXT_ELEMENT_FONT_ALIASES } from "@/lib/overlay-constants";
@@ -38,7 +38,7 @@ export interface TextPreset {
   fields: TextPresetFields;
 }
 
-/** Fallback thumbnail words when no text element is selected — Nova-voiced,
+/** Fallback thumbnail words when no text element is selected — Kria-voiced,
  * rotated per grid index (plan Pass 4: brand shows up where personality lives). */
 export const PRESET_SAMPLE_WORDS = ["HOOK", "THIS", "WAIT"] as const;
 
