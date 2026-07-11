@@ -695,6 +695,70 @@ def _lazy_backfill_media_overlay_previews(job: Job) -> bool:
     return changed
 
 
+def _collect_media_overlay_preview_stamps(job: Job) -> dict[str, str]:
+    """Map `src_gcs_path -> preview_gcs_path` for cards the lazy backfill just stamped.
+
+    Read straight off the in-memory (post-backfill) job so the stamps can be
+    re-applied onto a freshly row-locked row — see
+    `_persist_media_overlay_preview_backfill`.
+    """
+    stamps: dict[str, str] = {}
+    for v in _variants_of(job):
+        if not isinstance(v, dict):
+            continue
+        for card in v.get("media_overlays") or []:
+            if not isinstance(card, dict):
+                continue
+            src = nonblank_str(card.get("src_gcs_path"))
+            preview = nonblank_str(card.get("preview_gcs_path"))
+            if src and preview:
+                stamps[src] = preview
+    return stamps
+
+
+async def _persist_media_overlay_preview_backfill(
+    db: AsyncSession, job_id: uuid.UUID, preview_by_src: dict[str, str]
+) -> None:
+    """Persist lazily-backfilled HEIC overlay preview paths under a row lock.
+
+    The status read computes these previews from an UNLOCKED snapshot; committing
+    that snapshot's whole `assembly_plan` back would clobber any concurrent worker
+    write (a completing render / finalize / SFX pass) that landed in between — the
+    lost-update the worker-side `with_for_update` locks now prevent. So we re-fetch
+    FOR UPDATE and merge ONLY the preview stamps onto the fresh row (mirrors
+    `persist_user_timeline` / the worker's `_update_variant_entry`). The caller must
+    have discarded the unlocked snapshot's pending mutation first (db.rollback()).
+    """
+    if not preview_by_src:
+        return
+    job = await db.get(Job, job_id, with_for_update=True)
+    if job is None:
+        return
+    variants = list((job.assembly_plan or {}).get("variants") or [])
+    changed = False
+    next_variants: list[dict] = []
+    for v in variants:
+        if not isinstance(v, dict) or not v.get("media_overlays"):
+            next_variants.append(v)
+            continue
+        next_cards: list[object] = []
+        variant_changed = False
+        for card in v.get("media_overlays") or []:
+            if isinstance(card, dict):
+                src = nonblank_str(card.get("src_gcs_path"))
+                if src and not nonblank_str(card.get("preview_gcs_path")) and src in preview_by_src:
+                    card = {**card, "preview_gcs_path": preview_by_src[src]}
+                    variant_changed = True
+            next_cards.append(card)
+        if variant_changed:
+            v = {**v, "media_overlays": next_cards}
+            changed = True
+        next_variants.append(v)
+    if changed:
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": next_variants}
+        await db.commit()
+
+
 def _variants_for_response(job: Job) -> list[dict]:
     """Variants with `output_url` (and `base_video_url`) re-signed fresh on read.
 
@@ -3004,7 +3068,15 @@ async def get_generative_job_status(
         archetype_fallback=archetype_fallback,
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
-        await db.commit()
+        # `_variants_for_response` mutated an UNLOCKED snapshot of assembly_plan.
+        # Committing it as-is would clobber a concurrent worker write (finalize /
+        # render / SFX pass) that landed since the unlocked read. Capture the
+        # computed stamps, discard the stale snapshot's pending mutation, and
+        # re-apply under a row lock.
+        stamps = _collect_media_overlay_preview_stamps(job)
+        job_pk = job.id
+        await db.rollback()
+        await _persist_media_overlay_preview_backfill(db, job_pk, stamps)
     return response
 
 
