@@ -522,6 +522,151 @@ def test_masonry_preset_applies_to_lyrics_variant(monkeypatch, tmp_path):
     assert len(masonry_calls) == 1
 
 
+def test_masonry_song_variant_skips_throwaway_classic_assembly(monkeypatch, tmp_path):
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+
+    import app.pipeline.masonry_montage as masonry
+    import app.pipeline.music_recipe as mr
+    import app.pipeline.template_matcher as tm
+    import app.tasks.template_orchestrate as to
+
+    monkeypatch.setattr(
+        mr,
+        "generate_music_recipe",
+        lambda td, **_kw: {
+            "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.5, 1.0],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(
+            steps=[
+                types.SimpleNamespace(
+                    clip_id="c1",
+                    slot={"position": 1, "target_duration_s": 2.0},
+                    moment={},
+                )
+            ]
+        ),
+        raising=False,
+    )
+    assemble_calls: list[object] = []
+
+    def _unexpected_classic_assembly(*_args, **_kw):
+        assemble_calls.append(True)
+        raise AssertionError("masonry song variants should not render a classic montage first")
+
+    monkeypatch.setattr(to, "_assemble_clips", _unexpected_classic_assembly, raising=False)
+    masonry_calls: list[dict] = []
+
+    def _fake_masonry(**kw):
+        masonry_calls.append(kw)
+        with open(kw["output_path"], "wb") as f:
+            f.write(b"\x02" * 16)
+
+    monkeypatch.setattr(masonry, "assemble_masonry_montage", _fake_masonry, raising=False)
+
+    vdir = tmp_path / "v1"
+    vdir.mkdir()
+    spec = {"variant_id": "song_text", "rank": 1, "text_mode": "none", "track": _track()}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
+        probe_map={},
+        available_footage_s=20.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        montage_preset="masonry",
+    )
+
+    assert res["ok"] is True
+    assert res["montage_preset_rendered"] == "masonry"
+    assert assemble_calls == []
+    assert masonry_calls[0]["audio_source_path"] is None
+    assert len(mix_calls) == 1
+
+
+def test_masonry_song_variant_fallback_builds_classic_if_compositor_fails(monkeypatch, tmp_path):
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+
+    import app.pipeline.masonry_montage as masonry
+    import app.pipeline.music_recipe as mr
+    import app.pipeline.template_matcher as tm
+    import app.tasks.template_orchestrate as to
+
+    monkeypatch.setattr(
+        mr,
+        "generate_music_recipe",
+        lambda td, **_kw: {
+            "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.5, 1.0],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(
+            steps=[
+                types.SimpleNamespace(
+                    clip_id="c1",
+                    slot={"position": 1, "target_duration_s": 2.0},
+                    moment={},
+                )
+            ]
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        masonry,
+        "assemble_masonry_montage",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")),
+        raising=False,
+    )
+    assemble_calls: list[str] = []
+
+    def _fake_assemble(_steps, _c2l, _probe, out_path, _tmpdir, **_kw):
+        assemble_calls.append(out_path)
+        with open(out_path, "wb") as f:
+            f.write(b"\x00" * 16)
+
+    monkeypatch.setattr(to, "_assemble_clips", _fake_assemble, raising=False)
+
+    vdir = tmp_path / "v1"
+    vdir.mkdir()
+    spec = {"variant_id": "song_text", "rank": 1, "text_mode": "none", "track": _track()}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
+        probe_map={},
+        available_footage_s=20.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        montage_preset="masonry",
+    )
+
+    assert res["ok"] is True
+    assert res["montage_preset_rendered"] is None
+    assert res["montage_preset_fallback"] == "classic_render_failed"
+    assert len(assemble_calls) == 1
+    assert len(mix_calls) == 1
+
+
 def test_masonry_preset_falls_back_to_classic_on_compositor_error(monkeypatch, tmp_path):
     _patch_render_helpers(monkeypatch, [])
 
