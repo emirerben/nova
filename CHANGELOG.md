@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.17.1] — 2026-07-11
+
+### Fixed
+- **Masonry collage renders no longer fail when a mixed upload includes photos.** Still-image tiles now enter the FFmpeg compositor through an RGBA-safe path, and the emergency classic audio/fallback assembly swaps photo slots onto available videos instead of handing raw JPG/HEIC files to the classic video renderer.
+
 ## [0.7.17.0] — 2026-07-11
 
 ### Added

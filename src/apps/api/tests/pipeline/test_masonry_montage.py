@@ -48,6 +48,9 @@ def test_build_masonry_command_loops_still_images_as_image_inputs(tmp_path) -> N
     video_idx = cmd.index("/tmp/b.mp4")
     assert cmd[image_idx - 5 : image_idx] == ["-loop", "1", "-t", "8.000", "-i"]
     assert cmd[video_idx - 5 : video_idx] == ["-stream_loop", "-1", "-t", "8.000", "-i"]
+    filter_graph = cmd[cmd.index("-filter_complex") + 1]
+    assert "format=rgba,scale=270:480" in filter_graph
+    assert "setpts=PTS-STARTPTS,setsar=1,format=rgba" in filter_graph
 
 
 def test_build_masonry_command_uses_alpha_masks_audio_and_fast_preset(tmp_path) -> None:
