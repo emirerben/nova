@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.15.2] — 2026-07-11
+
+### Fixed
+- **Generative variant state can no longer be silently clobbered by a concurrent write.** Several `Job.assembly_plan` read-modify-writers in the generative pipeline (`_set_status`/finalize, `_fail_job`, and the media-overlay / SFX re-apply prep passes) updated the whole JSONB column without `SELECT … FOR UPDATE`, while sibling regenerate tasks (worker `--concurrency=4`) and the status route's lazy HEIC-preview backfill mutate the same column concurrently. A stale read in any unlocked writer overwrote another writer's variants — lost render state, lost preview stamps. All four worker writers now row-lock (mirroring `_upsert_variant_entry`), and the status route persists its preview backfill by re-reading the row `FOR UPDATE` and merging only the stamps instead of committing an unlocked snapshot. Regression-tested (lock-spy on the writers + a route test proving a concurrent worker append survives the backfill).
+
 ## [0.7.15.0] — 2026-07-11
 
 ### Added
