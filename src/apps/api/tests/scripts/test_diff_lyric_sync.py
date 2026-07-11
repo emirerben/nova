@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import base64
+import importlib.util
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from scripts import diff_lyric_sync
 
-COOKIE_TEXT = (
-    "# Netscape HTTP Cookie File\n"
-    ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session\n"
-)
+COOKIE_TEXT = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tsecret-session\n"
 
 
 def _cookie_b64(text: str = COOKIE_TEXT) -> str:
@@ -79,3 +79,110 @@ def test_yt_dlp_download_rejects_bad_cookie_config(
             "https://www.youtube.com/watch?v=abc",
             tmp_path / "yt.mp4",
         )
+
+
+# ── .env loading must be a main()-time action, never an import side effect ───
+#
+# Regression guard for the 2026-07 cross-test pollution incident: importing
+# this module at pytest collection used to merge the developer's real .env
+# into os.environ for the whole session, so any pydantic-invalid value there
+# (e.g. `FLAG=true  # inline comment`) failed every test that builds a fresh
+# Settings() — tests/test_config.py + test_feature_flag_default_is_false —
+# in full-tree runs only. The tests below import a copy of the script next to
+# a canary .env so they stay hermetic (independent of the machine's real .env).
+
+_CANARY_KEY = "NOVA_DIFF_LYRIC_SYNC_LEAK_CANARY"
+_COMMENT_KEY = "NOVA_DIFF_LYRIC_SYNC_COMMENT_CANARY"
+_QUOTED_KEY = "NOVA_DIFF_LYRIC_SYNC_QUOTED_CANARY"
+_SQUOTE_KEY = "NOVA_DIFF_LYRIC_SYNC_SQUOTE_CANARY"
+_UNCLOSED_KEY = "NOVA_DIFF_LYRIC_SYNC_UNCLOSED_CANARY"
+_EMPTY_KEY = "NOVA_DIFF_LYRIC_SYNC_EMPTY_CANARY"
+_HASH_KEY = "NOVA_DIFF_LYRIC_SYNC_HASH_CANARY"
+_ALL_CANARY_KEYS = (
+    _CANARY_KEY,
+    _COMMENT_KEY,
+    _QUOTED_KEY,
+    _SQUOTE_KEY,
+    _UNCLOSED_KEY,
+    _EMPTY_KEY,
+    _HASH_KEY,
+)
+
+# Everything the guard helper registers/mutates, so _canary_cleanup restores
+# exactly what was created — no hardcoded name coupling with the test bodies.
+_GUARD_MODULE_NAMES: list[str] = []
+
+
+def _import_script_copy_with_canary_env(tmp_path: Path, module_name: str):
+    """Copy the real script under tmp_path/scripts/ with a canary .env above it.
+
+    The loader walks up from the script file's own location, so the copy can
+    only ever find the canary .env — never the developer's real one.
+    """
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    copy = scripts_dir / f"{module_name}.py"
+    copy.write_text(Path(diff_lyric_sync.__file__).read_text())
+    (tmp_path / ".env").write_text(
+        f"{_CANARY_KEY}=tripped\n"
+        f"{_COMMENT_KEY}=true   # inline comment must be stripped\n"
+        f'{_QUOTED_KEY}="quoted value"  # comment after close quote\n'
+        f"{_SQUOTE_KEY}='single quoted'  # single-quote arm\n"
+        f'{_UNCLOSED_KEY}="unclosed\n'
+        f"{_EMPTY_KEY}= # value is intentionally blank\n"
+        f"{_HASH_KEY}=abc#def\n"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, copy)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod  # dataclass creation resolves via sys.modules
+    _GUARD_MODULE_NAMES.append(module_name)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture()
+def _canary_cleanup():
+    """The module-under-copy mutates os.environ/sys.* outside monkeypatch's
+    view, so restore by hand."""
+    saved_path = list(sys.path)
+    try:
+        yield
+    finally:
+        sys.path[:] = saved_path
+        for key in _ALL_CANARY_KEYS:
+            os.environ.pop(key, None)
+        for name in _GUARD_MODULE_NAMES:
+            sys.modules.pop(name, None)
+        _GUARD_MODULE_NAMES.clear()
+
+
+@pytest.mark.usefixtures("_canary_cleanup")
+def test_import_does_not_mutate_environ(tmp_path: Path) -> None:
+    """Importing the module (as pytest collection does) must not load .env."""
+    _import_script_copy_with_canary_env(tmp_path, "diff_lyric_sync_import_guard")
+
+    assert _CANARY_KEY not in os.environ, (
+        "importing scripts/diff_lyric_sync loaded a .env into os.environ — "
+        "this poisons every fresh Settings() in full-tree pytest runs"
+    )
+
+
+@pytest.mark.usefixtures("_canary_cleanup")
+def test_main_loads_env_and_strips_inline_comments(tmp_path: Path) -> None:
+    """CLI behavior preserved: main() loads .env, dotenv comment semantics."""
+    mod = _import_script_copy_with_canary_env(tmp_path, "diff_lyric_sync_main_guard")
+
+    with pytest.raises(SystemExit):
+        mod.main(["--help"])  # env load happens before argparse exits
+
+    assert os.environ.get(_CANARY_KEY) == "tripped"
+    assert os.environ.get(_COMMENT_KEY) == "true"
+    # Quoted value: comment after the close quote dropped, quotes stripped.
+    assert os.environ.get(_QUOTED_KEY) == "quoted value"
+    assert os.environ.get(_SQUOTE_KEY) == "single quoted"
+    # An unclosed quote is malformed — the value is kept verbatim.
+    assert os.environ.get(_UNCLOSED_KEY) == '"unclosed'
+    # `KEY= # note` is an empty value, not the literal comment text.
+    assert os.environ.get(_EMPTY_KEY) == ""
+    # "#" with no preceding whitespace is part of the value, never a comment.
+    assert os.environ.get(_HASH_KEY) == "abc#def"

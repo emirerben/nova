@@ -51,7 +51,9 @@ from pathlib import Path
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# .env loader — same stdlib-only parser as scripts/admin.py
+# .env loader — stdlib-only, forked from scripts/admin.py's parser. Unlike the
+# admin.py copy (and its other script-local siblings), this one strips
+# dotenv-style inline comments — see the incident note in main().
 # ---------------------------------------------------------------------------
 
 
@@ -71,15 +73,25 @@ def _load_env_file_into_environ() -> None:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        k, _, v = line.partition("=")
+        k, _, raw_v = line.partition("=")
         k = k.strip()
-        v = v.strip()
-        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-            v = v[1:-1]
+        v = raw_v.strip()
+        if v[:1] in ('"', "'"):
+            # Quoted value: content runs to the matching close quote; anything
+            # after it (e.g. an inline comment) is dropped. An unclosed quote
+            # keeps the value verbatim.
+            end = v.find(v[0], 1)
+            if end != -1:
+                v = v[1:end]
+        else:
+            # dotenv semantics: an unquoted value ends at a whitespace-preceded
+            # "#" (abc#def keeps its "#"). Split BEFORE stripping so
+            # `KEY= # note` reads as empty. Keeping the comment would poison
+            # typed Settings fields (e.g. FLAG=true  # note → bool_parsing
+            # error in every fresh Settings()).
+            v = re.split(r"\s#", raw_v, maxsplit=1)[0].strip()
         os.environ.setdefault(k, v)
 
-
-_load_env_file_into_environ()
 
 _API_ROOT = Path(__file__).resolve().parents[1]
 if str(_API_ROOT) not in sys.path:
@@ -1319,6 +1331,11 @@ document.querySelectorAll('tr.row-line').forEach(row => {{
 
 
 def main(argv: list[str]) -> int:
+    # Load .env here, NOT at import time: tests/scripts/test_diff_lyric_sync.py
+    # imports this module during full-tree collection, and an import-time load
+    # merges the developer's real .env into os.environ for the whole pytest
+    # session (breaks every test that builds a fresh Settings()).
+    _load_env_file_into_environ()
     args = _parse_args(argv)
     cache_dir = Path(args.cache_dir).resolve()
     out_dir = Path(args.out_dir).resolve()
