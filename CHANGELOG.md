@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.11.0] — 2026-07-11
+
+### Added
+- **The clip trim editor now works on phones.** Every trim gesture (start, end, whole-range, source in/out) responds to touch: handles have 44px hit areas with slim visual grips, a floating readout shows In/Out/Duration while your thumb covers the handle, and ±0.1s nudge steppers (±1 beat on beat-synced edits) make fine trims possible on a small screen. Dragging never hijacks page scroll — vertical swipes still scroll, horizontal drags on handles trim.
+- **Mobile layout for the trim editor:** below tablet width the preview video sits pinned above a full-width timeline (no more squeezed rail), with no horizontal page overflow at 375px.
+
+### Changed
+- The trim editor now matches the light editorial design system (cream/ink/lime) instead of the old dark styling, and failed saves show a quiet plain-language notice instead of red error text.
+
+### Fixed
+- Undo after a trim drag now restores the pre-drag value (history recorded at gesture start, one entry per gesture).
+- Trim handles no longer overlap neighboring clips' bars; short clips split the shared zone at the midpoint.
+
 ## [0.7.10.1] — 2026-07-11
 
 ### Fixed
