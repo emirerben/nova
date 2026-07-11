@@ -4769,29 +4769,44 @@ def _render_generative_variant(
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []
-        _assemble_clips(
-            steps,
-            clip_id_to_local,
-            probe_map,
-            assembled_path,
-            variant_dir,
-            beat_timestamps_s=recipe.beat_timestamps_s,
-            clip_metas=clip_metas,
-            global_color_grade=recipe.color_grade,
-            job_id=f"{job_id}#v{rank}",
-            user_subject="",
-            interstitials=[],
-            force_single_pass=False,
-            is_agentic=True,  # route overlays through the Skia renderer
-            # Generative edits must never stretch footage to fill a slot. When a
-            # clip is shorter than its slot, shrink the slot instead of slowing
-            # the clip down — the output stays bounded by real footage length.
-            allow_slowdown_fill=False,
-            # Post-resolution source windows per slot — the clip editor's
-            # ground truth for what each slot actually rendered.
-            resolved_plans_out=resolved_plans,
-            landscape_fit=landscape_fit,
-        )
+
+        # Masonry song variants replace footage audio with the matched track later
+        # in the normal audio-mix branch. Rendering a full classic montage first is
+        # therefore pure waste and can consume the whole Celery budget on heavy
+        # uploads before the collage compositor even starts. Original-audio masonry
+        # still needs this pass because it derives its audio bed from source clips.
+        skip_classic_assembly_for_masonry_song = masonry_requested and track is not None
+        classic_assembly_done = False
+
+        def _assemble_classic_montage() -> None:
+            nonlocal classic_assembly_done
+            _assemble_clips(
+                steps,
+                clip_id_to_local,
+                probe_map,
+                assembled_path,
+                variant_dir,
+                beat_timestamps_s=recipe.beat_timestamps_s,
+                clip_metas=clip_metas,
+                global_color_grade=recipe.color_grade,
+                job_id=f"{job_id}#v{rank}",
+                user_subject="",
+                interstitials=[],
+                force_single_pass=False,
+                is_agentic=True,  # route overlays through the Skia renderer
+                # Generative edits must never stretch footage to fill a slot. When a
+                # clip is shorter than its slot, shrink the slot instead of slowing
+                # the clip down — the output stays bounded by real footage length.
+                allow_slowdown_fill=False,
+                # Post-resolution source windows per slot — the clip editor's
+                # ground truth for what each slot actually rendered.
+                resolved_plans_out=resolved_plans,
+                landscape_fit=landscape_fit,
+            )
+            classic_assembly_done = True
+
+        if not skip_classic_assembly_for_masonry_song:
+            _assemble_classic_montage()
 
         masonry_applied = False
         if masonry_requested:
@@ -4806,7 +4821,7 @@ def _render_generative_variant(
                     output_path=masonry_path,
                     tmpdir=variant_dir,
                     duration_s=effective_available_footage_s,
-                    audio_source_path=assembled_path,
+                    audio_source_path=assembled_path if classic_assembly_done else None,
                     job_id=job_id,
                 )
                 assembled_path = masonry_path
@@ -4830,6 +4845,8 @@ def _render_generative_variant(
                     variant_id=variant_id,
                     error=str(exc),
                 )
+                if not classic_assembly_done:
+                    _assemble_classic_montage()
 
         # ai_timeline persistence (clip timeline editor): rewritten on every
         # FRESH montage assembly (first render, swap-song, mix re-render), so
