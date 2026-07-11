@@ -3,7 +3,7 @@
 iPhone (and some Android) phones record video in physical landscape
 (1920x1080) and write a Display Matrix side-data flag (e.g. rotation: -90)
 into the MP4 container. QuickTime / TikTok / Instagram all read this flag
-and present the video upright. Nova's downstream pipeline reads the raw
+and present the video upright. Kria's downstream pipeline reads the raw
 pixel dimensions and was getting confused:
 
   - `probe.py:_classify_aspect` labels a 1920x1080 file as "16:9", so

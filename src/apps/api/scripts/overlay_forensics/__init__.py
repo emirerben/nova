@@ -1,6 +1,6 @@
 """Text-overlay forensics: video-to-video diff primitives.
 
-Building blocks for offline analyzer scripts that compare a Nova-pipeline
+Building blocks for offline analyzer scripts that compare a Kria-pipeline
 output video against the original recipe it was meant to match. Each module
 is single-purpose so analyzers can wire only what they need.
 

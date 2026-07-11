@@ -299,7 +299,7 @@ export interface PlanItem {
    * Only affects clips where width > height; portrait/square always crop.
    */
   landscape_fit: "fit" | "fill";
-  /** Original-audio bed level for narrated. 0 = voice only, 1 = loudest. Null = Nova's default. */
+  /** Original-audio bed level for narrated. 0 = voice only, 1 = loudest. Null = Kria's default. */
   voiceover_bed_level?: number | null;
   /** Narrated caption style: "sentence" (sentence blocks) or "word" (one word at a time). Null = "sentence". */
   voiceover_caption_style?: string | null;
@@ -887,7 +887,7 @@ export interface PlanItemVariant {
   // "sentence" (full lines) or "word" (one word at a time). Present on narrated
   // + talking-to-camera variants. See setPlanItemVariantCaptionStyle.
   voiceover_caption_style?: VoiceoverCaptionStyle | null;
-  // Background-sound (voice/bed) level — narrated only. Null = Nova's render-time
+  // Background-sound (voice/bed) level — narrated only. Null = Kria's render-time
   // default. See setPlanItemNarratedBedLevel / BackgroundSoundControl.
   voiceover_bed_level?: number | null;
   // Generic rendered bed level returned by editor-capable variants (voiceover +
@@ -896,6 +896,9 @@ export interface PlanItemVariant {
   // Caption font (font-registry key) for narrated captions. Null = default (TikTok
   // Sans). Editable in the on-video caption editor; the reburn honors it.
   voiceover_caption_font?: string | null;
+  // ASS MarginV for captioned variants after the caption-position control is used.
+  // Null/absent means legacy default: subtitled 384, narrated 180.
+  caption_margin_v?: number | null;
   // Language the subtitled captions were transcribed in ("en" | "tr"). Shown as the
   // editor chip; changing it re-transcribes (setPlanItemCaptionLanguage). Absent for
   // narrated/montage variants.
@@ -1057,6 +1060,22 @@ export function setPlanItemCaptionFont(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ caption_font: font }),
+  });
+}
+
+/**
+ * Set caption vertical position and reburn the captioned variant.
+ * `yFrac` is normalized from the top of the 9:16 frame.
+ */
+export function setPlanItemCaptionPosition(
+  itemId: string,
+  variantId: string,
+  yFrac: number,
+): Promise<PlanItem> {
+  return request<PlanItem>(`/plan-items/${itemId}/variants/${variantId}/caption-position`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ y_frac: yFrac }),
   });
 }
 
@@ -1543,7 +1562,7 @@ export function styleAgentTurn(
 }
 
 // ── Plan dogfood fixes (2026-06-11): clip notes, conformance trust actions, ────
-// Ask Nova advisor, footage pool. Append-only — do not edit code above.
+// Ask Kria advisor, footage pool. Append-only — do not edit code above.
 
 // Clip notes + provisional machine matches (interface merging, append-only rule).
 export interface ClipAssignment {
@@ -1623,7 +1642,7 @@ export function dismissConformance(itemId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/conformance/dismiss`, { method: "POST" });
 }
 
-/** "Looks wrong? Tell Nova" — mark the verdict contested (suppresses low-confidence re-reads). */
+/** "Looks wrong? Tell Kria" — mark the verdict contested (suppresses low-confidence re-reads). */
 export function contestConformance(itemId: string): Promise<PlanItem> {
   return request<PlanItem>(`/plan-items/${itemId}/conformance/contest`, { method: "POST" });
 }
@@ -1636,7 +1655,7 @@ export interface AdvisorTurnResponse {
 }
 
 /**
- * POST /plan-items/{id}/agent/turn — one "Ask Nova" advisor turn for this item.
+ * POST /plan-items/{id}/agent/turn — one "Ask Kria" advisor turn for this item.
  * Stateless: priorTurns carries the whole conversation. 404 when the
  * PLAN_ITEM_ADVISOR_ENABLED kill switch is off (the page hides the entry).
  */

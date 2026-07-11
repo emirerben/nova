@@ -107,13 +107,13 @@ def main() -> None:
             f"<small>applies_to: {', '.join(st['applies_to'])}</small></figcaption></figure>"
         )
     html = (
-        "<!doctype html><meta charset=utf-8><title>Nova style sets</title>"
+        "<!doctype html><meta charset=utf-8><title>Kria style sets</title>"
         "<style>body{background:#0d0d0f;color:#eee;font:14px/1.4 -apple-system,sans-serif;margin:24px}"
         "h1{font-weight:600}.grid{display:flex;flex-wrap:wrap;gap:24px}"
         "figure{margin:0;background:#1a1a1f;border-radius:12px;padding:12px;width:360px}"
         "img{border-radius:8px;display:block}figcaption{margin-top:8px}"
         "span{color:#bbb}small{color:#888}</style>"
-        f"<h1>Nova style sets — {_STYLE_SETS_DATA['version']}</h1>"
+        f"<h1>Kria style sets — {_STYLE_SETS_DATA['version']}</h1>"
         "<p>Each tile: HERO sample (top) + deliberately-long label (bottom) run through "
         "the real renderer + universal constraint pass.</p>"
         f'<div class="grid">{"".join(cards)}</div>'

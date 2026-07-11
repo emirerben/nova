@@ -5,7 +5,7 @@ curated showcase clips.
 
 Background
 ----------
-The landing marquee displays ~6 Nova outputs.  Clips live under the permanent
+The landing marquee displays ~6 Kria outputs.  Clips live under the permanent
 ``landing/`` prefix in the storage bucket (not touched by the 24-h lifecycle
 delete rule — only ``dev-user/``, ``music-jobs/``, ``music-lyrics-previews/``,
 and ``voiceover-uploads/`` are purged).  The bucket runs uniform-bucket-level

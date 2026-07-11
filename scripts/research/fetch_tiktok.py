@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch public TikTok account metadata for Nova's weekly market research.
+"""Fetch public TikTok account metadata for Kria's weekly market research.
 
 This is the DETERMINISTIC, FREE first stage of the research pipeline (see
 .claude/skills/research-tiktok/SKILL.md). It pulls captions + engagement

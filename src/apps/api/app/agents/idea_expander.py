@@ -16,7 +16,7 @@ from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
 from app.pipeline.prompt_loader import load_prompt
 
-IDEA_EXPANDER_PROMPT_VERSION = "2026-07-11"
+IDEA_EXPANDER_PROMPT_VERSION = "2026-07-11-kria"
 
 IdeaExpandVideoType = Literal["montage", "voiceover", "talking_to_camera"]
 IdeaExpandContentMode = Literal["create_new", "existing_footage", "mixed"]

@@ -250,8 +250,8 @@ export default function AdminMusicPage() {
                   }
                   title={
                     extensionAvailable === false
-                      ? "Nova extension not detected — install it to ingest from your browser"
-                      : "Pull audio via the Nova Chrome extension (your IP + your YouTube cookies)"
+                      ? "Kria extension not detected — install it to ingest from your browser"
+                      : "Pull audio via the Kria Chrome extension (your IP + your YouTube cookies)"
                   }
                   className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold px-5 py-2 rounded-lg transition-colors"
                 >
@@ -262,7 +262,7 @@ export default function AdminMusicPage() {
                     href="/admin/extension/install"
                     className="text-xs text-emerald-400 hover:text-emerald-300 underline"
                   >
-                    Install Nova extension
+                    Install Kria extension
                   </a>
                 )}
                 {extensionAvailable === null && (
@@ -377,7 +377,7 @@ export default function AdminMusicPage() {
 const STAGE_LABELS: Record<IngestProgress["stage"], string> = {
   extension_check: "Checking extension…",
   extracting: "Downloading from YouTube (your browser, your IP)",
-  uploading: "Uploading to Nova (your → our GCS bucket)",
+  uploading: "Uploading to Kria (your → our GCS bucket)",
   confirming: "Verifying upload on the server",
   analyzing: "Analyzing (beat detect, sections, classifier)",
   ready: "Ready",

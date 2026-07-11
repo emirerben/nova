@@ -3,7 +3,7 @@
 #
 # CI guard: if a PR changes anything that affects the built Chrome extension
 # bundle, it MUST also update the prebuilt zip at
-# src/apps/web/public/admin/extension/nova-extension.zip AND the sidecar
+# src/apps/web/public/admin/extension/kria-extension.zip AND the sidecar
 # extension-info.json in the same PR.
 #
 # Why: the zip is a committed binary artifact served by /admin/extension/install
@@ -35,7 +35,7 @@ WATCHED_PATHS=(
 
 # Files that MUST appear in the same diff when any WATCHED_PATHS file changes.
 REQUIRED_PATHS=(
-  "src/apps/web/public/admin/extension/nova-extension.zip"
+  "src/apps/web/public/admin/extension/kria-extension.zip"
   "src/apps/web/public/admin/extension/extension-info.json"
 )
 
@@ -88,7 +88,7 @@ Fix: from a fresh worktree, run
 
   bash scripts/build-admin-extension-zip.sh
 
-and commit the regenerated src/apps/web/public/admin/extension/nova-extension.zip
+and commit the regenerated src/apps/web/public/admin/extension/kria-extension.zip
 and extension-info.json alongside your source change.
 
 If this edit genuinely cannot change the built bundle (e.g. a comment-only

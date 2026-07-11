@@ -15,6 +15,7 @@ see the report for the gap.
 
 from __future__ import annotations
 
+import json
 import uuid
 
 import app.tasks.autoplace as ap
@@ -50,7 +51,7 @@ class _Asset:
         self.source_filename = "x.png"
         self.duration_s = None
         self.aspect = 1.0
-        # v3 stub-shaped analysis so analysis_is_stale() never triggers the
+        # Current-version stub-shaped analysis so analysis_is_stale() never triggers the
         # background backfill dispatch (which would need a real broker).
         self.analysis = (
             analysis
@@ -148,8 +149,114 @@ class _NullCtx:
         return False
 
 
+class _PoolAsset:
+    def __init__(self, *, kind: str = "image"):
+        self.id = uuid.uuid4()
+        self.plan_item_id = uuid.uuid4()
+        self.user_id = uuid.uuid4()
+        self.gcs_path = f"users/u/plan/i/pool/{self.id}.png"
+        self.kind = kind
+        self.source_filename = "alpha-card.png"
+        self.duration_s = None
+        self.aspect = None
+        self.analysis = None
+        self.status = "uploaded"
+
+
+class _AnalyzeSess:
+    def __init__(self, asset: _PoolAsset):
+        self.asset = asset
+        self.commits = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get(self, _model, _pk, **_kw):
+        return self.asset
+
+    def commit(self):
+        self.commits += 1
+
+
+def _patch_analyze_pool_common(monkeypatch, asset: _PoolAsset, *, gemini_key: str | None) -> None:
+    from PIL import Image
+
+    from app.config import settings as _settings
+
+    monkeypatch.setattr(ap, "_sync_session", lambda: _AnalyzeSess(asset))
+    monkeypatch.setattr(_settings, "gemini_api_key", gemini_key, raising=False)
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda *a, **k: _NullCtx()
+    )
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.record_pipeline_event",
+        lambda stage, event, data=None: None,
+    )
+
+    def _download(_gcs_path: str, local_path: str) -> None:
+        Image.new("RGBA", (4, 2), (255, 0, 0, 128)).save(local_path)
+
+    monkeypatch.setattr("app.storage.download_to_file", _download)
+    monkeypatch.setattr("app.pipeline.image_clip.image_has_alpha", lambda _path: True)
+
+
 def _variant_now(job: _Job) -> dict:
     return job.assembly_plan["variants"][0]
+
+
+# ── analyze_pool_asset image alpha persistence ────────────────────────────────
+
+
+def test_analyze_pool_asset_image_gemini_success_persists_has_alpha(monkeypatch):
+    asset = _PoolAsset(kind="image")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key="gemini-key")
+
+    class _Models:
+        def generate_content(self, **_kwargs):
+            return type(
+                "Resp",
+                (),
+                {
+                    "text": json.dumps(
+                        {
+                            "subject": "alpha card",
+                            "description": "transparent sticker",
+                            "on_screen_text": "",
+                            "kind_hint": "photo",
+                        }
+                    )
+                },
+            )()
+
+    class _Client:
+        models = _Models()
+
+    monkeypatch.setattr("app.pipeline.agents.gemini_analyzer._get_client", lambda: _Client())
+    monkeypatch.setattr("app.pipeline.prompt_loader.load_prompt", lambda _name: "prompt")
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.analysis["source"] == "image_metadata"
+    assert asset.analysis["has_alpha"] is True
+    assert asset.analysis["width"] == 4
+    assert asset.analysis["height"] == 2
+
+
+def test_analyze_pool_asset_image_no_gemini_key_persists_has_alpha_on_stub(monkeypatch):
+    asset = _PoolAsset(kind="image")
+    _patch_analyze_pool_common(monkeypatch, asset, gemini_key=None)
+
+    ap.analyze_pool_asset(str(asset.id))
+
+    assert asset.status == "ready"
+    assert asset.analysis["source"] == "stub"
+    assert asset.analysis["has_alpha"] is True
+    assert asset.analysis["width"] == 4
+    assert asset.analysis["height"] == 2
 
 
 # ── no transcript → failed ────────────────────────────────────────────────────

@@ -4,7 +4,7 @@
  * Covers:
  *  1. Desktop autoplay — all visible cards with `src` get play() called.
  *  2. Mobile single-play — only the most-visible card plays.
- *  3. Copy — "created with nova" rendered; clip title NOT visible as tile text.
+ *  3. Copy — "created with kria" rendered; clip title NOT visible as tile text.
  */
 import "@testing-library/jest-dom";
 import { render, act } from "@testing-library/react";
@@ -228,9 +228,9 @@ describe("ShowcaseMarquee — copy", () => {
     });
   });
 
-  it("renders 'created with nova' credit on each tile", () => {
+  it("renders 'created with kria' credit on each tile", () => {
     const { getAllByText } = render(<ShowcaseMarquee clips={CLIPS} />);
-    const credits = getAllByText(/created with nova/i);
+    const credits = getAllByText(/created with kria/i);
     // One per clip (three tiles).
     expect(credits.length).toBe(CLIPS.length);
   });

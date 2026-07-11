@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nova — dev launcher that uses Homebrew postgres + redis instead of docker.
+# Kria — dev launcher that uses Homebrew postgres + redis instead of docker.
 # Mirrors scripts/dev-auto.sh but skips the docker-compose infra step. Use this
 # when:
 #   - postgres@16 is already running via brew services

@@ -183,7 +183,7 @@ describe("IdeasHome", () => {
 
     const status = screen.getByRole("status");
     expect(status).toHaveAttribute("aria-live", "polite");
-    expect(within(status).getByText("Nova is writing an idea…")).toBeInTheDocument();
+    expect(within(status).getByText("Kria is writing an idea…")).toBeInTheDocument();
   });
 
   it("renders Generate with AI failures under the composer", async () => {

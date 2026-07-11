@@ -1,3 +1,4 @@
+import json
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from pydantic import Field, field_validator
@@ -90,8 +91,26 @@ class Settings(BaseSettings):
     # key — see app/services/lrclib_client.py.
     lyrics_extraction_timeout_s: float = 90.0
 
-    # CORS — JSON array in env: ALLOWED_ORIGINS='["https://nova.io","http://localhost:3000"]'
+    # CORS — comma-separated or JSON array in env:
+    # ALLOWED_ORIGINS=https://usekria.com,http://localhost:3000
+    # ALLOWED_ORIGINS='["https://usekria.com","http://localhost:3000"]'
     allowed_origins: list[str] = ["http://localhost:3000"]
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v: object) -> object:
+        """Support both JSON-array and comma-separated ALLOWED_ORIGINS values."""
+        if not isinstance(v, str):
+            return v
+        raw = v.strip()
+        if not raw:
+            return []
+        if raw.startswith("["):
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError:
+                return v
+        return [part.strip() for part in raw.split(",") if part.strip()]
 
     # Waitlist admin
     waitlist_admin_secret: str = "changeme"
@@ -443,6 +462,9 @@ class Settings(BaseSettings):
     # When False: upload-urls + set-media-overlays routes return 404; the
     # worker apply-pass branch never fires.
     media_overlays_enabled: bool = False
+    # Alpha-preserving image overlays for the media-overlay lane. When False,
+    # image cards still flatten through JPEG exactly as before.
+    media_overlay_alpha_enabled: bool = False
 
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.
@@ -479,7 +501,7 @@ class Settings(BaseSettings):
     # (the #296/#297 parity incident class).
     fullscreen_cutaways_enabled: bool = False
 
-    # Per-item "Ask Nova" advisor (plan dogfood feedback #2): conversational,
+    # Per-item "Ask Kria" advisor (plan dogfood feedback #2): conversational,
     # read-only advice about which clip fits which shot. Additive + auth'd; it
     # never writes state (the re-read offer goes through the clip-note PATCH).
     # Kill switch: PLAN_ITEM_ADVISOR_ENABLED=false → route returns 404.

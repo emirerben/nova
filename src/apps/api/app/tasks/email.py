@@ -34,9 +34,9 @@ def send_waitlist_confirmation(email: str) -> None:
                 "Content-Type": "application/json",
             },
             json={
-                "from": "Nova <hello@nova.video>",
+                "from": "Kria <hello@usekria.com>",
                 "to": [email],
-                "subject": "You're on the Nova waitlist",
+                "subject": "You're on the Kria waitlist",
                 "html": _build_email_html(email),
             },
             timeout=10.0,
@@ -61,7 +61,7 @@ def _build_email_html(email: str) -> str:
                 max-width: 480px; margin: 0 auto; padding: 40px 20px;">
         <h1 style="font-size: 24px; margin-bottom: 16px;">You're on the list! 🎬</h1>
         <p style="color: #555; line-height: 1.6;">
-            Thanks for signing up for <strong>Nova</strong> — the AI tool that transforms
+            Thanks for signing up for <strong>Kria</strong> — the AI tool that transforms
             your raw videos into viral-ready short-form content.
         </p>
         <p style="color: #555; line-height: 1.6;">
@@ -70,7 +70,7 @@ def _build_email_html(email: str) -> str:
         </p>
         <hr style="border: none; border-top: 1px solid #eee; margin: 32px 0;" />
         <p style="color: #999; font-size: 12px;">
-            Nova — AI-powered raw video to viral short-form content
+            Kria — AI-powered raw video to viral short-form content
         </p>
     </div>
     """

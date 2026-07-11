@@ -58,7 +58,7 @@ function StepRail({
 }) {
   return (
     <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-200 bg-white px-8 py-10">
-      <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Nova</p>
+      <p className="text-xs font-semibold uppercase tracking-widest text-[#3f3f46]">Kria</p>
 
       <ol className="mt-10 flex flex-col gap-6">
         {STEP_LABELS.map((label, i) => {

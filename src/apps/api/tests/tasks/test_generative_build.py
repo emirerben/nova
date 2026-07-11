@@ -3739,6 +3739,7 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
         "caption_cues": [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}],
         "voiceover_caption_style": "word",
         "voiceover_caption_font": "Montserrat Bold",
+        "caption_margin_v": 653,
         "caption_language": "tr",
     }
     gb._finalize_job(str(uuid.uuid4()), [result])
@@ -3748,9 +3749,65 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     # caption style + font must survive too, or a caption edit reburns wrong.
     assert v["voiceover_caption_style"] == "word"
     assert v["voiceover_caption_font"] == "Montserrat Bold"
+    assert v["caption_margin_v"] == 653
     # subtitled: the language must survive or the editor chip + re-transcribe lose it.
     assert v["caption_language"] == "tr"
     assert job.status == "variants_ready"
+
+
+def test_subtitled_caption_margin_resolves_identically_for_first_and_reburn(monkeypatch, tmp_path):
+    from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V
+
+    captured: dict[str, int | None] = {}
+
+    def fake_generate_ass_from_cues(cues, output_path, **kwargs):
+        captured["sentence"] = kwargs.get("margin_v")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("ass")
+
+    def fake_generate_word_pop_ass(cues, output_path, **kwargs):
+        captured["word"] = kwargs.get("margin_v")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write("ass")
+
+    def fake_burn(base_local, ass_path, fonts_dir, out_local):
+        with open(out_local, "wb") as f:
+            f.write(b"video")
+
+    monkeypatch.setattr("app.pipeline.captions.generate_ass_from_cues", fake_generate_ass_from_cues)
+    monkeypatch.setattr("app.pipeline.captions.generate_word_pop_ass", fake_generate_word_pop_ass)
+    monkeypatch.setattr("app.pipeline.narrated_assembler.burn_captions_on_video", fake_burn)
+
+    base_local = tmp_path / "base.mp4"
+    base_local.write_bytes(b"base")
+    cues = [{"text": "Hello world", "start_s": 0.0, "end_s": 1.0}]
+
+    for variant, expected in [
+        ({"caption_margin_v": 653}, 653),
+        ({}, SUBTITLED_CAPTION_MARGIN_V),
+    ]:
+        captured.clear()
+        assert gb._resolve_caption_margin_v(variant) == expected  # first-burn helper
+        common = {
+            **variant,
+            "resolved_archetype": "subtitled",
+            "captions_enabled": True,
+            "caption_cues": cues,
+            "voiceover_caption_font": None,
+        }
+        gb._burn_persisted_captions_onto_base(
+            str(base_local),
+            str(tmp_path / f"sentence_{expected}.mp4"),
+            {**common, "voiceover_caption_style": "sentence"},
+            str(tmp_path),
+        )
+        gb._burn_persisted_captions_onto_base(
+            str(base_local),
+            str(tmp_path / f"word_{expected}.mp4"),
+            {**common, "voiceover_caption_style": "word"},
+            str(tmp_path),
+        )
+        assert captured == {"sentence": expected, "word": expected}
 
 
 def test_finalize_job_preserves_sound_effects(monkeypatch):

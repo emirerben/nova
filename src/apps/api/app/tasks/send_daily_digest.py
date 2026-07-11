@@ -34,7 +34,7 @@ log = structlog.get_logger()
 GRADER_AGENT_NAME = "nova.final_video_grader"
 ESCALATE_BAND = "escalate"
 
-DEFAULT_FROM_EMAIL = "Nova <hello@nova.video>"
+DEFAULT_FROM_EMAIL = "Kria <hello@usekria.com>"
 # Work-hours weekday window the builder cron runs in (UTC). Outside it, zero
 # activity is expected, so the dead-man's-switch must NOT fire. Mirrors the
 # work-hours guard in scripts/cron/build_task_runner.sh (the OpenClaw/Paperclip

@@ -7,6 +7,7 @@ import {
   type CaptionCue,
   type CaptionLanguage,
   setPlanItemCaptionFont,
+  setPlanItemCaptionPosition,
   setPlanItemCaptions,
   setPlanItemCaptionsEnabled,
   setPlanItemVariantCaptionStyle,
@@ -16,6 +17,11 @@ import { INTRO_FONTS } from "../../../lib/overlay-constants";
 import CaptionStyleToggle from "./CaptionStyleToggle";
 
 const CAPTION_LANGUAGE_LABELS: Record<string, string> = { en: "English", tr: "Türkçe" };
+const CAPTION_POSITION_OPTIONS = [
+  { label: "Low", yFrac: 0.8 },
+  { label: "Middle", yFrac: 0.66 },
+  { label: "High", yFrac: 0.45 },
+] as const;
 
 /**
  * On-video caption editor (paused "Edit captions" mode).
@@ -151,6 +157,8 @@ export default function CaptionEditor({
   // debounced/in-flight PATCH can never land after the reburn reads it.
   const [captionsEnabled, setCaptionsEnabled] = useState(initialCaptionsEnabled);
   const [captionStyle, setCaptionStyle] = useState<VoiceoverCaptionStyle>(initialCaptionStyle);
+  const [captionYFrac, setCaptionYFrac] = useState(() => 1 - previewBottomCqh / 100);
+  const [positioning, setPositioning] = useState(false);
   const captionsEnabledInFlight = useRef<Promise<void> | null>(null);
   const captionStyleInFlight = useRef<Promise<void> | null>(null);
   // Review-first nudge (D6): true once the user has scanned/touched the cue list,
@@ -236,6 +244,23 @@ export default function CaptionEditor({
       captionStyleInFlight.current = p;
     },
     [itemId, variantId],
+  );
+
+  const chooseCaptionPosition = useCallback(
+    async (yFrac: number) => {
+      setCaptionYFrac(yFrac);
+      setPositioning(true);
+      setError(null);
+      try {
+        await setPlanItemCaptionPosition(itemId, variantId, yFrac);
+        onApplied?.();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Couldn't move captions");
+      } finally {
+        setPositioning(false);
+      }
+    },
+    [itemId, variantId, onApplied],
   );
 
   const activeIndex = useMemo(
@@ -345,7 +370,9 @@ export default function CaptionEditor({
   }, [itemId, variantId, cues, font, captionsEnabled, captionStyle, sendFont, onApplied]);
 
   const active = activeIndex >= 0 ? cues[activeIndex] : null;
-  const busy = applying || rendering;
+  const busy = applying || positioning || rendering;
+  const captionPositionEnabled = process.env.NEXT_PUBLIC_CAPTION_POSITION_ENABLED === "true";
+  const captionPreviewBottomCqh = (1 - captionYFrac) * 100;
 
   return (
     <div className="space-y-3">
@@ -464,7 +491,7 @@ export default function CaptionEditor({
           {captionsEnabled && active && (
             <div
               className="absolute inset-x-0 flex justify-center"
-              style={{ bottom: `${previewBottomCqh}cqh` }}
+              style={{ bottom: `${captionPreviewBottomCqh}cqh` }}
             >
               {paused && editing === activeIndex ? (
                 <textarea
@@ -561,6 +588,35 @@ export default function CaptionEditor({
           saving={false}
           wordHint={wordHint}
         />
+      </div>
+      )}
+
+      {captionsEnabled && captionPositionEnabled && (
+      <div>
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
+          Caption position
+        </p>
+        <div className="grid grid-cols-3 gap-2">
+          {CAPTION_POSITION_OPTIONS.map((opt) => {
+            const active = Math.abs(captionYFrac - opt.yFrac) < 0.01;
+            return (
+              <button
+                key={opt.label}
+                type="button"
+                aria-pressed={active}
+                disabled={busy}
+                onClick={() => void chooseCaptionPosition(opt.yFrac)}
+                className={`min-h-[44px] rounded-lg border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  active
+                    ? "border-lime-600 bg-lime-50 text-lime-900"
+                    : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
       )}
 

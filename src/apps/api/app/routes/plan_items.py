@@ -34,6 +34,7 @@ from app.routes.generative_jobs import (
     BedLevelRequest,
     CaptionFontRequest,
     CaptionLanguageRequest,
+    CaptionPositionRequest,
     CaptionsEnabledRequest,
     CaptionsRequest,
     CaptionStyleRequest,
@@ -59,6 +60,7 @@ from app.routes.generative_jobs import (
     dispatch_reset_timeline,
     dispatch_retext,
     dispatch_retranscribe_captions,
+    dispatch_set_caption_position,
     dispatch_set_intro_size,
     dispatch_set_intro_timing,
     dispatch_set_media_overlays,
@@ -240,7 +242,7 @@ class PlanItemResponse(BaseModel):
     # Only affects clips where width > height; portrait/square always crop.
     landscape_fit: Literal["fit", "fill"] = "fit"
     # Original-audio bed level for narrated. 0 = voice only, 1 = loudest.
-    # NULL = Nova's default level. Set via PATCH /{id}/voiceover-bed-level.
+    # NULL = Kria's default level. Set via PATCH /{id}/voiceover-bed-level.
     voiceover_bed_level: float | None = None
     # Narrated caption style: "sentence" (sentence-block) or "word" (one big word
     # at a time). NULL = "sentence". PATCH /{id}/voiceover-caption-style.
@@ -1070,7 +1072,7 @@ async def set_item_voiceover(
 
 
 class VoiceoverBedLevelBody(BaseModel):
-    # 0.0 = voice only, 1.0 = original audio loudest. null → Nova's default level.
+    # 0.0 = voice only, 1.0 = original audio loudest. null → Kria's default level.
     voiceover_bed_level: float | None = None
 
 
@@ -1083,7 +1085,7 @@ async def set_item_voiceover_bed_level(
 ) -> PlanItemResponse:
     """Set how loud the original clip audio plays under the narration.
 
-    0.0 = voice only, 1.0 = loudest; null clears the override (Nova's default).
+    0.0 = voice only, 1.0 = loudest; null clears the override (Kria's default).
     Consumed at generate time (the footage bed is side-chain ducked under the
     voice). No re-render is triggered — the user still clicks Generate.
     """
@@ -1119,7 +1121,7 @@ async def set_item_voiceover_caption_style(
     """Choose how the narrated voiceover captions render.
 
     "sentence" = sentence-block captions (default); "word" = the qbuilder
-    word-by-word look (one big word at a time). null clears the override (Nova's
+    word-by-word look (one big word at a time). null clears the override (Kria's
     default, "sentence"). Consumed at generate time — no re-render is triggered.
     """
     if (
@@ -1161,7 +1163,7 @@ async def contest_conformance(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
-    """'Looks wrong? Tell Nova' — mark the verdict contested. From here on,
+    """'Looks wrong? Tell Kria' — mark the verdict contested. From here on,
     only high-confidence (≥0.8) verdicts may render on this footage."""
     item = await _load_owned_item(item_id, user.id, db)
     if item.conformance:
@@ -1172,7 +1174,7 @@ async def contest_conformance(
     return plan_item_response(reloaded, instruction_level=instruction_level)
 
 
-# ── Ask Nova (per-item filming advisor) ───────────────────────────────────────
+# ── Ask Kria (per-item filming advisor) ───────────────────────────────────────
 
 
 class AdvisorTurnBody(BaseModel):
@@ -1200,7 +1202,7 @@ async def plan_item_advisor_turn(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> AdvisorTurnResponse:
-    """One "Ask Nova" turn on this item: which clip fits, what to film instead,
+    """One "Ask Kria" turn on this item: which clip fits, what to film instead,
     or contesting the brief read. Read-only — advice, never writes."""
     from app.config import settings  # noqa: PLC0415
 
@@ -1451,6 +1453,28 @@ async def set_item_caption_font(
         item_id=item_id,
         variant_id=variant_id,
         font=req.caption_font,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post("/{item_id}/variants/{variant_id}/caption-position", response_model=PlanItemResponse)
+async def set_item_caption_position(
+    item_id: str,
+    variant_id: str,
+    req: CaptionPositionRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set caption vertical position and reburn the captioned variant (async)."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    margin_v = dispatch_set_caption_position(job, variant_id, y_frac=req.y_frac)
+    await db.commit()
+    log.info(
+        "plan_item_set_caption_position",
+        item_id=item_id,
+        variant_id=variant_id,
+        y_frac=req.y_frac,
+        margin_v=margin_v,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -2562,7 +2586,7 @@ async def transcript_analyze(
     analyze_id = uuid.uuid4().hex
     from app.tasks.transcript_analyze import analyze_transcript_footage  # noqa: PLC0415
 
-    # Default `celery` queue via .delay(), like every other task in Nova — prod
+    # Default `celery` queue via .delay(), like every other task in Kria — prod
     # workers already drain it, so no fly.toml -Q change is needed. (Registered in
     # app/worker.py `include` so workers know the task.)
     analyze_transcript_footage.delay(analyze_id, clip_paths, item_id)

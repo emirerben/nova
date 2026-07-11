@@ -324,7 +324,7 @@ sub-phase (`assemble_phase_done`) events. Stringified numbers, Fly's
 Items I could not execute from a worktree without production access. All of
 these are operational, not code:
 
-1. **Stage actual Nova-user-uploaded clips in a parity GCS prefix.** The
+1. **Stage actual Kria-user-uploaded clips in a parity GCS prefix.** The
    in-repo test uses production-shape synthetic clips (see
    `tests/scripts/gen_real_shape_clips.sh`) which exercise the encoder
    correctly but are not real user footage. For a true production-grade

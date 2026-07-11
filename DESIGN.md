@@ -1,4 +1,4 @@
-# Nova Design System
+# Kria Design System
 
 This document is the **calibration target** for all design reviews and the token source for implementation.
 Consumers: `/plan-design-review` and `/design-review` skills, implementers, and AI agents.
@@ -215,7 +215,7 @@ Celebrate then recede.
 
 ---
 
-## §9 Anti-slop rules (Nova-specific)
+## §9 Anti-slop rules (Kria-specific)
 
 - **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
 - No candy gradients, no rainbow palettes, no purple/violet defaults.
@@ -262,7 +262,7 @@ Rules here supplement §2 (light editorial system).
 - **Idea link:** `text-[15px] leading-snug text-[#0c0c0e] line-clamp-2`; hover `text-lime-700`; focus `outline-2 outline-[#0c0c0e]`.
 - **Status slots:** ready pill `border-lime-200 bg-lime-50 text-lime-800 text-[11px]` "Ready to post"; generating/rerolling `text-[12px] text-[#71717a]` "Rendering…" + lime `motion-safe:animate-ping` dot; failed zinc "Didn't render — open to retry"; awaiting_clips zinc "Needs footage"; idea faint `text-[#a1a1aa]` "Plan this →".
 - **Delete:** `×` button `h-[28px] w-[28px]`; hidden until row hover/focus on hover-capable devices, always visible on touch. `ready|generating|rerolling` rows show inline zinc confirmation "Delete idea? It has a video — Keep / Delete"; other rows delete immediately.
-- **Generating:** top in-list optimistic row with `role="status" aria-live="polite"`, lime ping dot in numeral slot, `motion-safe:animate-shimmer` bar, label "Nova is writing an idea…"; button stays focused and disabled.
+- **Generating:** top in-list optimistic row with `role="status" aria-live="polite"`, lime ping dot in numeral slot, `motion-safe:animate-shimmer` bar, label "Kria is writing an idea…"; button stays focused and disabled.
 - **Empty:** no card/icon; list zone shows Fraunces `text-[16px] font-medium` "Pitch your first idea."
 - **Failed plan:** quiet dashed `border-zinc-200` tile between composer and ledger, zinc copy "That idea didn't come through. Try again"; no red.
 - **Initial load:** SHIMMER tier — header ghost plus 4 ghost rows.

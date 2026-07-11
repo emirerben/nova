@@ -84,7 +84,7 @@ def confirm(prompt: str) -> bool:
 def main() -> int:
     p = argparse.ArgumentParser(
         prog="admin.py",
-        description="Call Nova /admin/* endpoints with the right token + host.",
+        description="Call Kria /admin/* endpoints with the right token + host.",
     )
     p.add_argument("method", help="HTTP method (GET, POST, PATCH, PUT, DELETE)")
     p.add_argument("path", help="Endpoint path, e.g. /admin/templates or templates/123")

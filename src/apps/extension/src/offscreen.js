@@ -1,4 +1,4 @@
-// Nova Music Ingest — offscreen document.
+// Kria Music Ingest — offscreen document.
 //
 // Runs the heavy work that MV3 service workers can't safely host:
 //   1. Extract audio stream from YouTube via youtubei.js (web build = pure-JS
@@ -6,23 +6,23 @@
 //      Phase 0 spike).
 //   2. Stream-fetch bytes from googlevideo.com (host_permissions bypasses
 //      CORS that would block this from any regular page).
-//   3. Call Nova's /api/admin/music-tracks/upload-init via the SPA's Next.js
+//   3. Call Kria's /api/admin/music-tracks/upload-init via the SPA's Next.js
 //      admin proxy → get back a signed GCS PUT URL.
-//   4. PUT the blob directly to GCS (no Nova hop = bypasses Vercel function
+//   4. PUT the blob directly to GCS (no Kria hop = bypasses Vercel function
 //      body cap of 4.5 MB on Hobby / bounded on Pro).
 //   5. Call /api/admin/music-tracks/<id>/upload-confirm → server ffprobes the
 //      blob + dispatches the Celery analyze task.
 //
 // Progress is reported back to the SW via runtime.sendMessage with a tagged
 // stage payload. The SW routes those events to whichever surface kicked off
-// the job (popup tab or Nova SPA tab).
+// the job (popup tab or Kria SPA tab).
 //
 // Falls back from youtubei.js → @distube/ytdl-core if extraction throws.
 // Both libraries break periodically when YouTube changes its player JS;
 // having both vendored is the redundancy layer the plan calls for.
 
 import { Innertube, UniversalCache } from "youtubei.js/web";
-import { isAllowedNovaApiOrigin } from "./lib/origin-allowlist.js";
+import { isAllowedKriaApiOrigin } from "./lib/origin-allowlist.js";
 import { encodeBasicAuthHeader } from "./lib/basic-auth.js";
 
 const ADMIN_USER_KEY = "nova_admin_user";
@@ -143,7 +143,7 @@ async function streamToBlob(stream, mime, onProgress, expectedBytes) {
 }
 
 async function fetchJson(proxyBase, path, body) {
-  // proxyBase is the Nova admin proxy origin + base (e.g. "/api/admin").
+  // proxyBase is the Kria admin proxy origin + base (e.g. "/api/admin").
   // The extension origin (chrome-extension://<id>) calls into the SPA's
   // proxy, which injects X-Admin-Token server-side — token never reaches us.
   // Cross-origin POSTs to vercel.app must include the absolute origin since
@@ -155,7 +155,7 @@ async function fetchJson(proxyBase, path, body) {
   const headers = { "Content-Type": "application/json" };
 
   // SECURITY: only attach Authorization: Basic when BOTH conditions hold —
-  //   (1) the request URL's origin is in the Nova allowlist, AND
+  //   (1) the request URL's origin is in the Kria allowlist, AND
   //   (2) the request URL's pathname starts with /api/admin/.
   // Belt-and-suspenders against a tampered `nova_api_origin` setting or a
   // future call site that points fetchJson at something other than the
@@ -165,7 +165,7 @@ async function fetchJson(proxyBase, path, body) {
     const parsed = new URL(url);
     const reqOrigin = `${parsed.protocol}//${parsed.host}`;
     if (
-      isAllowedNovaApiOrigin(reqOrigin) &&
+      isAllowedKriaApiOrigin(reqOrigin) &&
       parsed.pathname.startsWith("/api/admin/")
     ) {
       const auth = await loadAdminBasicAuthHeader();
@@ -195,7 +195,7 @@ async function fetchJson(proxyBase, path, body) {
         ? parsed.detail
         : JSON.stringify(parsed?.detail ?? parsed);
     const err = new Error(
-      `Nova ${path} returned ${resp.status}: ${detail.slice(0, 300)}`,
+      `Kria ${path} returned ${resp.status}: ${detail.slice(0, 300)}`,
     );
     err.status = resp.status;
     err.detail = parsed?.detail;
@@ -209,7 +209,7 @@ async function resolveAbsoluteProxyBase(rel) {
   // the extension context. Stored once per session via chrome.storage; default
   // to prod if missing.
   const stored = await chrome.storage.local.get("nova_api_origin");
-  const origin = stored.nova_api_origin || "https://nova-video.vercel.app";
+  const origin = stored.nova_api_origin || "https://usekria.com";
   return `${origin}${rel}`;
 }
 
@@ -279,7 +279,7 @@ async function runIngest(jobId, { url, title, artist, proxy_base }) {
   const { track_id, upload_url, content_type } = initResp;
   emit(jobId, "uploading", {
     percent: 0,
-    detail: `Uploading ${formatMB(blob.size)} to Nova…`,
+    detail: `Uploading ${formatMB(blob.size)} to Kria…`,
     track_id,
   });
 
@@ -295,7 +295,7 @@ async function runIngest(jobId, { url, title, artist, proxy_base }) {
     }
   } catch (err) {
     emit(jobId, "failed", {
-      detail: `Upload to Nova failed: ${err.message || err}`,
+      detail: `Upload to Kria failed: ${err.message || err}`,
       track_id,
     });
     return;

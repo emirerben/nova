@@ -12,7 +12,10 @@ Guards:
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 from app.agents._schemas.media_overlay import MediaOverlay
+from app.pipeline import media_overlay as mo
 from app.pipeline.media_overlay import build_media_overlay_command
 
 
@@ -80,6 +83,10 @@ def _build(cards, local_paths=None, widths_px=None):
     )
 
 
+def _fc(cmd: list[str]) -> str:
+    return cmd[cmd.index("-filter_complex") + 1]
+
+
 class TestImageCard:
     def test_loop_flag_present_for_image(self):
         card = _card_img()
@@ -91,15 +98,13 @@ class TestImageCard:
         card = _card_img(scale=0.4)
         expected_w = card.card_width_px()  # round(0.4 * 1080) = 432
         cmd = _build([card])
-        fc = cmd[cmd.index("-filter_complex") + 1]
         # -2 rounds height to nearest even (yuv420p chroma-subsampling safe); format=yuv420p
-        assert f"scale={expected_w}:-2,format=yuv420p" in fc
+        assert f"scale={expected_w}:-2,format=yuv420p" in _fc(cmd)
 
     def test_enable_gate_present(self):
         card = _card_img(start_s=2.0, end_s=5.0)
         cmd = _build([card])
-        fc = cmd[cmd.index("-filter_complex") + 1]
-        assert "enable='between(t,2.000,5.000)'" in fc
+        assert "enable='between(t,2.000,5.000)'" in _fc(cmd)
 
     def test_overlay_top_left_math_centered(self):
         # Card at center (x=0.5, y=0.5), scale=0.4
@@ -110,28 +115,24 @@ class TestImageCard:
         cx = round(0.5 * 1080)
         ox = cx - cw // 2
         cmd = _build([card])
-        fc = cmd[cmd.index("-filter_complex") + 1]
-        assert f"overlay={ox}:" in fc
+        assert f"overlay={ox}:" in _fc(cmd)
 
     def test_no_tpad_for_image(self):
         card = _card_img()
         cmd = _build([card])
-        fc = cmd[cmd.index("-filter_complex") + 1]
-        assert "tpad" not in fc
+        assert "tpad" not in _fc(cmd)
 
     def test_eof_action_pass(self):
         card = _card_img()
         cmd = _build([card])
-        fc = cmd[cmd.index("-filter_complex") + 1]
-        assert "eof_action=pass" in fc
+        assert "eof_action=pass" in _fc(cmd)
 
 
 class TestVideoCard:
     def test_tpad_clone_present_for_video(self):
         card = _card_video()
         cmd = _build([card], local_paths=["/tmp/vid1.mp4"])
-        fc = cmd[cmd.index("-filter_complex") + 1]
-        assert "tpad=stop_mode=clone" in fc
+        assert "tpad=stop_mode=clone" in _fc(cmd)
 
     def test_no_loop_flag_for_video(self):
         card = _card_video()
@@ -142,8 +143,7 @@ class TestVideoCard:
     def test_pts_shift_present(self):
         card = _card_video(start_s=5.0)
         cmd = _build([card], local_paths=["/tmp/vid1.mp4"])
-        fc = cmd[cmd.index("-filter_complex") + 1]
-        assert "PTS-STARTPTS+5.000/TB" in fc
+        assert "PTS-STARTPTS+5.000/TB" in _fc(cmd)
 
 
 class TestChaining:
@@ -151,19 +151,256 @@ class TestChaining:
         img = _card_img(id_="img1", z=0)
         vid = _card_video(id_="vid1", z=1)
         cmd = _build([img, vid], local_paths=["/tmp/img1.jpg", "/tmp/vid1.mp4"])
-        fc = cmd[cmd.index("-filter_complex") + 1]
         # Both overlay labels should appear
-        assert "ov0" in fc
-        assert "ov1" in fc
+        assert "ov0" in _fc(cmd)
+        assert "ov1" in _fc(cmd)
 
     def test_z_order_ascending(self):
         # z=1 card must be rendered AFTER z=0 card (higher z = on top = later in chain)
         low_z = _card_img(id_="low", z=0, start_s=0.0, end_s=2.0)
         high_z = _card_img(id_="high", z=1, start_s=0.0, end_s=2.0)
         cmd = _build([high_z, low_z], local_paths=["/tmp/high.jpg", "/tmp/low.jpg"])
-        fc = cmd[cmd.index("-filter_complex") + 1]
         # ov0 is applied first (z=0 card), ov1 is applied on top (z=1 card)
-        assert fc.index("ov0") < fc.index("ov1")
+        assert _fc(cmd).index("ov0") < _fc(cmd).index("ov1")
+
+
+class TestAlphaCards:
+    def test_alpha_pip_uses_rgba_and_final_output_yuv420p(self):
+        card = _card_img(scale=0.4)
+        cmd = build_media_overlay_command(
+            "/tmp/base.mp4",
+            [card],
+            ["/tmp/card.png"],
+            [card.card_width_px()],
+            "/tmp/out.mp4",
+            card_has_alpha=[True],
+        )
+        fc = _fc(cmd)
+        assert f"scale={card.card_width_px()}:-2,format=rgba" in fc
+        assert fc.endswith("[ov0]format=yuv420p[finalv]")
+        assert cmd[cmd.index("-map") + 1] == "[finalv]"
+
+    def test_non_alpha_explicit_false_is_byte_identical_to_default(self):
+        card = _card_img()
+        baseline = _build([card], local_paths=["/tmp/card.jpg"])
+        explicit_false = build_media_overlay_command(
+            "/tmp/base.mp4",
+            [card],
+            ["/tmp/card.jpg"],
+            [card.card_width_px()],
+            "/tmp/out.mp4",
+            card_has_alpha=[False],
+        )
+        assert explicit_false == baseline
+
+    def test_fullscreen_alpha_asset_stays_flattened_command_byte_identical(self):
+        card = _card_fullscreen_img()
+        baseline = _build([card], local_paths=["/tmp/fs.jpg"])
+        alpha = build_media_overlay_command(
+            "/tmp/base.mp4",
+            [card],
+            ["/tmp/fs.jpg"],
+            [card.card_width_px()],
+            "/tmp/out.mp4",
+            card_has_alpha=[True],
+        )
+        assert alpha == baseline
+
+    def test_alpha_flag_tracks_original_index_after_z_sort(self):
+        opaque_high_z = _card_img(id_="opaque", z=2, scale=0.3)
+        alpha_low_z = _card_img(id_="alpha", z=1, scale=0.5)
+        cmd = build_media_overlay_command(
+            "/tmp/base.mp4",
+            [opaque_high_z, alpha_low_z],
+            ["/tmp/opaque.jpg", "/tmp/alpha.png"],
+            [opaque_high_z.card_width_px(), alpha_low_z.card_width_px()],
+            "/tmp/out.mp4",
+            card_has_alpha=[False, True],
+        )
+        fc = _fc(cmd)
+        assert f"[1:v]null,scale={alpha_low_z.card_width_px()}:-2,format=rgba" in fc
+        assert f"[2:v]null,scale={opaque_high_z.card_width_px()}:-2,format=yuv420p" in fc
+        assert fc.count("format=rgba") == 1
+        assert fc.count("format=yuv420p[finalv]") == 1
+
+    def test_flag_off_apply_uses_jpeg_path_even_when_asset_has_alpha(self, monkeypatch, tmp_path):
+        card = _card_img()
+        calls: list[list[str]] = []
+
+        def fake_download(_gcs, local):  # noqa: ANN001
+            with open(local, "wb") as fh:
+                fh.write(b"x")
+
+        def fake_run(cmd, **_kw):  # noqa: ANN001
+            calls.append(list(cmd))
+            return MagicMock(returncode=0, stderr=b"")
+
+        def fake_jpeg(_src, dst):  # noqa: ANN001
+            with open(dst, "wb") as fh:
+                fh.write(b"jpg")
+
+        monkeypatch.setattr(mo.settings, "media_overlay_alpha_enabled", False)
+        monkeypatch.setattr(mo, "image_has_alpha", lambda _path: True)
+        with (
+            patch.object(mo.storage, "download_to_file", side_effect=fake_download),
+            patch.object(mo.storage, "upload_public_read", return_value="https://signed"),
+            patch.object(mo, "normalize_to_jpeg", side_effect=fake_jpeg),
+            patch.object(mo, "normalize_to_png") as png_mock,
+            patch.object(mo.subprocess, "run", side_effect=fake_run),
+        ):
+            assert (
+                mo.apply_media_overlays("base/key.mp4", [card], "out/key.mp4", job_id="j1")
+                == "https://signed"
+            )
+
+        png_mock.assert_not_called()
+        assert len(calls) == 1
+        assert "format=rgba" not in _fc(calls[0])
+        assert f"scale={card.card_width_px()}:-2,format=yuv420p" in _fc(calls[0])
+        assert calls[0][calls[0].index("-map") + 1] == "[ov0]"
+
+    def test_flag_on_apply_alpha_pip_normalizes_png_and_builds_rgba_command(self, monkeypatch):
+        """Flag ON + alpha pip asset → normalize_to_png (not JPEG), alpha flag
+        threads through the valid-timing zip into the command: per-card
+        format=rgba + final format=yuv420p pin mapped as [finalv]."""
+        card = _card_img()
+        calls: list[list[str]] = []
+
+        def fake_download(_gcs, local):  # noqa: ANN001
+            with open(local, "wb") as fh:
+                fh.write(b"x")
+
+        def fake_run(cmd, **_kw):  # noqa: ANN001
+            calls.append(list(cmd))
+            return MagicMock(returncode=0, stderr=b"")
+
+        def fake_png(_src, dst):  # noqa: ANN001
+            with open(dst, "wb") as fh:
+                fh.write(b"png")
+            return dst, True
+
+        monkeypatch.setattr(mo.settings, "media_overlay_alpha_enabled", True)
+        monkeypatch.setattr(mo, "image_has_alpha", lambda _path: True)
+        with (
+            patch.object(mo.storage, "download_to_file", side_effect=fake_download),
+            patch.object(mo.storage, "upload_public_read", return_value="https://signed"),
+            patch.object(mo, "normalize_to_png", side_effect=fake_png) as png_mock,
+            patch.object(mo, "normalize_to_jpeg") as jpeg_mock,
+            patch.object(mo.subprocess, "run", side_effect=fake_run),
+        ):
+            assert (
+                mo.apply_media_overlays("base/key.mp4", [card], "out/key.mp4", job_id="j1")
+                == "https://signed"
+            )
+
+        png_mock.assert_called_once()
+        jpeg_mock.assert_not_called()
+        assert len(calls) == 1
+        fc = _fc(calls[0])
+        assert f"scale={card.card_width_px()}:-2,format=rgba" in fc
+        assert fc.endswith("[ov0]format=yuv420p[finalv]")
+        assert calls[0][calls[0].index("-map") + 1] == "[finalv]"
+
+    def test_flag_on_png_convert_failure_jpeg_fallback_drops_alpha_flag(self, monkeypatch):
+        """Flag ON + alpha asset, but normalize_to_png falls back to a JPEG
+        flatten (FFmpeg convert failed) → the alpha flag must drop to False
+        (the .png suffix check), keeping the command opaque: no rgba, no
+        [finalv] pin — byte-stable with the legacy chain."""
+        card = _card_img()
+        calls: list[list[str]] = []
+
+        def fake_download(_gcs, local):  # noqa: ANN001
+            with open(local, "wb") as fh:
+                fh.write(b"x")
+
+        def fake_run(cmd, **_kw):  # noqa: ANN001
+            calls.append(list(cmd))
+            return MagicMock(returncode=0, stderr=b"")
+
+        def fake_png_fallback(_src, dst):  # noqa: ANN001
+            # Mirror normalize_to_png's failure contract: return the JPEG path
+            # and an explicit alpha_preserved=False signal.
+            jpg = dst[: -len(".png")] + ".jpg"
+            with open(jpg, "wb") as fh:
+                fh.write(b"jpg")
+            return jpg, False
+
+        monkeypatch.setattr(mo.settings, "media_overlay_alpha_enabled", True)
+        monkeypatch.setattr(mo, "image_has_alpha", lambda _path: True)
+        with (
+            patch.object(mo.storage, "download_to_file", side_effect=fake_download),
+            patch.object(mo.storage, "upload_public_read", return_value="https://signed"),
+            patch.object(mo, "normalize_to_png", side_effect=fake_png_fallback),
+            patch.object(mo.subprocess, "run", side_effect=fake_run),
+        ):
+            assert (
+                mo.apply_media_overlays("base/key.mp4", [card], "out/key.mp4", job_id="j1")
+                == "https://signed"
+            )
+
+        assert len(calls) == 1
+        fc = _fc(calls[0])
+        assert "format=rgba" not in fc
+        assert "[finalv]" not in fc
+        assert f"scale={card.card_width_px()}:-2,format=yuv420p" in fc
+        assert calls[0][calls[0].index("-map") + 1] == "[ov0]"
+
+    def test_alpha_flags_survive_fullscreen_timeout_retry(self, monkeypatch):
+        """Mixed set: alpha pip image + fullscreen video. The fullscreen fast
+        attempt times out → one-shot force_veryfast retry MUST re-thread
+        card_has_alpha: rgba pip chain + [finalv] pin present in BOTH commands,
+        fullscreen chain stays yuv420p, presets fast → veryfast."""
+        import subprocess as _sp
+
+        pip = _card_img(id_="pip1", z=0)
+        fs = _card_video(id_="fsv", z=1).model_copy(
+            update={
+                "display_mode": "fullscreen",
+                "clip_trim_start_s": 0.0,
+                "clip_trim_end_s": 2.0,
+                "clip_duration_s": 5.0,
+            }
+        )
+        calls: list[list[str]] = []
+
+        def fake_download(_gcs, local):  # noqa: ANN001
+            with open(local, "wb") as fh:
+                fh.write(b"x")
+
+        def fake_run(cmd, **kw):  # noqa: ANN001
+            calls.append(list(cmd))
+            if len(calls) == 1:
+                raise _sp.TimeoutExpired(cmd=cmd, timeout=kw.get("timeout"))
+            return MagicMock(returncode=0, stderr=b"")
+
+        def fake_png(_src, dst):  # noqa: ANN001
+            with open(dst, "wb") as fh:
+                fh.write(b"png")
+            return dst, True
+
+        monkeypatch.setattr(mo.settings, "media_overlay_alpha_enabled", True)
+        monkeypatch.setattr(mo, "image_has_alpha", lambda _path: True)
+        with (
+            patch.object(mo.storage, "download_to_file", side_effect=fake_download),
+            patch.object(mo.storage, "upload_public_read", return_value="https://signed"),
+            patch.object(mo, "normalize_to_png", side_effect=fake_png),
+            patch.object(mo.subprocess, "run", side_effect=fake_run),
+        ):
+            assert (
+                mo.apply_media_overlays("base/key.mp4", [pip, fs], "out/key.mp4", job_id="j1")
+                == "https://signed"
+            )
+
+        assert len(calls) == 2
+        presets = [c[c.index("-preset") + 1] for c in calls]
+        assert presets == ["fast", "veryfast"]
+        for cmd in calls:
+            fc = _fc(cmd)
+            assert f"scale={pip.card_width_px()}:-2,format=rgba" in fc
+            # Fullscreen chain stays flattened yuv420p (cover-crop branch).
+            assert "crop=1080:1920,setsar=1,format=yuv420p" in fc
+            assert fc.endswith("format=yuv420p[finalv]")
+            assert cmd[cmd.index("-map") + 1] == "[finalv]"
 
 
 class TestAudioMapping:

@@ -612,7 +612,7 @@ export async function adminUploadMusicTrack(
   });
 
   // Phase 2: PUT bytes directly to GCS. CORS on the prod bucket is configured
-  // to allow exactly two origins: https://nova-video.vercel.app and
+  // to allow exactly two origins: https://usekria.com and
   // http://localhost:3000 (Allow-Methods GET/PUT/HEAD, Allow-Headers
   // Content-Type) — empirically verified via OPTIONS preflight. Vercel preview
   // deploys (nova-video-git-*.vercel.app) are NOT in the allowlist, so this
@@ -703,7 +703,7 @@ export async function adminGetAudioUrl(id: string): Promise<string> {
 /** Placeholder returned when the extension hasn't injected its ID yet. */
 const EXTENSION_ID_NOT_SET = "nova-extension-id-not-set";
 
-/** Resolve the Nova extension ID at call time.
+/** Resolve the Kria extension ID at call time.
  *  The extension's content script (src/apps/extension/src/content.js) sets
  *  `<html data-nova-extension-id="…">` at document_start, so the attribute
  *  is normally already on the document by the time SPA code runs. The
@@ -772,11 +772,11 @@ async function resolveExtensionId(timeoutMs: number): Promise<string> {
   });
 }
 
-/** Returns true iff the Nova extension is installed AND reachable from this page.
+/** Returns true iff the Kria extension is installed AND reachable from this page.
  *  First resolves the extension ID (DOM attribute set by the content script,
  *  with an event-driven fallback for slow profiles), then sends a one-shot
  *  `ping` and waits for a `pong`. Resolves false on overall timeout so the UI
- *  can swap to "Install Nova extension" without hanging. */
+ *  can swap to "Install Kria extension" without hanging. */
 export async function detectExtension(timeoutMs = 1500): Promise<boolean> {
   const runtime = chromeRuntime();
   if (!runtime) return false;
@@ -933,14 +933,14 @@ export async function extensionIngest(
 ): Promise<{ track_id: string }> {
   const runtime = chromeRuntime();
   if (!runtime) {
-    onProgress({ stage: "failed", detail: "Nova extension not installed" });
-    throw new Error("Nova extension not installed");
+    onProgress({ stage: "failed", detail: "Kria extension not installed" });
+    throw new Error("Kria extension not installed");
   }
   onProgress({ stage: "extension_check" });
   const ok = await detectExtension();
   if (!ok) {
-    onProgress({ stage: "failed", detail: "Nova extension not reachable" });
-    throw new Error("Nova extension not reachable");
+    onProgress({ stage: "failed", detail: "Kria extension not reachable" });
+    throw new Error("Kria extension not reachable");
   }
   // detectExtension() resolved the ID via the DOM-attribute bridge and
   // confirmed it's reachable; reuse the same accessor here. Stable for the
@@ -966,7 +966,7 @@ export async function extensionIngest(
       : ADMIN_PROXY;
 
   // Delegate to the extension. The extension calls upload-init/confirm on its
-  // own (via fetch to the Nova proxy, which injects the admin token); we just
+  // own (via fetch to the Kria proxy, which injects the admin token); we just
   // kick it off and tail the progress events it broadcasts back.
   return new Promise((resolve, reject) => {
     const listener = (msg: unknown) => {
