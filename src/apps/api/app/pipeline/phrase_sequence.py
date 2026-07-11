@@ -53,8 +53,8 @@ are shared with the transcript-synced path. ``rhythm_scenes`` is the one-call
 convenience wrapper.
 
 Everything here is deterministic: same words in, byte-identical scenes out.
-``word_roles`` is emitted as ``None`` — the downstream emphasis agent fills it
-later; this module never invents styling.
+``word_roles`` carries a deterministic one-keyword placeholder; the downstream
+emphasis agent overwrites it before normal sequence rendering.
 """
 
 from __future__ import annotations
@@ -81,6 +81,31 @@ RHYTHM_LEAD_IN_S = 0.3  # first sentence slot starts here, not at t=0
 RHYTHM_TAIL_S = 0.8  # sentence slots end this far before the video ends
 RHYTHM_SPEAK_FRAC = 0.62  # words occupy the first fraction of each slot; rest is air
 RHYTHM_MIN_CHAR_WEIGHT = 2  # short tokens still get a readable minimum span
+
+_ROLE_HERO = "hero"
+_ROLE_CONNECTOR = "connector"
+_ROLE_CLOSER = "closer"
+_KEYWORD_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "at",
+    "be",
+    "but",
+    "for",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "was",
+    "we",
+    "you",
+}
 
 _TERMINAL_PUNCT = ".!?…"
 # Closing wrappers that may trail the terminal punctuation ("word.")  etc.
@@ -210,7 +235,7 @@ def split_phrases(words: list, *, video_duration_s: float) -> list[dict]:
     Each scene dict::
 
         {"words": [str, ...],      # the words, original text preserved
-         "word_roles": None,       # placeholder; the emphasis agent fills this
+         "word_roles": [str, ...], # deterministic keyword placeholder
          "speech_start_s": float,  # first word start
          "speech_end_s": float,    # last word end
          "start_s": float,         # display start = speech_start_s; scene 0
@@ -283,7 +308,7 @@ def split_phrases(words: list, *, video_duration_s: float) -> list[dict]:
         scenes.append(
             {
                 "words": [w.text for w in group],
-                "word_roles": None,
+                "word_roles": _keyword_word_roles([w.text for w in group]),
                 "speech_start_s": round(speech_start_s, 3),
                 "speech_end_s": round(speech_end_s, 3),
                 "start_s": round(display_starts[i], 3),
@@ -300,6 +325,32 @@ def split_phrases(words: list, *, video_duration_s: float) -> list[dict]:
         window=scenes_total_window(scenes),
     )
     return scenes
+
+
+def _keyword_word_roles(words: list[str]) -> list[str]:
+    """Deterministic placeholder until the emphasis agent overwrites roles.
+
+    Mark one content-heavy word as the phrase hero; keep the final terminal
+    word as a closer when it is not the hero. This gives downstream cluster
+    code an explicit keyword hook without changing the role vocabulary.
+    """
+    if not words:
+        return []
+
+    def _bare(word: str) -> str:
+        return word.lower().strip(".,!?…;:\"'“”‘’()[]{}")
+
+    candidates = [
+        i for i, word in enumerate(words) if _bare(word) and _bare(word) not in _KEYWORD_STOPWORDS
+    ]
+    if not candidates:
+        candidates = list(range(len(words)))
+    hero_idx = max(candidates, key=lambda i: (len(_bare(words[i])), -i))
+    roles = [_ROLE_CONNECTOR for _ in words]
+    roles[hero_idx] = _ROLE_HERO
+    if len(words) > 1 and hero_idx != len(words) - 1 and _ends_with_terminal_punct(words[-1]):
+        roles[-1] = _ROLE_CLOSER
+    return roles
 
 
 def _group_words(normalized: list[_TimedWord]) -> list[list[_TimedWord]]:
