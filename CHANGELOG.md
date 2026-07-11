@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.10.2] — 2026-07-11
+
+### Fixed
+- **`diff_lyric_sync` .env parser now matches `scripts/admin.py::load_env` exactly.** The quoted-value branch uses the same closing-quote scan: a quote ends the value only when followed by end-of-line, whitespace, or a glued `#` (`KEY="abc"def` stays verbatim instead of truncating to `abc`); an unterminated quote falls back to the whitespace-`#` comment cut (`KEY="abc # note` → `"abc`); and `KEY= # note` keeps the literal text — byte-identical to python-dotenv, i.e. to what pydantic-settings feeds the API from the same file. Keeping the two stdlib parsers in sync closes the divergence class behind the 2026-07 `.env` incidents. New canary pins in `test_main_loads_env_and_strips_inline_comments`.
+
 ## [0.7.10.1] — 2026-07-11
 
 ### Fixed
