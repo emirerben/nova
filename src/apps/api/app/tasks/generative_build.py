@@ -31,7 +31,9 @@ import shutil
 import tempfile
 import threading
 import uuid
+from dataclasses import is_dataclass, replace
 from datetime import datetime
+from itertools import cycle
 from typing import Any
 
 import structlog
@@ -4642,6 +4644,59 @@ def _classify_error(exc: BaseException) -> str:
     return "unknown"
 
 
+def _replace_step_clip(step: Any, clip_id: str) -> Any:
+    """Return a copy of an AssemblyStep-like object pointed at another clip."""
+    target_s = float((getattr(step, "slot", {}) or {}).get("target_duration_s", 0.5) or 0.5)
+    moment = {"start_s": 0.0, "end_s": max(0.5, target_s)}
+    if is_dataclass(step):
+        return replace(step, clip_id=clip_id, moment=moment)
+    copied = type("AssemblyStepLike", (), {})()
+    copied.slot = dict(getattr(step, "slot", {}) or {})
+    copied.clip_id = clip_id
+    copied.moment = moment
+    return copied
+
+
+def _masonry_classic_safe_inputs(
+    *,
+    steps: list,
+    clip_id_to_local: dict[str, str],
+    clip_id_to_gcs: dict[str, str],
+    probe_map: dict,
+    clip_metas: list,
+) -> tuple[list, dict[str, str], dict[str, str], dict, list, int]:
+    """Build video-only inputs for classic fallback/audio-bed assembly.
+
+    Masonry accepts still photos as visual tiles. The classic montage assembler
+    does not: raw JPG/HEIC inputs can hit the video reframe path and fail before
+    the collage has a chance to render. For fallback and original-audio beds we
+    keep the slot structure but substitute photo slots with available videos.
+    """
+    from app.pipeline.image_clip import is_image_file  # noqa: PLC0415
+
+    video_ids = [cid for cid, path in clip_id_to_local.items() if not is_image_file(path)]
+    image_ids = {cid for cid, path in clip_id_to_local.items() if is_image_file(path)}
+    if not image_ids:
+        return steps, clip_id_to_local, clip_id_to_gcs, probe_map, clip_metas, 0
+    if not video_ids:
+        return [], {}, {}, {}, [], len(image_ids)
+
+    replacements = cycle(video_ids)
+    safe_steps = [
+        step
+        if getattr(step, "clip_id", None) not in image_ids
+        else _replace_step_clip(step, next(replacements))
+        for step in steps
+    ]
+    safe_local = {cid: clip_id_to_local[cid] for cid in video_ids}
+    safe_gcs = {cid: path for cid, path in clip_id_to_gcs.items() if cid in video_ids}
+    safe_paths = set(safe_local.values())
+    safe_probe_map = {path: probe for path, probe in probe_map.items() if path in safe_paths}
+    safe_video_ids = set(video_ids)
+    safe_metas = [meta for meta in clip_metas if getattr(meta, "clip_id", None) in safe_video_ids]
+    return safe_steps, safe_local, safe_gcs, safe_probe_map, safe_metas, len(image_ids)
+
+
 def _render_generative_variant(
     *,
     job_id: str,
@@ -4984,6 +5039,27 @@ def _render_generative_variant(
 
         assembled_path = os.path.join(variant_dir, "assembled.mp4")
         resolved_plans: list[dict] = []
+        classic_steps = steps
+        classic_clip_id_to_local = clip_id_to_local
+        classic_clip_id_to_gcs = clip_id_to_gcs
+        classic_probe_map = probe_map
+        classic_clip_metas = clip_metas
+        classic_image_substitutions = 0
+        if masonry_requested:
+            (
+                classic_steps,
+                classic_clip_id_to_local,
+                classic_clip_id_to_gcs,
+                classic_probe_map,
+                classic_clip_metas,
+                classic_image_substitutions,
+            ) = _masonry_classic_safe_inputs(
+                steps=steps,
+                clip_id_to_local=clip_id_to_local,
+                clip_id_to_gcs=clip_id_to_gcs,
+                probe_map=probe_map,
+                clip_metas=clip_metas,
+            )
 
         # Masonry song variants replace footage audio with the matched track later
         # in the normal audio-mix branch. Rendering a full classic montage first is
@@ -4995,14 +5071,16 @@ def _render_generative_variant(
 
         def _assemble_classic_montage() -> None:
             nonlocal classic_assembly_done
+            if masonry_requested and (not classic_steps or not classic_clip_id_to_local):
+                raise RuntimeError("classic montage fallback unavailable: no video clips")
             _assemble_clips(
-                steps,
-                clip_id_to_local,
-                probe_map,
+                classic_steps,
+                classic_clip_id_to_local,
+                classic_probe_map,
                 assembled_path,
                 variant_dir,
                 beat_timestamps_s=recipe.beat_timestamps_s,
-                clip_metas=clip_metas,
+                clip_metas=classic_clip_metas,
                 global_color_grade=recipe.color_grade,
                 job_id=f"{job_id}#v{rank}",
                 user_subject="",
@@ -5021,12 +5099,31 @@ def _render_generative_variant(
             classic_assembly_done = True
 
         if not skip_classic_assembly_for_masonry_song:
-            _assemble_classic_montage()
+            if masonry_requested and not classic_steps:
+                log.info(
+                    "masonry_original_audio_bed_skipped_no_video",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    image_clips=classic_image_substitutions,
+                )
+            else:
+                _assemble_classic_montage()
 
         masonry_applied = False
         if masonry_requested:
             from app.pipeline.masonry_montage import assemble_masonry_montage  # noqa: PLC0415
             from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+            if classic_image_substitutions:
+                record_pipeline_event(
+                    "assembly",
+                    "masonry_classic_inputs_sanitized",
+                    {
+                        "variant_id": variant_id,
+                        "image_clips": classic_image_substitutions,
+                        "video_clips": len(classic_clip_id_to_local),
+                    },
+                )
 
             masonry_path = os.path.join(variant_dir, "masonry.mp4")
             try:
@@ -5085,11 +5182,13 @@ def _render_generative_variant(
                 base.pop("ai_timeline", None)
             else:
                 base["ai_timeline"] = _build_ai_timeline(
-                    steps=steps,
+                    steps=classic_steps if masonry_requested else steps,
                     resolved_plans=resolved_plans,
-                    clip_id_to_gcs=clip_id_to_gcs,
-                    clip_id_to_local=clip_id_to_local,
-                    probe_map=probe_map,
+                    clip_id_to_gcs=classic_clip_id_to_gcs if masonry_requested else clip_id_to_gcs,
+                    clip_id_to_local=(
+                        classic_clip_id_to_local if masonry_requested else clip_id_to_local
+                    ),
+                    probe_map=classic_probe_map if masonry_requested else probe_map,
                     beat_grid=beats,
                 )
         elif masonry_applied:

@@ -182,9 +182,10 @@ def build_masonry_command(
         mask_index = 1 + len(tiles) + idx
         filters.append(
             f"[{tile.input_index}:v]"
+            "format=rgba,"
             f"scale={tile.width}:{tile.height}:force_original_aspect_ratio=increase,"
             f"crop={tile.width}:{tile.height},fps={output_fps},"
-            "setpts=PTS-STARTPTS,format=rgba"
+            "setpts=PTS-STARTPTS,setsar=1,format=rgba"
             f"[tile{idx}raw]"
         )
         filters.append(f"[{mask_index}:v]format=gray[mask{idx}]")
