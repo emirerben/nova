@@ -8,6 +8,26 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Plan 010 — SFX/overlay lanes on caption archetypes (follow-ups)
+
+### T-CAPFX-1 — Caption keep-out hint in the overlay placement UI
+**What:** Shade the caption zone (subtitled lower band / narrated centered word-pop area) in the overlay editor so users see where captions live before dropping a PiP card or fullscreen takeover on top of them.
+**Why:** On caption archetypes the captions ARE the content; manual placement freedom (kept for montage parity, decision D13/OV-6 in plan 010) means users can bury their own captions with no warning today.
+**Pros:** Prevents accidental occlusion without blocking deliberate creative choices (fullscreen cutaways over speech are a real idiom).
+**Cons:** Caption geometry varies (font, cue length, margin_v); the hint band is an approximation, and it's FE work on the shared placement UI used by all archetypes.
+**Context:** `SUBTITLED_CAPTION_MARGIN_V` in `app/pipeline/captions.py` defines the subtitled band; narrated word-pop is centered. The placement UI lives in `src/apps/web/src/app/plan/_components/` (OverlayLane/OverlayCardPopover). Decision trail: plans/010-subtitled-sfx-overlay-lanes.md (OV-6).
+**Depends on:** plan 010 shipping (lanes enabled on caption archetypes).
+**Effort:** S-M (CC: ~30 min)
+
+### T-CAPFX-2 — Evaluate AI overlay-suggestion quality on speech content
+**What:** Run the overlay suggester against a sample set of subtitled/narrated renders and grade anchor quality (does it propose cutaways at sensible speech moments? does it avoid fullscreen takeovers mid-sentence?), then decide whether to lift the `caption_archetype` suggestions gate.
+**Why:** Plan 010 deliberately kept AI suggestions OFF on caption archetypes (decision D12/OV-5) because the suggester has only been evaluated on montage content; enabling it blind risks fullscreen cards hiding captions and the speaker's face.
+**Pros:** Unlocks the suggestions rail (the main overlay-discovery surface) for the speech formats once quality is proven.
+**Cons:** Needs a labeled sample set and judge criteria; Gemini eval cost.
+**Context:** Gate added in `_editor_capabilities` (`suggestions_reason = "caption_archetype"`) + the suggest-overlays route guard in `routes/plan_items.py`. Eval harness pattern: `src/apps/api/tests/evals/`. Decision trail: plans/010-subtitled-sfx-overlay-lanes.md (OV-5).
+**Depends on:** plan 010 shipping; sample subtitled/narrated jobs with ready assets.
+**Effort:** M (CC: ~1-2 h incl. eval fixtures)
+
 ## Landscape-fit — Follow-ups (from PR landscape-fit-2026-06-26, v0.5.3.0)
 
 ### ~~T-LANDSCAPE-1 — Show Fit/Fill toggle even after first render~~ ✓ SHIPPED

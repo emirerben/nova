@@ -64,6 +64,16 @@ def _arm(monkeypatch) -> list[dict]:
     return calls
 
 
+def _arm_reburn(monkeypatch) -> list[dict]:
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.reburn_narrated_captions",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    return calls
+
+
 def _overlay(id_: str = "ov-1") -> dict:
     return {
         "id": id_,
@@ -114,6 +124,98 @@ def test_sound_effects_dispatch_bumps_generation_and_stamps_task(monkeypatch):
     assert new_gen
     assert len(calls) == 1
     assert calls[0]["kwargs"]["render_gen_id"] == new_gen
+
+
+def test_media_overlay_dispatch_routes_subtitled_through_caption_reburn(monkeypatch):
+    """Plan 010 + R2: caption archetypes get the manual lanes, but a lane save on
+    a variant with a caption base must render via the caption reburn + reapply
+    chain — the fast pass composites onto the CURRENT video and would silently
+    drop an in-flight caption edit it supersedes. The validated lane is persisted
+    in the SAME write as the gate/gen (the reburn reads persisted state).
+
+    R1-1: the reburn's start write is token-checked, so the dispatcher returns a
+    DEFERRED enqueue thunk (nothing queued yet) — the route commits the gate
+    write first, then invokes it."""
+    regen_calls = _arm(monkeypatch)
+    reburn_calls = _arm_reburn(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        music_track_id=None,
+    )
+
+    enqueue = gj.dispatch_set_media_overlays(
+        job, "subtitled", overlays_raw=[_overlay()], user_id=USER_ID
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "rendering"
+    assert v["media_overlays"][0]["id"] == "ov-1"  # persisted with the gate write
+    assert regen_calls == []
+    assert reburn_calls == []  # deferred — nothing enqueued before the caller commits
+    assert enqueue is not None
+    enqueue()
+    assert len(reburn_calls) == 1
+    assert reburn_calls[0]["args"] == [str(job.id), "subtitled"]
+    assert reburn_calls[0]["kwargs"]["render_gen_id"] == v["render_generation_id"]
+    assert reburn_calls[0]["queue"] == "overlay-jobs"
+
+
+def test_sound_effects_dispatch_routes_subtitled_through_caption_reburn(monkeypatch):
+    regen_calls = _arm(monkeypatch)
+    reburn_calls = _arm_reburn(monkeypatch)
+    monkeypatch.setattr(
+        gj, "validate_sound_effects_for_user", lambda *, sfx_raw, user_id: list(sfx_raw)
+    )
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        music_track_id=None,
+    )
+
+    enqueue = gj.dispatch_set_sound_effects(
+        job,
+        "subtitled",
+        sfx_raw=[{"id": "sfx-1", "src_gcs_path": "sfx/pop.mp3", "at_s": 1.0}],
+        user_id=USER_ID,
+        db_for_glossary=None,
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "rendering"
+    assert v["sound_effects"][0]["id"] == "sfx-1"  # persisted with the gate write
+    assert regen_calls == []
+    assert reburn_calls == []  # R1-1: deferred until the caller commits
+    assert enqueue is not None
+    enqueue()
+    assert len(reburn_calls) == 1
+    assert reburn_calls[0]["kwargs"]["render_gen_id"] == v["render_generation_id"]
+    assert reburn_calls[0]["queue"] == "overlay-jobs"
+
+
+def test_media_overlay_dispatch_subtitled_without_base_keeps_fast_pass(monkeypatch):
+    """Legacy safety (R2c): no cached caption base → the reburn can't run; the
+    overlay fast pass still services the save (montage behavior)."""
+    regen_calls = _arm(monkeypatch)
+    reburn_calls = _arm_reburn(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        music_track_id=None,
+        base_video_path=None,
+    )
+
+    gj.dispatch_set_media_overlays(job, "subtitled", overlays_raw=[_overlay()], user_id=USER_ID)
+
+    v = job.assembly_plan["variants"][0]
+    assert reburn_calls == []
+    assert len(regen_calls) == 1
+    assert regen_calls[0]["queue"] == "overlay-jobs"
+    assert regen_calls[0]["kwargs"]["render_gen_id"] == v["render_generation_id"]
+    assert regen_calls[0]["kwargs"]["media_overlays_override"][0]["id"] == "ov-1"
 
 
 def test_editor_commit_after_overlay_apply_409s_instead_of_silent_clobber(monkeypatch):

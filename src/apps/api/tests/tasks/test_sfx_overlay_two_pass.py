@@ -9,7 +9,13 @@ failed re-mix was swallowed (variant stuck looking "ready" without SFX).
 
 Fix (plan-eng-review T3): the overlay pass stays "rendering" until the SFX pass
 sets the terminal state, and a failed re-mix surfaces as "failed".
+
+R1-3 sibling: when the deferred SFX hook reports NO ownership (the lane was
+cleared in the DB mid-bake), the overlay pass must finalize "ready" itself —
+never strand the variant in "rendering".
 """
+
+import pytest
 
 import app.tasks.generative_build as gb
 
@@ -180,3 +186,41 @@ def test_flag_off_keeps_overlay_pass_terminal(monkeypatch):
     v = job.assembly_plan["variants"][0]
     assert v["render_status"] == "ready"
     assert calls == []
+
+
+@pytest.mark.parametrize("render_gen_id", [None, "tok-1"], ids=["tokenless", "tokened"])
+def test_sfx_cleared_midbake_finalizes_ready_never_stranded_rendering(monkeypatch, render_gen_id):
+    """Stranded-rendering lockout (R1-3 sibling of the caption terminals'
+    lanes_cleared_midrun tests): SFX are persisted at pass start, so the overlay
+    pass defers its terminal to the SFX hook (writes "rendering"). The lane is
+    then cleared in the DB during the overlay bake (persist-only save), so
+    `_reapply_persisted_sfx_if_any` no-ops and reports no ownership — the pass
+    must write the token-gated finalize "ready", never leave "rendering"."""
+    variant = _variant(sound_effects=[_placement()], pre_sfx="gs://bucket/v1.mp4_pre_sfx")
+    if render_gen_id is not None:
+        variant["render_generation_id"] = render_gen_id
+    job = _FakeJob(variant)
+    sfx_calls: list = []
+
+    def _clear_sfx_midbake(**kw):
+        # Replace (don't mutate) the entry — a DB-side clear never touches the
+        # task's in-memory snapshot, so will_reapply_sfx stays True (deferred).
+        plan = job.assembly_plan
+        cleared = {**plan["variants"][0], "sound_effects": None}
+        plan["variants"] = [cleared]
+        return "gs://bucket/v1.mp4?sig=overlaid"
+
+    _patch_common(monkeypatch, job, sfx_apply=lambda **kw: sfx_calls.append(kw) or "gs://x")
+    monkeypatch.setattr("app.pipeline.media_overlay.apply_media_overlays", _clear_sfx_midbake)
+
+    gb._run_media_overlay_pass(
+        job_id=JOB_ID,
+        variant_id="v1",
+        overlays_raw=[_card()],
+        expected_render_gen_id=render_gen_id,
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert sfx_calls == []  # the hook no-oped: the lane was gone
+    assert v["render_status"] == "ready"
+    assert v["render_finished_at"] != "2026-06-01T00:00:00Z"

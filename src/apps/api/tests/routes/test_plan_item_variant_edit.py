@@ -789,16 +789,25 @@ def test_caption_language_happy_enqueues_retranscribe(client: TestClient) -> Non
     user = _user()
     job = _job([dict(SUBTITLED_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item, item], plan)
+    # item (ownership) → dispatcher's own row-locked job re-fetch (R1-1) → reload.
+    db = _db([item, job, item], plan)
     _override(user, db)
     with patch(RETX) as retx:
-        retx.delay = MagicMock()
+        retx.apply_async = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/subtitled/caption-language",
             json={"language": "tr"},
         )
     assert resp.status_code == 200
-    retx.delay.assert_called_once_with(str(job.id), "subtitled", "tr")
+    # 2A/OV-3: the dispatch mints + stamps a supersede token and hands it to the task.
+    # RT-4: caption tasks ride the overlay-jobs queue.
+    stamped = job.assembly_plan["variants"][0]["render_generation_id"]
+    assert stamped
+    retx.apply_async.assert_called_once_with(
+        args=[str(job.id), "subtitled", "tr"],
+        kwargs={"render_gen_id": stamped},
+        queue="overlay-jobs",
+    )
 
 
 def test_caption_language_marks_rendering_synchronously(client: TestClient) -> None:
@@ -807,10 +816,10 @@ def test_caption_language_marks_rendering_synchronously(client: TestClient) -> N
     user = _user()
     job = _job([dict(SUBTITLED_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item, item], plan)
+    db = _db([item, job, item], plan)
     _override(user, db)
     with patch(RETX) as retx:
-        retx.delay = MagicMock()
+        retx.apply_async = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/subtitled/caption-language",
             json={"language": "tr"},
@@ -826,14 +835,93 @@ def test_apply_captions_marks_rendering_synchronously(client: TestClient) -> Non
     user = _user()
     job = _job([dict(NARRATED_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item, item], plan)
+    db = _db([item, job, item], plan)
     _override(user, db)
     with patch(REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(f"/plan-items/{item.id}/variants/narrated/captions/apply")
     assert resp.status_code == 200
     assert job.assembly_plan["variants"][0]["render_status"] == "rendering"
     assert db.commit.await_count >= 1  # persisted, not rolled back
+
+
+@pytest.mark.parametrize("endpoint", ["captions/apply", "caption-language"])
+def test_caption_dispatch_commits_gate_before_enqueue(client: TestClient, endpoint) -> None:
+    """R1-1: the reburn/retranscribe START write is token-checked, so the gen
+    stamp MUST be committed before the enqueue — a worker dequeuing first would
+    read the old gen, discard its start write, and strand the variant."""
+    user = _user()
+    variant = dict(SUBTITLED_VARIANT) if endpoint == "caption-language" else dict(NARRATED_VARIANT)
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, job, item], plan)
+    order: list[str] = []
+    db.commit = AsyncMock(side_effect=lambda: order.append("commit"))
+    _override(user, db)
+    task_path = RETX if endpoint == "caption-language" else REBURN
+    with patch(task_path) as task:
+        task.apply_async = MagicMock(side_effect=lambda **k: order.append("enqueue"))
+        body = {"language": "tr"} if endpoint == "caption-language" else None
+        resp = client.post(
+            f"/plan-items/{item.id}/variants/{variant['variant_id']}/{endpoint}",
+            json=body,
+        )
+    assert resp.status_code == 200
+    assert "commit" in order and "enqueue" in order
+    assert order.index("commit") < order.index("enqueue")
+
+
+@pytest.mark.parametrize("endpoint", ["media-overlays", "render-sfx"])
+def test_lane_dispatch_commits_gate_before_caption_enqueue(
+    client: TestClient, endpoint, monkeypatch
+) -> None:
+    """R1-1 sibling for the SFX/overlay lane routes: on a caption archetype the
+    dispatchers route to reburn_narrated_captions, whose START write is
+    token-checked — so the route must COMMIT the gate/gen/lane write before the
+    enqueue. A worker dequeuing first would read the pre-commit generation,
+    discard its start write, and strand the variant in "rendering" behind the
+    409 gate."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "sound_effects_enabled", True, raising=False)
+    # MagicMock jobs aren't ORM instances — neutralize the dirty-flag call.
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda obj, key: None)
+    user = _user()
+    variant = dict(
+        SUBTITLED_VARIANT,
+        sound_effects=[{"id": "sfx-1", "src_gcs_path": "sound-effects/pop/audio.mp3", "at_s": 1.0}],
+    )
+    job = _job([variant])
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item, item], plan)  # ownership check → post-commit reload
+    order: list[str] = []
+    db.commit = AsyncMock(side_effect=lambda: order.append("commit"))
+    _override(user, db)
+    with patch(REBURN) as task:
+        task.apply_async = MagicMock(side_effect=lambda **k: order.append("enqueue"))
+        if endpoint == "media-overlays":
+            overlay_card = {
+                "id": "ov-1",
+                "kind": "image",
+                "src_gcs_path": f"users/{user.id}/plan/{item.id}/overlays/card.png",
+                "position": "center",
+                "scale": 0.35,
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "z": 0,
+            }
+            resp = client.put(
+                f"/plan-items/{item.id}/variants/subtitled/media-overlays",
+                json={"overlays": [overlay_card], "render": True},
+            )
+        else:
+            resp = client.post(f"/plan-items/{item.id}/variants/subtitled/render-sfx")
+    assert resp.status_code == 200
+    assert "commit" in order and "enqueue" in order
+    assert order.index("commit") < order.index("enqueue")
+    # The 409 gate still closed at dispatch time (persisted by the commit above).
+    assert job.assembly_plan["variants"][0]["render_status"] == "rendering"
 
 
 def test_caption_cue_caps_text_length() -> None:
@@ -849,7 +937,7 @@ def test_caption_language_rejects_non_subtitled(client: TestClient) -> None:
     user = _user()
     job = _job([dict(NARRATED_VARIANT)])  # narrated: no language override
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item], plan)
+    db = _db([item, job], plan)  # item (ownership) → locked job re-fetch → 422
     _override(user, db)
     resp = client.post(
         f"/plan-items/{item.id}/variants/narrated/caption-language",
@@ -863,7 +951,7 @@ def test_caption_language_rejects_missing_base(client: TestClient) -> None:
     no_base = {**SUBTITLED_VARIANT, "base_video_path": None}
     job = _job([no_base])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item], plan)
+    db = _db([item, job], plan)
     _override(user, db)
     resp = client.post(
         f"/plan-items/{item.id}/variants/subtitled/caption-language",
@@ -889,13 +977,20 @@ def test_apply_captions_happy(client: TestClient) -> None:
     user = _user()
     job = _job([dict(NARRATED_VARIANT)])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item, item], plan)  # load item → reload for response
+    # item (ownership) → dispatcher's row-locked job re-fetch (R1-1) → reload.
+    db = _db([item, job, item], plan)
     _override(user, db)
     with patch(REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(f"/plan-items/{item.id}/variants/narrated/captions/apply")
     assert resp.status_code == 200
-    reburn.delay.assert_called_once_with(str(job.id), "narrated")
+    stamped = job.assembly_plan["variants"][0]["render_generation_id"]
+    assert stamped
+    reburn.apply_async.assert_called_once_with(
+        args=[str(job.id), "narrated"],
+        kwargs={"render_gen_id": stamped},
+        queue="overlay-jobs",
+    )
 
 
 def test_apply_captions_rejects_non_narrated_variant(client: TestClient) -> None:
@@ -904,13 +999,13 @@ def test_apply_captions_rejects_non_narrated_variant(client: TestClient) -> None
     montage = {**NARRATED_VARIANT, "variant_id": "original_text", "resolved_archetype": "montage"}
     job = _job([montage])
     item, plan = _owned_item(user.id, job=job)
-    db = _db([item], plan)  # rejected in dispatch, before any reload
+    db = _db([item, job], plan)  # rejected in dispatch after its locked re-fetch
     _override(user, db)
     with patch(REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(f"/plan-items/{item.id}/variants/original_text/captions/apply")
     assert resp.status_code == 422
-    reburn.delay.assert_not_called()
+    reburn.apply_async.assert_not_called()
 
 
 def test_edit_captions_persists_cues(client: TestClient) -> None:
@@ -1036,13 +1131,13 @@ def test_set_bed_level_rejects_non_narrated(client: TestClient) -> None:
     db = _db([item, job], plan)  # item (ownership) → locked job re-fetch → 422
     _override(user, db)
     with patch(BED_REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/subtitled/bed-level",
             json={"bed_level": 0.5},
         )
     assert resp.status_code == 422
-    reburn.delay.assert_not_called()
+    reburn.apply_async.assert_not_called()
 
 
 def test_set_bed_level_rejects_montage(client: TestClient) -> None:
@@ -1053,13 +1148,13 @@ def test_set_bed_level_rejects_montage(client: TestClient) -> None:
     db = _db([item, job], plan)
     _override(user, db)
     with patch(BED_REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/original_text/bed-level",
             json={"bed_level": 0.5},
         )
     assert resp.status_code == 422
-    reburn.delay.assert_not_called()
+    reburn.apply_async.assert_not_called()
 
 
 def test_set_bed_level_happy_path_dispatches_reburn(client: TestClient) -> None:
@@ -1073,13 +1168,21 @@ def test_set_bed_level_happy_path_dispatches_reburn(client: TestClient) -> None:
     db = _db([item, job, item], plan)
     _override(user, db)
     with patch(BED_REBURN) as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         resp = client.post(
             f"/plan-items/{item.id}/variants/narrated/bed-level",
             json={"bed_level": 0.6},
         )
     assert resp.status_code == 200
-    reburn.delay.assert_called_once_with(str(job.id), "narrated", 0.6)
+    stamped = job.assembly_plan["variants"][0]["render_generation_id"]
+    assert stamped
+    # RT-4: caption tasks (bed-level inline-runs the reapply passes) ride the
+    # overlay-jobs queue — the solo worker serializes them.
+    reburn.apply_async.assert_called_once_with(
+        args=[str(job.id), "narrated", 0.6],
+        kwargs={"render_gen_id": stamped},
+        queue="overlay-jobs",
+    )
 
 
 def test_set_bed_level_409_while_rendering(client: TestClient) -> None:
@@ -1127,14 +1230,19 @@ async def test_dispatch_set_narrated_bed_level_takes_a_row_lock() -> None:
     db.commit = AsyncMock()
 
     with patch("app.tasks.generative_build.reburn_narrated_bed_level") as reburn:
-        reburn.delay = MagicMock()
+        reburn.apply_async = MagicMock()
         await dispatch_set_narrated_bed_level(job.id, "narrated", bed_level=0.6, db=db)
 
     db.execute.assert_called_once()
     compiled_stmt = str(db.execute.call_args[0][0])
     assert "FOR UPDATE" in compiled_stmt.upper()
     db.commit.assert_called_once()
-    reburn.delay.assert_called_once_with(str(job.id), "narrated", 0.6)
+    stamped = job.assembly_plan["variants"][0]["render_generation_id"]
+    reburn.apply_async.assert_called_once_with(
+        args=[str(job.id), "narrated", 0.6],
+        kwargs={"render_gen_id": stamped},
+        queue="overlay-jobs",
+    )
 
 
 # ── subtitles on/off — independent of caption_cues count ───────────────────────

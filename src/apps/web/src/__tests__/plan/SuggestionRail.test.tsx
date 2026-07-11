@@ -138,6 +138,89 @@ describe("SuggestionRail — flag gating", () => {
   });
 });
 
+describe("SuggestionRail — variant capability gating (plan 010 OV-5)", () => {
+  it("renders nothing (no fetch) when editor_capabilities.suggestions is false", () => {
+    process.env[FLAG] = "true";
+    const fetchSpy = mockFetch(() => jsonResponse(suggestionsResponse()));
+    const { container } = render(
+      <SuggestionRail itemId="item-1" variantId="var-1" suggestionsCapability={false} />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rail when the capability is true or absent (legacy payloads)", async () => {
+    process.env[FLAG] = "true";
+    mockFetch((method, url) => {
+      if (method === "GET" && url === ASSETS_URL) {
+        return jsonResponse({ assets: [makeAsset()], max_assets: 20 });
+      }
+      if (method === "GET" && url === SUGGESTIONS_URL) {
+        return jsonResponse(suggestionsResponse());
+      }
+      return undefined;
+    });
+    await act(async () => {
+      render(
+        <SuggestionRail itemId="item-1" variantId="var-1" suggestionsCapability={true} />,
+      );
+    });
+    expect(
+      screen.getByRole("button", { name: /place visuals for me/i }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("SuggestionRail — unavailable-error heuristic", () => {
+  async function renderAndSuggest(detail: string) {
+    process.env[FLAG] = "true";
+    mockFetch((method, url) => {
+      if (method === "GET" && url === ASSETS_URL) {
+        return jsonResponse({ assets: [makeAsset()], max_assets: 20 });
+      }
+      if (method === "GET" && url === SUGGESTIONS_URL) {
+        return jsonResponse(suggestionsResponse());
+      }
+      if (method === "POST" && url === SUGGEST_URL) {
+        return jsonResponse({ detail }, 400);
+      }
+      return undefined;
+    });
+    let result: ReturnType<typeof render>;
+    await act(async () => {
+      result = render(<SuggestionRail itemId="item-1" variantId="var-1" />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /place visuals for me/i }));
+    });
+    return result!;
+  }
+
+  it("maps the backend's caption-archetype 400 ('isn't available') to the calm unavailable state, not failed+Retry", async () => {
+    const { container } = await renderAndSuggest(
+      "Auto-placement isn't available on this edit format.",
+    );
+    // Calm unavailable — the rail hides entirely instead of dead-ending.
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByText("Couldn't match your visuals this time.")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("still maps the older 'not available' wording to unavailable", async () => {
+    const { container } = await renderAndSuggest(
+      "Auto-placement is not available for this variant.",
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
+  it("keeps genuine failures on the Retry tile (heuristic doesn't overmatch)", async () => {
+    await renderAndSuggest("The matcher exploded.");
+    expect(screen.getByText("Couldn't match your visuals this time.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+  });
+});
+
 describe("SuggestionRail — entry button gating", () => {
   it("disables the button with an inline reason when no ready assets", async () => {
     process.env[FLAG] = "true";

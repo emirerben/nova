@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import time
 import uuid
 from datetime import datetime
 from typing import Any
@@ -1331,8 +1332,14 @@ def _run_media_overlay_pass(
     variant_id: str,
     overlays_raw: list[dict],
     expected_render_gen_id: str | None = None,
+    deadline_monotonic: float | None = None,
 ) -> None:
     """Apply (or clear) media-overlay cards on a finished variant (fast path).
+
+    `deadline_monotonic` (R4-2): wall-clock ceiling threaded from callers that
+    enter this pass mid-task (the caption reburn terminals) — clamps the
+    fullscreen encode budget inside apply_media_overlays. None (default) keeps
+    the standalone-task behavior byte-identical.
 
     Steps:
     1. Load the variant entry from the DB.
@@ -1442,11 +1449,17 @@ def _run_media_overlay_pass(
             db.commit()
             record_pipeline_event("media_overlay", "cards_cleared", {"variant_id": variant_id})
             # Terminal hook: re-apply persisted SFX on top of the restored clean variant.
-            _reapply_persisted_sfx_if_any(
+            sfx_owned = _reapply_persisted_sfx_if_any(
                 job_id=job_id,
                 variant_id=variant_id,
                 expected_render_gen_id=expected_render_gen_id,
             )
+            if will_reapply_sfx and not sfx_owned:
+                _finalize_overlay_deferred_terminal(
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    expected_render_gen_id=expected_render_gen_id,
+                )
             return
 
         # ── Apply path: composite cards onto the clean base ──────────────────
@@ -1475,6 +1488,7 @@ def _run_media_overlay_pass(
                 cards=cards,
                 output_gcs_path=current_video_path,
                 job_id=job_id,
+                deadline_monotonic=deadline_monotonic,
             )
         except Exception as exc:  # noqa: BLE001
             log.error(
@@ -1568,11 +1582,188 @@ def _run_media_overlay_pass(
             },
         )
         # Terminal hook: re-apply persisted SFX on top of the newly composited video.
-        _reapply_persisted_sfx_if_any(
+        sfx_owned = _reapply_persisted_sfx_if_any(
             job_id=job_id,
             variant_id=variant_id,
             expected_render_gen_id=expected_render_gen_id,
         )
+        if will_reapply_sfx and not sfx_owned:
+            _finalize_overlay_deferred_terminal(
+                job_id=job_id,
+                variant_id=variant_id,
+                expected_render_gen_id=expected_render_gen_id,
+            )
+
+
+def _finalize_overlay_deferred_terminal(
+    *,
+    job_id: str,
+    variant_id: str,
+    expected_render_gen_id: str | None,
+) -> None:
+    """R1-3 sibling for the overlay pass: it deferred its terminal render_status
+    to the SFX reapply hook (will_reapply_sfx → wrote "rendering"), but the hook
+    reported no ownership — e.g. SFX cleared in the DB mid-bake via the
+    persist-only save, or the flag flipped off mid-run. Finalize "ready" exactly
+    like the caption terminals do (token-gated), or the variant strands in
+    "rendering" behind the 409 gate forever."""
+    _update_variant_entry(
+        job_id,
+        variant_id,
+        {
+            "render_status": "ready",
+            "render_finished_at": datetime.utcnow().isoformat() + "Z",
+        },
+        expected_render_gen_id=expected_render_gen_id,
+        outcome="media_overlay_sfx_reapply_noop",
+    )
+
+
+# Variant keys that snapshot a "clean" (pre-effect) video for the fast lanes.
+_MEDIA_SNAPSHOT_FIELDS = ("pre_media_overlay_video_path", "pre_sfx_video_path")
+
+# Caption tasks enter the overlay reapply pass mid-task, AFTER a burn that may have
+# consumed minutes — apply_media_overlays' fullscreen budget was sized for a task
+# that STARTS with the pass (R4-2). The soft limit mirrors the caption tasks'
+# decorators (literal there — test_task_time_limits.py pins the decorator source);
+# the margin leaves room to persist the failed/ready terminal before SIGKILL.
+_CAPTION_TASK_SOFT_TIME_LIMIT_S = 1740
+_REAPPLY_DEADLINE_MARGIN_S = 120
+
+
+def _stage_media_snapshot_nulls(
+    patch: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    fields: tuple[str, ...] = _MEDIA_SNAPSHOT_FIELDS,
+) -> list[str]:
+    """Null retired pre_* snapshot fields in `patch`; return the retired keys.
+
+    NO deletes here — callers free the returned keys AFTER their gen-gated write
+    is accepted / their transaction commits (R1-2: a superseded write must never
+    delete the winning render's snapshots; F4: no network I/O inside an open
+    transaction). Keep-set guard: the fast passes alias the snapshot to
+    `video_path` itself when their durable copy fails, so a key equal to ANY
+    live reference (`video_path` / `base_video_path` on the patch or the current
+    variant) is nulled but never returned for deletion.
+    """
+    keep = {
+        current.get("video_path"),
+        current.get("base_video_path"),
+        patch.get("video_path"),
+        patch.get("base_video_path"),
+    }
+    keep.discard(None)
+    retired: list[str] = []
+    for field in fields:
+        snapshot = current.get(field)
+        if snapshot and snapshot not in keep:
+            retired.append(snapshot)
+        patch[field] = None
+    return retired
+
+
+def _free_media_snapshot_keys(keys: list[str]) -> None:
+    """Best-effort delete of retired snapshot blobs (D16-C).
+
+    `generative-jobs/*` never expires and has no sweeper, so a snapshot key that
+    is simply nulled strands its blob forever. Prefix-confined: the shared bucket
+    holds curated forever-assets (music/*, templates/*), so anything outside
+    generative-jobs/* is skipped, never deleted. delete_object_best_effort never
+    raises — it returns False on failure, which only strands a blob.
+    """
+    from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+    for key in keys:
+        if not key.startswith("generative-jobs/"):
+            log.warning("media_snapshot_free_skipped_foreign_prefix", key=key)
+            continue
+        if not delete_object_best_effort(key):
+            log.warning("media_snapshot_free_failed", key=key)
+
+
+def _free_retired_media_snapshots(
+    current: dict[str, Any],
+    keep_paths: tuple[str | None, ...] = (),
+    *,
+    fields: tuple[str, ...] = _MEDIA_SNAPSHOT_FIELDS,
+) -> None:
+    """Free-only path for post-write sites (R1-2): the caption terminals stage the
+    None fields in their patch dict literally, so after the accepted terminal
+    write only the freeing remains. `keep_paths` carries the patch's new
+    video/base keys; `current`'s own live references join the keep set."""
+    keep = {current.get("video_path"), current.get("base_video_path"), *keep_paths}
+    keep.discard(None)
+    _free_media_snapshot_keys(
+        [current[f] for f in fields if current.get(f) and current[f] not in keep]
+    )
+
+
+def _null_and_free_media_snapshots(
+    patch: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    fields: tuple[str, ...] = _MEDIA_SNAPSHOT_FIELDS,
+) -> None:
+    """One-shot null+free (stage + free composed). Hot paths use the split forms
+    so deletes land only after an accepted write / committed transaction —
+    reach for this only where no gen-gated write or open transaction is in play."""
+    _free_media_snapshot_keys(_stage_media_snapshot_nulls(patch, current, fields=fields))
+
+
+def _will_reapply_media_layers(variant: dict) -> bool:
+    """True when _reapply_user_media_layers will run at least one pass for this
+    variant — the OV-7 deferred-terminal condition: the caption terminals keep
+    render_status="rendering" and let the reapply chain own the final
+    ready/failed, so a poll never observes an effect-less "ready"."""
+    return (bool(variant.get("media_overlays")) and settings.media_overlays_enabled) or (
+        bool(variant.get("sound_effects")) and settings.sound_effects_enabled
+    )
+
+
+def _reapply_user_media_layers(
+    *,
+    job_id: str,
+    variant_id: str,
+    expected_render_gen_id: str | None = None,
+    deadline_monotonic: float | None = None,
+) -> bool:
+    """Rebuild the user's persisted media lanes on a freshly rendered base (3A).
+
+    Overlays first — that pass owns the follow-up SFX hook because SFX is the
+    outermost audio layer. If no overlays are persisted (or the overlay feature
+    is disabled), fall through to the SFX-only hook. Shared by the montage
+    full-render/fast-reburn terminals and the three caption re-render terminals.
+
+    Returns True when the chain took ownership of the terminal render_status
+    (ran a pass, marked the variant failed, or found itself superseded by a
+    newer generation). False = the chain no-oped: a caller that deferred its
+    terminal status (OV-7) must finalize itself or the variant strands (R1-3).
+    """
+    if _reapply_persisted_media_overlays_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+        deadline_monotonic=deadline_monotonic,
+    ):
+        return True
+    return _reapply_persisted_sfx_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+    )
+
+
+def _reapply_prep_superseded(existing: dict, expected_render_gen_id: str | None) -> bool:
+    """F4: same stale-generation rule as `_update_variant_entry`, applied to the
+    reapply preps' row-locked read — a superseded chain must not touch snapshots
+    or run a pass (the newer generation owns the variant's state now)."""
+    current = existing.get("render_generation_id")
+    return (
+        expected_render_gen_id is not None
+        and current is not None
+        and current != expected_render_gen_id
+    )
 
 
 def _reapply_persisted_media_overlays_if_any(
@@ -1580,12 +1771,16 @@ def _reapply_persisted_media_overlays_if_any(
     job_id: str,
     variant_id: str,
     expected_render_gen_id: str | None = None,
+    deadline_monotonic: float | None = None,
 ) -> bool:
     """Re-apply media overlays after a fresh full re-render, if any are persisted.
 
     Full re-renders produce a fresh base video without media-overlay cards. Reset
     stale clean-copy snapshots, then route through _run_media_overlay_pass so its
     normal terminal behavior and SFX reapply hook stay single-sourced.
+
+    Returns True iff this helper took ownership of the terminal render_status
+    (pass ran / marked failed / superseded by a newer generation); False = no-op.
     """
     from app.config import settings as _settings_overlay  # noqa: PLC0415
 
@@ -1594,28 +1789,43 @@ def _reapply_persisted_media_overlays_if_any(
 
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            # F4: row-locked RMW — the gen compare, the snapshot-null staging,
+            # and the commit happen under ONE lock; blob deletes run after.
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
                 return False
             variants = list((job.assembly_plan or {}).get("variants") or [])
             existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
             if existing is None:
                 return False
+            if _reapply_prep_superseded(existing, expected_render_gen_id):
+                log.warning(
+                    "stale_render_write_discarded",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    outcome="media_overlay_reapply_prep",
+                    expected_gen_id=expected_render_gen_id,
+                    actual_gen_id=existing.get("render_generation_id"),
+                )
+                return True  # the newer generation owns the terminal status
             overlays_raw = existing.get("media_overlays")
             if not overlays_raw:
                 return False
+            retired_keys: list[str] = []
             for v in variants:
                 if v.get("variant_id") == variant_id:
-                    v["pre_media_overlay_video_path"] = None
                     # SFX is re-applied after overlays. Any old SFX clean copy
                     # points at the pre-full-render video, so force a fresh one.
-                    v["pre_sfx_video_path"] = None
+                    # Collect the orphaned keys only (D16-C) — the best-effort
+                    # GCS deletes run AFTER the commit (no I/O in the txn, F4).
+                    retired_keys = _stage_media_snapshot_nulls(v, v)
                     break
             job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
             from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
             flag_modified(job, "assembly_plan")
             db.commit()
+        _free_media_snapshot_keys(retired_keys)
     except Exception as exc:  # noqa: BLE001
         log.warning("media_overlay_reapply_prep_failed", job_id=job_id, error=str(exc))
         _mark_variant_failed(
@@ -1632,6 +1842,7 @@ def _reapply_persisted_media_overlays_if_any(
             variant_id=variant_id,
             overlays_raw=overlays_raw,
             expected_render_gen_id=expected_render_gen_id,
+            deadline_monotonic=deadline_monotonic,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("media_overlay_reapply_failed", job_id=job_id, error=str(exc))
@@ -1649,7 +1860,7 @@ def _reapply_persisted_sfx_if_any(
     job_id: str,
     variant_id: str,
     expected_render_gen_id: str | None = None,
-) -> None:
+) -> bool:
     """Re-apply sound effects after an overlay edit, if any SFX are persisted.
 
     SFX is the outermost layer: an overlay edit replaces video_path from the
@@ -1659,36 +1870,53 @@ def _reapply_persisted_sfx_if_any(
 
     No-op when SOUND_EFFECTS_ENABLED is False or the variant has no persisted SFX.
     Never raises — best-effort, overlay success must not be gated on SFX reapply.
+
+    Returns True iff this helper took ownership of the terminal render_status
+    (pass ran / marked failed / superseded by a newer generation); False = no-op.
     """
     from app.config import settings as _settings_sfx  # noqa: PLC0415
 
     if not _settings_sfx.sound_effects_enabled:
-        return
+        return False
 
     try:
         with _sync_session() as db:
-            job = db.get(Job, uuid.UUID(job_id))
+            # F4: row-locked RMW — see _reapply_persisted_media_overlays_if_any.
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
             if job is None:
-                return
+                return False
             variants = list((job.assembly_plan or {}).get("variants") or [])
             existing = next((v for v in variants if v.get("variant_id") == variant_id), None)
             if existing is None:
-                return
+                return False
+            if _reapply_prep_superseded(existing, expected_render_gen_id):
+                log.warning(
+                    "stale_render_write_discarded",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    outcome="sfx_reapply_prep",
+                    expected_gen_id=expected_render_gen_id,
+                    actual_gen_id=existing.get("render_generation_id"),
+                )
+                return True  # the newer generation owns the terminal status
             sfx_raw = existing.get("sound_effects")
             if not sfx_raw:
-                return
+                return False
             # pre_sfx_video_path must now point to the newly composited overlay video
             # (the current video_path post-overlay), so SFX are re-applied on top.
-            # Clear the stale pre_sfx_video_path so _run_sfx_pass takes a fresh copy.
+            # Clear the stale pre_sfx_video_path so _run_sfx_pass takes a fresh
+            # copy; the orphaned blob is freed AFTER the commit (D16-C + F4).
+            retired_keys: list[str] = []
             for v in variants:
                 if v.get("variant_id") == variant_id:
-                    v["pre_sfx_video_path"] = None
+                    retired_keys = _stage_media_snapshot_nulls(v, v, fields=("pre_sfx_video_path",))
                     break
             job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
             from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
             flag_modified(job, "assembly_plan")
             db.commit()
+        _free_media_snapshot_keys(retired_keys)
     except Exception as exc:  # noqa: BLE001
         log.warning("sfx_reapply_prep_failed", job_id=job_id, error=str(exc))
         # The overlay pass deferred its terminal state to this reapply (it left
@@ -1701,7 +1929,7 @@ def _reapply_persisted_sfx_if_any(
             error=str(exc),
             expected_render_gen_id=expected_render_gen_id,
         )
-        return
+        return True
 
     try:
         _run_sfx_pass(
@@ -1721,6 +1949,7 @@ def _reapply_persisted_sfx_if_any(
             error=str(exc),
             expected_render_gen_id=expected_render_gen_id,
         )
+    return True
 
 
 def _mark_variant_failed(
@@ -2896,19 +3125,12 @@ def _run_regenerate_variant(
             ):
                 return
             # A text/style reburn overwrites video_path from the cached text-free
-            # base, so any persisted user media layers must be rebuilt. Re-apply
-            # overlays first; that pass owns the SFX hook because SFX is the
-            # outermost audio layer. If no overlays exist, keep the SFX-only hook.
-            if not _reapply_persisted_media_overlays_if_any(
+            # base, so any persisted user media layers must be rebuilt.
+            _reapply_user_media_layers(
                 job_id=job_id,
                 variant_id=variant_id,
                 expected_render_gen_id=render_gen_id,
-            ):
-                _reapply_persisted_sfx_if_any(
-                    job_id=job_id,
-                    variant_id=variant_id,
-                    expected_render_gen_id=render_gen_id,
-                )
+            )
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
 
@@ -3144,14 +3366,15 @@ def _run_regenerate_variant(
                     cluster_accent_size_px_override=resolved_cluster_accent_size_override,
                 ),
             }
+        retired_snapshot_keys: list[str] = []
         persisted_media_overlays = existing.get("media_overlays") or None
         if persisted_media_overlays:
             # A fresh full render produces the clean base without user media cards.
-            # Preserve the just-persisted cards through the result merge and reset
-            # stale snapshots so the reapply pass composites onto the new base.
+            # Preserve the just-persisted cards through the result merge and STAGE
+            # the snapshot nulls (R1-2: no deletes yet — a superseded write below
+            # must never delete the winning render's snapshot blobs).
             result["media_overlays"] = persisted_media_overlays
-            result["pre_media_overlay_video_path"] = None
-            result["pre_sfx_video_path"] = None
+            retired_snapshot_keys = _stage_media_snapshot_nulls(result, existing)
         if not _update_variant_entry(
             job_id,
             variant_id,
@@ -3160,20 +3383,15 @@ def _run_regenerate_variant(
             outcome="full_render",
         ):
             return
+        # Write accepted — the retired snapshot blobs are unreachable; free them
+        # (D16-C) before the reapply pass mints fresh ones.
+        _free_media_snapshot_keys(retired_snapshot_keys)
         # A full re-render re-assembles video_path without user media layers.
-        # Re-apply overlays first; that pass owns the follow-up SFX hook because
-        # SFX is the outermost audio layer. If no overlays exist (or the overlay
-        # feature is disabled), keep the pre-existing SFX-only terminal hook.
-        if not _reapply_persisted_media_overlays_if_any(
+        _reapply_user_media_layers(
             job_id=job_id,
             variant_id=variant_id,
             expected_render_gen_id=render_gen_id,
-        ):
-            _reapply_persisted_sfx_if_any(
-                job_id=job_id,
-                variant_id=variant_id,
-                expected_render_gen_id=render_gen_id,
-            )
+        )
     else:
         # Failure-patch hygiene: the failure record spreads the fresh `base`
         # dict, whose None values (base_video_path, intro_text, ...) would NULL
@@ -5711,25 +5929,33 @@ def _render_subtitled_variant(
     retry_backoff_max=60,
     retry_jitter=False,
     max_retries=7,
-    # Caption reburn re-encodes only the (already-mixed) base — fast. Bounded well
+    # Caption reburn re-encodes the (already-mixed) base, then may inline-run the
+    # overlay+SFX reapply chain (plan 010) — the overlay pass alone budgets a 600s
+    # subprocess timeout, so this rides the standard render ceiling (5A). Bounded
     # under the broker visibility_timeout (1900s) like the other render tasks.
-    soft_time_limit=600,
-    time_limit=660,
+    soft_time_limit=1740,
+    time_limit=1800,
 )
-def reburn_narrated_captions(self, job_id: str, variant_id: str) -> None:
+def reburn_narrated_captions(
+    self, job_id: str, variant_id: str, render_gen_id: str | None = None
+) -> None:
     """Reburn a narrated variant's (hand-edited) caption cues onto its caption-free base.
 
     Apply step for the on-video caption editor: reads the variant's persisted
     `caption_cues` + `base_video_path`, burns the cues with libass onto the base
     (clips + voice + bed, no old text), uploads to a NEW key (so caches/old links
-    don't serve stale captions), and swaps in `video_path`. A failure reverts the
-    variant to `ready` keeping its last-good video.
+    don't serve stale captions), swaps in `video_path`, and re-applies any
+    persisted SFX/overlay lanes on top (plan 010). A failure reverts the variant
+    to `ready` keeping its last-good video.
     """
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
+        terminal_state = {"accepted": False}
         try:
-            _run_reburn_narrated_captions(job_id, variant_id)
+            _run_reburn_narrated_captions(
+                job_id, variant_id, render_gen_id=render_gen_id, terminal_state=terminal_state
+            )
         except OperationalError:
             raise
         except Exception as exc:
@@ -5740,8 +5966,26 @@ def reburn_narrated_captions(self, job_id: str, variant_id: str) -> None:
                 error=str(exc)[:MAX_ERROR_DETAIL_LEN],
                 exc_info=True,
             )
-            # Keep the last-good burned video; just clear the in-flight state.
-            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+            if terminal_state["accepted"]:
+                # F5: the video swap already landed — an exception past that point
+                # means the persisted lanes are missing from the new video, so
+                # "ready" would lie. Token-gated like every terminal write.
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {"render_status": "failed", "render_error": str(exc)[:500]},
+                    expected_render_gen_id=render_gen_id,
+                    outcome="caption_reburn_failed_post_swap",
+                )
+            else:
+                # Keep the last-good burned video; just clear the in-flight state.
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {"render_status": "ready"},
+                    expected_render_gen_id=render_gen_id,
+                    outcome="caption_reburn_failed",
+                )
 
 
 # Archetypes whose editable caption cues may be reburned onto a caption-free base.
@@ -5826,9 +6070,23 @@ def _burn_persisted_captions_onto_base(
     burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
 
 
-def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
-    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+def _run_reburn_narrated_captions(
+    job_id: str,
+    variant_id: str,
+    render_gen_id: str | None = None,
+    terminal_state: dict | None = None,
+) -> None:
+    from app.storage import (  # noqa: PLC0415
+        delete_object_best_effort,
+        download_to_file,
+        upload_public_read,
+    )
 
+    # R4-2: the reapply chain below may run the overlay pass mid-task — clamp its
+    # fullscreen budget to the wall clock actually left under the soft ceiling.
+    reapply_deadline = (
+        time.monotonic() + _CAPTION_TASK_SOFT_TIME_LIMIT_S - _REAPPLY_DEADLINE_MARGIN_S
+    )
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
@@ -5846,7 +6104,14 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
     if not base_path:
         raise ValueError("variant has no caption-free base — cannot reburn captions")
 
-    _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        {"render_status": "rendering"},
+        expected_render_gen_id=render_gen_id,
+        outcome="caption_reburn_start",
+    ):
+        return
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(base_path, base_local)
@@ -5858,25 +6123,66 @@ def _run_reburn_narrated_captions(job_id: str, variant_id: str) -> None:
         )
         output_url = upload_public_read(out_local, new_gcs)
 
-    _update_variant_entry(
+    will_reapply = _will_reapply_media_layers(variant)
+    # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
+    # AST guard exempts merge-patch dicts assigned to locals named `patch`.
+    patch: dict[str, Any] = {
+        "video_path": new_gcs,
+        "output_url": output_url,
+        # Deliberate reset, never a stale round-trip: the old snapshots point at
+        # the pre-reburn video (deleted below), so a stale key is a download-404.
+        "pre_media_overlay_video_path": None,
+        "pre_sfx_video_path": None,
+    }
+    if will_reapply:
+        # OV-7: the reapply chain owns the final ready/failed — no effect-less
+        # "ready" observable between burn and reapply.
+        patch["render_status"] = "rendering"
+    else:
+        patch["render_status"] = "ready"
+        # Advance the render fingerprint so the hero player (keyed off
+        # render_finished_at) swaps to the reburned video instead of showing
+        # the pre-edit one until reload.
+        patch["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+    if not _update_variant_entry(
         job_id,
         variant_id,
-        {
-            "video_path": new_gcs,
-            "output_url": output_url,
-            "render_status": "ready",
-            # Advance the render fingerprint so the hero player (keyed off
-            # render_finished_at) swaps to the reburned video instead of showing
-            # the pre-edit one until reload.
-            "render_finished_at": datetime.utcnow().isoformat() + "Z",
-        },
-    )
+        patch,
+        expected_render_gen_id=render_gen_id,
+        outcome="caption_reburn",
+    ):
+        # F3: superseded — the just-uploaded burn was never referenced; free it.
+        delete_object_best_effort(new_gcs)
+        return
+    if terminal_state is not None:
+        terminal_state["accepted"] = True  # F5: video swap landed
+    # OV-4: deletes run only after the accepted terminal write above — a
+    # discarded stale task must never delete the winning task's live blobs.
+    _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
     # The old burn is unreachable now — free it (generative-jobs/* never expires).
     old_video_path = variant.get("video_path")
     if old_video_path and old_video_path != new_gcs:
-        from app.storage import delete_object_best_effort  # noqa: PLC0415
-
         delete_object_best_effort(old_video_path)
+    if will_reapply and not _reapply_user_media_layers(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=render_gen_id,
+        deadline_monotonic=reapply_deadline,
+    ):
+        # R1-3: the terminal write above deferred status (OV-7) but the chain
+        # no-oped — e.g. lanes cleared mid-run via the render=False autosave, or
+        # flags off in a tokenless legacy run. Finalize so no path leaves the
+        # variant stranded in "rendering". Token-gated like every terminal write.
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=render_gen_id,
+            outcome="caption_reburn_reapply_noop",
+        )
     log.info(
         "narrated_caption_reburn_done",
         job_id=job_id,
@@ -5906,7 +6212,9 @@ _BED_LEVEL_ARCHETYPES = frozenset({"narrated"})
     soft_time_limit=1740,
     time_limit=1800,
 )
-def reburn_narrated_bed_level(self, job_id: str, variant_id: str, bed_level: float) -> None:
+def reburn_narrated_bed_level(
+    self, job_id: str, variant_id: str, bed_level: float, render_gen_id: str | None = None
+) -> None:
     """Re-render a narrated variant's background-sound (voice/bed) balance.
 
     Post-gen editor Apply step for the Background Sound slider. Unlike the caption
@@ -5921,8 +6229,15 @@ def reburn_narrated_bed_level(self, job_id: str, variant_id: str, bed_level: flo
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
+        terminal_state = {"accepted": False}
         try:
-            _run_reburn_narrated_bed_level(job_id, variant_id, bed_level)
+            _run_reburn_narrated_bed_level(
+                job_id,
+                variant_id,
+                bed_level,
+                render_gen_id=render_gen_id,
+                terminal_state=terminal_state,
+            )
         except OperationalError:
             raise
         except Exception as exc:
@@ -5933,19 +6248,46 @@ def reburn_narrated_bed_level(self, job_id: str, variant_id: str, bed_level: flo
                 error=str(exc)[:MAX_ERROR_DETAIL_LEN],
                 exc_info=True,
             )
-            # Keep the last-good burned video; just clear the in-flight state.
-            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+            if terminal_state["accepted"]:
+                # F5: the video swap already landed — an exception past that point
+                # means the persisted lanes are missing; "ready" would lie.
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {"render_status": "failed", "render_error": str(exc)[:500]},
+                    expected_render_gen_id=render_gen_id,
+                    outcome="bed_level_reburn_failed_post_swap",
+                )
+            else:
+                # Keep the last-good burned video; just clear the in-flight state.
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {"render_status": "ready"},
+                    expected_render_gen_id=render_gen_id,
+                    outcome="bed_level_reburn_failed",
+                )
 
 
-def _run_reburn_narrated_bed_level(job_id: str, variant_id: str, bed_level: float) -> None:
+def _run_reburn_narrated_bed_level(
+    job_id: str,
+    variant_id: str,
+    bed_level: float,
+    render_gen_id: str | None = None,
+    terminal_state: dict | None = None,
+) -> None:
     from app.pipeline.narrated_alignment import StepTiming  # noqa: PLC0415
     from app.pipeline.narrated_assembler import (  # noqa: PLC0415
         NarratedClip,
         assemble_narrated,
     )
-    from app.storage import upload_public_read  # noqa: PLC0415
+    from app.storage import delete_object_best_effort, upload_public_read  # noqa: PLC0415
     from app.tasks.template_orchestrate import _download_clips_parallel  # noqa: PLC0415
 
+    # R4-2: clamp the mid-task overlay reapply to the wall clock actually left.
+    reapply_deadline = (
+        time.monotonic() + _CAPTION_TASK_SOFT_TIME_LIMIT_S - _REAPPLY_DEADLINE_MARGIN_S
+    )
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id))
         if job is None:
@@ -5979,7 +6321,14 @@ def _run_reburn_narrated_bed_level(job_id: str, variant_id: str, bed_level: floa
     clip_id_to_gcs = {f"clip_{i}": gcs for i, gcs in enumerate(clip_paths_gcs)}
     narrative_order = _resolve_narrative_order(narrative_shot_count, clip_id_to_gcs, job_id=job_id)
 
-    _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        {"render_status": "rendering"},
+        expected_render_gen_id=render_gen_id,
+        outcome="bed_level_reburn_start",
+    ):
+        return
     with tempfile.TemporaryDirectory(prefix="nova_bed_level_reburn_") as tmpdir:
         from app.storage import download_to_file  # noqa: PLC0415
 
@@ -6058,30 +6407,64 @@ def _run_reburn_narrated_bed_level(job_id: str, variant_id: str, bed_level: floa
         output_url = upload_public_read(out_local, new_video_gcs)
         upload_public_read(new_base_path, new_base_gcs)
 
-    _update_variant_entry(
+    will_reapply = _will_reapply_media_layers(variant)
+    # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
+    # AST guard exempts merge-patch dicts assigned to locals named `patch`.
+    patch: dict[str, Any] = {
+        "video_path": new_video_gcs,
+        "base_video_path": new_base_gcs,
+        "output_url": output_url,
+        "voiceover_bed_level": bed_level,
+        # OV-2: media_overlays is deliberately ABSENT from this patch — the
+        # _update_variant_entry merge preserves the DB's current cards, so one
+        # saved during this minutes-long rebuild survives. The snapshots ARE
+        # reset explicitly: they point at the pre-reburn video deleted below.
+        "pre_media_overlay_video_path": None,
+        "pre_sfx_video_path": None,
+    }
+    if will_reapply:
+        # OV-7: the reapply chain owns the final ready/failed.
+        patch["render_status"] = "rendering"
+    else:
+        patch["render_status"] = "ready"
+        patch["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+    if not _update_variant_entry(
         job_id,
         variant_id,
-        {
-            "video_path": new_video_gcs,
-            "base_video_path": new_base_gcs,
-            "output_url": output_url,
-            "voiceover_bed_level": bed_level,
-            "render_status": "ready",
-            "render_finished_at": datetime.utcnow().isoformat() + "Z",
-            # A bed-level reburn never touches media overlays — round-trip the
-            # variant's existing values explicitly (narrated never has any, but
-            # naming them here keeps the byte-identity guard honest, same as the
-            # first-render base dict above).
-            "media_overlays": variant.get("media_overlays"),
-            "pre_media_overlay_video_path": variant.get("pre_media_overlay_video_path"),
-        },
-    )
+        patch,
+        expected_render_gen_id=render_gen_id,
+        outcome="bed_level_reburn",
+    ):
+        # F3: superseded — the just-uploaded pair was never referenced; free both.
+        delete_object_best_effort(new_video_gcs)
+        delete_object_best_effort(new_base_gcs)
+        return
+    if terminal_state is not None:
+        terminal_state["accepted"] = True  # F5: video swap landed
+    # OV-4: deletes run only after the accepted terminal write above.
+    _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
     # Old burns are unreachable now — free them (generative-jobs/* never expires).
-    from app.storage import delete_object_best_effort  # noqa: PLC0415
-
     for old_path in (variant.get("video_path"), variant.get("base_video_path")):
         if old_path and old_path not in (new_video_gcs, new_base_gcs):
             delete_object_best_effort(old_path)
+    if will_reapply and not _reapply_user_media_layers(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=render_gen_id,
+        deadline_monotonic=reapply_deadline,
+    ):
+        # R1-3: deferred terminal status (OV-7) but the chain no-oped — finalize
+        # so no path leaves the variant stranded in "rendering". Token-gated.
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=render_gen_id,
+            outcome="bed_level_reburn_reapply_noop",
+        )
     log.info(
         "narrated_bed_level_reburn_done", job_id=job_id, variant_id=variant_id, bed_level=bed_level
     )
@@ -6095,12 +6478,16 @@ def _run_reburn_narrated_bed_level(job_id: str, variant_id: str, bed_level: floa
     retry_backoff_max=60,
     retry_jitter=False,
     max_retries=7,
-    # Re-transcribe + reburn from the cached base (no clip re-assembly) — bounded like
-    # the caption reburn, well under the broker visibility_timeout.
-    soft_time_limit=600,
-    time_limit=660,
+    # Re-transcribe + reburn from the cached base (no clip re-assembly), then may
+    # inline-run the overlay+SFX reapply chain (plan 010) — the overlay pass alone
+    # budgets a 600s subprocess timeout, so this rides the standard render ceiling
+    # (5A), under the broker visibility_timeout (1900s).
+    soft_time_limit=1740,
+    time_limit=1800,
 )
-def retranscribe_subtitled_captions(self, job_id: str, variant_id: str, language: str) -> None:
+def retranscribe_subtitled_captions(
+    self, job_id: str, variant_id: str, language: str, render_gen_id: str | None = None
+) -> None:
     """Re-transcribe a subtitled variant's own audio in a new language, then reburn.
 
     The D5 language override: the creator changes the caption language (e.g. auto-detect
@@ -6109,10 +6496,17 @@ def retranscribe_subtitled_captions(self, job_id: str, variant_id: str, language
     (the frontend confirms this first)."""
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
+    terminal_state = {"accepted": False}
     try:
         # Trace scope: the correction LLM runs inside — admin job-debug must see it.
         with pipeline_trace_for(job_id):
-            _run_retranscribe_subtitled(job_id, variant_id, language)
+            _run_retranscribe_subtitled(
+                job_id,
+                variant_id,
+                language,
+                render_gen_id=render_gen_id,
+                terminal_state=terminal_state,
+            )
     except OperationalError:
         raise
     except Exception as exc:
@@ -6123,11 +6517,34 @@ def retranscribe_subtitled_captions(self, job_id: str, variant_id: str, language
             error=str(exc)[:MAX_ERROR_DETAIL_LEN],
             exc_info=True,
         )
-        # Keep the last-good burned video; just clear the in-flight state.
-        _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+        if terminal_state["accepted"]:
+            # F5: the video swap already landed — an exception past that point
+            # means the persisted lanes are missing; "ready" would lie.
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {"render_status": "failed", "render_error": str(exc)[:500]},
+                expected_render_gen_id=render_gen_id,
+                outcome="subtitled_retranscribe_failed_post_swap",
+            )
+        else:
+            # Keep the last-good burned video; just clear the in-flight state.
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {"render_status": "ready"},
+                expected_render_gen_id=render_gen_id,
+                outcome="subtitled_retranscribe_failed",
+            )
 
 
-def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> None:
+def _run_retranscribe_subtitled(
+    job_id: str,
+    variant_id: str,
+    language: str,
+    render_gen_id: str | None = None,
+    terminal_state: dict | None = None,
+) -> None:
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
         SUBTITLED_CAPTION_MARGIN_V,
@@ -6142,8 +6559,16 @@ def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> 
     )
     from app.pipeline.text_overlay import FONTS_DIR  # noqa: PLC0415
     from app.pipeline.transcribe import transcribe_whisper  # noqa: PLC0415
-    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.storage import (  # noqa: PLC0415
+        delete_object_best_effort,
+        download_to_file,
+        upload_public_read,
+    )
 
+    # R4-2: clamp the mid-task overlay reapply to the wall clock actually left.
+    reapply_deadline = (
+        time.monotonic() + _CAPTION_TASK_SOFT_TIME_LIMIT_S - _REAPPLY_DEADLINE_MARGIN_S
+    )
     lang = (language or "").strip().lower()
     if lang not in _SUBTITLED_CAPTION_LANGUAGES:
         raise ValueError(f"unsupported caption language: {language!r}")
@@ -6166,7 +6591,14 @@ def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> 
     word_pop = variant.get("voiceover_caption_style") == "word"
     ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
 
-    _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        {"render_status": "rendering"},
+        expected_render_gen_id=render_gen_id,
+        outcome="subtitled_retranscribe_start",
+    ):
+        return
     with tempfile.TemporaryDirectory(prefix="nova_subtitled_retx_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(base_path, base_local)
@@ -6194,7 +6626,15 @@ def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> 
                 variant_id=variant_id,
                 language=lang,
             )
-            _update_variant_entry(job_id, variant_id, {"render_status": "ready"})
+            # Video untouched → any baked-in SFX/overlay lanes are still on it;
+            # no reapply, no snapshot reset.
+            _update_variant_entry(
+                job_id,
+                variant_id,
+                {"render_status": "ready"},
+                expected_render_gen_id=render_gen_id,
+                outcome="subtitled_retranscribe_empty",
+            )
             return
         out_local = os.path.join(tmpdir, "out.mp4")
         ass_path = os.path.join(tmpdir, "captions.ass")
@@ -6217,24 +6657,61 @@ def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> 
         )
         output_url = upload_public_read(out_local, new_gcs)
 
-    _update_variant_entry(
+    will_reapply = _will_reapply_media_layers(variant)
+    # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
+    # AST guard exempts merge-patch dicts assigned to locals named `patch`.
+    patch: dict[str, Any] = {
+        "video_path": new_gcs,
+        "output_url": output_url,
+        "caption_cues": cues or None,
+        "caption_language": lang,
+        # Deliberate reset, never a stale round-trip: the old snapshots point at
+        # the pre-reburn video (deleted below), so a stale key is a download-404.
+        "pre_media_overlay_video_path": None,
+        "pre_sfx_video_path": None,
+    }
+    if will_reapply:
+        # OV-7: the reapply chain owns the final ready/failed.
+        patch["render_status"] = "rendering"
+    else:
+        patch["render_status"] = "ready"
+        patch["render_finished_at"] = datetime.utcnow().isoformat() + "Z"
+    if not _update_variant_entry(
         job_id,
         variant_id,
-        {
-            "video_path": new_gcs,
-            "output_url": output_url,
-            "caption_cues": cues or None,
-            "caption_language": lang,
-            "render_status": "ready",
-            "render_finished_at": datetime.utcnow().isoformat() + "Z",
-        },
-    )
+        patch,
+        expected_render_gen_id=render_gen_id,
+        outcome="subtitled_retranscribe",
+    ):
+        # F3: superseded — the just-uploaded burn was never referenced; free it.
+        delete_object_best_effort(new_gcs)
+        return
+    if terminal_state is not None:
+        terminal_state["accepted"] = True  # F5: video swap landed
+    # OV-4: deletes run only after the accepted terminal write above.
+    _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
     # The old burn is unreachable now — free it (generative-jobs/* never expires).
     old_video_path = variant.get("video_path")
     if old_video_path and old_video_path != new_gcs:
-        from app.storage import delete_object_best_effort  # noqa: PLC0415
-
         delete_object_best_effort(old_video_path)
+    if will_reapply and not _reapply_user_media_layers(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=render_gen_id,
+        deadline_monotonic=reapply_deadline,
+    ):
+        # R1-3: deferred terminal status (OV-7) but the chain no-oped — finalize
+        # so no path leaves the variant stranded in "rendering". Token-gated.
+        _update_variant_entry(
+            job_id,
+            variant_id,
+            {
+                "render_status": "ready",
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+            },
+            expected_render_gen_id=render_gen_id,
+            outcome="subtitled_retranscribe_reapply_noop",
+        )
     log.info(
         "subtitled_retranscribe_done",
         job_id=job_id,

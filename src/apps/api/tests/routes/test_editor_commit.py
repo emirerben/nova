@@ -244,7 +244,16 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         raising=False,
     )
     gj.enqueue_editor_commit_render(str(job.id), "narrated", prep)
-    assert calls == [{"args": [str(job.id), "narrated"]}]
+    # 2A: the reburn carries the freshly-bumped generation for E1 supersession.
+    # RT-4: caption tasks ride the overlay-jobs queue (solo worker serializes the
+    # inline overlay/SFX reapply passes).
+    assert calls == [
+        {
+            "args": [str(job.id), "narrated"],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
 
 
 def test_text_only_commit_rides_overlay_jobs_queue(monkeypatch):
@@ -692,6 +701,43 @@ def test_editor_commit_accepts_registry_font_names(monkeypatch):
     assert job.assembly_plan["variants"][0]["text_elements"][0]["font_family"] == "Playfair Display"
 
 
+def test_editor_commit_text_elements_on_subtitled_422(monkeypatch):
+    """OV-1 API half: subtitled captions own the on-video text — a text_elements
+    section must 422 (the FE disables the tool; this closes the API path)."""
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job, "subtitled", _commit_req(text_elements=[dict(_VALID_ELEMENT)])
+        )
+    assert exc.value.status_code == 422
+    assert "Captions" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+def test_editor_commit_text_elements_on_narrated_still_accepted(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    prep = gj.prepare_editor_commit(
+        job, "narrated", _commit_req(text_elements=[dict(_VALID_ELEMENT)])
+    )
+    assert prep["has_render_section"] is True
+    assert job.assembly_plan["variants"][0]["text_elements"][0]["text"] == "Hello world"
+
+
 def test_mix_on_variant_without_voice_bed_422(monkeypatch):
     _arm(monkeypatch)
     job = _job(mix=None)  # song variant with no voice bed
@@ -700,6 +746,137 @@ def test_mix_on_variant_without_voice_bed_422(monkeypatch):
             job, "song_text", _commit_req(mix=gj.EditorCommitMix(music_level=0.3))
         )
     assert exc.value.status_code == 422
+
+
+@pytest.mark.parametrize("archetype", ["narrated", "subtitled"])
+def test_mix_commit_on_caption_archetype_422(monkeypatch, archetype):
+    """R1-4: caption renderers persist mix=1.0, so without this guard a mix save
+    funnels into the montage regenerate → caption reject → silent no-op "ready".
+    Narrated's real knob is the item-page bed-level dispatch; subtitled has none."""
+    _arm(monkeypatch)
+    job = _job(
+        variant_id=archetype,
+        text_mode="none",
+        resolved_archetype=archetype,
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=1.0,  # realistic: both caption renderers persist mix=1.0
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job, archetype, _commit_req(mix=gj.EditorCommitMix(music_level=0.3))
+        )
+    assert exc.value.status_code == 422
+    assert "item page" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+# ── R2: caption-archetype lane-only commits route through the caption reburn ───
+
+
+_R2_OVERLAYS = [
+    {
+        "id": "ov-1",
+        "kind": "image",
+        "src_gcs_path": "users/u123/plan/item/overlays/card.png",
+        "position": "center",
+        "x_frac": 0.5,
+        "y_frac": 0.5,
+        "scale": 0.35,
+        "start_s": 0.4,
+        "end_s": 2.4,
+        "z": 0,
+    }
+]
+
+_R2_SFX = [
+    {
+        "id": "sfx-1",
+        "sound_effect_id": None,
+        "src_gcs_path": "users/u123/plan/item/sfx/pop.mp3",
+        "at_s": 1.2,
+        "gain": 0.8,
+    }
+]
+
+
+def _capture_render_tasks(monkeypatch) -> tuple[list[dict], list[dict]]:
+    reburn_calls: list[dict] = []
+    regen_calls: list[dict] = []
+    monkeypatch.setattr(
+        REBURN_NARRATED,
+        types.SimpleNamespace(apply_async=lambda **k: reburn_calls.append(k)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        REGEN,
+        types.SimpleNamespace(apply_async=lambda **k: regen_calls.append(k)),
+        raising=False,
+    )
+    return reburn_calls, regen_calls
+
+
+@pytest.mark.parametrize(("archetype", "section"), [("subtitled", "overlays"), ("narrated", "sfx")])
+def test_caption_variant_lane_only_commit_enqueues_reburn(monkeypatch, archetype, section):
+    """An SFX/overlay-only Save on a caption variant must ride the caption reburn
+    + reapply chain (queue overlay-jobs, generation attached) — the fast pass
+    composites onto the CURRENT video and would silently drop an in-flight
+    caption edit it supersedes."""
+    _arm(monkeypatch)
+    job = _job(
+        variant_id=archetype,
+        text_mode="none",
+        resolved_archetype=archetype,
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=1.0,
+    )
+    req = (
+        _commit_req(media_overlays=[dict(_R2_OVERLAYS[0])])
+        if section == "overlays"
+        else _commit_req(sound_effects=[dict(_R2_SFX[0])])
+    )
+
+    prep = gj.prepare_editor_commit(job, archetype, req, user_id="u123")
+    reburn_calls, regen_calls = _capture_render_tasks(monkeypatch)
+    gj.enqueue_editor_commit_render(str(job.id), archetype, prep)
+
+    assert regen_calls == []
+    assert reburn_calls == [
+        {
+            "args": [str(job.id), archetype],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
+    # The commit itself persisted the lane atomically — the reburn reads it back.
+    v = job.assembly_plan["variants"][0]
+    if section == "overlays":
+        assert v["media_overlays"][0]["id"] == "ov-1"
+    else:
+        assert v["sound_effects"][0]["id"] == "sfx-1"
+
+
+def test_caption_variant_lane_commit_without_base_falls_back_to_fast_pass(monkeypatch):
+    """Legacy safety (R2c): a caption variant with no cached base can't reburn —
+    the overlay fast pass still runs (composites onto video_path directly)."""
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        base_video_path=None,
+        mix=1.0,
+    )
+    prep = gj.prepare_editor_commit(
+        job, "subtitled", _commit_req(media_overlays=[dict(_R2_OVERLAYS[0])]), user_id="u123"
+    )
+    reburn_calls, regen_calls = _capture_render_tasks(monkeypatch)
+    gj.enqueue_editor_commit_render(str(job.id), "subtitled", prep)
+
+    assert reburn_calls == []
+    assert len(regen_calls) == 1
+    assert regen_calls[0]["queue"] == "overlay-jobs"
+    assert regen_calls[0]["kwargs"]["media_overlays_override"][0]["id"] == "ov-1"
 
 
 def test_prod_song_text_empty_text_and_mixed_beat_slots_round_trip(monkeypatch):
@@ -1155,28 +1332,68 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["overlays"] is True
 
 
-def test_capabilities_narrated_caption_archetype_text_elements_on(monkeypatch):
+def test_capabilities_narrated_caption_archetype_lanes_on_text_elements_on(monkeypatch):
     _arm(monkeypatch)
+    _arm_autoplace(monkeypatch)
     job = _job(
         variant_id="narrated",
         text_mode="none",
         resolved_archetype="narrated",
         base_video_path="generative-jobs/job/base-captionless.mp4",
-        mix=None,
+        # REALISTIC fixture (R1-4): both caption renderers persist mix=1.0 — the
+        # earlier mix=None here masked the capability leak.
+        mix=1.0,
     )
     caps = _caps(job, "narrated")
     assert caps["text_elements"] is True
     assert caps["timeline"] is False
     assert caps["split_clips"] is False
+    # R1-4: narrated's background-sound knob is the item-page bed-level dispatch,
+    # not the montage mix lane — capability must be off despite mix=1.0.
+    assert caps["mix"] is False
     assert caps["reason"] == "locked_to_voiceover"
-    assert caps["sfx"] is False
-    assert caps["overlays"] is False
-    assert caps["sfx_reason"] == "caption_archetype"
-    assert caps["overlays_reason"] == "caption_archetype"
+    # Plan 010: manual SFX/overlay lanes open on caption archetypes (flags armed) —
+    # the caption re-render terminals reapply persisted lanes.
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
+    assert caps["sfx_reason"] is None
+    assert caps["overlays_reason"] is None
+    # OV-5: AI suggestions stay off on caption archetypes even with all flags on.
+    assert caps["suggestions"] is False
+    assert caps["suggestions_reason"] == "caption_archetype"
 
 
-def test_capabilities_subtitled_caption_archetype_text_elements_off(monkeypatch):
+def test_capabilities_subtitled_caption_archetype_lanes_on_text_elements_off(monkeypatch):
     _arm(monkeypatch)
+    _arm_autoplace(monkeypatch)
+    job = _job(
+        variant_id="subtitled",
+        text_mode="none",
+        resolved_archetype="subtitled",
+        # REALISTIC fixture (R1-4): the subtitled renderer persists mix=1.0.
+        mix=1.0,
+    )
+    caps = _caps(job, "subtitled")
+    assert caps["text_elements"] is False
+    assert caps["reason"] == gj.CAPTION_TAB_COPY
+    # R1-4: subtitled has no bed at all — mix stays off despite mix=1.0.
+    assert caps["mix"] is False
+    assert caps["sfx"] is True
+    assert caps["overlays"] is True
+    assert caps["sfx_reason"] is None
+    assert caps["overlays_reason"] is None
+    assert caps["suggestions"] is False
+    assert caps["suggestions_reason"] == "caption_archetype"
+
+
+def test_capabilities_caption_archetype_flags_off_report_disabled_reasons(monkeypatch):
+    """Kill-switch parity with montage variants: Fly flags off → caption variants
+    report the *_disabled reasons, not caption_archetype."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "sound_effects_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "media_overlays_enabled", False, raising=False)
     job = _job(
         variant_id="subtitled",
         text_mode="none",
@@ -1184,12 +1401,10 @@ def test_capabilities_subtitled_caption_archetype_text_elements_off(monkeypatch)
         mix=None,
     )
     caps = _caps(job, "subtitled")
-    assert caps["text_elements"] is False
-    assert caps["reason"] == "Captions for this edit are managed in the Captions tab"
     assert caps["sfx"] is False
     assert caps["overlays"] is False
-    assert caps["sfx_reason"] == "caption_archetype"
-    assert caps["overlays_reason"] == "caption_archetype"
+    assert caps["sfx_reason"] == "sound_effects_disabled"
+    assert caps["overlays_reason"] == "media_overlays_disabled"
 
 
 def test_capabilities_expired_sources(monkeypatch):

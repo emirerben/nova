@@ -9,6 +9,13 @@
  *
  * Tool availability is driven by server capabilities so kill switches surface
  * as disabled buttons with honest tooltips.
+ *
+ * Disabled tools use the focusable-disabled pattern (review fix round on plan
+ * 010): `aria-disabled="true"` instead of the `disabled` attribute, a no-op
+ * onClick, and `aria-describedby` → a visually-hidden per-tool reason element,
+ * so keyboard / screen-reader / touch users can reach the WHY (a native
+ * `title` on a `disabled` button is mouse-hover-only). The title stays as a
+ * pointer bonus.
  */
 
 export type EditorTool = "text" | "sounds" | "overlays" | "styles";
@@ -39,19 +46,26 @@ export default function ToolRail({
         const active = activeTool === tool.id;
         const disabledReason = disabledTools[tool.id];
         const enabled = !disabledReason;
+        const reasonId = `tool-rail-reason-${tool.id}`;
         return (
           <button
             key={tool.id}
             type="button"
-            disabled={!enabled}
+            aria-disabled={enabled ? undefined : true}
+            aria-describedby={enabled ? undefined : reasonId}
             aria-pressed={active}
             aria-label={`${tool.label} tool`}
             title={enabled ? tool.label : `${tool.label} — ${disabledReason}`}
-            onClick={() => onToggleTool(tool.id)}
+            onClick={() => {
+              if (!enabled) return; // focusable-disabled: reachable, inert
+              onToggleTool(tool.id);
+            }}
             className={`flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active
                 ? "border-[#0c0c0e]"
-                : "border-transparent hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+                : enabled
+                  ? "border-transparent hover:bg-zinc-50"
+                  : "cursor-not-allowed border-transparent opacity-40"
             }`}
           >
             <span
@@ -69,6 +83,11 @@ export default function ToolRail({
             >
               {tool.label}
             </span>
+            {!enabled && (
+              <span id={reasonId} className="sr-only">
+                {disabledReason}
+              </span>
+            )}
           </button>
         );
       })}

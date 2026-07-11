@@ -537,9 +537,86 @@ def test_full_render_success_reapplies_persisted_media_overlays(monkeypatch):
             "job_id": JOB_ID,
             "variant_id": "original_text",
             "expected_render_gen_id": "tok-cur",
+            # Montage terminals pass no wall-clock deadline (R4-2 default —
+            # byte-identical standalone budget); only caption terminals thread one.
+            "deadline_monotonic": None,
         }
     ]
     assert sfx_calls == []
+
+
+def test_full_render_superseded_does_not_delete_snapshot_blobs(monkeypatch):
+    """R1-2: the montage full-render terminal STAGES the snapshot nulls before the
+    gen-gated write and frees the blobs only AFTER it is accepted — a superseded
+    render must never delete the winning render's snapshot blobs."""
+    overlays = [_media_overlay_card()]
+    job = _FakeJob(
+        [
+            _variant(
+                "tok-new",
+                media_overlays=overlays,
+                pre_media_overlay_video_path=f"generative-jobs/{JOB_ID}/pre_overlay.mp4",
+                pre_sfx_video_path=f"generative-jobs/{JOB_ID}/pre_sfx.mp4",
+            )
+        ]
+    )
+    _patch_sessions(monkeypatch, job)
+    _capture_updates(monkeypatch, job)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort", lambda p: deleted.append(p) or True
+    )
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(
+        gb, "_render_generative_variant", lambda **kw: dict(_READY_RESULT), raising=False
+    )
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: _fake_ingest(), raising=False)
+    monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
+
+    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-old")
+
+    assert deleted == []
+
+
+def test_full_render_accepted_frees_retired_snapshot_blobs(monkeypatch):
+    """Companion: with the CURRENT token the write lands and the now-orphaned
+    snapshot blobs are freed after it (same keys, same run shape)."""
+    overlays = [_media_overlay_card()]
+    job = _FakeJob(
+        [
+            _variant(
+                "tok-cur",
+                media_overlays=overlays,
+                pre_media_overlay_video_path=f"generative-jobs/{JOB_ID}/pre_overlay.mp4",
+                pre_sfx_video_path=f"generative-jobs/{JOB_ID}/pre_sfx.mp4",
+            )
+        ]
+    )
+    _patch_sessions(monkeypatch, job)
+    _capture_updates(monkeypatch, job)
+    deleted: list[str] = []
+    monkeypatch.setattr(
+        "app.storage.delete_object_best_effort", lambda p: deleted.append(p) or True
+    )
+    monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)
+    monkeypatch.setattr(
+        gb, "_reapply_persisted_media_overlays_if_any", lambda **kw: True, raising=False
+    )
+    monkeypatch.setattr(gb, "_reapply_persisted_sfx_if_any", lambda **kw: True, raising=False)
+    monkeypatch.setattr(
+        gb, "_render_generative_variant", lambda **kw: dict(_READY_RESULT), raising=False
+    )
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: _fake_ingest(), raising=False)
+    monkeypatch.setattr(gb, "_resolve_narrative_order", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_run_text_agents", lambda *a, **k: (None, None), raising=False)
+
+    gb._run_regenerate_variant(JOB_ID, "original_text", None, None, False, render_gen_id="tok-cur")
+
+    assert sorted(deleted) == [
+        f"generative-jobs/{JOB_ID}/pre_overlay.mp4",
+        f"generative-jobs/{JOB_ID}/pre_sfx.mp4",
+    ]
 
 
 def test_full_render_success_reburns_persisted_text_elements_after_new_base(monkeypatch):
@@ -552,9 +629,7 @@ def test_full_render_success_reburns_persisted_text_elements_after_new_base(monk
             "role": "generative_intro",
         }
     ]
-    job = _FakeJob(
-        [_variant("tok-cur", text_elements=elements, text_elements_user_edited=True)]
-    )
+    job = _FakeJob([_variant("tok-cur", text_elements=elements, text_elements_user_edited=True)])
     _patch_sessions(monkeypatch, job)
     updates = _capture_updates(monkeypatch, job)
     monkeypatch.setattr(gb, "_is_fast_reburn_eligible", lambda *a, **k: False, raising=False)

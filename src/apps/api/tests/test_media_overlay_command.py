@@ -278,3 +278,48 @@ class TestEncoderPolicyModes:
             force_veryfast=True,
         )
         assert _preset_of(cmd) == "veryfast"
+
+
+class TestPassBudgetDeadlineClamp:
+    """R4-2: apply_media_overlays' shared budget was sized for a task that STARTS
+    with the pass; caption tasks enter it mid-task and thread a wall-clock
+    deadline. _resolve_pass_budget clamps the budget/timeout to what's left and
+    fails fast below the floor. Default (None) is byte-identical."""
+
+    def test_default_none_is_byte_identical(self):
+        from app.pipeline import media_overlay as mo
+
+        assert mo._resolve_pass_budget(True, None) == (
+            mo._TIMEOUT_FULLSCREEN_S,
+            float(mo._FULLSCREEN_TOTAL_BUDGET_S),
+        )
+        assert mo._resolve_pass_budget(False, None) == (
+            mo._TIMEOUT_PIP_S,
+            float(mo._FULLSCREEN_TOTAL_BUDGET_S),
+        )
+
+    def test_deadline_clamps_budget_and_timeout(self, monkeypatch):
+        from app.pipeline import media_overlay as mo
+
+        monkeypatch.setattr(mo.time, "monotonic", lambda: 1000.0)
+        # 400s left < both the 900s fullscreen attempt timeout and 1500s budget.
+        timeout_s, budget_s = mo._resolve_pass_budget(True, 1400.0)
+        assert budget_s == 400.0
+        assert timeout_s == 400
+
+    def test_deadline_far_away_keeps_standalone_numbers(self, monkeypatch):
+        from app.pipeline import media_overlay as mo
+
+        monkeypatch.setattr(mo.time, "monotonic", lambda: 1000.0)
+        timeout_s, budget_s = mo._resolve_pass_budget(True, 1000.0 + 10_000.0)
+        assert budget_s == float(mo._FULLSCREEN_TOTAL_BUDGET_S)
+        assert timeout_s == mo._TIMEOUT_FULLSCREEN_S
+
+    def test_below_floor_fails_fast_with_clear_error(self, monkeypatch):
+        import pytest
+
+        from app.pipeline import media_overlay as mo
+
+        monkeypatch.setattr(mo.time, "monotonic", lambda: 1000.0)
+        with pytest.raises(mo.MediaOverlayError, match="task deadline"):
+            mo._resolve_pass_budget(True, 1000.0 + mo._DEADLINE_FLOOR_S - 1)

@@ -29,6 +29,7 @@ from app.auth import CurrentUser
 from app.database import get_db
 from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset
 from app.routes.generative_jobs import (
+    CAPTION_EDIT_ARCHETYPES,
     BedLevelRequest,
     CaptionFontRequest,
     CaptionLanguageRequest,
@@ -1371,13 +1372,12 @@ async def apply_item_captions(
     db: AsyncSession = Depends(get_db),
 ) -> PlanItemResponse:
     """Reburn the variant's edited captions onto its caption-free base (async)."""
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_apply_captions(job, variant_id)
-    # Persist the synchronous render_status="rendering" gate-close: the dispatcher
-    # mutates job.assembly_plan, and get_db does NOT commit on exit — without this
-    # commit the write rolls back and the enqueue-window race reopens (siblings
-    # retext/swap-song commit after dispatch for the same reason).
-    await db.commit()
+    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    # dispatch_apply_captions does its OWN row-locked re-fetch by job.id and commits
+    # the rendering gate BEFORE enqueuing (R1-1): the reburn's start write is
+    # token-checked, so a worker dequeuing before the commit would read the old
+    # generation, discard its start write, and strand the variant in "rendering".
+    await dispatch_apply_captions(job.id, variant_id, db=db)
     log.info("plan_item_apply_captions", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -1501,10 +1501,10 @@ async def set_item_caption_language(
     hint and rebuilds the cues, REPLACING the current captions + any hand-edits (the
     frontend confirms first). Subtitled-only; unsupported languages are rejected (422).
     """
-    job = await _owned_item_render_job(item_id, user.id, db)
-    dispatch_retranscribe_captions(job, variant_id, language=req.language)
-    # Same commit rationale as apply_item_captions above — the gate-close must persist.
-    await db.commit()
+    job = await _owned_item_render_job(item_id, user.id, db)  # ownership check only
+    # Same commit-before-enqueue rationale as apply_item_captions above (R1-1) —
+    # the dispatcher row-locks, stamps the generation, commits, then enqueues.
+    await dispatch_retranscribe_captions(job.id, variant_id, language=req.language, db=db)
     log.info(
         "plan_item_set_caption_language",
         item_id=item_id,
@@ -1994,8 +1994,9 @@ async def set_item_media_overlays(
         )
 
     job = await _owned_item_render_job(item_id, user.id, db)
+    enqueue_after_commit = None
     if body.render:
-        dispatch_set_media_overlays(
+        enqueue_after_commit = dispatch_set_media_overlays(
             job, variant_id, overlays_raw=body.overlays, user_id=str(user.id)
         )
     else:
@@ -2003,6 +2004,11 @@ async def set_item_media_overlays(
             job, variant_id, overlays_raw=body.overlays, user_id=str(user.id)
         )
     await db.commit()
+    if enqueue_after_commit is not None:
+        # R1-1: caption-reburn branch — the reburn's start write is token-checked
+        # against the generation committed above, so the enqueue must come AFTER
+        # the commit or a fast worker strands the variant in "rendering".
+        enqueue_after_commit()
     log.info(
         "plan_item_set_media_overlays",
         item_id=item_id,
@@ -2338,7 +2344,7 @@ async def render_item_sound_effects(
             sfx_raw = v.get("sound_effects") or []
             break
 
-    dispatch_set_sound_effects(
+    enqueue_after_commit = dispatch_set_sound_effects(
         job,
         variant_id,
         sfx_raw=sfx_raw,
@@ -2346,6 +2352,9 @@ async def render_item_sound_effects(
         db_for_glossary=db,
     )
     await db.commit()
+    if enqueue_after_commit is not None:
+        # R1-1: caption-reburn branch — enqueue only after the gate/gen commit.
+        enqueue_after_commit()
     log.info("plan_item_render_sfx", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
@@ -3160,6 +3169,15 @@ async def suggest_overlays(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Auto-placement isn't available on song or lyric variants.",
+        )
+
+    # Caption-archetype guard (OV-5, plan 010): manual SFX/overlay lanes are open
+    # on narrated/subtitled, but AI suggestions stay off pending a speech-content
+    # quality eval. Lockstep with _editor_capabilities' suggestions_reason.
+    if variant.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Auto-placement isn't available on this edit format.",
         )
 
     ready_count = int(
