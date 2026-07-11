@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
   deriveLaneRows,
   deriveTextLaneRows,
+  seedBarsFromVariant,
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
@@ -9,7 +10,7 @@ import {
   undoSnapshot,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
-import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import type { MediaOverlay, PlanItemVariant, SoundEffectPlacement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
@@ -114,6 +115,42 @@ describe("deriveTextLaneRows", () => {
       ["first", 0],
       ["second", 1],
       ["third", 2],
+    ]);
+  });
+});
+
+describe("seedBarsFromVariant", () => {
+  it("prefers projected text_elements over lossy scene_timings for generated sequences", () => {
+    const variant = {
+      variant_id: "original_text",
+      text_elements_user_edited: false,
+      scene_timings: [{ text: "", start_s: 0.3, end_s: 1.8 }],
+      text_elements: [
+        {
+          id: "sequence-1",
+          text: "This is what it's all about.",
+          start_s: 0.3,
+          end_s: 1.8,
+          role: "generative_sequence",
+          position: "custom",
+          x_frac: 0.49,
+          y_frac: 0.44,
+          size_px: 122,
+          font_family: "Great Vibes",
+          color: "#FFFFFF",
+        },
+      ],
+    } as unknown as PlanItemVariant;
+
+    expect(seedBarsFromVariant(variant)).toEqual([
+      expect.objectContaining({
+        id: "sequence-1",
+        text: "This is what it's all about.",
+        x_frac: 0.49,
+        y_frac: 0.44,
+        size_px: 122,
+        font_family: "Great Vibes",
+      }),
     ]);
   });
 });

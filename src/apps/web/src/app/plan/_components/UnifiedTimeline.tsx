@@ -165,6 +165,8 @@ export interface UnifiedTimelineProps {
    * one draft.
    */
   clipTimelineHandle?: ClipTimelineHandle;
+  /** Hide the Clips lane when the active variant has no linear slot timeline. */
+  showClipsLane?: boolean;
   /**
    * Plan C fix: called when the user clicks a clip bar body in the lane.
    * The key is the clicked slot.key so the parent can pre-select it in
@@ -226,6 +228,7 @@ export default function UnifiedTimeline({
   clipsPanel,
   onClipsPanelChange,
   clipTimelineHandle,
+  showClipsLane = true,
   onClipBodyClick,
   textPanelPortalTarget,
   onTextBarSelect,
@@ -286,14 +289,16 @@ export default function UnifiedTimeline({
       </div>
 
       {/* ── Clips lane ── */}
-      <ClipsLane
-        totalDurationS={totalDurationS}
-        currentTimeS={currentTimeS}
-        clipsPanel={clipsPanel}
-        onClipsPanelChange={onClipsPanelChange}
-        clipHandle={clipTimelineHandle}
-        onClipBodyClick={onClipBodyClick}
-      />
+      {showClipsLane && (
+        <ClipsLane
+          totalDurationS={totalDurationS}
+          currentTimeS={currentTimeS}
+          clipsPanel={clipsPanel}
+          onClipsPanelChange={onClipsPanelChange}
+          clipHandle={clipTimelineHandle}
+          onClipBodyClick={onClipBodyClick}
+        />
+      )}
 
       {/* ── Text lane ── */}
       <TextLane
@@ -352,7 +357,9 @@ export default function UnifiedTimeline({
       />
 
       <p className="pl-14 pt-1.5 text-[9px] text-zinc-400">
-        Clips lane — click to expand inline · Text lane — click to expand inline
+        {showClipsLane
+          ? "Clips lane — click to expand inline · Text lane — click to expand inline"
+          : "Text lane — click to expand inline"}
       </p>
     </div>
   );

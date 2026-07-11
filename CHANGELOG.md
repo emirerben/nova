@@ -7,6 +7,15 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Mobile regression net in CI.** Every web pull request now runs a Playwright suite on three phone viewports (375/390/430, touch enabled) covering the things unit tests can't see: no horizontal overflow, 44px touch targets, trim-drag/undo round-trips, tap-vs-drag slop, cancelled-tap safety, and page scroll surviving gestures on the editing rails. Backed by env-gated fixture pages that 404 in production.
 
+## [0.7.14.0] — 2026-07-11
+
+### Added
+- **Montage items can now render as a Masonry collage preset.** Plan items persist a `montage_preset` (`classic` by default, `masonry` when explicitly selected) and the item page exposes a Classic / Masonry collage picker only for montage generation. The render contract stores only the non-default preset so legacy montage jobs keep their byte-compatible shape.
+- **Masonry collage rendering path.** Selected montage items compose uploaded user clips into a 1080x1920 white-canvas collage with rounded video tiles, mixed tile ratios, white gutters, slow board motion, a ~15s cap, and final-output `preset=fast` encoding. `song_lyrics`, `song_text`, and `original_text` stay in the existing montage variant set while `original_text` muxes an audio bed from the normal montage assembly; compositor failure falls back to classic montage and records the reason.
+
+### Changed
+- Masonry-rendered variants disable timeline / split-clip editing because the visual is a simultaneous tile board, while current text/style editing surfaces remain available.
+
 ## [0.7.13.0] — 2026-07-11
 
 ### Added
@@ -50,6 +59,7 @@ All notable changes to this project will be documented in this file.
 - **`scripts/admin.py` no longer breaks auth when a `.env` value carries an inline comment.** The CLI's tiny .env reader treated everything after `=` as the value, so `ADMIN_API_KEY=abc  # my note` (or the quoted form `="abc" # note`) silently sent a corrupted token and every `/admin/*` call 401'd with no visible cause — the `-v` flag masks the token by design. `load_env()` now follows dotenv semantics, matching how pydantic-settings reads the same file for the local API: an unquoted value is cut at the first whitespace-preceded `#`, and a quoted value ends at its closing quote (so `#` inside quotes stays literal, and a comment may follow the closing quote). Verified byte-for-byte against python-dotenv on the affected shapes; pinned by 15 unit tests in `tests/scripts/test_admin_cli_load_env.py` covering every parser branch (quoting, CRLF, tab-before-`#`, unterminated quotes, missing file).
 - **Full-tree pytest no longer inherits the developer's real `.env`.** `scripts/diff_lyric_sync.py` merged the nearest `.env` into `os.environ` at import time; full-tree collection imports it via its test module, so any pydantic-invalid value on a Settings-typed key (e.g. `GENERATIVE_FAST_REBURN_ENABLED=true   # comment`) failed exactly the 7 tests that build a fresh `Settings()` — in full runs only, never in isolation. The load now happens inside `main()` (CLI behavior unchanged), pinned by `test_import_does_not_mutate_environ`.
 - **`diff_lyric_sync` .env parser now follows dotenv comment semantics.** Inline comments after unquoted values are stripped (`FLAG=true  # note` → `true`), quoted values drop trailing comments and their quotes (`KEY="abc"  # note` → `abc`), `KEY= # note` reads as empty, and `abc#def` keeps its `#` — so a hand-annotated `.env` can no longer poison typed Settings fields or crash the CLI at startup. Pinned by canary lines in `test_main_loads_env_and_strips_inline_comments`.
+
 ## [0.7.9.0] — 2026-07-11
 
 ### Added

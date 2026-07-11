@@ -220,6 +220,7 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
   TIMELINE_EMPTY: "The timeline needs at least one clip.",
   TIMELINE_UNKNOWN_CLIP: "One of the clips isn't part of this edit anymore.",
   TIMELINE_STALE: "This video changed in another tab — reload to continue.",
+  masonry_preset: "Collage presets do not use a clip timeline.",
   sources_expired: "One of the clips has expired and needs to be re-uploaded.",
 };
 

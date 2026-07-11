@@ -402,6 +402,177 @@ def test_original_audio_variant_skips_mix(monkeypatch, tmp_path):
     assert res["video_path"].startswith("generative-jobs/")
 
 
+def test_masonry_preset_uses_collage_assembler_for_text_variant(monkeypatch, tmp_path):
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+
+    import app.pipeline.masonry_montage as masonry
+    import app.pipeline.template_matcher as tm
+
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(
+            steps=[
+                types.SimpleNamespace(
+                    clip_id="c1",
+                    slot={"position": 1, "target_duration_s": 2.0},
+                    moment={},
+                )
+            ]
+        ),
+        raising=False,
+    )
+    masonry_calls: list[dict] = []
+
+    def _fake_masonry(**kw):
+        masonry_calls.append(kw)
+        with open(kw["output_path"], "wb") as f:
+            f.write(b"\x02" * 16)
+
+    monkeypatch.setattr(masonry, "assemble_masonry_montage", _fake_masonry, raising=False)
+
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
+        probe_map={},
+        available_footage_s=20.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        montage_preset="masonry",
+    )
+
+    assert res["ok"] is True
+    assert res["montage_preset"] == "masonry"
+    assert res["montage_preset_rendered"] == "masonry"
+    assert len(masonry_calls) == 1
+    assert masonry_calls[0]["duration_s"] == 15.0
+
+
+def test_masonry_preset_applies_to_lyrics_variant(monkeypatch, tmp_path):
+    mix_calls: list = []
+    _patch_render_helpers(monkeypatch, mix_calls)
+
+    import app.pipeline.masonry_montage as masonry
+    import app.pipeline.music_recipe as mr
+    import app.pipeline.template_matcher as tm
+
+    monkeypatch.setattr(
+        mr,
+        "generate_music_recipe",
+        lambda td, **_kw: {
+            "slots": [{"position": 1, "target_duration_s": 2.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.5, 1.0],
+        },
+        raising=False,
+    )
+    monkeypatch.setattr(gb, "_inject_lyrics", lambda recipe, track, **_kw: recipe)
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(
+            steps=[
+                types.SimpleNamespace(
+                    clip_id="c1",
+                    slot={"position": 1, "target_duration_s": 2.0},
+                    moment={},
+                )
+            ]
+        ),
+        raising=False,
+    )
+    masonry_calls: list[dict] = []
+
+    def _fake_masonry(**kw):
+        masonry_calls.append(kw)
+        with open(kw["output_path"], "wb") as f:
+            f.write(b"\x02" * 16)
+
+    monkeypatch.setattr(masonry, "assemble_masonry_montage", _fake_masonry, raising=False)
+
+    vdir = tmp_path / "v1"
+    vdir.mkdir()
+    spec = {"variant_id": "song_lyrics", "rank": 1, "text_mode": "lyrics", "track": _track()}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
+        probe_map={},
+        available_footage_s=20.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        montage_preset="masonry",
+    )
+
+    assert res["ok"] is True
+    assert res["variant_id"] == "song_lyrics"
+    assert res["montage_preset_rendered"] == "masonry"
+    assert len(masonry_calls) == 1
+
+
+def test_masonry_preset_falls_back_to_classic_on_compositor_error(monkeypatch, tmp_path):
+    _patch_render_helpers(monkeypatch, [])
+
+    import app.pipeline.masonry_montage as masonry
+    import app.pipeline.template_matcher as tm
+
+    monkeypatch.setattr(
+        tm,
+        "match",
+        lambda recipe, metas, **kw: types.SimpleNamespace(
+            steps=[
+                types.SimpleNamespace(
+                    clip_id="c1",
+                    slot={"position": 1, "target_duration_s": 2.0},
+                    moment={},
+                )
+            ]
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        masonry,
+        "assemble_masonry_montage",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("boom")),
+        raising=False,
+    )
+
+    vdir = tmp_path / "v3"
+    vdir.mkdir()
+    spec = {"variant_id": "original_text", "rank": 3, "text_mode": "none", "track": None}
+    res = gb._render_generative_variant(
+        job_id="j",
+        rank=3,
+        spec=spec,
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "users/u/plan/i/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        montage_preset="masonry",
+    )
+
+    assert res["ok"] is True
+    assert res["montage_preset"] == "masonry"
+    assert res["montage_preset_rendered"] is None
+    assert res["montage_preset_fallback"] == "classic_render_failed"
+
+
 def test_song_variant_calls_mix(monkeypatch, tmp_path):
     mix_calls: list = []
     _patch_render_helpers(monkeypatch, mix_calls)
@@ -952,6 +1123,78 @@ def test_mid_render_status_still_reruns(monkeypatch):
         pass
 
     assert entered["ingest"], "rendering (non-terminal) job must re-enter the pipeline"
+
+
+def test_run_generative_job_forwards_masonry_preset_to_montage_renderer(monkeypatch):
+    """Regression guard for the full job path: all_candidates.montage_preset must
+    reach the montage renderer, not only direct _render_generative_variant callers."""
+
+    monkeypatch.setattr(gb.settings, "text_renderer_skia_enabled", True, raising=False)
+
+    job = _FakeJob(assembly_plan={})
+    job.status = "queued"
+    job.mode = "generative"
+    job.all_candidates = {
+        "clip_paths": ["users/u/plan/i/clip.mp4"],
+        "edit_format": "montage",
+        "montage_preset": "masonry",
+    }
+    _patch_job_session(monkeypatch, job)
+
+    import app.services.pipeline_trace as pt
+
+    monkeypatch.setattr(gb, "record_phase", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(pt, "record_pipeline_event", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(gb, "_persist_durable_sources", lambda _job_id, paths: paths)
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: {
+            "clip_metas": [_Meta("c1", 5.0)],
+            "clip_id_to_gcs": {"c1": "users/u/plan/i/clip.mp4"},
+            "clip_id_to_local": {"c1": "/tmp/clip.mp4"},
+            "probe_map": {"/tmp/clip.mp4": _Probe(12.0)},
+            "hero": _Meta("c1", 5.0),
+        },
+    )
+    monkeypatch.setattr(gb, "_pretonemap_hdr_clips", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        gb,
+        "_run_text_agents",
+        lambda *a, **k: (
+            "Text",
+            {},
+        ),
+    )
+    monkeypatch.setattr(gb, "_select_generative_style_set", lambda *a, **k: "default")
+    monkeypatch.setattr(gb, "_match_best_track", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_resolve_archetype", lambda *a, **k: ("montage", None, None))
+    monkeypatch.setattr(gb, "_set_status", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_persist_archetype_fallback", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_existing_variants", lambda *a, **k: [])
+    monkeypatch.setattr(gb, "_update_variant_entry", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_upsert_variant_entry", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_maybe_add_text_elements_snapshot", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_finalize_job", lambda *a, **k: None)
+    monkeypatch.setattr(gb, "_maybe_autoplace_after_finalize", lambda *a, **k: None)
+
+    seen: dict[str, str] = {}
+
+    def _fake_render(**kw):
+        seen["montage_preset"] = kw["montage_preset"]
+        return {
+            "ok": True,
+            "variant_id": kw["spec"]["variant_id"],
+            "rank": kw["rank"],
+            "render_status": "ready",
+            "output_url": "https://signed/out.mp4",
+        }
+
+    monkeypatch.setattr(gb, "_render_generative_variant", _fake_render)
+
+    gb._run_generative_job("44444444-4444-4444-4444-444444444444")
+
+    assert seen["montage_preset"] == "masonry"
 
 
 # ── Resumable variants (survive deploy/OOM kills) ──────────────────────────────

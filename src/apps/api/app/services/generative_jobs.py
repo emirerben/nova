@@ -15,6 +15,11 @@ import uuid
 from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, coerce_edit_format
 from app.models import Job
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.schemas.montage_preset import (
+    DEFAULT_MONTAGE_PRESET,
+    MASONRY_MONTAGE_PRESET,
+    coerce_montage_preset,
+)
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 
@@ -167,6 +172,7 @@ def build_generative_job(
     narrative_shot_count: int = 0,
     clip_notes: dict[str, str] | None = None,
     landscape_fit: str = "fill",
+    montage_preset: str = DEFAULT_MONTAGE_PRESET,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -258,6 +264,10 @@ def build_generative_job(
     # when-default discipline used for persona / user_style / filming_guide above.
     if landscape_fit == "fit":
         all_candidates["landscape_fit"] = "fit"
+    # Montage visual preset. Omit the default so public/legacy jobs keep their
+    # exact all_candidates shape; absent reads as classic at render time.
+    if coerce_montage_preset(montage_preset) == MASONRY_MONTAGE_PRESET:
+        all_candidates["montage_preset"] = MASONRY_MONTAGE_PRESET
     return Job(
         user_id=user_id,
         job_type="generative",
