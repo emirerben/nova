@@ -412,10 +412,17 @@ def test_scene_shape_and_role_placeholder():
     scenes = split_phrases(_run("a b c d"), video_duration_s=2.0)
     for scene in scenes:
         assert set(scene) == _SCENE_KEYS
-        assert scene["word_roles"] is None
+        assert len(scene["word_roles"]) == len(scene["words"])
+        assert scene["word_roles"].count("hero") == 1
         assert scene["speech_start_s"] <= scene["speech_end_s"]
         assert scene["start_s"] < scene["end_s"]
         assert isinstance(scene["fade_out"], bool)
+
+
+def test_scene_roles_mark_one_deterministic_keyword():
+    scenes = split_phrases(_run("we found the quiet library."), video_duration_s=2.0)
+    assert scenes[0]["words"] == ["we", "found", "the", "quiet", "library."]
+    assert scenes[0]["word_roles"] == ["connector", "connector", "connector", "connector", "hero"]
 
 
 def test_times_are_rounded_to_3_decimals():
@@ -588,7 +595,8 @@ def test_synthesized_timings_shape_feeds_split_phrases():
     assert scenes == rhythm_scenes(_GOLDEN_QUOTE, video_duration_s=_GOLDEN_DURATION_S)
     for scene in scenes:
         assert set(scene) == _SCENE_KEYS
-        assert scene["word_roles"] is None
+        assert len(scene["word_roles"]) == len(scene["words"])
+        assert scene["word_roles"].count("hero") == 1
 
 
 def test_rhythm_scene_windows_never_overlap():
