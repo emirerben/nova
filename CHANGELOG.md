@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.12.0] — 2026-07-11
+
+### Added
+- **Media overlays are now editable by touch.** Tapping an overlay card opens its editor (previously dead on phones — touch taps were misread as drags), moving and trimming overlays works with your finger, and very small cards degrade gracefully on touch screens: edge handles hide and a tap opens the editor where timing can be typed precisely. Vertical swipes over the timeline still scroll the page.
+- **Overlay editor works at phone sizes:** number fields are 44px tall with 16px text on small screens (no more iOS zoom-jump when tapping a field) and the focused field scrolls into view above the keyboard on touch devices.
+- **Upload feedback:** while an overlay clip uploads, a pulsing dot and status line replace the previous bare text.
+
+### Fixed
+- On desktop, small overlay cards keep their slim trim handles — clicking a short overlay opens/moves it as before (touch-sized handles apply only to touch screens).
+- Scrolling the page with a finger over an overlay card no longer opens its editor as a side effect.
+
 ## [0.7.11.0] — 2026-07-11
 
 ### Added

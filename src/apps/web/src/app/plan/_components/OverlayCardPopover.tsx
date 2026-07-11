@@ -182,6 +182,22 @@ function NumField({
   max: number;
   onCommit: (v: number) => void;
 }) {
+  function isCoarsePointer() {
+    return (
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(pointer: coarse)").matches
+    );
+  }
+
+  function scrollIntoView(target: HTMLInputElement) {
+    if (!isCoarsePointer()) return;
+    if (typeof target.scrollIntoView !== "function") return;
+    window.requestAnimationFrame(() => {
+      target.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+    });
+  }
+
   return (
     <input
       type="number"
@@ -195,7 +211,8 @@ function NumField({
         if (!Number.isFinite(v)) return;
         onCommit(Math.min(max, Math.max(min, Math.round(v * 10) / 10)));
       }}
-      className="w-16 rounded border border-zinc-600 bg-zinc-900 px-1.5 py-1 text-xs text-white tabular-nums focus:border-zinc-400 focus:outline-none"
+      onFocus={(e) => scrollIntoView(e.currentTarget)}
+      className="h-11 w-20 rounded border border-zinc-600 bg-zinc-900 px-2 py-2 text-base text-white tabular-nums focus:border-zinc-400 focus:outline-none sm:h-auto sm:w-16 sm:px-1.5 sm:py-1 sm:text-xs"
     />
   );
 }
@@ -305,7 +322,7 @@ export default function OverlayCardPopover({
   // Segmented pill — PlanVariantEditor's radiogroup pattern (disabled when
   // selected), restyled for the dark lane surface, ≥44px touch height.
   const pill = (selected: boolean) =>
-    `flex-1 min-h-[44px] rounded-full border px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed ${
+    `flex-1 min-h-[44px] rounded-full border px-4 py-2 text-sm transition-colors disabled:cursor-not-allowed sm:min-h-0 sm:px-3 sm:py-1 sm:text-xs ${
       selected
         ? "border-white bg-white font-semibold text-[#0c0c0e]"
         : "border-zinc-600 text-zinc-300 hover:border-zinc-400"
@@ -331,7 +348,7 @@ export default function OverlayCardPopover({
             <button
               type="button"
               onClick={onRemove}
-              className="ml-2 text-white/30 hover:text-red-400 text-xs px-1"
+              className="ml-2 flex h-11 w-11 items-center justify-center text-xs text-white/30 hover:text-red-400 sm:h-auto sm:w-auto"
               aria-label="Remove card"
             >
               ✕
@@ -390,7 +407,7 @@ export default function OverlayCardPopover({
           <button
             type="button"
             onClick={() => onPatch(demotePatch(card))}
-            className="text-xs text-zinc-400 underline underline-offset-2 hover:text-white transition-colors"
+            className="flex min-h-11 items-center text-xs text-zinc-400 underline underline-offset-2 transition-colors hover:text-white sm:min-h-0"
           >
             Show as small card instead
           </button>
@@ -422,7 +439,7 @@ export default function OverlayCardPopover({
                 key={p.value}
                 type="button"
                 onClick={() => onPatch({ position: p.value })}
-                className={`flex-1 text-xs rounded py-1 transition-colors ${
+                className={`min-h-11 flex-1 rounded px-2 py-2 text-xs transition-colors sm:min-h-0 sm:py-1 ${
                   card.position === p.value
                     ? "bg-lime-400 text-black font-semibold"
                     : "bg-white/10 text-white/60 hover:bg-white/20"
@@ -440,7 +457,7 @@ export default function OverlayCardPopover({
               max={Math.round(MAX_SCALE * 100)}
               value={scalePct}
               onChange={(e) => onPatch({ scale: Number(e.target.value) / 100 })}
-              className="flex-1 accent-lime-400"
+              className="h-11 flex-1 accent-lime-400 sm:h-auto"
             />
             <span className="text-xs text-white/60 w-14 text-right">
               {atMaxScale ? "Full width" : `${scalePct}%`}
@@ -451,7 +468,7 @@ export default function OverlayCardPopover({
             <button
               type="button"
               onClick={() => onPatch({ display_mode: "fullscreen" })}
-              className="text-xs text-zinc-300 underline underline-offset-2 hover:text-white transition-colors"
+              className="flex min-h-11 items-center text-xs text-zinc-300 underline underline-offset-2 transition-colors hover:text-white sm:min-h-0"
             >
               Make full screen →
             </button>
