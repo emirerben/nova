@@ -1,8 +1,9 @@
 /**
  * Editor working-state converters: API variant data ↔ TextElementBar[].
  *
- * Same seeding precedence as the item page for untouched variants, but
- * user-edited text_elements are authoritative over caption/scene projections.
+ * Same seeding precedence as the item page for untouched variants. Caption
+ * cues keep their special save path, then API text_elements win because they
+ * carry the renderer-projected words and geometry for generated text.
  * This keeps reload from resurrecting sequence-projected bars after Save.
  *
  * The API text-element path maps WITHOUT dropping position / x_frac / y_frac /
@@ -143,8 +144,10 @@ export function convertSceneTimings(
 /** Seed the editor's working bars from a variant.
  *
  * Once the user has committed text_elements, that persisted list owns reload
- * state.  Projection sources (caption_cues / scene_timings) are only seeds for
- * variants that have never been user-edited.
+ * state. Caption cues are still seeded first so narrated caption saves continue
+ * through the caption endpoint. For generated sequence/intro text, prefer the
+ * API's projected text_elements over scene_timings because scene_timings is a
+ * timing-only compatibility shim and may not carry text placement/style.
  */
 export function seedBarsFromVariant(
   variant: PlanItemVariant,
@@ -154,6 +157,8 @@ export function seedBarsFromVariant(
   }
   if (variant.caption_cues?.length)
     return convertCaptionCues(variant.caption_cues);
+  if (variant.text_elements?.length)
+    return convertApiTextElements(variant.text_elements);
   if (variant.scene_timings?.length)
     return convertSceneTimings(variant.scene_timings);
   return convertApiTextElements(variant.text_elements);

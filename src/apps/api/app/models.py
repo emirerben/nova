@@ -691,6 +691,10 @@ class PlanItem(Base):
     # the schema layer (app.agents._schemas.edit_format), not a DB CHECK, so the
     # vocabulary can grow without a migration. Legacy rows read 'montage'.
     edit_format: Mapped[str] = mapped_column(Text, nullable=False, server_default="montage")
+    # Per-item montage visual preset. "classic" = current sequential montage;
+    # "masonry" = collage-wall visual assembly. Render path validates/coerces
+    # defensively; no DB CHECK so the preset vocabulary can grow without a migration.
+    montage_preset: Mapped[str] = mapped_column(Text, nullable=False, server_default="classic")
     # Per-item preference for landscape source clips: "fit" (letterbox — full-width,
     # black bars top & bottom, never enlarged — the default) | "fill" (center-crop to
     # fill the 9:16 frame). Portrait and square clips are always cropped regardless.
