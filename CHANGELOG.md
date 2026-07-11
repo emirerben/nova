@@ -7,6 +7,12 @@ All notable changes to this project will be documented in this file.
 ### Changed
 - **The product is now branded Kria on the shipped website, API, emails, prompts, and admin extension.** The web app uses `https://usekria.com` as its canonical origin, keeps the old Vercel URL as a temporary accepted legacy origin, and ships a rebuilt `kria-extension.zip` package whose manifest allows the new domain.
 
+## [0.7.17.2] — 2026-07-11
+
+### Fixed
+- **Masonry collage now renders HEIC/HEIF photo tiles instead of falling back to classic.** The compositor normalizes still images into temp PNGs before FFmpeg input construction, so iPhone photos never hit FFmpeg's unsupported HEIC `-loop` path.
+- **Queued plan-item renders no longer show a false "didn't register" error after 45 seconds.** The item page now waits through the plan-render queue window before surfacing a registration failure.
+
 ## [0.7.17.1] — 2026-07-11
 
 ### Fixed

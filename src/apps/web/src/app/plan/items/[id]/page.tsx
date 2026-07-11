@@ -117,9 +117,10 @@ import {
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 
 // How long a dispatched render may take to register its Job before we admit
-// failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
-// queue waits can too. Keep this comfortably above both.
-const RENDER_REGISTER_TIMEOUT_MS = 45_000;
+// failure. Plan-item renders are queued behind a single worker, and the Job row
+// is minted when that worker picks the task up; a real render can sit queued for
+// several minutes before current_job_id appears.
+const RENDER_REGISTER_TIMEOUT_MS = 15 * 60_000;
 
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
 // Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
