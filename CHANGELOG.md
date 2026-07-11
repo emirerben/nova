@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.15.0] — 2026-07-11
+
+### Added
+- **Mobile regression net in CI.** Every web pull request now runs a Playwright suite on three phone viewports (375/390/430, touch enabled) covering the things unit tests can't see: no horizontal overflow, 44px touch targets, trim-drag/undo round-trips, tap-vs-drag slop, cancelled-tap safety, and page scroll surviving gestures on the editing rails. Backed by env-gated fixture pages that 404 in production.
+
 ## [0.7.13.0] — 2026-07-11
 
 ### Added
