@@ -371,7 +371,7 @@ class IntroTextWriterAgent(Agent[IntroWriterInput, IntroWriterOutput]):
         #              pillars + plan item theme/idea) for persona-coherent hooks.
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_instruction block (en|tr).
-        prompt_version="2026-06-18",
+        prompt_version="2026-07-11",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
