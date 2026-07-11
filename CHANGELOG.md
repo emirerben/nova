@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.16.0] — 2026-07-11
+
+### Changed
+- **Weekly market-research refresh (2026-07-11).** Content-idea bank gains the credibility-inversion qualifier hook and the ask-audience-for-help format; success factors codify comment-led distribution from genuine help requests; overlay examples gain the vulnerable-ask hook voice. The standout implied-question entry's performance signal refreshed (same post, now indexing ~320x its account median). Coupled prompt versions bumped across persona, plan, intro-writer, and overlay-format-matcher agents.
+
 ## [0.7.15.3] — 2026-07-11
 
 ### Fixed
