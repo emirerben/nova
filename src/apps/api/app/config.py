@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # are wired and verified end-to-end; the frontend picker card gates on this too.
     subtitled_archetype_enabled: bool = False
 
+    # Kill switch for authored TextElements on subtitled variants. When False,
+    # subtitled remains captions-only and the text-element routes/capabilities
+    # reject it. When True, user-authored text is burned onto the caption-free
+    # base before captions, so captions stay topmost.
+    subtitled_text_lane_enabled: bool = False
+
     # Subtitled caption correction: after whisper, an LLM fixes each cue's spelling /
     # grammar / case-endings (whisper mishears Turkish morphology) while preserving cue
     # timing. Best-effort — a failure leaves cues untouched. Kill switch: set False to

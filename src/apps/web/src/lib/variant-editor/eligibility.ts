@@ -39,3 +39,14 @@ export function isInstantEditEligible(variant: EditableVariant): boolean {
     !CAPTION_ARCHETYPES.has(variant.resolved_archetype ?? "")
   );
 }
+
+export function isTextLaneEligible(variant: EditableVariant): boolean {
+  if (variant.text_mode === "lyrics") return false;
+  if (variant.resolved_archetype === "subtitled") {
+    return (
+      process.env.NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED === "true" &&
+      !!variant.base_video_url
+    );
+  }
+  return variant.text_mode === "agent_text" || variant.text_mode === "none";
+}

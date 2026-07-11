@@ -285,6 +285,53 @@ def test_flag_off_is_byte_identical_dispatch(monkeypatch, tmp_path):
     assert not [e for e in calls["events"] if e[0] == "silence_cut"]
 
 
+def test_subtitled_text_lane_uploads_base_even_without_cues(monkeypatch, tmp_path):
+    import app.storage as storage
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    _patch_pipeline(monkeypatch, words=[])
+    uploads: list[str] = []
+    monkeypatch.setattr(
+        storage,
+        "upload_public_read",
+        lambda _local, gcs: uploads.append(gcs) or f"https://signed/{gcs}",
+        raising=False,
+    )
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert res["caption_cues"] is None
+    assert res["base_video_path"] is not None
+    assert [path.rsplit("/", 1)[-1] for path in uploads] == [
+        "variant_1_subtitled.mp4",
+        "variant_1_subtitled_base.mp4",
+    ]
+
+
+def test_subtitled_text_lane_flag_off_keeps_no_cue_base_upload_unchanged(monkeypatch, tmp_path):
+    import app.storage as storage
+
+    monkeypatch.setattr(gb.settings, "silence_cut_enabled", False, raising=False)
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", False, raising=False)
+    _patch_pipeline(monkeypatch, words=[])
+    uploads: list[str] = []
+    monkeypatch.setattr(
+        storage,
+        "upload_public_read",
+        lambda _local, gcs: uploads.append(gcs) or f"https://signed/{gcs}",
+        raising=False,
+    )
+
+    res = _render(monkeypatch, tmp_path)
+
+    assert res["ok"] is True
+    assert res["caption_cues"] is None
+    assert res["base_video_path"] is None
+    assert [path.rsplit("/", 1)[-1] for path in uploads] == ["variant_1_subtitled.mp4"]
+
+
 # ── Gates (all fail-open to today's flow) ────────────────────────────────────────
 
 

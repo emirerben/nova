@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.24.0] — 2026-07-11
+
+### Added
+- **Text on talk-to-camera edits.** Subtitled edits can now carry styled titles, keywords, and numbers — added in the editor and burned under the captions (captions always stay on top). Behind `SUBTITLED_TEXT_LANE_ENABLED` + `NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED`.
+
+### Fixed
+- Text edits on subtitled variants publish to a fresh video URL so CDNs can never serve the stale pre-edit render.
+
 ## [0.7.23.0] — 2026-07-11
 
 ### Added

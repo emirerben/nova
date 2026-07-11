@@ -176,6 +176,47 @@ def test_retranscribe_word_style_routes_to_word_pop(monkeypatch):
     assert seen["pop_kwargs"]["margin_v"] == SUBTITLED_CAPTION_MARGIN_V
 
 
+def test_retranscribe_flag_on_routes_through_subtitled_compose(monkeypatch):
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    job = _FakeJob(
+        assembly_plan={
+            "variants": [
+                _subtitled_variant(
+                    text_elements=[
+                        {
+                            "id": "title",
+                            "text": "TITLE",
+                            "start_s": 0.0,
+                            "end_s": 2.0,
+                            "role": "generative_intro",
+                            "position": "middle",
+                        }
+                    ],
+                    text_elements_user_edited=True,
+                )
+            ]
+        }
+    )
+    _patch_job_session(monkeypatch, job)
+    seen: dict = {}
+    _patch_retx_io(monkeypatch, seen)
+
+    def _compose(base_local, variant, tmpdir):
+        seen["compose_variant"] = dict(variant)
+        out = f"{tmpdir}/composed.mp4"
+        with open(out, "wb") as f:
+            f.write(b"composed")
+        return out
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
+
+    gb._run_retranscribe_subtitled(str(job.id), "subtitled", "tr")
+
+    assert seen["compose_variant"]["caption_language"] == "tr"
+    assert seen["compose_variant"]["caption_cues"][0]["text"].startswith("merhaba")
+    assert "gen_kwargs" not in seen and "pop_kwargs" not in seen
+
+
 def test_retranscribe_empty_transcript_keeps_existing_captions(monkeypatch):
     """A wrong-language pass that hears nothing must NOT destroy the user's cues or
     swap the video — it keeps everything and just clears the rendering state."""

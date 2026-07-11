@@ -1,4 +1,4 @@
-import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
+import { isInstantEditEligible, isTextLaneEligible } from "@/lib/variant-editor/eligibility";
 import type { EditableVariant } from "@/lib/variant-editor/types";
 
 function variant(overrides: Partial<EditableVariant> = {}): EditableVariant {
@@ -63,5 +63,30 @@ describe("isInstantEditEligible", () => {
         variant({ text_mode: "agent_text", resolved_archetype: "original_text" }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("isTextLaneEligible", () => {
+  const oldFlag = process.env.NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED;
+
+  afterEach(() => {
+    process.env.NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED = oldFlag;
+  });
+
+  it("keeps montage text variants eligible", () => {
+    expect(isTextLaneEligible(variant({ text_mode: "agent_text" }))).toBe(true);
+    expect(isTextLaneEligible(variant({ text_mode: "none" }))).toBe(true);
+    expect(isTextLaneEligible(variant({ text_mode: "lyrics" }))).toBe(false);
+  });
+
+  it("gates subtitled text lane on the frontend flag and base video", () => {
+    const subtitled = variant({ text_mode: "none", resolved_archetype: "subtitled" });
+
+    process.env.NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED = "false";
+    expect(isTextLaneEligible(subtitled)).toBe(false);
+
+    process.env.NEXT_PUBLIC_SUBTITLED_TEXT_LANE_ENABLED = "true";
+    expect(isTextLaneEligible(subtitled)).toBe(true);
+    expect(isTextLaneEligible({ ...subtitled, base_video_url: null })).toBe(false);
   });
 });

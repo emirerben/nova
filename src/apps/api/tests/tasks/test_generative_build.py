@@ -3463,6 +3463,76 @@ def _patch_reburn_io(monkeypatch, burned: dict):
     monkeypatch.setattr("app.pipeline.narrated_assembler.burn_captions_on_video", _burn)
 
 
+def test_compose_subtitled_burns_text_before_captions(monkeypatch, tmp_path):
+    order: list[tuple] = []
+    base = tmp_path / "base.mp4"
+    base.write_bytes(b"base")
+
+    monkeypatch.setattr(
+        "app.pipeline.generative_overlays.build_overlays_from_text_elements",
+        lambda elements, **kw: [{"text": elements[0].text}],
+    )
+
+    def _burn_text(input_path, overlays, output_path, tmpdir):
+        order.append(("text", input_path, output_path, overlays))
+        with open(output_path, "wb") as f:
+            f.write(b"text")
+
+    def _burn_captions(input_path, output_path, variant, tmpdir):
+        order.append(("captions", input_path, output_path, variant["caption_cues"]))
+        with open(output_path, "wb") as f:
+            f.write(b"captions")
+
+    monkeypatch.setattr("app.pipeline.text_overlay_skia.burn_text_overlays_skia", _burn_text)
+    monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _burn_captions)
+
+    out = gb._compose_subtitled_final(
+        str(base),
+        {
+            "duration_s": 3.0,
+            "text_elements": [
+                {
+                    "id": "title",
+                    "text": "TITLE",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "role": "generative_intro",
+                    "position": "middle",
+                }
+            ],
+            "caption_cues": [{"text": "caption", "start_s": 0.0, "end_s": 1.0}],
+        },
+        str(tmp_path),
+    )
+
+    assert out.endswith("subtitled_final.mp4")
+    assert [entry[0] for entry in order] == ["text", "captions"]
+    assert order[0][1] == str(base)
+    assert order[1][1] == order[0][2]
+
+
+def test_compose_subtitled_without_text_passes_base_to_captions(monkeypatch, tmp_path):
+    base = tmp_path / "base.mp4"
+    base.write_bytes(b"base")
+    seen = {}
+
+    monkeypatch.setattr(
+        "app.pipeline.text_overlay_skia.burn_text_overlays_skia",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("no text burn expected")),
+    )
+
+    def _burn_captions(input_path, output_path, variant, tmpdir):
+        seen["input"] = input_path
+        with open(output_path, "wb") as f:
+            f.write(b"captions")
+
+    monkeypatch.setattr(gb, "_burn_persisted_captions_onto_base", _burn_captions)
+
+    gb._compose_subtitled_final(str(base), {"text_elements": [], "caption_cues": []}, str(tmp_path))
+
+    assert seen["input"] == str(base)
+
+
 def test_reburn_captions_happy_swaps_video_and_marks_ready(monkeypatch):
     import uuid
 
@@ -3555,6 +3625,31 @@ def test_reburn_subtitled_word_style_routes_to_word_pop(monkeypatch):
     gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
 
     assert seen["pop"] is True and burned["called"] is True
+
+
+def test_reburn_subtitled_flag_on_routes_caption_apply_through_compose(monkeypatch):
+    import uuid
+
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    variant = _narrated_caption_variant(resolved_archetype="subtitled", variant_id="subtitled")
+    job = _FakeJob(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    _patch_reburn_io(monkeypatch, {"called": False})
+    seen = {}
+
+    def _compose(base_local, fresh_variant, tmpdir):
+        seen["variant"] = dict(fresh_variant)
+        out = f"{tmpdir}/composed.mp4"
+        with open(out, "wb") as f:
+            f.write(b"composed")
+        return out
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _compose)
+
+    gb._run_reburn_narrated_captions(str(uuid.uuid4()), "subtitled")
+
+    assert seen["variant"]["variant_id"] == "subtitled"
+    assert job.assembly_plan["variants"][0]["video_path"].find("_cap_") != -1
 
 
 # ── Background-sound (bed-level) reburn — new post-gen editor control ─────────
