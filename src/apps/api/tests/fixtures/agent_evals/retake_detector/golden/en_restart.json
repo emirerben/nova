@@ -1,0 +1,45 @@
+{
+  "agent": "nova.audio.retake_detector",
+  "prompt_version": "1",
+  "input": {
+    "words": [
+      {"i": 0, "text": "So", "start_s": 0.0, "end_s": 0.22},
+      {"i": 1, "text": "today", "start_s": 0.24, "end_s": 0.52},
+      {"i": 2, "text": "we're", "start_s": 0.54, "end_s": 0.8},
+      {"i": 3, "text": "wait,", "start_s": 1.1, "end_s": 1.38},
+      {"i": 4, "text": "let", "start_s": 1.4, "end_s": 1.55},
+      {"i": 5, "text": "me", "start_s": 1.56, "end_s": 1.68},
+      {"i": 6, "text": "start", "start_s": 1.7, "end_s": 1.98},
+      {"i": 7, "text": "over.", "start_s": 2.0, "end_s": 2.3},
+      {"i": 8, "text": "So", "start_s": 2.9, "end_s": 3.1},
+      {"i": 9, "text": "today", "start_s": 3.12, "end_s": 3.4},
+      {"i": 10, "text": "we're", "start_s": 3.42, "end_s": 3.66},
+      {"i": 11, "text": "looking", "start_s": 3.68, "end_s": 3.98},
+      {"i": 12, "text": "at", "start_s": 4.0, "end_s": 4.1},
+      {"i": 13, "text": "the", "start_s": 4.12, "end_s": 4.22},
+      {"i": 14, "text": "new", "start_s": 4.24, "end_s": 4.44},
+      {"i": 15, "text": "studio", "start_s": 4.46, "end_s": 4.82},
+      {"i": 16, "text": "setup", "start_s": 4.84, "end_s": 5.2},
+      {"i": 17, "text": "and", "start_s": 5.4, "end_s": 5.52},
+      {"i": 18, "text": "why", "start_s": 5.54, "end_s": 5.74},
+      {"i": 19, "text": "I", "start_s": 5.76, "end_s": 5.84},
+      {"i": 20, "text": "changed", "start_s": 5.86, "end_s": 6.18},
+      {"i": 21, "text": "everything.", "start_s": 6.2, "end_s": 6.8}
+    ],
+    "language": "en"
+  },
+  "raw_text": "{\"retakes\": [{\"start_word\": 0, \"end_word\": 7, \"reason\": \"False start 'So today we're' abandoned with the explicit restart marker 'wait, let me start over'; the same opening is re-delivered from word 8.\"}]}",
+  "output": {
+    "retakes": [
+      {
+        "start_word": 0,
+        "end_word": 7,
+        "reason": "False start 'So today we're' abandoned with the explicit restart marker 'wait, let me start over'; the same opening is re-delivered from word 8."
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "case": "EN restart from the plan's canonical example. The abandoned opening plus the marker phrase (words 0-7) is flagged; the kept re-delivery starts at word 8 and runs to the end, so end_word=7 stays strictly before the final index 21."
+  }
+}

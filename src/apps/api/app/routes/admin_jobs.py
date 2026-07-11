@@ -207,6 +207,11 @@ class CancelJobResponse(BaseModel):
     revoke_dispatched: bool
 
 
+class SilenceCutDisableResponse(BaseModel):
+    job_id: str
+    silence_cut_disabled: bool
+
+
 class QueueInfoPayload(BaseModel):
     name: str
     depth: int
@@ -746,3 +751,46 @@ async def cancel_job(
         task_id=task_id,
         revoke_dispatched=revoke_dispatched,
     )
+
+
+# ── silence-cut disable endpoint ─────────────────────────────────────────────
+
+
+@router.post("/{job_id}/silence-cut-disable", response_model=SilenceCutDisableResponse)
+async def disable_silence_cut(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    _: None = Depends(_require_admin),
+) -> SilenceCutDisableResponse:
+    """Set the per-item silence-cut opt-out on one job (plans/010 10A).
+
+    Merges ``{"silence_cut_disabled": true}`` into ``Job.assembly_plan``. The
+    orchestrator reads the flag when it picks up the job, and skips the whole
+    silence/filler/retake cut stage.
+
+    Support-remedy contract: after setting the flag, only a FULL re-render
+    (an ``orchestrate_generative_job`` re-dispatch) picks it up — fast-reburn
+    and other partial re-render paths do NOT re-read the flag. Idempotent:
+    re-posting on an already-disabled job is a no-op that returns the same
+    payload.
+    """
+    try:
+        job_uuid = uuid.UUID(job_id)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid job_id: {exc}",
+        ) from exc
+
+    job_res = await db.execute(select(Job).where(Job.id == job_uuid).with_for_update())
+    job = job_res.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+    # Reassign (not mutate) so SQLAlchemy's change tracking sees the new JSONB
+    # value; guards legacy rows where assembly_plan is still NULL.
+    job.assembly_plan = {**(job.assembly_plan or {}), "silence_cut_disabled": True}
+    await db.commit()
+
+    log.info("admin_silence_cut_disabled", job_id=job_id)
+    return SilenceCutDisableResponse(job_id=job_id, silence_cut_disabled=True)

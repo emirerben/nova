@@ -16,6 +16,7 @@ _EXPECTED = {
     "nova.audio.song_classifier",
     "nova.audio.song_sections",
     "nova.audio.music_matcher",
+    "nova.audio.retake_detector",
     "nova.audio.lyric_style_selector",
     "nova.compose.overlay_format_matcher",
     "nova.compose.intro_writer",
