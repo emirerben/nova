@@ -2397,19 +2397,34 @@ def resolve_timeline_slots_for_edit(
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
                 # Reclamp on a sub-floor span ONLY when the user actually changed
                 # this slot (the worker legitimately emits sub-floor beat spans on
-                # untouched slots) — but reclamp on a footage-overflowing span
-                # REGARDLESS of window_changed. An upstream delete/edit shifts
-                # this slot's cumulative grid_offset on the non-uniform grid
-                # without the user ever touching THIS slot; deleting a clip must
-                # never fail the save (the worker itself never overflows footage —
-                # it trims to the real window — so the save-time reconstruction
-                # must match that behavior instead of rejecting it).
+                # untouched slots). Footage-overflow handling is three-way:
+                #  - UNTOUCHED slot whose recomputed span differs from its stored
+                #    one: an upstream delete/edit shifted this slot's cumulative
+                #    grid_offset on the non-uniform grid — reclamp to fit, because
+                #    deleting a clip must never fail the save (the worker never
+                #    overflows footage; it trims to the real window).
+                #  - UNTOUCHED slot whose recomputed span EQUALS its stored one:
+                #    a legacy timeline whose saved window already exceeded the
+                #    probed source. The worker clamps these at render; an
+                #    unrelated save must round-trip them unchanged, not 422.
+                #  - USER-CHANGED slot that overflows: fall through to the final
+                #    bounds check, which rejects with TIMELINE_OUT_OF_BOUNDS
+                #    (readable copy), not a TOO_SHORT reclamp failure.
                 overflows_footage = (
                     max_source_window_s is not None and duration_s > max_source_window_s + 1e-6
                 )
-                if (
-                    window_changed and duration_s < TIMELINE_MIN_SLOT_S - 1e-9
-                ) or overflows_footage:
+                # Compare against the SAVED baseline span (the edit payload may
+                # post beats without duration_s); tolerance matches the worker's
+                # 0.05s beat-span drift allowance in _window_changed's rationale.
+                _base_span = (baseline_by_id.get(e.slot_id) or {}).get("duration_s")
+                legacy_unshifted = (
+                    not window_changed
+                    and _base_span is not None
+                    and abs(duration_s - float(_base_span)) <= 5e-2
+                )
+                if (window_changed and duration_s < TIMELINE_MIN_SLOT_S - 1e-9) or (
+                    overflows_footage and not window_changed and not legacy_unshifted
+                ):
                     duration_beats = _smallest_beat_count_clearing_floor(
                         grid_offset,
                         max_source_window_s=max_source_window_s,
