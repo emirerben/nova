@@ -582,6 +582,92 @@ async def test_edit_out_of_bounds(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_edit_unchanged_legacy_out_of_bounds_slot_round_trips(monkeypatch):
+    # Prod regression: older saved user_timelines can contain a slot whose source
+    # window already exceeds the probed source duration. The render worker clamps
+    # those unchanged windows, so a later text/overlay save must not be blocked.
+    beat_grid = [0.0, 0.4, 0.811, 1.3]
+    user_slots = _ai_slots("generative-jobs/legacy/sources/", src_dur=3.875)
+    user_slots[0].update(
+        {
+            "slot_id": "legacy-oob",
+            "in_s": 3.875,
+            "duration_s": 0.811,
+            "duration_beats": 2,
+        }
+    )
+    job = _timeline_job(beat_grid=beat_grid, user_slots=user_slots, src_dur=3.875)
+    variant = job.assembly_plan["variants"][0]
+    variant["music_track_id"] = "track-1"
+
+    seq, _, delays = _arm(monkeypatch)
+    await gj.dispatch_edit_timeline(
+        job,
+        "song_text",
+        _req(
+            [
+                {
+                    "slot_id": "legacy-oob",
+                    "clip_index": 0,
+                    "in_s": 3.875,
+                    "duration_beats": 2,
+                },
+                {
+                    "slot_id": "s2",
+                    "clip_index": 1,
+                    "in_s": 1.0,
+                    "duration_beats": 1,
+                    "removed": True,
+                },
+            ]
+        ),
+        db=None,
+    )
+
+    assert seq == ["persist", "enqueue"]
+    assert delays[0][1]["timeline_override"][0]["slot_id"] == "legacy-oob"
+    assert delays[0][1]["timeline_override"][0]["duration_s"] == pytest.approx(0.811)
+
+
+@pytest.mark.asyncio
+async def test_edit_changed_legacy_out_of_bounds_slot_still_rejects(monkeypatch):
+    beat_grid = [0.0, 0.4, 0.811, 1.3]
+    user_slots = _ai_slots("generative-jobs/legacy/sources/", src_dur=3.875)
+    user_slots[0].update(
+        {
+            "slot_id": "legacy-oob",
+            "in_s": 3.875,
+            "duration_s": 0.811,
+            "duration_beats": 2,
+        }
+    )
+    job = _timeline_job(beat_grid=beat_grid, user_slots=user_slots, src_dur=3.875)
+    variant = job.assembly_plan["variants"][0]
+    variant["music_track_id"] = "track-1"
+
+    await _expect_422(
+        monkeypatch,
+        job,
+        [
+            {
+                "slot_id": "legacy-oob",
+                "clip_index": 0,
+                "in_s": 3.8,
+                "duration_beats": 2,
+            },
+            {
+                "slot_id": "s2",
+                "clip_index": 1,
+                "in_s": 1.0,
+                "duration_beats": 1,
+                "removed": True,
+            },
+        ],
+        "TIMELINE_OUT_OF_BOUNDS",
+    )
+
+
+@pytest.mark.asyncio
 async def test_edit_negative_in_s_out_of_bounds(monkeypatch):
     await _expect_422(
         monkeypatch,

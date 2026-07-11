@@ -2421,6 +2421,7 @@ def resolve_timeline_slots_for_edit(
         return round(max(0.5, round(float(duration_s) * 2) / 2), 3)
 
     for order, e in enumerate(slots):
+        window_changed = _window_changed(e)
         duration_s = e.duration_s
         duration_beats = e.duration_beats
         src_dur = src_dur_by_idx.get(e.clip_index)
@@ -2429,7 +2430,7 @@ def resolve_timeline_slots_for_edit(
             if (
                 beat_grid
                 and duration_beats is None
-                and not _window_changed(e)
+                and not window_changed
                 and e.duration_s is not None
                 and e.duration_s > 0
             ):
@@ -2443,7 +2444,7 @@ def resolve_timeline_slots_for_edit(
                 # duration is grid[offset+beats] - grid[offset]; the offset then
                 # advances, so the same beat count can yield different seconds at
                 # different positions (non-uniform grids).
-                if is_song_variant and _window_changed(e):
+                if is_song_variant and window_changed:
                     requested_end = grid_offset + duration_beats
                     if requested_end <= len(beat_grid) - 1:
                         requested_duration_s = beat_grid[requested_end] - beat_grid[grid_offset]
@@ -2460,19 +2461,34 @@ def resolve_timeline_slots_for_edit(
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
                 # Reclamp on a sub-floor span ONLY when the user actually changed
                 # this slot (the worker legitimately emits sub-floor beat spans on
-                # untouched slots) — but reclamp on a footage-overflowing span
-                # REGARDLESS of _window_changed. An upstream delete/edit shifts
-                # this slot's cumulative grid_offset on the non-uniform grid
-                # without the user ever touching THIS slot; deleting a clip must
-                # never fail the save (the worker itself never overflows footage —
-                # it trims to the real window — so the save-time reconstruction
-                # must match that behavior instead of rejecting it).
+                # untouched slots). Footage-overflow handling is three-way:
+                #  - UNTOUCHED slot whose recomputed span differs from its stored
+                #    one: an upstream delete/edit shifted this slot's cumulative
+                #    grid_offset on the non-uniform grid — reclamp to fit, because
+                #    deleting a clip must never fail the save (the worker never
+                #    overflows footage; it trims to the real window).
+                #  - UNTOUCHED slot whose recomputed span EQUALS its stored one:
+                #    a legacy timeline whose saved window already exceeded the
+                #    probed source. The worker clamps these at render; an
+                #    unrelated save must round-trip them unchanged, not 422.
+                #  - USER-CHANGED slot that overflows: fall through to the final
+                #    bounds check, which rejects with TIMELINE_OUT_OF_BOUNDS
+                #    (readable copy), not a TOO_SHORT reclamp failure.
                 overflows_footage = (
                     max_source_window_s is not None and duration_s > max_source_window_s + 1e-6
                 )
-                if (
-                    _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9
-                ) or overflows_footage:
+                # Compare against the SAVED baseline span (the edit payload may
+                # post beats without duration_s); tolerance matches the worker's
+                # 0.05s beat-span drift allowance in _window_changed's rationale.
+                _base_span = (baseline_by_id.get(e.slot_id) or {}).get("duration_s")
+                legacy_unshifted = (
+                    not window_changed
+                    and _base_span is not None
+                    and abs(duration_s - float(_base_span)) <= 5e-2
+                )
+                if (window_changed and duration_s < TIMELINE_MIN_SLOT_S - 1e-9) or (
+                    overflows_footage and not window_changed and not legacy_unshifted
+                ):
                     duration_beats = _smallest_beat_count_clearing_floor(
                         grid_offset,
                         max_source_window_s=max_source_window_s,
@@ -2510,7 +2526,7 @@ def resolve_timeline_slots_for_edit(
                 # round-trip can carry the AI's original non-stepped timings; keep
                 # unchanged slots byte-stable so Save does not dirty a baseline.
                 duration_s = (
-                    _snap_half_second(e.duration_s) if _window_changed(e) else float(e.duration_s)
+                    _snap_half_second(e.duration_s) if window_changed else float(e.duration_s)
                 )
                 duration_beats = None
             else:
@@ -2518,12 +2534,17 @@ def resolve_timeline_slots_for_edit(
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_INVALID_DURATION"
                 )
-            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9 and _window_changed(e):
+            if duration_s < TIMELINE_MIN_SLOT_S - 1e-9 and window_changed:
                 raise _timeline_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_TOO_SHORT")
             total += duration_s
             # Bounds against the probed source duration. New clips the AI never
             # probed have no known duration — skip; the worker's probe will clamp.
-            if e.in_s < 0 or (src_dur is not None and e.in_s + duration_s > src_dur + 1e-6):
+            # Older saved timelines can already exceed the source by a few frames;
+            # the worker clamps those unchanged windows, so only newly changed
+            # source windows should hard-fail here.
+            if e.in_s < 0 or (
+                window_changed and src_dur is not None and e.in_s + duration_s > src_dur + 1e-6
+            ):
                 raise _timeline_error(
                     status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_OUT_OF_BOUNDS"
                 )

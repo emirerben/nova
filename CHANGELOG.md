@@ -12,6 +12,11 @@ All notable changes to this project will be documented in this file.
 - **Narrated walkthrough is now labeled Voiceover in the edit-style UI.** Internal `narrated_*` values stay unchanged, but user-facing item-page copy now says Voiceover and clarifies the two sub-modes.
 - **Idea expansion understands context, video type, and footage mode.** `POST /plan-items/{id}/expand` accepts optional `creator_context`, keeps empty/no-body calls backward compatible, and the prompt now differentiates visual montage shots, narration-led voiceover beats, one-shot talking-to-camera plans, and existing-footage guidance.
 
+## [0.7.15.3] — 2026-07-11
+
+### Fixed
+- **Editor saves no longer fail with `TIMELINE_OUT_OF_BOUNDS` on legacy song-text timelines.** The API now lets unchanged saved clip windows round-trip when older renders already stored a source window past the probed clip end, while still rejecting newly edited out-of-bounds windows.
+
 ## [0.7.15.2] — 2026-07-11
 
 ### Fixed
