@@ -212,7 +212,7 @@ function NumField({
         onCommit(Math.min(max, Math.max(min, Math.round(v * 10) / 10)));
       }}
       onFocus={(e) => scrollIntoView(e.currentTarget)}
-      className="h-11 w-20 rounded border border-zinc-600 bg-zinc-900 px-2 py-2 text-base text-white tabular-nums focus:border-zinc-400 focus:outline-none sm:h-auto sm:w-16 sm:px-1.5 sm:py-1 sm:text-xs"
+      className="h-11 w-20 rounded border border-zinc-600 bg-zinc-900 px-2 py-2 text-base text-white tabular-nums focus:border-amber-400/60 focus:outline-none sm:h-auto sm:w-16 sm:px-1.5 sm:py-1 sm:text-xs"
     />
   );
 }

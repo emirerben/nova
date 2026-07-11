@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.13.0] — 2026-07-11
+
+### Added
+- **Explicit mobile viewport policy:** the app declares its viewport (device-width, cream theme color for browser chrome; the dark render-status flow keeps matching black chrome). Pinch-zoom is never disabled.
+- DESIGN.md now carries the canonical breakpoint tiers, the touch pressed-state rule, and the ≥44px/≥16px touch-input rules the mobile work shipped this week.
+
+### Changed
+- **Phone-friendly grids and controls across upload and editing flows:** onboarding clip grids and the visuals pool show 2 columns on phones (larger, legible thumbnails); dozens of small controls (remove ×, retry, caption toggle, text-lane tools, "Clear all overlays") now meet the 44px touch floor on phones while keeping their compact desktop look.
+- Number fields in the overlay editor show a proper amber focus ring.
+
+### Fixed
+- The visuals-pool remove button is now visible on phones (it was hover-revealed — invisible but still tappable on touch, deleting without warning).
+
 ## [0.7.12.0] — 2026-07-11
 
 ### Added
