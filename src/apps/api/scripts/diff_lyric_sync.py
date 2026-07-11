@@ -51,9 +51,11 @@ from pathlib import Path
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# .env loader — stdlib-only, forked from scripts/admin.py's parser. Unlike the
-# admin.py copy (and its other script-local siblings), this one strips
-# dotenv-style inline comments — see the incident note in main().
+# .env loader — stdlib-only twin of scripts/admin.py::load_env; keep the two
+# parsers' semantics identical (dotenv-style inline comments: a quoted value
+# ends at the first close quote followed by end-of-line/whitespace/"#", an
+# unquoted value is cut at a whitespace-preceded "#"). See the incident note
+# in main().
 # ---------------------------------------------------------------------------
 
 
@@ -73,23 +75,24 @@ def _load_env_file_into_environ() -> None:
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        k, _, raw_v = line.partition("=")
+        k, _, v = line.partition("=")
         k = k.strip()
-        v = raw_v.strip()
-        if v[:1] in ('"', "'"):
-            # Quoted value: content runs to the matching close quote; anything
-            # after it (e.g. an inline comment) is dropped. An unclosed quote
-            # keeps the value verbatim.
-            end = v.find(v[0], 1)
-            if end != -1:
-                v = v[1:end]
+        v = v.strip()
+        quote = v[:1]
+        end = v.find(quote, 1) if quote in {'"', "'"} else -1
+        if end != -1 and (end == len(v) - 1 or v[end + 1].isspace() or v[end + 1] == "#"):
+            # Quoted value: ends at the first close quote that terminates the
+            # value (end-of-line, whitespace, or a glued "#" after it) — a "#"
+            # inside the quotes stays literal, a trailing comment is dropped.
+            v = v[1:end]
         else:
-            # dotenv semantics: an unquoted value ends at a whitespace-preceded
-            # "#" (abc#def keeps its "#"). Split BEFORE stripping so
-            # `KEY= # note` reads as empty. Keeping the comment would poison
-            # typed Settings fields (e.g. FLAG=true  # note → bool_parsing
-            # error in every fresh Settings()).
-            v = re.split(r"\s#", raw_v, maxsplit=1)[0].strip()
+            # Unquoted value: ends at a whitespace-preceded "#" (abc#def keeps
+            # its "#"). Keeping the comment would poison typed Settings fields
+            # (e.g. FLAG=true  # note → bool_parsing error in every fresh
+            # Settings()). Malformed quoting (unterminated, or text glued after
+            # the close quote) lands here too — best-effort; python-dotenv
+            # skips such lines entirely.
+            v = re.split(r"\s#", v, maxsplit=1)[0].rstrip()
         os.environ.setdefault(k, v)
 
 

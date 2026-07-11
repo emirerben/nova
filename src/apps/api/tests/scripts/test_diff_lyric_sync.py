@@ -95,16 +95,24 @@ _CANARY_KEY = "NOVA_DIFF_LYRIC_SYNC_LEAK_CANARY"
 _COMMENT_KEY = "NOVA_DIFF_LYRIC_SYNC_COMMENT_CANARY"
 _QUOTED_KEY = "NOVA_DIFF_LYRIC_SYNC_QUOTED_CANARY"
 _SQUOTE_KEY = "NOVA_DIFF_LYRIC_SYNC_SQUOTE_CANARY"
+_GLUED_KEY = "NOVA_DIFF_LYRIC_SYNC_GLUED_CANARY"
 _UNCLOSED_KEY = "NOVA_DIFF_LYRIC_SYNC_UNCLOSED_CANARY"
+_UNCLOSED_COMMENT_KEY = "NOVA_DIFF_LYRIC_SYNC_UNCLOSED_COMMENT_CANARY"
+_MIDQUOTE_KEY = "NOVA_DIFF_LYRIC_SYNC_MIDQUOTE_CANARY"
 _EMPTY_KEY = "NOVA_DIFF_LYRIC_SYNC_EMPTY_CANARY"
+_COMMENT_ONLY_KEY = "NOVA_DIFF_LYRIC_SYNC_COMMENT_ONLY_CANARY"
 _HASH_KEY = "NOVA_DIFF_LYRIC_SYNC_HASH_CANARY"
 _ALL_CANARY_KEYS = (
     _CANARY_KEY,
     _COMMENT_KEY,
     _QUOTED_KEY,
     _SQUOTE_KEY,
+    _GLUED_KEY,
     _UNCLOSED_KEY,
+    _UNCLOSED_COMMENT_KEY,
+    _MIDQUOTE_KEY,
     _EMPTY_KEY,
+    _COMMENT_ONLY_KEY,
     _HASH_KEY,
 )
 
@@ -128,8 +136,12 @@ def _import_script_copy_with_canary_env(tmp_path: Path, module_name: str):
         f"{_COMMENT_KEY}=true   # inline comment must be stripped\n"
         f'{_QUOTED_KEY}="quoted value"  # comment after close quote\n'
         f"{_SQUOTE_KEY}='single quoted'  # single-quote arm\n"
+        f'{_GLUED_KEY}="s3cr3t"# comment glued to the close quote\n'
         f'{_UNCLOSED_KEY}="unclosed\n'
-        f"{_EMPTY_KEY}= # value is intentionally blank\n"
+        f'{_UNCLOSED_COMMENT_KEY}="unclosed # with a comment\n'
+        f'{_MIDQUOTE_KEY}="abc"def\n'
+        f"{_EMPTY_KEY}=\n"
+        f"{_COMMENT_ONLY_KEY}= # only a comment after the =\n"
         f"{_HASH_KEY}=abc#def\n"
     )
     spec = importlib.util.spec_from_file_location(module_name, copy)
@@ -180,9 +192,19 @@ def test_main_loads_env_and_strips_inline_comments(tmp_path: Path) -> None:
     # Quoted value: comment after the close quote dropped, quotes stripped.
     assert os.environ.get(_QUOTED_KEY) == "quoted value"
     assert os.environ.get(_SQUOTE_KEY) == "single quoted"
-    # An unclosed quote is malformed — the value is kept verbatim.
+    # A "#" glued to the close quote still starts a comment.
+    assert os.environ.get(_GLUED_KEY) == "s3cr3t"
+    # An unclosed quote is malformed — the value is kept verbatim...
     assert os.environ.get(_UNCLOSED_KEY) == '"unclosed'
-    # `KEY= # note` is an empty value, not the literal comment text.
+    # ...but a whitespace-preceded "#" after it is still cut as a comment.
+    assert os.environ.get(_UNCLOSED_COMMENT_KEY) == '"unclosed'
+    # A close quote glued to more text does not end the value — kept verbatim,
+    # matching scripts/admin.py::load_env (python-dotenv skips the line).
+    assert os.environ.get(_MIDQUOTE_KEY) == '"abc"def'
     assert os.environ.get(_EMPTY_KEY) == ""
+    # `KEY= # note` keeps the literal text: once the value is stripped the "#"
+    # has no whitespace before it. Odd, but byte-identical to python-dotenv —
+    # and therefore to what pydantic-settings feeds the API from the same file.
+    assert os.environ.get(_COMMENT_ONLY_KEY) == "# only a comment after the ="
     # "#" with no preceding whitespace is part of the value, never a comment.
     assert os.environ.get(_HASH_KEY) == "abc#def"
