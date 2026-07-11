@@ -286,6 +286,8 @@ export interface PlanItem {
   user_edited: boolean;
   /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
   edit_format?: string | null;
+  /** Montage visual preset. "classic" keeps the sequential montage; "masonry" renders a collage wall. */
+  montage_preset?: "classic" | "masonry";
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
   voiceover_gcs_path?: string | null;
   /**
@@ -411,6 +413,7 @@ export function updatePlanItem(
     scenes?: SceneBlock[];
     scheduled_date?: string | null;
     edit_format?: string | null;
+    montage_preset?: "classic" | "masonry";
     filming_guide?: FilmingShot[];
     landscape_fit?: "fit" | "fill";
     /** Per-item content_mode override (montage plan-vs-have toggle, 0058+). */
@@ -880,6 +883,12 @@ export interface PlanItemVariant {
   // the hero shows the burned output, so it is NOT instant-edit-eligible. Absent
   // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
   resolved_archetype?: string | null;
+  /** Montage preset selected at generation time. Present only for non-classic presets. */
+  montage_preset?: "masonry" | null;
+  /** Visual assembler that actually rendered; "masonry" disables clip-timeline editing. */
+  montage_preset_rendered?: "masonry" | null;
+  /** Best-effort fallback reason when a selected preset rendered via classic montage. */
+  montage_preset_fallback?: string | null;
   render_generation_id?: string | null;
   render_started_at?: string | null;
   render_finished_at?: string | null;

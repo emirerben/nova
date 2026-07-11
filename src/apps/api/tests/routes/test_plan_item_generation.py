@@ -573,6 +573,43 @@ def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
     assert item.landscape_fit == "fit"  # unchanged
 
 
+def test_patch_montage_preset_persists_masonry(client: TestClient) -> None:
+    """PATCH montage_preset='masonry' must be written to the item row."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.montage_preset = "classic"
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"montage_preset": "masonry"},
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 200
+    assert item.montage_preset == "masonry"
+    assert resp.json()["montage_preset"] == "masonry"
+
+
+def test_patch_montage_preset_rejects_junk(client: TestClient) -> None:
+    """Invalid montage_preset values must be rejected with 422."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.montage_preset = "classic"
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _db_for(item, plan)
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"montage_preset": "polaroid"},
+        headers={"Authorization": "Bearer test"},
+    )
+    assert resp.status_code == 422
+    assert item.montage_preset == "classic"
+
+
 def test_plan_item_response_surface_landscape_fit() -> None:
     """plan_item_response() must expose landscape_fit; fallback to 'fit' for MagicMock."""
     from app.models import PlanItem  # noqa: PLC0415
@@ -600,6 +637,7 @@ def test_plan_item_response_surface_landscape_fit() -> None:
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.edit_format = None
+    item.montage_preset = "masonry"
     item.voiceover_gcs_path = None
     item.landscape_fit = "fill"  # explicitly set
     item.voiceover_bed_level = None
@@ -607,6 +645,7 @@ def test_plan_item_response_surface_landscape_fit() -> None:
 
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fill"
+    assert resp.montage_preset == "masonry"
 
 
 def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
@@ -636,6 +675,7 @@ def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.edit_format = None
+    item.montage_preset = None
     item.voiceover_gcs_path = None
     item.landscape_fit = None  # pre-migration row: None → should default to "fit"
     item.voiceover_bed_level = None
@@ -643,3 +683,4 @@ def test_plan_item_response_landscape_fit_defaults_to_fit() -> None:
 
     resp = plan_item_response(item)
     assert resp.landscape_fit == "fit"
+    assert resp.montage_preset == "classic"

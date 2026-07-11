@@ -115,6 +115,7 @@ function editorReasonCopy(reason: string | null | undefined): string {
   }
   if (reason === "lyrics_sync") return "lyrics are synced to the song";
   if (reason === "no_slot_timeline") return "this edit has no clip timeline";
+  if (reason === "masonry_preset") return "collage presets do not use a clip timeline";
   if (reason === "sources_expired") return "the source clips are no longer available";
   if (reason === "caption_archetype") return CAPTIONS_TAB_REASON;
   return reason;

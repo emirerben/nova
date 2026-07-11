@@ -119,6 +119,29 @@ def test_edit_format_passthrough_and_coercion() -> None:
     assert job2.all_candidates["edit_format"] == "montage"
 
 
+def test_montage_preset_omits_classic_and_stashes_masonry() -> None:
+    classic = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        montage_preset="classic",
+    )
+    assert "montage_preset" not in classic.all_candidates
+
+    masonry = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        montage_preset="masonry",
+    )
+    assert masonry.all_candidates["montage_preset"] == "masonry"
+
+    unknown = build_generative_job(
+        user_id=uuid.uuid4(),
+        clip_paths=["users/u/plan/i/a.mp4"],
+        montage_preset="collage-but-wrong",
+    )
+    assert "montage_preset" not in unknown.all_candidates
+
+
 def test_users_prefix_is_allowlisted() -> None:
     # The whole point of the Phase 5 allowlist change — plan uploads must pass.
     job = build_generative_job(user_id=uuid.uuid4(), clip_paths=["users/u/plan/i/clip.mp4"])
