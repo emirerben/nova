@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.17.0] — 2026-07-11
+
+### Added
+- **Masonry collage items can use photos as tiles.** Masonry montage uploads now accept JPG, PNG, WebP, HEIC, and HEIF files alongside videos; classic montage still requires video clips, with a clear error when photos are used without the Masonry collage preset.
+
+### Changed
+- **Masonry preview text now matches the editor.** Item previews and the edit canvas share the same text-element renderer, so generated text keeps the same font, casing, stroke, anchoring, spacing, and placement in both views.
+- **Changing the song on non-lyrics Masonry variants keeps the video fixed.** Song swaps now remux the new track under the existing masonry render instead of re-ingesting clips, rebuilding the board, or reburning text.
+
+### Fixed
+- **Still images flow through masonry ingest without video-only analysis.** Photos now get synthetic clip/probe metadata and are looped as still tile inputs in the compositor, so mixed photo/video masonry renders stay on the rounded white-canvas layout.
+
 ## [0.7.16.0] — 2026-07-11
 
 ### Added
