@@ -240,7 +240,7 @@ def build_word_cues(words: list[Word], offset_s: float = 0.0) -> list[dict]:
 # the first burn and the reburn MUST pass the same value or edited captions jump.
 SUBTITLED_CAPTION_MARGIN_V = 384
 
-# Nova lime accent (#84cc16) as an ASS inline colour (AABBGGRR, opaque). Used to pop
+# Kria lime accent (#84cc16) as an ASS inline colour (AABBGGRR, opaque). Used to pop
 # the currently-spoken word in the word-by-word subtitled look — NOT the yellow-karaoke
 # cliché (SecondaryColour sweep). See DESIGN.md §9 "one accent per surface".
 _ACTIVE_WORD_ASS_COLOR = "&H0016CC84"
@@ -475,7 +475,7 @@ def generate_word_pop_ass(
     margin_v: int | None = None,
 ) -> None:
     """Word-by-word highlight (D2/E1): the full caption line stays visible and the
-    currently-spoken word pops in the Nova lime accent.
+    currently-spoken word pops in the Kria lime accent.
 
     NOT the one-big-word `_ass_header_word` look and NOT the yellow `\\k` karaoke sweep —
     each spoken word gets its own dialogue event that shows the SAME full line (so the

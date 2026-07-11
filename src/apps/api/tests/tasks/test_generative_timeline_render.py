@@ -120,12 +120,12 @@ def _patch_sessions(monkeypatch, job, track=None):
 
 def _capture_updates(monkeypatch):
     updates: list[dict] = []
-    monkeypatch.setattr(
-        gb,
-        "_update_variant_entry",
-        lambda jid, vid, patch, **kw: updates.append(dict(patch)),
-        raising=False,
-    )
+
+    def _fake_update(jid, vid, patch, **kw):
+        updates.append(dict(patch))
+        return True
+
+    monkeypatch.setattr(gb, "_update_variant_entry", _fake_update, raising=False)
     return updates
 
 
@@ -185,6 +185,7 @@ def _patch_render_helpers(monkeypatch, mix_calls: list, assembled_steps: list | 
             f.write(b"\x00" * 16)  # non-empty so the size guard passes
 
     monkeypatch.setattr(to, "_assemble_clips", _fake_assemble, raising=False)
+
     def _fake_mix(*a, **k):
         mix_calls.append({"args": a, "kwargs": k})
         with open(a[2], "wb") as f:
@@ -735,6 +736,65 @@ def test_no_timeline_takes_fresh_match_as_today(monkeypatch):
 
     assert called["ingest"] and called["match"]
     assert updates[-1]["ok"] is True
+
+
+def test_masonry_song_swap_takes_audio_only_path_without_timeline_reset(monkeypatch):
+    variant = _existing_variant(
+        variant_id="song_text",
+        rank=1,
+        text_mode="agent_text",
+        music_track_id="t1",
+        montage_preset="masonry",
+        montage_preset_rendered="masonry",
+        video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
+        base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
+        user_timeline={"slots": [_tl_slot(1, in_s=2.0, duration_s=1.0)]},
+    )
+    job, updates, _dl = _regen_setup(monkeypatch, variants=[variant], track=_track("t2"))
+
+    called = {"audio_swap": False}
+
+    def _audio_swap(**kw):
+        called["audio_swap"] = True
+        assert kw["existing"]["user_timeline"] == variant["user_timeline"]
+        assert kw["track"].id == "t2"
+        return True
+
+    monkeypatch.setattr(gb, "_run_masonry_audio_only_song_swap", _audio_swap, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_clear_user_timeline",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("timeline should stay intact")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_ingest_clips",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("ingest should be skipped")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        gb,
+        "_render_generative_variant",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("full render should be skipped")),
+        raising=False,
+    )
+
+    gb._run_regenerate_variant(JOB_ID, "song_text", "t2", None, False)
+
+    assert called["audio_swap"] is True
+    assert updates == [{"render_status": "rendering", "ok": False, "error": None}]
+    assert job.assembly_plan["variants"][0]["user_timeline"] == variant["user_timeline"]
+
+
+def test_masonry_lyrics_swap_is_not_audio_only() -> None:
+    variant = _existing_variant(
+        variant_id="song_lyrics",
+        text_mode="lyrics",
+        music_track_id="t1",
+        montage_preset_rendered="masonry",
+    )
+    assert gb._is_masonry_audio_only_swap_eligible(variant, "t2") is False
 
 
 def test_swap_song_clears_user_timeline_and_takes_fresh_match(monkeypatch):

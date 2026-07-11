@@ -75,7 +75,7 @@ def main() -> None:
     track = MusicTrack(
         id=track_id,
         title="Neon Skies (demo)",
-        artist="Nova Demo",
+        artist="Kria Demo",
         source_url="https://example.com/demo",
         audio_gcs_path=object_path,
         duration_s=26.0,

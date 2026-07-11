@@ -304,7 +304,7 @@ export function VariantCard({
         {!rendering && !failed && variant.output_url && (
           <button
             onClick={() =>
-              downloadVideo(variant.output_url!, `nova-${variant.variant_id}.mp4`)
+              downloadVideo(variant.output_url!, `kria-${variant.variant_id}.mp4`)
             }
             className={btnClass}
           >
@@ -500,4 +500,3 @@ export function VariantCard({
     </div>
   );
 }
-

@@ -207,7 +207,7 @@ Render below the `<video>` element:
 - New file: `src/apps/api/app/tasks/email.py`
 - Celery task: `send_waitlist_confirmation(email: str)`
 - Fire-and-forget: log errors, don't retry
-- Email: subject "You're on the Nova waitlist", body: value prop + "we'll reach out when your spot opens"
+- Email: subject "You're on the Kria waitlist", body: value prop + "we'll reach out when your spot opens"
 - Dispatch from `POST /api/waitlist` after successful DB insert
 
 ---

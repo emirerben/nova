@@ -1,4 +1,4 @@
-"""Bulk-ingest a YouTube playlist into Nova's music library.
+"""Bulk-ingest a YouTube playlist into Kria's music library.
 
 Usage (from src/apps/api/):
     python -m scripts.ingest_youtube_playlist <playlist_url> [--dry-run]

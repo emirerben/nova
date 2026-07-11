@@ -746,7 +746,7 @@ class PlanItem(Base):
     # generate time so the narrated archetype can do force-alignment + per-step trimming.
     voiceover_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Original-audio bed level for the narrated archetype (0.0 = voice only,
-    # 1.0 = loudest). NULL → Nova's default level. Set via
+    # 1.0 = loudest). NULL → Kria's default level. Set via
     # PATCH /plan-items/{id}/voiceover-bed-level; threaded to build_generative_job
     # so the footage audio plays, side-chain ducked, under the narration.
     voiceover_bed_level: Mapped[float | None] = mapped_column(Float, nullable=True)

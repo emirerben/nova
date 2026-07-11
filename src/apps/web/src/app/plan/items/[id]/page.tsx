@@ -59,7 +59,7 @@ import { useSfxPreview } from "../../_components/useSfxPreview";
 import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
 import ShotSlotUploader, { ClipNoteControl } from "./components/ShotSlotUploader";
-import AskNovaPanel from "./components/AskNovaPanel";
+import AskKriaPanel from "./components/AskKriaPanel";
 import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
@@ -104,18 +104,23 @@ import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
-import { resolveTextElementsLayout } from "@/lib/overlay-layout";
 import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 import {
   parsePlanItemEditorReturnSignal,
   stripPlanItemEditorReturnParams,
 } from "@/lib/editor-return";
-import { needsFormatPersist, resolvePickerFormat } from "@/lib/edit-format";
+import {
+  needsFormatPersist,
+  resolvePickerFormat,
+  type PickerEditFormat,
+} from "@/lib/edit-format";
+import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 
 // How long a dispatched render may take to register its Job before we admit
-// failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
-// queue waits can too. Keep this comfortably above both.
-const RENDER_REGISTER_TIMEOUT_MS = 45_000;
+// failure. Plan-item renders are queued behind a single worker, and the Job row
+// is minted when that worker picks the task up; a real render can sit queued for
+// several minutes before current_job_id appears.
+const RENDER_REGISTER_TIMEOUT_MS = 15 * 60_000;
 
 // Kill-switch: overlays tab only appears when NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED=true.
 // Normalise: accept "true", "True", "TRUE", "1" and trim whitespace so a
@@ -173,7 +178,7 @@ type PendingEdit = {
 // merge these two label maps — they answer different questions.
 const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
   montage: { label: "Montage", desc: "Multiple clips cut to music" },
-  narrated_planned: { label: "Narrated walkthrough", desc: "Footage explained by voiceover or a script" },
+  narrated_planned: { label: "Voiceover", desc: "Tell the story with narration" },
   subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
 };
 
@@ -189,6 +194,59 @@ const MONTAGE_PRESET_OPTIONS: { value: "classic" | "masonry"; label: string; des
   { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
 ];
 
+const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
+const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
+
+function uploadContentType(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
+function expandContextPrompt(format: PickerEditFormat): string {
+  if (format === "narrated_planned") {
+    return "What should your voiceover explain, reveal, or make people feel?";
+  }
+  if (format === "subtitled") {
+    return "Who is this for, and what point are you trying to make?";
+  }
+  return "What should this edit make people feel or notice?";
+}
+
+function CompactPlanSummary({ item }: { item: PlanItem }) {
+  const shots = item.filming_guide ?? [];
+  if (shots.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-zinc-400">
+        Plan summary
+      </p>
+      {item.filming_suggestion && (
+        <p className="mt-1 text-sm text-[#3f3f46]">{item.filming_suggestion}</p>
+      )}
+      <ol className="mt-3 space-y-2">
+        {shots.map((shot, index) => (
+          <li key={shot.shot_id ?? `${shot.what}-${index}`} className="flex gap-2">
+            <span className="font-display text-[15px] italic text-zinc-300">
+              {index + 1}.
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-[#0c0c0e]">{shot.what}</p>
+              {shot.how && <p className="text-xs text-[#71717a]">{shot.how}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 // Reads each file's video dimensions via a detached <video> element and resolves
 // true iff ANY is landscape (width > height). Fails safe (resolves false, never
 // rejects/throws) on metadata timeout or an unsupported codec — the caller's
@@ -198,7 +256,7 @@ const MONTAGE_PRESET_OPTIONS: { value: "classic" | "masonry"; label: string; des
 // this page) — only the PoolUploadCard-based flows (narrated_ready, talking-to-
 // camera, existing_footage) funnel through handleFiles today.
 function detectLandscapeClip(files: File[]): Promise<boolean> {
-  const checks = files.map(
+  const checks = files.filter((file) => uploadContentType(file).startsWith("video/")).map(
     (file) =>
       new Promise<boolean>((resolve) => {
         const video = document.createElement("video");
@@ -264,6 +322,8 @@ export default function PlanItemPage() {
   const [uploaderBusy, setUploaderBusy] = useState(false);
   // Idea-centric: propose-only AI plan state.
   const [expandProposal, setExpandProposal] = useState<IdeaExpandProposal | null>(null);
+  const [expandContextOpen, setExpandContextOpen] = useState(false);
+  const [expandContext, setExpandContext] = useState("");
   const [expanding, setExpanding] = useState(false);
   const [acceptingExpand, setAcceptingExpand] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
@@ -335,8 +395,8 @@ export default function PlanItemPage() {
     (srcGcsPath: string) => suggestionAssetMetaBySrcPath.get(srcGcsPath),
     [suggestionAssetMetaBySrcPath],
   );
-  // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
-  const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
+  // Ask Kria advisor panel: closed | opened normally | opened via "Tell Kria".
+  const [askKria, setAskKria] = useState<null | "default" | "contest">(null);
   const pendingEdits = useRef<Map<string, PendingEdit>>(new Map());
   // Incremented whenever pendingEdits is mutated so the variants memo re-runs
   // immediately (useMemo only tracks reactive dependencies; the ref itself is not reactive).
@@ -649,21 +709,24 @@ export default function PlanItemPage() {
   // ShotSlotUploader. existing_footage items keep the legacy pool upload.
   // instruction_level no longer gates the upload UI — it only affects copy/tone.
   const contentMode = item?.content_mode ?? "create_new";
-  const isFilmThis = contentMode !== "existing_footage";
-  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
-  const isInstructed = isFilmThis && hasGuide;
-
   // Narrated sub-modes:
   //   "narrated" | "narrated_planned" → step-guided flow (plan first, then film)
   //   "narrated_ready"               → have-videos flow (audio first, pool clips)
   const rawEditFormat = item?.edit_format ?? "montage";
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
+  const itemUploadAccept =
+    resolvedFormat === "montage" && montagePreset === "masonry"
+      ? MASONRY_UPLOAD_ACCEPT
+      : VIDEO_UPLOAD_ACCEPT;
   const isNarrated = resolvedFormat === "narrated_planned";
   const isNarratedReady = isNarrated && rawEditFormat === "narrated_ready";
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
   // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
   const isSubtitled = resolvedFormat === "subtitled";
+  const isFilmThis = contentMode !== "existing_footage";
+  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
+  const isInstructed = isFilmThis && hasGuide && !isSubtitled && !isNarratedReady;
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -680,7 +743,7 @@ export default function PlanItemPage() {
         itemId,
         list.map((f) => ({
           filename: f.name,
-          content_type: f.type || "video/mp4",
+          content_type: uploadContentType(f),
           file_size_bytes: f.size,
         })),
       );
@@ -773,6 +836,29 @@ export default function PlanItemPage() {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
     } finally {
       setVoiceoverSaving(false);
+    }
+  }
+
+  async function handleExpandIdea(creatorContext: string | null) {
+    if (!item) return;
+    setExpanding(true);
+    setExpandError(null);
+    setAcceptExpandError(null);
+    try {
+      const proposal = await expandIdea(item.id, {
+        creator_context: creatorContext,
+      });
+      if ((proposal.filming_guide?.length ?? 0) === 0) {
+        setExpandError("Couldn't plan this idea — try again.");
+        return;
+      }
+      setExpandProposal(proposal);
+      setExpandContextOpen(false);
+      setExpandError(null);
+    } catch {
+      setExpandError("Couldn't plan this idea — try again.");
+    } finally {
+      setExpanding(false);
     }
   }
 
@@ -996,8 +1082,8 @@ export default function PlanItemPage() {
                   <div className="mt-3 flex gap-2">
                     {(
                       [
-                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, film each shot" },
-                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload audio + clips, we match them" },
+                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, then film each shot" },
+                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload clips and we'll match them to your voice" },
                       ] as { value: string; label: string; desc: string }[]
                     ).map(({ value, label, desc }) => {
                       const active = isNarratedReady
@@ -1166,46 +1252,70 @@ export default function PlanItemPage() {
             })()}
 
             {/* AI plan proposal — available only until the item has a shot list. */}
-            {totalShots === 0 && !expandProposal && (
+            {totalShots === 0 && !expandProposal && !expandContextOpen && (
               <div className="mb-4">
                 <button
                   type="button"
                   disabled={expanding}
-                  onClick={async () => {
-                    setExpanding(true);
+                  onClick={() => {
+                    setExpandContextOpen(true);
                     setExpandError(null);
                     setAcceptExpandError(null);
-                    try {
-                      const proposal = await expandIdea(item.id);
-                      if ((proposal.filming_guide?.length ?? 0) === 0) {
-                        setExpandError("Couldn't plan this idea — try again.");
-                        return;
-                      }
-                      setExpandProposal(proposal);
-                      setExpandError(null);
-                    } catch {
-                      setExpandError("Couldn't plan this idea — try again.");
-                    } finally {
-                      setExpanding(false);
-                    }
                   }}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {expanding ? (
-                    <>
-                      <span
-                        aria-hidden
-                        className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
-                      />
-                      Thinking…
-                    </>
-                  ) : (
-                    <>
-                      <span aria-hidden>✦</span>
-                      Plan this for me
-                    </>
-                  )}
+                  <span aria-hidden>✦</span>
+                  Plan this for me
                 </button>
+                {expandError && (
+                  <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
+                )}
+              </div>
+            )}
+
+            {totalShots === 0 && !expandProposal && expandContextOpen && (
+              <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+                <p className="font-display text-lg font-medium text-[#0c0c0e]">
+                  A little context helps.
+                </p>
+                <label className="mt-3 block text-sm text-[#3f3f46]">
+                  <span>{expandContextPrompt(resolvedFormat)}</span>
+                  <textarea
+                    value={expandContext}
+                    onChange={(e) => setExpandContext(e.currentTarget.value)}
+                    maxLength={800}
+                    rows={3}
+                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+                    placeholder="A rough goal or detail is enough..."
+                  />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={expanding}
+                    onClick={() => handleExpandIdea(expandContext)}
+                    className="rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {expanding ? "Thinking…" : "Generate plan"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={expanding}
+                    onClick={() => handleExpandIdea(null)}
+                    className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Skip and generate
+                  </button>
+                </div>
+                {expanding && (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-[#71717a]">
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
+                    />
+                    Turning this into a plan…
+                  </p>
+                )}
                 {expandError && (
                   <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
                 )}
@@ -1259,6 +1369,8 @@ export default function PlanItemPage() {
                             filming_guide: expandProposal.filming_guide,
                           });
                           setExpandProposal(null);
+                          setExpandContext("");
+                          setExpandContextOpen(false);
                           setFocusShotListAfterAccept(true);
                           refetch();
                         } catch {
@@ -1293,6 +1405,8 @@ export default function PlanItemPage() {
               </div>
             )}
 
+            {hasGuide && !isInstructed && <CompactPlanSummary item={item} />}
+
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
               <div className="sticky top-0 z-10 -mx-6 mb-6 border-b border-zinc-100 bg-[#fafaf8] px-6 py-3">
@@ -1319,7 +1433,7 @@ export default function PlanItemPage() {
                     className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700"
                   >
                     <span aria-hidden>✦</span>
-                    Not sure what to say? Write a script with Nova
+                    Not sure what to say? Write a script with Kria
                   </Link>
                 )}
               </div>
@@ -1361,6 +1475,7 @@ export default function PlanItemPage() {
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
                   maxClips={1}
+                  accept={itemUploadAccept}
                 />
               </div>
             ) : isNarratedReady ? (
@@ -1383,6 +1498,7 @@ export default function PlanItemPage() {
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
                 />
               </div>
             ) : isInstructed ? (
@@ -1399,7 +1515,7 @@ export default function PlanItemPage() {
             ) : (
               /* existing_footage — pool upload (find the footage you already have) */
               <>
-                {item.filming_suggestion ? (
+                {!hasGuide && item.filming_suggestion ? (
                   <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
                 ) : null}
                 <PoolUploadCard
@@ -1409,6 +1525,7 @@ export default function PlanItemPage() {
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
                 />
               </>
             )}
@@ -1462,15 +1579,15 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Nova helper — inline, below Generate (WS1: moved from right rail) */}
+            {/* Kria helper — inline, below Generate (WS1: moved from right rail) */}
             <div className="mt-4">
-              <NovaHelper
+              <KriaHelper
                 item={item}
                 conformanceChecking={conformanceChecking}
-                askNova={askNova}
-                onOpen={() => setAskNova("default")}
-                onContest={() => setAskNova("contest")}
-                onClose={() => setAskNova(null)}
+                askKria={askKria}
+                onOpen={() => setAskKria("default")}
+                onContest={() => setAskKria("contest")}
+                onClose={() => setAskKria(null)}
                 onDismissConformance={async () => {
                   try {
                     await dismissConformance(itemId);
@@ -1647,9 +1764,9 @@ function deriveRationale(variant: PlanItemVariant, totalVariants: number): strin
   if (variant.text_mode === "lyrics" && track) return `Beat-synced to ${track}.`;
   if (variant.text_mode === "lyrics") return "Beat-synced lyrics overlay.";
   if (variant.text_mode === "agent_text" && track) return `Styled text over ${track}.`;
-  if (variant.text_mode === "agent_text") return "Nova-written intro, your original audio.";
+  if (variant.text_mode === "agent_text") return "Kria-written intro, your original audio.";
   if (variant.text_mode === "none") return "Your original audio, kept.";
-  return `Nova generated ${totalVariants} edit${totalVariants !== 1 ? "s" : ""}.`;
+  return `Kria generated ${totalVariants} edit${totalVariants !== 1 ? "s" : ""}.`;
 }
 
 // ── Editor panel tabs ────────────────────────────────────────────────────────
@@ -1668,7 +1785,7 @@ const EDITOR_TABS: { id: EditorTab; icon: string; label: string }[] = [
  * Owns the focused variant's edit session and renders the Hero + rail layout.
  *
  * Layout:
- *   HERO — large 9/16 video player (active variant). "Nova's pick" lime badge
+ *   HERO — large 9/16 video player (active variant). "Kria's pick" lime badge
  *   on variants[0]; text_mode label pill below the video.
  *
  *   RIGHT (desktop) / BELOW (mobile):
@@ -1962,7 +2079,7 @@ function FocusedResults({
     return () => clearInterval(t);
   }, [editSession.isSaving, refetch]);
 
-  const downloadName = `nova-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
+  const downloadName = `kria-${slugify(item.theme ?? "") || itemId.slice(0, 8)}.mp4`;
 
   useEffect(() => {
     if (!pendingDownloadRef.current) return;
@@ -2062,8 +2179,8 @@ function FocusedResults({
 
   // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
   const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
-  // "Nova's pick" is always the first variant (index 0 in the variants array)
-  const isNovaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
+  // "Kria's pick" is always the first variant (index 0 in the variants array)
+  const isKriaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
 
   // Text-mode label for the pill below the hero. Narrated variants carry the
   // creator's recorded voiceover (not the clips' original audio), so they get
@@ -2115,10 +2232,10 @@ function FocusedResults({
           {/* data-variant-preview: stable DOM hook for the SuggestionRail reveal
               (row click seeks this variant's preview video — plans/005 1A). */}
           <div className="relative" data-variant-preview={variant?.variant_id}>
-            {/* "Nova's pick" badge */}
-            {isNovaPick && variant?.output_url && (
+            {/* "Kria's pick" badge */}
+            {isKriaPick && variant?.output_url && (
               <span className="absolute left-3 top-3 z-10 rounded-full border border-lime-300 bg-lime-50 px-2.5 py-0.5 text-[11px] font-semibold text-lime-800">
-                Nova&apos;s pick
+                Kria&apos;s pick
               </span>
             )}
             {instantEligible && variant && (activeTab !== "timeline" || textLaneOpen) ? (
@@ -3327,13 +3444,7 @@ function LiveEditPreview({
     return () => el.removeEventListener("timeupdate", onTimeUpdate);
   }, [mountedSrcKind]);
 
-  // N-element preview: use the text_elements array when available (T6).
-  // Each element is positioned by its API-persisted x_frac/y_frac or named
-  // position preset.  Font size scales by the rendered box height via CSS.
-  const textLayouts =
-    !burnedSrc && textElements && textElements.length > 0
-      ? resolveTextElementsLayout(textElements)
-      : null;
+  const hasTextElements = !burnedSrc && Boolean(textElements && textElements.length > 0);
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
@@ -3370,32 +3481,8 @@ function LiveEditPreview({
         </div>
       )}
       {/* N-element text overlay (T6): shows all text_elements from the API. */}
-      {textLayouts ? (
-        textLayouts.map((layout) => (
-          <div
-            key={layout.id}
-            className="pointer-events-none absolute"
-            style={{
-              left: `${layout.xFrac * 100}%`,
-              top: `${layout.yFrac * 100}%`,
-              transform: "translate(-50%, -50%)",
-              textAlign: layout.alignment,
-              color: layout.color,
-              // Scale from 1920-px canvas to the 9:16 preview box via vH-equivalent.
-              // The preview box is aspect-[9/16]; its height drives the font scale.
-              fontSize: `${(layout.sizePx / 1920) * 100}cqh`,
-              fontFamily: `"${layout.fontFamily}", serif`,
-              fontWeight: 700,
-              lineHeight: 1.15,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              maxWidth: "90%",
-              textShadow: "0 2px 8px rgba(0,0,0,0.7)",
-            }}
-          >
-            {layout.text}
-          </div>
-        ))
+      {hasTextElements && textElements ? (
+        <TextElementOverlayLayer elements={textElements} />
       ) : (
         // Legacy single-element preview: driven by the instant-editor draft.
         !burnedSrc && (
@@ -3704,7 +3791,7 @@ function slugify(s: string): string {
 // Display-only: never disables or blocks Generate. Redesigned per DESIGN.md §7-D10
 // after the wrong-brief incident: dashed zinc (no red walls), a READ AGAINST
 // evidence line so the user can SEE what was judged, advice voice, and real
-// recourse ("Tell Nova" re-reads the clip; "Hide this read" dismisses).
+// recourse ("Tell Kria" re-reads the clip; "Hide this read" dismisses).
 
 const VERDICT_LABEL: Record<"minor_drift" | "off_brief", string> = {
   minor_drift: "Close — one tweak",
@@ -3713,11 +3800,11 @@ const VERDICT_LABEL: Record<"minor_drift" | "off_brief", string> = {
 
 function ConformanceVerdictPanel({
   conformance,
-  onTellNova,
+  onTellKria,
   onDismiss,
 }: {
   conformance: ConformanceVerdict;
-  onTellNova: () => void;
+  onTellKria: () => void;
   onDismiss: () => void;
 }) {
   // Render gates: dismissed/suppressed verdicts and low-confidence reads show
@@ -3771,10 +3858,10 @@ function ConformanceVerdictPanel({
       <div className="mt-3 flex gap-4">
         <button
           type="button"
-          onClick={onTellNova}
+          onClick={onTellKria}
           className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
         >
-          Looks wrong? Tell Nova
+          Looks wrong? Tell Kria
         </button>
         <button
           type="button"
@@ -3791,16 +3878,16 @@ function ConformanceVerdictPanel({
   );
 }
 
-// ── Nova helper ─────────────────────────────────────────────────────────────────
+// ── Kria helper ─────────────────────────────────────────────────────────────────
 // One quiet line in the right action panel. Collapses the two pre-generate AI
-// surfaces (conformance critic + Ask Nova) into a single lime-dot row.
+// surfaces (conformance critic + Ask Kria) into a single lime-dot row.
 // States: checking (pulse) → on-track → off-brief one-liner → default prompt.
-// Expanding → AskNovaPanel (full advisor chat) replaces this row entirely.
+// Expanding → AskKriaPanel (full advisor chat) replaces this row entirely.
 
-function NovaHelper({
+function KriaHelper({
   item,
   conformanceChecking,
-  askNova,
+  askKria,
   onOpen,
   onContest,
   onClose,
@@ -3809,19 +3896,19 @@ function NovaHelper({
 }: {
   item: PlanItem;
   conformanceChecking: boolean;
-  askNova: null | "default" | "contest";
+  askKria: null | "default" | "contest";
   onOpen: () => void;
   onContest: () => void;
   onClose: () => void;
   onDismissConformance: () => void;
   onItemChanged: () => void;
 }) {
-  // AskNovaPanel is the full-expanded state — it takes over the row entirely.
-  if (askNova !== null) {
+  // AskKriaPanel is the full-expanded state — it takes over the row entirely.
+  if (askKria !== null) {
     return (
-      <AskNovaPanel
+      <AskKriaPanel
         item={item}
-        mode={askNova}
+        mode={askKria}
         onClose={onClose}
         onItemChanged={onItemChanged}
       />
@@ -3838,7 +3925,7 @@ function NovaHelper({
     (c.confidence ?? 0) >= 0.6;
 
   return (
-    <div role="status" aria-live="polite" className="space-y-1.5" data-testid="nova-helper">
+    <div role="status" aria-live="polite" className="space-y-1.5" data-testid="kria-helper">
       {conformanceChecking ? (
         <p className="flex items-start gap-2 text-sm text-[#71717a] motion-safe:animate-pulse">
           <span
@@ -3859,7 +3946,7 @@ function NovaHelper({
             onClick={onOpen}
             className="font-medium text-lime-700 underline-offset-2 hover:underline"
           >
-            Ask Nova ↗
+            Ask Kria ↗
           </button>
         </p>
       ) : hasVerdict ? (
@@ -3877,7 +3964,7 @@ function NovaHelper({
               onClick={onContest}
               className="text-xs font-medium text-lime-700 underline-offset-2 hover:underline"
             >
-              Tell Nova
+              Tell Kria
             </button>
             <button
               type="button"
@@ -3891,7 +3978,7 @@ function NovaHelper({
               onClick={onOpen}
               className="text-xs text-[#71717a] underline-offset-2 hover:underline"
             >
-              Ask Nova ↗
+              Ask Kria ↗
             </button>
           </div>
         </div>
@@ -3907,7 +3994,7 @@ function NovaHelper({
             onClick={onOpen}
             className="font-medium text-lime-700 underline-offset-2 hover:underline"
           >
-            Ask Nova ↗
+            Ask Kria ↗
           </button>
         </p>
       )}
@@ -3928,6 +4015,7 @@ function PoolUploadCard({
   onRemove,
   onNoteChange,
   maxClips,
+  accept = VIDEO_UPLOAD_ACCEPT,
 }: {
   clips: ClipAssignment[];
   uploading: boolean;
@@ -3937,6 +4025,7 @@ function PoolUploadCard({
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
   /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
   maxClips?: number;
+  accept?: string;
 }) {
   const atCap = maxClips != null && clips.length >= maxClips;
   return (
@@ -4000,7 +4089,7 @@ function PoolUploadCard({
           <span className="sr-only">Upload video clips for this idea</span>
           <input
             type="file"
-            accept="video/mp4,video/quicktime"
+            accept={accept}
             multiple={maxClips !== 1}
             disabled={uploading}
             onChange={(e) => onFiles(e.target.files)}

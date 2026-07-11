@@ -11,7 +11,7 @@ export default function GlobalError({
 }) {
   // Always log so users with DevTools open can paste the trace to support.
   useEffect(() => {
-    console.error("[Nova] Unhandled error:", error);
+    console.error("[Kria] Unhandled error:", error);
   }, [error]);
 
   const isDev = process.env.NODE_ENV !== "production";

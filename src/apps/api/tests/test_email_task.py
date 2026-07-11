@@ -34,7 +34,7 @@ def test_email_sent_successfully():
         mock_post.assert_called_once()
         call_args = mock_post.call_args
         assert call_args[1]["json"]["to"] == ["user@example.com"]
-        assert "Nova waitlist" in call_args[1]["json"]["subject"]
+        assert "Kria waitlist" in call_args[1]["json"]["subject"]
 
 
 def test_email_api_failure_logged_not_raised():
@@ -80,4 +80,4 @@ def test_email_html_contains_email():
 
     html = _build_email_html("hello@test.com")
     assert "hello@test.com" in html
-    assert "Nova" in html
+    assert "Kria" in html

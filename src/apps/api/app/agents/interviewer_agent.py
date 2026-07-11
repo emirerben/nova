@@ -39,7 +39,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-INTERVIEWER_PROMPT_VERSION = "2026-07-09"
+INTERVIEWER_PROMPT_VERSION = "2026-07-11-kria"
 _HARD_CAP = 7
 # Server-side turn contract (parse() enforces; the prompt only *aims*):
 # question _FORCE_FINAL_AT is always the last one, and turn_label is derived

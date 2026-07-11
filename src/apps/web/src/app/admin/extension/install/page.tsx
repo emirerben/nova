@@ -51,7 +51,7 @@ export default async function InstallExtensionPage() {
         </Link>
 
         <h1 className="text-3xl font-bold mt-4 mb-6">
-          Install the Nova extension
+          Install the Kria extension
         </h1>
 
         <div className="bg-amber-950/60 border border-amber-800/60 text-amber-200 rounded-lg p-4 mb-4 text-sm">
@@ -79,11 +79,11 @@ export default async function InstallExtensionPage() {
         {/* Primary CTA */}
         <section className="bg-zinc-900 border border-zinc-800 rounded-lg p-6 mb-8">
           <a
-            href="/admin/extension/nova-extension.zip"
-            download="nova-extension.zip"
+            href="/admin/extension/kria-extension.zip"
+            download="kria-extension.zip"
             className="inline-block bg-emerald-600 hover:bg-emerald-500 text-white text-base font-semibold px-6 py-3 rounded-lg transition-colors"
           >
-            Download nova-extension.zip
+            Download kria-extension.zip
           </a>
           {info ? (
             <p className="text-xs text-zinc-500 mt-3 font-mono">
@@ -122,13 +122,13 @@ export default async function InstallExtensionPage() {
             </li>
             <li>
               <strong>Pin the extension</strong>: click the puzzle-piece icon in
-              your browser toolbar, then pin &ldquo;Nova Music Ingest&rdquo; so
+              your browser toolbar, then pin &ldquo;Kria Music Ingest&rdquo; so
               it stays visible.
             </li>
             <li>
-              <strong>Set admin credentials</strong>: click the Nova extension
-              icon to open its popup. Enter the same Nova admin username and
-              password you use for the Nova admin pages (the ones the browser
+              <strong>Set admin credentials</strong>: click the Kria extension
+              icon to open its popup. Enter the same Kria admin username and
+              password you use for the Kria admin pages (the ones the browser
               prompted you for). Click <strong>Test connection</strong>{" "}
               &mdash; it should say <span className="text-emerald-400">OK</span>.
               The extension uses these to talk to <code>/api/admin/*</code> from
@@ -143,7 +143,7 @@ export default async function InstallExtensionPage() {
           <p className="text-sm text-zinc-300">
             When a new zip is published here: re-download, unzip over the same
             local folder (overwrite), then open <code>chrome://extensions</code>{" "}
-            and click <strong>Reload</strong> under Nova Music Ingest.
+            and click <strong>Reload</strong> under Kria Music Ingest.
           </p>
         </section>
 
@@ -152,7 +152,7 @@ export default async function InstallExtensionPage() {
           <h2 className="text-xl font-semibold mb-2">Verify it worked</h2>
           <p className="text-sm text-zinc-300">
             Refresh <Link href="/admin/music" className="underline text-emerald-400">/admin/music</Link>.
-            The &ldquo;Install Nova extension&rdquo; link should be replaced by
+            The &ldquo;Install Kria extension&rdquo; link should be replaced by
             an enabled <strong>Ingest via extension</strong> button.
           </p>
         </section>
@@ -168,11 +168,11 @@ export default async function InstallExtensionPage() {
               <p className="text-zinc-400 mt-2">
                 Hard-refresh <code>/admin/music</code> (
                 <kbd>Cmd-Shift-R</kbd> / <kbd>Ctrl-Shift-R</kbd>). If it
-                persists, confirm <code>chrome://extensions</code> shows Nova
+                persists, confirm <code>chrome://extensions</code> shows Kria
                 Music Ingest as <em>Enabled</em> and the page origin matches the
                 manifest&rsquo;s <code>externally_connectable.matches</code>{" "}
-                (production <code>nova-video.vercel.app</code> or local{" "}
-                <code>localhost:3000</code>).
+                (production <code>usekria.com</code>, legacy{" "}
+                <code>nova-video.vercel.app</code>, or local <code>localhost:3000</code>).
               </p>
             </details>
 
@@ -203,8 +203,9 @@ export default async function InstallExtensionPage() {
                 allowlisted&rdquo;
               </summary>
               <p className="text-zinc-400 mt-2">
-                The &ldquo;Nova API origin&rdquo; field in the popup must be{" "}
-                <code>https://nova-video.vercel.app</code> for production or{" "}
+                The &ldquo;Kria API origin&rdquo; field in the popup must be{" "}
+                <code>https://usekria.com</code> for production,{" "}
+                <code>https://nova-video.vercel.app</code> for legacy access, or{" "}
                 <code>http://localhost:3000</code> for local dev. Any other
                 value is rejected without a network request &mdash; defense in
                 depth so the extension can&rsquo;t leak admin credentials to a

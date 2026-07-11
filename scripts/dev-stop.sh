@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nova — stop the dev environment started by dev-auto.sh
+# Kria — stop the dev environment started by dev-auto.sh
 
 set -euo pipefail
 

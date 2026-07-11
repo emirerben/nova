@@ -123,7 +123,7 @@ def _run(plan_item_id: str) -> None:
         )
         user_note = str(chosen.get("user_note") or "")
         if chosen.get("machine_matched"):
-            # Pool-matched footage Nova picked itself: running the judge on it
+            # Pool-matched footage Kria picked itself: running the judge on it
             # would have the product argue with its own matcher. Conformance
             # runs only after the user touches the slot (keep / swap / replace).
             log.info(

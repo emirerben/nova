@@ -27,6 +27,6 @@
     "tiktok_url": "https://www.tiktok.com/@qbuilder/video/7655110155230596383",
     "captured_at": "2026-06-28",
     "gemini_file_ttl_note": "Gemini File API URIs expire ~48h after upload. Re-run run_style_observation.py to refresh.",
-    "case": "Tech creator (@qbuilder), Nova's first user. Kinetic single-word text cards — bold display font, white text (#ffffff) with a golden highlight accent (#f6d895), centered layout, no stroke. Background: vibrant pop-art mural. Talking-head format with ring mic. The 'bold_display' classification is confirmed: large, heavy sans-serif single words that appear as kinetic cards throughout the video."
+    "case": "Tech creator (@qbuilder), Kria's first user. Kinetic single-word text cards — bold display font, white text (#ffffff) with a golden highlight accent (#f6d895), centered layout, no stroke. Background: vibrant pop-art mural. Talking-head format with ring mic. The 'bold_display' classification is confirmed: large, heavy sans-serif single words that appear as kinetic cards throughout the video."
   }
 }

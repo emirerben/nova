@@ -8,7 +8,7 @@ accepts before the PATCH write happens.
 from __future__ import annotations
 
 import json
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -16,13 +16,19 @@ from app.agents._runtime import Agent, AgentSpec, RefusalError, SchemaError
 from app.agents.music_matcher import _sanitize_text
 from app.pipeline.prompt_loader import load_prompt
 
-IDEA_EXPANDER_PROMPT_VERSION = "2026-06-17"
+IDEA_EXPANDER_PROMPT_VERSION = "2026-07-11-kria"
+
+IdeaExpandVideoType = Literal["montage", "voiceover", "talking_to_camera"]
+IdeaExpandContentMode = Literal["create_new", "existing_footage", "mixed"]
 
 
 class IdeaExpanderInput(BaseModel):
     idea: str
     persona_summary: str = ""
     content_pillars: list[str] = Field(default_factory=list)
+    creator_context: str = ""
+    video_type: IdeaExpandVideoType = "montage"
+    content_mode: IdeaExpandContentMode = "create_new"
 
 
 class FilmingShot(BaseModel):
@@ -73,6 +79,9 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             idea=_sanitize_text(input.idea),
             persona_summary=_sanitize_text(input.persona_summary),
             content_pillars=pillars_block,
+            creator_context=_sanitize_text(input.creator_context),
+            video_type=input.video_type,
+            content_mode=input.content_mode,
         )
 
     def parse(
@@ -99,9 +108,11 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             for s in output.filming_guide
             if s.what.strip()
         ][:4]
-        if not shots:
+        min_shots = 1 if input.video_type == "talking_to_camera" else 2
+        if len(shots) < min_shots:
+            expected = "1-4" if min_shots == 1 else "2-4"
             raise EmptyFilmingGuideError(
-                "idea_expander: filming_guide must contain 2-4 concrete shots"
+                f"idea_expander: filming_guide must contain {expected} concrete shots"
             )
         return IdeaExpanderOutput(
             theme=output.theme.strip(),
@@ -115,7 +126,8 @@ class IdeaExpanderAgent(Agent[IdeaExpanderInput, IdeaExpanderOutput]):
             "\n\nIMPORTANT: return ONLY valid JSON with keys: "
             "theme (string, ≤80 chars), "
             "filming_suggestion (string, ≤300 chars), "
-            "filming_guide (list of 2-4 non-empty shots; each shot MUST include "
+            "filming_guide (list of non-empty shots; montage/voiceover need 2-4, "
+            "talking_to_camera may use 1-4; each shot MUST include "
             "what, how, and duration_s), "
             "rationale (string, ≤400 chars). "
             "No markdown, no prose outside the JSON."

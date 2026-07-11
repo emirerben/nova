@@ -28,7 +28,7 @@ jest.mock("@/components/FadeInOnScroll", () => ({
 // the page still mounts cleanly.
 jest.mock("@/components/ShowcaseMarquee", () => ({
   __esModule: true,
-  default: () => <section aria-label="Videos created by Nova" />,
+  default: () => <section aria-label="Videos created by Kria" />,
 }));
 
 const mockGetServerSession = getServerSession as jest.MockedFunction<

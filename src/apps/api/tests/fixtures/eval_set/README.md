@@ -28,7 +28,7 @@ eval_set/
 ## Launch gate
 
 `pytest tests/quality/ -v` must pass before launch.
-Target: recall@3 ≥ 70% (Nova's top 3 contains the human-chosen clip in ≥70% of cases).
+Target: recall@3 ≥ 70% (Kria's top 3 contains the human-chosen clip in ≥70% of cases).
 
 ## Adding fixtures
 

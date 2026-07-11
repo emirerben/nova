@@ -385,7 +385,7 @@ class TestConformanceDefenseInDepth:
         assert persist_item.conformance["verdict"] == "off_brief"
 
     def test_machine_matched_clips_skip_conformance(self) -> None:
-        """Pool-matched footage Nova placed itself never gets judged — the
+        """Pool-matched footage Kria placed itself never gets judged — the
         product must not argue with its own matcher."""
         item = _make_item(
             clip_assignments=[{"gcs_path": _CLIP, "shot_id": None, "machine_matched": True}]

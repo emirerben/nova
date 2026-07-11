@@ -103,7 +103,7 @@ _MIN_USABLE_S = 0.05  # below this a clip is treated as unusable / unprobeable
 _EOF_GUARD_S = 0.05  # read a hair under EOF so -t never overshoots the source
 _SLOW_WARN_FACTOR = 0.4  # warn when a clip must slow more than ~2.5x to fill
 
-# Nova's default original-audio bed level (0 = voice only, 1 = loudest). A modest
+# Kria's default original-audio bed level (0 = voice only, 1 = loudest). A modest
 # ambient bed under the voice unless the creator dials it elsewhere. The voice is
 # always side-chain dominant, so this is the resting level in speech pauses.
 _DEFAULT_BED_LEVEL = 0.25
@@ -528,7 +528,7 @@ def assemble_narrated(
     as plain synced captions so the on-screen text IS the spoken narration.
 
     ``bed_level`` controls the original clip audio under the voice (0 = voice
-    only, 1 = loudest; None = Nova's default). When > 0 the footage audio is
+    only, 1 = loudest; None = Kria's default). When > 0 the footage audio is
     reassembled and side-chain ducked beneath the narration.
 
     ``base_output_path``: when set, ALSO writes a caption-FREE cut (same clips +

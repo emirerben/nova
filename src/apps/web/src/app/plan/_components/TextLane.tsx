@@ -515,7 +515,7 @@ export default function TextLane({
       {showSequenceNote && (
         <div className="ml-14 mr-0 mt-1">
           <div className="text-xs text-amber-400 bg-amber-950/40 rounded px-2 py-1">
-            Editing this flow makes it yours — Nova won&apos;t regenerate it automatically.
+            Editing this flow makes it yours — Kria won&apos;t regenerate it automatically.
           </div>
         </div>
       )}

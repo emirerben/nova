@@ -33,9 +33,12 @@ import {
   MAX_WIDTH_FRAC_MAX,
   MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
-import { resolveCssFont } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
+import {
+  TextElementOverlayContent,
+  textElementWrapperStyle,
+} from "../components/TextElementOverlayLayer";
 import {
   clampMediaOverlayPosition,
   clampMediaOverlayScale,
@@ -738,19 +741,17 @@ export default function EditorCanvas({
                   const sizePx = override?.size_px ?? layout.sizePx;
                   const maxWidthFrac = override?.max_width_frac ?? layout.maxWidthFrac;
                   const fontPx = stageSize.h > 0 ? (sizePx / CANVAS_H) * stageSize.h : 0;
+                  const strokeCanvasPx = bar?.stroke_width ?? layout.strokeWidth;
                   const strokePx =
-                    bar?.stroke_width && stageSize.h > 0
-                      ? (bar.stroke_width / CANVAS_H) * stageSize.h
+                    strokeCanvasPx && stageSize.h > 0
+                      ? (strokeCanvasPx / CANVAS_H) * stageSize.h
                       : 0;
-                  const { family, weight } = resolveCssFont(layout.fontFamily);
                   const isSelected = selectedTextId === layout.id;
                   const isHovered = hoveredId === layout.id && !isSelected;
-                  const anchorTransform =
-                    layout.alignment === "left"
-                      ? "translate(0, -50%)"
-                      : layout.alignment === "right"
-                        ? "translate(-100%, -50%)"
-                        : "translate(-50%, -50%)";
+                  const zIndex =
+                    isSelected && allowManipulation
+                      ? EDITOR_STAGE_Z.selectionHandle
+                      : EDITOR_STAGE_Z.textOverlay;
                   return (
                     <div
                       key={layout.id}
@@ -763,16 +764,7 @@ export default function EditorCanvas({
                       className={`absolute select-none touch-none ${
                         tool === "select" ? "cursor-pointer" : ""
                       }`}
-                      style={{
-                        left: `${xFrac * 100}%`,
-                        top: `${yFrac * 100}%`,
-                        transform: anchorTransform,
-                        width: `${maxWidthFrac * 100}%`,
-                        zIndex:
-                          isSelected && allowManipulation
-                            ? EDITOR_STAGE_Z.selectionHandle
-                            : EDITOR_STAGE_Z.textOverlay,
-                      }}
+                      style={textElementWrapperStyle({ layout, xFrac, yFrac, maxWidthFrac, zIndex })}
                       onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}
                       onPointerMove={onPointerMove}
                       onPointerUp={onPointerUp}
@@ -784,27 +776,11 @@ export default function EditorCanvas({
                         onFocusContent();
                       }}
                     >
-                      <div
-                        style={{
-                          fontSize: `${fontPx}px`,
-                          fontFamily: family,
-                          fontWeight: weight,
-                          color: layout.color,
-                          textAlign: layout.alignment,
-                          letterSpacing:
-                            layout.letterSpacingEm !== 0
-                              ? `${layout.letterSpacingEm}em`
-                              : undefined,
-                          lineHeight: layout.lineSpacing || 1.15,
-                          whiteSpace: "pre-wrap",
-                          wordBreak: "break-word",
-                          WebkitTextStroke: strokePx > 0 ? `${strokePx}px #000000` : undefined,
-                          textShadow: strokePx > 0 ? undefined : "0 2px 8px rgba(0,0,0,0.55)",
-                          padding: "0.08em 0.18em",
-                        }}
-                      >
-                        {layout.text}
-                      </div>
+                      <TextElementOverlayContent
+                        layout={layout}
+                        fontSize={`${fontPx}px`}
+                        strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
+                      />
 
                       {/* Hover ghost outline (1px zinc-400/60) */}
                       {isHovered && (

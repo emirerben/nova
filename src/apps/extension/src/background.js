@@ -1,8 +1,8 @@
-// Nova Music Ingest — MV3 service worker (coordinator only).
+// Kria Music Ingest — MV3 service worker (coordinator only).
 //
 // All heavy work (ytdl extraction, googlevideo fetch, signed-URL PUT) runs in
 // the offscreen document so it survives MV3's ~5-minute service-worker timeout.
-// The SW is a pure message router between (a) the Nova SPA (via
+// The SW is a pure message router between (a) the Kria SPA (via
 // externally_connectable), (b) the popup, and (c) the offscreen doc.
 //
 // Message protocol:
@@ -81,9 +81,10 @@ ensureYouTubeOriginRule().catch((err) =>
 // Runtime sender verification. externally_connectable.matches in the manifest
 // already restricts WHICH ORIGINS can send messages, but not WHICH PATHS on
 // those origins, and not which COMMANDS they can invoke. Defense in depth so
-// a compromised non-admin Nova page (or a future regression of the manifest's
+// a compromised non-admin Kria page (or a future regression of the manifest's
 // `matches`) can't trigger privileged ingest work.
 const ALLOWED_NOVA_ORIGINS = new Set([
+  "https://usekria.com",
   "https://nova-video.vercel.app",
   "http://localhost:3000",
 ]);
@@ -138,7 +139,7 @@ function newJobId() {
 }
 
 async function dispatchIngest(payload, source, preferredJobId) {
-  // If the caller (Nova SPA) provided a jobId, use it so the SPA's progress
+  // If the caller (Kria SPA) provided a jobId, use it so the SPA's progress
   // listener can filter events that belong to its in-flight ingest vs ones
   // from another tab's concurrent ingest. Popup callers don't provide one.
   const jobId = preferredJobId || newJobId();
@@ -181,7 +182,7 @@ function forwardProgress(jobId, event) {
   }
 }
 
-// External (from Nova SPA): handle pings + ingest requests.
+// External (from Kria SPA): handle pings + ingest requests.
 chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
   if (msg?.target !== "nova_extension") return;
 

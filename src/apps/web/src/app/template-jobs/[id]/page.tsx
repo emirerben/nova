@@ -554,7 +554,7 @@ function ResultView({
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = `nova-${job.job_id.slice(0, 8)}.mp4`;
+                a.download = `kria-${job.job_id.slice(0, 8)}.mp4`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);

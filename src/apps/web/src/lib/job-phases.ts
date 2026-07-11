@@ -1,5 +1,5 @@
 /**
- * Unified phase vocabulary for all Nova job types.
+ * Unified phase vocabulary for all Kria job types.
  *
  * - Generative phases defined here (GENERATIVE_PHASE_ORDER, GENERATIVE_PHASE_LABEL).
  * - Template phases re-exported from template-job-phases.ts (that module remains

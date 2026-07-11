@@ -121,7 +121,7 @@ export default function BriefStep({
           Get a transcript
         </p>
         <h1 className="font-display text-3xl leading-snug text-[#0c0c0e]">
-          Add your clips first, and Nova will write what to say over them.
+          Add your clips first, and Kria will write what to say over them.
         </h1>
         <p className="mt-4 text-[#71717a]">
           The transcript is tuned to your footage — its length, its moments. Once a
@@ -164,7 +164,7 @@ export default function BriefStep({
         What&apos;s this video about?
       </h1>
       <p className="mt-4 text-[#71717a]">
-        A sentence or two is plenty — Nova reads your footage and writes what to say
+        A sentence or two is plenty — Kria reads your footage and writes what to say
         over it.
       </p>
 

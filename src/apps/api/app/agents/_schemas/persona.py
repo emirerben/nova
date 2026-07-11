@@ -39,7 +39,7 @@ from pydantic import BaseModel, Field
 #                "update persona from feedback" re-tunes the lane toward what works.
 # 2026-05-30.1 — added `rationale` (the AI's "why this lane" shown in the dashboard).
 # 2026-05-30 — added $success_factors block + archetype performance ranking.
-PERSONA_PROMPT_VERSION = "2026-07-09"
+PERSONA_PROMPT_VERSION = "2026-07-11-kria"
 
 # Upper bounds keep a runaway model response from bloating the persona row.
 _MAX_PILLARS = 8
@@ -98,7 +98,7 @@ class Persona(BaseModel):
     # fails validation; the generator's prompt reliably fills it (structural-checked).
     rationale: str = ""
     # What this page is in service of, in the creator's own terms (e.g. "grow
-    # Nova's TikTok audience", "share my pottery"). "" for legacy personas.
+    # Kria's TikTok audience", "share my pottery"). "" for legacy personas.
     goal: str = ""
     # Where the content comes from. Optional so legacy personas validate;
     # resolve_content_mode() derives the effective value (default create_new —

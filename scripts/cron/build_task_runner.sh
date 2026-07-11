@@ -120,7 +120,7 @@ else
 fi
 
 # ── 3. run Claude Code headless, timeout-bounded ─────────────────────────────
-PROMPT="You are the Nova autonomous builder working ONE bounded chunk of a task.
+PROMPT="You are the Kria autonomous builder working ONE bounded chunk of a task.
 Task: ${TASK_TITLE}
 Details: ${TASK_BODY}
 Prior progress note (if resuming): ${TASK_NOTE}
