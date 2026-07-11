@@ -48,9 +48,9 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 
 ---
 
-## §3 Dark render system (template flow + admin)
+## §3 Dark render system (/template-jobs + admin)
 
-Token source: `src/apps/web/src/app/template/`, `template-jobs/` on origin/main. Admin is a separate variant (§4).
+Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/template/[id]` config flow was deleted in v0.7.8.2). Admin is a separate variant (§4).
 
 - **Canvas:** `bg-black text-white`; `min-h-[calc(100vh-3.5rem)]` under the h-14 header.
 - **Zinc scale roles:**
@@ -205,7 +205,7 @@ Celebrate then recede.
 
 ## §9 Anti-slop rules (Nova-specific)
 
-- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template/*`, `/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
+- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
 - No candy gradients, no rainbow palettes, no purple/violet defaults.
 - No 3-column icon-in-circle feature grids; no centered-everything; no decorative blobs/wavy dividers; no emoji as design elements.
 - **Serif display (Fraunces) is the brand voice;** system-ui display type is the "gave up" signal.
