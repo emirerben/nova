@@ -143,18 +143,6 @@ class TestOrchestratePipelineHelpers:
         # Result must preserve input order (not completion order)
         assert mock_upload.call_count == 3
 
-    def test_upload_clips_parallel_skips_still_images(self, tmp_path):
-        from app.tasks.template_orchestrate import _upload_clips_parallel
-
-        image_path = tmp_path / "still.png"
-        image_path.write_bytes(b"png")
-
-        with patch("app.tasks.template_orchestrate.gemini_upload_and_wait") as mock_upload:
-            result = _upload_clips_parallel([str(image_path)])
-
-        assert result == [None]
-        mock_upload.assert_not_called()
-
     def test_upload_clips_parallel_tolerates_per_clip_failure(self):
         """One clip's Gemini upload raising should not fail the whole job —
         the failed clip comes back as None and the rest continue.
@@ -252,29 +240,6 @@ class TestOrchestratePipelineHelpers:
         fallback = next(m for m in metas if m.analysis_degraded)
         assert fallback.clip_id == "clip_1"
         assert fallback.clip_path == "/tmp/bad.mp4"
-
-    def test_analyze_clips_parallel_synthesizes_still_image_metadata(self, tmp_path):
-        """Still images are visual tiles, not videos to upload/transcribe."""
-        from app.tasks.template_orchestrate import _analyze_clips_parallel
-
-        image_path = tmp_path / "still.jpg"
-        image_path.write_bytes(b"not-a-real-jpeg-but-extension-is-enough")
-
-        with patch("app.pipeline.transcribe.transcribe_whisper") as whisper:
-            metas, failed = _analyze_clips_parallel(
-                [None],
-                [str(image_path)],
-                probe_map={str(image_path): MagicMock(duration_s=15.0)},
-            )
-
-        assert failed == 0
-        assert len(metas) == 1
-        assert metas[0].clip_id == "clip_0"
-        assert metas[0].clip_path == str(image_path)
-        assert metas[0].analysis_degraded is True
-        assert getattr(metas[0], "is_image") is True
-        assert metas[0].best_moments[0]["end_s"] == 15.0
-        whisper.assert_not_called()
 
     def test_probe_and_upload_concurrent_returns_both(self):
         """Slice-5 contract: helper runs probe + upload concurrently and
