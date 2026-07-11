@@ -6,10 +6,12 @@ Look at the attached image and return STRICT JSON (no markdown fences, no commen
   "subject": "<2-6 words: what this is, e.g. 'Claude settings privacy toggle'>",
   "description": "<one sentence: what the image shows, concrete and specific>",
   "on_screen_text": "<the most prominent legible text in the image, verbatim, up to ~30 words; empty string if none>",
+  "brands": ["<brand, product, mascot, or named identity visibly present; empty array if none>"],
   "kind_hint": "screenshot" | "photo" | "diagram" | "document" | "other"
 }
 
 Rules:
 1. Be concrete. "Settings page with 'Help improve our AI models' toggle" beats "a settings page".
 2. on_screen_text is verbatim transcription of visible text — no paraphrasing, no invention.
-3. If the image is unreadable or empty, still return valid JSON with best-effort fields.
+3. brands captures visible brand/product/mascot identities, e.g. ["Arçelik", "Çelik robot mascot"].
+4. If the image is unreadable or empty, still return valid JSON with best-effort fields.

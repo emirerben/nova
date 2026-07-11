@@ -14,7 +14,7 @@ import json
 from typing import ClassVar
 
 import structlog
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.agents._runtime import Agent, AgentSpec, SchemaError
 from app.pipeline.prompt_loader import load_prompt
@@ -33,6 +33,7 @@ class ImageMetadataOutput(BaseModel):
     subject: str = ""
     description: str = ""
     on_screen_text: str = ""
+    brands: list[str] = Field(default_factory=list)
     # "screenshot" | "photo" | "diagram" | "document" | "other"
     kind_hint: str = "other"
 
@@ -40,6 +41,13 @@ class ImageMetadataOutput(BaseModel):
     @classmethod
     def _trim(cls, v: str) -> str:
         return (v or "").strip()[:_MAX_TEXT]
+
+    @field_validator("brands", mode="before")
+    @classmethod
+    def _brands(cls, v: object) -> list[str]:
+        if not isinstance(v, list):
+            return []
+        return [(s or "").strip()[:80] for s in v if (s or "").strip()][:10]
 
     @field_validator("kind_hint")
     @classmethod
@@ -53,7 +61,7 @@ class ImageMetadataAgent(Agent[ImageMetadataInput, ImageMetadataOutput]):
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.ingest.image_metadata",
         prompt_id="image_metadata",
-        prompt_version="1.0.0",
+        prompt_version="1.1.0",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
