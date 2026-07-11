@@ -6227,7 +6227,6 @@ def _render_subtitled_variant(
     """
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
-        SUBTITLED_CAPTION_MARGIN_V,
         build_plain_cues,
         generate_ass_from_cues,
         generate_word_pop_ass,
@@ -6250,6 +6249,7 @@ def _render_subtitled_variant(
     # v1: no font chosen at render time — the editor sets it later (None → default
     # TikTok Sans). Reuses the narrated caption-font key so the editor/reburn work.
     caption_font = spec.get("caption_font") or None
+    caption_margin_v = _resolve_caption_margin_v(spec)
     base = {
         "variant_id": variant_id,
         "rank": rank,
@@ -6282,6 +6282,7 @@ def _render_subtitled_variant(
         # reads it so edited cues re-burn in the SAME style (word-pop stays word-pop).
         "voiceover_caption_style": caption_style,
         "voiceover_caption_font": caption_font,
+        "caption_margin_v": caption_margin_v,
         # Language the captions were transcribed in (ISO "en"/"tr"). Shown as the editor
         # chip; the re-transcribe override reads + rewrites it.
         "caption_language": (language or "en"),
@@ -6523,16 +6524,14 @@ def _render_subtitled_variant(
             ass_path = os.path.join(variant_dir, "captions.ass")
             ass_font = resolve_caption_font(caption_font)
             if caption_style == "word":
-                generate_word_pop_ass(
-                    cues, ass_path, font_name=ass_font, margin_v=SUBTITLED_CAPTION_MARGIN_V
-                )
+                generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
             else:
                 generate_ass_from_cues(
                     cues,
                     ass_path,
                     font_name=ass_font,
                     style="plain",
-                    margin_v=SUBTITLED_CAPTION_MARGIN_V,
+                    margin_v=caption_margin_v,
                     pop_in=True,
                 )
             burn_captions_on_video(base_path, ass_path, FONTS_DIR, final_path)
@@ -6657,6 +6656,29 @@ _CAPTION_REBURN_ARCHETYPES = frozenset({"narrated", "subtitled"})
 _SUBTITLED_CAPTION_LANGUAGES = frozenset({"en", "tr"})
 
 
+def _resolve_caption_margin_v(variant: dict) -> int:
+    """Resolve a subtitled variant's ASS MarginV.
+
+    Absent/null/invalid values fall back to the legacy subtitled safe-zone margin so
+    old variants keep byte-identical ASS geometry. Valid persisted values are bounded
+    to the UI/API's 0.30-0.90 y_frac range: round((1 - y_frac) * 1920).
+    """
+    from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V  # noqa: PLC0415
+
+    raw = variant.get("caption_margin_v")
+    if raw is None:
+        return SUBTITLED_CAPTION_MARGIN_V
+    try:
+        margin_v = int(raw)
+    except (TypeError, ValueError):
+        return SUBTITLED_CAPTION_MARGIN_V
+    min_margin = round((1.0 - 0.90) * 1920)
+    max_margin = round((1.0 - 0.30) * 1920)
+    if min_margin <= margin_v <= max_margin:
+        return margin_v
+    return SUBTITLED_CAPTION_MARGIN_V
+
+
 def _burn_persisted_captions_onto_base(
     base_local: str, out_local: str, variant: dict, tmpdir: str
 ) -> None:
@@ -6669,11 +6691,7 @@ def _burn_persisted_captions_onto_base(
     caption-free copy regardless of stored cue count, so toggling back on needs no
     re-transcription) AND the presence of cues.
     """
-    from app.pipeline.captions import (  # noqa: PLC0415
-        SUBTITLED_CAPTION_MARGIN_V,
-        generate_ass_from_cues,
-        generate_word_pop_ass,
-    )
+    from app.pipeline.captions import generate_ass_from_cues, generate_word_pop_ass  # noqa: PLC0415
     from app.pipeline.narrated_assembler import (  # noqa: PLC0415
         burn_captions_on_video,
         resolve_caption_font,
@@ -6697,13 +6715,19 @@ def _burn_persisted_captions_onto_base(
         # reburn MUST agree on the margin (and style) or edited captions jump. Word-pop
         # uses the same safe margin via generate_word_pop_ass.
         ass_style = "plain"
-        margin_v: int | None = SUBTITLED_CAPTION_MARGIN_V
+        margin_v: int | None = _resolve_caption_margin_v(variant)
     else:
         # narrated: re-burn edited cues in the SAME caption style the variant first
         # rendered with, so word-by-word stays word-by-word after an edit ("word" → the
         # big centered one-word style; anything else → the plain sentence style).
         ass_style = "word" if variant.get("voiceover_caption_style") == "word" else "plain"
-        margin_v = None
+        # Legacy narrated default is MarginV=180 (captions._ass_header_for default).
+        # Only pass an explicit margin after the new position control has stored one.
+        margin_v = (
+            _resolve_caption_margin_v(variant)
+            if variant.get("caption_margin_v") is not None
+            else None
+        )
     # Re-burn in the variant's chosen caption font (registry key → libass family;
     # None/unknown → the default). Both narrated AND subtitled persist the font under
     # `voiceover_caption_font` (render + caption-font route + finalize whitelist).
@@ -7032,7 +7056,6 @@ def retranscribe_subtitled_captions(self, job_id: str, variant_id: str, language
 def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> None:
     from app.pipeline.caption_correct import correct_caption_cues  # noqa: PLC0415
     from app.pipeline.captions import (  # noqa: PLC0415
-        SUBTITLED_CAPTION_MARGIN_V,
         build_plain_cues,
         generate_ass_from_cues,
         generate_word_pop_ass,
@@ -7067,6 +7090,7 @@ def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> 
     rank = variant.get("rank")
     word_pop = variant.get("voiceover_caption_style") == "word"
     ass_font = resolve_caption_font(variant.get("voiceover_caption_font"))
+    caption_margin_v = _resolve_caption_margin_v(variant)
 
     _update_variant_entry(job_id, variant_id, {"render_status": "rendering"})
     with tempfile.TemporaryDirectory(prefix="nova_subtitled_retx_") as tmpdir:
@@ -7101,16 +7125,14 @@ def _run_retranscribe_subtitled(job_id: str, variant_id: str, language: str) -> 
         out_local = os.path.join(tmpdir, "out.mp4")
         ass_path = os.path.join(tmpdir, "captions.ass")
         if word_pop:
-            generate_word_pop_ass(
-                cues, ass_path, font_name=ass_font, margin_v=SUBTITLED_CAPTION_MARGIN_V
-            )
+            generate_word_pop_ass(cues, ass_path, font_name=ass_font, margin_v=caption_margin_v)
         else:
             generate_ass_from_cues(
                 cues,
                 ass_path,
                 font_name=ass_font,
                 style="plain",
-                margin_v=SUBTITLED_CAPTION_MARGIN_V,
+                margin_v=caption_margin_v,
                 pop_in=True,
             )
         burn_captions_on_video(base_local, ass_path, FONTS_DIR, out_local)
@@ -7667,6 +7689,10 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # narrated caption font (registry key) — MUST survive or a caption
                     # edit reburns in the wrong font (the reburn reads it).
                     "voiceover_caption_font": r.get("voiceover_caption_font"),
+                    # subtitled caption position — MUST survive or a caption edit /
+                    # language re-transcribe reburns at the legacy safe-zone instead
+                    # of the creator's chosen y position.
+                    "caption_margin_v": r.get("caption_margin_v"),
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor
                     # chip shows it and the re-transcribe override reads the current one.
                     "caption_language": r.get("caption_language"),

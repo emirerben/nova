@@ -243,6 +243,7 @@ class GenerativeVariant(BaseModel):
     captions_enabled: bool | None = None
     # User-pinned independent overrides (decoupled from style_set_id).
     # null when not pinned; the renderer uses the style-set value.
+    caption_margin_v: int | None = None
     intro_font_family: str | None = None
     intro_effect: str | None = None
     intro_text_color: str | None = None
@@ -1062,6 +1063,16 @@ class CaptionFontRequest(BaseModel):
     caption_font: str | None = None
 
 
+class CaptionPositionRequest(BaseModel):
+    """Caption vertical position as a normalized y coordinate from the top."""
+
+    y_frac: float = Field(ge=0.30, le=0.90)
+
+    @property
+    def caption_margin_v(self) -> int:
+        return round((1.0 - self.y_frac) * 1920)
+
+
 class CaptionStyleRequest(BaseModel):
     """Sentence/word caption style for a caption variant."""
 
@@ -1187,6 +1198,34 @@ async def persist_variant_caption_font(
             detail="Unknown caption font.",
         )
     await _patch_narrated_variant(job_id, variant_id, {"voiceover_caption_font": caption_font}, db)
+
+
+def dispatch_set_caption_position(job: Job, variant_id: str, *, y_frac: float) -> int:
+    """Persist caption position and enqueue the caption reburn in one JSONB rewrite."""
+    req = CaptionPositionRequest(y_frac=y_frac)
+    plan = dict(job.assembly_plan or {})
+    variants = list(plan.get("variants") or [])
+    target = next((v for v in variants if v.get("variant_id") == variant_id), None)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+    if not _is_editable_caption_variant(target):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Captions can only be edited on captioned variants.",
+        )
+    if target.get("render_status") == "rendering":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Captions are being applied — try again once the render finishes.",
+        )
+    for i, v in enumerate(variants):
+        if v.get("variant_id") == variant_id:
+            variants[i] = {**v, "caption_margin_v": req.caption_margin_v}
+            break
+    plan["variants"] = variants
+    job.assembly_plan = plan
+    dispatch_apply_captions(job, variant_id)
+    return req.caption_margin_v
 
 
 _CAPTION_STYLES = frozenset({"sentence", "word"})
@@ -3156,6 +3195,30 @@ async def set_intro_size(
         job_id=str(job.id),
         variant_id=variant_id,
         px=req.text_size_px,
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.post(
+    "/{job_id}/variants/{variant_id}/caption-position", response_model=GenerativeJobResponse
+)
+async def set_caption_position(
+    job_id: str,
+    variant_id: str,
+    req: CaptionPositionRequest,
+    current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Set caption vertical position and reburn the captioned variant."""
+    job = await _load_generative_job(job_id, db, current_user)
+    margin_v = dispatch_set_caption_position(job, variant_id, y_frac=req.y_frac)
+    await db.commit()
+    log.info(
+        "generative_set_caption_position",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        y_frac=req.y_frac,
+        margin_v=margin_v,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
