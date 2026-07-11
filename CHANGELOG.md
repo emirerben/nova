@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.22.0] — 2026-07-11
+
+### Added
+- **Two-tone editorial titles.** Cluster-block intro/sequence text can now mix an accent color with the base color per block, flipping with the same parity as the accent font (so font and color change together), plus explicit keyword emphasis via `word_roles` (own block, accent color, optional glow). Current output is unchanged unless a style opts in.
+
 ## [0.7.18.0] — 2026-07-11
 
 ### Changed
