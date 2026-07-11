@@ -101,25 +101,43 @@ def render_image_to_clip(
 
     cmd = [
         "ffmpeg",
-        "-loop", "1",
-        "-r", str(target_fps),
-        "-i", image_path,
-        "-t", f"{duration_s:.3f}",
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "ultrafast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-b:v", settings.output_video_bitrate,
-        "-maxrate", settings.output_video_bitrate,
-        "-bufsize", "8M",
-        "-r", str(target_fps),
+        "-loop",
+        "1",
+        "-r",
+        str(target_fps),
+        "-i",
+        image_path,
+        "-t",
+        f"{duration_s:.3f}",
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-b:v",
+        settings.output_video_bitrate,
+        "-maxrate",
+        settings.output_video_bitrate,
+        "-bufsize",
+        "8M",
+        "-r",
+        str(target_fps),
         "-an",
-        "-movflags", "+faststart",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -135,9 +153,7 @@ def render_image_to_clip(
     result = subprocess.run(cmd, capture_output=True, timeout=180, check=False)
     if result.returncode != 0:
         stderr_tail = result.stderr.decode("utf-8", errors="replace")[-800:]
-        raise ImageClipError(
-            f"FFmpeg image→clip failed (rc={result.returncode}): {stderr_tail}"
-        )
+        raise ImageClipError(f"FFmpeg image→clip failed (rc={result.returncode}): {stderr_tail}")
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise ImageClipError(f"FFmpeg produced empty output: {output_path}")
 
@@ -151,6 +167,34 @@ def is_image_file(path: str) -> bool:
     """Return True when *path* looks like a still image by extension."""
     ext = os.path.splitext(path)[1].lower()
     return ext in _IMAGE_EXTS
+
+
+def image_has_alpha(path: str) -> bool:
+    """True only when an image has alpha and at least one non-opaque pixel."""
+    try:
+        import pillow_heif  # type: ignore[import]  # noqa: PLC0415
+        from PIL import Image  # noqa: PLC0415
+
+        pillow_heif.register_heif_opener()
+        with Image.open(path) as im:
+            if im.width * im.height > 25_000_000:
+                log.warning(
+                    "image_alpha_probe_oversized",
+                    path=os.path.basename(path),
+                    width=im.width,
+                    height=im.height,
+                )
+                return False
+            if "A" not in im.getbands() and "transparency" not in im.info:
+                return False
+            if "A" in im.getbands():
+                alpha = im.getchannel("A")
+            else:
+                alpha = im.convert("RGBA").getchannel("A")
+            min_alpha, _max_alpha = alpha.getextrema()
+            return min_alpha < 255
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def render_video_to_clip(
@@ -188,15 +232,10 @@ def render_video_to_clip(
     # Force "unknown"/exotic input metadata to bt709 SDR. This is what
     # reframe.py's colorspace filter cannot do for arib-std-b67 or
     # unknown-primaries clips.
-    setparams = (
-        "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
-    )
+    setparams = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709"
 
     if aspect_ratio == "16:9":
-        scale_pad = (
-            f"scale=-2:{height},"
-            f"crop={width}:{height}"
-        )
+        scale_pad = f"scale=-2:{height},crop={width}:{height}"
     else:
         # 9:16 input or unknown — fit into the canvas, pad with black.
         scale_pad = (
@@ -208,24 +247,41 @@ def render_video_to_clip(
 
     cmd = [
         "ffmpeg",
-        "-ss", f"{start_s:.3f}",
-        "-t", f"{duration_s:.3f}",
-        "-i", input_path,
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "ultrafast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-b:v", settings.output_video_bitrate,
-        "-maxrate", settings.output_video_bitrate,
-        "-bufsize", "8M",
-        "-r", str(fps),
+        "-ss",
+        f"{start_s:.3f}",
+        "-t",
+        f"{duration_s:.3f}",
+        "-i",
+        input_path,
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-b:v",
+        settings.output_video_bitrate,
+        "-maxrate",
+        settings.output_video_bitrate,
+        "-bufsize",
+        "8M",
+        "-r",
+        str(fps),
         "-an",  # audio is mixed in later from the music track
-        "-movflags", "+faststart",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -241,9 +297,7 @@ def render_video_to_clip(
     result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
     if result.returncode != 0:
         stderr_tail = result.stderr.decode("utf-8", errors="replace")[-800:]
-        raise ImageClipError(
-            f"FFmpeg video→clip failed (rc={result.returncode}): {stderr_tail}"
-        )
+        raise ImageClipError(f"FFmpeg video→clip failed (rc={result.returncode}): {stderr_tail}")
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise ImageClipError(f"FFmpeg produced empty output: {output_path}")
 
@@ -262,8 +316,10 @@ def normalize_to_jpeg(input_path: str, output_path: str) -> None:
         return
     cmd = [
         "ffmpeg",
-        "-i", input_path,
-        "-q:v", "2",
+        "-i",
+        input_path,
+        "-q:v",
+        "2",
         "-y",
         output_path,
     ]
@@ -273,3 +329,45 @@ def normalize_to_jpeg(input_path: str, output_path: str) -> None:
         raise ImageClipError(
             f"FFmpeg image normalize failed (rc={result.returncode}): {stderr_tail}"
         )
+
+
+def normalize_to_png(input_path: str, output_path: str | None = None) -> tuple[str, bool]:
+    """Convert image uploads to PNG while preserving alpha when FFmpeg can.
+
+    Existing PNGs are passed through by path. If conversion fails, fall back to
+    the existing JPEG flatten path and return that JPEG path with alpha_preserved
+    set to False.
+    """
+    if input_path.lower().endswith(".png"):
+        return input_path, True
+
+    if output_path is None:
+        root, _ext = os.path.splitext(input_path)
+        output_path = f"{root}.png"
+
+    cmd = [
+        "ffmpeg",
+        "-i",
+        input_path,
+        "-frames:v",
+        "1",
+        "-update",
+        "1",
+        "-y",
+        output_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=60, check=False)
+    if result.returncode == 0:
+        return output_path, True
+
+    root, _ext = os.path.splitext(output_path)
+    fallback_path = f"{root}.jpg"
+    stderr_tail = result.stderr.decode("utf-8", errors="replace")[-500:]
+    log.warning(
+        "image_png_normalize_fallback",
+        input=os.path.basename(input_path),
+        output=os.path.basename(output_path),
+        stderr_tail=stderr_tail,
+    )
+    normalize_to_jpeg(input_path, fallback_path)
+    return fallback_path, False

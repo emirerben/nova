@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Glowing keyword text.** Burned text overlays can now carry a colored outer glow (`glow_color` + `glow_strength` on the burn dict) — a soft halo drawn behind the glyphs, matching the yellow glowing-keyword look in reference explainer edits. Absent fields render byte-identically; Skia renderer only.
+## [0.7.20.0] — 2026-07-11
+
+### Added
+- **Caption position control.** Captioned edits (talk-to-camera and voiceover) can now place captions low, middle, or high on the frame; the choice sticks across caption edits, font changes, and re-transcribes. Behind `NEXT_PUBLIC_CAPTION_POSITION_ENABLED`.
+
+### Fixed
+- `tsc --noEmit` was red on main: the Playwright e2e specs imported `@playwright/test` without it being declared; it is now a devDependency.
+## [0.7.19.0] — 2026-07-11
+
+### Added
+- **Transparent sticker overlays.** Image overlay cards with real transparency (mascot cutouts, badges) now composite with clean edges instead of opaque black rectangles, behind the `MEDIA_OVERLAY_ALPHA_ENABLED` flag (default off; off is byte-identical). Alpha applies to pip cards only — fullscreen cutaways still flatten, and video cards are unaffected.
+
+### Changed
+- Pool-asset analysis records whether an image has transparency (`has_alpha`, analysis v4). Only image analyses re-run to pick the field up — existing video analyses stay valid, so no re-analysis wave.
 
 ## [0.7.18.0] — 2026-07-11
 
