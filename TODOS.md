@@ -8,6 +8,17 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Generative photos — re-plan (PR #476 closed 2026-07-11)
+
+### Photo support in generative edits (re-plan against current stack)
+**What:** Let users include photos (stills) in generative edits — pacing, Ken-Burns-style motion or static holds, and slot assembly for mixed photo/video clip pools.
+**Why:** Real creator footage is photo-heavy; today photos are rejected or mishandled by the clip pipeline. PR #476 (June 7) built this against a pre-format-aware stack and drifted 140 commits behind — closed as unlandable, but the demand stands.
+**How:** Re-plan rather than rebase: the agent stack has since gained format-aware edit intents, editorial sequences, and clip_metadata parse-threading (new fields must be threaded into parse() explicitly). Use branch `feat/generative-photos-2026-06-07` as the reference implementation for the photo_pacing agent shape and upload handling; re-derive the assembler integration from `docs/pipelines/generative.md` as it exists now.
+**Effort:** L (human: ~1w / CC+Codex: ~1-2 days)
+**Priority:** P2
+**Depends on:** nothing hard; benefits from the format-aware Lane D dispatch work if it lands first.
+
+
 ## Landscape-fit — Follow-ups (from PR landscape-fit-2026-06-26, v0.5.3.0)
 
 ### ~~T-LANDSCAPE-1 — Show Fit/Fill toggle even after first render~~ ✓ SHIPPED
