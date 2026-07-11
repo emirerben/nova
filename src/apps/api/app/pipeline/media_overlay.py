@@ -4,6 +4,9 @@ Composites timed, positioned image/video "cards" on top of a finished variant
 video. The pass runs AFTER the initial render (including text burn), so cards
 appear above captions — z-order is automatic.
 
+Alpha transparency is supported for IMAGE pip cards only. Video cards (including
+VP9/HEVC alpha sources) composite opaque, and fullscreen cards always flatten.
+
 FFmpeg approach:
 - Generalizes `talking_head_assembler.build_talking_head_command` (video-over-video)
   and `text_overlay_skia._ffmpeg_burn_pngs` (PNG-over-video) by adding:
@@ -48,7 +51,13 @@ from app.agents._schemas.media_overlay import (
     MediaOverlay,
     validate_overlay_gcs_path,
 )
-from app.pipeline.image_clip import is_image_file, normalize_to_jpeg
+from app.config import settings
+from app.pipeline.image_clip import (
+    image_has_alpha,
+    is_image_file,
+    normalize_to_jpeg,
+    normalize_to_png,
+)
 from app.pipeline.reframe import _encoding_args
 
 log = structlog.get_logger()
@@ -86,6 +95,7 @@ def build_media_overlay_command(
     card_local_paths: list[str],
     card_widths_px: list[int],
     output_path: str,
+    card_has_alpha: list[bool] | None = None,
     force_veryfast: bool = False,
 ) -> list[str]:
     """Build the ffmpeg command to composite media-overlay cards on top of a video.
@@ -110,7 +120,9 @@ def build_media_overlay_command(
     with LITERAL preset constants so the encoder-policy AST gate can attribute
     both branches to this module.
     """
-    assert len(cards) == len(card_local_paths) == len(card_widths_px)
+    if card_has_alpha is None:
+        card_has_alpha = [False] * len(cards)
+    assert len(cards) == len(card_local_paths) == len(card_widths_px) == len(card_has_alpha)
 
     # Sort by z ascending (then stable list order via enumerate).
     ordered = sorted(enumerate(cards), key=lambda t: (t[1].z, t[0]))
@@ -128,6 +140,7 @@ def build_media_overlay_command(
 
     filter_parts: list[str] = []
     prev = "[0:v]"
+    alpha_pips: list[bool] = []
 
     for filter_idx, (orig_idx, card) in enumerate(ordered):
         # ffmpeg input index: 0 = base, 1..N = cards in z-order
@@ -146,6 +159,8 @@ def build_media_overlay_command(
         out_label = f"ov{filter_idx}"
         local = card_local_paths[orig_idx]
         is_fullscreen = card.display_mode == "fullscreen"
+        alpha_pip = bool(card_has_alpha[orig_idx]) and not is_fullscreen
+        alpha_pips.append(alpha_pip)
 
         # Build the per-card filter chain.
         card_filter_parts: list[str] = []
@@ -180,9 +195,11 @@ def build_media_overlay_command(
         else:
             # Scale to card width; -2 rounds height to nearest even number so
             # yuv420p chroma subsampling doesn't misinterpret odd dimensions.
-            # format=yuv420p normalises pixel format before the overlay compositor
-            # to prevent implicit BT.601/709 colour-space conversions.
-            card_filter_parts.append(f"scale={cw}:-2,format=yuv420p")
+            # Opaque cards keep the legacy yuv420p pre-format. Alpha cards stay
+            # rgba and let overlay perform its internal conversion, matching the
+            # legacy JPEG path's colorimetry.
+            pix_fmt = "rgba" if alpha_pip else "yuv420p"
+            card_filter_parts.append(f"scale={cw}:-2,format={pix_fmt}")
 
         # For video cards: freeze last frame to fill any gap between trim duration
         # and the overlay window. Use a bounded `stop_duration` instead of `stop=-1`
@@ -219,6 +236,10 @@ def build_media_overlay_command(
             f"enable='between(t,{card.start_s:.3f},{card.end_s:.3f})':eof_action=pass[{out_label}]"
         )
         prev = f"[{out_label}]"
+
+    if any(alpha_pips):
+        filter_parts.append(f"{prev}format=yuv420p[finalv]")
+        prev = "[finalv]"
 
     # Mode-dependent encoder policy (module docstring). Two LITERAL call sites
     # on purpose — the encoder-policy AST gate reads constant presets only.
@@ -281,6 +302,7 @@ def apply_media_overlays(
         ready_cards: list[MediaOverlay] = []
         local_paths: list[str] = []
         widths_px: list[int] = []
+        alpha_flags: list[bool] = []
 
         for i, card in enumerate(cards):
             try:
@@ -309,10 +331,23 @@ def apply_media_overlays(
                 continue
 
             if is_image_file(raw_local) or card.kind == "image":
-                # Normalise to JPEG (handles HEIC/WEBP).
-                norm_local = os.path.join(tmpdir, f"card_{i}.jpg")
+                # Normalise to JPEG (handles HEIC/WEBP). Alpha-capable pip
+                # images keep PNG only behind the dedicated kill switch.
+                use_alpha = (
+                    settings.media_overlay_alpha_enabled
+                    and card.display_mode != "fullscreen"
+                    and image_has_alpha(raw_local)
+                )
                 try:
-                    normalize_to_jpeg(raw_local, norm_local)
+                    if use_alpha:
+                        norm_local, alpha_preserved = normalize_to_png(
+                            raw_local,
+                            os.path.join(tmpdir, f"card_{i}.png"),
+                        )
+                    else:
+                        norm_local = os.path.join(tmpdir, f"card_{i}.jpg")
+                        normalize_to_jpeg(raw_local, norm_local)
+                        alpha_preserved = False
                 except Exception as exc:  # noqa: BLE001
                     log.warning(
                         "media_overlay_normalise_failed",
@@ -322,8 +357,10 @@ def apply_media_overlays(
                     )
                     continue
                 local_paths.append(norm_local)
+                alpha_flags.append(use_alpha and alpha_preserved)
             else:
                 local_paths.append(raw_local)
+                alpha_flags.append(False)
 
             ready_cards.append(card)
             widths_px.append(card.card_width_px())
@@ -334,17 +371,17 @@ def apply_media_overlays(
 
         # Validate timing: discard cards with end_s <= start_s (shouldn't happen
         # post-schema-validation, but defensive here too).
-        valid: list[tuple[MediaOverlay, str, int]] = []
-        for card, lp, wp in zip(ready_cards, local_paths, widths_px):
+        valid: list[tuple[MediaOverlay, str, int, bool]] = []
+        for card, lp, wp, has_alpha in zip(ready_cards, local_paths, widths_px, alpha_flags):
             if card.end_s <= card.start_s:
                 log.warning("media_overlay_bad_timing", card_id=card.id, job_id=job_id)
                 continue
-            valid.append((card, lp, wp))
+            valid.append((card, lp, wp, has_alpha))
 
         if not valid:
             raise MediaOverlayError("No cards have valid timing — skipping apply-pass")
 
-        final_cards, final_paths, final_widths = zip(*valid)  # type: ignore[misc]
+        final_cards, final_paths, final_widths, final_alpha_flags = zip(*valid)  # type: ignore[misc]
 
         output_local = os.path.join(tmpdir, "output.mp4")
         fullscreen_pass = _has_fullscreen(list(final_cards))
@@ -360,6 +397,7 @@ def apply_media_overlays(
             list(final_paths),
             list(final_widths),
             output_local,
+            card_has_alpha=list(final_alpha_flags),
         )
         log.info(
             "media_overlay_applying",
@@ -393,6 +431,7 @@ def apply_media_overlays(
                 list(final_paths),
                 list(final_widths),
                 output_local,
+                card_has_alpha=list(final_alpha_flags),
                 force_veryfast=True,
             )
             result = subprocess.run(cmd, capture_output=True, timeout=retry_timeout, check=False)
