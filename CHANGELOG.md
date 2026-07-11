@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.18.0] — 2026-07-11
+
+### Changed
+- **The product is now branded Kria on the shipped website, API, emails, prompts, and admin extension.** The web app uses `https://usekria.com` as its canonical origin, keeps the old Vercel URL as a temporary accepted legacy origin, and ships a rebuilt `kria-extension.zip` package whose manifest allows the new domain.
+
 ## [0.7.17.1] — 2026-07-11
 
 ### Fixed
