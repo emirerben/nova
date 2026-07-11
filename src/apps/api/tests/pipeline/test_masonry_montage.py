@@ -29,6 +29,27 @@ def test_build_masonry_tiles_cycles_uploaded_clips_and_writes_masks(tmp_path) ->
     assert all((tmp_path / f"mask_{t.width}x{t.height}.png").exists() for t in tiles)
 
 
+def test_build_masonry_command_loops_still_images_as_image_inputs(tmp_path) -> None:
+    steps = [types.SimpleNamespace(clip_id="clip_0"), types.SimpleNamespace(clip_id="clip_1")]
+    tiles = build_masonry_tiles(
+        steps=steps,
+        clip_id_to_local={"clip_0": "/tmp/a.jpg", "clip_1": "/tmp/b.mp4"},
+        mask_dir=str(tmp_path),
+        max_tiles=2,
+    )
+    cmd = build_masonry_command(
+        tiles=tiles,
+        output_path="/tmp/out.mp4",
+        duration_s=8.0,
+        board_width=1600,
+    )
+
+    image_idx = cmd.index("/tmp/a.jpg")
+    video_idx = cmd.index("/tmp/b.mp4")
+    assert cmd[image_idx - 5 : image_idx] == ["-loop", "1", "-t", "8.000", "-i"]
+    assert cmd[video_idx - 5 : video_idx] == ["-stream_loop", "-1", "-t", "8.000", "-i"]
+
+
 def test_build_masonry_command_uses_alpha_masks_audio_and_fast_preset(tmp_path) -> None:
     steps = [types.SimpleNamespace(clip_id="clip_0")]
     tiles = build_masonry_tiles(

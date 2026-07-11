@@ -1356,6 +1356,159 @@ def _is_fast_reburn_eligible(
     return True
 
 
+def _is_masonry_audio_only_swap_eligible(existing: dict, new_track_id: str | None) -> bool:
+    """True when a song swap can preserve the rendered masonry visuals exactly."""
+    if new_track_id is None:
+        return False
+    if existing.get("montage_preset_rendered") != MASONRY_MONTAGE_PRESET:
+        return False
+    if not existing.get("video_path"):
+        return False
+    if existing.get("variant_id") == "song_lyrics" or existing.get("text_mode") == "lyrics":
+        return False
+    return existing.get("music_track_id") is not None
+
+
+def _mux_track_audio_preserve_video(
+    *,
+    video_gcs_path: str,
+    track: MusicTrack,
+    output_gcs_path: str,
+    tmpdir: str,
+    label: str,
+) -> str:
+    """Replace a finished video's audio with ``track`` while stream-copying video."""
+    import subprocess  # noqa: PLC0415
+
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+    from app.tasks.template_orchestrate import _probe_duration  # noqa: PLC0415
+
+    if not track.audio_gcs_path:
+        raise ValueError(f"Track {track.id} has no audio_gcs_path")
+
+    video_local = os.path.join(tmpdir, f"{label}_video.mp4")
+    audio_local = os.path.join(tmpdir, f"{label}_audio.m4a")
+    out_local = os.path.join(tmpdir, f"{label}_out.mp4")
+    download_to_file(video_gcs_path, video_local)
+    download_to_file(track.audio_gcs_path, audio_local)
+
+    video_dur = _probe_duration(video_local)
+    if video_dur <= 0:
+        raise ValueError(f"Cannot audio-swap {video_gcs_path}: duration probe failed")
+
+    audio_dur = _probe_duration(audio_local)
+    cfg = track.track_config or {}
+    safe_offset = max(0.0, float(cfg.get("best_start_s", 0.0) or 0.0))
+    if audio_dur > 0 and safe_offset > 0:
+        safe_offset = min(safe_offset, max(0.0, audio_dur - 5.0))
+
+    fade_start = max(0.0, video_dur - 0.5)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_local,
+        "-stream_loop",
+        "-1",
+        *(["-ss", f"{safe_offset:.3f}"] if safe_offset > 0 else []),
+        "-i",
+        audio_local,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-af",
+        f"afade=t=out:st={fade_start:.3f}:d=0.5,loudnorm=I={settings.output_target_lufs}:TP=-1.5:LRA=11",  # noqa: E501
+        "-t",
+        f"{video_dur:.3f}",
+        "-movflags",
+        "+faststart",
+        out_local,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=180, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace")[-800:]
+        raise RuntimeError(
+            f"masonry audio-only song swap failed (rc={result.returncode}): {stderr}"
+        )
+    if not os.path.exists(out_local) or os.path.getsize(out_local) == 0:
+        raise RuntimeError("masonry audio-only song swap produced empty output")
+    return upload_public_read(out_local, output_gcs_path, content_type="video/mp4")
+
+
+def _run_masonry_audio_only_song_swap(
+    *,
+    job_id: str,
+    variant_id: str,
+    existing: dict,
+    track: MusicTrack,
+    expected_render_gen_id: str | None = None,
+) -> bool:
+    """Fast song swap for masonry variants: video bytes are stream-copied."""
+    from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+
+    token = uuid.uuid4().hex
+    path_fields = (
+        "video_path",
+        "base_video_path",
+        "pre_media_overlay_video_path",
+        "pre_sfx_video_path",
+    )
+    patch: dict[str, Any] = {
+        "music_track_id": track.id,
+        "track_title": track.title,
+        "ok": True,
+        "error": None,
+        "render_error": None,
+        "render_status": "ready",
+        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+    }
+    with tempfile.TemporaryDirectory(prefix="nova_masonry_audio_swap_") as tmpdir:
+        for field in path_fields:
+            source_gcs = existing.get(field)
+            if not source_gcs:
+                continue
+            out_gcs = f"generative-jobs/{job_id}/audio-swap/{variant_id}_{token}_{field}.mp4"
+            signed_url = _mux_track_audio_preserve_video(
+                video_gcs_path=source_gcs,
+                track=track,
+                output_gcs_path=out_gcs,
+                tmpdir=tmpdir,
+                label=field,
+            )
+            patch[field] = out_gcs
+            if field == "video_path":
+                patch["output_url"] = signed_url
+
+    if "video_path" not in patch or "output_url" not in patch:
+        raise ValueError("masonry audio-only song swap missing current video_path")
+
+    if not _update_variant_entry(
+        job_id,
+        variant_id,
+        patch,
+        expected_render_gen_id=expected_render_gen_id,
+        outcome="masonry_audio_swap",
+    ):
+        return False
+
+    record_pipeline_event(
+        "audio_mix",
+        "masonry_audio_only_swap",
+        {"variant_id": variant_id, "track_id": track.id},
+    )
+    _reapply_persisted_sfx_if_any(
+        job_id=job_id,
+        variant_id=variant_id,
+        expected_render_gen_id=expected_render_gen_id,
+    )
+    return True
+
+
 def _run_media_overlay_pass(
     *,
     job_id: str,
@@ -2801,6 +2954,62 @@ def _run_regenerate_variant(
         resolved_size_override_px = int(existing_size_px)
     else:
         resolved_size_override_px = None
+
+    audio_only_song_swap = (
+        _is_masonry_audio_only_swap_eligible(existing, new_track_id)
+        and override_text is None
+        and not remove_text
+        and style_set_id is None
+        and size_override_px is None
+        and mix_override is None
+        and layout_override is None
+        and timeline_override is None
+        and font_family_override is None
+        and effect_override is None
+        and text_color_override is None
+        and cluster_hero_font_override is None
+        and cluster_body_font_override is None
+        and cluster_accent_font_override is None
+        and cluster_hero_size_px_override is None
+        and cluster_body_size_px_override is None
+        and cluster_accent_size_px_override is None
+        and media_overlays_override is None
+        and sfx_override is None
+        and intro_start_s_override is None
+        and intro_end_s_override is None
+    )
+    if audio_only_song_swap and new_track_id is not None:
+        with _sync_session() as db:
+            track = db.get(MusicTrack, new_track_id)
+        if track is None or track.analysis_status != "ready" or not track.audio_gcs_path:
+            raise ValueError(f"Track {new_track_id} is not available for audio-only swap")
+        if not _update_variant_entry(
+            job_id,
+            variant_id,
+            {"render_status": "rendering", "ok": False, "error": None},
+            expected_render_gen_id=render_gen_id,
+            outcome="masonry_audio_swap_start",
+        ):
+            return
+        try:
+            completed = _run_masonry_audio_only_song_swap(
+                job_id=job_id,
+                variant_id=variant_id,
+                existing=existing,
+                track=track,
+                expected_render_gen_id=render_gen_id,
+            )
+            if completed:
+                return
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "masonry_audio_only_swap_fallback_full_render",
+                job_id=job_id,
+                variant_id=variant_id,
+                error=str(exc),
+                exc_info=True,
+            )
 
     if not clip_paths_gcs:
         raise ValueError("Generative job has no clip paths to re-render from")

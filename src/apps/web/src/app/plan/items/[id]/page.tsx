@@ -104,13 +104,17 @@ import { isInstantEditEligible } from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
-import { resolveTextElementsLayout } from "@/lib/overlay-layout";
 import type { EditDraft } from "@/lib/variant-editor/useVariantEditSession";
 import {
   parsePlanItemEditorReturnSignal,
   stripPlanItemEditorReturnParams,
 } from "@/lib/editor-return";
-import { needsFormatPersist, resolvePickerFormat, type PickerEditFormat } from "@/lib/edit-format";
+import {
+  needsFormatPersist,
+  resolvePickerFormat,
+  type PickerEditFormat,
+} from "@/lib/edit-format";
+import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 
 // How long a dispatched render may take to register its Job before we admit
 // failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
@@ -189,6 +193,21 @@ const MONTAGE_PRESET_OPTIONS: { value: "classic" | "masonry"; label: string; des
   { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
 ];
 
+const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
+const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
+
+function uploadContentType(file: File): string {
+  if (file.type) return file.type;
+  const name = file.name.toLowerCase();
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".heic")) return "image/heic";
+  if (name.endsWith(".heif")) return "image/heif";
+  if (name.endsWith(".mov")) return "video/quicktime";
+  return "video/mp4";
+}
+
 function expandContextPrompt(format: PickerEditFormat): string {
   if (format === "narrated_planned") {
     return "What should your voiceover explain, reveal, or make people feel?";
@@ -236,7 +255,7 @@ function CompactPlanSummary({ item }: { item: PlanItem }) {
 // this page) — only the PoolUploadCard-based flows (narrated_ready, talking-to-
 // camera, existing_footage) funnel through handleFiles today.
 function detectLandscapeClip(files: File[]): Promise<boolean> {
-  const checks = files.map(
+  const checks = files.filter((file) => uploadContentType(file).startsWith("video/")).map(
     (file) =>
       new Promise<boolean>((resolve) => {
         const video = document.createElement("video");
@@ -695,6 +714,10 @@ export default function PlanItemPage() {
   const rawEditFormat = item?.edit_format ?? "montage";
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
+  const itemUploadAccept =
+    resolvedFormat === "montage" && montagePreset === "masonry"
+      ? MASONRY_UPLOAD_ACCEPT
+      : VIDEO_UPLOAD_ACCEPT;
   const isNarrated = resolvedFormat === "narrated_planned";
   const isNarratedReady = isNarrated && rawEditFormat === "narrated_ready";
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
@@ -719,7 +742,7 @@ export default function PlanItemPage() {
         itemId,
         list.map((f) => ({
           filename: f.name,
-          content_type: f.type || "video/mp4",
+          content_type: uploadContentType(f),
           file_size_bytes: f.size,
         })),
       );
@@ -1451,6 +1474,7 @@ export default function PlanItemPage() {
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
                   maxClips={1}
+                  accept={itemUploadAccept}
                 />
               </div>
             ) : isNarratedReady ? (
@@ -1473,6 +1497,7 @@ export default function PlanItemPage() {
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
                 />
               </div>
             ) : isInstructed ? (
@@ -1499,6 +1524,7 @@ export default function PlanItemPage() {
                   onKeep={keepUninstructedMatch}
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
                 />
               </>
             )}
@@ -3410,13 +3436,7 @@ function LiveEditPreview({
     return () => el.removeEventListener("timeupdate", onTimeUpdate);
   }, [mountedSrcKind]);
 
-  // N-element preview: use the text_elements array when available (T6).
-  // Each element is positioned by its API-persisted x_frac/y_frac or named
-  // position preset.  Font size scales by the rendered box height via CSS.
-  const textLayouts =
-    !burnedSrc && textElements && textElements.length > 0
-      ? resolveTextElementsLayout(textElements)
-      : null;
+  const hasTextElements = !burnedSrc && Boolean(textElements && textElements.length > 0);
 
   return (
     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-xl border border-zinc-200 bg-zinc-100">
@@ -3453,32 +3473,8 @@ function LiveEditPreview({
         </div>
       )}
       {/* N-element text overlay (T6): shows all text_elements from the API. */}
-      {textLayouts ? (
-        textLayouts.map((layout) => (
-          <div
-            key={layout.id}
-            className="pointer-events-none absolute"
-            style={{
-              left: `${layout.xFrac * 100}%`,
-              top: `${layout.yFrac * 100}%`,
-              transform: "translate(-50%, -50%)",
-              textAlign: layout.alignment,
-              color: layout.color,
-              // Scale from 1920-px canvas to the 9:16 preview box via vH-equivalent.
-              // The preview box is aspect-[9/16]; its height drives the font scale.
-              fontSize: `${(layout.sizePx / 1920) * 100}cqh`,
-              fontFamily: `"${layout.fontFamily}", serif`,
-              fontWeight: 700,
-              lineHeight: 1.15,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
-              maxWidth: "90%",
-              textShadow: "0 2px 8px rgba(0,0,0,0.7)",
-            }}
-          >
-            {layout.text}
-          </div>
-        ))
+      {hasTextElements && textElements ? (
+        <TextElementOverlayLayer elements={textElements} />
       ) : (
         // Legacy single-element preview: driven by the instant-editor draft.
         !burnedSrc && (
@@ -4011,6 +4007,7 @@ function PoolUploadCard({
   onRemove,
   onNoteChange,
   maxClips,
+  accept = VIDEO_UPLOAD_ACCEPT,
 }: {
   clips: ClipAssignment[];
   uploading: boolean;
@@ -4020,6 +4017,7 @@ function PoolUploadCard({
   onNoteChange: (a: ClipAssignment, note: string) => Promise<void>;
   /** Hard cap on clip count (subtitled = 1). Undefined → unlimited (montage pool). */
   maxClips?: number;
+  accept?: string;
 }) {
   const atCap = maxClips != null && clips.length >= maxClips;
   return (
@@ -4083,7 +4081,7 @@ function PoolUploadCard({
           <span className="sr-only">Upload video clips for this idea</span>
           <input
             type="file"
-            accept="video/mp4,video/quicktime"
+            accept={accept}
             multiple={maxClips !== 1}
             disabled={uploading}
             onChange={(e) => onFiles(e.target.files)}
