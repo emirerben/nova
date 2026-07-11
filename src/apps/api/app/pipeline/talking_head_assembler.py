@@ -14,6 +14,25 @@ encoder policy (`_encoding_args`, preset="fast"), the CFR-normalised reframe
 output, and the loudnorm/aresample tail from `intro_voiceover_mix`. The montage
 and music beat-snap paths are untouched.
 
+Assembly flow (plans/010 T6 added the silence-cut stage; SPINE ONLY — b-roll is
+never cut, and every cut-stage failure falls OPEN to the uncut flow below):
+
+    clip_paths + clip_metas ─▶ select_spine (speech_coverage + Lane A labels)
+                                    │ spine + ordered b-roll
+                                    ▼
+    [silence_cut_fn set] spine pre-cap (≤ min(max(2×target, 120s), 300s))
+                       → transcribe + silencedetect → CutPlan     (plans/010)
+                                    │ keep_segments in the capped spine window
+                                    ▼
+    reframe spine (keep_segments + alternating punch-in when a plan applies)
+    reframe each b-roll (unchanged — never cut)
+                                    │ re-probe CUT spine → usable_s
+                                    ▼
+    schedule_broll(usable_s, broll, anchors=cut points in the CUT timeline)
+                                    │ windows bias onto cuts to conceal them
+                                    ▼
+    build_talking_head_command → ONE FFmpeg composite + spine-audio loudnorm mux
+
 Scope (Lane C): pure pipeline module. It is NOT wired into the generative
 orchestrator dispatch — that is Lane D. Lane D resolves `edit_format` against the
 footage, calls `assemble_talking_head`, and on `SpineExtractionError` degrades to
@@ -27,12 +46,15 @@ from __future__ import annotations
 
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 import structlog
 
 from app.pipeline.probe import probe_video
 from app.pipeline.reframe import _encoding_args, reframe_and_export, resolve_output_fit
+from app.pipeline.silence_cut import KEEP_SEGMENTS_PUNCH_IN, plan_event_payload, plan_summary
 from app.services.clip_speech import speech_coverage
 from app.services.pipeline_trace import record_pipeline_event
 
@@ -65,6 +87,13 @@ _MIN_WINDOW_S = 0.5  # drop sub-0.5s windows (perceived as a flicker, not a cut)
 _OUTPUT_LUFS = -14.0
 _OUTPUT_SAMPLE_RATE = 48000  # loudnorm upsamples to 192k; without this AAC picks
 #                              96k → wrong-pitch playback on some browsers.
+
+# Spine silence-cut pre-cap bounds (plans/010 14A / outside voice #9): detection
+# + cutting operate on at most min(max(2×target, MIN), MAX) seconds of spine.
+# MAX mirrors subtitled's 300s clip budget and keeps the 16 kHz mono analysis
+# WAV (~9.6 MB at 300s) safely under whisper-1's 25 MB upload limit.
+_SPINE_CUT_CAP_MIN_S = 120.0
+_SPINE_CUT_CAP_MAX_S = 300.0
 
 
 class TalkingHeadAssemblyError(Exception):
@@ -152,13 +181,134 @@ def select_spine(
     return SpineSelection(spine_clip_id=chosen, spine_score=score, broll_clip_ids=broll)
 
 
-def schedule_broll(usable_s: float, broll: list[BrollSource]) -> list[BrollWindow]:
+def spine_cut_cap_s(target_duration_s: float | None) -> float:
+    """Spine silence-cut working-window cap (plans/010 14A / outside voice #9).
+
+    ``min(max(target × 2, 120s), 300s)``. No target (None/0 → full spine today)
+    falls back to the 300s maximum — subtitled's clip budget precedent. The cap
+    bounds DETECTION + CUTTING only; when the cut stage does not apply, the
+    spine renders full-length exactly as today (fail-open).
+    """
+    if not target_duration_s or float(target_duration_s) <= 0:
+        return _SPINE_CUT_CAP_MAX_S
+    return min(max(float(target_duration_s) * 2.0, _SPINE_CUT_CAP_MIN_S), _SPINE_CUT_CAP_MAX_S)
+
+
+def _extract_capped_audio(src_path: str, cap_s: float, wav_path: str) -> None:
+    """First ``cap_s`` seconds of audio as 16 kHz mono WAV (whisper-native).
+
+    A precise ``-t`` re-encode, NOT a stream copy — keyframe-snapped copies can
+    overshoot the cap and push keep_segments past the reframe window's bounds.
+    Timestamps in the WAV are identical to the source clip's first ``cap_s``
+    seconds, so the CutPlan applies directly to the original spine.
+    """
+    cmd = [
+        "ffmpeg",
+        "-i",
+        src_path,
+        "-t",
+        f"{cap_s:.3f}",
+        "-vn",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        "-y",
+        wav_path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, timeout=300, check=False)
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace")[-300:]
+        raise TalkingHeadAssemblyError(f"spine pre-cap audio extraction failed: {stderr}")
+
+
+def _spine_silence_cut_plan(
+    *,
+    spine_path: str,
+    spine_dur: float,
+    spine_probe: object | None,
+    target_duration_s: float | None,
+    tmpdir: str,
+    silence_cut_fn: Callable[..., dict[str, Any]],
+    job_id: str | None,
+) -> tuple[Any, float, int]:
+    """Spine silence-cut ANALYSIS (plans/010 T6): gates → pre-cap → shared analysis.
+
+    Returns ``(plan | None, analysis_duration_s, retake_span_count)``. Every
+    gate and failure returns ``(None, …)`` — the caller renders today's uncut
+    flow (fail-open; the stage may shorten the video, never fail the job).
+    Same gates + events as the subtitled path: the ``has_audio`` probe gate
+    fires BEFORE any ASR (eng review 3A — whisper on injected digital silence
+    hallucinates plausible words).
+    """
+    has_audio = getattr(spine_probe, "has_audio", None)
+    if has_audio is None:
+        try:
+            has_audio = bool(probe_video(spine_path).has_audio)
+        except Exception as exc:  # noqa: BLE001 — probe failure ⇒ skip the stage, render uncut
+            log.warning("talking_head_spine_cut_probe_failed", job_id=job_id, error=str(exc))
+            return None, spine_dur, 0
+    if not has_audio:
+        record_pipeline_event(
+            "silence_cut", "silence_cut_skipped_no_audio", {"variant_id": "talking_head"}
+        )
+        return None, spine_dur, 0
+
+    # Spine pre-cap (14A): bound the working window BEFORE detection so the
+    # analysis WAV stays under whisper-1's 25 MB limit. A spine shorter than
+    # the cap analyzes the original clip directly — nothing changes.
+    #
+    # Job-scoped cache key (review P1): the capped analysis WAV lives under the
+    # VARIANT tmpdir, so keying the shared per-job cache by the WAV path would
+    # make a second cut-capable variant cache-miss and re-pay whisper + the
+    # retake LLM. Key by ORIGINAL spine path + cap instead — stable across
+    # variants, distinct across caps. Uncapped analyses pass the spine path
+    # itself (the same value the path-keyed cache used; explicit for symmetry).
+    # The WAV may stay under the variant tmpdir: it is consumed only during the
+    # first compute; later hits read the cached entry. Its double audio-extract
+    # (source → 16k mono WAV, then transcribe re-extracts 16k mono from it) is
+    # an accepted cost — a precise -t re-encode is what bounds the window.
+    cap = spine_cut_cap_s(target_duration_s)
+    analysis_dur = min(float(spine_dur), cap)
+    analysis_path = spine_path
+    cache_key = spine_path
+    if float(spine_dur) > cap:
+        cache_key = f"{spine_path}::cap={cap:.1f}"
+        analysis_path = f"{tmpdir}/spine_cut_analysis_{_safe_stem(spine_path)}.wav"
+        try:
+            _extract_capped_audio(spine_path, cap, analysis_path)
+        except Exception as exc:  # noqa: BLE001 — pre-cap failure ⇒ uncut flow
+            log.warning("talking_head_spine_precap_failed", job_id=job_id, error=str(exc)[:200])
+            record_pipeline_event(
+                "silence_cut", "silence_cut_analysis_failed", {"error": str(exc)[:200]}
+            )
+            return None, spine_dur, 0
+
+    entry = silence_cut_fn(analysis_path, analysis_dur, cache_key=cache_key)
+    if not isinstance(entry, dict) or entry.get("failed") or entry.get("plan") is None:
+        return None, analysis_dur, 0
+    return entry["plan"], analysis_dur, int(entry.get("retake_span_count") or 0)
+
+
+def schedule_broll(
+    usable_s: float, broll: list[BrollSource], anchors: list[float] | None = None
+) -> list[BrollWindow]:
     """Lay B-roll cutaways across the spine at a fixed even cadence.
 
     Each B-roll clip gets one evenly-spaced window after a lead-in. Window length
     is clamped to the clip's own source duration, to its segment (no overlap), and
     to the remaining timeline. Windows that would start at/after `usable_s` are
     dropped. Returns [] for no B-roll or a non-positive timeline (→ spine-only).
+
+    ``anchors`` (plans/010 T6, 12A / outside voice #7): optional silence-cut
+    positions in the CUT spine timeline. Each window keeps today's slot and
+    length but SLIDES within its slot to cover the nearest uncovered anchor —
+    a cutaway playing over a jump cut conceals it. Cadence, lead-in, min/max
+    window and window count are unchanged; anchors no window can legally cover
+    are simply left uncovered (no forcing). ``None``/``[]`` ⇒ byte-identical
+    to the anchor-less schedule.
     """
     if not broll or usable_s <= 0:
         return []
@@ -166,24 +316,47 @@ def schedule_broll(usable_s: float, broll: list[BrollSource]) -> list[BrollWindo
     if span <= _MIN_WINDOW_S:
         return []  # spine too short to cut away into — show the speaker alone
 
+    # Coverable anchors only: a cut inside the lead-in (windows can't start
+    # earlier) or at/after the trim boundary has no legal covering window.
+    pending = sorted(float(a) for a in (anchors or []) if _LEAD_IN_S <= float(a) < usable_s)
+
     n = len(broll)
     seg = span / n
     windows: list[BrollWindow] = []
     for i, b in enumerate(broll):
-        start = _LEAD_IN_S + i * seg
-        if start >= usable_s:
+        slot_lo = _LEAD_IN_S + i * seg
+        if slot_lo >= usable_s:
             break
-        length = min(_MAX_WINDOW_S, b.source_dur_s, seg, usable_s - start)
+        length = min(_MAX_WINDOW_S, b.source_dur_s, seg, usable_s - slot_lo)
         if length < _MIN_WINDOW_S:
             continue
+        start = slot_lo  # anchor-less cadence position (regression-pinned)
+        if pending:
+            # The window may slide within its own slot: [slot_lo, max_start].
+            # length ≤ seg and ≤ usable_s − slot_lo, so max_start ≥ slot_lo.
+            max_start = min(slot_lo + seg, usable_s) - length
+            coverable = [a for a in pending if slot_lo <= a <= max_start + length]
+            if coverable:
+                target = coverable[0]  # nearest uncovered anchor (all sit ≥ slot_lo)
+                # Center the anchor inside the window when the slot allows;
+                # clamp into [max(slot_lo, target−length), min(max_start, target)]
+                # which is never empty and always keeps start ≤ target ≤ end.
+                lo_f = max(slot_lo, target - length)
+                hi_f = min(max_start, target)
+                start = min(max(target - length / 2.0, lo_f), hi_f)
+        start_r = round(start, 3)
+        end_r = round(start + length, 3)
         windows.append(
             BrollWindow(
                 clip_id=b.clip_id,
                 reframed_path=b.reframed_path,
-                start_s=round(start, 3),
-                end_s=round(start + length, 3),
+                start_s=start_r,
+                end_s=end_r,
             )
         )
+        if pending:
+            # Anything this window covers (the target + incidentals) is done.
+            pending = [a for a in pending if not (start_r - 1e-6 <= a <= end_r + 1e-6)]
     return windows
 
 
@@ -263,6 +436,8 @@ def assemble_talking_head(
     job_id: str | None = None,
     spine_clip_id: str | None = None,
     landscape_fit: str = "fill",
+    silence_cut_fn: Callable[..., dict[str, Any]] | None = None,
+    silence_cut_out: dict[str, Any] | None = None,
 ) -> str:
     """Render a talking-head edit: spine audio under B-roll cutaways.
 
@@ -277,6 +452,19 @@ def assemble_talking_head(
         job_id: for log context; pipeline_trace events are bound by the caller's
             `pipeline_trace_for(job_id)` block (Lane D), no-op without one.
         spine_clip_id: explicit spine override (user "set as spine" action).
+        silence_cut_fn: optional ``(analysis_path, duration_s, *, cache_key=None)
+            → analysis entry`` hook (the caller wraps
+            ``generative_build._silence_cut_analysis`` so the per-job cache +
+            retake wiring stay in the tasks layer); ``cache_key`` is the
+            job-stable cache identity (original spine path [+ cap]). When set,
+            the SPINE gets the plans/010 silence/filler/retake cut: pre-cap →
+            analyze → ``reframe(keep_segments + punch-in)`` → re-probed
+            ``usable_s`` → b-roll windows anchored onto the cut points. B-roll
+            is never cut. None (the kill-switch/gated path) ⇒ byte-identical to
+            the pre-T6 flow; every cut-stage failure also falls open to it.
+        silence_cut_out: optional dict the assembler fills with
+            ``{"summary": {removed, time_saved_s, version}}`` when a non-bailout
+            plan was produced — the caller persists it on the variant.
 
     Returns:
         output_path on success.
@@ -307,23 +495,121 @@ def assemble_talking_head(
         raise SpineExtractionError(f"spine clip {selection.spine_clip_id} has no usable duration")
     usable_s = min(spine_dur, target_duration_s) if target_duration_s else spine_dur
 
+    # ── Spine silence-cut analysis (plans/010 T6) — SPINE ONLY, fail-open. ──
+    sc_plan = None
+    sc_analysis_dur = spine_dur
+    sc_retake_count = 0
+    sc_apply_error: str | None = None
+    if silence_cut_fn is not None:
+        sc_plan, sc_analysis_dur, sc_retake_count = _spine_silence_cut_plan(
+            spine_path=spine_path,
+            spine_dur=spine_dur,
+            # probe_map is path-keyed in prod (_probe_clips); the clip_id lookup
+            # is a defensive mirror of _duration's keying.
+            spine_probe=(probe_map or {}).get(spine_path)
+            or (probe_map or {}).get(selection.spine_clip_id),
+            target_duration_s=target_duration_s,
+            tmpdir=tmpdir,
+            silence_cut_fn=silence_cut_fn,
+            job_id=job_id,
+        )
+    sc_apply = (
+        sc_plan is not None
+        and sc_plan.bailout_reason is None
+        and bool(sc_plan.removed)
+        and bool(sc_plan.keep_segments)
+    )
+
     spine_reframed = f"{tmpdir}/spine_{_safe_stem(selection.spine_clip_id)}.mp4"
     # probe_map is keyed by local file path (from _probe_clips), not by clip_id.
     spine_probe = (probe_map or {}).get(spine_path)
-    try:
+
+    def _reframe_spine(end_s: float, cut_kwargs: dict[str, Any]) -> None:
         reframe_and_export(
             spine_path,
             0.0,
-            spine_dur,
+            end_s,
             _ASPECT,
             None,
             spine_reframed,
             output_fit=resolve_output_fit(spine_probe, landscape_fit=landscape_fit),
+            **cut_kwargs,
         )
+
+    try:
+        if sc_apply:
+            # The cut executes INSIDE the reframe (13A): keep_segments live in
+            # the pre-capped window [0, sc_analysis_dur]; the punch factor is
+            # silence_cut's user-approved constant — never a literal here.
+            _reframe_spine(
+                sc_analysis_dur,
+                {
+                    "keep_segments": sc_plan.keep_segments,
+                    "keep_segments_punch_in": KEEP_SEGMENTS_PUNCH_IN,
+                },
+            )
+        else:
+            _reframe_spine(spine_dur, {})
     except Exception as exc:  # noqa: BLE001 — ReframeError or any probe/IO failure degrades
-        raise SpineExtractionError(
-            f"failed to reframe spine clip {selection.spine_clip_id}: {exc}"
-        ) from exc
+        if not sc_apply:
+            raise SpineExtractionError(
+                f"failed to reframe spine clip {selection.spine_clip_id}: {exc}"
+            ) from exc
+        # ffmpeg CUT failure falls back to the uncut spine (plans/010 failure
+        # table) — the cut stage may never turn a renderable job into a montage
+        # degrade. Only an UNCUT failure is a real spine-extraction signal.
+        sc_apply = False
+        sc_apply_error = str(exc)[:200]
+        log.warning("talking_head_spine_cut_apply_failed", job_id=job_id, error=sc_apply_error)
+        try:
+            _reframe_spine(spine_dur, {})
+        except Exception as exc2:  # noqa: BLE001
+            raise SpineExtractionError(
+                f"failed to reframe spine clip {selection.spine_clip_id}: {exc2}"
+            ) from exc2
+
+    # ── Cut applied: usable_s derives from the CUT spine (re-probe; plan
+    # arithmetic is the fallback), and each removal becomes a b-roll anchor at
+    # its position in the cut timeline (start minus removed-time-before-it). ──
+    anchors: list[float] | None = None
+    if sc_apply:
+        kept_s = sum(b - a for a, b in sc_plan.keep_segments)
+        try:
+            cut_dur = float(probe_video(spine_reframed).duration_s) or kept_s
+        except Exception as exc:  # noqa: BLE001 — fall back to exact plan arithmetic
+            log.warning("talking_head_cut_spine_probe_failed", job_id=job_id, error=str(exc))
+            cut_dur = kept_s
+        usable_s = min(cut_dur, target_duration_s) if target_duration_s else cut_dur
+        anchors = []
+        removed_before = 0.0
+        for r in sc_plan.removed:
+            anchors.append(round(r.start_s - removed_before, 3))
+            removed_before += r.end_s - r.start_s
+
+    if sc_plan is not None and sc_plan.bailout_reason is None:
+        # Same persistence contract as the subtitled path (shared helpers, M2):
+        # non-bailout plans (zero-removal included — "nothing to cut" is
+        # information) emit the plan event; bailouts are event-only upstream in
+        # the analysis. A plan whose APPLY failed is event-only too (the video
+        # shipped uncut, so a persisted removed[] would lie to the admin
+        # cut-plan viewer).
+        extra: dict[str, Any] = {"broll_anchors": len(anchors or [])}
+        if sc_apply_error is not None:
+            extra["apply_error"] = sc_apply_error
+        record_pipeline_event(
+            "silence_cut",
+            "silence_cut_plan",
+            plan_event_payload(
+                sc_plan,
+                variant_id="talking_head",
+                retake_spans=sc_retake_count,
+                applied=sc_apply,
+                cut_reused=False,
+                extra=extra,
+            ),
+        )
+        if sc_apply_error is None and silence_cut_out is not None:
+            silence_cut_out["summary"] = plan_summary(sc_plan, original_duration_s=sc_analysis_dur)
 
     # ── B-roll: reframe each; a failure drops that clip (best-effort). ──
     broll_sources: list[BrollSource] = []
@@ -353,7 +639,7 @@ def assemble_talking_head(
             continue
         broll_sources.append(BrollSource(clip_id=cid, reframed_path=reframed, source_dur_s=dur))
 
-    windows = schedule_broll(usable_s, broll_sources)
+    windows = schedule_broll(usable_s, broll_sources, anchors=anchors)
     record_pipeline_event(
         "assembly",
         "broll_scheduled",

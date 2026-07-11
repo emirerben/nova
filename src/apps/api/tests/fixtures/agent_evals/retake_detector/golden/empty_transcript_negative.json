@@ -1,0 +1,15 @@
+{
+  "agent": "nova.audio.retake_detector",
+  "prompt_version": "1",
+  "input": {
+    "words": [],
+    "language": ""
+  },
+  "raw_text": "{\"retakes\": []}",
+  "output": {"retakes": []},
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_empty": true,
+    "case": "Empty transcript NEGATIVE: no words at all (silent or music-only clip). Must return an empty list — and normalize_retake_spans drops ANY span on a <2-word transcript, so even a hallucinated span could not survive parse()."
+  }
+}
