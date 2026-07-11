@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.10.0] — 2026-07-11
+## [0.7.12.0] — 2026-07-11
 
 ### Added
 - **Media overlays are now editable by touch.** Tapping an overlay card opens its editor (previously dead on phones — touch taps were misread as drags), moving and trimming overlays works with your finger, and very small cards degrade gracefully on touch screens: edge handles hide and a tap opens the editor where timing can be typed precisely. Vertical swipes over the timeline still scroll the page.
@@ -12,6 +12,47 @@ All notable changes to this project will be documented in this file.
 ### Fixed
 - On desktop, small overlay cards keep their slim trim handles — clicking a short overlay opens/moves it as before (touch-sized handles apply only to touch screens).
 - Scrolling the page with a finger over an overlay card no longer opens its editor as a side effect.
+
+## [0.7.11.0] — 2026-07-11
+
+### Added
+- **The clip trim editor now works on phones.** Every trim gesture (start, end, whole-range, source in/out) responds to touch: handles have 44px hit areas with slim visual grips, a floating readout shows In/Out/Duration while your thumb covers the handle, and ±0.1s nudge steppers (±1 beat on beat-synced edits) make fine trims possible on a small screen. Dragging never hijacks page scroll — vertical swipes still scroll, horizontal drags on handles trim.
+- **Mobile layout for the trim editor:** below tablet width the preview video sits pinned above a full-width timeline (no more squeezed rail), with no horizontal page overflow at 375px.
+
+### Changed
+- The trim editor now matches the light editorial design system (cream/ink/lime) instead of the old dark styling, and failed saves show a quiet plain-language notice instead of red error text.
+
+### Fixed
+- Undo after a trim drag now restores the pre-drag value (history recorded at gesture start, one entry per gesture).
+- Trim handles no longer overlap neighboring clips' bars; short clips split the shared zone at the midpoint.
+
+## [0.7.10.1] — 2026-07-11
+
+### Fixed
+- **Full-tree pytest no longer inherits the developer's real `.env`.** `scripts/diff_lyric_sync.py` merged the nearest `.env` into `os.environ` at import time; full-tree collection imports it via its test module, so any pydantic-invalid value on a Settings-typed key (e.g. `GENERATIVE_FAST_REBURN_ENABLED=true   # comment`) failed exactly the 7 tests that build a fresh `Settings()` — in full runs only, never in isolation. The load now happens inside `main()` (CLI behavior unchanged), pinned by `test_import_does_not_mutate_environ`.
+- **`diff_lyric_sync` .env parser now follows dotenv comment semantics.** Inline comments after unquoted values are stripped (`FLAG=true  # note` → `true`), quoted values drop trailing comments and their quotes (`KEY="abc"  # note` → `abc`), `KEY= # note` reads as empty, and `abc#def` keeps its `#` — so a hand-annotated `.env` can no longer poison typed Settings fields or crash the CLI at startup. Pinned by canary lines in `test_main_loads_env_and_strips_inline_comments`.
+## [0.7.9.0] — 2026-07-11
+
+### Added
+- **Automatic silence + filler-sound cutting for speech edits** (behind `SILENCE_CUT_ENABLED`, default off; plans/010). Speech render paths (subtitled + the talking_head spine; narrated self-narration inherits) now auto-tighten pauses and remove filler vocalizations ("uh", "um", "ııı", "eee") — detection = whisper word timings (verbatim-bias prompt) cross-checked against ffmpeg `silencedetect` (pause cuts require silence agreement; whisper end-times drift), applied inside the reframe filtergraph as per-segment trim/concat with 12ms declick fades and an alternating 1.08× punch-in so cuts read as intentional jump-cut style. Captions rebuild from the remapped transcript with fillers stripped. Fail-open by design: any gate/failure renders today's uncut video, never fails the job. Behavior is pinned by a golden test derived from the user-validated reference clip. Music/template/montage paths are structurally excluded (guard test) — cutting would corrupt beat maps.
+- **Retake detection** (behind `RETAKE_CUT_ENABLED`, default off, independent kill switch): a Gemini agent flags abandoned takes ("dur baştan alayım" / "let me start over") as word-index spans, merged into the same cut plan with boundary snapping and shared removal caps; agent failure degrades to zero retake cuts, never blocking silence cutting. Live evals required before the flag flips.
+- **Admin cut-plan viewer**: `/admin/jobs/{id}` renders a per-variant timeline strip of removed ranges (reason-colored bands + legend, hover detail, aria summary, true-timeline scaling via persisted `original_duration_s`) driven by the persisted `variants[i].silence_cut` blob (finalize-whitelist entry + preserve pin).
+- **Per-item opt-out**: `POST /admin/jobs/{id}/silence-cut-disable` (via `scripts/admin.py`) sets `assembly_plan["silence_cut_disabled"]`; the next FULL re-render skips the stage — support's one-item remedy instead of a global flag flip.
+- `reframe_and_export(keep_segments=…)`: per-segment cutting inside the existing filtergraph after CFR normalization (raw phone VFR never sees frame math), declick fades, optional punch-in; pinned byte-identical when unused, plus real-ffmpeg micro-e2e and a 30-cut A/V drift e2e (<40ms).
+- `detect_silences(path, noise_db, min_silence_s)` extracted from `speech_coverage` (which keeps its 0.3s default and byte-identical results — regression-pinned); the cut path uses d=0.1.
+- whisper transcription: optional `verbatim_prompt` passthrough + segment-level `avg_logprob`/`no_speech_prob` mapped onto words (whisper-1 has no per-word confidence — prod quality gates ride segment signals).
+
+### Fixed
+- Turkish sentence-initial fillers ("Iıı,") now match the filler lexicon — Python `lower()` never maps `I→ı`; a Turkish case-fold runs first (English `I`/`It`/`Im` pinned safe).
+- Punch-in on landscape (16:9-input) sources used swapped dims and would abort the concat — punch geometry is always the chain's portrait output now (pinned).
+
+## [0.7.8.2] — 2026-07-11
+
+### Removed
+- **Legacy `/template/[id]` configuration flow.** The old template-config → render-job page and its component chain (`TemplateGrid`, `TemplateTile`, `TemplatePreviewModal`, slot-bound uploads, Google Drive batch import, client-side batch recovery) were unreachable — no page has mounted the template grid since the product moved to the plan/generative flows — and are now deleted (~2,970 lines). The render-status page `/template-jobs/[id]` is unaffected and stays (it backs the admin job views).
+
+### Changed
+- `t-modal` motion token relabeled as an unconsumed pattern template (its last consumer left with the dead route); DESIGN.md §6 updated to match.
 
 ## [0.7.8.1] — 2026-07-10
 

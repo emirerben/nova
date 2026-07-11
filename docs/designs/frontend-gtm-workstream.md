@@ -3,7 +3,7 @@
 > **Owner:** ybyesilyurt
 > **Reviewer:** emirerben
 > **Created:** 2026-03-23
-> **Status:** Ready to start
+> **Status:** Historical — shipped in 2026-03/04; the public `/template` gallery + upload flow it describes was later deleted as dead code in v0.7.8.2 (only `/template-jobs/[id]` remains)
 > **Branch:** Create `dev-frontend-gtm` from `main`
 
 ## TL;DR
