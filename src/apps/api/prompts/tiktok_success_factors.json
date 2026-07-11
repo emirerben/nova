@@ -1,141 +1,190 @@
 {
-  "version": "2026-06-14",
-  "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
-  "factors": [
-    {
-      "id": "hook-first-2s-public-01",
-      "factor": "Earn the first 1-2 seconds — open mid-action or with the payoff in frame, never a slow intro",
-      "why": "Watch-time and early retention are the dominant inputs to the For You ranking; a swipe in the first second is the biggest reach killer",
-      "applies_to": ["hook", "plan"],
-      "provenance": "public",
-      "evidence": "TikTok's own creator guidance repeatedly stresses that the opening seconds decide whether a video is shown to more people",
-      "source": "TikTok Creator Portal — getting discovered / best practices"
-    },
-    {
-      "id": "completion-tight-edit-public-02",
-      "factor": "Cut to the length the story actually needs — remove every dead second so the video gets watched to the end (and re-watched)",
-      "why": "High completion and replays are strong positive signals; padding lowers average watch-time and suppresses reach",
-      "applies_to": ["plan", "hook"],
-      "provenance": "public",
-      "evidence": "Completion rate and re-watches are cited as core engagement signals in TikTok's published creator guidance",
-      "source": "TikTok Creator Portal — understanding the For You feed"
-    },
-    {
-      "id": "saves-shares-utility-public-03",
-      "factor": "Give the viewer a reason to save or send it — make it useful (a save) or relatable (a share)",
-      "why": "Saves and shares weigh heavily as intent signals; 'save this' guides and 'this is so us' relatable posts compound reach beyond likes",
-      "applies_to": ["persona", "plan"],
-      "provenance": "public",
-      "evidence": "TikTok lists shares and saves among the interactions that signal a video is worth showing to more people",
-      "source": "TikTok Creator Portal — engagement signals"
-    },
-    {
-      "id": "cadence-consistency-public-04",
-      "factor": "Post on a steady, sustainable cadence rather than in bursts",
-      "why": "Consistent posting helps the system learn who your audience is and keeps you in rotation; an abandoned account loses momentum fast",
-      "applies_to": ["persona", "plan"],
-      "provenance": "public",
-      "evidence": "Regular posting is a standing recommendation in TikTok's creator best-practice guidance",
-      "source": "TikTok Creator Portal — best practices"
-    },
-    {
-      "id": "trending-sound-early-public-05",
-      "factor": "Ride a trending sound while it is still rising, fitted to the clip's vibe — don't force it",
-      "why": "Trending audio gives short-lived distribution tailwinds; using it early in the trend's life captures the lift before it saturates",
-      "applies_to": ["plan"],
-      "provenance": "public",
-      "evidence": "TikTok's creator and music guidance highlights trending sounds as a discovery lever when they fit the content",
-      "source": "TikTok Creator Portal — sounds & trends"
-    },
-    {
-      "id": "onscreen-text-retention-public-06",
-      "factor": "Put a short on-screen line on the opening frame — a hook in text, not just spoken",
-      "why": "Most feeds autoplay muted; on-screen text holds sound-off viewers and reinforces the hook, lifting retention and accessibility",
-      "applies_to": ["hook"],
-      "provenance": "public",
-      "evidence": "On-screen captions/text are recommended in TikTok's creator guidance to keep sound-off viewers watching",
-      "source": "TikTok Creator Portal — captions & accessibility"
-    },
-    {
-      "id": "feeling-over-place-corpus-01",
-      "factor": "Open on a felt moment ('mornings here hit different'), not a place name or itinerary",
-      "why": "An emotional, borrowable feeling stops the scroll where a literal location label does not",
-      "applies_to": ["hook", "plan"],
-      "provenance": "corpus",
-      "evidence": "In our fetched city-lifestyle set, a feeling-led 'a perfect day' opener indexed ~4x the account's median views (≈28% engagement), well above its literal location posts",
-      "source": "tiktok market research 2026-05 (city-lifestyle account)"
-    },
-    {
-      "id": "milestone-as-growth-corpus-02",
-      "factor": "Frame a milestone as getting braver, not as a stat — show the nerves and the effort, not just the result",
-      "why": "Growth-framed milestones invite the viewer to root for you and project their own goals onto the clip",
-      "applies_to": ["plan", "hook"],
-      "provenance": "corpus",
-      "evidence": "In our fetched solo-travel/fitness set, a '2nd 10k run — getting braver' milestone post indexed ~5x the account median",
-      "source": "tiktok market research 2026-05 (solo-travel account)"
-    },
-    {
-      "id": "confident-launch-corpus-03",
-      "factor": "When something goes live, post a short, confident 'it's live — here's where to get it' to camera",
-      "why": "Decisive launch energy plus a clear destination converts watching supporters into buyers",
-      "applies_to": ["plan"],
-      "provenance": "corpus",
-      "evidence": "In our fetched founder set, a confident 'it's live' launch post indexed ~2.8x the account median at ~6% engagement",
-      "source": "tiktok market research 2026-05 (founder account)"
-    },
-    {
-      "id": "relatable-one-liner-corpus-04",
-      "factor": "A short, universal one-liner over a strong travel/lifestyle clip can massively overperform — say the relatable thing plainly",
-      "why": "A line everyone has felt invites comments and shares, which broadens reach far past the core audience",
-      "applies_to": ["hook"],
-      "provenance": "corpus",
-      "evidence": "In our fetched solo-travel set a single plain, relatable one-liner clip was a >100x-median outlier — rare, but it shows the upside of a universally felt line (treat as upside, not a guarantee)",
-      "source": "tiktok market research 2026-05 (solo-travel account)"
-    },
-    {
-      "id": "implied-question-hook-corpus-05",
-      "factor": "Let your video be the answer to a question the viewer is already asking — caption it as the conclusion, not the premise",
-      "why": "An implied question creates curiosity before a single frame plays; the video becomes the resolution of something the viewer already cares about, driving replays and comments",
-      "applies_to": ["hook"],
-      "provenance": "corpus",
-      "evidence": "In our fetched solo-adventure set, a clip captioned as 'my simplest answer' (the video IS the response to an unasked existential question) indexed ~120x the account median — treat as upside, not a baseline",
-      "source": "tiktok market research 2026-06 (solo-travel account)"
-    },
-    {
-      "id": "humor-extreme-adventure-corpus-06",
-      "factor": "Pair an extreme or high-stakes adventure moment with a single self-deprecating line — the gap between the epic setting and the honest human reaction is the hook",
-      "why": "Self-deprecating humor on otherwise intimidating content lowers the barrier for non-adventurers to engage; they share it because it's how they'd feel, not because they'd do it",
-      "applies_to": ["hook", "plan"],
-      "provenance": "corpus",
-      "evidence": "In our fetched outdoor-adventure set, a raw water-rafting clip with a single humorous caption indexed ~124x the account median at 8.7% engagement",
-      "source": "tiktok market research 2026-06 (solo-travel account)"
-    },
-    {
-      "id": "serial-brand-chapters-corpus-07",
-      "factor": "Break the brand-build journey into named standalone chapters — each video is one decision or milestone, satisfying alone but rewarding for followers of the whole arc",
-      "why": "Serial narrative creates returning viewers without requiring them to have seen previous episodes; each chapter also functions as an entry point for new followers",
-      "applies_to": ["plan"],
-      "provenance": "corpus",
-      "evidence": "In our fetched founder set, five consecutive brand-chapter videos (naming, packaging, launch prep, launch day, live post) all indexed 2–5x the account median — consistent outperformance across the full arc, not just the reveal",
-      "source": "tiktok market research 2026-06 (founder account)"
-    },
-    {
-      "id": "ultrashort-aesthetic-clip-corpus-08",
-      "factor": "For aesthetic lifestyle and fashion content, keep clips to 6-10 seconds — each second past 10 adds friction without adding depth",
-      "why": "Ultra-short clips achieve near-100% completion, feeding the algorithm a strong signal across the full audience; re-watches compound that signal further",
-      "applies_to": ["plan"],
-      "provenance": "corpus",
-      "evidence": "In our fetched city-lifestyle set, the top 5 performers were all 6-13s (median 9s); a 7s morning clip indexed 14x, a 9s city clip 2.75x. Posts over 30s sat below median. Consistent pattern across the full 20-video sample.",
-      "source": "tiktok market research 2026-06 (city-lifestyle account)"
-    },
-    {
-      "id": "event-community-reach-corpus-09",
-      "factor": "Appear at or with a notable community event alongside a brand partner — it spikes views even when engagement is minimal; use it for discovery, not conversion",
-      "why": "Events carry a captive, primed audience; embedding your presence in that moment borrows the event's reach and bypasses the normal cold-start cost on the For You page",
-      "applies_to": ["plan", "persona"],
-      "provenance": "corpus",
-      "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
-      "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
-    }
-  ]
+ "version": "2026-07-11",
+ "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
+ "factors": [
+  {
+   "id": "hook-first-2s-public-01",
+   "factor": "Earn the first 1-2 seconds — open mid-action or with the payoff in frame, never a slow intro",
+   "why": "Watch-time and early retention are the dominant inputs to the For You ranking; a swipe in the first second is the biggest reach killer",
+   "applies_to": [
+    "hook",
+    "plan"
+   ],
+   "provenance": "public",
+   "evidence": "TikTok's own creator guidance repeatedly stresses that the opening seconds decide whether a video is shown to more people",
+   "source": "TikTok Creator Portal — getting discovered / best practices"
+  },
+  {
+   "id": "completion-tight-edit-public-02",
+   "factor": "Cut to the length the story actually needs — remove every dead second so the video gets watched to the end (and re-watched)",
+   "why": "High completion and replays are strong positive signals; padding lowers average watch-time and suppresses reach",
+   "applies_to": [
+    "plan",
+    "hook"
+   ],
+   "provenance": "public",
+   "evidence": "Completion rate and re-watches are cited as core engagement signals in TikTok's published creator guidance",
+   "source": "TikTok Creator Portal — understanding the For You feed"
+  },
+  {
+   "id": "saves-shares-utility-public-03",
+   "factor": "Give the viewer a reason to save or send it — make it useful (a save) or relatable (a share)",
+   "why": "Saves and shares weigh heavily as intent signals; 'save this' guides and 'this is so us' relatable posts compound reach beyond likes",
+   "applies_to": [
+    "persona",
+    "plan"
+   ],
+   "provenance": "public",
+   "evidence": "TikTok lists shares and saves among the interactions that signal a video is worth showing to more people",
+   "source": "TikTok Creator Portal — engagement signals"
+  },
+  {
+   "id": "cadence-consistency-public-04",
+   "factor": "Post on a steady, sustainable cadence rather than in bursts",
+   "why": "Consistent posting helps the system learn who your audience is and keeps you in rotation; an abandoned account loses momentum fast",
+   "applies_to": [
+    "persona",
+    "plan"
+   ],
+   "provenance": "public",
+   "evidence": "Regular posting is a standing recommendation in TikTok's creator best-practice guidance",
+   "source": "TikTok Creator Portal — best practices"
+  },
+  {
+   "id": "trending-sound-early-public-05",
+   "factor": "Ride a trending sound while it is still rising, fitted to the clip's vibe — don't force it",
+   "why": "Trending audio gives short-lived distribution tailwinds; using it early in the trend's life captures the lift before it saturates",
+   "applies_to": [
+    "plan"
+   ],
+   "provenance": "public",
+   "evidence": "TikTok's creator and music guidance highlights trending sounds as a discovery lever when they fit the content",
+   "source": "TikTok Creator Portal — sounds & trends"
+  },
+  {
+   "id": "onscreen-text-retention-public-06",
+   "factor": "Put a short on-screen line on the opening frame — a hook in text, not just spoken",
+   "why": "Most feeds autoplay muted; on-screen text holds sound-off viewers and reinforces the hook, lifting retention and accessibility",
+   "applies_to": [
+    "hook"
+   ],
+   "provenance": "public",
+   "evidence": "On-screen captions/text are recommended in TikTok's creator guidance to keep sound-off viewers watching",
+   "source": "TikTok Creator Portal — captions & accessibility"
+  },
+  {
+   "id": "feeling-over-place-corpus-01",
+   "factor": "Open on a felt moment ('mornings here hit different'), not a place name or itinerary",
+   "why": "An emotional, borrowable feeling stops the scroll where a literal location label does not",
+   "applies_to": [
+    "hook",
+    "plan"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched city-lifestyle set, a feeling-led 'a perfect day' opener indexed ~4x the account's median views (≈28% engagement), well above its literal location posts",
+   "source": "tiktok market research 2026-05 (city-lifestyle account)"
+  },
+  {
+   "id": "milestone-as-growth-corpus-02",
+   "factor": "Frame a milestone as getting braver, not as a stat — show the nerves and the effort, not just the result",
+   "why": "Growth-framed milestones invite the viewer to root for you and project their own goals onto the clip",
+   "applies_to": [
+    "plan",
+    "hook"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched solo-travel/fitness set, a '2nd 10k run — getting braver' milestone post indexed ~5x the account median",
+   "source": "tiktok market research 2026-05 (solo-travel account)"
+  },
+  {
+   "id": "confident-launch-corpus-03",
+   "factor": "When something goes live, post a short, confident 'it's live — here's where to get it' to camera",
+   "why": "Decisive launch energy plus a clear destination converts watching supporters into buyers",
+   "applies_to": [
+    "plan"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched founder set, a confident 'it's live' launch post indexed ~2.8x the account median at ~6% engagement",
+   "source": "tiktok market research 2026-05 (founder account)"
+  },
+  {
+   "id": "relatable-one-liner-corpus-04",
+   "factor": "A short, universal one-liner over a strong travel/lifestyle clip can massively overperform — say the relatable thing plainly",
+   "why": "A line everyone has felt invites comments and shares, which broadens reach far past the core audience",
+   "applies_to": [
+    "hook"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched solo-travel set a single plain, relatable one-liner clip was a >100x-median outlier — rare, but it shows the upside of a universally felt line (treat as upside, not a guarantee)",
+   "source": "tiktok market research 2026-05 (solo-travel account)"
+  },
+  {
+   "id": "implied-question-hook-corpus-05",
+   "factor": "Let your video be the answer to a question the viewer is already asking — caption it as the conclusion, not the premise",
+   "why": "An implied question creates curiosity before a single frame plays; the video becomes the resolution of something the viewer already cares about, driving replays and comments",
+   "applies_to": [
+    "hook"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched solo-adventure set, a clip captioned as 'my simplest answer' (the video IS the response to an unasked existential question) indexed ~120x the account median — treat as upside, not a baseline",
+   "source": "tiktok market research 2026-06 (solo-travel account)"
+  },
+  {
+   "id": "humor-extreme-adventure-corpus-06",
+   "factor": "Pair an extreme or high-stakes adventure moment with a single self-deprecating line — the gap between the epic setting and the honest human reaction is the hook",
+   "why": "Self-deprecating humor on otherwise intimidating content lowers the barrier for non-adventurers to engage; they share it because it's how they'd feel, not because they'd do it",
+   "applies_to": [
+    "hook",
+    "plan"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched outdoor-adventure set, a raw water-rafting clip with a single humorous caption indexed ~124x the account median at 8.7% engagement",
+   "source": "tiktok market research 2026-06 (solo-travel account)"
+  },
+  {
+   "id": "serial-brand-chapters-corpus-07",
+   "factor": "Break the brand-build journey into named standalone chapters — each video is one decision or milestone, satisfying alone but rewarding for followers of the whole arc",
+   "why": "Serial narrative creates returning viewers without requiring them to have seen previous episodes; each chapter also functions as an entry point for new followers",
+   "applies_to": [
+    "plan"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched founder set, five consecutive brand-chapter videos (naming, packaging, launch prep, launch day, live post) all indexed 2–5x the account median — consistent outperformance across the full arc, not just the reveal",
+   "source": "tiktok market research 2026-06 (founder account)"
+  },
+  {
+   "id": "ultrashort-aesthetic-clip-corpus-08",
+   "factor": "For aesthetic lifestyle and fashion content, keep clips to 6-10 seconds — each second past 10 adds friction without adding depth",
+   "why": "Ultra-short clips achieve near-100% completion, feeding the algorithm a strong signal across the full audience; re-watches compound that signal further",
+   "applies_to": [
+    "plan"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched city-lifestyle set, the top 5 performers were all 6-13s (median 9s); a 7s morning clip indexed 14x, a 9s city clip 2.75x. Posts over 30s sat below median. Consistent pattern across the full 20-video sample.",
+   "source": "tiktok market research 2026-06 (city-lifestyle account)"
+  },
+  {
+   "id": "event-community-reach-corpus-09",
+   "factor": "Appear at or with a notable community event alongside a brand partner — it spikes views even when engagement is minimal; use it for discovery, not conversion",
+   "why": "Events carry a captive, primed audience; embedding your presence in that moment borrows the event's reach and bypasses the normal cold-start cost on the For You page",
+   "applies_to": [
+    "plan",
+    "persona"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
+   "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+  },
+  {
+   "id": "help-request-comments-corpus-10",
+   "factor": "Asking the audience for help with a genuine, unresolved decision turns comments into the distribution engine",
+   "why": "A sincere request flips viewers from spectators to advisors; every opinion left in the comments feeds the ranking loop, and long watch time follows because the dilemma needs context",
+   "applies_to": [
+    "plan"
+   ],
+   "provenance": "corpus",
+   "evidence": "In our fetched lifestyle set, a talk-to-camera help-request indexed ~7x the account median despite running nearly two minutes — a length that otherwise underperforms in the same corpus",
+   "source": "tiktok:@nermozdemir (2026-07)"
+  }
+ ]
 }

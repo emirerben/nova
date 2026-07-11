@@ -1,217 +1,296 @@
 {
-  "version": "2026-06-14",
-  "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
-  "ideas": [
-    {
-      "id": "city-curated-guide-01",
-      "niche": "city lifestyle & food",
-      "pillar": "curated food guides",
-      "idea": "a very curated guide to the best places to indulge in [your city], framed as a save-for-later list",
-      "hook_pattern": "my very curated [city] guide — save this",
-      "filming_context": "fast cuts of each spot, warm natural light, on-screen place names",
-      "source": "tiktok:@allexmarielle (2026-05)"
-    },
-    {
-      "id": "city-perfect-day-01",
-      "niche": "city lifestyle & food",
-      "pillar": "a perfect day in the city",
-      "idea": "a perfect day in [your city] told as a morning-to-night montage of small rituals",
-      "hook_pattern": "my perfect day in [city]",
-      "filming_context": "POV handheld, golden-hour bookends, one clip per moment",
-      "source": "tiktok:@allexmarielle (2026-05)",
-      "performance": {"engagement_rate": 0.2842, "view_index": 4.07, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "seasonal-outfit-rotation-01",
-      "niche": "city lifestyle & food",
-      "pillar": "seasonal outfit rotations",
-      "idea": "your [season] outfit rotation — a handful of repeatable, minimal looks",
-      "hook_pattern": "[season] outfit rotation",
-      "filming_context": "mirror or tripod, quick outfit-change cuts on the beat",
-      "source": "tiktok:@allexmarielle (2026-05)"
-    },
-    {
-      "id": "experiences-over-savings-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "mindset & growth",
-      "idea": "a single striking clip captioned with the 'experiences > savings' philosophy",
-      "hook_pattern": "experiences > savings",
-      "filming_context": "one hero wide shot of a view or climb, minimal text",
-      "source": "tiktok:@izzsiomoi (2026-05)"
-    },
-    {
-      "id": "core-memory-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "core memories",
-      "idea": "a 'core memory' recap of one experience you'll never forget",
-      "hook_pattern": "core memory: [the experience]",
-      "filming_context": "montage of the day, sentimental sound, slow final hold",
-      "source": "tiktok:@izzsiomoi (2026-05)"
-    },
-    {
-      "id": "fitness-milestone-braver-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "fitness milestones",
-      "idea": "document a milestone (2nd 10k run, first hike) framed as getting braver",
-      "hook_pattern": "[milestone] — getting braver",
-      "filming_context": "first-person, candid, show the effort not just the result",
-      "source": "tiktok:@izzsiomoi (2026-05)",
-      "performance": {"engagement_rate": 0.0381, "view_index": 5.23, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "launch-countdown-01",
-      "niche": "founder / product launch",
-      "pillar": "launch countdown",
-      "idea": "a countdown post: how many days until your product drops, with one detail teased",
-      "hook_pattern": "X days until [product] drops",
-      "filming_context": "hands-on product b-roll, bold countdown number on screen",
-      "source": "tiktok:@nermozdemir (2026-05)"
-    },
-    {
-      "id": "product-reveal-surprise-01",
-      "niche": "founder / product launch",
-      "pillar": "product reveal",
-      "idea": "the big reveal of what you've been making, with genuine surprise/relief energy",
-      "hook_pattern": "surprise — what we finally made",
-      "filming_context": "open/unbox on camera, real reaction, tight on the product",
-      "source": "tiktok:@nermozdemir (2026-05)"
-    },
-    {
-      "id": "founder-standing-on-business-01",
-      "niche": "founder / product launch",
-      "pillar": "founder backstory",
-      "idea": "a confident 'it's live' post pointing people to where they can buy",
-      "hook_pattern": "i'm standing on business — it's live",
-      "filming_context": "to-camera, short, clear call to where it sells",
-      "source": "tiktok:@nermozdemir (2026-05)",
-      "performance": {"views": 8308, "engagement_rate": 0.0643, "view_index": 2.81, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "mood-diary-feeling-01",
-      "niche": "aesthetic mood diary",
-      "pillar": "mood diaries",
-      "idea": "a short mood b-roll diary that captures a feeling more than an event",
-      "hook_pattern": "a feeling, not a place",
-      "filming_context": "3-5 unhurried clips, trending soft sound, minimal or no text",
-      "source": "tiktok:@patricia.turchin (2026-05)"
-    },
-    {
-      "id": "hidden-gem-nobody-01",
-      "niche": "city lifestyle & food",
-      "pillar": "hidden gems to save",
-      "idea": "the spot in [your city] nobody tells you about, framed as insider knowledge",
-      "hook_pattern": "the [place] nobody told you about",
-      "filming_context": "reveal shot of the place, name on screen, save prompt",
-      "source": "tiktok:@allexmarielle (2026-05)"
-    },
-    {
-      "id": "solo-travel-destination-curiosity-01",
-      "niche": "city lifestyle & food",
-      "pillar": "a perfect day in the city",
-      "idea": "a single short clip of a striking moment in [destination], captioned to create selective resonance with anyone who has been or wants to go",
-      "hook_pattern": "especially if you've been to [destination]",
-      "filming_context": "5-10s hero moment, wide or intimate, let the place carry it — no narration needed",
-      "source": "tiktok:@allexmarielle (2026-05)",
-      "performance": {"engagement_rate": 0.234, "view_index": 10.0, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "city-morning-sensory-01",
-      "niche": "city lifestyle & food",
-      "pillar": "seasonal moments",
-      "idea": "a morning sensory moment in [your city] — coffee, light, a quiet ritual — that makes the place feel alive",
-      "hook_pattern": "mornings in [city] just hit different",
-      "filming_context": "7-10s, natural morning light, one sensory detail close-up",
-      "source": "tiktok:@allexmarielle (2026-05)",
-      "performance": {"engagement_rate": 0.277, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "gap-in-market-origin-01",
-      "niche": "founder / product launch",
-      "pillar": "gap-in-market origin story",
-      "idea": "the moment you decided to create [your product] because the exact thing you wanted didn't exist — told from frustration to first step",
-      "hook_pattern": "i couldn't find [x] anywhere — so i made it from scratch",
-      "filming_context": "talking-head or b-roll of the gap, honest and personal, no polish needed",
-      "source": "tiktok:@nermozdemir (2026-05)",
-      "performance": {"engagement_rate": 0.044, "view_index": 3.52, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "brand-naming-struggle-01",
-      "niche": "founder / product launch",
-      "pillar": "brand naming struggles",
-      "idea": "the unexpected difficulty of naming your [product or brand] — the false starts, the constraints, the moment it finally clicked",
-      "hook_pattern": "nobody told me naming a [thing] would be this hard",
-      "filming_context": "candid to-camera, show the struggle honestly, let the relief at the end land",
-      "source": "tiktok:@nermozdemir (2026-05)"
-    },
-    {
-      "id": "sunrise-hike-reveal-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "core memories",
-      "idea": "a sunrise hike reveal — the effort it took to get there followed by the moment the view pays off",
-      "hook_pattern": "witnessed [location]'s beautiful sunrise",
-      "filming_context": "timelapse or quick cuts of the climb, hold on the sunrise payoff — let it breathe",
-      "source": "tiktok:@izzsiomoi (2026-05)",
-      "performance": {"engagement_rate": 0.103, "sampled_at": "2026-05"}
-    },
-    {
-      "id": "adventure-humor-one-liner-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "extreme adventure moments",
-      "idea": "a single raw action clip from an extreme or high-stakes moment, captioned with one self-deprecating line that names exactly how you felt",
-      "hook_pattern": "i was NOT ready for this",
-      "filming_context": "GoPro or handheld — capture the raw moment, no edit polish needed; the humor is in the gap between the epic setting and your honest reaction",
-      "source": "tiktok:@izzsiomoi (2026-06)",
-      "performance": {"engagement_rate": 0.087, "view_index": 123.6, "sampled_at": "2026-06"}
-    },
-    {
-      "id": "implied-question-answer-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "mindset & growth",
-      "idea": "post your single most visually powerful clip and let it be the answer to a question you never state — the caption IS the conclusion",
-      "hook_pattern": "my simplest answer",
-      "filming_context": "one hero shot — wide vista, a summit, an arrival — that visually speaks for itself with no explanation needed",
-      "source": "tiktok:@izzsiomoi (2026-06)",
-      "performance": {"engagement_rate": 0.123, "view_index": 120.4, "sampled_at": "2026-06"}
-    },
-    {
-      "id": "serial-brand-chapter-01",
-      "niche": "founder / product launch",
-      "pillar": "build process behind-the-scenes",
-      "idea": "document one specific chapter of your brand build as a standalone episode in a named series — each video covers a single decision or milestone in the journey",
-      "hook_pattern": "chapter [N]: [the decision/milestone]",
-      "filming_context": "candid to-camera or b-roll of the moment it happened; each video should be satisfying alone but reward people who follow the whole arc",
-      "source": "tiktok:@nermozdemir (2026-06)",
-      "performance": {"engagement_rate": 0.041, "view_index": 5.5, "sampled_at": "2026-06"}
-    },
-    {
-      "id": "art-cultural-moment-01",
-      "niche": "city lifestyle & food",
-      "pillar": "hidden gems to save",
-      "idea": "a short artful clip inside a gallery, museum, or cultural landmark in your city — one striking installation or work — captioned with a single thoughtful observation",
-      "hook_pattern": "the [artwork/exhibit] nobody is talking about in [city]",
-      "filming_context": "slow pan or still hold on the work, natural museum light, respectful framing — let the art occupy the frame",
-      "source": "tiktok:@allexmarielle (2026-06)",
-      "performance": {"engagement_rate": 0.122, "view_index": 1.2, "sampled_at": "2026-06"}
-    },
-    {
-      "id": "9to5-minimal-glimpse-01",
-      "niche": "professional lifestyle & city aesthetics",
-      "pillar": "work outfits (#9to5)",
-      "idea": "a 6-10s minimal clip from your workday in [city] — just the outfit and where you're going, no narration needed",
-      "hook_pattern": "#9to5",
-      "filming_context": "mirror or building exterior, natural light, 6-10s, single look — the brevity IS the format; don't add explanation",
-      "source": "tiktok:@allexmarielle (2026-06)",
-      "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
-    },
-    {
-      "id": "parallel-life-aspiration-01",
-      "niche": "solo travel & outdoors",
-      "pillar": "mindset & growth",
-      "idea": "a short clip of a beautiful place or lifestyle moment, captioned as the parallel life you want — lets the viewer project themselves into it",
-      "hook_pattern": "in another life this is my reality",
-      "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
-      "source": "tiktok:@izzsiomoi (2026-06)",
-      "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
-    }
-  ]
+ "version": "2026-07-11",
+ "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
+ "ideas": [
+  {
+   "id": "city-curated-guide-01",
+   "niche": "city lifestyle & food",
+   "pillar": "curated food guides",
+   "idea": "a very curated guide to the best places to indulge in [your city], framed as a save-for-later list",
+   "hook_pattern": "my very curated [city] guide — save this",
+   "filming_context": "fast cuts of each spot, warm natural light, on-screen place names",
+   "source": "tiktok:@allexmarielle (2026-05)"
+  },
+  {
+   "id": "city-perfect-day-01",
+   "niche": "city lifestyle & food",
+   "pillar": "a perfect day in the city",
+   "idea": "a perfect day in [your city] told as a morning-to-night montage of small rituals",
+   "hook_pattern": "my perfect day in [city]",
+   "filming_context": "POV handheld, golden-hour bookends, one clip per moment",
+   "source": "tiktok:@allexmarielle (2026-05)",
+   "performance": {
+    "engagement_rate": 0.2842,
+    "view_index": 4.07,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "seasonal-outfit-rotation-01",
+   "niche": "city lifestyle & food",
+   "pillar": "seasonal outfit rotations",
+   "idea": "your [season] outfit rotation — a handful of repeatable, minimal looks",
+   "hook_pattern": "[season] outfit rotation",
+   "filming_context": "mirror or tripod, quick outfit-change cuts on the beat",
+   "source": "tiktok:@allexmarielle (2026-05)"
+  },
+  {
+   "id": "experiences-over-savings-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "mindset & growth",
+   "idea": "a single striking clip captioned with the 'experiences > savings' philosophy",
+   "hook_pattern": "experiences > savings",
+   "filming_context": "one hero wide shot of a view or climb, minimal text",
+   "source": "tiktok:@izzsiomoi (2026-05)"
+  },
+  {
+   "id": "core-memory-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "core memories",
+   "idea": "a 'core memory' recap of one experience you'll never forget",
+   "hook_pattern": "core memory: [the experience]",
+   "filming_context": "montage of the day, sentimental sound, slow final hold",
+   "source": "tiktok:@izzsiomoi (2026-05)"
+  },
+  {
+   "id": "fitness-milestone-braver-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "fitness milestones",
+   "idea": "document a milestone (2nd 10k run, first hike) framed as getting braver",
+   "hook_pattern": "[milestone] — getting braver",
+   "filming_context": "first-person, candid, show the effort not just the result",
+   "source": "tiktok:@izzsiomoi (2026-05)",
+   "performance": {
+    "engagement_rate": 0.0381,
+    "view_index": 5.23,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "launch-countdown-01",
+   "niche": "founder / product launch",
+   "pillar": "launch countdown",
+   "idea": "a countdown post: how many days until your product drops, with one detail teased",
+   "hook_pattern": "X days until [product] drops",
+   "filming_context": "hands-on product b-roll, bold countdown number on screen",
+   "source": "tiktok:@nermozdemir (2026-05)"
+  },
+  {
+   "id": "product-reveal-surprise-01",
+   "niche": "founder / product launch",
+   "pillar": "product reveal",
+   "idea": "the big reveal of what you've been making, with genuine surprise/relief energy",
+   "hook_pattern": "surprise — what we finally made",
+   "filming_context": "open/unbox on camera, real reaction, tight on the product",
+   "source": "tiktok:@nermozdemir (2026-05)"
+  },
+  {
+   "id": "founder-standing-on-business-01",
+   "niche": "founder / product launch",
+   "pillar": "founder backstory",
+   "idea": "a confident 'it's live' post pointing people to where they can buy",
+   "hook_pattern": "i'm standing on business — it's live",
+   "filming_context": "to-camera, short, clear call to where it sells",
+   "source": "tiktok:@nermozdemir (2026-05)",
+   "performance": {
+    "views": 8308,
+    "engagement_rate": 0.0643,
+    "view_index": 2.81,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "mood-diary-feeling-01",
+   "niche": "aesthetic mood diary",
+   "pillar": "mood diaries",
+   "idea": "a short mood b-roll diary that captures a feeling more than an event",
+   "hook_pattern": "a feeling, not a place",
+   "filming_context": "3-5 unhurried clips, trending soft sound, minimal or no text",
+   "source": "tiktok:@patricia.turchin (2026-05)"
+  },
+  {
+   "id": "hidden-gem-nobody-01",
+   "niche": "city lifestyle & food",
+   "pillar": "hidden gems to save",
+   "idea": "the spot in [your city] nobody tells you about, framed as insider knowledge",
+   "hook_pattern": "the [place] nobody told you about",
+   "filming_context": "reveal shot of the place, name on screen, save prompt",
+   "source": "tiktok:@allexmarielle (2026-05)"
+  },
+  {
+   "id": "solo-travel-destination-curiosity-01",
+   "niche": "city lifestyle & food",
+   "pillar": "a perfect day in the city",
+   "idea": "a single short clip of a striking moment in [destination], captioned to create selective resonance with anyone who has been or wants to go",
+   "hook_pattern": "especially if you've been to [destination]",
+   "filming_context": "5-10s hero moment, wide or intimate, let the place carry it — no narration needed",
+   "source": "tiktok:@allexmarielle (2026-05)",
+   "performance": {
+    "engagement_rate": 0.234,
+    "view_index": 10.0,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "city-morning-sensory-01",
+   "niche": "city lifestyle & food",
+   "pillar": "seasonal moments",
+   "idea": "a morning sensory moment in [your city] — coffee, light, a quiet ritual — that makes the place feel alive",
+   "hook_pattern": "mornings in [city] just hit different",
+   "filming_context": "7-10s, natural morning light, one sensory detail close-up",
+   "source": "tiktok:@allexmarielle (2026-05)",
+   "performance": {
+    "engagement_rate": 0.277,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "gap-in-market-origin-01",
+   "niche": "founder / product launch",
+   "pillar": "gap-in-market origin story",
+   "idea": "the moment you decided to create [your product] because the exact thing you wanted didn't exist — told from frustration to first step",
+   "hook_pattern": "i couldn't find [x] anywhere — so i made it from scratch",
+   "filming_context": "talking-head or b-roll of the gap, honest and personal, no polish needed",
+   "source": "tiktok:@nermozdemir (2026-05)",
+   "performance": {
+    "engagement_rate": 0.044,
+    "view_index": 3.52,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "brand-naming-struggle-01",
+   "niche": "founder / product launch",
+   "pillar": "brand naming struggles",
+   "idea": "the unexpected difficulty of naming your [product or brand] — the false starts, the constraints, the moment it finally clicked",
+   "hook_pattern": "nobody told me naming a [thing] would be this hard",
+   "filming_context": "candid to-camera, show the struggle honestly, let the relief at the end land",
+   "source": "tiktok:@nermozdemir (2026-05)"
+  },
+  {
+   "id": "sunrise-hike-reveal-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "core memories",
+   "idea": "a sunrise hike reveal — the effort it took to get there followed by the moment the view pays off",
+   "hook_pattern": "witnessed [location]'s beautiful sunrise",
+   "filming_context": "timelapse or quick cuts of the climb, hold on the sunrise payoff — let it breathe",
+   "source": "tiktok:@izzsiomoi (2026-05)",
+   "performance": {
+    "engagement_rate": 0.103,
+    "sampled_at": "2026-05"
+   }
+  },
+  {
+   "id": "adventure-humor-one-liner-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "extreme adventure moments",
+   "idea": "a single raw action clip from an extreme or high-stakes moment, captioned with one self-deprecating line that names exactly how you felt",
+   "hook_pattern": "i was NOT ready for this",
+   "filming_context": "GoPro or handheld — capture the raw moment, no edit polish needed; the humor is in the gap between the epic setting and your honest reaction",
+   "source": "tiktok:@izzsiomoi (2026-06)",
+   "performance": {
+    "engagement_rate": 0.087,
+    "view_index": 123.6,
+    "sampled_at": "2026-06"
+   }
+  },
+  {
+   "id": "implied-question-answer-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "mindset & growth",
+   "idea": "post your single most visually powerful clip and let it be the answer to a question you never state — the caption IS the conclusion",
+   "hook_pattern": "my simplest answer",
+   "filming_context": "one hero shot — wide vista, a summit, an arrival — that visually speaks for itself with no explanation needed",
+   "source": "tiktok:@izzsiomoi (2026-06)",
+   "performance": {
+    "engagement_rate": 0.123,
+    "view_index": 319.8,
+    "sampled_at": "2026-07"
+   }
+  },
+  {
+   "id": "serial-brand-chapter-01",
+   "niche": "founder / product launch",
+   "pillar": "build process behind-the-scenes",
+   "idea": "document one specific chapter of your brand build as a standalone episode in a named series — each video covers a single decision or milestone in the journey",
+   "hook_pattern": "chapter [N]: [the decision/milestone]",
+   "filming_context": "candid to-camera or b-roll of the moment it happened; each video should be satisfying alone but reward people who follow the whole arc",
+   "source": "tiktok:@nermozdemir (2026-06)",
+   "performance": {
+    "engagement_rate": 0.041,
+    "view_index": 5.5,
+    "sampled_at": "2026-06"
+   }
+  },
+  {
+   "id": "art-cultural-moment-01",
+   "niche": "city lifestyle & food",
+   "pillar": "hidden gems to save",
+   "idea": "a short artful clip inside a gallery, museum, or cultural landmark in your city — one striking installation or work — captioned with a single thoughtful observation",
+   "hook_pattern": "the [artwork/exhibit] nobody is talking about in [city]",
+   "filming_context": "slow pan or still hold on the work, natural museum light, respectful framing — let the art occupy the frame",
+   "source": "tiktok:@allexmarielle (2026-06)",
+   "performance": {
+    "engagement_rate": 0.122,
+    "view_index": 1.2,
+    "sampled_at": "2026-06"
+   }
+  },
+  {
+   "id": "9to5-minimal-glimpse-01",
+   "niche": "professional lifestyle & city aesthetics",
+   "pillar": "work outfits (#9to5)",
+   "idea": "a 6-10s minimal clip from your workday in [city] — just the outfit and where you're going, no narration needed",
+   "hook_pattern": "#9to5",
+   "filming_context": "mirror or building exterior, natural light, 6-10s, single look — the brevity IS the format; don't add explanation",
+   "source": "tiktok:@allexmarielle (2026-06)",
+   "performance": {
+    "engagement_rate": 0.128,
+    "view_index": 1.05,
+    "sampled_at": "2026-06"
+   }
+  },
+  {
+   "id": "parallel-life-aspiration-01",
+   "niche": "solo travel & outdoors",
+   "pillar": "mindset & growth",
+   "idea": "a short clip of a beautiful place or lifestyle moment, captioned as the parallel life you want — lets the viewer project themselves into it",
+   "hook_pattern": "in another life this is my reality",
+   "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
+   "source": "tiktok:@izzsiomoi (2026-06)",
+   "performance": {
+    "engagement_rate": 0.032,
+    "view_index": 1.57,
+    "sampled_at": "2026-06"
+   }
+  },
+  {
+   "id": "qualifier-credibility-inversion-01",
+   "niche": "everyday lifestyle & style",
+   "pillar": "personal style & identity",
+   "idea": "share your take on [topic] framed by the credential you DON'T have — the outsider angle is the hook, and the content proves you belong anyway",
+   "hook_pattern": "[topic] as someone who doesn't [expected credential]",
+   "filming_context": "simple mirror or static-camera sequence of the thing itself (outfits, setups, routines) — the inverted qualifier carries the intrigue, so footage stays plain and real",
+   "source": "tiktok:@allexmarielle (2026-07)",
+   "performance": {
+    "engagement_rate": 0.141,
+    "view_index": 2.2,
+    "sampled_at": "2026-07"
+   }
+  },
+  {
+   "id": "ask-audience-help-01",
+   "niche": "personal vlog & community",
+   "pillar": "community & connection",
+   "idea": "bring a real unresolved decision to your audience and genuinely ask for their input — the comment section becomes the content's engine",
+   "hook_pattern": "I need your help with [real decision you're facing]",
+   "filming_context": "talk-to-camera, unpolished and urgent; show the options or the dilemma on screen so commenters have something concrete to argue for",
+   "source": "tiktok:@nermozdemir (2026-07)",
+   "performance": {
+    "engagement_rate": 0.026,
+    "view_index": 7.4,
+    "sampled_at": "2026-07"
+   }
+  }
+ ]
 }

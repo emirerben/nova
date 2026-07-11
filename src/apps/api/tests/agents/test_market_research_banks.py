@@ -223,8 +223,11 @@ def test_persona_bank_version_couples_to_prompt_version():
     # Bump 2026-06-14: weekly research refresh — added professional-visual-diary-01 archetype
     #                  (allexmarielle 9to5 professional aesthetic lane).
     # Bump 2026-07-09: persona prompt/schema removed an unused output field; banks untouched.
+    # Bump 2026-07-11: weekly research refresh — archetype bank unchanged, but
+    #                  success factors bumped (help-request-comments-corpus-10),
+    #                  which feed generate_persona.txt, so the prompt version moves.
     assert archetypes_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-09"
+    assert PERSONA_PROMPT_VERSION == "2026-07-11"
 
 
 def test_content_idea_bank_version_couples_to_prompt_version():
@@ -246,8 +249,11 @@ def test_content_idea_bank_version_couples_to_prompt_version():
     #             banks untouched (new block is conditional-empty when no seeds).
     # 2026-06-14: weekly research refresh — added 9to5-minimal-glimpse-01 and
     #             parallel-life-aspiration-01 ideas.
-    assert content_ideas_version() == "2026-06-14"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
+    # Bump 2026-07-11: weekly research refresh — qualifier-credibility-inversion-01
+    #                  + ask-audience-help-01 added; implied-question-answer-01
+    #                  performance refreshed (vi 120.4 -> 319.8 on the same post).
+    assert content_ideas_version() == "2026-07-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11"
 
 
 def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
@@ -264,10 +270,12 @@ def test_success_factor_bank_version_couples_to_consuming_prompt_versions():
     # (ultrashort-aesthetic-clip 6-10s sweet spot, event-community-reach vi=64x discovery spike).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
     # Persona bumped to 2026-07-09: prompt/schema removed an unused output field; banks untouched.
-    assert success_factors_version() == "2026-06-14"
-    assert PERSONA_PROMPT_VERSION == "2026-07-09"
-    assert CONTENT_PLAN_PROMPT_VERSION == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
+    # Bump 2026-07-11: help-request-comments-corpus-10 (advice-solicit drives
+    #                  comment-led distribution; vi ~7x on a ~2min talk video).
+    assert success_factors_version() == "2026-07-11"
+    assert PERSONA_PROMPT_VERSION == "2026-07-11"
+    assert CONTENT_PLAN_PROMPT_VERSION == "2026-07-11"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-07-11"
 
 
 def test_overlay_bank_version_couples_to_agent_versions():
@@ -288,9 +296,10 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # Bump 2026-06-14: weekly research refresh — added professional-ootd-static-01
     #                  (office fashion / professional aesthetic lane).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
-    assert library_version() == "2026-06-14"
-    assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-14"
+    # Bump 2026-07-11: help-request-popin-01 (vulnerable-ask hook voice).
+    assert library_version() == "2026-07-11"
+    assert IntroTextWriterAgent.spec.prompt_version == "2026-07-11"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-07-11"
 
 
 @pytest.mark.parametrize(
