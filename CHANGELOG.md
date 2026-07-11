@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.8.1] — 2026-07-10
+
+### Fixed
+- **Deleting a clip from a beat-synced (song) editor timeline no longer 422s the save.** `resolve_timeline_slots_for_edit` recomputes each beat slot's duration by walking the music beat grid cumulatively; removing an upstream slot frees its beats from that walk, shifting every downstream slot onto an earlier — and, on a non-uniform grid, sometimes wider — interval, which could exceed a short downstream clip's remaining footage even though the user never touched that slot. The render worker never hits this (it trims to real footage, never loops/holds/slows), but the save-time validator had no equivalent ceiling clamp — only a floor clamp (`_smallest_beat_count_clearing_floor`), and only for slots the user directly changed. Both beat-derivation branches (explicit `duration_beats` and the nearest-beat-count fallback) now reclamp to the largest beat span that still fits the clip's footage, regardless of whether the failing slot itself was edited — a delete must never fail the save. Also added friendly copy for `TIMELINE_OUT_OF_BOUNDS` and the other previously-unmapped timeline codes in `editor-commit.ts` (`formatDetailValue`) so a future edge case shows readable text instead of the raw machine code.
+
 ## [0.7.8.0] — 2026-07-10
 
 ### Changed
