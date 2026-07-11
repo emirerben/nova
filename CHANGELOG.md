@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.9.0] — 2026-07-11
+
+### Added
+- **Automatic silence + filler-sound cutting for speech edits** (behind `SILENCE_CUT_ENABLED`, default off; plans/010). Speech render paths (subtitled + the talking_head spine; narrated self-narration inherits) now auto-tighten pauses and remove filler vocalizations ("uh", "um", "ııı", "eee") — detection = whisper word timings (verbatim-bias prompt) cross-checked against ffmpeg `silencedetect` (pause cuts require silence agreement; whisper end-times drift), applied inside the reframe filtergraph as per-segment trim/concat with 12ms declick fades and an alternating 1.08× punch-in so cuts read as intentional jump-cut style. Captions rebuild from the remapped transcript with fillers stripped. Fail-open by design: any gate/failure renders today's uncut video, never fails the job. Behavior is pinned by a golden test derived from the user-validated reference clip. Music/template/montage paths are structurally excluded (guard test) — cutting would corrupt beat maps.
+- **Retake detection** (behind `RETAKE_CUT_ENABLED`, default off, independent kill switch): a Gemini agent flags abandoned takes ("dur baştan alayım" / "let me start over") as word-index spans, merged into the same cut plan with boundary snapping and shared removal caps; agent failure degrades to zero retake cuts, never blocking silence cutting. Live evals required before the flag flips.
+- **Admin cut-plan viewer**: `/admin/jobs/{id}` renders a per-variant timeline strip of removed ranges (reason-colored bands + legend, hover detail, aria summary, true-timeline scaling via persisted `original_duration_s`) driven by the persisted `variants[i].silence_cut` blob (finalize-whitelist entry + preserve pin).
+- **Per-item opt-out**: `POST /admin/jobs/{id}/silence-cut-disable` (via `scripts/admin.py`) sets `assembly_plan["silence_cut_disabled"]`; the next FULL re-render skips the stage — support's one-item remedy instead of a global flag flip.
+- `reframe_and_export(keep_segments=…)`: per-segment cutting inside the existing filtergraph after CFR normalization (raw phone VFR never sees frame math), declick fades, optional punch-in; pinned byte-identical when unused, plus real-ffmpeg micro-e2e and a 30-cut A/V drift e2e (<40ms).
+- `detect_silences(path, noise_db, min_silence_s)` extracted from `speech_coverage` (which keeps its 0.3s default and byte-identical results — regression-pinned); the cut path uses d=0.1.
+- whisper transcription: optional `verbatim_prompt` passthrough + segment-level `avg_logprob`/`no_speech_prob` mapped onto words (whisper-1 has no per-word confidence — prod quality gates ride segment signals).
+
+### Fixed
+- Turkish sentence-initial fillers ("Iıı,") now match the filler lexicon — Python `lower()` never maps `I→ı`; a Turkish case-fold runs first (English `I`/`It`/`Im` pinned safe).
+- Punch-in on landscape (16:9-input) sources used swapped dims and would abort the concat — punch geometry is always the chain's portrait output now (pinned).
+
 ## [0.7.8.2] — 2026-07-11
 
 ### Removed
