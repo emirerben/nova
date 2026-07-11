@@ -34,7 +34,7 @@ export default function Header() {
   if (isAdmin) return null;
 
   // Light surfaces: landing + all plan pages (incl. /plan/items) + library + generative.
-  // Dark: template render flow (/template, /template-jobs) and /admin (early-return above).
+  // Dark: template render job flow (/template-jobs) and /admin (early-return above).
   const isLight =
     pathname === "/" ||
     pathname.startsWith("/plan") ||
