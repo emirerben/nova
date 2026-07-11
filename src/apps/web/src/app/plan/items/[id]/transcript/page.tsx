@@ -208,8 +208,7 @@ export default function TranscriptTakeoverPage() {
           This item isn&apos;t set up for a voiceover yet.
         </h1>
         <p className="mt-4 text-[#71717a]">
-          Switch it to a narrated walkthrough on the item page, then come back to
-          write your script.
+          Switch it to Voiceover on the item page, then come back to write your script.
         </p>
         <div className="mt-8">
           <Link

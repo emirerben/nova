@@ -109,7 +109,11 @@ import {
   parsePlanItemEditorReturnSignal,
   stripPlanItemEditorReturnParams,
 } from "@/lib/editor-return";
-import { needsFormatPersist, resolvePickerFormat } from "@/lib/edit-format";
+import {
+  needsFormatPersist,
+  resolvePickerFormat,
+  type PickerEditFormat,
+} from "@/lib/edit-format";
 import TextElementOverlayLayer from "./components/TextElementOverlayLayer";
 
 // How long a dispatched render may take to register its Job before we admit
@@ -173,7 +177,7 @@ type PendingEdit = {
 // merge these two label maps — they answer different questions.
 const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
   montage: { label: "Montage", desc: "Multiple clips cut to music" },
-  narrated_planned: { label: "Narrated walkthrough", desc: "Footage explained by voiceover or a script" },
+  narrated_planned: { label: "Voiceover", desc: "Tell the story with narration" },
   subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
 };
 
@@ -202,6 +206,44 @@ function uploadContentType(file: File): string {
   if (name.endsWith(".heif")) return "image/heif";
   if (name.endsWith(".mov")) return "video/quicktime";
   return "video/mp4";
+}
+
+function expandContextPrompt(format: PickerEditFormat): string {
+  if (format === "narrated_planned") {
+    return "What should your voiceover explain, reveal, or make people feel?";
+  }
+  if (format === "subtitled") {
+    return "Who is this for, and what point are you trying to make?";
+  }
+  return "What should this edit make people feel or notice?";
+}
+
+function CompactPlanSummary({ item }: { item: PlanItem }) {
+  const shots = item.filming_guide ?? [];
+  if (shots.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-zinc-400">
+        Plan summary
+      </p>
+      {item.filming_suggestion && (
+        <p className="mt-1 text-sm text-[#3f3f46]">{item.filming_suggestion}</p>
+      )}
+      <ol className="mt-3 space-y-2">
+        {shots.map((shot, index) => (
+          <li key={shot.shot_id ?? `${shot.what}-${index}`} className="flex gap-2">
+            <span className="font-display text-[15px] italic text-zinc-300">
+              {index + 1}.
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-[#0c0c0e]">{shot.what}</p>
+              {shot.how && <p className="text-xs text-[#71717a]">{shot.how}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
 }
 
 // Reads each file's video dimensions via a detached <video> element and resolves
@@ -279,6 +321,8 @@ export default function PlanItemPage() {
   const [uploaderBusy, setUploaderBusy] = useState(false);
   // Idea-centric: propose-only AI plan state.
   const [expandProposal, setExpandProposal] = useState<IdeaExpandProposal | null>(null);
+  const [expandContextOpen, setExpandContextOpen] = useState(false);
+  const [expandContext, setExpandContext] = useState("");
   const [expanding, setExpanding] = useState(false);
   const [acceptingExpand, setAcceptingExpand] = useState(false);
   const [expandError, setExpandError] = useState<string | null>(null);
@@ -664,10 +708,6 @@ export default function PlanItemPage() {
   // ShotSlotUploader. existing_footage items keep the legacy pool upload.
   // instruction_level no longer gates the upload UI — it only affects copy/tone.
   const contentMode = item?.content_mode ?? "create_new";
-  const isFilmThis = contentMode !== "existing_footage";
-  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
-  const isInstructed = isFilmThis && hasGuide;
-
   // Narrated sub-modes:
   //   "narrated" | "narrated_planned" → step-guided flow (plan first, then film)
   //   "narrated_ready"               → have-videos flow (audio first, pool clips)
@@ -683,6 +723,9 @@ export default function PlanItemPage() {
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
   // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
   const isSubtitled = resolvedFormat === "subtitled";
+  const isFilmThis = contentMode !== "existing_footage";
+  const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
+  const isInstructed = isFilmThis && hasGuide && !isSubtitled && !isNarratedReady;
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -792,6 +835,29 @@ export default function PlanItemPage() {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
     } finally {
       setVoiceoverSaving(false);
+    }
+  }
+
+  async function handleExpandIdea(creatorContext: string | null) {
+    if (!item) return;
+    setExpanding(true);
+    setExpandError(null);
+    setAcceptExpandError(null);
+    try {
+      const proposal = await expandIdea(item.id, {
+        creator_context: creatorContext,
+      });
+      if ((proposal.filming_guide?.length ?? 0) === 0) {
+        setExpandError("Couldn't plan this idea — try again.");
+        return;
+      }
+      setExpandProposal(proposal);
+      setExpandContextOpen(false);
+      setExpandError(null);
+    } catch {
+      setExpandError("Couldn't plan this idea — try again.");
+    } finally {
+      setExpanding(false);
     }
   }
 
@@ -1015,8 +1081,8 @@ export default function PlanItemPage() {
                   <div className="mt-3 flex gap-2">
                     {(
                       [
-                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, film each shot" },
-                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload audio + clips, we match them" },
+                        { value: "narrated_planned", label: "Planning to film", desc: "Get a step guide, then film each shot" },
+                        { value: "narrated_ready",   label: "I have the videos", desc: "Upload clips and we'll match them to your voice" },
                       ] as { value: string; label: string; desc: string }[]
                     ).map(({ value, label, desc }) => {
                       const active = isNarratedReady
@@ -1185,46 +1251,70 @@ export default function PlanItemPage() {
             })()}
 
             {/* AI plan proposal — available only until the item has a shot list. */}
-            {totalShots === 0 && !expandProposal && (
+            {totalShots === 0 && !expandProposal && !expandContextOpen && (
               <div className="mb-4">
                 <button
                   type="button"
                   disabled={expanding}
-                  onClick={async () => {
-                    setExpanding(true);
+                  onClick={() => {
+                    setExpandContextOpen(true);
                     setExpandError(null);
                     setAcceptExpandError(null);
-                    try {
-                      const proposal = await expandIdea(item.id);
-                      if ((proposal.filming_guide?.length ?? 0) === 0) {
-                        setExpandError("Couldn't plan this idea — try again.");
-                        return;
-                      }
-                      setExpandProposal(proposal);
-                      setExpandError(null);
-                    } catch {
-                      setExpandError("Couldn't plan this idea — try again.");
-                    } finally {
-                      setExpanding(false);
-                    }
                   }}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {expanding ? (
-                    <>
-                      <span
-                        aria-hidden
-                        className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
-                      />
-                      Thinking…
-                    </>
-                  ) : (
-                    <>
-                      <span aria-hidden>✦</span>
-                      Plan this for me
-                    </>
-                  )}
+                  <span aria-hidden>✦</span>
+                  Plan this for me
                 </button>
+                {expandError && (
+                  <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
+                )}
+              </div>
+            )}
+
+            {totalShots === 0 && !expandProposal && expandContextOpen && (
+              <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
+                <p className="font-display text-lg font-medium text-[#0c0c0e]">
+                  A little context helps.
+                </p>
+                <label className="mt-3 block text-sm text-[#3f3f46]">
+                  <span>{expandContextPrompt(resolvedFormat)}</span>
+                  <textarea
+                    value={expandContext}
+                    onChange={(e) => setExpandContext(e.currentTarget.value)}
+                    maxLength={800}
+                    rows={3}
+                    className="mt-2 w-full resize-none rounded-lg border border-zinc-200 bg-[#fafaf8] px-3 py-2 text-base text-[#0c0c0e] placeholder-zinc-400 focus:border-lime-500/60 focus:outline-none"
+                    placeholder="A rough goal or detail is enough..."
+                  />
+                </label>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={expanding}
+                    onClick={() => handleExpandIdea(expandContext)}
+                    className="rounded-lg bg-lime-600 px-4 py-2 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {expanding ? "Thinking…" : "Generate plan"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={expanding}
+                    onClick={() => handleExpandIdea(null)}
+                    className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-[12px] text-[#71717a] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Skip and generate
+                  </button>
+                </div>
+                {expanding && (
+                  <p className="mt-2 flex items-center gap-1.5 text-xs text-[#71717a]">
+                    <span
+                      aria-hidden
+                      className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
+                    />
+                    Turning this into a plan…
+                  </p>
+                )}
                 {expandError && (
                   <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
                 )}
@@ -1278,6 +1368,8 @@ export default function PlanItemPage() {
                             filming_guide: expandProposal.filming_guide,
                           });
                           setExpandProposal(null);
+                          setExpandContext("");
+                          setExpandContextOpen(false);
                           setFocusShotListAfterAccept(true);
                           refetch();
                         } catch {
@@ -1311,6 +1403,8 @@ export default function PlanItemPage() {
                 )}
               </div>
             )}
+
+            {hasGuide && !isInstructed && <CompactPlanSummary item={item} />}
 
             {/* Narrated walkthrough: sticky voice recorder bar — shown for both narrated sub-modes */}
             {isNarrated && (
@@ -1420,7 +1514,7 @@ export default function PlanItemPage() {
             ) : (
               /* existing_footage — pool upload (find the footage you already have) */
               <>
-                {item.filming_suggestion ? (
+                {!hasGuide && item.filming_suggestion ? (
                   <p className="mb-4 text-sm text-[#71717a]">{item.filming_suggestion}</p>
                 ) : null}
                 <PoolUploadCard
