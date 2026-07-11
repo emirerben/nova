@@ -194,6 +194,8 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - `SOUND_EFFECTS_ENABLED` / `MEDIA_OVERLAYS_ENABLED` — both default **`false`**. Gate the SFX-lane and overlay-lane write/render routes in `routes/plan_items.py` (404 when off); the public `GET /sound-effects` list is NOT gated, so the picker still loads. **Dual-flag trap:** the frontend lanes have SEPARATE flags (`NEXT_PUBLIC_SOUND_EFFECTS_ENABLED` / `NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED` in Vercel) — if the frontend flag is on but the backend one is off, saves 404 and the UI now surfaces an error (was silently swallowed pre-fix). Keep Fly + Vercel in sync. Apply: `fly secrets set SOUND_EFFECTS_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker).
 - `FULLSCREEN_CUTAWAYS_ENABLED` — defaults **`false`**. Gates the AI fullscreen branch (`build_suggestions` slot `"full"` → `display_mode="fullscreen"` cover-crop takeover). Dual-flag with `NEXT_PUBLIC_FULLSCREEN_CUTAWAYS_ENABLED` (Vercel) which gates the MANUAL popover promote affordances — version-skew rule (review C8): a manual fullscreen on new web + OLD api bakes as pip (Pydantic `extra="ignore"` strips `display_mode`), so keep the Vercel twin FALSE until the api flag's Fly deploy is live, then flip Fly, then Vercel. Render rollback = `MEDIA_OVERLAYS_ENABLED`. Rule (g) fails closed on assets without ANALYSIS_VERSION-3 pixel dims — the backfill re-analyzes them on first match. Guards: `tests/test_overlay_fullscreen_rules.py` (kill-switch byte-identical off), dual preset pins in `tests/test_media_overlay_command.py` (fullscreen pass = `preset=fast` + shared 1500s timeout budget + one-shot veryfast retry — see plans/009).
 - `SUBTITLED_ARCHETYPE_ENABLED` — defaults to **`false`**. Gates the subtitled single-clip edit style (talk-to-camera clip → auto-detected-language captions, editable + reburnable, sentence-per-cue with pop-in; TR/EN). When off, a `subtitled` job falls back to montage. Dual-flag with `NEXT_PUBLIC_SUBTITLED_ENABLED` (Vercel picker card) — keep Fly + Vercel in sync. Companions: `SUBTITLED_CAPTION_CORRECTION_ENABLED` (default `true` — LLM pass fixing whisper mishearings per cue, timing preserved) + `CAPTION_CORRECTION_MODEL` (default `gpt-4o`; mini missed Turkish case errors 4/4 runs). Apply: `fly secrets set SUBTITLED_ARCHETYPE_ENABLED=true --app nova-video` + `fly machine restart <id>` (api + worker).
+- `NARRATED_SELF_NARRATION_ENABLED` — defaults **`false`**. Narrated items generate WITHOUT a recorded voiceover when the footage's own audio carries the voice: 1 clip → `subtitled` (captions), 2+ → `talking_head` (speech spine); no speech → montage + reason persisted on `assembly_plan["archetype_fallback"]` (item-page banner). SOLE gate — deliberately bypasses the two archetype flags above (they gate declared formats). Dual-flag `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (Vercel); flip Fly first. Voiceover, when recorded, still wins (narrated archetype unchanged). Guards: flag-off pins in `tests/tasks/test_generative_dispatch.py`.
+- `SILENCE_CUT_ENABLED` — defaults **`false`**. Auto-cuts silences + filler vocalizations ("uh", "ııı") from speech render paths ONLY (subtitled + talking_head spine; self-narration inherits; music/beat paths structurally excluded — guard: `tests/tasks/test_silence_cut_isolation.py`). Engine: `app/pipeline/silence_cut.py` (pure CutPlan) applied inside `reframe_and_export(keep_segments=…)` with alternating punch-in; captions rebuilt from remapped words, fillers stripped. Fail-open: any failure ⇒ uncut render, job never fails. Per-item opt-out: `POST /admin/jobs/{id}/silence-cut-disable` (scripts/admin.py) + full re-render. User-validated behavior pinned by `tests/pipeline/test_silence_cut_golden.py` — detection-rule changes move that pin consciously. Companion `RETAKE_CUT_ENABLED` (default `false`, independent): `retake_detector` agent cuts abandoned takes; flip only after silence cutting validates in prod + live evals pass. Pre-flip gate: prod-image parity render (TR+EN). See plans/010-silence-filler-cut.md. Apply: `fly secrets set SILENCE_CUT_ENABLED=true --app nova-video` + `fly machine restart <id>` (worker).
 
 ## Agent evals
 - Per-agent quality eval harness lives at `src/apps/api/tests/evals/`. Covers the Big 5 (`template_recipe`, `clip_metadata`, `creative_direction`, `song_classifier`, `music_matcher`) plus the in-pipeline `transcript`, `platform_copy`, `audio_template`, and `template_text` agents.
@@ -222,7 +224,7 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - Framework: Next.js (auto-detected)
 - Root directory: `src/apps/web/`
 - Deploy: auto-deploys on push to `main` via GitHub integration. **Do NOT run `vercel --prod` from a feature branch** — it pushes your local working tree to production. For an emergency manual deploy: `git checkout main && git pull`, then `cd src/apps/web && vercel --prod`.
-- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXT_PUBLIC_GOOGLE_CLIENT_ID, NEXT_PUBLIC_GOOGLE_PICKER_API_KEY, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD)
+- Env vars: set via `vercel env` CLI (NEXT_PUBLIC_API_URL, NEXT_PUBLIC_WS_URL, NEXT_PUBLIC_DEFAULT_TEMPLATE_ID, NEXTAUTH_SECRET, ADMIN_BASIC_AUTH_USER, ADMIN_BASIC_AUTH_PASSWORD). NEXT_PUBLIC_GOOGLE_CLIENT_ID + NEXT_PUBLIC_GOOGLE_PICKER_API_KEY were removed in v0.7.8.2 with the dead `/template/[id]` route (Drive picker gone; NextAuth uses server-side GOOGLE_CLIENT_ID).
 - **`ADMIN_BASIC_AUTH_USER` + `ADMIN_BASIC_AUTH_PASSWORD` are MANDATORY.** They gate `/admin/*` and `/api/admin/*` via `src/apps/web/src/middleware.ts`. Without them, every admin page returns 503 — fail-closed by design.
 - Preview deploys: full API access via regex CORS (`allow_origin_regex` in `main.py`)
 
@@ -339,3 +341,22 @@ add --path <dir>` (no `--url`): URL-managed sources can auto-reclone, and the
 sync code walk for them requires an explicit `--allow-reclone` opt-in.
 
 <!-- gstack-gbrain-search-guidance:end -->
+
+## Skill routing
+
+When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
+
+Key routing rules:
+- Product ideas/brainstorming → invoke /office-hours
+- Strategy/scope → invoke /plan-ceo-review
+- Architecture → invoke /plan-eng-review
+- Design system/plan review → invoke /design-consultation or /plan-design-review
+- Full review pipeline → invoke /autoplan
+- Bugs/errors → invoke /investigate
+- QA/testing site behavior → invoke /qa or /qa-only
+- Code review/diff check → invoke /review
+- Visual polish → invoke /design-review
+- Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Save progress → invoke /context-save
+- Resume context → invoke /context-restore
+- Author a backlog-ready spec/issue → invoke /spec

@@ -10,7 +10,6 @@ import {
   editPlanItemVariant,
   expandIdea,
   generatePlanItem,
-  generatePlanItemGuide,
   getPlanItem,
   getPlanItemFresh,
   getPlanItemJobStatus,
@@ -50,6 +49,12 @@ import {
   patchPlanItemSceneTiming,
   type SceneTimingPatch,
 } from "@/lib/plan-api";
+import { buildPromotedAssignments } from "@/lib/plan-clip-promotion";
+import {
+  FINISHING_UPLOAD_HINT,
+  generateGate,
+  narrationFallbackBanner,
+} from "@/lib/plan-generate-gate";
 import { useSfxPreview } from "../../_components/useSfxPreview";
 import { resolveSfxPreviewUrls, sfxUrlKey } from "@/lib/sfx-preview-urls";
 import { VoiceRecorder } from "../../../generative/VoiceRecorder";
@@ -104,6 +109,7 @@ import {
   parsePlanItemEditorReturnSignal,
   stripPlanItemEditorReturnParams,
 } from "@/lib/editor-return";
+import { needsFormatPersist, resolvePickerFormat } from "@/lib/edit-format";
 
 // How long a dispatched render may take to register its Job before we admit
 // failure. Celery pickup on a busy local worker regularly exceeds 10s; prod
@@ -161,7 +167,7 @@ type PendingEdit = {
 
 // Edit-style picker copy, keyed by `edit_format`. NOTE: "Talking to camera" here
 // is a DIFFERENT namespace than persona.footage_type_bias="talking_head" (see
-// StyleCard.tsx / OnboardingShell.tsx's FOOTAGE_OPTIONS, which use the same
+// the persona/onboarding footage options, which use the same
 // phrase for a persona-level content preference, not an edit style). Do not
 // merge these two label maps — they answer different questions.
 const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
@@ -250,10 +256,13 @@ export default function PlanItemPage() {
   const [generating, setGenerating] = useState(false);
   // uploaderBusy: true while ShotSlotUploader has any upload/commit in flight (D6).
   const [uploaderBusy, setUploaderBusy] = useState(false);
-  // Idea-centric: "Expand with AI" proposal state.
+  // Idea-centric: propose-only AI plan state.
   const [expandProposal, setExpandProposal] = useState<IdeaExpandProposal | null>(null);
   const [expanding, setExpanding] = useState(false);
   const [acceptingExpand, setAcceptingExpand] = useState(false);
+  const [expandError, setExpandError] = useState<string | null>(null);
+  const [acceptExpandError, setAcceptExpandError] = useState<string | null>(null);
+  const [focusShotListAfterAccept, setFocusShotListAfterAccept] = useState(false);
   const [tracks, setTracks] = useState<MusicTrackSummary[]>([]);
   const [styleSets, setStyleSets] = useState<GenerativeStyleSet[]>([]);
   const [focusedVariantId, setFocusedVariantId] = useState<string | null>(null);
@@ -322,7 +331,6 @@ export default function PlanItemPage() {
   );
   // Ask Nova advisor panel: closed | opened normally | opened via "Tell Nova".
   const [askNova, setAskNova] = useState<null | "default" | "contest">(null);
-  const [generatingGuide, setGeneratingGuide] = useState(false);
   const pendingEdits = useRef<Map<string, PendingEdit>>(new Map());
   // Incremented whenever pendingEdits is mutated so the variants memo re-runs
   // immediately (useMemo only tracks reactive dependencies; the ref itself is not reactive).
@@ -469,6 +477,25 @@ export default function PlanItemPage() {
   }, [pollError]);
 
   const item = data?.item ?? null;
+
+  useEffect(() => {
+    if (!focusShotListAfterAccept || (item?.filming_guide?.length ?? 0) === 0) return;
+    setFocusShotListAfterAccept(false);
+    window.requestAnimationFrame(() => {
+      const target = document.querySelector<HTMLElement>(
+        "[data-plan-shot-list-heading], [data-plan-shot-row='0']",
+      );
+      if (!target) return;
+      const reduceMotion =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      target.scrollIntoView({
+        block: "center",
+        behavior: reduceMotion ? "auto" : "smooth",
+      });
+      target.focus({ preventScroll: true });
+    });
+  }, [focusShotListAfterAccept, item?.filming_guide?.length]);
 
   // Sync voiceover path from item whenever it changes (after refetch / on load).
   useEffect(() => {
@@ -623,14 +650,13 @@ export default function PlanItemPage() {
   // Narrated sub-modes:
   //   "narrated" | "narrated_planned" → step-guided flow (plan first, then film)
   //   "narrated_ready"               → have-videos flow (audio first, pool clips)
-  const isNarrated =
-    item?.edit_format === "narrated" ||
-    item?.edit_format === "narrated_planned" ||
-    item?.edit_format === "narrated_ready";
-  const isNarratedReady = item?.edit_format === "narrated_ready";
+  const rawEditFormat = item?.edit_format ?? "montage";
+  const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
+  const isNarrated = resolvedFormat === "narrated_planned";
+  const isNarratedReady = isNarrated && rawEditFormat === "narrated_ready";
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
   // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
-  const isSubtitled = item?.edit_format === "subtitled";
+  const isSubtitled = resolvedFormat === "subtitled";
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -708,6 +734,28 @@ export default function PlanItemPage() {
     }
   }
 
+  // "Use in edit" (Visuals pool → clip promotion). Pool objects live under
+  // users/{uid}/plan/{itemId}/pool/ — already inside attach_clips' allowed
+  // prefix — so promotion is a plain re-attach with the pool path appended.
+  // The asset stays in the pool (overlay suggestions still see it).
+  async function promotePoolAsset(asset: PoolAsset) {
+    // Pure merge (unit-tested): preserves every existing shot_id/user_note and
+    // returns null on dedupe or a missing gcs_path (old-API version skew).
+    const assignments = buildPromotedAssignments(item?.clip_assignments ?? [], asset.gcs_path);
+    if (!assignments) return;
+    conformancePolls.current = 0;
+    try {
+      await attachClips(
+        itemId,
+        assignments.map((a) => a.gcs_path),
+        assignments,
+      );
+      refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't add that visual to the edit");
+    }
+  }
+
   async function handleVoiceover(gcsPath: string | null) {
     setVoiceoverGcsPath(gcsPath);
     setVoiceoverSaving(true);
@@ -728,6 +776,9 @@ export default function PlanItemPage() {
     // early while the request is still in flight.
     awaitingJobSince.current = Date.now();
     try {
+      if (item && needsFormatPersist(item.edit_format)) {
+        await updatePlanItem(item.id, { edit_format: resolvedFormat });
+      }
       await generatePlanItem(itemId);
       refetch();
     } catch (err) {
@@ -816,6 +867,30 @@ export default function PlanItemPage() {
   const filledShots = item.clip_assignments?.filter((a) => a.shot_id !== null).length ?? 0;
   const shotsLeft = Math.max(0, totalShots - filledShots);
 
+  // Self-narration (dual-flag with NARRATED_SELF_NARRATION_ENABLED on Fly — flip
+  // Fly first, then Vercel): narrated items may generate without a recorded
+  // voiceover; the footage's own audio drives the edit.
+  const selfNarrationEnabled =
+    process.env.NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED === "true";
+  // Button + hint from ONE decision so they can never disagree (plan-generate-gate).
+  const gate = generateGate({
+    generating,
+    isGenerating,
+    uploaderBusy,
+    clipCount,
+    isNarrated,
+    hasVoiceover: !!voiceoverGcsPath,
+    selfNarrationEnabled,
+    isInstructed,
+    shotsLeft,
+  });
+  // "Your narrated render became a montage" explanation (no_speech etc.) —
+  // persisted by the orchestrator, surfaced here so the swap is never silent.
+  const fallbackBanner = narrationFallbackBanner(
+    isNarrated,
+    data?.job?.archetype_fallback ?? null,
+  );
+
   const currentPhase =
     data?.job?.current_phase ??
     (!data?.job?.started_at ? "queued" : null);
@@ -884,7 +959,7 @@ export default function PlanItemPage() {
                         : []),
                     ] as { value: string; label: string; desc: string }[]
                   ).map(({ value, label, desc }) => {
-                    const active = value === "narrated_planned" ? isNarrated : (item.edit_format ?? "montage") === value;
+                    const active = resolvedFormat === value;
                     return (
                       <button
                         key={label}
@@ -1049,79 +1124,131 @@ export default function PlanItemPage() {
               );
             })()}
 
-            {/* Expand with AI — only for planned mode; hide in ready (have-videos)
-                mode and for subtitled (single clip, no shot plan to expand). */}
-            {!isNarratedReady && !isSubtitled && item.clip_gcs_paths.length === 0 && !expandProposal && item.status !== "generating" && item.status !== "ready" && variants.length === 0 && (
+            {/* AI plan proposal — available only until the item has a shot list. */}
+            {totalShots === 0 && !expandProposal && (
               <div className="mb-4">
                 <button
                   type="button"
                   disabled={expanding}
                   onClick={async () => {
                     setExpanding(true);
+                    setExpandError(null);
+                    setAcceptExpandError(null);
                     try {
                       const proposal = await expandIdea(item.id);
+                      if ((proposal.filming_guide?.length ?? 0) === 0) {
+                        setExpandError("Couldn't plan this idea — try again.");
+                        return;
+                      }
                       setExpandProposal(proposal);
+                      setExpandError(null);
                     } catch {
-                      /* swallow — user can retry */
+                      setExpandError("Couldn't plan this idea — try again.");
                     } finally {
                       setExpanding(false);
                     }
                   }}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-[12px] text-[#71717a] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  <span aria-hidden>✦</span>
-                  {expanding ? "Thinking…" : "Expand with AI"}
+                  {expanding ? (
+                    <>
+                      <span
+                        aria-hidden
+                        className="h-1.5 w-1.5 rounded-full bg-lime-500 motion-safe:animate-ping"
+                      />
+                      Thinking…
+                    </>
+                  ) : (
+                    <>
+                      <span aria-hidden>✦</span>
+                      Plan this for me
+                    </>
+                  )}
                 </button>
+                {expandError && (
+                  <p className="mt-2 text-xs text-[#71717a]">{expandError}</p>
+                )}
               </div>
             )}
 
-            {/* Expand proposal card */}
-            {expandProposal && (
-              <div className="mb-4 rounded-xl border border-lime-200 bg-lime-50 p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">
-                  AI suggestion
-                </p>
-                <p className="mt-1 font-display text-lg font-medium text-[#0c0c0e]">
-                  {expandProposal.theme}
-                </p>
-                {expandProposal.filming_suggestion && (
-                  <p className="mt-1 text-sm text-[#3f3f46]">{expandProposal.filming_suggestion}</p>
-                )}
-                {expandProposal.rationale && (
-                  <p className="mt-2 text-xs text-[#71717a]">{expandProposal.rationale}</p>
-                )}
-                <div className="mt-3 flex gap-2">
-                  <button
-                    type="button"
-                    disabled={acceptingExpand}
-                    onClick={async () => {
-                      setAcceptingExpand(true);
-                      try {
-                        await updatePlanItem(item.id, {
-                          theme: expandProposal.theme,
-                          filming_suggestion: expandProposal.filming_suggestion,
-                          filming_guide: expandProposal.filming_guide,
-                        });
+            {/* AI plan proposal card */}
+            {totalShots === 0 && expandProposal && (
+              <div className="mb-4">
+                <div className="rounded-xl border border-lime-200 bg-lime-50 p-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">
+                    AI SUGGESTION
+                  </p>
+                  <p className="mt-1 font-display text-lg font-medium text-[#0c0c0e]">
+                    {expandProposal.theme}
+                  </p>
+                  {expandProposal.filming_suggestion && (
+                    <p className="mt-1 text-sm text-[#3f3f46]">{expandProposal.filming_suggestion}</p>
+                  )}
+                  <ol className="mt-4 space-y-3">
+                    {expandProposal.filming_guide.map((shot, index) => (
+                      <li key={shot.shot_id ?? `${shot.what}-${index}`} className="flex gap-3">
+                        <span className="font-display text-[17px] italic text-lime-600">
+                          {index + 1}.
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-start justify-between gap-3">
+                            <p className="text-[15px] font-medium text-[#0c0c0e]">{shot.what}</p>
+                            <span className="shrink-0 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] text-[#3f3f46]">
+                              ~{shot.duration_s}s
+                            </span>
+                          </div>
+                          {shot.how && (
+                            <p className="mt-0.5 text-[13.5px] text-[#3f3f46]">{shot.how}</p>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      type="button"
+                      disabled={acceptingExpand}
+                      onClick={async () => {
+                        setAcceptingExpand(true);
+                        setAcceptExpandError(null);
+                        try {
+                          await updatePlanItem(item.id, {
+                            theme: expandProposal.theme,
+                            filming_suggestion: expandProposal.filming_suggestion,
+                            filming_guide: expandProposal.filming_guide,
+                          });
+                          setExpandProposal(null);
+                          setFocusShotListAfterAccept(true);
+                          refetch();
+                        } catch {
+                          setAcceptExpandError("Couldn't save the plan — try again.");
+                        } finally {
+                          setAcceptingExpand(false);
+                        }
+                      }}
+                      className="rounded-lg bg-lime-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {acceptingExpand ? "Saving…" : "Use this plan"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={acceptingExpand}
+                      onClick={() => {
                         setExpandProposal(null);
-                        refetch();
-                      } catch {
-                        /* swallow */
-                      } finally {
-                        setAcceptingExpand(false);
-                      }
-                    }}
-                    className="rounded-lg bg-lime-600 px-4 py-1.5 text-[12px] font-semibold text-white hover:bg-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {acceptingExpand ? "Saving…" : "Accept"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setExpandProposal(null)}
-                    className="rounded-lg border border-zinc-200 bg-white px-4 py-1.5 text-[12px] text-[#71717a] hover:border-zinc-400"
-                  >
-                    Dismiss
-                  </button>
+                        setAcceptExpandError(null);
+                      }}
+                      className="rounded-lg border border-zinc-200 bg-white px-4 py-1.5 text-[12px] text-[#71717a] hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
                 </div>
+                {expandProposal.rationale && (
+                  <p className="mt-2 text-xs italic text-[#71717a]">{expandProposal.rationale}</p>
+                )}
+                {acceptExpandError && (
+                  <p className="mt-2 text-xs text-[#71717a]">{acceptExpandError}</p>
+                )}
               </div>
             )}
 
@@ -1174,7 +1301,7 @@ export default function PlanItemPage() {
                 0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
                 1. narrated_ready: audio-first flow, pool upload, no step spine
                 2. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                3. isFilmThis but no guide yet → "Generate shot list" CTA
+                3. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
                 4. existing_footage → PoolUploadCard (use footage you already have) */}
             {isSubtitled ? (
               <div>
@@ -1200,8 +1327,13 @@ export default function PlanItemPage() {
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Your clips
                 </p>
+                {/* Self-narration mode keeps this line short — the gate hint under
+                    Generate carries the "your video's own narration" explanation
+                    (one explanation per screen, DESIGN.md §9). */}
                 <p className="mb-4 text-sm text-[#71717a]">
-                  Upload all the clips you filmed. We&apos;ll listen to your recording and match each moment to the right clip automatically.
+                  {selfNarrationEnabled && !voiceoverGcsPath
+                    ? "Upload all the clips you filmed."
+                    : "Upload all the clips you filmed. We'll listen to your recording and match each moment to the right clip automatically."}
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
@@ -1222,32 +1354,7 @@ export default function PlanItemPage() {
                 onBusyChange={setUploaderBusy}
               />
             ) : isFilmThis ? (
-              /* create_new/mixed with empty filming guide — offer to generate one */
-              <div className="mb-6 rounded-2xl border border-dashed border-zinc-200 bg-white p-5 text-center">
-                <p className="text-sm text-[#71717a]">
-                  {item.filming_suggestion ?? "No shot plan yet."}
-                </p>
-                <button
-                  type="button"
-                  disabled={generatingGuide}
-                  onClick={async () => {
-                    setGeneratingGuide(true);
-                    setError(null);
-                    try {
-                      await generatePlanItemGuide(item.id);
-                      refetch();
-                    } catch {
-                      setError("Couldn't generate a shot plan. Please try again.");
-                    } finally {
-                      setGeneratingGuide(false);
-                    }
-                  }}
-                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <span aria-hidden>✦</span>
-                  {generatingGuide ? "Generating shot plan…" : "Generate shot plan"}
-                </button>
-              </div>
+              null
             ) : (
               /* existing_footage — pool upload (find the footage you already have) */
               <>
@@ -1268,7 +1375,12 @@ export default function PlanItemPage() {
             {/* Visuals pool — screenshots/screen recordings that feed AI overlay
                 auto-placement (plans/005 PR0). Renders nothing unless
                 NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED=true (gate lives inside). */}
-            <AssetPool itemId={itemId} />
+            <AssetPool
+              itemId={itemId}
+              attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
+              onUseInEdit={promotePoolAsset}
+              attachBusy={uploading || uploaderBusy}
+            />
 
             {/* Suggestion rail — AI overlay auto-placement review for the
                 focused variant (plans/005 PR2). Same flag gate as AssetPool;
@@ -1291,36 +1403,21 @@ export default function PlanItemPage() {
               }}
             />
 
-            {/* Generate + "N shots left" caption — below the shot sections (WS1) */}
+            {/* Generate + hint caption — both from generateGate (plan-generate-gate)
+                so the disabled state and its explanation can never disagree. */}
             {!isGenerating && (
               <div className="mt-4 space-y-2">
-                <InkButton
-                  onClick={handleGenerate}
-                  disabled={
-                    generating ||
-                    clipCount === 0 ||
-                    isGenerating ||
-                    uploaderBusy ||
-                    (isNarrated && !voiceoverGcsPath)
-                  }
-                >
+                <InkButton onClick={handleGenerate} disabled={gate.disabled}>
                   {generating
                     ? "Starting…"
                     : uploaderBusy
-                      ? "Finishing upload…"
+                      ? FINISHING_UPLOAD_HINT
                       : "Generate videos"}
                 </InkButton>
-                <p className="text-center text-sm text-[#a1a1aa]">
-                  {uploaderBusy
-                    ? "Finishing upload…"
-                    : isNarrated && !voiceoverGcsPath
-                      ? "Record your voiceover first — narration drives the edit"
-                      : clipCount === 0
-                        ? "Add clips to generate"
-                        : isInstructed && shotsLeft > 0
-                          ? `${shotsLeft} shot${shotsLeft !== 1 ? "s" : ""} left`
-                          : null}
-                </p>
+                {/* #71717a, not the faint #a1a1aa: this line now carries must-read
+                    gating copy (why the button is off / what drives the edit) —
+                    DESIGN.md §8 keeps faint ink decorative-only. */}
+                <p className="text-center text-sm text-[#71717a]">{gate.hint}</p>
               </div>
             )}
 
@@ -1384,6 +1481,18 @@ export default function PlanItemPage() {
             {item.status === "failed" && variants.length === 0 && (
               <p className="mt-2 text-sm text-[#71717a]">
                 Generation failed before any variant rendered. Try generating again.
+              </p>
+            )}
+            {/* Style-downgrade explanation: the narrated render fell back to
+                montage (no speech found / unreadable clip / flag-skew window).
+                Quiet zinc notice — informative, recoverable, never red (DESIGN.md).
+                Gated on a finished render WITH variants: the reason persists at
+                render START, so without the gate the past-tense "we made a montage"
+                would show mid-render, and after a hard failure it would claim a
+                montage exists right under "Generation failed". */}
+            {fallbackBanner && !isGenerating && variants.length > 0 && (
+              <p className="mt-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-[#3f3f46]">
+                {fallbackBanner}
               </p>
             )}
           </div>

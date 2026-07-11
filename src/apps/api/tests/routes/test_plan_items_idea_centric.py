@@ -9,11 +9,14 @@ T14: POST /plan-items/{id}/expand does NOT write to DB (propose-only)
 from __future__ import annotations
 
 import uuid
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agents._runtime import ModelInvocation
+from app.agents.idea_expander import FilmingShot
 from app.auth import get_current_user
 from app.database import get_db
 from app.main import app
@@ -31,6 +34,19 @@ def _result(value) -> MagicMock:  # noqa: ANN001
     r = MagicMock()
     r.scalar_one_or_none = MagicMock(return_value=value)
     return r
+
+
+class _QueuedModelClient:
+    def __init__(self, *responses: dict) -> None:
+        self.responses = deque(responses)
+        self.invocations: list[dict] = []
+
+    def invoke(self, **kwargs) -> ModelInvocation:  # noqa: ANN003
+        import json
+
+        self.invocations.append(kwargs)
+        response = self.responses.popleft()
+        return ModelInvocation(raw_text=json.dumps(response), tokens_in=10, tokens_out=20)
 
 
 def _plan(user_id: uuid.UUID, items=None) -> MagicMock:
@@ -77,9 +93,34 @@ def _idea_item(user_id: uuid.UUID, *, item_status: str = "idea", current_job_id=
     item.voiceover_bed_level = None
     item.voiceover_caption_style = None
     item.edit_format = None
+    item.landscape_fit = "fit"
+    item.content_mode = None
     plan = MagicMock()
     plan.user_id = user_id
     return item, plan
+
+
+def _valid_expander_payload() -> dict:
+    return {
+        "theme": "Coffee shop first visit",
+        "filming_suggestion": "Film the entrance and your first sip",
+        "filming_guide": [
+            {
+                "what": "Walk up to the shop",
+                "how": "Wide shot from across the street",
+                "duration_s": 4,
+            },
+            {"what": "Take the first sip", "how": "Close-up at the table", "duration_s": 3},
+        ],
+        "rationale": "Creates curiosity",
+    }
+
+
+def _persona() -> MagicMock:
+    persona = MagicMock()
+    persona.persona = {"summary": "creator", "content_pillars": ["fitness"]}
+    persona.style = {}
+    return persona
 
 
 @pytest.fixture()
@@ -309,8 +350,7 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     """expand returns a proposal without calling db.add or db.commit."""
     user = _user()
     item, plan = _idea_item(user.id)
-    persona = MagicMock()
-    persona.persona = {"summary": "creator", "content_pillars": ["fitness"]}
+    persona = _persona()
 
     db = AsyncMock()
     db.commit = AsyncMock()
@@ -324,7 +364,10 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     mock_output = MagicMock()
     mock_output.theme = "Coffee shop first visit"
     mock_output.filming_suggestion = "Film the entrance and your first sip"
-    mock_output.filming_guide = []
+    mock_output.filming_guide = [
+        FilmingShot(what="Walk up to the shop", how="Wide shot", duration_s=4),
+        FilmingShot(what="Take the first sip", how="Close-up", duration_s=3),
+    ]
     mock_output.rationale = "Creates curiosity"
 
     with patch("app.agents.idea_expander.IdeaExpanderAgent.run", return_value=mock_output):
@@ -333,6 +376,145 @@ def test_expand_does_not_write_db(client: TestClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["theme"] == "Coffee shop first visit"
+    assert 2 <= len(data["filming_guide"]) <= 4
+    assert all(shot["shot_id"] for shot in data["filming_guide"])
     # No DB writes.
     db.add.assert_not_called()
     db.commit.assert_not_awaited()
+
+
+def test_expand_empty_guide_after_retry_returns_502_and_does_not_write(
+    client: TestClient,
+) -> None:
+    """If the agent cannot produce shots after clarification, expand fails friendly."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    persona = _persona()
+    model_client = _QueuedModelClient(
+        {**_valid_expander_payload(), "filming_guide": []},
+        {**_valid_expander_payload(), "filming_guide": []},
+    )
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
+    db.get = AsyncMock(side_effect=[plan, plan, persona])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.agents._model_client.default_client", return_value=model_client):
+        resp = client.post(f"/plan-items/{item.id}/expand")
+
+    assert resp.status_code == 502
+    assert resp.json()["detail"] == "Couldn't plan this idea — try again."
+    assert len(model_client.invocations) == 2
+    assert "2-4 non-empty shots" in model_client.invocations[1]["prompt"]
+    db.add.assert_not_called()
+    db.commit.assert_not_awaited()
+    assert item.filming_guide == []
+
+
+def test_expand_empty_once_then_valid_guide_returns_200(client: TestClient) -> None:
+    """A sanitized-empty first answer gets one clarification retry."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    persona = _persona()
+    model_client = _QueuedModelClient(
+        {**_valid_expander_payload(), "filming_guide": []},
+        _valid_expander_payload(),
+    )
+
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.add = MagicMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
+    db.get = AsyncMock(side_effect=[plan, plan, persona])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.agents._model_client.default_client", return_value=model_client):
+        resp = client.post(f"/plan-items/{item.id}/expand")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["filming_guide"]) == 2
+    assert all(shot["shot_id"] for shot in data["filming_guide"])
+    assert len(model_client.invocations) == 2
+    db.commit.assert_not_awaited()
+
+
+def test_patch_filming_guide_stamps_missing_shot_ids(client: TestClient) -> None:
+    """Accepting an expand proposal without shot_ids never persists null shot_id."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    persona = _persona()
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(item)])
+    db.get = AsyncMock(side_effect=[plan, plan, plan, persona, plan, persona])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={
+            "filming_guide": [
+                {"what": "Walk up to the shop", "how": "Wide shot", "duration_s": 4},
+                {
+                    "shot_id": None,
+                    "what": "Take the first sip",
+                    "how": "Close-up",
+                    "duration_s": 3,
+                },
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    assert len(item.filming_guide) == 2
+    assert all(shot["shot_id"] for shot in item.filming_guide)
+    assert all(len(shot["shot_id"]) == 32 for shot in item.filming_guide)
+    db.commit.assert_awaited()
+
+
+def test_patch_filming_guide_preserves_existing_shot_ids(client: TestClient) -> None:
+    """Existing shot_ids round-trip through plan item edits unchanged."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    persona = _persona()
+    existing_ids = [uuid.uuid4().hex, uuid.uuid4().hex]
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(item)])
+    db.get = AsyncMock(side_effect=[plan, plan, plan, persona, plan, persona])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={
+            "filming_guide": [
+                {
+                    "shot_id": existing_ids[0],
+                    "what": "Walk up to the shop",
+                    "how": "Wide shot",
+                    "duration_s": 4,
+                },
+                {
+                    "shot_id": existing_ids[1],
+                    "what": "Take the first sip",
+                    "how": "Close-up",
+                    "duration_s": 3,
+                },
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    assert [shot["shot_id"] for shot in item.filming_guide] == existing_ids
+    db.commit.assert_awaited()

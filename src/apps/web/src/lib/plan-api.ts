@@ -12,6 +12,7 @@
  */
 
 import type { EditVariantPayload } from "@/lib/generative-api";
+import type { ArchetypeFallback } from "@/lib/plan-generate-gate";
 
 const PLAN_BASE = "/api/plan";
 
@@ -47,10 +48,6 @@ export interface PersonaContent {
   // The AI's "why this lane" — shown read-only in the dashboard. Optional:
   // personas generated before this field shipped won't have it.
   rationale?: string;
-  // The single most revealing thing the creator said in the chat interview —
-  // shown verbatim as "You said: '...'" on the persona reveal. Empty for
-  // personas generated from the old flat-field questionnaire.
-  signature_quote?: string;
   // "What kind of videos do you make?" onboarding signal.
   // talking_head | montage | day_vlog | mixed
   footage_type_bias?: string[];
@@ -369,10 +366,6 @@ export async function getContentPlan(): Promise<ContentPlan | null> {
  */
 export function regenerateContentPlan(planId: string): Promise<ContentPlan> {
   return request<ContentPlan>(`/content-plans/${planId}/regenerate`, { method: "POST" });
-}
-
-export function addIdeasToPlan(planId: string): Promise<ContentPlan> {
-  return request<ContentPlan>(`/content-plans/${planId}/add-ideas`, { method: "POST" });
 }
 
 /** Idea-centric: append AI-generated ideas to the plan (opt-in, never auto-runs). */
@@ -1346,6 +1339,12 @@ export interface PlanItemJobStatus {
   finished_at?: string | null;
   expected_phase_durations?: Record<string, number> | null;
   created_at?: string | null;
+  /** Style-downgrade explanation persisted by the orchestrator when the declared
+   *  edit_format fell back to montage (e.g. self-narration found no speech).
+   *  Null when the declared format rendered. Drives the item-page banner.
+   *  Mirrors ArchetypeFallbackOut in routes/generative_jobs.py — the single TS
+   *  definition lives in plan-generate-gate.ts. */
+  archetype_fallback?: ArchetypeFallback | null;
 }
 
 export async function getPlanItemJobStatus(jobId: string): Promise<PlanItemJobStatus> {
@@ -1362,7 +1361,7 @@ export async function getPlanItemJobStatusFresh(jobId: string): Promise<PlanItem
 
 // ── Creator Agent M1: Per-user style ─────────────────────────────────────────
 // Gated behind USER_STYLE_ENABLED on the backend (returns 404 when disabled).
-// Frontend: render StyleCard only when the style API returns non-404.
+// Frontend: render style surfaces only when the style API returns non-404.
 
 export interface StyleKnobs {
   font_family?: string | null;
@@ -1667,6 +1666,10 @@ export interface PoolAsset {
   subject: string | null;
   display_url: string | null;
   deduped: boolean;
+  /** Object key under users/{uid}/plan/{itemId}/pool/ — already inside
+   *  attach_clips' allowed prefix, so "Use in edit" can promote the asset to a
+   *  clip via the existing attach flow (no copy, no new endpoint). */
+  gcs_path: string;
 }
 
 /** Signed PUT URLs for pool assets (users/{uid}/plan/{itemId}/pool/, persistent). */

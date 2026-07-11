@@ -103,7 +103,11 @@ function makeTrack(bestStart: number, bestEnd: number): MusicTrackDetail {
     lyrics_status: "ready",
     lyrics_source: "lrclib_synced+whisper",
     lyrics_error_detail: null,
+    lyrics_whisper_draft: null,
+    lyrics_diagnostic: null,
+    lyrics_extraction_version: 0,
     lyrics_extracted_at: "2026-05-27T10:02:00Z",
+    section_error_detail: null,
     lyrics_cached: {
       source: "lrclib_synced+whisper",
       language: "en",

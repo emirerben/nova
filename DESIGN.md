@@ -12,10 +12,10 @@ Consumers: `/plan-design-review` and `/design-review` skills, implementers, and 
 |---|---|---|---|---|
 | Landing (`/`) | cream `#fafaf8` | lime-700 family | Fraunces headings | light editorial |
 | Light product (`/plan`, `/plan/items/`, `/library`, `/generative`) | cream `#fafaf8` / ink / lime | lime-700 | Fraunces headings | light editorial |
-| Dark render system (`/template/[id]`, `/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
+| Dark render system (`/template-jobs`) | `bg-black` | amber-400/300 | Fraunces headings | dark theater |
 | Admin (`/admin/*`) | `bg-black` | none (white CTAs) | default sans | plain utility |
 
-**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = template flow (`/template/*`, `/template-jobs/*`) + `/admin/*` only. ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for template flow + admin). Intentional, not drift.
+**Standing rule:** Light editorial = entire user-facing product (landing, /plan, /plan/items, /library, /generative). Dark render system = render-status flow (`/template-jobs/*`) + `/admin/*` only (the `/template/[id]` config flow was deleted in v0.7.8.2). ProgressTheater is tone-aware (`tone="light"` on all light surfaces, default dark for /template-jobs + admin). Intentional, not drift.
 
 ---
 
@@ -41,6 +41,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
   - Eyebrows: `text-[11px] font-semibold uppercase tracking-[0.18em]` (dominant, 5× in section cards); hero eyebrow uses `tracking-[0.24em]` — see §10 ledger
 - **CTA (InkButton):** ink pill `rounded-full bg-[#0c0c0e] px-9 py-[15px] text-[15px] font-semibold text-white hover:opacity-80`.
   **Single-primary-CTA rule on landing:** one CTA to `/plan`, proof via showcase — never a second CTA alongside it.
+- **Touch pressed state:** on touch surfaces, pressed/drag state replaces hover affordance. Active handles solidify and scale slightly; active chips go `opacity-100`; drags show a floating value readout offset from the thumb.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
@@ -48,9 +49,9 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 
 ---
 
-## §3 Dark render system (template flow + admin)
+## §3 Dark render system (/template-jobs + admin)
 
-Token source: `src/apps/web/src/app/template/`, `template-jobs/` on origin/main. Admin is a separate variant (§4).
+Token source: `src/apps/web/src/app/template-jobs/` on origin/main (the `/template/[id]` config flow was deleted in v0.7.8.2). Admin is a separate variant (§4).
 
 - **Canvas:** `bg-black text-white`; `min-h-[calc(100vh-3.5rem)]` under the h-14 header.
 - **Zinc scale roles:**
@@ -112,7 +113,7 @@ closing the §6 D17 gap per-surface. Source skill: `npx skills add Jakubantalik/
 
 | Token group | CSS vars | Usage |
 |---|---|---|
-| `t-modal` (#6) | `--modal-open-dur: 250ms`, `--modal-close-dur: 150ms`, `--modal-scale: 0.96`, `--modal-ease` | `TemplatePreviewModal` scale-up in / scale-down out. Pattern template for all future modals. |
+| `t-modal` (#6) | `--modal-open-dur: 250ms`, `--modal-close-dur: 150ms`, `--modal-scale: 0.96`, `--modal-ease` | Pattern template for all future modals. No current consumer (last user `TemplatePreviewModal` removed with the dead `/template` route, 2026-07-11). |
 | step-slide (derived #8) | `--page-slide-dur/fade-dur: 250ms`, `--page-slide-distance: 8px`, `--page-blur: 3px`, `--page-slide/fade-ease` | `OnboardingShell` `<StepSlide key={step}>` — slide+blur entrance on each wizard step. |
 | `t-skel` (#14) | `--reveal-dur: 400ms`, `--reveal-blur: 2px`, `--reveal-ease: ease-in-out` | `VariantRenderCard` shimmer→video cross-blur reveal when status becomes `ready`. |
 | `t-stagger` (#18) | `--stagger-dur: 500ms`, `--stagger-distance: 12px`, `--stagger-stagger: 40ms`, `--stagger-blur: 3px`, `--stagger-ease` | Landing hero `<section class="t-stagger is-shown">` — 4 lines stagger in on page load. |
@@ -198,14 +199,25 @@ Celebrate then recede.
 - **Visible focus** on every interactive element: product `focus:border-amber-400/60` or amber ring; landing ink outline (`outline-lime-500` for selection states).
 - **Contrast floor:** text meets 4.5:1 against its surface. `zinc-600`-on-black fails — faint zinc is decorative only, never for content that must be read.
 - **Touch targets** ≥44px on mobile.
+- **Touch inputs:** inputs on touch viewports are ≥44px tall with ≥16px font to prevent iOS Safari zoom-on-focus.
+- **User scaling:** never disable zoom. Do not set `maximumScale` or `user-scalable=no`.
 - **Mobile-first:** single column default, `sm:`/`md:` enhance; landing display type scales via `clamp()`; phone tiles use mobile radii (§2).
 - **Reduced-motion** honored globally — `prefers-reduced-motion` zeroes entrances (globals.css); new shimmer/ping uses `motion-safe:` prefix until D17 lands (see §6).
+
+| Tier | Width | Canonical use |
+|---|---:|---|
+| base | <640px | Phone-first single column; 44px touch targets; 16px focused inputs. |
+| `sm` | ≥640px | Tailwind small-tablet enhancement tier. |
+| `md` | ≥768px | Tailwind tablet enhancement tier. |
+| light editor | <1024px | `useEditorLayoutMode.ts` light mode. |
+| `lg` / overlay editor | ≥1024px to <1280px | Tailwind desktop tier; editor overlay mode. |
+| `xl` / full editor | ≥1280px | Tailwind wide tier; editor full mode. |
 
 ---
 
 ## §9 Anti-slop rules (Nova-specific)
 
-- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template/*`, `/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
+- **One accent per surface:** lime = entire user-facing product (landing + all light editorial surfaces). Amber = dark render system (`/template-jobs/*`) only. Never mixed on the same surface; never a third accent.
 - No candy gradients, no rainbow palettes, no purple/violet defaults.
 - No 3-column icon-in-circle feature grids; no centered-everything; no decorative blobs/wavy dividers; no emoji as design elements.
 - **Serif display (Fraunces) is the brand voice;** system-ui display type is the "gave up" signal.
@@ -229,7 +241,7 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 | 5 | Montserrat 800 imported in `globals.css`, mapped to nothing | Removed in PR1 (light workspace reskin) | Dead import eliminated — closed |
 | 6 | Eyebrow `letter-spacing` varies: `tracking-wide` (0.025em), 0.12, 0.14, 0.18, 0.22, 0.24em | `tracking-[0.18em]` landing section cards (dominant); `tracking-[0.24em]` hero eyebrow; `tracking-wide` product micro-labels (dominant in `/plan`) | Normalize opportunistically |
 | 7 | `/generative` submit CTA deviates from amber-CTA rule: `rounded bg-white text-black` | Resolved v0.4.87.0 — `/generative` now uses `InkButton` (`bg-[#0c0c0e] text-white rounded-full`), same as all other light surfaces. Amber CTA exception closed. | DONE |
-| 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:bg-zinc-800 disabled:text-zinc-500` (`PlanCalendar`), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
+| 8 | Disabled CTA state varies: `disabled:bg-zinc-700` (most plan components), `disabled:opacity-25` (`ChatInterview`) | `disabled:bg-zinc-700` is the dominant pattern | Normalize opportunistically |
 | 9 | Light editorial system covers landing + /plan flow. `/plan/items/[id]`, `/library`, `/generative` remain dark theater. | Resolved v0.4.87.0 — D20 + D21 landed. All user-facing surfaces are now light editorial. §1 standing rule updated. | DONE |
 | 10 | Workspace route layout | `/plan` = mode router (setup flow for new users; workspace for returning users); `/plan/setup` = canonical onboarding URL (redirects to `/plan`); `/plan/persona` = real persona read+edit page | PR3 ships the canonical routes and back-compat redirects. |
 | 11 | Display font: Playfair Display → Fraunces | `"Fraunces", Georgia, serif` — optical-size variable, `opsz,wght@9..144`. Rationale: 3-way user comparison (Fraunces / Space Grotesk / Instrument Serif), Fraunces chosen (D6/D8 in based-on-our-talk-deep-hopper plan). Body unchanged → Inter. **Web UI only** — burned-in video fonts (`assets/fonts/`, Skia ASS) unaffected. | DONE v0.4.106.0 |
@@ -238,34 +250,28 @@ Documented here, **not fixed** (D2 decision). Canonicals are user-ratified. Norm
 
 ## §12 Idea-centric plan components (v0.4.111+)
 
-Four new / redesigned components shipped with the idea-centric plan redesign. Rules here supplement §2 (light editorial system).
+Rules here supplement §2 (light editorial system).
 
-### IdeasSidebar (`/plan` left rail)
-- **Data source:** `plan.items` sorted by `position` — NOT `persona.idea_seeds`.
-- **Item row:** `min-h-[44px] border-t border-zinc-100 py-2.5`; idea text `text-[14px] leading-snug text-[#0c0c0e]`; each row is a `Link` to `/plan/items/{id}`.
-- **Delete affordance:** `× button` opacity-0 → opacity-100 on `group-hover`. `w-[28px] h-[28px]` tap target.
-- **Add input:** dashed border `border-zinc-300`, focus ring `border-lime-500/60`; lime `+` prefix; commits on Enter or blur.
-- **Empty state:** Fraunces `text-[16px] font-medium` invitation + `text-[12px]` muted sub-line inside `rounded-xl border-dashed border-zinc-200` tile.
-- **Generating spinner:** `animate-ping` lime dot + `text-[12px] text-[#71717a]` label (matches §7 ping convention).
+### Ideas ledger (`/plan` home)
+- **Canvas:** `bg-[#fafaf8]`; centered column `max-w-[760px] px-6 pt-14`.
+- **Header:** Fraunces `font-display text-[44px] font-medium` "Ideas"; sub-line `text-[14px] text-[#71717a]` "Every idea here becomes a video."
+- **Stat line:** right-baseline `text-[13px] text-[#71717a]`; zero fragments hidden; whole line hidden when ready+rendering are zero. Ready fragment `font-semibold text-lime-700`; rendering plain zinc; `/library` link hover underline.
+- **Composer:** add input `min-h-[44px] rounded-lg border border-dashed border-zinc-300 bg-white`, focus `border-lime-500/60`, lime `+`, placeholder "A video idea, rough is fine…"; commits on Enter/blur. Button `min-h-[44px] rounded-lg border border-zinc-200 bg-white px-4 text-[12px] text-[#71717a]`, hover `border-lime-400 text-lime-700`, disabled `opacity-50 cursor-not-allowed`, copy "✦ Generate with AI".
+- **Ledger rows:** semantic `ol`; `plan.items` sorted newest-first by `position` descending. Row `min-h-[48px] border-t border-zinc-100 py-2.5`; grid numeral | link | status | delete.
+- **Numeral:** decorative `font-display italic text-[20px] text-zinc-300 w-8`, top-aligned, hidden below 380px.
+- **Idea link:** `text-[15px] leading-snug text-[#0c0c0e] line-clamp-2`; hover `text-lime-700`; focus `outline-2 outline-[#0c0c0e]`.
+- **Status slots:** ready pill `border-lime-200 bg-lime-50 text-lime-800 text-[11px]` "Ready to post"; generating/rerolling `text-[12px] text-[#71717a]` "Rendering…" + lime `motion-safe:animate-ping` dot; failed zinc "Didn't render — open to retry"; awaiting_clips zinc "Needs footage"; idea faint `text-[#a1a1aa]` "Plan this →".
+- **Delete:** `×` button `h-[28px] w-[28px]`; hidden until row hover/focus on hover-capable devices, always visible on touch. `ready|generating|rerolling` rows show inline zinc confirmation "Delete idea? It has a video — Keep / Delete"; other rows delete immediately.
+- **Generating:** top in-list optimistic row with `role="status" aria-live="polite"`, lime ping dot in numeral slot, `motion-safe:animate-shimmer` bar, label "Nova is writing an idea…"; button stays focused and disabled.
+- **Empty:** no card/icon; list zone shows Fraunces `text-[16px] font-medium` "Pitch your first idea."
+- **Failed plan:** quiet dashed `border-zinc-200` tile between composer and ledger, zinc copy "That idea didn't come through. Try again"; no red.
+- **Initial load:** SHIMMER tier — header ghost plus 4 ghost rows.
 
-### IdeaItem row (inside IdeasSidebar)
-- Idea text truncated at 2 lines (`line-clamp-2`). Full text is accessible via `/plan/items/{id}`.
-- Hover: idea text transitions to `text-lime-700`; delete `×` fades in.
-- No "Day N" badge — items are position-ordered, not calendar-slotted until AI expands them.
-- Focus ring: `focus-visible:outline-2 focus-visible:outline-[#0c0c0e] focus-visible:rounded`.
-
-### Generate-with-AI button
-- Full-width button below the add-input in IdeasSidebar.
-- Tokens: `border border-zinc-200 bg-white text-[12px] text-[#71717a]`; hover `border-lime-400 text-lime-700`.
-- Disabled while `aiGenerating` or `plan.plan_status === "generating"`: `opacity-50 cursor-not-allowed`.
-- Sparkle icon `✦` prefix (aria-hidden). Copy: "Generate with AI" / "Generating…".
-
-### Expand-with-AI proposal card (item detail page)
-- Shown only when `!item.theme && clip_gcs_paths.length === 0` — un-expanded pure ideas.
-- Trigger button matches Generate-with-AI token pattern.
-- Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`. Rationale `text-xs text-[#71717a]`.
-- Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold`. Dismiss: `border-zinc-200 bg-white text-[#71717a]`.
-- On accept: writes `theme + filming_suggestion` to item via `updatePlanItem`, then refetches — card disappears.
+### Expand-with-AI proposal card (item detail page; trigger "✦ Plan this for me")
+- Shown only while the item has no `filming_guide`; trigger button matches Generate-with-AI token pattern.
+- Proposal card: `rounded-xl border border-lime-200 bg-lime-50 p-4`. Eyebrow `text-[11px] uppercase tracking-[.15em] text-lime-700`. Theme in Fraunces `text-lg font-medium`. Filming suggestion `text-sm text-[#3f3f46]`.
+- Shot list renders inside the card: italic Fraunces numerals `text-[17px] text-lime-600`, shot `what` `text-[15px] font-medium text-[#0c0c0e]`, `how` `text-[13.5px] text-[#3f3f46]`, duration chip `text-[11px] border-zinc-200 bg-white text-[#3f3f46]`.
+- Accept CTA: `bg-lime-600 text-white rounded-lg text-[12px] font-semibold` copy "Use this plan". Dismiss: `border-zinc-200 bg-white text-[#71717a]`. Rationale `text-xs italic text-[#71717a]` under the card.
 
 ---
 

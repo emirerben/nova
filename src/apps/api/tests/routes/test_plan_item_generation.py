@@ -121,9 +121,13 @@ def test_generate_enqueues_when_clips_present(client: TestClient) -> None:
     task.delay.assert_called_once_with(str(item.id))
 
 
-def test_generate_blocks_narrated_without_voiceover(client: TestClient) -> None:
-    """A narrated item with clips but NO voiceover must be rejected (the spine is
-    the narration). Reproduces the 'started a narrated render with no audio' bug."""
+def test_generate_blocks_narrated_without_voiceover(monkeypatch, client: TestClient) -> None:
+    """Self-narration OFF (default): a narrated item with clips but NO voiceover is
+    rejected (the spine is the narration). Kill-switch pin for the pre-self-narration
+    behavior — reproduces the 'started a narrated render with no audio' bug."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "narrated_self_narration_enabled", False, raising=False)
     user = _user()
     item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
     item.edit_format = "narrated_ready"
@@ -134,6 +138,44 @@ def test_generate_blocks_narrated_without_voiceover(client: TestClient) -> None:
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 409
     assert "voiceover" in resp.json()["detail"].lower()
+
+
+def test_generate_allows_narrated_without_voiceover_when_self_narration_on(
+    monkeypatch, client: TestClient
+) -> None:
+    """Self-narration ON: the voiceover requirement lifts — clips alone dispatch the
+    render and _resolve_archetype routes by the footage's own speech."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "narrated_self_narration_enabled", True, raising=False)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[f"users/{user.id}/plan/0/a.mp4"])
+    item.edit_format = "narrated_ready"
+    item.voiceover_gcs_path = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.tasks.content_plan_build.generate_plan_item_videos") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 200
+    task.delay.assert_called_once_with(str(item.id))
+
+
+def test_generate_self_narration_on_still_requires_clips(monkeypatch, client: TestClient) -> None:
+    """Self-narration ON does not relax the clips requirement — zero clips still 409."""
+    from app.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "narrated_self_narration_enabled", True, raising=False)
+    user = _user()
+    item, plan = _owned_item(user.id, clips=[])
+    item.edit_format = "narrated_ready"
+    item.voiceover_gcs_path = None
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(f"/plan-items/{item.id}/generate")
+    assert resp.status_code == 409
 
 
 def test_generate_allows_narrated_with_voiceover(client: TestClient) -> None:
@@ -199,6 +241,112 @@ def test_attach_clips_rejects_foreign_prefix(client: TestClient) -> None:
         json={"clip_gcs_paths": ["users/someone-else/plan/x/clip.mp4"]},
     )
     assert resp.status_code == 422
+
+
+def _db_for_pool_attach(item, plan, *, asset_kind):
+    """_db_for + a second execute() result for the pool-promotion kind check.
+    asset_kind None → no PlanItemAsset row found (deleted/foreign object)."""
+    db = _db_for(item, plan)
+    load_result = MagicMock()
+    load_result.scalar_one_or_none = MagicMock(return_value=item)
+    asset_result = MagicMock()
+    rows = []
+    if asset_kind is not None:
+        rows = [
+            MagicMock(
+                gcs_path=f"users/{plan.user_id}/plan/{item.id}/pool/asset.bin",
+                kind=asset_kind,
+            )
+        ]
+    asset_result.scalars = MagicMock(return_value=rows)
+
+    # execute() serves BOTH the item load/reload (any number of calls) and the
+    # one pool-asset kind lookup — discriminate on the compiled query target.
+    async def _execute(query, *args, **kwargs):
+        if "plan_item_assets" in str(query):
+            return asset_result
+        return load_result
+
+    db.execute = AsyncMock(side_effect=_execute)
+    return db
+
+
+def test_attach_clips_accepts_pool_asset_prefix(client: TestClient) -> None:
+    """The Visuals-pool "Use in edit" promotion re-attaches a pool object
+    (users/{uid}/plan/{item}/pool/…) as a clip — that path is INSIDE the item's
+    allowed prefix and must keep attaching WHEN the pool row is a video. Pins
+    the contract the frontend promotion in AssetPool.tsx depends on."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    pool_path = f"users/{user.id}/plan/{item.id}/pool/asset.bin"
+    db = _db_for_pool_attach(item, plan, asset_kind="video")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.tasks.conformance_build.analyze_item_conformance") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/clips",
+            json={"clip_gcs_paths": [pool_path]},
+        )
+    assert resp.status_code == 200
+    assert pool_path in resp.json()["clip_gcs_paths"]
+
+
+def test_attach_clips_rejects_non_video_pool_asset(client: TestClient) -> None:
+    """Server-side twin of the AssetPool video-only affordance: an IMAGE pool
+    asset attached as a clip via direct API call must 422 loudly, not fail the
+    render confusingly later."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    pool_path = f"users/{user.id}/plan/{item.id}/pool/asset.bin"
+    db = _db_for_pool_attach(item, plan, asset_kind="image")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(
+        f"/plan-items/{item.id}/clips",
+        json={"clip_gcs_paths": [pool_path]},
+    )
+    assert resp.status_code == 422
+    assert "video" in resp.json()["detail"].lower()
+
+
+def test_attach_clips_rejects_pool_path_without_asset_row(client: TestClient) -> None:
+    """A pool-prefixed path with NO PlanItemAsset row (deleted or never registered)
+    is unverifiable — reject the NEW attach; previously attached paths are exempt
+    (the full-set re-send must keep working after a pool-row delete)."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    pool_path = f"users/{user.id}/plan/{item.id}/pool/asset.bin"
+    db = _db_for_pool_attach(item, plan, asset_kind=None)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(
+        f"/plan-items/{item.id}/clips",
+        json={"clip_gcs_paths": [pool_path]},
+    )
+    assert resp.status_code == 422
+
+
+def test_attach_clips_realready_pool_path_skips_kind_check(client: TestClient) -> None:
+    """An ALREADY-attached pool path re-sent in the full assignment set does not
+    re-run the kind lookup — a promoted clip survives its pool row's deletion."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    pool_path = f"users/{user.id}/plan/{item.id}/pool/asset.bin"
+    item.clip_assignments = [{"gcs_path": pool_path, "shot_id": None, "user_note": ""}]
+    item.clip_gcs_paths = [pool_path]
+    # Plain _db_for: if the kind-check query ran, .scalars() on its MagicMock
+    # result would raise — passing proves the check was skipped.
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    with patch("app.tasks.conformance_build.analyze_item_conformance") as mock_task:
+        mock_task.delay = MagicMock()
+        resp = client.post(
+            f"/plan-items/{item.id}/clips",
+            json={"clip_gcs_paths": [pool_path]},
+        )
+    assert resp.status_code == 200
 
 
 def test_upload_urls_returns_signed_puts(client: TestClient) -> None:

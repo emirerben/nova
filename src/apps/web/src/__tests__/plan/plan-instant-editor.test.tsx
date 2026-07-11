@@ -116,10 +116,6 @@ jest.mock("@/components/ui/LightShell", () => ({
     <div data-testid="light-shell">{children}</div>
   ),
 }));
-jest.mock("@/app/plan/_components/PlanFilmstrip", () => ({
-  __esModule: true,
-  default: () => <div data-testid="plan-filmstrip" />,
-}));
 jest.mock("@/app/plan/_components/SignInPrompt", () => ({
   __esModule: true,
   default: () => <div data-testid="sign-in-prompt" />,

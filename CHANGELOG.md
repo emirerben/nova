@@ -2,10 +2,130 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.4.2] — 2026-07-08
+## [0.7.15.2] — 2026-07-11
 
 ### Fixed
 - **Generative variant state can no longer be silently clobbered by a concurrent write.** Several `Job.assembly_plan` read-modify-writers in the generative pipeline (`_set_status`/finalize, `_fail_job`, and the media-overlay / SFX re-apply prep passes) updated the whole JSONB column without `SELECT … FOR UPDATE`, while sibling regenerate tasks (worker `--concurrency=4`) and the status route's lazy HEIC-preview backfill mutate the same column concurrently. A stale read in any unlocked writer overwrote another writer's variants — lost render state, lost preview stamps. All four worker writers now row-lock (mirroring `_upsert_variant_entry`), and the status route persists its preview backfill by re-reading the row `FOR UPDATE` and merging only the stamps instead of committing an unlocked snapshot. Regression-tested (lock-spy on the writers + a route test proving a concurrent worker append survives the backfill).
+
+## [0.7.13.0] — 2026-07-11
+
+### Added
+- **Explicit mobile viewport policy:** the app declares its viewport (device-width, cream theme color for browser chrome; the dark render-status flow keeps matching black chrome). Pinch-zoom is never disabled.
+- DESIGN.md now carries the canonical breakpoint tiers, the touch pressed-state rule, and the ≥44px/≥16px touch-input rules the mobile work shipped this week.
+
+### Changed
+- **Phone-friendly grids and controls across upload and editing flows:** onboarding clip grids and the visuals pool show 2 columns on phones (larger, legible thumbnails); dozens of small controls (remove ×, retry, caption toggle, text-lane tools, "Clear all overlays") now meet the 44px touch floor on phones while keeping their compact desktop look.
+- Number fields in the overlay editor show a proper amber focus ring.
+
+### Fixed
+- The visuals-pool remove button is now visible on phones (it was hover-revealed — invisible but still tappable on touch, deleting without warning).
+
+## [0.7.12.0] — 2026-07-11
+
+### Added
+- **Media overlays are now editable by touch.** Tapping an overlay card opens its editor (previously dead on phones — touch taps were misread as drags), moving and trimming overlays works with your finger, and very small cards degrade gracefully on touch screens: edge handles hide and a tap opens the editor where timing can be typed precisely. Vertical swipes over the timeline still scroll the page.
+- **Overlay editor works at phone sizes:** number fields are 44px tall with 16px text on small screens (no more iOS zoom-jump when tapping a field) and the focused field scrolls into view above the keyboard on touch devices.
+- **Upload feedback:** while an overlay clip uploads, a pulsing dot and status line replace the previous bare text.
+
+### Fixed
+- On desktop, small overlay cards keep their slim trim handles — clicking a short overlay opens/moves it as before (touch-sized handles apply only to touch screens).
+- Scrolling the page with a finger over an overlay card no longer opens its editor as a side effect.
+
+## [0.7.11.0] — 2026-07-11
+
+### Added
+- **The clip trim editor now works on phones.** Every trim gesture (start, end, whole-range, source in/out) responds to touch: handles have 44px hit areas with slim visual grips, a floating readout shows In/Out/Duration while your thumb covers the handle, and ±0.1s nudge steppers (±1 beat on beat-synced edits) make fine trims possible on a small screen. Dragging never hijacks page scroll — vertical swipes still scroll, horizontal drags on handles trim.
+- **Mobile layout for the trim editor:** below tablet width the preview video sits pinned above a full-width timeline (no more squeezed rail), with no horizontal page overflow at 375px.
+
+### Changed
+- The trim editor now matches the light editorial design system (cream/ink/lime) instead of the old dark styling, and failed saves show a quiet plain-language notice instead of red error text.
+
+### Fixed
+- Undo after a trim drag now restores the pre-drag value (history recorded at gesture start, one entry per gesture).
+- Trim handles no longer overlap neighboring clips' bars; short clips split the shared zone at the midpoint.
+
+## [0.7.10.1] — 2026-07-11
+
+### Fixed
+- **`scripts/admin.py` no longer breaks auth when a `.env` value carries an inline comment.** The CLI's tiny .env reader treated everything after `=` as the value, so `ADMIN_API_KEY=abc  # my note` (or the quoted form `="abc" # note`) silently sent a corrupted token and every `/admin/*` call 401'd with no visible cause — the `-v` flag masks the token by design. `load_env()` now follows dotenv semantics, matching how pydantic-settings reads the same file for the local API: an unquoted value is cut at the first whitespace-preceded `#`, and a quoted value ends at its closing quote (so `#` inside quotes stays literal, and a comment may follow the closing quote). Verified byte-for-byte against python-dotenv on the affected shapes; pinned by 15 unit tests in `tests/scripts/test_admin_cli_load_env.py` covering every parser branch (quoting, CRLF, tab-before-`#`, unterminated quotes, missing file).
+- **Full-tree pytest no longer inherits the developer's real `.env`.** `scripts/diff_lyric_sync.py` merged the nearest `.env` into `os.environ` at import time; full-tree collection imports it via its test module, so any pydantic-invalid value on a Settings-typed key (e.g. `GENERATIVE_FAST_REBURN_ENABLED=true   # comment`) failed exactly the 7 tests that build a fresh `Settings()` — in full runs only, never in isolation. The load now happens inside `main()` (CLI behavior unchanged), pinned by `test_import_does_not_mutate_environ`.
+- **`diff_lyric_sync` .env parser now follows dotenv comment semantics.** Inline comments after unquoted values are stripped (`FLAG=true  # note` → `true`), quoted values drop trailing comments and their quotes (`KEY="abc"  # note` → `abc`), `KEY= # note` reads as empty, and `abc#def` keeps its `#` — so a hand-annotated `.env` can no longer poison typed Settings fields or crash the CLI at startup. Pinned by canary lines in `test_main_loads_env_and_strips_inline_comments`.
+## [0.7.9.0] — 2026-07-11
+
+### Added
+- **Automatic silence + filler-sound cutting for speech edits** (behind `SILENCE_CUT_ENABLED`, default off; plans/010). Speech render paths (subtitled + the talking_head spine; narrated self-narration inherits) now auto-tighten pauses and remove filler vocalizations ("uh", "um", "ııı", "eee") — detection = whisper word timings (verbatim-bias prompt) cross-checked against ffmpeg `silencedetect` (pause cuts require silence agreement; whisper end-times drift), applied inside the reframe filtergraph as per-segment trim/concat with 12ms declick fades and an alternating 1.08× punch-in so cuts read as intentional jump-cut style. Captions rebuild from the remapped transcript with fillers stripped. Fail-open by design: any gate/failure renders today's uncut video, never fails the job. Behavior is pinned by a golden test derived from the user-validated reference clip. Music/template/montage paths are structurally excluded (guard test) — cutting would corrupt beat maps.
+- **Retake detection** (behind `RETAKE_CUT_ENABLED`, default off, independent kill switch): a Gemini agent flags abandoned takes ("dur baştan alayım" / "let me start over") as word-index spans, merged into the same cut plan with boundary snapping and shared removal caps; agent failure degrades to zero retake cuts, never blocking silence cutting. Live evals required before the flag flips.
+- **Admin cut-plan viewer**: `/admin/jobs/{id}` renders a per-variant timeline strip of removed ranges (reason-colored bands + legend, hover detail, aria summary, true-timeline scaling via persisted `original_duration_s`) driven by the persisted `variants[i].silence_cut` blob (finalize-whitelist entry + preserve pin).
+- **Per-item opt-out**: `POST /admin/jobs/{id}/silence-cut-disable` (via `scripts/admin.py`) sets `assembly_plan["silence_cut_disabled"]`; the next FULL re-render skips the stage — support's one-item remedy instead of a global flag flip.
+- `reframe_and_export(keep_segments=…)`: per-segment cutting inside the existing filtergraph after CFR normalization (raw phone VFR never sees frame math), declick fades, optional punch-in; pinned byte-identical when unused, plus real-ffmpeg micro-e2e and a 30-cut A/V drift e2e (<40ms).
+- `detect_silences(path, noise_db, min_silence_s)` extracted from `speech_coverage` (which keeps its 0.3s default and byte-identical results — regression-pinned); the cut path uses d=0.1.
+- whisper transcription: optional `verbatim_prompt` passthrough + segment-level `avg_logprob`/`no_speech_prob` mapped onto words (whisper-1 has no per-word confidence — prod quality gates ride segment signals).
+
+### Fixed
+- Turkish sentence-initial fillers ("Iıı,") now match the filler lexicon — Python `lower()` never maps `I→ı`; a Turkish case-fold runs first (English `I`/`It`/`Im` pinned safe).
+- Punch-in on landscape (16:9-input) sources used swapped dims and would abort the concat — punch geometry is always the chain's portrait output now (pinned).
+
+## [0.7.8.2] — 2026-07-11
+
+### Removed
+- **Legacy `/template/[id]` configuration flow.** The old template-config → render-job page and its component chain (`TemplateGrid`, `TemplateTile`, `TemplatePreviewModal`, slot-bound uploads, Google Drive batch import, client-side batch recovery) were unreachable — no page has mounted the template grid since the product moved to the plan/generative flows — and are now deleted (~2,970 lines). The render-status page `/template-jobs/[id]` is unaffected and stays (it backs the admin job views).
+
+### Changed
+- `t-modal` motion token relabeled as an unconsumed pattern template (its last consumer left with the dead route); DESIGN.md §6 updated to match.
+
+## [0.7.8.1] — 2026-07-10
+
+### Fixed
+- **Deleting a clip from a beat-synced (song) editor timeline no longer 422s the save.** `resolve_timeline_slots_for_edit` recomputes each beat slot's duration by walking the music beat grid cumulatively; removing an upstream slot frees its beats from that walk, shifting every downstream slot onto an earlier — and, on a non-uniform grid, sometimes wider — interval, which could exceed a short downstream clip's remaining footage even though the user never touched that slot. The render worker never hits this (it trims to real footage, never loops/holds/slows), but the save-time validator had no equivalent ceiling clamp — only a floor clamp (`_smallest_beat_count_clearing_floor`), and only for slots the user directly changed. Both beat-derivation branches (explicit `duration_beats` and the nearest-beat-count fallback) now reclamp to the largest beat span that still fits the clip's footage, regardless of whether the failing slot itself was edited — a delete must never fail the save. Also added friendly copy for `TIMELINE_OUT_OF_BOUNDS` and the other previously-unmapped timeline codes in `editor-commit.ts` (`formatDetailValue`) so a future edge case shows readable text instead of the raw machine code.
+
+## [0.7.8.0] — 2026-07-10
+
+### Changed
+- **Plan home is now a single ideas ledger — calendar planning is fully removed.** `WorkspaceHome` becomes a centered composer-first column: Fraunces "Ideas" H1 with a live stat line ("N ready · M rendering · View ready videos →"), add-input + "✦ Generate with AI" on top, and a newest-first numbered ledger with per-item status (Ready to post / Rendering… / Didn't render / Needs footage / Plan this →). Deleted: `HomeTodayCard`, `ThisWeekStrip`, `MonthCalendarGrid`, `PlanReadyBanner`, `FootagePool`, `MomentumCard`, `SteerInput`, `IdeasSidebar`, dead `PlanCalendar`/`PlanItemCard`/`PlanFilmstrip`, and `plan-schedule.ts`/`plan-logic.ts`. Legacy items with a `day_index` render as plain ideas (column kept, vestigial). Deleting an idea that already has a video now asks an inline "Keep / Delete" confirm; the × is always visible on touch. DESIGN.md §12 rewritten to codify the ledger.
+- **"Generate with AI" creates exactly ONE idea per click.** The two-mode task (which scheduled ideas onto the calendar on the second click and produced up to 5 at once) is gone: every click appends one fresh bare idea (`horizon_days=1`, newest-first). While generating, an optimistic shimmer row ("Nova is writing an idea…") appears at the top of the ledger.
+- **Item page: "Expand with AI" + "Generate shot plan" merged into one "✦ Plan this for me" flow.** The proposal card now shows the actual numbered shot list (what/how/~Ns) before you accept ("Use this plan"); the rationale moves under the card; the button only renders while the item has no shot plan and disappears once shots exist. Propose/save failures surface as visible quiet-zinc error lines (was a silent `catch {}`).
+
+### Fixed
+- **Talking-to-camera ideas no longer open as montage with nothing selected.** New `resolvePickerFormat` maps planner vocab to the picker (talking_head → "Talking to camera"/subtitled when the flag is on, else montage; day_vlog/single_hero → montage; narrated family preserved incl. the narrated_ready sub-mode) so a card is always pre-selected, and the resolved format is persisted right before Generate dispatch for planner-only vocab — so the rendered video matches the flow shown (server renders raw `talking_head` as montage fallback).
+- **"Plan this for me" can no longer produce an empty "How to film this".** `IdeaExpanderAgent.parse()` refuses an empty sanitized shot list (runtime does one clarification retry; terminal failure → friendly 502), and every persisted/returned shot now carries a server-assigned `shot_id` — fixing the soft-lock where accepted shots (`shot_id: null`) all rendered as un-cancellable empty edit forms in `ShotSlotUploader`.
+- **Generate-with-AI no longer strands the page in "Generating…" forever.** The task is fail-closed: any crash marks `plan_status="failed"` (quiet dashed "Try again" tile). Persona resolution survives a dangling `plan.persona_id` (falls back to the user's persona row) and salvages sparse mid-onboarding payloads (e.g. only `footage_type_bias` saved) by overlaying generic defaults instead of crashing — found by E2E: any mid-onboarding account previously crashed generation 100% of the time.
+- **Frontend `tsc --noEmit` gate un-broken repo-wide:** added the missing `@types/jest` devDependency and fixed 19 stale test fixtures (MusicTrackDetail/EditDraft/PlanItem drift, duplicate `originalEnv` redeclares) that had the preship typecheck red.
+
+## [0.7.7.0] — 2026-07-09
+
+### Changed
+- **Plan home is ideas-first.** Removed the "Your persona" and "Your style" cards (and the dead `IdeasCard`/`TodayCard` components) from the plan workspace, widened the sticky ideas rail (`lg:w-64` → `lg:w-96`), and gave the Ideas heading a real display treatment with a primary lime "Generate with AI" button. `IdeasSidebar` now splits into two sections — unscheduled **Ideas** and **In your plan** (scheduled, muted, with a "Day N" chip) — and AI-generation failures (including the 409 "already generating" case) surface in their own error slot instead of the generic save-error text.
+- Persona editing is still one click away: the account-menu dropdown gained a "Your persona" link to `/plan/persona`.
+- `MomentumCard` copy reworded from streak/momentum language to honest completion-progress phrasing ("X of Y videos made") — no change to the underlying `planProgress()` computation.
+## [0.7.6.0] — 2026-07-09
+
+### Changed
+- **Onboarding interview drops the Turn-3 MOTIVATION question** ("What would you keep filming even if nobody ever watched?") — users found it weird. Arc renumbers to AUDIENCE (turn 3) → GAP (turn 4+), GROUNDING stays a conditional swap-in. Caps tighten proportionally: `_HARD_CAP` 8→7, `_FORCE_FINAL_AT` 7→6, `_DEFAULT_TOTAL_ESTIMATE` 6→5. `INTERVIEWER_PROMPT_VERSION` bumped to `2026-07-09`.
+- **Removed `signature_quote` persona field end-to-end** (prompt, schema, generator, model comment, frontend type). Generated and stored since 2026-06-06 but never rendered anywhere and never consumed by any downstream agent — confirmed by exhaustive grep. No DB migration: the field lived inside a JSONB blob; legacy rows with the key are harmless. `PERSONA_PROMPT_VERSION` bumped to `2026-07-09`.
+
+### Fixed
+- **Interview progress label no longer creeps** ("~2 OF ~5" … "~6 OF ~8", found in the 2026-07-09 E2E baseline pass). `parse()` now clamps the advertised total to the M last shown to the user (`InterviewerInput.prev_total_estimate`, extracted from the stored agent turns by the chat routes); it only grows when the turn counter genuinely outruns the promise, and then minimally. Prompt also instructs the model to treat its first estimate as a promise.
+## [0.7.5.1] — 2026-07-09
+
+### Fixed
+- **`content_mode` now agrees between plan (list) and item (detail) reads.** `GET /content-plans` hardcoded `create_new` per item while `GET /plan-items/{id}` resolved item-override → persona → default, so the same item reported different modes on the two endpoints (found in the 2026-07-09 E2E baseline pass). Plan responses now resolve via `_resolve_item_content_mode` (same priority, no extra DB read) on the GET and create paths.
+- **"Generate with AI" no longer no-ops when the idea list is empty.** `generate_ideas_into_plan` only ever expanded bare (unscheduled) items — once a plan had none left, clicking the button silently flipped `plan_status` back to `"ready"` with no visible change. It's now two-mode: with bare ideas, expand + schedule them as before (skipping a redundant `IdeaExpanderAgent` call for items that already carry a theme + filming guide from a prior fresh-generate pass); with none, reuse `ContentPlanGeneratorAgent` (same pattern as `add_ideas_to_plan`) to drop ~5 fresh unscheduled suggestions for the user to curate, so a second click schedules them. Terminal failures (retries exhausted) now set `plan_status="failed"` instead of masking as `"ready"`.
+
+### Removed
+- **Orphaned `POST /content-plans/{id}/add-ideas` + its `add_ideas_to_plan` Celery task.** Only caller was the dead `IdeasCard.tsx` (zero imports); the live flow is the two-mode `/generate-ideas` above. Frontend client fn + dead component removal ships separately with the ideas-first plan-home PR.
+
+## [0.7.5.0] — 2026-07-08
+
+### Added
+- **Narrated walkthroughs generate without a separate voiceover recording** (behind `NARRATED_SELF_NARRATION_ENABLED`, default off). When a creator picks a narrated style and uploads footage whose own audio carries the narration, generation now proceeds instead of hard-blocking on the voice recorder. `_resolve_archetype` routes by the footage's own speech: 1 clip → `subtitled` (own audio + editable captions), 2+ clips → `talking_head` (highest-speech spine + B-roll). No audible speech anywhere → montage fallback with a persisted, user-visible reason. A recorded voiceover still wins and renders the narrated archetype unchanged. Dual-flag with `NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED` (flip Fly first, then Vercel). The flag is the SOLE gate for the branch — it deliberately bypasses the per-archetype kill switches so rollback is one switch (incident note: if you disable a broken assembler, disable this too).
+- **"Use in edit" promotes a Visuals-pool video into the render** (rides the existing `NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED`). Pool objects already live inside `attach_clips`' allowed prefix, so promotion is a plain re-attach — no new endpoint, no copy. The asset stays in the pool for overlay suggestions. Video assets only; server-side kind check rejects non-video pool paths with a clear 422, matching the UI.
+- **Style-downgrade banner on the plan-item page.** When a narrated render falls back to montage, the reason is persisted on `assembly_plan["archetype_fallback"]` and surfaced as a quiet notice ("we made a montage instead…") so a style swap is never silent. Any unmapped reason still shows a generic downgrade line — a silent swap was the original dogfood bug this exists to prevent.
+
+### Changed
+- **`speech_coverage` decodes audio only** (`-vn -sn -dn` on the `silencedetect` command). Decoding the full video stream just to measure audio silence was 10-50x slower and could blow the 60s probe timeout on long phone clips — which scored the clip 0.0 and could misroute a genuinely narrated clip set to montage.
+- The Generate button's disabled state and its hint line now come from one pure, unit-tested function (`plan-generate-gate.ts`) so they can never disagree — the exact divergence class behind the "Record your voiceover first" bug.
+
+## [0.7.4.1] — 2026-07-07
 
 ### Fixed
 - **"Place visuals for me" no longer hangs the worker.** The suggestion matcher validated placements while holding the job row lock, and each validation trace event opened a second database connection to update the same row — deadlocking the worker on every run that actually found a match (zero-match runs were unaffected, which is how it shipped). Trace events now flush after the lock releases. Found by the v0.7.3.0 localhost E2E; regression-tested red/green.

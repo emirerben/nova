@@ -601,9 +601,7 @@ class TestCancelJob:
         )
         # 30s countdown so the still-dying worker can finish writing
         # to GCS before cleanup deletes the prefix.
-        mock_cleanup.apply_async.assert_called_once_with(
-            args=[str(j.id)], countdown=30
-        )
+        mock_cleanup.apply_async.assert_called_once_with(args=[str(j.id)], countdown=30)
 
     def test_null_task_id_skips_revoke_but_still_flips_status(self, client):
         """Legacy row (celery_task_id=NULL): worker is gone, revoke would no-op anyway.
@@ -674,6 +672,97 @@ class TestCancelJob:
 
         assert res.status_code == 409
         assert "terminal" in res.json()["detail"].lower()
+
+
+# ── Silence-cut disable endpoint ─────────────────────────────────────────────
+
+
+class TestSilenceCutDisable:
+    """POST /admin/jobs/{id}/silence-cut-disable — merge the per-item opt-out
+    flag into assembly_plan. Only a FULL re-render picks it up afterwards."""
+
+    def _db_gen(self, job):
+        async def _gen():
+            db = AsyncMock()
+            job_res = MagicMock()
+            job_res.scalar_one_or_none.return_value = job
+            db.execute = AsyncMock(return_value=job_res)
+            db.commit = AsyncMock()
+            yield db
+
+        return _gen
+
+    def test_invalid_uuid_returns_400(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+
+            async def _gen():
+                yield AsyncMock()
+
+            app.dependency_overrides[get_db] = _gen
+            try:
+                res = client.post(
+                    "/admin/jobs/not-a-uuid/silence-cut-disable",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 400
+
+    def test_missing_job_returns_404(self, client):
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = self._db_gen(None)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{uuid.uuid4()}/silence-cut-disable",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 404
+
+    def test_merges_flag_into_existing_assembly_plan(self, client):
+        """Existing assembly_plan keys survive — the flag is merged, not a
+        wholesale replace (a replace would drop output_url/variants)."""
+        j = _job_row(assembly_plan={"output_url": "https://x/y.mp4", "variants": []})
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = self._db_gen(j)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/silence-cut-disable",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["job_id"] == str(j.id)
+        assert body["silence_cut_disabled"] is True
+        assert j.assembly_plan == {
+            "output_url": "https://x/y.mp4",
+            "variants": [],
+            "silence_cut_disabled": True,
+        }
+
+    def test_none_assembly_plan_is_initialized(self, client):
+        """Legacy/unstarted row with assembly_plan=NULL must not 500 — the
+        route initializes the dict around the flag."""
+        j = _job_row(assembly_plan=None)
+        with patch("app.routes.admin.settings") as s:
+            s.admin_api_key = VALID_TOKEN
+            app.dependency_overrides[get_db] = self._db_gen(j)
+            try:
+                res = client.post(
+                    f"/admin/jobs/{j.id}/silence-cut-disable",
+                    headers={"X-Admin-Token": VALID_TOKEN},
+                )
+            finally:
+                app.dependency_overrides.pop(get_db, None)
+        assert res.status_code == 200
+        assert res.json()["silence_cut_disabled"] is True
+        assert j.assembly_plan == {"silence_cut_disabled": True}
 
 
 # ── Queue-state endpoint ─────────────────────────────────────────────────────

@@ -101,7 +101,7 @@ export function EditUploadStep({
 
       {/* Thumbnail grid */}
       {clips.length > 0 && (
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {clips.map((clip, i) => (
             <div
               key={i}
@@ -126,7 +126,7 @@ export function EditUploadStep({
                     onClick={() =>
                       setClips((prev) => prev.filter((_, idx) => idx !== i))
                     }
-                    className="text-white text-xs underline"
+                    className="min-h-11 min-w-11 text-white text-xs underline sm:min-h-0 sm:min-w-0"
                   >
                     retry
                   </button>
@@ -136,7 +136,7 @@ export function EditUploadStep({
                 onClick={() =>
                   setClips((prev) => prev.filter((_, idx) => idx !== i))
                 }
-                className="absolute top-1 right-1 w-5 h-5 rounded-full bg-[#0c0c0e]/60 text-white text-xs flex items-center justify-center hover:bg-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600"
+                className="absolute top-1 right-1 flex h-11 w-11 items-center justify-center rounded-full bg-[#0c0c0e]/60 text-xs text-white hover:bg-[#0c0c0e] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 sm:h-5 sm:w-5"
                 aria-label="Remove clip"
               >
                 ×

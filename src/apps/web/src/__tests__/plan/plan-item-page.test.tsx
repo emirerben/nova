@@ -26,7 +26,7 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 // Mock next/navigation
@@ -52,6 +52,8 @@ jest.mock("@/lib/plan-api", () => ({
   requestUploadUrls: jest.fn(),
   attachClips: jest.fn(),
   generatePlanItem: jest.fn(),
+  expandIdea: jest.fn(),
+  updatePlanItem: jest.fn(),
   swapPlanItemSong: jest.fn(),
   retextPlanItem: jest.fn(),
   changePlanItemStyle: jest.fn(),
@@ -89,10 +91,6 @@ jest.mock("@/lib/plan-text", () => ({ stripRationalePrefix: (s: string) => s }))
 jest.mock("@/components/ui/LightShell", () => ({
   LightShell: ({ children }: { children: React.ReactNode }) => <div data-testid="light-shell">{children}</div>,
 }));
-jest.mock("@/app/plan/_components/PlanFilmstrip", () => ({
-  __esModule: true,
-  default: () => <div data-testid="plan-filmstrip" />,
-}));
 jest.mock("@/app/plan/_components/PlanVariantEditor", () => ({
   __esModule: true,
   default: () => <div data-testid="plan-variant-editor" />,
@@ -107,7 +105,10 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
 }));
 
 import PlanItemPage from "@/app/plan/items/[id]/page";
-import type { PlanItemJobStatus } from "@/lib/plan-api";
+import { expandIdea, generatePlanItem, updatePlanItem, type PlanItemJobStatus } from "@/lib/plan-api";
+const mockExpandIdea = expandIdea as jest.MockedFunction<typeof expandIdea>;
+const mockGeneratePlanItem = generatePlanItem as jest.MockedFunction<typeof generatePlanItem>;
+const mockUpdatePlanItem = updatePlanItem as jest.MockedFunction<typeof updatePlanItem>;
 
 // ===== Factory helpers =====
 
@@ -462,5 +463,191 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     // Generate button should be enabled — off_brief verdict never blocks it.
     const generateBtn = screen.getByRole("button", { name: /generate videos/i });
     expect(generateBtn).not.toBeDisabled();
+  });
+
+  it("test_talking_head_persists_resolved_edit_format_before_generate", async () => {
+    mockUpdatePlanItem.mockClear();
+    mockGeneratePlanItem.mockClear();
+    const item = makeItem({
+      status: "awaiting_clips",
+      edit_format: "talking_head",
+      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+    });
+
+    mockUpdatePlanItem.mockResolvedValue({ ...item, edit_format: "montage" });
+    mockGeneratePlanItem.mockResolvedValue(item);
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /generate videos/i }));
+    });
+
+    await waitFor(() => {
+      expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", { edit_format: "montage" });
+      expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
+    });
+    expect(mockUpdatePlanItem.mock.invocationCallOrder[0]).toBeLessThan(
+      mockGeneratePlanItem.mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe("PlanItemPage — Plan this for me proposal flow", () => {
+  beforeEach(() => {
+    mockExpandIdea.mockReset();
+    mockUpdatePlanItem.mockReset();
+    mockRefetch.mockReset();
+  });
+
+  it("renders the AI proposal card with shot list details", async () => {
+    const item = makeItem({ theme: null, filming_guide: [], status: "ready" });
+    mockExpandIdea.mockResolvedValue({
+      theme: "A calmer morning reset",
+      filming_suggestion: "Film it as three quiet beats.",
+      rationale: "This gives the edit a clean before-after arc.",
+      filming_guide: [
+        {
+          shot_id: "shot-1",
+          what: "Open on the messy counter",
+          how: "Hold steady from chest height",
+          duration_s: 4,
+        },
+        {
+          shot_id: "shot-2",
+          what: "Wipe and reset the surface",
+          how: "Use a close side angle",
+          duration_s: 6,
+        },
+      ],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
+    });
+
+    expect(await screen.findByText("AI SUGGESTION")).toBeInTheDocument();
+    expect(screen.getByText("A calmer morning reset")).toBeInTheDocument();
+    expect(screen.getByText("Film it as three quiet beats.")).toBeInTheDocument();
+    expect(screen.getByText("Open on the messy counter")).toBeInTheDocument();
+    expect(screen.getByText("Hold steady from chest height")).toBeInTheDocument();
+    expect(screen.getByText("~4s")).toBeInTheDocument();
+    expect(screen.getByText("Wipe and reset the surface")).toBeInTheDocument();
+    expect(screen.getByText("Use a close side angle")).toBeInTheDocument();
+    expect(screen.getByText("~6s")).toBeInTheDocument();
+    expect(screen.getByText("This gives the edit a clean before-after arc.")).toBeInTheDocument();
+  });
+
+  it("shows propose failure under the button", async () => {
+    const item = makeItem({ theme: null, filming_guide: [] });
+    mockExpandIdea.mockRejectedValue(new Error("bad gateway"));
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
+    });
+
+    expect(await screen.findByText("Couldn't plan this idea — try again.")).toBeInTheDocument();
+    expect(screen.queryByText("AI SUGGESTION")).toBeNull();
+  });
+
+  it("shows accept failure, preserves the card, and sends shot_ids through untouched", async () => {
+    const item = makeItem({ theme: null, filming_guide: [] });
+    const filmingGuide = [
+      {
+        shot_id: "shot-keep-me",
+        what: "Start with the packed bag",
+        how: "Shoot from above",
+        duration_s: 5,
+      },
+    ];
+    mockExpandIdea.mockResolvedValue({
+      theme: "Packing reveal",
+      filming_suggestion: "Make the plan feel tactile.",
+      rationale: "The shot progression creates curiosity.",
+      filming_guide: filmingGuide,
+    });
+    mockUpdatePlanItem.mockRejectedValue(new Error("save failed"));
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Plan this for me/i }));
+    });
+    expect(await screen.findByText("Packing reveal")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Use this plan/i }));
+    });
+
+    expect(await screen.findByText("Couldn't save the plan — try again.")).toBeInTheDocument();
+    expect(screen.getByText("Packing reveal")).toBeInTheDocument();
+    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
+      theme: "Packing reveal",
+      filming_suggestion: "Make the plan feel tactile.",
+      filming_guide: filmingGuide,
+    });
+  });
+
+  it("hides Plan this for me when a post-render item already has a filming guide", async () => {
+    const item = makeItem({
+      status: "ready",
+      current_job_id: "job-ready",
+      clip_gcs_paths: ["uploads/rendered-source.mp4"],
+      filming_guide: [
+        {
+          shot_id: "shot-existing",
+          what: "creator at the counter",
+          how: "eye level",
+          duration_s: 7,
+        },
+      ],
+    });
+    const job = makeJob({
+      status: "variants_ready",
+      variants: [makeVariant("v1", "ready", "https://cdn/v1.mp4")],
+      finished_at: "2026-06-06T10:02:00Z",
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByRole("button", { name: /Plan this for me/i })).toBeNull();
   });
 });

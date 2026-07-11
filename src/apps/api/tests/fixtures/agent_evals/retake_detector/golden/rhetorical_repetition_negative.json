@@ -1,0 +1,31 @@
+{
+  "agent": "nova.audio.retake_detector",
+  "prompt_version": "1",
+  "input": {
+    "words": [
+      {"i": 0, "text": "I", "start_s": 0.0, "end_s": 0.1},
+      {"i": 1, "text": "showed", "start_s": 0.12, "end_s": 0.4},
+      {"i": 2, "text": "up", "start_s": 0.42, "end_s": 0.56},
+      {"i": 3, "text": "every", "start_s": 0.58, "end_s": 0.82},
+      {"i": 4, "text": "day.", "start_s": 0.84, "end_s": 1.1},
+      {"i": 5, "text": "Every", "start_s": 1.5, "end_s": 1.76},
+      {"i": 6, "text": "day.", "start_s": 1.78, "end_s": 2.04},
+      {"i": 7, "text": "Every", "start_s": 2.5, "end_s": 2.76},
+      {"i": 8, "text": "single", "start_s": 2.78, "end_s": 3.06},
+      {"i": 9, "text": "day.", "start_s": 3.08, "end_s": 3.36},
+      {"i": 10, "text": "That", "start_s": 3.9, "end_s": 4.1},
+      {"i": 11, "text": "is", "start_s": 4.12, "end_s": 4.22},
+      {"i": 12, "text": "the", "start_s": 4.24, "end_s": 4.34},
+      {"i": 13, "text": "whole", "start_s": 4.36, "end_s": 4.6},
+      {"i": 14, "text": "secret.", "start_s": 4.62, "end_s": 5.1}
+    ],
+    "language": "en"
+  },
+  "raw_text": "{\"retakes\": []}",
+  "output": {"retakes": []},
+  "meta": {
+    "source": "hand_authored_golden",
+    "expect_empty": true,
+    "case": "Near-miss NEGATIVE: 'every day' repeated three times with escalation is deliberate rhetorical emphasis, not an abandoned take — the false-positive class that cuts real content. Must return an empty list."
+  }
+}

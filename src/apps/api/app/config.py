@@ -147,6 +147,49 @@ class Settings(BaseSettings):
     subtitled_caption_correction_enabled: bool = True
     caption_correction_model: str = "gpt-4o"
 
+    # Self-narration for narrated walkthroughs: a NARRATED_EDIT_FORMATS item with NO
+    # recorded voiceover may still generate when its footage carries the voice — the
+    # clip audio IS the narration. Resolution: 1 clip with speech → subtitled (editable
+    # captions from its own audio); 2+ clips → talking_head (highest-speech spine +
+    # B-roll); no speech anywhere → montage fallback, reason persisted on
+    # assembly_plan["archetype_fallback"] and surfaced on the item page. This flag is
+    # the SOLE gate for the branch — it deliberately does NOT consult
+    # edit_format_talking_head_enabled / subtitled_archetype_enabled (those gate
+    # plan-DECLARED formats, not resolution outcomes) so rollback is one switch.
+    # INCIDENT NOTE: if either assembler's own kill switch is flipped off because
+    # that render path is broken, ALSO flip this flag off — self-narration would
+    # otherwise keep routing narrated items into the disabled assembler.
+    # Mirror flag NEXT_PUBLIC_NARRATED_SELF_NARRATION_ENABLED gates the frontend
+    # Generate button; flip Fly first, then Vercel. Default OFF.
+    narrated_self_narration_enabled: bool = False
+
+    silence_cut_enabled: bool = Field(
+        default=False,
+        description="Automatic silence/filler cutting for speech render paths "
+        "(plans/010): subtitled today, talking_head when T6 lands. When true, the "
+        "clip's own audio is transcribed verbatim (whisper bias prompt), silences "
+        "are detected, and dead air + filler vocalizations are cut inside the "
+        "reframe (alternating punch-in jump cuts); captions are built from the "
+        "remapped transcript minus filler tokens. Fail-open by design: any stage "
+        "failure or safety-rail bailout renders today's uncut video. Per-item "
+        "opt-out: POST /admin/jobs/{job_id}/silence-cut-disable (takes effect on "
+        "the next FULL re-render only). "
+        "Kill switch: `fly secrets set SILENCE_CUT_ENABLED=false --app nova-video` "
+        "+ worker restart — byte-identical to pre-feature behavior.",
+    )
+
+    retake_cut_enabled: bool = Field(
+        default=False,
+        description="Retake/restart cutting inside the silence-cut stage "
+        "(plans/010): the retake_detector agent flags abandoned takes and their "
+        "spans merge into the same CutPlan. Independent of SILENCE_CUT_ENABLED "
+        "(silence cutting ships and validates first); only meaningful when that "
+        "flag is also on. Detector failure degrades to zero retake cuts "
+        "(`retake_detector_failed` event) — never blocks silence/filler cutting. "
+        "Kill switch: `fly secrets set RETAKE_CUT_ENABLED=false --app nova-video` "
+        "+ worker restart.",
+    )
+
     # "Get a transcript" helper for narrated-walkthrough voiceovers. When False,
     # the transcript routes (POST/GET /plan-items/{id}/transcript/*) return 404 and
     # the frontend entry link is hidden (mirror flag NEXT_PUBLIC_TRANSCRIPT_HELPER_ENABLED

@@ -110,6 +110,9 @@ class _TimedWord(NamedTuple):
 
 def _field(word: Any, names: tuple[str, ...]) -> Any:
     """First non-None value among `names`, via dict key OR attribute access."""
+    # Sibling copy in app/pipeline/silence_cut.py — key preference diverges
+    # deliberately ('start' preferred here vs 'start_s' there); fragile if a
+    # record ever carries both keys with different values.
     for name in names:
         if isinstance(word, dict):
             value = word.get(name)

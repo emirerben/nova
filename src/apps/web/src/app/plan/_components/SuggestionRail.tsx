@@ -850,7 +850,7 @@ function SuggestionRow({
                 e.stopPropagation();
                 onStripSfx();
               }}
-              className="rounded border border-zinc-200 px-1 text-[#71717a] transition-colors hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded border border-zinc-200 px-1 text-[#71717a] transition-colors hover:border-zinc-400 hover:text-[#3f3f46] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0 sm:min-w-0"
             >
               ×
             </button>

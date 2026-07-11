@@ -260,6 +260,19 @@ class GenerativeVariant(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class ArchetypeFallbackOut(BaseModel):
+    """Typed shape for assembly_plan["archetype_fallback"] on the status response.
+
+    Field-level allowlist: whatever else a hand-edited JSONB row carries under that
+    key, only these two documented fields reach the public payload (Pydantic strips
+    unknown keys). Mirrored by `ArchetypeFallback` in the web app's
+    plan-generate-gate.ts — keep in sync.
+    """
+
+    declared: str | None = None
+    reason: str | None = None
+
+
 class GenerativeJobStatusResponse(BaseModel):
     job_id: str
     status: str
@@ -279,6 +292,13 @@ class GenerativeJobStatusResponse(BaseModel):
     started_at: datetime | None = None
     finished_at: datetime | None = None
     expected_phase_durations: dict[str, int] | None = None
+    # Style-downgrade explanation persisted by the orchestrator when the declared
+    # edit_format fell back to montage (e.g. narrated self-narration found no speech).
+    # Null when the declared format rendered. Drives the item-page banner so a style
+    # swap is never silent. `reason` values are an INTERNAL enum (no_speech,
+    # spine_extraction_failed, flag_disabled, ...) — clients map the known ones to
+    # specific copy and show a generic downgrade banner for anything else.
+    archetype_fallback: ArchetypeFallbackOut | None = None
 
 
 class SwapSongRequest(BaseModel):
@@ -2430,7 +2450,21 @@ def resolve_timeline_slots_for_edit(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
-                if _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9:
+                # Reclamp on a sub-floor span ONLY when the user actually changed
+                # this slot (the worker legitimately emits sub-floor beat spans on
+                # untouched slots) — but reclamp on a footage-overflowing span
+                # REGARDLESS of _window_changed. An upstream delete/edit shifts
+                # this slot's cumulative grid_offset on the non-uniform grid
+                # without the user ever touching THIS slot; deleting a clip must
+                # never fail the save (the worker itself never overflows footage —
+                # it trims to the real window — so the save-time reconstruction
+                # must match that behavior instead of rejecting it).
+                overflows_footage = (
+                    max_source_window_s is not None and duration_s > max_source_window_s + 1e-6
+                )
+                if (
+                    _window_changed(e) and duration_s < TIMELINE_MIN_SLOT_S - 1e-9
+                ) or overflows_footage:
                     duration_beats = _smallest_beat_count_clearing_floor(
                         grid_offset,
                         max_source_window_s=max_source_window_s,
@@ -2450,6 +2484,16 @@ def resolve_timeline_slots_for_edit(
                         status.HTTP_422_UNPROCESSABLE_ENTITY, "TIMELINE_BEATS_EXHAUSTED"
                     )
                 duration_s = beat_grid[end] - beat_grid[grid_offset]
+                # The nearest beat count can round UP past the clip's remaining
+                # footage; reclamp to the largest span that still fits (mirrors
+                # the explicit-beat-slot branch above).
+                if max_source_window_s is not None and duration_s > max_source_window_s + 1e-6:
+                    duration_beats = _smallest_beat_count_clearing_floor(
+                        grid_offset,
+                        max_source_window_s=max_source_window_s,
+                    )
+                    end = grid_offset + duration_beats
+                    duration_s = beat_grid[end] - beat_grid[grid_offset]
                 grid_offset = end
             elif e.duration_s is not None and e.duration_s > 0:
                 # No-music variants snap to 0.5s steps server-side. The editor may
@@ -2967,6 +3011,18 @@ async def get_generative_job_status(
 
     variants = _variants_for_response(job)
 
+    # Null-safe, never-raising read of the style-downgrade stash: a corrupt or
+    # non-dict value from a hand-edited row degrades to null rather than a 500.
+    _raw_fallback = (job.assembly_plan or {}).get("archetype_fallback")
+    archetype_fallback: ArchetypeFallbackOut | None = None
+    if isinstance(_raw_fallback, dict):
+        _declared = _raw_fallback.get("declared")
+        _reason = _raw_fallback.get("reason")
+        archetype_fallback = ArchetypeFallbackOut(
+            declared=str(_declared) if _declared is not None else None,
+            reason=str(_reason) if _reason is not None else None,
+        )
+
     response = GenerativeJobStatusResponse(
         job_id=str(job.id),
         status=job.status,
@@ -2980,6 +3036,7 @@ async def get_generative_job_status(
         started_at=job.started_at,
         finished_at=job.finished_at,
         expected_phase_durations=baselines,
+        archetype_fallback=archetype_fallback,
     )
     if getattr(job, "_media_overlay_preview_backfilled", False):
         # `_variants_for_response` mutated an UNLOCKED snapshot of assembly_plan.

@@ -16,7 +16,7 @@
  * count, inline reason when the cap disables the add affordance.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   deletePoolAsset,
   listPoolAssets,
@@ -52,7 +52,23 @@ interface PendingUpload {
   filename: string;
 }
 
-export default function AssetPool({ itemId }: { itemId: string }) {
+export default function AssetPool({
+  itemId,
+  attachedPaths,
+  onUseInEdit,
+  attachBusy = false,
+}: {
+  itemId: string;
+  /** gcs_paths already attached as clips — flips a promoted tile to "In edit ✓". */
+  attachedPaths?: string[];
+  /** "Use in edit" promotion: re-attach the pool object as a clip (video assets
+   *  only). Absent → the affordance doesn't render (pool-only surfaces). */
+  onUseInEdit?: (asset: PoolAsset) => void | Promise<void>;
+  /** True while another attach writer (clip upload) is in flight. attach_clips is
+   *  a full-set replace, so concurrent writers silently drop each other's clips —
+   *  promotion is disabled until the other write settles. */
+  attachBusy?: boolean;
+}) {
   const enabled = process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true";
 
   const [assets, setAssets] = useState<PoolAsset[]>([]);
@@ -61,6 +77,11 @@ export default function AssetPool({ itemId }: { itemId: string }) {
   const [unavailable, setUnavailable] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // One promotion at a time: attach_clips is last-writer-wins over the FULL
+  // assignment set, so two in-flight promotions built from the same stale
+  // snapshot would drop each other's clip. Serializing client-side closes the
+  // rapid-double-promote race; attachBusy covers the concurrent-upload writer.
+  const [promotingId, setPromotingId] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -173,6 +194,23 @@ export default function AssetPool({ itemId }: { itemId: string }) {
     [itemId],
   );
 
+  // Set lookup: the tile grid re-renders on every job-status poll tick, so keep
+  // the per-tile membership check O(1) instead of O(attached) per asset.
+  const attached = useMemo(() => new Set(attachedPaths ?? []), [attachedPaths]);
+
+  const handleUseInEdit = useCallback(
+    async (asset: PoolAsset) => {
+      if (!onUseInEdit) return;
+      setPromotingId(asset.id);
+      try {
+        await onUseInEdit(asset);
+      } finally {
+        setPromotingId(null);
+      }
+    },
+    [onUseInEdit],
+  );
+
   if (!enabled) return null;
 
   const count = assets.length;
@@ -233,7 +271,7 @@ export default function AssetPool({ itemId }: { itemId: string }) {
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+                className="mt-3 inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm text-[#3f3f46] transition-colors hover:border-lime-400 hover:text-lime-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-0"
               >
                 Add visuals
               </button>
@@ -246,9 +284,22 @@ export default function AssetPool({ itemId }: { itemId: string }) {
                 if (!atCap) handleFiles(e.dataTransfer.files);
               }}
             >
-              <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
+              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 md:grid-cols-5">
                 {assets.map((asset) => (
-                  <AssetTile key={asset.id} asset={asset} onRemove={() => handleRemove(asset)} />
+                  <AssetTile
+                    key={asset.id}
+                    asset={asset}
+                    onRemove={() => handleRemove(asset)}
+                    inEdit={attached.has(asset.gcs_path)}
+                    // Version-skew guard: an old API's PoolAssetOut has no gcs_path —
+                    // without one there is nothing valid to attach, so the
+                    // affordance must not render at all.
+                    onUseInEdit={
+                      onUseInEdit && asset.gcs_path ? () => handleUseInEdit(asset) : undefined
+                    }
+                    promoting={promotingId === asset.id}
+                    promotionDisabled={attachBusy || promotingId !== null}
+                  />
                 ))}
                 {pending.map((p) => (
                   <li
@@ -297,7 +348,23 @@ export default function AssetPool({ itemId }: { itemId: string }) {
   );
 }
 
-function AssetTile({ asset, onRemove }: { asset: PoolAsset; onRemove: () => void }) {
+function AssetTile({
+  asset,
+  onRemove,
+  inEdit = false,
+  onUseInEdit,
+  promoting = false,
+  promotionDisabled = false,
+}: {
+  asset: PoolAsset;
+  onRemove: () => void;
+  inEdit?: boolean;
+  onUseInEdit?: () => void | Promise<void>;
+  /** THIS tile's promotion is in flight — shows "Adding…" instead of the button. */
+  promoting?: boolean;
+  /** ANY attach writer is busy (another promotion or a clip upload) — disables the button. */
+  promotionDisabled?: boolean;
+}) {
   const label = asset.source_filename ?? "this file";
 
   if (asset.status === "failed") {
@@ -308,7 +375,7 @@ function AssetTile({ asset, onRemove }: { asset: PoolAsset; onRemove: () => void
           type="button"
           onClick={onRemove}
           aria-label={`Remove ${label}`}
-          className="mt-1 min-h-[28px] min-w-[28px] text-[12px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500"
+          className="mt-1 min-h-11 min-w-11 text-[12px] text-[#71717a] underline underline-offset-2 transition-colors hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:min-h-[28px] sm:min-w-[28px]"
         >
           Remove
         </button>
@@ -328,14 +395,35 @@ function AssetTile({ asset, onRemove }: { asset: PoolAsset; onRemove: () => void
         // eslint-disable-next-line @next/next/no-img-element -- signed GCS thumbnail, not an optimizable static asset
         <img src={asset.display_url} alt={asset.subject ?? label} className="h-full w-full object-cover" />
       )}
-      <span className="absolute inset-x-0 bottom-0 truncate bg-white/85 px-1.5 py-1 text-[12px] text-[#71717a]">
-        {busy ? "Analyzing…" : (asset.subject ?? asset.kind)}
+      {/* bg-white/95 (not /85): the lime-700 action text must hold the 4.5:1
+          contrast floor even over dark video frames (DESIGN.md §8). */}
+      <span className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-white/95 px-1.5 py-1 text-[12px] text-[#71717a]">
+        <span className="truncate">{busy ? "Analyzing…" : (asset.subject ?? asset.kind)}</span>
+        {/* "Use in edit" — video assets only: promotes the pool object to a real
+            clip (B-roll / spine candidate). Images stay overlay-only in v1. */}
+        {onUseInEdit && asset.kind === "video" && !busy && (
+          inEdit ? (
+            <span className="shrink-0 text-lime-700">In edit ✓</span>
+          ) : promoting ? (
+            <span className="shrink-0 text-lime-700">Adding…</span>
+          ) : (
+            <button
+              type="button"
+              onClick={onUseInEdit}
+              disabled={promotionDisabled}
+              aria-label={`Use ${label} in the edit`}
+              className="-my-1 flex min-h-11 min-w-11 shrink-0 items-center px-1 text-lime-700 underline underline-offset-2 transition-colors hover:text-lime-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-lime-700 sm:min-h-[28px] sm:min-w-[28px]"
+            >
+              Use in edit
+            </button>
+          )
+        )}
       </span>
       <button
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${label}`}
-        className="absolute right-1 top-1 flex h-7 w-7 items-center justify-center rounded-full bg-white/90 text-[#3f3f46] opacity-0 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 group-hover:opacity-100"
+        className="absolute right-1 top-1 flex h-11 w-11 items-center justify-center rounded-full bg-white/90 text-[#3f3f46] opacity-100 transition-opacity focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-lime-500 sm:h-7 sm:w-7 sm:opacity-0 sm:group-hover:opacity-100"
       >
         ×
       </button>
