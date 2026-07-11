@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import storage
+from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
@@ -136,7 +137,10 @@ def _is_image_clip_path(path: str) -> bool:
 
 
 def _item_uses_masonry(item: PlanItem) -> bool:
-    return coerce_montage_preset(getattr(item, "montage_preset", None)) == "masonry"
+    return (
+        coerce_edit_format(getattr(item, "edit_format", None)) == "montage"
+        and coerce_montage_preset(getattr(item, "montage_preset", None)) == "masonry"
+    )
 
 
 def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:

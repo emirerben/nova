@@ -121,7 +121,9 @@ interface ShotSlotUploaderProps {
 
 export default function ShotSlotUploader({ item, onAttached, onBusyChange }: ShotSlotUploaderProps) {
   const shots = useMemo(() => item.filming_guide ?? [], [item.filming_guide]);
-  const uploadAccept = item.montage_preset === "masonry" ? MASONRY_UPLOAD_ACCEPT : VIDEO_UPLOAD_ACCEPT;
+  const isMasonryMontage =
+    (item.edit_format ?? "montage") === "montage" && item.montage_preset === "masonry";
+  const uploadAccept = isMasonryMontage ? MASONRY_UPLOAD_ACCEPT : VIDEO_UPLOAD_ACCEPT;
 
   // Per-slot state keyed by shot_id (or "__pool__" for pool uploads in progress).
   // Filled-from-reload state is derived from item.clip_assignments initially.

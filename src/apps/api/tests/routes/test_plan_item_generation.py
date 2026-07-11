@@ -406,6 +406,7 @@ def test_upload_urls_rejects_images_for_classic_montage(client: TestClient) -> N
 def test_upload_urls_accepts_images_for_masonry_montage(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
+    item.edit_format = "montage"
     item.montage_preset = "masonry"
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
@@ -425,6 +426,26 @@ def test_upload_urls_accepts_images_for_masonry_montage(client: TestClient) -> N
     assert resp.status_code == 200
     signed.assert_called_once()
     assert signed.call_args.kwargs["content_type"] == "image/jpeg"
+
+
+def test_upload_urls_rejects_images_when_stale_masonry_preset_is_not_montage(
+    client: TestClient,
+) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "narrated_ready"
+    item.montage_preset = "masonry"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+    resp = client.post(
+        f"/plan-items/{item.id}/upload-urls",
+        json={
+            "files": [{"filename": "x.jpg", "content_type": "image/jpeg", "file_size_bytes": 1000}]
+        },
+    )
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Photos require Masonry collage"
 
 
 # ── filming_guide serialization ───────────────────────────────────────────────
