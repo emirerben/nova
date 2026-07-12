@@ -62,6 +62,7 @@ import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import { barsToCaptionCues, barsToTextElements, seedBarsFromVariant } from "./editor-bars";
+import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
   CAPTIONS_TAB_REASON,
   computeToolDisabledReasons,
@@ -435,6 +436,13 @@ export default function EditorShell({
   // subtitled variants the shell is editable, but on-video text still lives
   // in the Captions tab — every add-text path must stay blocked.
   const textElementsLocked = !readOnly && capabilities?.text_elements === false;
+  // Caption archetypes edit captions in the item-page Captions tab, not this
+  // shell. Keyed off the archetype (+ base video) via isCaptionArchetype, NOT
+  // capabilities.text_elements — that flips to `true` for subtitled once
+  // SUBTITLED_TEXT_LANE_ENABLED ships, at which point a text_elements===false
+  // gate would silently drop the Captions signpost for the exact archetype that
+  // needs it. See isCaptionArchetype / DECISIONS (caption-edit discoverability).
+  const isCaptionEdit = !!variant && isCaptionArchetype(variant);
   const clipLockedToVoiceover =
     capabilities?.timeline === false &&
     (capabilities?.reason === "voiceover_bed_fit" ||
@@ -2180,6 +2188,14 @@ export default function EditorShell({
 	          tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
+          captionsTabHref={
+            // CTA only when on-video text genuinely can't be edited here — once
+            // SUBTITLED_TEXT_LANE_ENABLED ships (text_elements true) the styled-text
+            // lane is editable in this shell, so keep the generic empty state and
+            // don't mask it. The signpost notice stays archetype-gated (captions
+            // always live in the Captions tab).
+            textElementsLocked && isCaptionEdit ? `/plan/items/${itemId}` : null
+          }
           contentRef={contentRef}
           onEditText={(text) => {
             if (selectedBar && !readOnly) {
@@ -2332,7 +2348,7 @@ export default function EditorShell({
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div className="rounded-lg border border-zinc-200 bg-white/95 px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm">
             This version can&apos;t be edited. {readOnlyReason}
-            {readOnlyReason === CAPTIONS_TAB_REASON && (
+            {(readOnlyReason === CAPTIONS_TAB_REASON || isCaptionEdit) && (
               <>
                 {" "}
                 <CaptionsTabLink itemId={itemId} />
@@ -2347,17 +2363,29 @@ export default function EditorShell({
              lives in the Captions tab — keep the deep-link discoverable. Quiet
              notice line (DESIGN.md §2 tokens), outside the layout branches so
              both the full editor and the light layout show it. */}
-      {textElementsLocked && (
+      {(textElementsLocked || (!readOnly && isCaptionEdit)) && (
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div
             data-testid="captions-tab-notice"
             className="rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm"
           >
-            {textElementsLockedCopy(capabilities)}.
-            {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
+            {!readOnly && isCaptionEdit ? (
+              // Caption archetype (with base video): captions live in the Captions
+              // tab regardless of text_elements, so always show the reason + link.
               <>
-                {" "}
-                <CaptionsTabLink itemId={itemId} />
+                {CAPTIONS_TAB_REASON}. <CaptionsTabLink itemId={itemId} />
+              </>
+            ) : (
+              // Non-caption text lock (e.g. lyrics_sync): keep the reason-driven
+              // copy, appending the link only when the reason is the caption one.
+              <>
+                {textElementsLockedCopy(capabilities)}.
+                {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
+                  <>
+                    {" "}
+                    <CaptionsTabLink itemId={itemId} />
+                  </>
+                )}
               </>
             )}
           </div>

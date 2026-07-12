@@ -31,6 +31,31 @@ import type { EditableVariant } from "@/lib/variant-editor/types";
  */
 const CAPTION_ARCHETYPES = new Set(["narrated", "subtitled"]);
 
+/**
+ * Whether a variant's captions are edited through the on-video CaptionEditor
+ * (the item-page Captions tab), NOT the timeline editor shell. This is the
+ * single client-side predicate for "is this a caption edit" — every surface
+ * that routes to caption editing (the shell's Captions-tab signpost, the
+ * InspectorPanel empty-state CTA, the item-page auto-open + tab gating) MUST
+ * consume it so they can't drift.
+ *
+ * Mirrors the backend contract `_is_editable_caption_variant`
+ * (generative_jobs.py): archetype ∈ {narrated, subtitled} AND a base video is
+ * present. The base-video clause is load-bearing — a base-less caption variant
+ * must NOT be routed to a CaptionEditor that has nothing to render (it would
+ * re-open the empty-panel dead end this predicate exists to close). Deliberately
+ * does NOT read `editor_capabilities.text_elements`: that flips to `true` for
+ * subtitled once SUBTITLED_TEXT_LANE_ENABLED ships, yet captions still live in
+ * the Captions tab — gating on it would make the signpost vanish for the exact
+ * archetype it serves.
+ */
+export function isCaptionArchetype(variant: EditableVariant): boolean {
+  return (
+    CAPTION_ARCHETYPES.has(variant.resolved_archetype ?? "") &&
+    !!variant.base_video_url
+  );
+}
+
 export function isInstantEditEligible(variant: EditableVariant): boolean {
   return (
     !!variant.base_video_url &&

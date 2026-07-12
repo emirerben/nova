@@ -253,3 +253,52 @@ describe("EditorShell — light-layout empty-state Add-text CTA", () => {
     expect(screen.getByRole("button", { name: "Add text" })).toBeInTheDocument();
   });
 });
+
+// Regression guard (caption-edit discoverability): once SUBTITLED_TEXT_LANE_ENABLED
+// ships, the backend sets text_elements=true for subtitled variants while their
+// captions still live in the Captions tab. A signpost gated on text_elements===false
+// would silently vanish for the exact archetype that needs it — so it must key off
+// the archetype (+ base video) via isCaptionArchetype instead.
+describe("EditorShell — Captions signpost keys off archetype, not text_elements", () => {
+  const CAPTION_TEXT_LANE_ON: EditorCapabilities = {
+    text_elements: true, // styled-text lane enabled (flag rolled forward)
+    timeline: true,
+    split_clips: true,
+    mix: true,
+    sfx: true,
+    overlays: true,
+    suggestions: true,
+    reason: "caption_archetype",
+  };
+
+  function makeCaptionVariant(capabilities: EditorCapabilities): PlanItemVariant {
+    return {
+      variant_id: "var-sub",
+      output_url: "https://storage.example/variant.mp4",
+      base_video_url: "https://storage.example/variant_base.mp4",
+      render_status: "ready",
+      text_mode: "none",
+      style_set_id: null,
+      intro_text_size_px: null,
+      text_elements: [],
+      resolved_archetype: "subtitled",
+      editor_capabilities: capabilities,
+    } as unknown as PlanItemVariant;
+  }
+
+  it("shows the Captions-tab notice for a subtitled variant even when text_elements is TRUE", async () => {
+    await renderShell(makeCaptionVariant(CAPTION_TEXT_LANE_ON));
+    const notice = screen.getByTestId("captions-tab-notice");
+    expect(notice).toHaveTextContent(CAPTIONS_TAB_REASON);
+    expect(
+      screen.getByRole("link", { name: "Open the item page Captions tab" }),
+    ).toHaveAttribute("href", "/plan/items/item-1");
+  });
+
+  it("still shows the notice when text_elements is false, given a base video", async () => {
+    await renderShell(
+      makeCaptionVariant({ ...CAPTION_TEXT_LANE_ON, text_elements: false }),
+    );
+    expect(screen.getByTestId("captions-tab-notice")).toHaveTextContent(CAPTIONS_TAB_REASON);
+  });
+});
