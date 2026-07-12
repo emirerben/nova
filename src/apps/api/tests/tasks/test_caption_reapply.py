@@ -379,10 +379,11 @@ def test_caption_terminal_superseded_mid_run_skips_delete(monkeypatch, path):
 
 @pytest.mark.parametrize("path", _PATHS)
 def test_caption_terminal_lanes_cleared_midrun_tokenless_finalizes_ready(monkeypatch, path):
-    """Stranded-rendering lockout (R1-3): variant HAS lanes at task start (so the
-    terminal defers status, OV-7), the run is tokenless (render_gen_id=None), and
-    the lanes are cleared in the DB mid-run (upload stub). The REAL reapply chain
-    then no-ops — the terminal must finalize "ready", never leave "rendering"."""
+    """Stranded-rendering lockout: variant HAS lanes at task start, the run is
+    tokenless (render_gen_id=None), and the lanes are cleared in the DB mid-run
+    (upload stub). Since #626 the terminal re-reads the fresh lane state, sees
+    the clear, and lands "ready" directly (no deferral, no resurrect) — either
+    way the variant must end "ready", never stranded in "rendering"."""
     _arm_flags(monkeypatch)
     variant = _lane_variant(
         path,
@@ -393,7 +394,7 @@ def test_caption_terminal_lanes_cleared_midrun_tokenless_finalizes_ready(monkeyp
 
     def _clear_lanes(_gcs_path):
         # Replace (don't mutate) the entry — a DB-side clear never touches the
-        # task's in-memory snapshot, so will_reapply stays True (OV-7 defers).
+        # task's in-memory snapshot; the terminal's fresh re-read (#626) sees it.
         plan = job_holder["job"].assembly_plan
         cleared = {**plan["variants"][0], "media_overlays": None, "sound_effects": None}
         plan["variants"] = [cleared]
@@ -416,6 +417,217 @@ def test_caption_terminal_lanes_cleared_midrun_tokenless_finalizes_ready(monkeyp
     v = job.assembly_plan["variants"][0]
     assert v["render_status"] == "ready"
     assert v["render_finished_at"]
+
+
+# ── #626: lanes saved DURING the burn must still be re-applied ─────────────────
+
+
+@pytest.mark.parametrize("path", _PATHS)
+def test_caption_terminal_lane_saved_mid_burn_still_reapplied(monkeypatch, path):
+    """Prod job 4bee92f8 (#626): the caption terminals used to decide
+    will_reapply from the variant snapshot read BEFORE the multi-minute burn.
+    The render=False overlay autosave writes media_overlays with no
+    render_status gate and no generation bump, so a card saved during the burn
+    window was silently dropped — persisted on the variant, absent from the
+    video (log signature: no media_overlay_applying in the reburn chain). The
+    terminal must re-read the fresh lane state and run the reapply chain."""
+    _arm_flags(monkeypatch)
+    reapply = _capture_reapply(monkeypatch)
+    variant = _lane_variant(path, render_generation_id="tok-1")  # NO lanes at start
+    job_holder: dict = {}
+
+    def _autosave_overlays(_gcs_path):
+        # Replace (don't mutate) the entry — mirrors _persist_overlay_metadata_only
+        # landing mid-burn; the task's in-memory snapshot never sees it.
+        plan = job_holder["job"].assembly_plan
+        saved = {**plan["variants"][0], "media_overlays": [dict(_OVERLAYS[0])]}
+        plan["variants"] = [saved]
+
+    all_candidates = dict(_BED_CANDIDATES) if path == "bed_level" else {}
+    job = _make_job(assembly_plan={"variants": [variant]}, all_candidates=all_candidates)
+    job_holder["job"] = job
+    _patch_job_session(monkeypatch, job)
+    seen: dict = {}
+    if path == "caption_reburn":
+        _patch_reburn_io(monkeypatch, seen, upload_hook=_autosave_overlays)
+        gb._run_reburn_narrated_captions(JOB_ID, variant["variant_id"], render_gen_id="tok-1")
+    elif path == "bed_level":
+        _patch_bed_io(monkeypatch, seen, upload_hook=_autosave_overlays)
+        gb._run_reburn_narrated_bed_level(JOB_ID, variant["variant_id"], 0.6, render_gen_id="tok-1")
+    else:
+        _patch_retx_io(monkeypatch, seen, upload_hook=_autosave_overlays)
+        gb._run_retranscribe_subtitled(JOB_ID, variant["variant_id"], "tr", render_gen_id="tok-1")
+
+    v = job.assembly_plan["variants"][0]
+    # The chain must run (fresh lane read) and own the terminal status (OV-7).
+    _assert_reapply_call(reapply, variant_id=variant["variant_id"], gen="tok-1")
+    assert v["render_status"] == "rendering"  # deferred to the reapply chain
+    assert v["media_overlays"] == [dict(_OVERLAYS[0])]  # the mid-burn save survives
+
+
+def test_caption_reburn_persisted_overlays_real_chain_applies_onto_new_burn(monkeypatch):
+    """#626 regression, real chain: a caption reburn on a variant with persisted
+    media overlays (no SFX) MUST run the overlay pass against the newly minted
+    burn key — the prod drop rendered sfx/no-overlay chains where cards stayed
+    persisted but vanished from the output."""
+    _arm_flags(monkeypatch)
+    variant = _narrated_variant(
+        media_overlays=[dict(_OVERLAYS[0])],
+        render_generation_id="tok-1",
+    )
+    job = _make_job(assembly_plan={"variants": [variant]})
+    _patch_job_session(monkeypatch, job)
+    seen: dict = {}
+    _patch_reburn_io(monkeypatch, seen)
+    monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
+    overlay_applies: list[dict] = []
+    monkeypatch.setattr(
+        "app.pipeline.media_overlay.apply_media_overlays",
+        lambda **kw: overlay_applies.append(kw) or "https://signed/overlaid",
+    )
+
+    gb._run_reburn_narrated_captions(JOB_ID, "narrated", render_gen_id="tok-1")
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "ready"
+    new_video = v["video_path"]
+    assert "_cap_" in new_video
+    assert len(overlay_applies) == 1
+    assert overlay_applies[0]["base_gcs_path"] == f"{new_video}_pre_overlay"
+    assert overlay_applies[0]["output_gcs_path"] == new_video
+    # The pass writes back the canonicalized card list — same single card.
+    assert [c["id"] for c in v["media_overlays"]] == ["ov-1"]
+
+
+# ── #626: subtitled text-element fast reburn honours the same reapply contract ─
+
+
+def _text_lane_variant(**over):
+    return _subtitled_variant(
+        text_mode="none",
+        text_elements=[
+            {"id": "te-1", "kind": "body", "content": "hello", "start_s": 0.0, "end_s": 2.0}
+        ],
+        text_elements_user_edited=True,
+        **over,
+    )
+
+
+def _run_text_fast_reburn(monkeypatch, variant):
+    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    monkeypatch.setattr(gb, "_TEXT_ELEMENTS_ENABLED", True, raising=False)
+    job = _make_job(
+        assembly_plan={"variants": [variant]},
+        all_candidates={"clip_paths": ["slot-uploads/a.mp4"]},
+    )
+    _patch_job_session(monkeypatch, job)
+    seen: dict = {}
+    _patch_storage(monkeypatch, seen)
+    monkeypatch.setattr("app.storage.copy_object", lambda src, dst: None)
+    monkeypatch.setattr("app.storage.signed_get_url", lambda p, **k: f"https://signed/{p}")
+    monkeypatch.setattr("app.services.pipeline_trace.record_pipeline_event", lambda *a, **k: None)
+
+    def _fake_compose(base_local, v, tmpdir):
+        path = f"{tmpdir}/final.mp4"
+        with open(path, "wb") as f:
+            f.write(b"x")
+        return path
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", _fake_compose)
+    gb._run_regenerate_variant(JOB_ID, "subtitled", None, None, False, render_gen_id="tok-1")
+    return job, seen
+
+
+def test_text_fast_reburn_defers_ready_until_reapply_chain(monkeypatch):
+    """#626 mechanism 1: the fast reburn used to flip render_status="ready" in its
+    terminal patch BEFORE _reapply_user_media_layers ran — a poll could observe
+    an effect-less "ready" and dispatch an edit racing the hook. With persisted
+    lanes the terminal must defer (OV-7) and hand ownership to the chain."""
+    _arm_flags(monkeypatch)
+    reapply = _capture_reapply(monkeypatch)
+    variant = _text_lane_variant(
+        media_overlays=[dict(_OVERLAYS[0])],
+        render_generation_id="tok-1",
+    )
+
+    job, _seen = _run_text_fast_reburn(monkeypatch, variant)
+
+    v = job.assembly_plan["variants"][0]
+    _assert_reapply_call_no_deadline(reapply, variant_id="subtitled", gen="tok-1")
+    assert v["render_status"] == "rendering"  # deferred — the chain owns terminal
+    assert "_text_" in v["video_path"]  # fresh minted key (CDN staleness rule)
+
+
+def test_text_fast_reburn_real_chain_reapplies_overlays_onto_new_key(monkeypatch):
+    """#626 regression, real chain: a subtitled text-element fast reburn with
+    persisted overlay cards must composite them onto the NEW output key and
+    land "ready" with the cards intact."""
+    _arm_flags(monkeypatch)
+    variant = _text_lane_variant(
+        media_overlays=[dict(_OVERLAYS[0])],
+        render_generation_id="tok-1",
+    )
+    overlay_applies: list[dict] = []
+    monkeypatch.setattr(
+        "app.pipeline.media_overlay.apply_media_overlays",
+        lambda **kw: overlay_applies.append(kw) or "https://signed/overlaid",
+    )
+
+    job, _seen = _run_text_fast_reburn(monkeypatch, variant)
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "ready"
+    assert v["render_finished_at"]
+    new_video = v["video_path"]
+    assert "_text_" in new_video
+    assert len(overlay_applies) == 1
+    assert overlay_applies[0]["base_gcs_path"] == f"{new_video}_pre_overlay"
+    assert overlay_applies[0]["output_gcs_path"] == new_video
+    # The pass writes back the canonicalized card list — same single card.
+    assert [c["id"] for c in v["media_overlays"]] == ["ov-1"]
+
+
+def test_text_fast_reburn_reapply_noop_finalizes_ready(monkeypatch):
+    """R1-3 sibling for the fast reburn: deferred status (lanes present at the
+    fresh read) but the chain reports no ownership — finalize "ready" so the
+    variant never strands in "rendering"."""
+    _arm_flags(monkeypatch)
+    variant = _text_lane_variant(
+        media_overlays=[dict(_OVERLAYS[0])],
+        render_generation_id="tok-1",
+    )
+    monkeypatch.setattr(gb, "_reapply_user_media_layers", lambda **kw: False, raising=False)
+
+    job, _seen = _run_text_fast_reburn(monkeypatch, variant)
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "ready"
+    assert v["render_finished_at"]
+
+
+def test_text_fast_reburn_without_lanes_stays_terminal_no_deferral(monkeypatch):
+    """No persisted lanes: the fast reburn's own terminal patch stays "ready"
+    (pre-#626 surface, byte-identical) and the chain no-ops."""
+    _arm_flags(monkeypatch)
+    variant = _text_lane_variant(render_generation_id="tok-1")
+
+    job, _seen = _run_text_fast_reburn(monkeypatch, variant)
+
+    v = job.assembly_plan["variants"][0]
+    assert v["render_status"] == "ready"
+    assert v["render_finished_at"]
+
+
+def _assert_reapply_call_no_deadline(reapply: list[dict], *, variant_id: str, gen: str | None):
+    # The fast reburn enters the chain at task start (no mid-task burn budget to
+    # clamp), so unlike the caption terminals it threads no deadline.
+    assert len(reapply) == 1
+    call = reapply[0]
+    assert call["job_id"] == JOB_ID
+    assert call["variant_id"] == variant_id
+    assert call["expected_render_gen_id"] == gen
 
 
 # ── F5: exception AFTER the accepted video swap must land failed, not ready ─────
