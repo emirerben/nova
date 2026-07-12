@@ -166,6 +166,33 @@ describe("buildEditorCommitRequest", () => {
     expect(body.mix).toBeUndefined();
     expect(body.base_generation).toBe("prod-gen");
   });
+
+  it("stages music changes and omits stale timeline cuts", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: true,
+      slots: [
+        {
+          slotId: "slot-a",
+          clipIndex: 0,
+          inS: 1,
+          durationS: 2,
+          durationBeats: null,
+          removed: false,
+        },
+      ],
+      musicDirty: true,
+      musicTrackId: "track-new",
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.music_track_id).toBe("track-new");
+    expect(body.timeline_slots).toBeUndefined();
+    expect(body.base_generation).toBe("gen-current");
+  });
 });
 
 describe("buildEditorCommitRequest — accepted suggestion ids", () => {

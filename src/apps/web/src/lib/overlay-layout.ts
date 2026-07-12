@@ -386,6 +386,8 @@ export interface TextElementLayout {
   maxWidthPx: number;
   /** Stroke width in 1080x1920 canvas pixels. */
   strokeWidth: number;
+  /** Soft-shadow toggle. Undefined/null defaults to legacy enabled. */
+  shadowEnabled: boolean;
   start_s: number;
   end_s: number;
 }
@@ -420,6 +422,7 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       maxWidthFrac: resolveMaxWidthFrac(el.max_width_frac),
       maxWidthPx: CANVAS_W * resolveMaxWidthFrac(el.max_width_frac),
       strokeWidth: el.stroke_width ?? 0,
+      shadowEnabled: el.shadow_enabled !== false,
       start_s: el.start_s,
       end_s: el.end_s,
     };

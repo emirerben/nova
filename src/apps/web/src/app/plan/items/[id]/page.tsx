@@ -194,6 +194,40 @@ const MONTAGE_PRESET_OPTIONS: { value: "classic" | "masonry"; label: string; des
   { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
 ];
 
+function MontagePresetPreview({ value }: { value: "classic" | "masonry" }) {
+  if (value === "masonry") {
+    const tiles = [
+      ["left-[4%] top-[9%] h-[50%] w-[24%]", "bg-lime-200"],
+      ["left-[32%] top-[7%] h-[25%] w-[36%]", "bg-sky-200"],
+      ["left-[72%] top-[12%] h-[48%] w-[25%]", "bg-rose-200"],
+      ["left-[7%] top-[64%] h-[24%] w-[36%]", "bg-zinc-200"],
+      ["left-[48%] top-[39%] h-[50%] w-[25%]", "bg-amber-200"],
+      ["left-[78%] top-[67%] h-[23%] w-[35%]", "bg-indigo-200"],
+    ] as const;
+    return (
+      <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        <div className="absolute inset-y-0 left-0 w-[132%] motion-safe:animate-[montage-masonry-pan_2.8s_ease-in-out_infinite_alternate]">
+          {tiles.map(([pos, color], idx) => (
+            <span
+              key={idx}
+              className={`absolute rounded-[10px] ${pos} ${color} shadow-sm ring-1 ring-black/5`}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-[#0c0c0e]">
+      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#bef264,#38bdf8)] motion-safe:animate-[montage-classic-a_3.6s_steps(1,end)_infinite]" />
+      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#fb7185,#facc15)] motion-safe:animate-[montage-classic-b_3.6s_steps(1,end)_infinite]" />
+      <span className="absolute inset-1 rounded-md bg-[linear-gradient(135deg,#a78bfa,#22c55e)] motion-safe:animate-[montage-classic-c_3.6s_steps(1,end)_infinite]" />
+      <span className="absolute bottom-2 left-1/2 h-1 w-10 -translate-x-1/2 rounded-full bg-white/80" />
+    </div>
+  );
+}
+
 const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
 const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
 
@@ -715,8 +749,9 @@ export default function PlanItemPage() {
   const rawEditFormat = item?.edit_format ?? "montage";
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
+  const isMasonryPreset = resolvedFormat === "montage" && montagePreset === "masonry";
   const itemUploadAccept =
-    resolvedFormat === "montage" && montagePreset === "masonry"
+    isMasonryPreset
       ? MASONRY_UPLOAD_ACCEPT
       : VIDEO_UPLOAD_ACCEPT;
   const isNarrated = resolvedFormat === "narrated_planned";
@@ -726,7 +761,9 @@ export default function PlanItemPage() {
   const isSubtitled = resolvedFormat === "subtitled";
   const isFilmThis = contentMode !== "existing_footage";
   const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
-  const isInstructed = isFilmThis && hasGuide && !isSubtitled && !isNarratedReady;
+  const isInstructed =
+    isFilmThis && hasGuide && !isMasonryPreset && !isSubtitled && !isNarratedReady;
+  const showVisualPools = !isMasonryPreset;
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -1172,13 +1209,14 @@ export default function PlanItemPage() {
                                 await updatePlanItem(item.id, { montage_preset: value }).catch(() => null);
                                 refetch();
                               }}
-                              className={`flex min-h-[68px] flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                              className={`flex flex-col rounded-xl border p-2 text-left transition-colors ${
                                 active
                                   ? "border-lime-400 bg-lime-50"
                                   : "border-zinc-200 bg-white hover:border-zinc-300"
                               }`}
                             >
-                              <span className={`text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
+                              <MontagePresetPreview value={value} />
+                              <span className={`mt-2 text-sm font-medium ${active ? "text-lime-800" : "text-[#0c0c0e]"}`}>
                                 {label}
                               </span>
                               <span className="mt-0.5 text-xs text-zinc-400">{desc}</span>
@@ -1455,9 +1493,10 @@ export default function PlanItemPage() {
             {/* Uploader — branches:
                 0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
                 1. narrated_ready: audio-first flow, pool upload, no step spine
-                2. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                3. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
-                4. existing_footage → PoolUploadCard (use footage you already have) */}
+                2. masonry montage → compact pool strip even when guide present
+                3. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
+                4. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
+                5. existing_footage → PoolUploadCard (use footage you already have) */}
             {isSubtitled ? (
               <div>
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
@@ -1501,6 +1540,21 @@ export default function PlanItemPage() {
                   accept={itemUploadAccept}
                 />
               </div>
+            ) : isMasonryPreset ? (
+              <div>
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Collage clips
+                </p>
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
+                  accept={itemUploadAccept}
+                />
+              </div>
             ) : isInstructed ? (
               <ShotSlotUploader
                 item={item}
@@ -1533,36 +1587,40 @@ export default function PlanItemPage() {
             {/* Visuals pool — screenshots/screen recordings that feed AI overlay
                 auto-placement (plans/005 PR0). Renders nothing unless
                 NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED=true (gate lives inside). */}
-            <AssetPool
-              itemId={itemId}
-              attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
-              onUseInEdit={promotePoolAsset}
-              attachBusy={uploading || uploaderBusy}
-            />
+            {showVisualPools && (
+              <AssetPool
+                itemId={itemId}
+                attachedPaths={item.clip_assignments?.map((a) => a.gcs_path) ?? []}
+                onUseInEdit={promotePoolAsset}
+                attachBusy={uploading || uploaderBusy}
+              />
+            )}
 
             {/* Suggestion rail — AI overlay auto-placement review for the
                 focused variant (plans/005 PR2). Same flag gate as AssetPool;
                 renders nothing until a variant exists, and nothing when the
                 variant's editor_capabilities report suggestions=false (plan
                 010 OV-5 — caption archetypes, song/lyric variants). */}
-            <SuggestionRail
-              itemId={itemId}
-              variantId={focused?.variant_id ?? null}
-              suggestionsCapability={focused?.editor_capabilities?.suggestions ?? null}
-              previewUrl={focused?.output_url ?? focused?.base_video_url ?? null}
-              rows={overlaySuggestions.rows}
-              onRowsChange={overlaySuggestions.setRows}
-              keptIds={overlaySuggestions.keptIds}
-              onKeptIdsChange={overlaySuggestions.setKeptIds}
-              onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
-              applyReceipt={focused?.overlay_apply_receipt ?? null}
-              onApplied={() => {
-                if (focused) {
-                  markVariantRendering(focused.variant_id, focused.render_finished_at ?? null);
-                }
-                refetch();
-              }}
-            />
+            {showVisualPools && (
+              <SuggestionRail
+                itemId={itemId}
+                variantId={focused?.variant_id ?? null}
+                suggestionsCapability={focused?.editor_capabilities?.suggestions ?? null}
+                previewUrl={focused?.output_url ?? focused?.base_video_url ?? null}
+                rows={overlaySuggestions.rows}
+                onRowsChange={overlaySuggestions.setRows}
+                keptIds={overlaySuggestions.keptIds}
+                onKeptIdsChange={overlaySuggestions.setKeptIds}
+                onSuggestionEdit={overlaySuggestions.onSuggestionEdit}
+                applyReceipt={focused?.overlay_apply_receipt ?? null}
+                onApplied={() => {
+                  if (focused) {
+                    markVariantRendering(focused.variant_id, focused.render_finished_at ?? null);
+                  }
+                  refetch();
+                }}
+              />
+            )}
 
             {/* Generate + hint caption — both from generateGate (plan-generate-gate)
                 so the disabled state and its explanation can never disagree. */}

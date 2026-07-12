@@ -255,6 +255,10 @@ class TextElement(BaseModel):
         default=None,
         description="Stroke width; silently clamped to [0, 20].",
     )
+    shadow_enabled: bool | None = Field(
+        default=None,
+        description="Explicit soft-shadow toggle. None preserves legacy renderer defaults.",
+    )
     alignment: Literal["left", "center", "right"] | None = Field(
         default="center",
         description="Text alignment (maps to text_anchor in the burn dict).",
@@ -596,6 +600,10 @@ def _burn_dict_to_text_element(
     # stroke_width
     stroke_raw = burn_dict.get("stroke_width")
     stroke_width: float | None = float(stroke_raw) if stroke_raw is not None else None
+    shadow_enabled_raw = burn_dict.get("shadow_enabled")
+    shadow_enabled: bool | None = (
+        bool(shadow_enabled_raw) if shadow_enabled_raw is not None else None
+    )
 
     # Parity-gated spacing fields (already clamped by TextElement validators).
     letter_spacing_raw = burn_dict.get("letter_spacing")
@@ -644,6 +652,7 @@ def _burn_dict_to_text_element(
             color=color,
             highlight_color=highlight_color,
             stroke_width=stroke_width,
+            shadow_enabled=shadow_enabled,
             letter_spacing=letter_spacing,
             line_spacing=line_spacing,
             max_width_frac=max_width_frac,

@@ -35,6 +35,8 @@ export interface TextElementBar {
   highlight_color?: string;
   /** Stroke width in canvas-px units (0 = no stroke). Renderer-honored. */
   stroke_width?: number;
+  /** Explicit soft-shadow toggle. undefined preserves legacy/generated defaults. */
+  shadow_enabled?: boolean | null;
   effect?: string;
   alignment?: string;
   /** Display-case transform ("none" | "upper" | "lower" | "title") — resolved

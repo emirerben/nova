@@ -105,6 +105,19 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
   __esModule: true,
   default: () => <div data-testid="feedback-buttons" />,
 }));
+jest.mock("@/app/plan/_components/AssetPool", () => ({
+  __esModule: true,
+  default: () => <div data-testid="asset-pool" />,
+}));
+jest.mock("@/app/plan/_components/SuggestionRail", () => ({
+  __esModule: true,
+  default: () => <div data-testid="suggestion-rail" />,
+}));
+jest.mock("@/app/plan/items/[id]/components/ShotSlotUploader", () => ({
+  __esModule: true,
+  default: () => <div data-testid="shot-slot-uploader" />,
+  ClipNoteControl: () => <div data-testid="clip-note-control" />,
+}));
 
 import { expandIdea, generatePlanItem, updatePlanItem, type PlanItemJobStatus } from "@/lib/plan-api";
 const PlanItemPage = require("@/app/plan/items/[id]/page").default;
@@ -164,6 +177,62 @@ function makeVariant(id: string, renderStatus: string, url: string | null = null
 }
 
 // ===== Tests =====
+
+describe("PlanItemPage — masonry collage item UX", () => {
+  function renderMasonryItem(extra = {}) {
+    const item = makeItem({
+      status: "awaiting_clips",
+      edit_format: "montage",
+      montage_preset: "masonry",
+      filming_guide: [{ what: "Wide room beat", how: "Hold steady", duration_s: 4 }],
+      ...extra,
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    return render(<PlanItemPage />);
+  }
+
+  it("renders preset preview tiles instead of text-only cards", async () => {
+    await act(async () => {
+      renderMasonryItem({ montage_preset: "classic" });
+    });
+
+    expect(
+      screen
+        .getByText("Classic")
+        .previousElementSibling?.querySelector('[class*="montage-classic-a"]'),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByText("Masonry collage")
+        .previousElementSibling?.querySelector('[class*="montage-masonry-pan"]'),
+    ).not.toBeNull();
+  });
+
+  it("uses compact collage uploads even when the item has a filming guide", async () => {
+    await act(async () => {
+      renderMasonryItem();
+    });
+
+    expect(screen.getByText("Collage clips")).toBeInTheDocument();
+    expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Upload video clips for this idea").getAttribute("accept")).toContain(
+      "image/webp",
+    );
+  });
+
+  it("hides visual-pool affordances for masonry items", async () => {
+    await act(async () => {
+      renderMasonryItem();
+    });
+
+    expect(screen.queryByTestId("asset-pool")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("suggestion-rail")).not.toBeInTheDocument();
+  });
+});
 
 describe("PlanItemPage — ProgressTheater renders with phase data", () => {
   it("test_progress_theater_renders_with_generative_phases: phase chips visible", async () => {

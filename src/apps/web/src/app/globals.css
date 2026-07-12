@@ -225,3 +225,21 @@
     filter: none;
   }
 }
+
+@keyframes montage-classic-a {
+  0%, 32% { opacity: 1; }
+  33%, 100% { opacity: 0; }
+}
+@keyframes montage-classic-b {
+  0%, 32% { opacity: 0; }
+  33%, 65% { opacity: 1; }
+  66%, 100% { opacity: 0; }
+}
+@keyframes montage-classic-c {
+  0%, 65% { opacity: 0; }
+  66%, 100% { opacity: 1; }
+}
+@keyframes montage-masonry-pan {
+  from { transform: translateX(0); }
+  to { transform: translateX(-20%); }
+}

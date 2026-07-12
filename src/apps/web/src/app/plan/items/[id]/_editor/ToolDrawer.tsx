@@ -11,6 +11,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { GenerativeStyleSet } from "@/lib/generative-api";
+import type { MusicTrackSummary } from "@/lib/music-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
   filterTextPresetsByCategory,
@@ -43,6 +44,11 @@ export default function ToolDrawer({
   sfxEffects = [],
   sfxLoading = false,
   onAddSfx,
+  musicTracks = [],
+  musicLoading = false,
+  currentMusicTrackId = null,
+  musicEditable = false,
+  onPickMusic,
   overlayUploading = false,
   onOverlayUpload,
   overlaySuggestions = null,
@@ -58,6 +64,11 @@ export default function ToolDrawer({
   sfxEffects?: SoundEffectSummary[];
   sfxLoading?: boolean;
   onAddSfx?: (effect: SoundEffectSummary) => void;
+  musicTracks?: MusicTrackSummary[];
+  musicLoading?: boolean;
+  currentMusicTrackId?: string | null;
+  musicEditable?: boolean;
+  onPickMusic?: (trackId: string) => void;
   overlayUploading?: boolean;
   onOverlayUpload?: (
     files: { file: File; filename: string; content_type: string; file_size_bytes: number }[],
@@ -172,6 +183,11 @@ export default function ToolDrawer({
           effects={sfxEffects}
           loading={sfxLoading}
           onAddSfx={onAddSfx}
+          musicTracks={musicTracks}
+          musicLoading={musicLoading}
+          currentMusicTrackId={currentMusicTrackId}
+          musicEditable={musicEditable}
+          onPickMusic={onPickMusic}
         />
       )}
 
@@ -190,13 +206,67 @@ function SoundsDrawer({
   effects,
   loading,
   onAddSfx,
+  musicTracks,
+  musicLoading,
+  currentMusicTrackId,
+  musicEditable,
+  onPickMusic,
 }: {
   effects: SoundEffectSummary[];
   loading: boolean;
   onAddSfx?: (effect: SoundEffectSummary) => void;
+  musicTracks: MusicTrackSummary[];
+  musicLoading: boolean;
+  currentMusicTrackId: string | null;
+  musicEditable: boolean;
+  onPickMusic?: (trackId: string) => void;
 }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+      <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Music</p>
+      {!musicEditable ? (
+        <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
+          This edit has no swappable song.
+        </div>
+      ) : musicLoading ? (
+        <div className="mb-5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
+          Loading songs...
+        </div>
+      ) : (
+        <div className="mb-5 max-h-48 space-y-2 overflow-y-auto pr-1">
+          {musicTracks.map((track) => {
+            const selected = track.id === currentMusicTrackId;
+            return (
+              <button
+                key={track.id}
+                type="button"
+                onClick={() => onPickMusic?.(track.id)}
+                className={[
+                  "flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                  selected
+                    ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
+                    : "border-zinc-200 bg-white text-[#0c0c0e] hover:border-zinc-400",
+                ].join(" ")}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-semibold">{track.title}</span>
+                  <span className={selected ? "block truncate text-[11px] text-white/70" : "block truncate text-[11px] text-[#71717a]"}>
+                    {track.artist || "Music"}
+                  </span>
+                </span>
+                <span className="ml-2 shrink-0 text-[11px]">
+                  {track.user_slot_count ? `${track.user_slot_count} clips` : "Song"}
+                </span>
+              </button>
+            );
+          })}
+          {musicTracks.length === 0 && (
+            <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">
+              No ready songs found.
+            </div>
+          )}
+        </div>
+      )}
       <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Effects</p>
       {loading ? (
         <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
@@ -224,12 +294,6 @@ function SoundsDrawer({
           )}
         </div>
       )}
-      <a
-        href="../"
-        className="mt-4 block text-[12px] text-[#71717a] underline underline-offset-4 hover:text-[#0c0c0e]"
-      >
-        Swap song on the item page
-      </a>
     </div>
   );
 }

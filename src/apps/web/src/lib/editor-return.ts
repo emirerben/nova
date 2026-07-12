@@ -29,6 +29,7 @@ export interface EditorCommitSectionsLike {
   caption_cues?: boolean;
   timeline?: boolean;
   mix?: boolean;
+  music?: boolean;
   sound_effects?: boolean;
   media_overlays?: boolean;
   title?: boolean;
@@ -40,6 +41,7 @@ export function editorCommitStartedRender(sections: EditorCommitSectionsLike): b
       sections.caption_cues ||
       sections.timeline ||
       sections.mix ||
+      sections.music ||
       sections.sound_effects ||
       sections.media_overlays,
   );

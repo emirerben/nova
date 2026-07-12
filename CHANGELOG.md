@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.26.0] — 2026-07-12
+
+### Added
+- **Masonry collage is clearer before generation and easier to edit after.** The item page now previews Classic vs. Masonry with animated preset tiles, keeps masonry uploads in a compact collage clip strip even when a filming guide exists, and hides visual-pool controls that do not apply to collage edits.
+- **The full-screen editor can now swap songs, preview animated text, and smart-place copy.** Music changes save through the editor commit flow, text animation previews reflect the selected effect at the playhead, and generated/editable intro text can use smart placement candidates derived from clip safe zones or masonry whitespace.
+
+### Changed
+- Text styling now defaults newly added editor text to no shadow, with explicit Shadow and Stroke controls, and the editor accepts the full renderer-backed 8-300px text-size range.
+
+### Fixed
+- Renderer parity now carries `shadow_enabled` through TextElement validation and both Skia/Pillow burn paths, so disabling the editor shadow no longer leaves a baked halo in the final render.
+
 ## [0.7.25.0] — 2026-07-11
 
 ### Added

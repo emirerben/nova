@@ -34,6 +34,7 @@ export const PARITY_VERIFIED_FIELDS = [
   "color",
   "highlight_color",
   "stroke_width",
+  "shadow_enabled",
   "alignment",
   "effect",
   // ── T11 gated style fields ──────────────────────────────────────────────

@@ -13,6 +13,7 @@ from app.pipeline.overlay_sizing import (
     MIN_INTRO_PX,
     clamp_intro_px,
     compute_overlay_size,
+    text_placement_candidate_from_safe_zone,
 )
 
 
@@ -102,3 +103,22 @@ def test_clamp_intro_px(raw, expected):
 def test_clamp_intro_px_rejects_junk():
     with pytest.raises((ValueError, TypeError)):
         clamp_intro_px("not-a-number")
+
+
+def test_text_placement_candidate_uses_safe_zone_center_and_width():
+    candidate = text_placement_candidate_from_safe_zone(
+        {"x": 0.2, "y": 0.25, "w": 0.5, "h": 0.3},
+        visual_density=2.0,
+    )
+
+    assert candidate is not None
+    assert candidate["source"] == "clip_safe_zone"
+    assert candidate["x_frac"] == 0.45
+    assert candidate["y_frac"] == 0.4
+    assert candidate["max_width_frac"] == 0.47
+    assert candidate["confidence"] > 0.7
+
+
+@pytest.mark.parametrize("bad_zone", [None, {}, {"x": 0, "y": 0, "w": 0}, "junk"])
+def test_text_placement_candidate_ignores_bad_safe_zone(bad_zone):
+    assert text_placement_candidate_from_safe_zone(bad_zone) is None

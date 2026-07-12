@@ -22,6 +22,8 @@ MASONRY_MAX_DURATION_S = 15.0
 MASONRY_MAX_TILES = 18
 MASONRY_TIMEOUT_S = 900
 MASONRY_TILE_RADIUS_PX = 34
+_PLACEMENT_SAMPLE_COUNT = 7
+_PLACEMENT_MARGIN_PX = 42
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,97 @@ def clamp_masonry_duration(duration_s: float) -> float:
     if duration <= 0:
         duration = MASONRY_MAX_DURATION_S
     return round(max(0.1, min(duration, MASONRY_MAX_DURATION_S)), 3)
+
+
+def masonry_text_placement_candidates(
+    *,
+    duration_s: float,
+    reveal_window_s: float = 4.0,
+    max_candidates: int = 3,
+) -> list[dict]:
+    """Find stable whitespace regions over the masonry reveal window.
+
+    Samples the scrolling tile board and scores a small set of editor-friendly text
+    boxes by how little they overlap visible tiles. This is intentionally lightweight:
+    it runs in render planning, not inside FFmpeg, and returns normalized candidates
+    the editor can apply directly.
+    """
+    output_w = int(settings.output_width)
+    output_h = int(settings.output_height)
+    board_width = max((x + w for x, _y, w, _h in _MASONRY_LAYOUT), default=output_w) + 34
+    pan_px = max(0, board_width - output_w)
+    duration = clamp_masonry_duration(duration_s)
+    window = max(0.1, min(float(reveal_window_s), duration))
+    sample_count = max(2, _PLACEMENT_SAMPLE_COUNT)
+    sample_times = [window * i / (sample_count - 1) for i in range(sample_count)]
+
+    rects_by_sample: list[list[tuple[float, float, float, float]]] = []
+    for t in sample_times:
+        progress = min(1.0, max(0.0, t / duration))
+        scroll = pan_px * progress
+        visible: list[tuple[float, float, float, float]] = []
+        for x, y, w, h in _MASONRY_LAYOUT:
+            left = x - scroll - _PLACEMENT_MARGIN_PX
+            top = y - _PLACEMENT_MARGIN_PX
+            right = x - scroll + w + _PLACEMENT_MARGIN_PX
+            bottom = y + h + _PLACEMENT_MARGIN_PX
+            if right <= 0 or left >= output_w or bottom <= 0 or top >= output_h:
+                continue
+            visible.append(
+                (
+                    max(0.0, left),
+                    max(0.0, top),
+                    min(float(output_w), right),
+                    min(float(output_h), bottom),
+                )
+            )
+        rects_by_sample.append(visible)
+
+    probe_boxes = [
+        (0.50, 0.50, 0.58, 0.18),
+        (0.50, 0.33, 0.62, 0.16),
+        (0.50, 0.68, 0.62, 0.16),
+        (0.30, 0.50, 0.42, 0.18),
+        (0.70, 0.50, 0.42, 0.18),
+        (0.50, 0.82, 0.52, 0.13),
+    ]
+
+    scored: list[tuple[float, dict]] = []
+    for x_frac, y_frac, w_frac, h_frac in probe_boxes:
+        bw = w_frac * output_w
+        bh = h_frac * output_h
+        left = x_frac * output_w - bw / 2.0
+        top = y_frac * output_h - bh / 2.0
+        box = (left, top, left + bw, top + bh)
+        worst_overlap = 0.0
+        clear_samples = 0
+        for rects in rects_by_sample:
+            overlap = 0.0
+            for rect in rects:
+                ox = max(0.0, min(box[2], rect[2]) - max(box[0], rect[0]))
+                oy = max(0.0, min(box[3], rect[3]) - max(box[1], rect[1]))
+                overlap += ox * oy
+            ratio = overlap / max(1.0, bw * bh)
+            worst_overlap = max(worst_overlap, ratio)
+            if ratio <= 0.02:
+                clear_samples += 1
+        stability = clear_samples / len(rects_by_sample)
+        score = stability * 1.8 + w_frac - worst_overlap * 2.5
+        scored.append(
+            (
+                score,
+                {
+                    "source": "masonry_whitespace",
+                    "x_frac": round(x_frac, 4),
+                    "y_frac": round(y_frac, 4),
+                    "max_width_frac": round(w_frac, 4),
+                    "confidence": round(max(0.2, min(0.98, score / 2.6)), 3),
+                },
+            )
+        )
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [candidate for _score, candidate in scored[: max(1, max_candidates)]]
 
 
 def _write_mask(path: str, width: int, height: int, radius: int = MASONRY_TILE_RADIUS_PX) -> None:

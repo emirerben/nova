@@ -2508,6 +2508,7 @@ def _reburn_text_on_base(
                 "intro_text_size_px": existing.get("intro_text_size_px"),
                 "intro_size_source": existing.get("intro_size_source"),
                 "text_elements_user_edited": True,
+                "text_placement_candidates": existing.get("text_placement_candidates"),
             }
 
         # Resolve size (pixel-stability rule)
@@ -2556,6 +2557,7 @@ def _reburn_text_on_base(
                 font_family_override=font_family_override,
                 effect_override=effect_override,
                 text_color_override=text_color_override,
+                placement_candidates=existing.get("text_placement_candidates") or None,
             )
             # Preserve the original source label — size_override_px always wins
             # inside the resolver, which would label it "user"; restore the real
@@ -2709,6 +2711,7 @@ def _reburn_text_on_base(
             "intro_font_family": font_family_override,
             "intro_effect": effect_override,
             "intro_text_color": text_color_override,
+            "text_placement_candidates": existing.get("text_placement_candidates"),
             "intro_cluster_hero_font": cluster_hero_font_override,
             "intro_cluster_body_font": cluster_body_font_override,
             "intro_cluster_accent_font": cluster_accent_font_override,
@@ -5237,8 +5240,15 @@ def _render_generative_variant(
         _agent_text_overlays = None  # built after audio mix, if needed
         _agent_text_intro_px = None
         _agent_text_intro_source = None
+        text_placement_candidates: list[dict] = []
         if text_mode == "agent_text" and agent_text is not None:
             hero_safe_zone, hero_density = _hero_composition(clip_metas)
+            text_placement_candidates = _placement_candidates_for_intro(
+                hero_safe_zone=hero_safe_zone,
+                hero_density=hero_density,
+                masonry_requested=masonry_requested,
+                duration_s=effective_available_footage_s,
+            )
             _at_params, _agent_text_intro_px, _agent_text_intro_source = (
                 _resolve_intro_overlay_params(
                     agent_text,
@@ -5252,8 +5262,10 @@ def _render_generative_variant(
                     font_family_override=font_family_override,
                     effect_override=effect_override,
                     text_color_override=text_color_override,
+                    placement_candidates=text_placement_candidates,
                 )
             )
+            base["text_placement_candidates"] = text_placement_candidates or None
             base["intro_text_size_px"] = _agent_text_intro_px
             base["intro_size_source"] = _agent_text_intro_source
             # Persist the intro text so re-renders (font/size/style edits) can reuse
@@ -7866,6 +7878,28 @@ def _hero_composition(clip_metas: list) -> tuple[dict | None, float]:
     return best.text_safe_zone, _safe_density(best)
 
 
+def _placement_candidates_for_intro(
+    *,
+    hero_safe_zone: dict | None,
+    hero_density: float,
+    masonry_requested: bool,
+    duration_s: float,
+) -> list[dict]:
+    """Variant-level smart text placement candidates for editor/render use."""
+    if masonry_requested:
+        from app.pipeline.masonry_montage import masonry_text_placement_candidates  # noqa: PLC0415
+
+        return masonry_text_placement_candidates(duration_s=duration_s)
+
+    from app.pipeline.overlay_sizing import text_placement_candidate_from_safe_zone  # noqa: PLC0415
+
+    candidate = text_placement_candidate_from_safe_zone(
+        hero_safe_zone,
+        visual_density=hero_density,
+    )
+    return [candidate] if candidate else []
+
+
 def _inject_agent_intro(
     recipe_dict: dict,
     agent_text,
@@ -7878,6 +7912,7 @@ def _inject_agent_intro(
     size_override_px: int | None = None,
     user_style_knobs: dict | None = None,
     language: str = "en",
+    placement_candidates: list[dict] | None = None,
 ) -> tuple[dict, int | None, str | None]:
     """Inject the hero intro and return (recipe, intro_text_size_px, size_source).
 
@@ -7911,6 +7946,7 @@ def _inject_agent_intro(
         size_override_px=size_override_px,
         user_style_knobs=user_style_knobs,
         language=language,
+        placement_candidates=placement_candidates,
     )
     recipe_dict = inject_persistent_intro(
         recipe_dict,
@@ -7935,6 +7971,7 @@ def _resolve_intro_overlay_params(
     font_family_override: str | None = None,
     effect_override: str | None = None,
     text_color_override: str | None = None,
+    placement_candidates: list[dict] | None = None,
 ) -> tuple[dict, int | None, str | None]:
     """Resolve the hero-intro look + size into kwargs for the overlay builders.
 
@@ -8034,6 +8071,7 @@ def _resolve_intro_overlay_params(
             if knobs.get("stroke_width") is not None
             else style.get("stroke_width")
         ),
+        "shadow_enabled": False,
         "text_size_px": intro_px,  # computed/user/user_style/set px — no hardcoded jumbo default
         # position_x_frac / position_y_frac: None-safe
         "position_x_frac": (
@@ -8047,6 +8085,25 @@ def _resolve_intro_overlay_params(
             else style.get("position_y_frac")
         ),
     }
+
+    first_candidate = (placement_candidates or [None])[0]
+    has_explicit_position = any(
+        value is not None
+        for value in (
+            knobs.get("position"),
+            knobs.get("position_x_frac"),
+            knobs.get("position_y_frac"),
+            style.get("position"),
+            style.get("position_x_frac"),
+            style.get("position_y_frac"),
+        )
+    )
+    if isinstance(first_candidate, dict) and not has_explicit_position:
+        params["position"] = "center"
+        params["position_x_frac"] = first_candidate.get("x_frac")
+        params["position_y_frac"] = first_candidate.get("y_frac")
+        params["max_width_frac"] = first_candidate.get("max_width_frac")
+        params["text_anchor"] = "center"
 
     # Layout (linear | cluster). Linear is forced when the kill switch is off or
     # when ANY explicit position exists (knob/set fracs, or a RESOLVED named

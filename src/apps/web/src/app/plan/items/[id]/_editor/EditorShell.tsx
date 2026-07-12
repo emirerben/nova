@@ -357,6 +357,11 @@ export default function EditorShell({
   const [sfxGlossaryLoading, setSfxGlossaryLoading] = useState(false);
   const [musicTracks, setMusicTracks] = useState<MusicTrackSummary[]>([]);
   const [musicTracksLoaded, setMusicTracksLoaded] = useState(false);
+  const [musicTracksLoading, setMusicTracksLoading] = useState(false);
+  const [selectedMusicTrackId, setSelectedMusicTrackId] = useState<string | null>(
+    variant?.music_track_id ?? null,
+  );
+  const [musicDirty, setMusicDirty] = useState(false);
   const [overlayUploading, setOverlayUploading] = useState(false);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
@@ -373,6 +378,10 @@ export default function EditorShell({
     setLocalSlots(clip.state.slots.map((s) => ({ ...s })));
     setTimelineDirty(false);
   }, [clip.loadState, clip.state.slots, timelineVariantId, variant]);
+  useEffect(() => {
+    setSelectedMusicTrackId(variant?.music_track_id ?? null);
+    setMusicDirty(false);
+  }, [variant?.variant_id, variant?.music_track_id]);
   const slots = localSlots ?? clip.state.slots;
   const reloadClipTimeline = clip.reload;
   const clipDirty = useMemo(
@@ -489,7 +498,7 @@ export default function EditorShell({
   // Every mutation (text, slots, mutes, title) records into the stack, so the
   // stack IS the dirty signal — and Save's history.clear() makes it read clean
   // (so the draft mirror doesn't immediately re-write the just-saved state).
-  const dirty = history.canUndo || history.canRedo;
+  const dirty = history.canUndo || history.canRedo || musicDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -516,6 +525,7 @@ export default function EditorShell({
         : null,
     [selection, state.bars],
   );
+  const smartPlacementCandidate = variant?.text_placement_candidates?.[0] ?? null;
 
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
@@ -584,8 +594,9 @@ export default function EditorShell({
 
   const virtualPreviewRequested =
     clipDirty && !virtualFallback && clip.loadState === "ready";
-  const virtualMusicTrack = variant?.music_track_id
-    ? musicTracks.find((track) => track.id === variant.music_track_id) ?? null
+  const effectiveMusicTrackId = selectedMusicTrackId ?? variant?.music_track_id ?? null;
+  const virtualMusicTrack = effectiveMusicTrackId
+    ? musicTracks.find((track) => track.id === effectiveMusicTrackId) ?? null
     : null;
   const virtualMusicAudioUrl = virtualMusicTrack?.preview_audio_url ?? null;
   const virtualMusicStartS = virtualMusicTrack?.preview_start_s ?? 0;
@@ -726,9 +737,13 @@ export default function EditorShell({
     };
   }, [activeTool, sfxGlossaryEffects.length]);
 
+  const musicPickerShouldLoad =
+    (!!variant?.music_track_id || !!selectedMusicTrackId || activeTool === "sounds") &&
+    !musicTracksLoaded;
   useEffect(() => {
-    if (!variant?.music_track_id || musicTracksLoaded) return;
+    if (!musicPickerShouldLoad) return;
     let cancelled = false;
+    setMusicTracksLoading(true);
     void getMusicTracks()
       .then((res) => {
         if (!cancelled) setMusicTracks(res.tracks);
@@ -737,12 +752,15 @@ export default function EditorShell({
         if (!cancelled) setMusicTracks([]);
       })
       .finally(() => {
-        if (!cancelled) setMusicTracksLoaded(true);
+        if (!cancelled) {
+          setMusicTracksLoaded(true);
+          setMusicTracksLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [musicTracksLoaded, variant?.music_track_id]);
+  }, [musicPickerShouldLoad]);
 
   useEffect(() => {
     if (localSfx.length === 0 || sfxGlossaryEffects.length === 0) return;
@@ -829,6 +847,25 @@ export default function EditorShell({
       dispatch({ type: "PATCH_BAR", id, patch });
     },
     [readOnly, history],
+  );
+
+  const applySmartPlacement = useCallback(() => {
+    if (!selectedBar || !smartPlacementCandidate || readOnly) return;
+    patchBar(selectedBar.id, {
+      x_frac: smartPlacementCandidate.x_frac,
+      y_frac: smartPlacementCandidate.y_frac,
+      max_width_frac: smartPlacementCandidate.max_width_frac,
+      position: "custom",
+    });
+  }, [patchBar, readOnly, selectedBar, smartPlacementCandidate]);
+
+  const pickMusicTrack = useCallback(
+    (trackId: string) => {
+      if (readOnly || !variant?.music_track_id) return;
+      setSelectedMusicTrackId(trackId);
+      setMusicDirty(trackId !== variant.music_track_id);
+    },
+    [readOnly, variant?.music_track_id],
   );
 
   const previewTextTiming = useCallback(
@@ -1198,6 +1235,7 @@ export default function EditorShell({
         color: preset.fields.color ?? undefined,
         highlight_color: preset.fields.highlight_color ?? undefined,
         stroke_width: preset.fields.stroke_width ?? undefined,
+        shadow_enabled: false,
         effect: preset.fields.effect ?? undefined,
       };
       dispatch({ type: "ADD_TEXT", bar });
@@ -1487,6 +1525,12 @@ export default function EditorShell({
 
   const handleSave = useCallback(async () => {
     if (!variant || saveState === "saving" || readOnly) return;
+    if (musicDirty && (timelineDirty || clipDirty)) {
+      const proceed = window.confirm(
+        "Changing the song resets clip cuts to the new beat grid. Save with the new song?",
+      );
+      if (!proceed) return;
+    }
     setSaveState("saving");
     setSaveMessage(null);
     try {
@@ -1500,6 +1544,8 @@ export default function EditorShell({
         slots,
         mixDirty,
         mixLevel,
+        musicDirty,
+        musicTrackId: selectedMusicTrackId,
         sfxDirty,
         soundEffects: localSfx,
         overlaysDirty,
@@ -1532,6 +1578,7 @@ export default function EditorShell({
       setOverlaysDirty(false);
       setTitleDirty(false);
       setMixDirty(false);
+      setMusicDirty(false);
       setSaveState("idle");
       const renderStarted = editorCommitStartedRender(res.sections);
       setSaveMessage(renderStarted ? "Saved — rendering your latest version" : "Saved");
@@ -1563,9 +1610,12 @@ export default function EditorShell({
     title,
     router,
     timelineDirty,
+    clipDirty,
     slots,
     mixDirty,
     mixLevel,
+    musicDirty,
+    selectedMusicTrackId,
     textDirty,
     sfxDirty,
     localSfx,
@@ -2037,6 +2087,11 @@ export default function EditorShell({
 	              sfxEffects={sfxGlossaryEffects}
 	              sfxLoading={sfxGlossaryLoading}
 	              onAddSfx={addSfxFromGlossary}
+              musicTracks={musicTracks}
+              musicLoading={musicTracksLoading}
+              currentMusicTrackId={selectedMusicTrackId}
+              musicEditable={!!variant.music_track_id && !readOnly}
+              onPickMusic={pickMusicTrack}
 	              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
@@ -2058,6 +2113,11 @@ export default function EditorShell({
 	              sfxEffects={sfxGlossaryEffects}
 	              sfxLoading={sfxGlossaryLoading}
 	              onAddSfx={addSfxFromGlossary}
+              musicTracks={musicTracks}
+              musicLoading={musicTracksLoading}
+              currentMusicTrackId={selectedMusicTrackId}
+              musicEditable={!!variant.music_track_id && !readOnly}
+              onPickMusic={pickMusicTrack}
 	              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
@@ -2132,6 +2192,8 @@ export default function EditorShell({
           mixEditable={capabilities?.mix !== false && mixLevel != null}
           mixLabel={soundBedLabel}
           onPatchMix={patchMixLevel}
+          smartPlaceAvailable={!!smartPlacementCandidate && !!selectedBar && !readOnly}
+          onSmartPlace={applySmartPlacement}
 	          onClose={clear}
           onPickPreset={pickPreset}
         />

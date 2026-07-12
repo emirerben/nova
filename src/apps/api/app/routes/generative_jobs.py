@@ -69,6 +69,7 @@ _TEXT_ELEMENT_LOG_SAFE_FIELDS = frozenset(
         "letter_spacing",
         "line_spacing",
         "max_width_frac",
+        "shadow_enabled",
         "position",
         "reveal_s",
         "role",
@@ -507,6 +508,7 @@ class EditorCommitRequest(BaseModel):
     caption_cues: list[dict] | None = None
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
+    music_track_id: str | None = None
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
@@ -534,6 +536,7 @@ class EditorCommitSections(BaseModel):
     caption_cues: bool
     timeline: bool
     mix: bool
+    music: bool
     sound_effects: bool
     media_overlays: bool
     title: bool
@@ -2886,6 +2889,7 @@ def prepare_editor_commit(
     payload: EditorCommitRequest,
     *,
     user_id: str | None = None,
+    music_track: MusicTrack | None = None,
 ) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
 
@@ -2914,6 +2918,7 @@ def prepare_editor_commit(
         and payload.caption_cues is None
         and payload.timeline_slots is None
         and payload.mix is None
+        and payload.music_track_id is None
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.title is None
@@ -2974,6 +2979,23 @@ def prepare_editor_commit(
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:
         resolved_slots = resolve_timeline_slots_for_edit(job, variant, payload.timeline_slots)
+
+    if payload.music_track_id is not None:
+        if variant.get("variant_id") == "original_text" or variant.get("music_track_id") is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="This is the original-audio edit — it has no song to swap.",
+            )
+        if (
+            music_track is None
+            or music_track.id != payload.music_track_id
+            or music_track.analysis_status != "ready"
+            or not music_track.audio_gcs_path
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Requested song is not available for rendering.",
+            )
 
     mix_override: float | None = None
     if payload.mix is not None:
@@ -3044,6 +3066,7 @@ def prepare_editor_commit(
         or validated_caption_cues is not None
         or resolved_slots is not None
         or payload.mix is not None
+        or payload.music_track_id is not None
         or validated_sfx is not None
         or validated_overlays is not None
     )
@@ -3070,6 +3093,8 @@ def prepare_editor_commit(
             if payload.mix.original_level is not None:
                 # Round-trip persistence only — not yet honored by the renderer.
                 updated["original_audio_level"] = float(payload.mix.original_level)
+        if payload.music_track_id is not None:
+            updated["music_track_id"] = payload.music_track_id
         if validated_sfx is not None:
             updated["sound_effects"] = validated_sfx or None
         if validated_overlays is not None:
@@ -3109,6 +3134,7 @@ def prepare_editor_commit(
         "mix_override": mix_override,
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
+        "new_track_id": payload.music_track_id,
         "caption_cues_override": validated_caption_cues,
         "text_requires_full_render": text_requires_full_render,
         # R2: lets enqueue_editor_commit_render route caption-archetype lane-only
@@ -3120,6 +3146,7 @@ def prepare_editor_commit(
             "caption_cues": payload.caption_cues is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
+            "music": payload.music_track_id is not None,
             "sound_effects": payload.sound_effects is not None,
             "media_overlays": payload.media_overlays is not None,
         },
@@ -3185,10 +3212,13 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         kwargs["timeline_override"] = prep["timeline_override"]
     if prep["mix_override"] is not None:
         kwargs["mix_override"] = float(prep["mix_override"])
+    if prep.get("new_track_id") is not None:
+        kwargs["new_track_id"] = prep["new_track_id"]
     has_text_section = prep["sections"].get("text_elements") is True
     full_render = (
         prep["timeline_override"] is not None
         or prep["mix_override"] is not None
+        or prep.get("new_track_id") is not None
         or prep.get("text_requires_full_render") is True
     )
     if full_render or has_text_section:
@@ -3204,6 +3234,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     is_reburn_only = (
         prep["timeline_override"] is None
         and prep["mix_override"] is None
+        and prep.get("new_track_id") is None
         and prep.get("text_requires_full_render") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}

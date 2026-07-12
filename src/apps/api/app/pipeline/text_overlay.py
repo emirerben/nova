@@ -525,6 +525,7 @@ def generate_text_overlay_png(
                 position_y_frac=overlay.get("position_y_frac"),
                 text_anchor=overlay.get("text_anchor", "center"),
                 stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+                shadow_enabled=overlay.get("shadow_enabled") is not False,
                 emoji_prefix=overlay.get("emoji_prefix", ""),
                 text_gradient=overlay.get("text_gradient"),
             )
@@ -829,6 +830,7 @@ def _render_static_overlay_layer(
         position_y_frac=overlay.get("position_y_frac"),
         text_anchor=overlay.get("text_anchor", "center"),
         stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+        shadow_enabled=overlay.get("shadow_enabled") is not False,
         emoji_prefix=overlay.get("emoji_prefix", ""),
         text_gradient=overlay.get("text_gradient"),
     )
@@ -1458,6 +1460,7 @@ def _draw_frame(
             position_y_frac=position_y_frac,
             text_anchor=overlay.get("text_anchor", "center"),
             stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
+            shadow_enabled=overlay.get("shadow_enabled") is not False,
             emoji_prefix=overlay.get("emoji_prefix", ""),
             text_gradient=overlay.get("text_gradient"),
         )
@@ -2124,6 +2127,7 @@ def _draw_text_png(
     text_anchor: str = "center",
     stroke_width: int = 0,
     stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
+    shadow_enabled: bool = True,
     emoji_prefix: str = "",
     text_gradient: dict | None = None,
 ) -> None:
@@ -2148,7 +2152,7 @@ def _draw_text_png(
     `position_x_frac` semantics change with `text_anchor`: for "center" it is
     the centerline; for "left"/"right" it is the corresponding edge.
 
-    Two compositing layers: a soft drop shadow for depth, and an optional
+    Two compositing layers: an optional soft drop shadow for depth, and an optional
     crisp black stroke (Pillow's stroke_width) for the TikTok caption look.
     Stroke is opt-in — old behaviour (shadow only) when stroke_width=0.
     """
@@ -2359,11 +2363,13 @@ def _draw_text_png(
             text_anchor_arg = None  # PIL default
             shadow_xy = (x, y + 6)
             fg_xy = (x, y)
-        # Soft drop shadow (always on — gives depth on busy backgrounds)
-        if text_anchor_arg:
-            shadow_draw.text(shadow_xy, ln, font=font, fill=(0, 0, 0, 160), anchor=text_anchor_arg)
-        else:
-            shadow_draw.text(shadow_xy, ln, font=font, fill=(0, 0, 0, 160))
+        if shadow_enabled:
+            if text_anchor_arg:
+                shadow_draw.text(
+                    shadow_xy, ln, font=font, fill=(0, 0, 0, 160), anchor=text_anchor_arg
+                )
+            else:
+                shadow_draw.text(shadow_xy, ln, font=font, fill=(0, 0, 0, 160))
         # Foreground: optional crisp stroke (TikTok caption look) + fill.
         # Pillow renders stroke + fill in a single pass when stroke_width > 0,
         # so glyph anti-aliasing stays clean.
@@ -2393,8 +2399,9 @@ def _draw_text_png(
             else:
                 fg_draw.text(fg_xy, ln, font=font, fill=text_color)
 
-    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
-    img = Image.alpha_composite(img, shadow_layer)
+    if shadow_enabled:
+        shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=12))
+        img = Image.alpha_composite(img, shadow_layer)
     img = Image.alpha_composite(img, fg_layer)
 
     # Gradient text fill: if text_gradient is set, build a gradient-coloured

@@ -33,6 +33,8 @@ import {
   MAX_WIDTH_FRAC_MAX,
   MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
+import { animationStateAt } from "@/lib/overlay-animation";
+import { MAX_INTRO_S } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
@@ -752,6 +754,20 @@ export default function EditorCanvas({
                     isSelected && allowManipulation
                       ? EDITOR_STAGE_Z.selectionHandle
                       : EDITOR_STAGE_Z.textOverlay;
+                  const effect = bar?.effect ?? "static";
+                  const animation = animationStateAt(
+                    effect,
+                    Math.max(0, currentTime - layout.start_s),
+                    Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
+                    layout.text,
+                  );
+                  const baseStyle = textElementWrapperStyle({
+                    layout,
+                    xFrac,
+                    yFrac,
+                    maxWidthFrac,
+                    zIndex,
+                  });
                   return (
                     <div
                       key={layout.id}
@@ -764,7 +780,13 @@ export default function EditorCanvas({
                       className={`absolute select-none touch-none ${
                         tool === "select" ? "cursor-pointer" : ""
                       }`}
-                      style={textElementWrapperStyle({ layout, xFrac, yFrac, maxWidthFrac, zIndex })}
+                      style={{
+                        ...baseStyle,
+                        opacity: animation.alpha,
+                        transform: `${baseStyle.transform ?? ""} translateY(${
+                          (animation.yTranslate / CANVAS_H) * stageSize.h
+                        }px) scale(${animation.scale})`,
+                      }}
                       onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}
                       onPointerMove={onPointerMove}
                       onPointerUp={onPointerUp}
@@ -780,7 +802,9 @@ export default function EditorCanvas({
                         layout={layout}
                         fontSize={`${fontPx}px`}
                         strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
-                      />
+                      >
+                        {animation.visibleText}
+                      </TextElementOverlayContent>
 
                       {/* Hover ghost outline (1px zinc-400/60) */}
                       {isHovered && (

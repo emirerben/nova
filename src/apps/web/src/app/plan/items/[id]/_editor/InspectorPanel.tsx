@@ -34,7 +34,6 @@ import {
   MAX_WIDTH_FRAC_MAX,
   MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
-import { INTRO_SIZE_MAX, INTRO_SIZE_MIN, INTRO_SIZE_STEP } from "@/lib/generative-api";
 import {
   INSPECTOR_INTERNAL_FIELDS,
   isParityVerified,
@@ -68,12 +67,16 @@ const EDITABLE_ROW_FIELDS = new Set([
   "size_px",
   "effect",
   "color",
+  "shadow_enabled",
   "stroke_width",
   "text_case",
   "letter_spacing",
   "line_spacing",
   "max_width_frac",
 ]);
+
+const EDITOR_TEXT_SIZE_MIN = 8;
+const EDITOR_TEXT_SIZE_MAX = 300;
 
 export interface InspectorClipTiming {
   slot: DraftSlot;
@@ -85,8 +88,8 @@ export interface InspectorClipTiming {
 
 const SIZE_OPTIONS = (() => {
   const out: number[] = [];
-  for (let s = INTRO_SIZE_MIN; s <= INTRO_SIZE_MAX; s += INTRO_SIZE_STEP) out.push(s);
-  if (out[out.length - 1] !== INTRO_SIZE_MAX) out.push(INTRO_SIZE_MAX);
+  for (let s = 8; s <= 96; s += 8) out.push(s);
+  out.push(120, 160, 220, 300);
   return out;
 })();
 
@@ -120,6 +123,8 @@ export default function InspectorPanel({
   mixEditable,
   mixLabel,
   onPatchMix,
+  smartPlaceAvailable = false,
+  onSmartPlace,
   onClose,
   onPickPreset,
 }: {
@@ -150,6 +155,8 @@ export default function InspectorPanel({
   mixEditable?: boolean;
   mixLabel?: string;
   onPatchMix?: (level: number) => void;
+  smartPlaceAvailable?: boolean;
+  onSmartPlace?: () => void;
   /** Close X clears the selection — the column stays (D6). */
   onClose: () => void;
   onPickPreset: (preset: TextPreset) => void;
@@ -179,6 +186,8 @@ export default function InspectorPanel({
           onEditText={onEditText}
           onPatch={onPatch}
           onPatchTiming={onPatchTextTiming}
+          smartPlaceAvailable={smartPlaceAvailable}
+          onSmartPlace={onSmartPlace}
           onClose={onClose}
         />
       ) : selection.kind === "clip" && clipTiming ? (
@@ -721,6 +730,8 @@ function TextInspector({
   onEditText,
   onPatch,
   onPatchTiming,
+  smartPlaceAvailable,
+  onSmartPlace,
   onClose,
 }: {
   bar: TextElementBar;
@@ -728,13 +739,18 @@ function TextInspector({
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
   onPatchTiming: (patch: { start_s?: number; end_s?: number }) => void;
+  smartPlaceAvailable: boolean;
+  onSmartPlace?: () => void;
   onClose: () => void;
 }) {
   // Stroke row starts expanded when the bar already carries a stroke.
   const [strokeOpen, setStrokeOpen] = useState((bar.stroke_width ?? 0) > 0);
 
   const sizeValue = Math.round(bar.size_px ?? 64);
-  const clampedSlider = Math.min(INTRO_SIZE_MAX, Math.max(INTRO_SIZE_MIN, sizeValue));
+  const clampedSlider = Math.min(
+    EDITOR_TEXT_SIZE_MAX,
+    Math.max(EDITOR_TEXT_SIZE_MIN, sizeValue),
+  );
   const canEditTextCase = isParityVerified("text_case");
   const canEditLetterSpacing = isParityVerified("letter_spacing");
   const canEditLineSpacing = isParityVerified("line_spacing");
@@ -778,6 +794,14 @@ function TextInspector({
         aria-label="Text content"
         className="mt-3 w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
       />
+      <button
+        type="button"
+        disabled={!smartPlaceAvailable}
+        onClick={onSmartPlace}
+        className="mt-2 min-h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+      >
+        Smart place
+      </button>
 
       <TimingSection label="Timing">
         <TimingNumberInput
@@ -821,8 +845,8 @@ function TextInspector({
         <input
           type="range"
           aria-label="Font size (fine)"
-          min={INTRO_SIZE_MIN}
-          max={INTRO_SIZE_MAX}
+          min={EDITOR_TEXT_SIZE_MIN}
+          max={EDITOR_TEXT_SIZE_MAX}
           step={1}
           value={clampedSlider}
           onChange={(e) => onPatch({ size_px: Number(e.target.value), size_class: undefined })}
@@ -951,6 +975,16 @@ function TextInspector({
           />
         </span>
       </div>
+
+      <label className="flex h-11 items-center justify-between border-b border-zinc-100">
+        <span className="text-[13px] text-[#3f3f46]">Shadow</span>
+        <input
+          type="checkbox"
+          checked={bar.shadow_enabled !== false}
+          onChange={(e) => onPatch({ shadow_enabled: e.target.checked })}
+          className="h-4 w-4 accent-[#0c0c0e]"
+        />
+      </label>
 
       {/* Stroke — collapsed behind + */}
       <div className="border-b border-zinc-100">

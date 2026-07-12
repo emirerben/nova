@@ -2981,6 +2981,48 @@ class TestResolveIntroOverlayParamsLayout:
         )
         assert params["layout"] == "linear"
 
+    def test_smart_placement_candidate_applies_when_position_is_not_explicit(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(),
+            {"effect": "fade-in", "layout": "linear"},
+            None,
+            size_override_px=58,
+            placement_candidates=[
+                {
+                    "source": "clip_safe_zone",
+                    "x_frac": 0.62,
+                    "y_frac": 0.34,
+                    "max_width_frac": 0.48,
+                }
+            ],
+        )
+
+        assert params["position"] == "center"
+        assert params["position_x_frac"] == 0.62
+        assert params["position_y_frac"] == 0.34
+        assert params["max_width_frac"] == 0.48
+
+    def test_smart_placement_candidate_does_not_override_user_position(self):
+        params, _, _ = gb._resolve_intro_overlay_params(
+            _agent_text(),
+            {"effect": "fade-in", "layout": "linear"},
+            None,
+            size_override_px=58,
+            user_style_knobs={"position_y_frac": 0.8},
+            placement_candidates=[
+                {
+                    "source": "clip_safe_zone",
+                    "x_frac": 0.62,
+                    "y_frac": 0.34,
+                    "max_width_frac": 0.48,
+                }
+            ],
+        )
+
+        assert params["position_y_frac"] == 0.8
+        assert params["position_x_frac"] is None
+        assert "max_width_frac" not in params
+
 
 class TestResolveRegenTextClusterPersistence:
     def test_persisted_cluster_layout_and_roles_reused_without_llm(self):
