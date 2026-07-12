@@ -13,6 +13,8 @@
 
 import type { EditVariantPayload } from "@/lib/generative-api";
 import type { ArchetypeFallback } from "@/lib/plan-generate-gate";
+import type { CopilotOp } from "@/lib/edit-copilot/ops";
+import type { CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
 
 const PLAN_BASE = "/api/plan";
 
@@ -106,6 +108,40 @@ export interface ChatTurnResponse {
   turn_number: number;
   turn_label: string;
   persona_status: string;
+}
+
+export interface EditCopilotTurn {
+  role: "user" | "assistant";
+  content: string;
+  applied?: string[];
+  rejected?: string[];
+}
+
+export interface EditCopilotTurnResponse {
+  intent: string;
+  ops: CopilotOp[];
+  confidence: number;
+  reply: string;
+  suggestions: string[];
+  needs_clarification: boolean;
+}
+
+export function editCopilotTurn(
+  itemId: string,
+  variantId: string,
+  body: {
+    message: string;
+    turns: EditCopilotTurn[];
+    snapshot: CopilotSnapshot;
+  },
+): Promise<EditCopilotTurnResponse> {
+  return request<EditCopilotTurnResponse>(
+    `/plan-items/${itemId}/variants/${variantId}/copilot/turn`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 /** Accept a TikTok handle; fires async scrape and returns the persona row. */
