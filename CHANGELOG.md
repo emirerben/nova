@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.26.4] — 2026-07-12
+
+### Fixed
+- **Caption/text reburns no longer drop persisted media overlays (#626).** The caption re-render terminals (caption Apply, background-sound change, language re-transcribe) decided whether to re-apply the effects lanes from a variant snapshot read before the multi-minute burn — a media-overlay save landing during that window (the position autosave writes cards with no render-status gate) was silently dropped: cards stayed persisted on the variant but vanished from the video (prod job `4bee92f8`, `sfx_applying` with no `media_overlay_applying`). All terminals now re-read the fresh persisted lane state before deciding, so racing lane edits are neither dropped nor resurrected. The subtitled text-element fast reburn also joins the deferred-terminal contract: it no longer flips "ready" before the overlay/SFX re-apply completes (#626 mechanism 1), and a no-op re-apply finalizes "ready" instead of stranding the variant. Full montage re-renders preserve the freshest card list rather than the task-start snapshot.
+
 ## [0.7.26.3] — 2026-07-12
 
 ### Fixed
