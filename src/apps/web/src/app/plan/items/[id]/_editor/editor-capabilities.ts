@@ -73,6 +73,7 @@ export function computeToolDisabledReasons({
 }): Partial<Record<EditorTool, string>> {
   const out: Partial<Record<EditorTool, string>> = {};
   if (readOnly) {
+    out.nova = readOnlyReason;
     out.text = readOnlyReason;
     out.styles = readOnlyReason;
   } else if (capabilities?.text_elements === false) {

@@ -151,6 +151,7 @@ export interface EditorTimelineBodyProps {
 
   onScrub: (seconds: number) => void;
   onScrubStart: () => void;
+  flashIds?: Set<string>;
 }
 
 type ActiveDrag =
@@ -235,6 +236,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     onOpenSounds,
     onScrub,
     onScrubStart,
+    flashIds,
   } = props;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -825,6 +827,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           secondsToPx(b.end_s - b.start_s, pps),
                         );
                         const selected = isSel("text", b.id);
+                        const flashing = flashIds?.has(b.id) ?? false;
                         return (
                           <BarButton
                             key={b.id}
@@ -845,6 +848,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
                             showTrimHandles
+                            flashing={flashing}
                             className="bg-[#0c0c0e] text-white"
                           >
                             <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
@@ -879,6 +883,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     const left = secondsToPx(win.startS, pps);
                     const width = Math.max(8, secondsToPx(win.durationS, pps));
                     const selected = isSel("clip", slot.key);
+                    const flashing = flashIds?.has(slot.key) ?? false;
                     const strip = filmstripByKey.get(slot.key);
                     const stripSlot = strip?.slot ?? slot;
                     const stripWin = strip?.win ?? win;
@@ -914,6 +919,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           selected
                             ? `border-transparent ${ringCls}`
                             : "border-white/50 hover:border-white",
+                          flashing
+                            ? "outline outline-2 outline-offset-[1px] outline-lime-500 motion-safe:animate-pulse"
+                            : "",
                         ].join(" ")}
                         style={{ left, width }}
                       >
@@ -1098,6 +1106,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           secondsToPx(o.end_s - o.start_s, pps),
                         );
                         const selected = isSel("overlay", o.id);
+                        const flashing = flashIds?.has(o.id) ?? false;
                         return (
                           <BarButton
                             key={o.id}
@@ -1118,6 +1127,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
                             showTrimHandles
+                            flashing={flashing}
                             className={
                               o.suggested
                                 ? "border-[1.5px] border-dashed border-lime-600 bg-white text-[#0c0c0e]"
@@ -1278,6 +1288,7 @@ function BarButton({
   dataRowIndex,
   title,
   draggable,
+  flashing = false,
   className,
   children,
 }: {
@@ -1300,6 +1311,7 @@ function BarButton({
   dataRowIndex?: number;
   title?: string;
   draggable?: boolean;
+  flashing?: boolean;
   className: string;
   children: React.ReactNode;
 }) {
@@ -1333,6 +1345,7 @@ function BarButton({
           : "cursor-grab hover:brightness-110 active:cursor-grabbing",
         positionedInRow ? "" : "inset-y-0.5",
         selected ? ringCls : "",
+        flashing ? "outline outline-2 outline-offset-[1px] outline-lime-500 motion-safe:animate-pulse" : "",
         className,
       ].join(" ")}
       style={{

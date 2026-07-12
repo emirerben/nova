@@ -87,7 +87,7 @@ describe("messagesToCopilotTurns", () => {
           id: "a",
           role: "assistant",
           text: "Done\n\nCouldn't apply: Clip 2: missing",
-          applied: ["Size: 64 -> 54"],
+          applied: ["Size: 64 → 54"],
           rejected: ["Clip 2: missing"],
         },
       ]),
@@ -96,7 +96,7 @@ describe("messagesToCopilotTurns", () => {
       {
         role: "assistant",
         content: "Done\n\nCouldn't apply: Clip 2: missing",
-        applied: ["Size: 64 -> 54"],
+        applied: ["Size: 64 → 54"],
         rejected: ["Clip 2: missing"],
       },
     ]);

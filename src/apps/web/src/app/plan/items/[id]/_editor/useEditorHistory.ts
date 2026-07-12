@@ -172,13 +172,15 @@ export interface EditorHistory {
    * command handler, BEFORE the mutating setState/dispatch (which read the
    * same pre-mutation state). Pass a coalesce `tag` for typing bursts.
    */
-  record: (tag?: string | null) => void;
+  record: (tag?: string | null) => number;
   undo: () => void;
   redo: () => void;
   /** Drop the whole stack (Save — no undoing into a pre-persist world). */
   clear: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /** Monotonic command counter; increments on every non-coalesced record(). */
+  version: number;
 }
 
 export function useEditorHistory(opts: {
@@ -188,9 +190,11 @@ export function useEditorHistory(opts: {
   apply: (doc: EditorDocument) => void;
 }): EditorHistory {
   const [hist, setHist] = useState<EditorHistoryState>(initEditorHistoryState);
+  const [version, setVersion] = useState(0);
   // Ref mirror so undo/redo/record read the authoritative stack synchronously
   // (no updater-side-effects → StrictMode double-invoke safe).
   const histRef = useRef<EditorHistoryState>(hist);
+  const versionRef = useRef(0);
   const getCurrentRef = useRef(opts.getCurrent);
   const applyRef = useRef(opts.apply);
   getCurrentRef.current = opts.getCurrent;
@@ -203,7 +207,13 @@ export function useEditorHistory(opts: {
 
   const record = useCallback(
     (tag: string | null = null) => {
-      commit(recordSnapshot(histRef.current, getCurrentRef.current(), tag));
+      const nextHist = recordSnapshot(histRef.current, getCurrentRef.current(), tag);
+      const changed = nextHist !== histRef.current;
+      commit(nextHist);
+      if (!changed) return versionRef.current;
+      versionRef.current += 1;
+      setVersion(versionRef.current);
+      return versionRef.current;
     },
     [commit],
   );
@@ -233,5 +243,6 @@ export function useEditorHistory(opts: {
     clear,
     canUndo: hist.past.length > 0,
     canRedo: hist.future.length > 0,
+    version,
   };
 }

@@ -198,11 +198,13 @@ describe("useEditorHistory (hook)", () => {
 
     expect(result.current.canUndo).toBe(false);
     expect(result.current.canRedo).toBe(false);
+    expect(result.current.version).toBe(0);
 
     // Command: record the pre-change doc, then mutate current.
     act(() => result.current.record());
     current = doc([bar("a"), bar("b")]);
     expect(result.current.canUndo).toBe(true);
+    expect(result.current.version).toBe(1);
 
     act(() => result.current.undo());
     expect(applied[applied.length - 1].bars.map((x) => x.id)).toEqual(["a"]);
@@ -212,6 +214,29 @@ describe("useEditorHistory (hook)", () => {
     act(() => result.current.redo());
     expect(applied[applied.length - 1].bars.map((x) => x.id)).toEqual(["a", "b"]);
     expect(result.current.canRedo).toBe(false);
+    expect(result.current.version).toBe(1);
+  });
+
+  it("increments version on non-coalesced records only", () => {
+    let current: EditorDocument = doc([bar("a")]);
+    const { result } = renderHook(() =>
+      useEditorHistory({ getCurrent: () => current, apply: (d) => (current = d) }),
+    );
+
+    act(() => {
+      expect(result.current.record("title")).toBe(1);
+    });
+    expect(result.current.version).toBe(1);
+
+    act(() => {
+      expect(result.current.record("title")).toBe(1);
+    });
+    expect(result.current.version).toBe(1);
+
+    act(() => {
+      expect(result.current.record()).toBe(2);
+    });
+    expect(result.current.version).toBe(2);
   });
 
   it("clear empties the stack (Save contract)", () => {

@@ -50,6 +50,10 @@ import { FONT_FACES } from "@/lib/font-faces";
 import { type GenerativeStyleSet } from "@/lib/generative-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
+import { applyCopilotOps, type ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
+import { buildCopilotSnapshot, type CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
+import { useEditCopilot } from "@/lib/edit-copilot/useEditCopilot";
+import type { CopilotOp } from "@/lib/edit-copilot/ops";
 import {
   initTextEditorState,
   textReducer,
@@ -93,6 +97,7 @@ import ToolRail, { type EditorTool } from "./ToolRail";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
+import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import { slotsDifferFromBaseline } from "./virtual-timeline";
 import {
   deleteKeyAllowed,
@@ -116,10 +121,86 @@ const NEW_TEXT_DURATION_S = 2.0;
 const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
+const COPILOT_SAVE_NOTICE_KEY = "nova-copilot-save-expectation-dismissed";
 
-function spaceShortcutAllowed(target: HTMLElement | null): boolean {
+export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   if (!deleteKeyAllowed(target)) return false;
   return (target?.tagName ?? "").toUpperCase() !== "BUTTON";
+}
+
+export function shouldCloseToolOnSelection({
+  layoutMode,
+  activeTool,
+  preserveOverlayTool,
+}: {
+  layoutMode: EditorLayoutMode;
+  activeTool: EditorTool | null;
+  preserveOverlayTool?: boolean;
+}): boolean {
+  return layoutMode === "overlay" && activeTool !== "nova" && !preserveOverlayTool;
+}
+
+export function resolveCopilotApplyFeedback({
+  result,
+  bars,
+  beforeSlots,
+  grid,
+}: {
+  result: ApplyCopilotOpsResult;
+  bars: TextElementBar[];
+  beforeSlots: DraftSlot[];
+  grid: number[];
+}): {
+  textIds: string[];
+  slotIds: string[];
+  first:
+    | { kind: "text"; id: string; seekS: number }
+    | { kind: "clip"; id: string; seekS: number }
+    | null;
+} {
+  const textIds = result.textActions
+    .map((action) => ("id" in action ? action.id : action.type === "ADD_TEXT" ? action.bar.id : null))
+    .filter((id): id is string => !!id);
+  const slotIds = result.nextSlots
+    ? result.nextSlots
+        .filter((slot) => {
+          const before = beforeSlots.find((s) => s.key === slot.key);
+          return !before || JSON.stringify(before) !== JSON.stringify(slot);
+        })
+        .map((slot) => slot.key)
+    : [];
+
+  const firstTextAction = result.textActions[0];
+  if (firstTextAction) {
+    const id =
+      "id" in firstTextAction
+        ? firstTextAction.id
+        : firstTextAction.type === "ADD_TEXT"
+          ? firstTextAction.bar.id
+          : null;
+    const bar =
+      firstTextAction.type === "ADD_TEXT"
+        ? firstTextAction.bar
+        : id
+          ? bars.find((b) => b.id === id) ?? null
+          : null;
+    if (id && bar) {
+      return { textIds, slotIds, first: { kind: "text", id, seekS: (bar.start_s + bar.end_s) / 2 } };
+    }
+  }
+
+  if (slotIds[0] && result.nextSlots) {
+    const slotId = slotIds[0];
+    const nextIndex = result.nextSlots.findIndex((slot) => slot.key === slotId);
+    const win = sequentialSlotLayout(result.nextSlots, grid).windows[nextIndex];
+    return {
+      textIds,
+      slotIds,
+      first: { kind: "clip", id: slotId, seekS: win?.startS ?? 0 },
+    };
+  }
+
+  return { textIds, slotIds, first: null };
 }
 
 function SelectCursorIcon() {
@@ -344,6 +425,11 @@ export default function EditorShell({
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
   const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
   const [zoomPct, setZoomPct] = useState<number>(100);
+  const [flashTextIds, setFlashTextIds] = useState<Set<string>>(new Set());
+  const [flashOverlayIds, setFlashOverlayIds] = useState<Set<string>>(new Set());
+  const [flashTimelineIds, setFlashTimelineIds] = useState<Set<string>>(new Set());
+  const [sessionHasCopilotEdits, setSessionHasCopilotEdits] = useState(false);
+  const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
   const panEnabled = zoomPct > 100;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -719,7 +805,7 @@ export default function EditorShell({
 
   useEffect(() => {
     if (layoutMode === "light") {
-      setActiveTool(null);
+      setActiveTool((tool) => (tool === "nova" ? tool : null));
       setCanvasTool("select");
     } else {
       setLightSheetOpen(false);
@@ -731,6 +817,16 @@ export default function EditorShell({
       setCanvasTool("select");
     }
   }, [canvasTool, panEnabled]);
+
+  useEffect(() => {
+    try {
+      setCopilotSaveNoticeDismissed(
+        window.localStorage.getItem(COPILOT_SAVE_NOTICE_KEY) === "true",
+      );
+    } catch {
+      setCopilotSaveNoticeDismissed(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (activeTool !== "sounds" || sfxGlossaryEffects.length > 0) {
@@ -820,9 +916,21 @@ export default function EditorShell({
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   const selectElement = useCallback(
-    (kind: EditorSelectionKind, id: string) => {
+    (
+      kind: EditorSelectionKind,
+      id: string,
+      options: { preserveOverlayTool?: boolean } = {},
+    ) => {
       select(kind, id);
-      if (layoutMode === "overlay") setActiveTool(null);
+      if (
+        shouldCloseToolOnSelection({
+          layoutMode,
+          activeTool,
+          preserveOverlayTool: options.preserveOverlayTool,
+        })
+      ) {
+        setActiveTool(null);
+      }
       if (kind === "text") {
         setInspectorTab("basic"); // selecting anything activates + switches to Basic (D6)
         if (layoutMode === "light") setLightSheetOpen(true);
@@ -850,7 +958,7 @@ export default function EditorShell({
         if (overlay) seekPlaybackTo(overlay.start_s);
       }
     },
-    [clip.state.grid, duration, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
+    [activeTool, clip.state.grid, duration, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -1330,6 +1438,99 @@ export default function EditorShell({
     () => computeToolDisabledReasons({ capabilities, readOnly, readOnlyReason }),
     [capabilities, readOnly, readOnlyReason],
   );
+
+  const buildCopilotDraftSnapshot = useCallback(
+    () => buildCopilotSnapshot(state.bars, slots, clip.clips, capabilities, clip.state.grid),
+    [capabilities, clip.clips, clip.state.grid, slots, state.bars],
+  );
+
+  const applyCopilotDraftOps = useCallback(
+    (ops: CopilotOp[], snapshot: CopilotSnapshot) =>
+      applyCopilotOps(ops, {
+        bars: state.bars,
+        slots,
+        snapshot,
+        capabilities,
+        grid: clip.state.grid,
+        videoDurationS: previewDuration,
+        makeTextBarId: () => crypto.randomUUID(),
+        makeSlotKey: (slot) => `${slot.key}-split-${crypto.randomUUID()}`,
+      }),
+    [capabilities, clip.state.grid, previewDuration, slots, state.bars],
+  );
+
+  const flashCopilotTargets = useCallback(
+    (targets: {
+      textIds?: string[];
+      overlayIds?: string[];
+      timelineIds?: string[];
+    }) => {
+      setFlashTextIds(new Set(targets.textIds ?? []));
+      setFlashOverlayIds(new Set(targets.overlayIds ?? []));
+      setFlashTimelineIds(new Set(targets.timelineIds ?? []));
+      window.setTimeout(() => {
+        setFlashTextIds(new Set());
+        setFlashOverlayIds(new Set());
+        setFlashTimelineIds(new Set());
+      }, 1600);
+    },
+    [],
+  );
+
+  const handleCopilotOps = useCallback(
+    (result: ApplyCopilotOpsResult): { undoVersion?: number } => {
+      const hasAppliedChanges =
+        result.textActions.length > 0 || result.nextSlots !== null;
+      if (!hasAppliedChanges || readOnly) return {};
+
+      const version = history.record();
+      result.textActions.forEach((action) => dispatch(action));
+      if (result.textActions.length > 0) setTextDirty(true);
+      if (result.nextSlots) {
+        setLocalSlots(result.nextSlots);
+        setTimelineDirty(true);
+      }
+      setSessionHasCopilotEdits(true);
+
+      const feedback = resolveCopilotApplyFeedback({
+        result,
+        bars: state.bars,
+        beforeSlots: slots,
+        grid: clip.state.grid,
+      });
+      flashCopilotTargets({
+        textIds: feedback.textIds,
+        timelineIds: [...feedback.textIds, ...feedback.slotIds],
+      });
+
+      if (feedback.first) {
+        pausePlayback();
+        seekPlaybackTo(feedback.first.seekS);
+        selectElement(feedback.first.kind, feedback.first.id, { preserveOverlayTool: true });
+      }
+
+      return { undoVersion: version };
+    },
+    [
+      clip.state.grid,
+      flashCopilotTargets,
+      history,
+      pausePlayback,
+      readOnly,
+      seekPlaybackTo,
+      selectElement,
+      slots,
+      state.bars,
+    ],
+  );
+
+  const copilot = useEditCopilot({
+    itemId,
+    variantId: variant?.variant_id ?? variantParam ?? "",
+    buildSnapshot: buildCopilotDraftSnapshot,
+    applyOps: applyCopilotDraftOps,
+    onApplied: handleCopilotOps,
+  });
 
   const deleteSelected = useCallback(() => {
     if (!selection || readOnly) return;
@@ -1814,6 +2015,7 @@ export default function EditorShell({
       onSeek={seekPlaybackTo}
     />
   ) : null;
+  const showCopilotSaveNotice = sessionHasCopilotEdits && !copilotSaveNoticeDismissed;
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
@@ -1893,6 +2095,7 @@ export default function EditorShell({
     onScrubStart: () => {
       pausePlayback();
     },
+    flashIds: flashTimelineIds,
   };
 
   return (
@@ -1914,7 +2117,17 @@ export default function EditorShell({
           saving={saving}
           readOnly={readOnly}
           saveState={saveState}
+          showCopilotNotice={showCopilotSaveNotice}
           onBack={requestLeave}
+          onOpenNova={() => setActiveTool("nova")}
+          onDismissCopilotNotice={() => {
+            setCopilotSaveNoticeDismissed(true);
+            try {
+              window.localStorage.setItem(COPILOT_SAVE_NOTICE_KEY, "true");
+            } catch {
+              /* localStorage unavailable */
+            }
+          }}
           onSave={() => void handleSave()}
         />
       ) : (
@@ -2012,6 +2225,28 @@ export default function EditorShell({
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-2">
+            {showCopilotSaveNotice && (
+              <div className="flex max-w-[360px] items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+                <span className="truncate">
+                  The preview is a close match — the saved video is rendered exactly.
+                </span>
+                <button
+                  type="button"
+                  aria-label="Dismiss preview match note"
+                  onClick={() => {
+                    setCopilotSaveNoticeDismissed(true);
+                    try {
+                      window.localStorage.setItem(COPILOT_SAVE_NOTICE_KEY, "true");
+                    } catch {
+                      /* localStorage unavailable */
+                    }
+                  }}
+                  className="min-h-8 px-1 text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {saveState === "idle" && saveMessage && (
               <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
                 {saveMessage}
@@ -2052,6 +2287,8 @@ export default function EditorShell({
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
+            flashTextIds={flashTextIds}
+            flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
             zoomPct={100}
             tool="select"
@@ -2114,15 +2351,32 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
-	              overlayUploading={overlayUploading}
+              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
+              layoutMode={layoutMode}
+              copilot={{
+                messages: copilot.messages,
+                sending: copilot.sending,
+                queued: copilot.queued,
+                error: copilot.error,
+                restoredInput: copilot.restoredInput,
+                suggestions: copilot.suggestions,
+                historyVersion: history.version,
+                canUndo: history.canUndo,
+                onSend: (text) => void copilot.send(text),
+                onCancelQueued: copilot.cancelQueued,
+                onEditQueued: copilot.editQueued,
+                onStop: copilot.stop,
+                onUndo: history.undo,
+                onClearRestoredInput: copilot.clearRestoredInput,
+              }}
 	              onClose={() => setActiveTool(null)}
 	            />
           ) : (
             <div />
           ))}
-        {layoutMode === "overlay" && activeTool !== null && (
+        {layoutMode === "overlay" && activeTool !== null && activeTool !== "nova" && (
           <div className="absolute bottom-0 left-[92px] top-0 z-40 shadow-[18px_0_36px_rgba(12,12,14,0.16)]">
             <ToolDrawer
               tool={activeTool}
@@ -2140,11 +2394,41 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
-	              overlayUploading={overlayUploading}
+              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
+              layoutMode={layoutMode}
 	              onClose={() => setActiveTool(null)}
 	            />
+          </div>
+        )}
+        {layoutMode === "overlay" && activeTool === "nova" && (
+          <div className="absolute bottom-4 left-[108px] right-[344px] z-40">
+            <ToolDrawer
+              tool="nova"
+              sampleWord={sampleWord}
+              appliedPresetId={appliedPresetId}
+              onAddText={() => addTextAtPlayhead()}
+              onPickPreset={pickPreset}
+              layoutMode={layoutMode}
+              copilot={{
+                messages: copilot.messages,
+                sending: copilot.sending,
+                queued: copilot.queued,
+                error: copilot.error,
+                restoredInput: copilot.restoredInput,
+                suggestions: copilot.suggestions,
+                historyVersion: history.version,
+                canUndo: history.canUndo,
+                onSend: (text) => void copilot.send(text),
+                onCancelQueued: copilot.cancelQueued,
+                onEditQueued: copilot.editQueued,
+                onStop: copilot.stop,
+                onUndo: history.undo,
+                onClearRestoredInput: copilot.clearRestoredInput,
+              }}
+              onClose={() => setActiveTool(null)}
+            />
           </div>
         )}
         <div
@@ -2162,6 +2446,8 @@ export default function EditorShell({
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
+            flashTextIds={flashTextIds}
+            flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
             zoomPct={zoomPct}
             tool={canvasTool}
@@ -2343,6 +2629,34 @@ export default function EditorShell({
         onSave={() => void handleSave()}
       />
 
+      {layoutMode === "light" && activeTool === "nova" && (
+        <ToolDrawer
+          tool="nova"
+          sampleWord={sampleWord}
+          appliedPresetId={appliedPresetId}
+          onAddText={() => addTextAtPlayhead()}
+          onPickPreset={pickPreset}
+          layoutMode={layoutMode}
+          copilot={{
+            messages: copilot.messages,
+            sending: copilot.sending,
+            queued: copilot.queued,
+            error: copilot.error,
+            restoredInput: copilot.restoredInput,
+            suggestions: copilot.suggestions,
+            historyVersion: history.version,
+            canUndo: history.canUndo,
+            onSend: (text) => void copilot.send(text),
+            onCancelQueued: copilot.cancelQueued,
+            onEditQueued: copilot.editQueued,
+            onStop: copilot.stop,
+            onUndo: history.undo,
+            onClearRestoredInput: copilot.clearRestoredInput,
+          }}
+          onClose={() => setActiveTool(null)}
+        />
+      )}
+
       {/* ── Read-only banner (ineligible variant, plan §9 / E4) ── */}
       {readOnly && (
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
@@ -2482,18 +2796,25 @@ function LightTopBar({
   saving,
   readOnly,
   saveState,
+  showCopilotNotice,
   onBack,
+  onOpenNova,
+  onDismissCopilotNotice,
   onSave,
 }: {
   dirty: boolean;
   saving: boolean;
   readOnly: boolean;
   saveState: "idle" | "saving" | "conflict" | "error" | "partial";
+  showCopilotNotice: boolean;
   onBack: () => void;
+  onOpenNova: () => void;
+  onDismissCopilotNotice: () => void;
   onSave: () => void;
 }) {
+  const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   return (
-    <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-3">
+    <header className="flex items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3">
       <button
         type="button"
         aria-label="Back to the video page"
@@ -2502,7 +2823,36 @@ function LightTopBar({
       >
         ‹
       </button>
-      <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+      <div className="min-w-0 flex-1 text-center">
+        {showCopilotNotice ? (
+          <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[11px] text-[#3f3f46]">
+            <span className="truncate">
+              Preview is close; Save renders exactly.
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss preview match note"
+              onClick={onDismissCopilotNotice}
+              className="min-h-8 px-1 text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              ✕
+            </button>
+          </div>
+        ) : (
+          <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+        )}
+      </div>
+      {copilotEnabled && (
+        <button
+          type="button"
+          aria-label="Open Nova"
+          disabled={readOnly}
+          onClick={onOpenNova}
+          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[15px] text-[#0c0c0e] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ✧
+        </button>
+      )}
       <button
         type="button"
         disabled={!dirty || saving || readOnly}

@@ -19,6 +19,7 @@ export interface CopilotMessage {
   applied?: string[];
   rejected?: string[];
   suggestions?: string[];
+  undoVersion?: number;
 }
 
 export interface QueuedCopilotMessage {
@@ -31,7 +32,11 @@ export interface UseEditCopilotOptions {
   variantId: string;
   buildSnapshot: () => CopilotSnapshot;
   applyOps: (ops: CopilotOp[], snapshot: CopilotSnapshot) => ApplyCopilotOpsResult;
-  onApplied?: (result: ApplyCopilotOpsResult, response: EditCopilotTurnResponse) => void;
+  onApplied?: (
+    result: ApplyCopilotOpsResult,
+    response: EditCopilotTurnResponse,
+    snapshot: CopilotSnapshot,
+  ) => { undoVersion?: number } | void;
 }
 
 export interface UseEditCopilotResult {
@@ -44,6 +49,7 @@ export interface UseEditCopilotResult {
   send: (text: string) => Promise<void>;
   cancelQueued: () => void;
   editQueued: (text: string) => void;
+  stop: () => void;
   clear: () => void;
   clearRestoredInput: () => void;
 }
@@ -106,7 +112,7 @@ function summaries(result: ApplyCopilotOpsResult): {
   rejected: string[];
 } {
   return {
-    applied: result.applied.map((chip) => `${chip.label}: ${chip.from} -> ${chip.to}`),
+    applied: result.applied.map((chip) => `${chip.label}: ${chip.from} → ${chip.to}`),
     rejected: result.rejected.map((op) => `${op.label}: ${op.detail}`),
   };
 }
@@ -141,6 +147,9 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
   const messagesRef = useRef(messages);
   const sendingRef = useRef(false);
   const queuedRef = useRef<QueuedCopilotMessage | null>(null);
+  const activeTurnRef = useRef<{ id: number; text: string } | null>(null);
+  const abandonedTurnsRef = useRef(new Set<number>());
+  const turnIdRef = useRef(0);
   const runTurnRef = useRef<(text: string) => Promise<void>>(async () => {});
   const skipNextPersistRef = useRef(false);
 
@@ -173,6 +182,9 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
 
     setSending(true);
     sendingRef.current = true;
+    turnIdRef.current += 1;
+    const turnId = turnIdRef.current;
+    activeTurnRef.current = { id: turnId, text: trimmed };
     setError(null);
     setRestoredInput("");
 
@@ -189,7 +201,11 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
       const applyResult = response.needs_clarification
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
         : optsRef.current.applyOps(response.ops, snapshot);
-      optsRef.current.onApplied?.(applyResult, response);
+      if (abandonedTurnsRef.current.has(turnId)) {
+        abandonedTurnsRef.current.delete(turnId);
+        return;
+      }
+      const applyMeta = optsRef.current.onApplied?.(applyResult, response, snapshot);
       const outcome = summaries(applyResult);
       const assistantText = appendRejectionSuffix(response.reply, outcome.rejected);
       const nextMessages: CopilotMessage[] = [
@@ -202,6 +218,7 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
           applied: outcome.applied,
           rejected: outcome.rejected,
           suggestions: response.suggestions,
+          undoVersion: applyMeta?.undoVersion,
         },
       ];
       messagesRef.current = nextMessages;
@@ -209,6 +226,10 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
       setSuggestions(response.suggestions);
       succeeded = true;
     } catch (err) {
+      if (abandonedTurnsRef.current.has(turnId)) {
+        abandonedTurnsRef.current.delete(turnId);
+        return;
+      }
       setError(
         err instanceof Error
           ? err.message
@@ -216,8 +237,11 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
       );
       setRestoredInput(trimmed);
     } finally {
-      setSending(false);
-      sendingRef.current = false;
+      if (activeTurnRef.current?.id === turnId) {
+        activeTurnRef.current = null;
+        setSending(false);
+        sendingRef.current = false;
+      }
     }
 
     const pending = queuedRef.current;
@@ -260,6 +284,18 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
     setQueued(next);
   }, []);
 
+  const stop = useCallback(() => {
+    const active = activeTurnRef.current;
+    if (!active) return;
+    abandonedTurnsRef.current.add(active.id);
+    activeTurnRef.current = null;
+    setRestoredInput(active.text);
+    setSending(false);
+    sendingRef.current = false;
+    queuedRef.current = null;
+    setQueued(null);
+  }, []);
+
   const clear = useCallback(() => {
     messagesRef.current = [];
     setMessages([]);
@@ -287,6 +323,7 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
       send,
       cancelQueued,
       editQueued,
+      stop,
       clear,
       clearRestoredInput,
     }),
@@ -300,6 +337,7 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
       send,
       cancelQueued,
       editQueued,
+      stop,
       clear,
       clearRestoredInput,
     ],
