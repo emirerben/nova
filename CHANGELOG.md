@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.26.3] — 2026-07-12
+
+### Fixed
+- **Media-overlay cards without ids are no longer silently wiped.** `PUT /plan-items/{item_id}/variants/{variant_id}/media-overlays` with cards missing the `id` field used to return 200 while persisting an empty list (every card dropped by lenient coercion). `MediaOverlay.id` is now server-assigned on parse (mirroring `TextElement.id`), and the user-facing validator rejects genuinely invalid cards with a 422 naming how many cards failed and at which indices, instead of silently clearing the set. Agent/render paths keep their lenient coercion.
+
 ## [0.7.26.2] — 2026-07-12
 
 ### Fixed
