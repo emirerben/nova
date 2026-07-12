@@ -90,7 +90,10 @@ async def run_copilot_turn(
             detail="edit_copilot_failed",
         ) from exc
 
-    ops = [] if output.needs_clarification else output.ops
+    # Ops ride only genuine edit turns: a disobedient model returning
+    # intent="reject"/"describe"/"clarify" WITH ops must not have them applied
+    # while the reply text says nothing was done (adversarial review F5).
+    ops = [] if (output.needs_clarification or output.intent != "edit") else output.ops
     return CopilotTurnResponse(
         intent=output.intent,
         ops=ops,

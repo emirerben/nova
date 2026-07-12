@@ -320,9 +320,11 @@ export default function CopilotDrawer({
             value={draft}
             maxLength={MAX_CHARS}
             onChange={(e) => {
-              const next = e.target.value.slice(0, MAX_CHARS);
-              setDraft(next);
-              if (sending && queued) onEditQueued(next);
+              // Typing must NOT live-mutate the queued message — a half-typed
+              // fragment would be dispatched if the in-flight turn resolves
+              // mid-keystroke, and backspacing to empty would silently cancel
+              // it (review F2). Queued edits happen only on explicit submit.
+              setDraft(e.target.value.slice(0, MAX_CHARS));
             }}
             placeholder={sending ? "Add more while I work..." : "Tell me what to change..."}
             aria-label="Tell Nova what to change"

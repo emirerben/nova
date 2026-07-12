@@ -234,6 +234,39 @@ def test_copilot_route_clarification_empties_ops(client: TestClient, monkeypatch
     assert resp.json()["needs_clarification"] is True
 
 
+def test_copilot_route_non_edit_intent_empties_ops(client: TestClient, monkeypatch) -> None:
+    """A disobedient model returning intent='reject' WITH ops must not have
+    them applied while the reply says nothing was done (review F5)."""
+    settings.edit_copilot_enabled = True
+    user = _user()
+    item, plan = _item_and_plan(user.id)
+    _install_route_deps(user, item, plan)
+
+    from app.routes import _copilot as copilot_route
+
+    class _FakeAgent:
+        def __init__(self, client) -> None:  # noqa: ANN001
+            pass
+
+        def run(self, inp, *, ctx=None):  # noqa: ANN001
+            from app.agents.edit_copilot import EditCopilotOutput
+
+            return EditCopilotOutput(
+                intent="reject",
+                ops=[{"op": "remove_clip", "slot_index": 0}],
+                confidence=0.9,
+                reply="Swap the song from the item page.",
+                suggestions=[],
+                needs_clarification=False,
+            )
+
+    monkeypatch.setattr(copilot_route, "EditCopilotAgent", _FakeAgent)
+    resp = client.post(f"/plan-items/{item.id}/variants/v1/copilot/turn", json=_payload())
+    assert resp.status_code == 200
+    assert resp.json()["ops"] == []
+    assert resp.json()["intent"] == "reject"
+
+
 def test_copilot_route_rate_limit_429(client: TestClient, monkeypatch) -> None:
     settings.edit_copilot_enabled = True
     user = _user()

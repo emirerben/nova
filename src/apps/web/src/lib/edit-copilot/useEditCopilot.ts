@@ -97,9 +97,13 @@ function isCopilotMessage(value: unknown): value is CopilotMessage {
 }
 
 function writeThread(variantId: string, messages: CopilotMessage[]) {
+  // undoVersion is meaningless across mounts: the history counter restarts at 0
+  // per editor session, so a persisted version could collide with a fresh
+  // counter and revive a stale Undo chip against unrelated edits (review F3).
+  const persistable = messages.map(({ undoVersion: _drop, ...rest }) => rest);
   storage()?.setItem(
     editCopilotStorageKey(variantId),
-    JSON.stringify({ v: 1, messages }),
+    JSON.stringify({ v: 1, messages: persistable }),
   );
 }
 
@@ -251,12 +255,24 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
     if (succeeded && pending) {
       queuedRef.current = null;
       setQueued(null);
-      await Promise.resolve();
-      await runTurnRef.current(pending.text);
+      // Fire via effect, NOT inline: the applied turn's state updates (bars,
+      // slots) have not committed yet, so an inline runTurn would build the
+      // queued turn's snapshot from the PRE-apply draft and every op touching
+      // a field the prior turn changed would fingerprint-fail (review F1).
+      // The effect below runs after React commits, when buildSnapshot's
+      // re-created closure sees the post-apply draft.
+      setFireQueued(pending);
     }
   }, []);
 
   runTurnRef.current = runTurn;
+
+  const [fireQueued, setFireQueued] = useState<QueuedCopilotMessage | null>(null);
+  useEffect(() => {
+    if (!fireQueued) return;
+    setFireQueued(null);
+    void runTurnRef.current(fireQueued.text);
+  }, [fireQueued]);
 
   const send = useCallback(async (text: string) => {
     const trimmed = text.trim();

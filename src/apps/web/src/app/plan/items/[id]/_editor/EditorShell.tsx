@@ -170,7 +170,11 @@ export function resolveCopilotApplyFeedback({
         .map((slot) => slot.key)
     : [];
 
-  const firstTextAction = result.textActions[0];
+  // Never select/seek to a just-deleted element — selecting a DELETE_BAR
+  // target points at a ghost id (and light mode would open the edit sheet for
+  // a bar that no longer exists) (review F6). Deleted targets still flash on
+  // the timeline; selection goes to the first SURVIVING changed element.
+  const firstTextAction = result.textActions.find((action) => action.type !== "DELETE_BAR");
   if (firstTextAction) {
     const id =
       "id" in firstTextAction
@@ -189,15 +193,19 @@ export function resolveCopilotApplyFeedback({
     }
   }
 
-  if (slotIds[0] && result.nextSlots) {
-    const slotId = slotIds[0];
-    const nextIndex = result.nextSlots.findIndex((slot) => slot.key === slotId);
-    const win = sequentialSlotLayout(result.nextSlots, grid).windows[nextIndex];
-    return {
-      textIds,
-      slotIds,
-      first: { kind: "clip", id: slotId, seekS: win?.startS ?? 0 },
-    };
+  if (result.nextSlots) {
+    const layout = sequentialSlotLayout(result.nextSlots, grid);
+    for (const slotId of slotIds) {
+      const nextIndex = result.nextSlots.findIndex((slot) => slot.key === slotId);
+      const slot = result.nextSlots[nextIndex];
+      if (!slot || slot.removed) continue;
+      const win = layout.windows[nextIndex];
+      return {
+        textIds,
+        slotIds,
+        first: { kind: "clip", id: slotId, seekS: win?.startS ?? 0 },
+      };
+    }
   }
 
   return { textIds, slotIds, first: null };
@@ -1459,20 +1467,31 @@ export default function EditorShell({
     [capabilities, clip.state.grid, previewDuration, slots, state.bars],
   );
 
+  const flashTimerRef = useRef<number | null>(null);
   const flashCopilotTargets = useCallback(
     (targets: {
       textIds?: string[];
       overlayIds?: string[];
       timelineIds?: string[];
     }) => {
+      // One flash timer at a time: a prior turn's timer must not truncate a
+      // newer flash mid-animation, and the timer is cleared on unmount (F7).
+      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
       setFlashTextIds(new Set(targets.textIds ?? []));
       setFlashOverlayIds(new Set(targets.overlayIds ?? []));
       setFlashTimelineIds(new Set(targets.timelineIds ?? []));
-      window.setTimeout(() => {
+      flashTimerRef.current = window.setTimeout(() => {
+        flashTimerRef.current = null;
         setFlashTextIds(new Set());
         setFlashOverlayIds(new Set());
         setFlashTimelineIds(new Set());
       }, 1600);
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
     },
     [],
   );
