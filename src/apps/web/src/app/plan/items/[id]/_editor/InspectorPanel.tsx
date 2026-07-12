@@ -42,6 +42,7 @@ import { TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import type { MusicTrackSummary } from "@/lib/music-api";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { EditorSelection } from "./useEditorSelection";
 import type { InspectorTab } from "./InspectorRail";
@@ -122,7 +123,12 @@ export default function InspectorPanel({
   mixLevel,
   mixEditable,
   mixLabel,
+  musicTracks = [],
+  musicLoading = false,
+  currentMusicTrackId = null,
+  musicEditable = false,
   onPatchMix,
+  onPickMusic,
   smartPlaceAvailable = false,
   onSmartPlace,
   onClose,
@@ -154,7 +160,12 @@ export default function InspectorPanel({
   mixLevel?: number | null;
   mixEditable?: boolean;
   mixLabel?: string;
+  musicTracks?: MusicTrackSummary[];
+  musicLoading?: boolean;
+  currentMusicTrackId?: string | null;
+  musicEditable?: boolean;
   onPatchMix?: (level: number) => void;
+  onPickMusic?: (trackId: string) => void;
   smartPlaceAvailable?: boolean;
   onSmartPlace?: () => void;
   /** Close X clears the selection — the column stays (D6). */
@@ -219,6 +230,11 @@ export default function InspectorPanel({
           level={mixLevel}
           editable={mixEditable ?? false}
           label={mixLabel ?? "Music"}
+          musicTracks={musicTracks}
+          musicLoading={musicLoading}
+          currentMusicTrackId={currentMusicTrackId}
+          musicEditable={musicEditable}
+          onPickMusic={onPickMusic}
           onPatch={onPatchMix}
           onClose={onClose}
         />
@@ -245,13 +261,23 @@ function MixInspector({
   level,
   editable,
   label,
+  musicTracks,
+  musicLoading,
+  currentMusicTrackId,
+  musicEditable,
   onPatch,
+  onPickMusic,
   onClose,
 }: {
   level?: number | null;
   editable: boolean;
   label: string;
+  musicTracks: MusicTrackSummary[];
+  musicLoading: boolean;
+  currentMusicTrackId: string | null;
+  musicEditable: boolean;
   onPatch?: (level: number) => void;
+  onPickMusic?: (trackId: string) => void;
   onClose: () => void;
 }) {
   const safeLevel = Math.max(0, Math.min(1, level ?? 0));
@@ -260,6 +286,60 @@ function MixInspector({
       <div className="flex items-center justify-between">
         <h2 className="font-display text-[18px] text-[#0c0c0e]">{label}</h2>
         <CloseX onClose={onClose} />
+      </div>
+      <div className="mt-4">
+        <p className="mb-2 text-[12px] font-semibold text-[#3f3f46]">Song</p>
+        {musicEditable ? (
+          musicLoading ? (
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-[12px] text-[#71717a]">
+              Loading songs...
+            </div>
+          ) : (
+            <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
+              {musicTracks.map((track) => {
+                const selected = track.id === currentMusicTrackId;
+                return (
+                  <button
+                    key={track.id}
+                    type="button"
+                    onClick={() => onPickMusic?.(track.id)}
+                    className={[
+                      "flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-left text-[13px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+                      selected
+                        ? "border-[#0c0c0e] bg-[#0c0c0e] text-white"
+                        : "border-zinc-200 bg-white text-[#0c0c0e] hover:border-zinc-400",
+                    ].join(" ")}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold">{track.title}</span>
+                      <span
+                        className={
+                          selected
+                            ? "block truncate text-[11px] text-white/70"
+                            : "block truncate text-[11px] text-[#71717a]"
+                        }
+                      >
+                        {track.artist || "Music"}
+                      </span>
+                    </span>
+                    <span className="ml-2 shrink-0 text-[11px]">
+                      {track.user_slot_count ? `${track.user_slot_count} clips` : "Song"}
+                    </span>
+                  </button>
+                );
+              })}
+              {musicTracks.length === 0 && (
+                <div className="rounded-lg border border-dashed border-zinc-300 px-3 py-3 text-[12px] text-[#71717a]">
+                  No ready songs found.
+                </div>
+              )}
+            </div>
+          )
+        ) : (
+          <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
+            This edit has no swappable song.
+          </p>
+        )}
       </div>
       {editable ? (
         <div className="mt-4">
@@ -283,7 +363,7 @@ function MixInspector({
         </div>
       ) : (
         <p className="mt-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-3 text-[13px] leading-relaxed text-[#52525b]">
-          This sound bed is locked for this edit.
+          Bed level is fixed for this edit.
         </p>
       )}
     </div>

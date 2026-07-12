@@ -42,35 +42,62 @@ export function TextElementOverlayContent({
   layout,
   fontSize,
   strokeWidth,
+  textAlignOverride,
+  reserveText,
   children,
 }: {
   layout: TextElementLayout;
   fontSize: string;
   strokeWidth?: string | null;
+  textAlignOverride?: TextElementLayout["alignment"] | null;
+  reserveText?: string | null;
   children?: ReactNode;
 }) {
   const { family, weight } = resolveCssFont(layout.fontFamily);
+  const textAlign = textAlignOverride ?? layout.alignment;
+  const content = children ?? layout.text;
+  const sharedStyle: CSSProperties = {
+    fontSize,
+    fontFamily: family,
+    fontWeight: weight,
+    color: layout.color,
+    textAlign,
+    letterSpacing: layout.letterSpacingEm !== 0 ? `${layout.letterSpacingEm}em` : undefined,
+    lineHeight: layout.lineSpacing || 1.15,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    WebkitTextStroke: strokeWidth ? `${strokeWidth} #000000` : undefined,
+    textShadow:
+      !strokeWidth && layout.shadowEnabled
+        ? "0 2px 8px rgba(0,0,0,0.55)"
+        : undefined,
+    padding: "0.08em 0.18em",
+  };
+
+  if (reserveText) {
+    return (
+      <div style={{ ...sharedStyle, position: "relative" }}>
+        <span aria-hidden style={{ visibility: "hidden" }}>
+          {reserveText}
+        </span>
+        <span
+          style={{
+            position: "absolute",
+            inset: "0.08em 0.18em",
+            padding: 0,
+          }}
+        >
+          {content}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div
-      style={{
-        fontSize,
-        fontFamily: family,
-        fontWeight: weight,
-        color: layout.color,
-        textAlign: layout.alignment,
-        letterSpacing: layout.letterSpacingEm !== 0 ? `${layout.letterSpacingEm}em` : undefined,
-        lineHeight: layout.lineSpacing || 1.15,
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        WebkitTextStroke: strokeWidth ? `${strokeWidth} #000000` : undefined,
-        textShadow:
-          !strokeWidth && layout.shadowEnabled
-            ? "0 2px 8px rgba(0,0,0,0.55)"
-            : undefined,
-        padding: "0.08em 0.18em",
-      }}
+      style={sharedStyle}
     >
-      {children ?? layout.text}
+      {content}
     </div>
   );
 }

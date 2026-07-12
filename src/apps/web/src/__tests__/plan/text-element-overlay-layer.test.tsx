@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 import TextElementOverlayLayer, {
+  TextElementOverlayContent,
   textElementAnchorTransform,
   textElementWrapperStyle,
 } from "@/app/plan/items/[id]/components/TextElementOverlayLayer";
@@ -79,6 +80,33 @@ describe("TextElementOverlayLayer", () => {
     render(<TextElementOverlayLayer elements={[element]} currentTime={6} />);
 
     expect(screen.queryByText("READY NOW")).not.toBeInTheDocument();
+  });
+
+  it("can reserve full text geometry while a typewriter reveal grows from the left", () => {
+    const [layout] = resolveTextElementsLayout([{ ...element, alignment: "center" }]);
+
+    render(
+      <TextElementOverlayContent
+        layout={layout}
+        fontSize="20px"
+        reserveText="READY NOW"
+        textAlignOverride="left"
+      >
+        READY
+      </TextElementOverlayContent>,
+    );
+
+    const reserve = screen.getByText("READY NOW");
+    const visible = screen.getByText("READY");
+    expect(reserve).toHaveStyle({ visibility: "hidden" });
+    expect(visible).toHaveStyle({
+      position: "absolute",
+      inset: "0.08em 0.18em",
+    });
+    expect(visible.parentElement).toHaveStyle({
+      position: "relative",
+      textAlign: "left",
+    });
   });
 
   it("honors explicit shadow off when no stroke is present", () => {
