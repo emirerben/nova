@@ -321,6 +321,55 @@ def test_list_survives_signing_failure(client: TestClient):
     assert resp.json()["assets"][0]["display_url"] is None
 
 
+def test_list_serializes_brands_from_analysis(client: TestClient):
+    """PoolAssetOut carries `brands` from the analysis JSONB (ANALYSIS_VERSION 5,
+    brand-aware matching): list passthrough when analyzed, [] when nothing was
+    detected, None on legacy analyses, and non-list garbage degrades to None —
+    never a response-validation 500."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    analyzed = _asset_row(item.id, user.id, content_hash="h1")
+    analyzed.analysis = {"subject": "checkout screen", "brands": ["Acme", "Duolingo"]}
+    none_found = _asset_row(item.id, user.id, content_hash="h2")
+    none_found.analysis = {"subject": "settings", "brands": []}
+    legacy = _asset_row(item.id, user.id, content_hash="h3")  # analysis None (pre-v5)
+    garbage = _asset_row(item.id, user.id, content_hash="h4")
+    garbage.analysis = {"brands": "Acme"}  # corrupt non-list shape
+    rows = [analyzed, none_found, legacy, garbage]
+    db = _db([_scalar_result(item), _scalars_result(rows)], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.get(f"/plan-items/{item.id}/assets")
+    assert resp.status_code == 200
+    out = resp.json()["assets"]
+    assert out[0]["brands"] == ["Acme", "Duolingo"]
+    assert out[1]["brands"] == []
+    assert out[2]["brands"] is None
+    assert out[3]["brands"] is None
+
+
+def test_list_brands_filters_falsy_and_coerces_non_strings(client: TestClient):
+    """A within-list corrupt element must not 500 the response: falsy entries
+    (None, "") are dropped by the `if b` filter and truthy non-strings are
+    str()-coerced, so `list[str]` validation always holds."""
+    user = _user()
+    item, plan = _owned_item(user.id)
+    row = _asset_row(item.id, user.id, content_hash="h1")
+    row.analysis = {"subject": "x", "brands": ["Acme", None, "", 123]}
+    db = _db([_scalar_result(item), _scalars_result([row])], plan)
+    _override(user, db)
+    with (
+        patch(f"{SETTINGS}.overlay_autoplace_enabled", True),
+        patch("app.routes.plan_items.storage.signed_get_url", return_value="https://get"),
+    ):
+        resp = client.get(f"/plan-items/{item.id}/assets")
+    assert resp.status_code == 200
+    assert resp.json()["assets"][0]["brands"] == ["Acme", "123"]
+
+
 # ── delete ────────────────────────────────────────────────────────────────────
 
 

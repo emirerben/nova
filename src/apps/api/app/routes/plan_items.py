@@ -2923,6 +2923,11 @@ class PoolAssetOut(BaseModel):
     width: int | None = None
     height: int | None = None
     subject: str | None  # analysis micro-label for the pool tile (2A state table)
+    # Brand/mascot identities from the analysis JSONB (ANALYSIS_VERSION 5,
+    # brand-aware matching) — surfaced so detection is verifiable from the pool
+    # tile. None on pre-v5 analyses until the backfill re-analyzes them;
+    # [] means analyzed with nothing detected.
+    brands: list[str] | None = None
     display_url: str | None
     deduped: bool = False
     # Object key under users/{uid}/plan/{item_id}/pool/ — inside attach_clips'
@@ -2942,6 +2947,10 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
     except Exception:  # noqa: BLE001 — thumbnail signing is best-effort, never 500s the list
         display_url = None
+    # str() coercion: a corrupt JSONB element must degrade, never fail response
+    # validation and 500 the whole list.
+    raw_brands = analysis.get("brands")
+    brands = [str(b) for b in raw_brands if b] if isinstance(raw_brands, list) else None
     return PoolAssetOut(
         id=str(asset.id),
         kind=asset.kind,
@@ -2952,6 +2961,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         width=analysis.get("width"),
         height=analysis.get("height"),
         subject=analysis.get("subject"),
+        brands=brands,
         display_url=display_url,
         deduped=deduped,
         gcs_path=asset.gcs_path,

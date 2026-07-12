@@ -1735,6 +1735,9 @@ export interface PoolAsset {
   width?: number | null;
   height?: number | null;
   subject: string | null;
+  /** Brand/mascot identities from analysis (ANALYSIS_VERSION 5, brand-aware
+   *  matching) — null/absent on pre-v5 analyses, [] analyzed with none found. */
+  brands?: string[] | null;
   display_url: string | null;
   deduped: boolean;
   /** Object key under users/{uid}/plan/{itemId}/pool/ — already inside
