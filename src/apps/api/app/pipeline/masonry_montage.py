@@ -24,6 +24,9 @@ MASONRY_TIMEOUT_S = 900
 MASONRY_TILE_RADIUS_PX = 34
 _PLACEMENT_SAMPLE_COUNT = 7
 _PLACEMENT_MARGIN_PX = 42
+_PLACEMENT_FRAME_MARGIN_PX = 36
+_PLACEMENT_MIN_WIDTH_FRAC = 0.20
+_PLACEMENT_MIN_HEIGHT_FRAC = 0.055
 
 
 @dataclass(frozen=True)
@@ -118,51 +121,151 @@ def masonry_text_placement_candidates(
             )
         rects_by_sample.append(visible)
 
-    probe_boxes = [
-        (0.50, 0.50, 0.58, 0.18),
-        (0.50, 0.33, 0.62, 0.16),
-        (0.50, 0.68, 0.62, 0.16),
-        (0.30, 0.50, 0.42, 0.18),
-        (0.70, 0.50, 0.42, 0.18),
-        (0.50, 0.82, 0.52, 0.13),
-    ]
+    stable_obstacles = [rect for rects in rects_by_sample for rect in rects]
+    empty_rects = _largest_empty_masonry_rects(
+        stable_obstacles,
+        output_w=output_w,
+        output_h=output_h,
+        max_rects=max(1, max_candidates),
+    )
 
-    scored: list[tuple[float, dict]] = []
-    for x_frac, y_frac, w_frac, h_frac in probe_boxes:
-        bw = w_frac * output_w
-        bh = h_frac * output_h
-        left = x_frac * output_w - bw / 2.0
-        top = y_frac * output_h - bh / 2.0
-        box = (left, top, left + bw, top + bh)
-        worst_overlap = 0.0
-        clear_samples = 0
-        for rects in rects_by_sample:
-            overlap = 0.0
-            for rect in rects:
-                ox = max(0.0, min(box[2], rect[2]) - max(box[0], rect[0]))
-                oy = max(0.0, min(box[3], rect[3]) - max(box[1], rect[1]))
-                overlap += ox * oy
-            ratio = overlap / max(1.0, bw * bh)
-            worst_overlap = max(worst_overlap, ratio)
-            if ratio <= 0.02:
-                clear_samples += 1
-        stability = clear_samples / len(rects_by_sample)
-        score = stability * 1.8 + w_frac - worst_overlap * 2.5
-        scored.append(
-            (
-                score,
-                {
-                    "source": "masonry_whitespace",
-                    "x_frac": round(x_frac, 4),
-                    "y_frac": round(y_frac, 4),
-                    "max_width_frac": round(w_frac, 4),
-                    "confidence": round(max(0.2, min(0.98, score / 2.6)), 3),
-                },
-            )
+    candidates: list[dict] = []
+    for score, (left, top, right, bottom) in empty_rects:
+        width = right - left
+        height = bottom - top
+        # Text is centered by default. Keep very low pockets from clipping
+        # multi-line hooks while still pointing at the discovered whitespace.
+        y_center = min(
+            bottom - min(height * 0.28, output_h * 0.035),
+            (top + bottom) / 2.0,
+        )
+        area_ratio = (width * height) / max(1.0, float(output_w * output_h))
+        candidates.append(
+            {
+                "source": "masonry_whitespace",
+                "x_frac": round((left + right) / 2.0 / output_w, 4),
+                "y_frac": round(max(0.12, min(0.9, y_center / output_h)), 4),
+                "max_width_frac": round(
+                    max(_PLACEMENT_MIN_WIDTH_FRAC, min(0.9, (width / output_w) * 0.92)),
+                    4,
+                ),
+                "confidence": round(
+                    max(0.35, min(0.98, 0.55 + area_ratio * 8.0 + score * 0.08)), 3
+                ),
+            }
         )
 
+    return candidates or _fallback_masonry_text_placement_candidates(max_candidates=max_candidates)
+
+
+def _largest_empty_masonry_rects(
+    obstacles: list[tuple[float, float, float, float]],
+    *,
+    output_w: int,
+    output_h: int,
+    max_rects: int,
+) -> list[tuple[float, tuple[float, float, float, float]]]:
+    """Return largest stable empty rectangles after subtracting sampled tiles."""
+    safe_left = float(_PLACEMENT_FRAME_MARGIN_PX)
+    safe_top = float(_PLACEMENT_FRAME_MARGIN_PX)
+    safe_right = float(output_w - _PLACEMENT_FRAME_MARGIN_PX)
+    safe_bottom = float(output_h - _PLACEMENT_FRAME_MARGIN_PX)
+
+    clipped: list[tuple[float, float, float, float]] = []
+    for left, top, right, bottom in obstacles:
+        clipped_left = max(safe_left, min(safe_right, left))
+        clipped_top = max(safe_top, min(safe_bottom, top))
+        clipped_right = max(safe_left, min(safe_right, right))
+        clipped_bottom = max(safe_top, min(safe_bottom, bottom))
+        if clipped_right > clipped_left and clipped_bottom > clipped_top:
+            clipped.append((clipped_left, clipped_top, clipped_right, clipped_bottom))
+
+    x_edges = sorted({safe_left, safe_right, *(v for rect in clipped for v in (rect[0], rect[2]))})
+    y_edges = sorted({safe_top, safe_bottom, *(v for rect in clipped for v in (rect[1], rect[3]))})
+    if len(x_edges) < 2 or len(y_edges) < 2:
+        return []
+
+    cols = len(x_edges) - 1
+    rows = len(y_edges) - 1
+    free = [[True for _ in range(cols)] for _ in range(rows)]
+    for left, top, right, bottom in clipped:
+        for y_idx in range(rows):
+            if y_edges[y_idx] >= bottom or y_edges[y_idx + 1] <= top:
+                continue
+            for x_idx in range(cols):
+                if x_edges[x_idx] >= right or x_edges[x_idx + 1] <= left:
+                    continue
+                free[y_idx][x_idx] = False
+
+    x_prefix = [0.0]
+    for x_idx in range(cols):
+        x_prefix.append(x_prefix[-1] + x_edges[x_idx + 1] - x_edges[x_idx])
+
+    min_width = output_w * _PLACEMENT_MIN_WIDTH_FRAC
+    min_height = output_h * _PLACEMENT_MIN_HEIGHT_FRAC
+    heights = [0.0 for _ in range(cols)]
+    scored: list[tuple[float, tuple[float, float, float, float]]] = []
+
+    for y_idx in range(rows):
+        row_h = y_edges[y_idx + 1] - y_edges[y_idx]
+        for x_idx in range(cols):
+            heights[x_idx] = heights[x_idx] + row_h if free[y_idx][x_idx] else 0.0
+
+        stack: list[int] = []
+        for scan_idx in range(cols + 1):
+            current_h = heights[scan_idx] if scan_idx < cols else 0.0
+            while stack and current_h < heights[stack[-1]]:
+                height = heights[stack.pop()]
+                left_idx = stack[-1] + 1 if stack else 0
+                right_idx = scan_idx
+                width = x_prefix[right_idx] - x_prefix[left_idx]
+                if width >= min_width and height >= min_height:
+                    bottom = y_edges[y_idx + 1]
+                    top = bottom - height
+                    rect = (x_edges[left_idx], top, x_edges[right_idx], bottom)
+                    area = width * height
+                    # Favor expressive side pockets over generic center bands.
+                    center_x = (rect[0] + rect[2]) / 2.0 / output_w
+                    side_bias = abs(center_x - 0.5) * 0.18
+                    scored.append((area / (output_w * output_h) + side_bias, rect))
+            stack.append(scan_idx)
+
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [candidate for _score, candidate in scored[: max(1, max_candidates)]]
+    selected: list[tuple[float, tuple[float, float, float, float]]] = []
+    for score, rect in scored:
+        if any(_rect_iou(rect, prev) > 0.72 for _prev_score, prev in selected):
+            continue
+        selected.append((score, rect))
+        if len(selected) >= max_rects:
+            break
+    return selected
+
+
+def _rect_iou(
+    a: tuple[float, float, float, float],
+    b: tuple[float, float, float, float],
+) -> float:
+    inter_w = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    inter_h = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = inter_w * inter_h
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    return inter / max(1.0, area_a + area_b - inter)
+
+
+def _fallback_masonry_text_placement_candidates(*, max_candidates: int) -> list[dict]:
+    fallback = [
+        {
+            "source": "masonry_whitespace_fallback",
+            "x_frac": 0.78,
+            "y_frac": 0.82,
+            "max_width_frac": 0.28,
+            "confidence": 0.35,
+        }
+    ]
+    return fallback[: max(1, max_candidates)]
 
 
 def _write_mask(path: str, width: int, height: int, radius: int = MASONRY_TILE_RADIUS_PX) -> None:

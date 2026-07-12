@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.7.26.1] — 2026-07-12
 
 ### Fixed
-- **Masonry/editor hotfix.** Typewriter and streaming text now reveal from a stable left edge instead of shifting as characters appear, with matching Skia render behavior. Smart place stays available on older variants that do not yet carry backend placement candidates, and selecting the music bed now exposes the song picker instead of implying the whole sound bed is locked.
+- **Masonry/editor hotfix.** Typewriter and streaming text now reveal from a stable left edge instead of shifting as characters appear, with matching Skia render behavior. Smart place stays available on older variants, now searches masonry tile whitespace instead of using a static top placement, and reflows longer copy into a compact stack for narrow collage pockets. Selecting the music bed now exposes the song picker instead of implying the whole sound bed is locked.
 
 ## [0.7.26.0] — 2026-07-12
 
