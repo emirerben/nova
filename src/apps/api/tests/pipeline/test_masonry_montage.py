@@ -23,9 +23,9 @@ def test_masonry_text_placement_candidates_choose_whitespace() -> None:
 
     assert candidates
     assert candidates[0]["source"] == "masonry_whitespace"
-    assert 0.0 < candidates[0]["x_frac"] < 1.0
-    assert 0.0 < candidates[0]["y_frac"] < 1.0
-    assert 0.2 <= candidates[0]["max_width_frac"] <= 0.9
+    assert candidates[0]["x_frac"] > 0.75
+    assert candidates[0]["y_frac"] > 0.85
+    assert 0.2 <= candidates[0]["max_width_frac"] <= 0.32
 
 
 def test_build_masonry_tiles_cycles_uploaded_clips_and_writes_masks(tmp_path) -> None:

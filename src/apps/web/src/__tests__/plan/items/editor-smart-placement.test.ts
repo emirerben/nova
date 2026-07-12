@@ -1,4 +1,7 @@
-import { resolveSmartPlacementCandidate } from "@/app/plan/items/[id]/_editor/editor-smart-placement";
+import {
+  reflowTextForSmartPlacement,
+  resolveSmartPlacementCandidate,
+} from "@/app/plan/items/[id]/_editor/editor-smart-placement";
 import type { PlanItemVariant, TextPlacementCandidate } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
@@ -52,12 +55,41 @@ describe("resolveSmartPlacementCandidate", () => {
       ),
     ).toMatchObject({
       source: "editor_fallback_masonry",
-      x_frac: 0.5,
-      max_width_frac: 0.68,
+      x_frac: expect.any(Number),
+      y_frac: expect.any(Number),
+      max_width_frac: 0.2,
     });
+    const candidate = resolveSmartPlacementCandidate(
+      variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
+      bar,
+    );
+    expect(candidate?.x_frac).toBeGreaterThan(0.75);
+    expect(candidate?.y_frac).toBeGreaterThan(0.85);
   });
 
   it("stays unavailable until text is selected", () => {
     expect(resolveSmartPlacementCandidate(variant(), null)).toBeNull();
+  });
+
+  it("reflows longer copy into a compact stack for narrow smart placements", () => {
+    expect(
+      reflowTextForSmartPlacement("find your favorite hidden swimming spot", {
+        source: "masonry_whitespace",
+        x_frac: 0.86,
+        y_frac: 0.9,
+        max_width_frac: 0.2,
+      }),
+    ).toBe("find your\nfavorite hidden\nswimming spot");
+  });
+
+  it("leaves explicit line breaks alone", () => {
+    expect(
+      reflowTextForSmartPlacement("already\nstacked", {
+        source: "masonry_whitespace",
+        x_frac: 0.86,
+        y_frac: 0.9,
+        max_width_frac: 0.2,
+      }),
+    ).toBe("already\nstacked");
   });
 });

@@ -68,7 +68,10 @@ import {
   editorReasonCopy,
   textElementsLockedCopy,
 } from "./editor-capabilities";
-import { resolveSmartPlacementCandidate } from "./editor-smart-placement";
+import {
+  reflowTextForSmartPlacement,
+  resolveSmartPlacementCandidate,
+} from "./editor-smart-placement";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
   applyClipTimingInput,
@@ -859,7 +862,9 @@ export default function EditorShell({
 
   const applySmartPlacement = useCallback(() => {
     if (!selectedBar || !smartPlacementCandidate || readOnly) return;
+    const smartText = reflowTextForSmartPlacement(selectedBar.text, smartPlacementCandidate);
     patchBar(selectedBar.id, {
+      ...(smartText !== selectedBar.text ? { text: smartText } : {}),
       x_frac: smartPlacementCandidate.x_frac,
       y_frac: smartPlacementCandidate.y_frac,
       max_width_frac: smartPlacementCandidate.max_width_frac,
