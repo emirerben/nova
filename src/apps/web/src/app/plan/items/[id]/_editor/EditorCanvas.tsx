@@ -761,6 +761,8 @@ export default function EditorCanvas({
                     Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
                     layout.text,
                   );
+                  const revealGrowsFromLeft =
+                    effect === "typewriter" || effect === "stream-in";
                   const baseStyle = textElementWrapperStyle({
                     layout,
                     xFrac,
@@ -802,6 +804,8 @@ export default function EditorCanvas({
                         layout={layout}
                         fontSize={`${fontPx}px`}
                         strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
+                        textAlignOverride={revealGrowsFromLeft ? "left" : null}
+                        reserveText={revealGrowsFromLeft ? layout.text : null}
                       >
                         {animation.visibleText}
                       </TextElementOverlayContent>

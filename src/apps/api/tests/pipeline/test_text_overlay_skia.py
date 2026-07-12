@@ -570,6 +570,26 @@ def test_animated_effects_all_produce_sequences(tmp_workdir):
         assert seq["n_frames"] > 1
 
 
+def test_typewriter_reveal_pins_to_full_text_box_left_edge():
+    overlay = {
+        "text": "TYPEWRITER TITLE",
+        "position": "center",
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.5,
+        "max_width_frac": 0.6,
+        "text_anchor": "center",
+        "font_family": "Inter",
+        "text_size_px": 80,
+        "text_color": "#FFFFFF",
+    }
+
+    reveal_overlay = tos._overlay_for_left_reveal_box(overlay, overlay["text"])
+
+    assert reveal_overlay["text_anchor"] == "left"
+    assert reveal_overlay["position_x_frac"] == pytest.approx(0.2)
+    assert reveal_overlay["position_y_frac"] < overlay["position_y_frac"]
+
+
 # -- Layout edge cases -------------------------------------------------------
 
 

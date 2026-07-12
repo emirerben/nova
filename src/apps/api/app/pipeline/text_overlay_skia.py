@@ -962,6 +962,57 @@ def _draw_centered_text(
     canvas.restore()
 
 
+def _overlay_for_left_reveal_box(overlay: dict, full_text: str) -> dict:
+    """Pin reveal effects to the full text box's left/top origin.
+
+    Typewriter/stream-in draw only the visible substring each frame. If that
+    substring is measured with the overlay's normal center/right anchor, every
+    newly revealed character shifts the block. Resolve the final text box once,
+    then draw each reveal frame as left-anchored inside that box.
+    """
+    if not full_text:
+        return overlay
+
+    typeface = _typeface_for_overlay(overlay)
+    letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
+    max_width = _overlay_max_width_px(overlay)
+    initial_size = _resolve_font_size_px(overlay)
+    if overlay.get("preserve_font_size"):
+        font, size, lines = _wrap_at_fixed_size(
+            full_text,
+            typeface,
+            initial_size,
+            max_width,
+            letter_spacing_em,
+        )
+    else:
+        font, size, lines = _shrink_to_fit(
+            full_text,
+            typeface,
+            initial_size,
+            max_width,
+            letter_spacing_em,
+        )
+    if not lines:
+        return overlay
+
+    block = _measure_block(
+        font,
+        lines,
+        line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
+        letter_spacing_px=letter_spacing_em * size,
+    )
+    cx, cy = _resolve_anchor(overlay)
+    anchor = _resolve_text_anchor(overlay)
+    box_left = _anchored_left_x(anchor, cx, max_width)
+    box_top = _vertical_block_top(anchor, cy, block["block_h"])
+    reveal_overlay = dict(overlay)
+    reveal_overlay["text_anchor"] = "left"
+    reveal_overlay["position_x_frac"] = max(0.0, min(1.0, box_left / CANVAS_W))
+    reveal_overlay["position_y_frac"] = max(0.0, min(1.0, box_top / CANVAS_H))
+    return reveal_overlay
+
+
 def _draw_line_with_layers(
     canvas: skia.Canvas,
     line: str,
@@ -1493,10 +1544,16 @@ def _draw_with_animation(
     if _is_sequence_overlay(overlay):
         alpha *= _sequence_fade_out_alpha(overlay, t_local, duration_s)
 
+    draw_overlay = (
+        _overlay_for_left_reveal_box(overlay, text)
+        if effect in ("typewriter", "stream-in")
+        else overlay
+    )
+
     _draw_centered_text(
         canvas,
         visible_text,
-        overlay,
+        draw_overlay,
         alpha=alpha,
         scale=scale,
         y_translate=y_translate,

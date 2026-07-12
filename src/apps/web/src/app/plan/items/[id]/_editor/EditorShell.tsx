@@ -68,6 +68,7 @@ import {
   editorReasonCopy,
   textElementsLockedCopy,
 } from "./editor-capabilities";
+import { resolveSmartPlacementCandidate } from "./editor-smart-placement";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
   applyClipTimingInput,
@@ -525,7 +526,10 @@ export default function EditorShell({
         : null,
     [selection, state.bars],
   );
-  const smartPlacementCandidate = variant?.text_placement_candidates?.[0] ?? null;
+  const smartPlacementCandidate = useMemo(
+    () => resolveSmartPlacementCandidate(variant, selectedBar),
+    [selectedBar, variant],
+  );
 
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
@@ -598,6 +602,7 @@ export default function EditorShell({
   const virtualMusicTrack = effectiveMusicTrackId
     ? musicTracks.find((track) => track.id === effectiveMusicTrackId) ?? null
     : null;
+  const effectiveMusicTitle = virtualMusicTrack?.title ?? variant?.track_title ?? "Music";
   const virtualMusicAudioUrl = virtualMusicTrack?.preview_audio_url ?? null;
   const virtualMusicStartS = virtualMusicTrack?.preview_start_s ?? 0;
   const virtualPreview = useVirtualPreview({
@@ -738,7 +743,10 @@ export default function EditorShell({
   }, [activeTool, sfxGlossaryEffects.length]);
 
   const musicPickerShouldLoad =
-    (!!variant?.music_track_id || !!selectedMusicTrackId || activeTool === "sounds") &&
+    (!!variant?.music_track_id ||
+      !!selectedMusicTrackId ||
+      activeTool === "sounds" ||
+      selection?.kind === "music") &&
     !musicTracksLoaded;
   useEffect(() => {
     if (!musicPickerShouldLoad) return;
@@ -1760,18 +1768,19 @@ export default function EditorShell({
   }
 
   const isVoiceoverVariant = variant.variant_id.startsWith("voiceover");
-  const hasSoundBed = !!variant.music_track_id || isVoiceoverVariant || mixLevel != null;
+  const musicSwapEditable = !!variant.music_track_id && !readOnly;
+  const hasSoundBed = !!effectiveMusicTrackId || isVoiceoverVariant || mixLevel != null;
   const soundBedLabel = isVoiceoverVariant
-    ? variant.music_track_id
-      ? `Voiceover + ${variant.track_title ?? "music"}`
+    ? effectiveMusicTrackId
+      ? `Voiceover + ${effectiveMusicTitle}`
       : "Voiceover"
-    : (variant.track_title ?? "Music");
+    : effectiveMusicTitle;
   const soundLaneTitle = isVoiceoverVariant ? "Voiceover bed" : "Music + effects";
   const hasUnbakedSfx = sfxDirty || localSfx.length > 0;
   const clipPreviewHint = (() => {
     if (!virtualPreviewActive) return "Clip changes preview after Save";
     const missing: string[] = [];
-    if (variant.music_track_id && !virtualMusicAudioUrl) missing.push("Music");
+    if (effectiveMusicTrackId && !virtualMusicAudioUrl) missing.push("Music");
     missing.push(missing.length > 0 ? "transitions" : "Transitions");
     if (hasUnbakedSfx) missing.push("sound effects");
     return `${missing.join(", ").replace(/, ([^,]*)$/, " and $1")} preview after Save`;
@@ -1834,7 +1843,7 @@ export default function EditorShell({
     }),
     onPreviewSfxTiming: previewSfxTiming,
     hasMusic: hasSoundBed,
-    musicLabel: variant.track_title ?? "Music",
+    musicLabel: effectiveMusicTitle,
     soundLaneTitle,
     soundBedLabel,
     soundBedTitle: isVoiceoverVariant
@@ -2090,7 +2099,7 @@ export default function EditorShell({
               musicTracks={musicTracks}
               musicLoading={musicTracksLoading}
               currentMusicTrackId={selectedMusicTrackId}
-              musicEditable={!!variant.music_track_id && !readOnly}
+              musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
 	              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
@@ -2116,7 +2125,7 @@ export default function EditorShell({
               musicTracks={musicTracks}
               musicLoading={musicTracksLoading}
               currentMusicTrackId={selectedMusicTrackId}
-              musicEditable={!!variant.music_track_id && !readOnly}
+              musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
 	              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
@@ -2191,6 +2200,11 @@ export default function EditorShell({
           mixLevel={mixLevel}
           mixEditable={capabilities?.mix !== false && mixLevel != null}
           mixLabel={soundBedLabel}
+          musicTracks={musicTracks}
+          musicLoading={musicTracksLoading}
+          currentMusicTrackId={selectedMusicTrackId}
+          musicEditable={musicSwapEditable}
+          onPickMusic={pickMusicTrack}
           onPatchMix={patchMixLevel}
           smartPlaceAvailable={!!smartPlacementCandidate && !!selectedBar && !readOnly}
           onSmartPlace={applySmartPlacement}
