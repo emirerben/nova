@@ -210,28 +210,39 @@ describe("PlanItemPage — masonry collage item UX", () => {
         .getByText("Masonry collage")
         .previousElementSibling?.querySelector('[class*="montage-masonry-pan"]'),
     ).not.toBeNull();
+    expect(
+      screen
+        .getByText("Polaroid wall")
+        .previousElementSibling?.querySelector('[class*="pb-"]'),
+    ).not.toBeNull();
   });
 
-  it("uses compact collage uploads even when the item has a filming guide", async () => {
-    await act(async () => {
-      renderMasonryItem();
-    });
+  it.each(["masonry", "polaroid_wall"])(
+    "uses compact collage uploads for %s even when the item has a filming guide",
+    async (montage_preset) => {
+      await act(async () => {
+        renderMasonryItem({ montage_preset });
+      });
 
-    expect(screen.getByText("Collage clips")).toBeInTheDocument();
-    expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Upload video clips for this idea").getAttribute("accept")).toContain(
-      "image/webp",
-    );
-  });
+      expect(screen.getByText("Collage clips")).toBeInTheDocument();
+      expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
+      expect(
+        screen.getByLabelText("Upload video clips for this idea").getAttribute("accept"),
+      ).toContain("image/webp");
+    },
+  );
 
-  it("hides visual-pool affordances for masonry items", async () => {
-    await act(async () => {
-      renderMasonryItem();
-    });
+  it.each(["masonry", "polaroid_wall"])(
+    "hides visual-pool affordances for %s items",
+    async (montage_preset) => {
+      await act(async () => {
+        renderMasonryItem({ montage_preset });
+      });
 
-    expect(screen.queryByTestId("asset-pool")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("suggestion-rail")).not.toBeInTheDocument();
-  });
+      expect(screen.queryByTestId("asset-pool")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("suggestion-rail")).not.toBeInTheDocument();
+    },
+  );
 });
 
 describe("PlanItemPage — ProgressTheater renders with phase data", () => {

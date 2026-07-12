@@ -25,6 +25,7 @@ import {
   type PlanItem,
   type PlanItemJobStatus,
   type PlanItemVariant,
+  type MontagePreset,
   requestUploadUrls,
   retextPlanItem,
   setPlanItemIntroSize,
@@ -189,12 +190,40 @@ const LANDSCAPE_FIT_OPTIONS: { value: "fit" | "fill"; label: string; desc: strin
   { value: "fill", label: "Fill", desc: "Crop to fill the vertical frame" },
 ];
 
-const MONTAGE_PRESET_OPTIONS: { value: "classic" | "masonry"; label: string; desc: string }[] = [
+const MONTAGE_PRESET_OPTIONS: { value: MontagePreset; label: string; desc: string }[] = [
   { value: "classic", label: "Classic", desc: "Full-screen cuts in sequence" },
   { value: "masonry", label: "Masonry collage", desc: "Rounded clips on a white wall" },
+  { value: "polaroid_wall", label: "Polaroid wall", desc: "Oversized photo cards on a wall" },
 ];
+const COLLAGE_MONTAGE_PRESETS = new Set<MontagePreset>(["masonry", "polaroid_wall"]);
 
-function MontagePresetPreview({ value }: { value: "classic" | "masonry" }) {
+function MontagePresetPreview({ value }: { value: MontagePreset }) {
+  if (value === "polaroid_wall") {
+    const cards = [
+      ["left-[4%] top-[9%] h-[44%] w-[24%] rotate-[-4deg]", "bg-lime-200"],
+      ["left-[32%] top-[4%] h-[29%] w-[44%] rotate-[2deg]", "bg-sky-200"],
+      ["left-[80%] top-[8%] h-[39%] w-[25%] rotate-[5deg]", "bg-rose-200"],
+      ["left-[36%] top-[36%] h-[55%] w-[31%] rotate-[-2deg]", "bg-amber-200"],
+      ["left-[4%] top-[61%] h-[27%] w-[29%] rotate-[3deg]", "bg-zinc-200"],
+      ["left-[72%] top-[55%] h-[31%] w-[37%] rotate-[-3deg]", "bg-indigo-200"],
+    ] as const;
+    return (
+      <div className="relative h-24 overflow-hidden rounded-lg border border-zinc-200 bg-white">
+        <div className="absolute inset-y-0 left-0 w-[136%] motion-safe:animate-[montage-masonry-pan_2.8s_ease-in-out_infinite_alternate]">
+          {cards.map(([pos, color], idx) => (
+            <span
+              key={idx}
+              className={`absolute rounded-[9px] bg-white p-[5px] pb-[13px] shadow-sm ring-1 ring-black/5 ${pos}`}
+            >
+              <span className={`block h-full w-full rounded-[6px] ${color}`} />
+            </span>
+          ))}
+        </div>
+        <span className="absolute left-1/2 top-1/2 h-6 w-20 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/80 blur-sm" />
+      </div>
+    );
+  }
+
   if (value === "masonry") {
     const tiles = [
       ["left-[4%] top-[9%] h-[50%] w-[24%]", "bg-lime-200"],
@@ -749,9 +778,10 @@ export default function PlanItemPage() {
   const rawEditFormat = item?.edit_format ?? "montage";
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
-  const isMasonryPreset = resolvedFormat === "montage" && montagePreset === "masonry";
+  const isCollagePreset =
+    resolvedFormat === "montage" && COLLAGE_MONTAGE_PRESETS.has(montagePreset);
   const itemUploadAccept =
-    isMasonryPreset
+    isCollagePreset
       ? MASONRY_UPLOAD_ACCEPT
       : VIDEO_UPLOAD_ACCEPT;
   const isNarrated = resolvedFormat === "narrated_planned";
@@ -762,8 +792,8 @@ export default function PlanItemPage() {
   const isFilmThis = contentMode !== "existing_footage";
   const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
   const isInstructed =
-    isFilmThis && hasGuide && !isMasonryPreset && !isSubtitled && !isNarratedReady;
-  const showVisualPools = !isMasonryPreset;
+    isFilmThis && hasGuide && !isCollagePreset && !isSubtitled && !isNarratedReady;
+  const showVisualPools = !isCollagePreset;
 
   // Legacy pool upload handler (uninstructed items only).
   async function handleFiles(files: FileList | null) {
@@ -1197,7 +1227,7 @@ export default function PlanItemPage() {
                       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-400">
                         Preset
                       </p>
-                      <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="grid gap-2 sm:grid-cols-3">
                         {MONTAGE_PRESET_OPTIONS.map(({ value, label, desc }) => {
                           const active = montagePreset === value;
                           return (
@@ -1540,7 +1570,7 @@ export default function PlanItemPage() {
                   accept={itemUploadAccept}
                 />
               </div>
-            ) : isMasonryPreset ? (
+            ) : isCollagePreset ? (
               <div>
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
                   Collage clips

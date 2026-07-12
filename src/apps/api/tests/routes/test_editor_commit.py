@@ -311,15 +311,11 @@ def test_music_commit_validates_ready_track_and_kicks_one_full_render(monkeypatc
     [
         (
             {"variant_id": "original_text", "music_track_id": None},
-            types.SimpleNamespace(
-                id="t2", analysis_status="ready", audio_gcs_path="music/t2.mp3"
-            ),
+            types.SimpleNamespace(id="t2", analysis_status="ready", audio_gcs_path="music/t2.mp3"),
         ),
         (
             {},
-            types.SimpleNamespace(
-                id="t2", analysis_status="failed", audio_gcs_path="music/t2.mp3"
-            ),
+            types.SimpleNamespace(id="t2", analysis_status="failed", audio_gcs_path="music/t2.mp3"),
         ),
         ({}, types.SimpleNamespace(id="t2", analysis_status="ready", audio_gcs_path=None)),
         ({}, None),
@@ -1402,12 +1398,13 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["overlays"] is True
 
 
-def test_capabilities_masonry_preset_disables_clip_timeline(monkeypatch):
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_capabilities_collage_preset_disables_clip_timeline(monkeypatch, preset):
     _arm(monkeypatch)
     job = _job(
         variant_id="song_text",
-        montage_preset="masonry",
-        montage_preset_rendered="masonry",
+        montage_preset=preset,
+        montage_preset_rendered=preset,
         mix=None,
     )
     caps = _caps(job, "song_text")

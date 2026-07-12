@@ -17,7 +17,6 @@ from app.models import Job
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
-    MASONRY_MONTAGE_PRESET,
     coerce_montage_preset,
 )
 
@@ -266,8 +265,9 @@ def build_generative_job(
         all_candidates["landscape_fit"] = "fit"
     # Montage visual preset. Omit the default so public/legacy jobs keep their
     # exact all_candidates shape; absent reads as classic at render time.
-    if coerce_montage_preset(montage_preset) == MASONRY_MONTAGE_PRESET:
-        all_candidates["montage_preset"] = MASONRY_MONTAGE_PRESET
+    resolved_montage_preset = coerce_montage_preset(montage_preset)
+    if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
+        all_candidates["montage_preset"] = resolved_montage_preset
     return Job(
         user_id=user_id,
         job_type="generative",

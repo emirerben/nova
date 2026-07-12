@@ -231,6 +231,8 @@ export function retunePersonaFromFeedback(id: string): Promise<PersonaResponse> 
 // ── Content plan ─────────────────────────────────────────────────────────────
 
 export type PlanStatus = "generating" | "ready" | "failed" | "edited";
+export type MontagePreset = "classic" | "masonry" | "polaroid_wall";
+export type RenderedMontagePreset = Exclude<MontagePreset, "classic">;
 
 /** Derived server-side from the linked Job.status — never a stored column. */
 export type PlanItemStatus =
@@ -286,8 +288,8 @@ export interface PlanItem {
   user_edited: boolean;
   /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
   edit_format?: string | null;
-  /** Montage visual preset. "classic" keeps the sequential montage; "masonry" renders a collage wall. */
-  montage_preset?: "classic" | "masonry";
+  /** Montage visual preset. "classic" keeps the sequential montage; collage presets render a visual wall. */
+  montage_preset?: MontagePreset;
   /** Per-item/persona content-mode resolved by the API for upload flow selection. */
   content_mode?: "existing_footage" | "create_new" | "mixed";
   /** Narrated-walkthrough voiceover GCS key (0056+). Null = no voiceover recorded yet. */
@@ -421,7 +423,7 @@ export function updatePlanItem(
     scenes?: SceneBlock[];
     scheduled_date?: string | null;
     edit_format?: string | null;
-    montage_preset?: "classic" | "masonry";
+    montage_preset?: MontagePreset;
     filming_guide?: FilmingShot[];
     landscape_fit?: "fit" | "fill";
     /** Per-item content_mode override (montage plan-vs-have toggle, 0058+). */
@@ -928,9 +930,9 @@ export interface PlanItemVariant {
   // on legacy/montage variants. See isInstantEditEligible (variant-editor/eligibility).
   resolved_archetype?: string | null;
   /** Montage preset selected at generation time. Present only for non-classic presets. */
-  montage_preset?: "masonry" | null;
-  /** Visual assembler that actually rendered; "masonry" disables clip-timeline editing. */
-  montage_preset_rendered?: "masonry" | null;
+  montage_preset?: RenderedMontagePreset | null;
+  /** Visual assembler that actually rendered; collage presets disable clip-timeline editing. */
+  montage_preset_rendered?: RenderedMontagePreset | null;
   /** Best-effort fallback reason when a selected preset rendered via classic montage. */
   montage_preset_fallback?: string | null;
   render_generation_id?: string | null;

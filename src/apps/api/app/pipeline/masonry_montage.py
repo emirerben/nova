@@ -7,6 +7,7 @@ alpha-mask PNGs for rounded corners.
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 from dataclasses import dataclass
@@ -15,6 +16,12 @@ from itertools import cycle, islice
 import structlog
 
 from app.config import settings
+from app.schemas.montage_preset import (
+    MASONRY_MONTAGE_PRESET,
+    POLAROID_WALL_MONTAGE_PRESET,
+    MontagePreset,
+    coerce_montage_preset,
+)
 
 log = structlog.get_logger()
 
@@ -27,6 +34,12 @@ _PLACEMENT_MARGIN_PX = 42
 _PLACEMENT_FRAME_MARGIN_PX = 36
 _PLACEMENT_MIN_WIDTH_FRAC = 0.20
 _PLACEMENT_MIN_HEIGHT_FRAC = 0.055
+_POLAROID_FRAME_PX = 24
+_POLAROID_BOTTOM_FRAME_PX = 62
+_POLAROID_SHADOW_PX = 16
+_POLAROID_LAYOUT_SPACING_PX = 28
+_POLAROID_SEARCH_STEP_PX = 56
+_POLAROID_MAX_TOP_Y = 1580
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,31 @@ class MasonryTile:
     height: int
     mask_path: str
     is_image: bool = False
+    content_x: int = 0
+    content_y: int = 0
+    content_width: int = 0
+    content_height: int = 0
+    frame_path: str | None = None
+    z_index: int = 0
+    rotation_deg: float = 0.0
+
+
+@dataclass(frozen=True)
+class MasonryPresetConfig:
+    """Visual configuration for a collage-style montage preset."""
+
+    preset: MontagePreset
+    layout: tuple[tuple[int, int, int, int], ...]
+    source: str
+    tile_radius_px: int = MASONRY_TILE_RADIUS_PX
+    content_radius_px: int = MASONRY_TILE_RADIUS_PX
+    frame_px: int = 0
+    bottom_frame_px: int = 0
+    shadow_px: int = 0
+    featured_tiles: tuple[tuple[int, float, int], ...] = ()
+    tile_variations: tuple[tuple[int, float, int, int, float], ...] = ()
+    layout_spacing_px: int = 0
+    placement_margin_px: int = _PLACEMENT_MARGIN_PX
 
 
 _MASONRY_LAYOUT: tuple[tuple[int, int, int, int], ...] = (
@@ -66,6 +104,251 @@ _MASONRY_LAYOUT: tuple[tuple[int, int, int, int], ...] = (
 )
 
 
+def _scale_rect(rect: tuple[int, int, int, int], scale: float) -> tuple[int, int, int, int]:
+    if scale == 1.0:
+        return rect
+    x, y, width, height = rect
+    scaled_w = int(round(width * scale))
+    scaled_h = int(round(height * scale))
+    return (
+        int(round(x - (scaled_w - width) / 2)),
+        int(round(y - (scaled_h - height) / 2)),
+        scaled_w,
+        scaled_h,
+    )
+
+
+def _preset_config(preset: str | None = None) -> MasonryPresetConfig:
+    resolved = coerce_montage_preset(preset)
+    if resolved == POLAROID_WALL_MONTAGE_PRESET:
+        return MasonryPresetConfig(
+            preset=POLAROID_WALL_MONTAGE_PRESET,
+            layout=_MASONRY_LAYOUT,
+            source="polaroid_wall_whitespace",
+            tile_radius_px=26,
+            content_radius_px=20,
+            frame_px=_POLAROID_FRAME_PX,
+            bottom_frame_px=_POLAROID_BOTTOM_FRAME_PX,
+            shadow_px=_POLAROID_SHADOW_PX,
+            featured_tiles=(
+                (3, 1.40, 20),
+                (6, 1.65, 40),
+                (11, 1.35, 18),
+                (15, 1.35, 14),
+            ),
+            tile_variations=(
+                (0, 0.92, -18, 12, -2.6),
+                (1, 1.08, 8, -16, 1.7),
+                (2, 0.96, 20, 8, -1.4),
+                (3, 1.00, -10, -8, 2.1),
+                (4, 1.10, 22, 10, -3.0),
+                (5, 0.94, -14, 18, 1.2),
+                (6, 1.00, 6, -6, -2.4),
+                (7, 1.07, 18, 12, 2.8),
+                (8, 0.91, -10, 24, -1.8),
+                (9, 1.12, 28, -6, 1.5),
+                (10, 0.88, -20, -8, 3.2),
+                (11, 1.00, 12, 10, -1.9),
+                (12, 1.05, -8, 18, 2.4),
+                (13, 0.95, 16, -12, -2.2),
+                (14, 1.08, 24, 6, 1.1),
+                (15, 1.00, -12, 16, 2.6),
+                (16, 0.90, 8, -14, -1.6),
+                (17, 1.12, 30, 12, 2.0),
+            ),
+            layout_spacing_px=_POLAROID_LAYOUT_SPACING_PX,
+            placement_margin_px=72,
+        )
+    return MasonryPresetConfig(
+        preset=MASONRY_MONTAGE_PRESET,
+        layout=_MASONRY_LAYOUT,
+        source="masonry_whitespace",
+    )
+
+
+def _layout_for_config(config: MasonryPresetConfig) -> list[tuple[int, int, int, int]]:
+    layout = list(config.layout)
+    for tile_index, scale, _z_index in config.featured_tiles:
+        if 0 <= tile_index < len(layout):
+            layout[tile_index] = _scale_rect(layout[tile_index], scale)
+    for tile_index, scale, dx, dy, _rotation_deg in config.tile_variations:
+        if 0 <= tile_index < len(layout):
+            x, y, width, height = _scale_rect(layout[tile_index], scale)
+            layout[tile_index] = (x + dx, y + dy, width, height)
+    if config.layout_spacing_px > 0:
+        layout = _relax_layout_around_featured_tiles(layout, config)
+    return layout
+
+
+def _z_index_for_config(config: MasonryPresetConfig, tile_index: int) -> int:
+    for featured_index, _scale, z_index in config.featured_tiles:
+        if featured_index == tile_index:
+            return z_index
+    return 0
+
+
+def _rotation_for_config(config: MasonryPresetConfig, tile_index: int) -> float:
+    for varied_index, _scale, _dx, _dy, rotation_deg in config.tile_variations:
+        if varied_index == tile_index:
+            return rotation_deg
+    return 0.0
+
+
+def _rotated_bounds(width: int, height: int, rotation_deg: float) -> tuple[int, int]:
+    if abs(rotation_deg) < 0.001:
+        return width, height
+    radians = math.radians(abs(rotation_deg))
+    rotated_w = int(math.ceil(width * math.cos(radians) + height * math.sin(radians)))
+    rotated_h = int(math.ceil(width * math.sin(radians) + height * math.cos(radians)))
+    return rotated_w, rotated_h
+
+
+def _rects_overlap(
+    a: tuple[int, int, int, int],
+    b: tuple[int, int, int, int],
+    spacing_px: int = 0,
+) -> bool:
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    margin = spacing_px / 2.0
+    return not (
+        ax + aw + margin <= bx - margin
+        or bx + bw + margin <= ax - margin
+        or ay + ah + margin <= by - margin
+        or by + bh + margin <= ay - margin
+    )
+
+
+def _collides_with_any(
+    rect: tuple[int, int, int, int],
+    placed: dict[int, tuple[int, int, int, int]],
+    spacing_px: int,
+) -> bool:
+    return any(_rects_overlap(rect, other, spacing_px) for other in placed.values())
+
+
+def _candidate_positions_for_rect(
+    target: tuple[int, int, int, int],
+    placed: dict[int, tuple[int, int, int, int]],
+    spacing_px: int,
+):
+    tx, ty, width, height = target
+    yield (max(24, tx), max(24, ty), width, height)
+
+    for bx, by, bw, bh in placed.values():
+        xs = (
+            tx,
+            bx,
+            bx + bw - width,
+            bx - spacing_px - width,
+            bx + bw + spacing_px,
+        )
+        ys = (
+            ty,
+            by,
+            by + bh - height,
+            by - spacing_px - height,
+            by + bh + spacing_px,
+        )
+        for x in xs:
+            for y in (by - spacing_px - height, by + bh + spacing_px, ty):
+                yield (round(max(24, x)), round(max(24, y)), width, height)
+        for y in ys:
+            for x in (bx - spacing_px - width, bx + bw + spacing_px, tx):
+                yield (round(max(24, x)), round(max(24, y)), width, height)
+
+    for radius in range(1, 18):
+        for dx in range(-radius, radius + 1):
+            for dy in (-radius, radius):
+                yield (
+                    max(24, tx + dx * _POLAROID_SEARCH_STEP_PX),
+                    max(24, ty + dy * _POLAROID_SEARCH_STEP_PX),
+                    width,
+                    height,
+                )
+        for dy in range(-radius + 1, radius):
+            for dx in (-radius, radius):
+                yield (
+                    max(24, tx + dx * _POLAROID_SEARCH_STEP_PX),
+                    max(24, ty + dy * _POLAROID_SEARCH_STEP_PX),
+                    width,
+                    height,
+                )
+
+
+def _relax_layout_around_featured_tiles(
+    layout: list[tuple[int, int, int, int]],
+    config: MasonryPresetConfig,
+) -> list[tuple[int, int, int, int]]:
+    """Pack cards around enlarged Polaroids while preserving nearby positions.
+
+    Featured cards are placed first, in visual priority order. Each remaining card
+    searches for the closest non-colliding position around its original masonry
+    target, so a growing hero card pushes neighbors into the nearest open lanes
+    instead of simply drawing over them.
+    """
+    featured_z = {tile_index: z_index for tile_index, _scale, z_index in config.featured_tiles}
+    order = sorted(
+        range(len(layout)),
+        key=lambda idx: (
+            0 if idx in featured_z else 1,
+            -featured_z.get(idx, 0),
+            layout[idx][1],
+            layout[idx][0],
+        ),
+    )
+    placed: dict[int, tuple[int, int, int, int]] = {}
+    final: list[tuple[int, int, int, int] | None] = [None] * len(layout)
+
+    for tile_index in order:
+        target = layout[tile_index]
+        best: tuple[int, int, int, int] | None = None
+        best_cost = float("inf")
+        seen: set[tuple[int, int, int, int]] = set()
+        for candidate in _candidate_positions_for_rect(
+            target,
+            placed,
+            config.layout_spacing_px,
+        ):
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            x, y, width, height = candidate
+            if y > _POLAROID_MAX_TOP_Y:
+                continue
+            if _collides_with_any(candidate, placed, config.layout_spacing_px):
+                continue
+            target_x, target_y, _target_w, _target_h = target
+            dx = x - target_x
+            dy = y - target_y
+            cost = dx * dx + dy * dy * 1.4 + x * 0.03
+            if cost < best_cost:
+                best = candidate
+                best_cost = cost
+
+        if best is None:
+            right = max((x + width for x, _y, width, _h in placed.values()), default=24)
+            right += config.layout_spacing_px
+            for row_y in (max(24, target[1]), 24, 568, 850, 1372):
+                fallback = (right, row_y, target[2], target[3])
+                if not _collides_with_any(fallback, placed, config.layout_spacing_px):
+                    best = fallback
+                    break
+        if best is None:
+            right = max((x + width for x, _y, width, _h in placed.values()), default=24)
+            best = (right + config.layout_spacing_px, max(24, target[1]), target[2], target[3])
+
+        placed[tile_index] = best
+        final[tile_index] = best
+
+    resolved: list[tuple[int, int, int, int]] = []
+    for rect in final:
+        if rect is None:
+            raise RuntimeError("polaroid layout solver left an unplaced tile")
+        resolved.append(rect)
+    return resolved
+
+
 def clamp_masonry_duration(duration_s: float) -> float:
     """Clamp masonry renders to the short reference-style window."""
     try:
@@ -82,6 +365,7 @@ def masonry_text_placement_candidates(
     duration_s: float,
     reveal_window_s: float = 4.0,
     max_candidates: int = 3,
+    preset: str | None = None,
 ) -> list[dict]:
     """Find stable whitespace regions over the masonry reveal window.
 
@@ -90,9 +374,11 @@ def masonry_text_placement_candidates(
     it runs in render planning, not inside FFmpeg, and returns normalized candidates
     the editor can apply directly.
     """
+    config = _preset_config(preset)
+    layout = _layout_for_config(config)
     output_w = int(settings.output_width)
     output_h = int(settings.output_height)
-    board_width = max((x + w for x, _y, w, _h in _MASONRY_LAYOUT), default=output_w) + 34
+    board_width = max((x + w for x, _y, w, _h in layout), default=output_w) + 34
     pan_px = max(0, board_width - output_w)
     duration = clamp_masonry_duration(duration_s)
     window = max(0.1, min(float(reveal_window_s), duration))
@@ -104,11 +390,11 @@ def masonry_text_placement_candidates(
         progress = min(1.0, max(0.0, t / duration))
         scroll = pan_px * progress
         visible: list[tuple[float, float, float, float]] = []
-        for x, y, w, h in _MASONRY_LAYOUT:
-            left = x - scroll - _PLACEMENT_MARGIN_PX
-            top = y - _PLACEMENT_MARGIN_PX
-            right = x - scroll + w + _PLACEMENT_MARGIN_PX
-            bottom = y + h + _PLACEMENT_MARGIN_PX
+        for x, y, w, h in layout:
+            left = x - scroll - config.placement_margin_px
+            top = y - config.placement_margin_px
+            right = x - scroll + w + config.placement_margin_px
+            bottom = y + h + config.placement_margin_px
             if right <= 0 or left >= output_w or bottom <= 0 or top >= output_h:
                 continue
             visible.append(
@@ -142,7 +428,7 @@ def masonry_text_placement_candidates(
         area_ratio = (width * height) / max(1.0, float(output_w * output_h))
         candidates.append(
             {
-                "source": "masonry_whitespace",
+                "source": config.source,
                 "x_frac": round((left + right) / 2.0 / output_w, 4),
                 "y_frac": round(max(0.12, min(0.9, y_center / output_h)), 4),
                 "max_width_frac": round(
@@ -155,7 +441,10 @@ def masonry_text_placement_candidates(
             }
         )
 
-    return candidates or _fallback_masonry_text_placement_candidates(max_candidates=max_candidates)
+    return candidates or _fallback_masonry_text_placement_candidates(
+        max_candidates=max_candidates,
+        source=config.source,
+    )
 
 
 def _largest_empty_masonry_rects(
@@ -255,10 +544,10 @@ def _rect_iou(
     return inter / max(1.0, area_a + area_b - inter)
 
 
-def _fallback_masonry_text_placement_candidates(*, max_candidates: int) -> list[dict]:
+def _fallback_masonry_text_placement_candidates(*, max_candidates: int, source: str) -> list[dict]:
     fallback = [
         {
-            "source": "masonry_whitespace_fallback",
+            "source": source,
             "x_frac": 0.78,
             "y_frac": 0.82,
             "max_width_frac": 0.28,
@@ -277,6 +566,38 @@ def _write_mask(path: str, width: int, height: int, radius: int = MASONRY_TILE_R
     image = Image.new("L", (width, height), 0)
     draw = ImageDraw.Draw(image)
     draw.rounded_rectangle((0, 0, width - 1, height - 1), radius=radius, fill=255)
+    image.save(path)
+
+
+def _write_polaroid_frame(
+    path: str,
+    *,
+    width: int,
+    height: int,
+    radius: int,
+    shadow_px: int,
+) -> None:
+    """Create one transparent PNG containing the Polaroid matte and soft shadow."""
+    if os.path.exists(path):
+        return
+    from PIL import Image, ImageDraw, ImageFilter  # noqa: PLC0415
+
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    shadow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    shadow_draw = ImageDraw.Draw(shadow)
+    shadow_draw.rounded_rectangle(
+        (shadow_px // 2, shadow_px // 2, width - 1, height - 1),
+        radius=radius,
+        fill=(0, 0, 0, 44),
+    )
+    image.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(max(1, shadow_px // 2))))
+
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle(
+        (0, 0, width - shadow_px - 1, height - shadow_px - 1),
+        radius=radius,
+        fill=(255, 255, 255, 255),
+    )
     image.save(path)
 
 
@@ -312,8 +633,11 @@ def build_masonry_tiles(
     mask_dir: str,
     max_tiles: int = MASONRY_MAX_TILES,
     normalize_images: bool = False,
+    preset: str | None = None,
 ) -> list[MasonryTile]:
     """Return deterministic tile specs, cycling uploaded clips when needed."""
+    config = _preset_config(preset)
+    layout = _layout_for_config(config)
     ordered_clip_ids = [str(getattr(step, "clip_id", "") or "") for step in steps]
     ordered_clip_ids = [cid for cid in ordered_clip_ids if cid in clip_id_to_local]
     if not ordered_clip_ids:
@@ -325,12 +649,15 @@ def build_masonry_tiles(
     image_dir = os.path.join(os.path.dirname(mask_dir), "masonry_images")
     if normalize_images:
         os.makedirs(image_dir, exist_ok=True)
-    count = min(max_tiles, len(_MASONRY_LAYOUT))
+    frame_dir = os.path.join(os.path.dirname(mask_dir), "masonry_frames")
+    if config.frame_px > 0:
+        os.makedirs(frame_dir, exist_ok=True)
+    count = min(max_tiles, len(layout))
     cycled_ids = list(islice(cycle(ordered_clip_ids), count))
     tiles: list[MasonryTile] = []
     from app.pipeline.image_clip import is_image_file  # noqa: PLC0415
 
-    for idx, (clip_id, (x, y, width, height)) in enumerate(zip(cycled_ids, _MASONRY_LAYOUT)):
+    for idx, (clip_id, (x, y, width, height)) in enumerate(zip(cycled_ids, layout)):
         local_path = clip_id_to_local[clip_id]
         is_image = is_image_file(local_path)
         if normalize_images and is_image:
@@ -338,8 +665,25 @@ def build_masonry_tiles(
                 local_path,
                 os.path.join(image_dir, f"tile_{idx}.png"),
             )
-        mask_path = os.path.join(mask_dir, f"mask_{width}x{height}.png")
-        _write_mask(mask_path, width, height)
+        content_x = config.frame_px
+        content_y = config.frame_px
+        content_width = max(1, width - config.shadow_px - config.frame_px * 2)
+        content_height = max(
+            1,
+            height - config.shadow_px - config.frame_px - config.bottom_frame_px,
+        )
+        mask_path = os.path.join(mask_dir, f"mask_{content_width}x{content_height}.png")
+        _write_mask(mask_path, content_width, content_height, radius=config.content_radius_px)
+        frame_path = None
+        if config.frame_px > 0:
+            frame_path = os.path.join(frame_dir, f"frame_{idx}_{width}x{height}.png")
+            _write_polaroid_frame(
+                frame_path,
+                width=width,
+                height=height,
+                radius=config.tile_radius_px,
+                shadow_px=config.shadow_px,
+            )
         tiles.append(
             MasonryTile(
                 input_index=idx + 1,
@@ -351,6 +695,13 @@ def build_masonry_tiles(
                 height=height,
                 mask_path=mask_path,
                 is_image=is_image,
+                content_x=content_x,
+                content_y=content_y,
+                content_width=content_width,
+                content_height=content_height,
+                frame_path=frame_path,
+                z_index=_z_index_for_config(config, idx),
+                rotation_deg=_rotation_for_config(config, idx),
             )
         )
     return tiles
@@ -393,7 +744,16 @@ def build_masonry_command(
     for tile in tiles:
         cmd.extend(["-loop", "1", "-t", f"{duration:.3f}", "-i", tile.mask_path])
 
-    audio_input_index = 1 + len(tiles) * 2
+    next_input_index = 1 + len(tiles) * 2
+    frame_input_indices: dict[int, int] = {}
+    for idx, tile in enumerate(tiles):
+        if not tile.frame_path:
+            continue
+        frame_input_indices[idx] = next_input_index
+        next_input_index += 1
+        cmd.extend(["-loop", "1", "-t", f"{duration:.3f}", "-i", tile.frame_path])
+
+    audio_input_index = next_input_index
     if audio_source_path:
         cmd.extend(["-t", f"{duration:.3f}", "-i", audio_source_path])
     else:
@@ -414,20 +774,57 @@ def build_masonry_command(
         filters.append(
             f"[{tile.input_index}:v]"
             "format=rgba,"
-            f"scale={tile.width}:{tile.height}:force_original_aspect_ratio=increase,"
-            f"crop={tile.width}:{tile.height},fps={output_fps},"
+            f"scale={tile.content_width}:{tile.content_height}:force_original_aspect_ratio=increase,"
+            f"crop={tile.content_width}:{tile.content_height},fps={output_fps},"
             "setpts=PTS-STARTPTS,setsar=1,format=rgba"
             f"[tile{idx}raw]"
         )
         filters.append(f"[{mask_index}:v]format=gray[mask{idx}]")
         filters.append(f"[tile{idx}raw][mask{idx}]alphamerge[tile{idx}]")
+        frame_input_index = frame_input_indices.get(idx)
+        if frame_input_index is not None:
+            filters.append(f"[{frame_input_index}:v]format=rgba[frame{idx}]")
+            filters.append(
+                f"[frame{idx}][tile{idx}]overlay=x={tile.content_x}:"
+                f"y={tile.content_y}:eval=init:shortest=1,format=rgba[card{idx}]"
+            )
+            if abs(tile.rotation_deg) >= 0.001:
+                radians = math.radians(tile.rotation_deg)
+                filters.append(
+                    f"[card{idx}]rotate={radians:.6f}:ow=rotw({radians:.6f}):"
+                    f"oh=roth({radians:.6f}):c=none:bilinear=1,format=rgba"
+                    f"[card{idx}rot]"
+                )
 
     previous = "[0:v]"
-    for idx, tile in enumerate(tiles):
-        out = "[outv]" if idx == len(tiles) - 1 else f"[base{idx}]"
+    chain_index = 0
+    draw_order = sorted(range(len(tiles)), key=lambda i: (tiles[i].z_index, i))
+    for order_idx, idx in enumerate(draw_order):
+        tile = tiles[idx]
         # Escape the comma in min(t\,N); otherwise FFmpeg parses it as the next
         # filter option inside the overlay expression.
         x_expr = f"{tile.x}-min(t\\,{duration:.3f})/{duration:.3f}*{pan_px}"
+        if tile.frame_path:
+            card_label = f"[card{idx}rot]" if abs(tile.rotation_deg) >= 0.001 else f"[card{idx}]"
+            rotated_w, rotated_h = _rotated_bounds(tile.width, tile.height, tile.rotation_deg)
+            x_expr = (
+                f"{tile.x - round((rotated_w - tile.width) / 2)}"
+                f"-min(t\\,{duration:.3f})/{duration:.3f}*{pan_px}"
+            )
+            out = "[outv]" if order_idx == len(draw_order) - 1 else f"[base{chain_index}]"
+            if out != "[outv]":
+                chain_index += 1
+            filters.append(
+                f"{previous}{card_label}overlay=x={x_expr}:"
+                f"y={tile.y - round((rotated_h - tile.height) / 2)}:"
+                f"eval=frame:shortest=1{out}"
+            )
+            previous = out
+            continue
+
+        out = "[outv]" if order_idx == len(draw_order) - 1 else f"[base{chain_index}]"
+        if out != "[outv]":
+            chain_index += 1
         filters.append(
             f"{previous}[tile{idx}]overlay=x={x_expr}:y={tile.y}:eval=frame:shortest=1{out}"
         )
@@ -457,14 +854,17 @@ def assemble_masonry_montage(
     duration_s: float,
     audio_source_path: str | None = None,
     job_id: str | None = None,
+    preset: str | None = None,
 ) -> None:
     """Render the masonry collage to ``output_path``."""
+    resolved_preset = coerce_montage_preset(preset)
     mask_dir = os.path.join(tmpdir, "masonry_masks")
     tiles = build_masonry_tiles(
         steps=steps,
         clip_id_to_local=clip_id_to_local,
         mask_dir=mask_dir,
         normalize_images=True,
+        preset=resolved_preset,
     )
     board_width = max(tile.x + tile.width for tile in tiles) + 34
     cmd = build_masonry_command(
@@ -483,6 +883,7 @@ def assemble_masonry_montage(
     log.info(
         "masonry_montage_rendered",
         job_id=job_id,
+        preset=resolved_preset,
         tiles=len(tiles),
         duration_s=clamp_masonry_duration(duration_s),
     )

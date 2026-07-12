@@ -131,7 +131,7 @@ def test_generate_rejects_photo_clip_for_classic_montage(client: TestClient) -> 
     app.dependency_overrides[get_db] = lambda: db
     resp = client.post(f"/plan-items/{item.id}/generate")
     assert resp.status_code == 422
-    assert resp.json()["detail"] == "Photos require Masonry collage"
+    assert resp.json()["detail"] == "Photos require a collage preset"
 
 
 def test_generate_blocks_narrated_without_voiceover(monkeypatch, client: TestClient) -> None:
@@ -320,7 +320,7 @@ def test_attach_clips_rejects_non_video_pool_asset(client: TestClient) -> None:
         json={"clip_gcs_paths": [pool_path]},
     )
     assert resp.status_code == 422
-    assert resp.json()["detail"] == "Photos require Masonry collage"
+    assert resp.json()["detail"] == "Photos require a collage preset"
 
 
 def test_attach_clips_rejects_pool_path_without_asset_row(client: TestClient) -> None:
@@ -400,14 +400,18 @@ def test_upload_urls_rejects_images_for_classic_montage(client: TestClient) -> N
         },
     )
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "Photos require Masonry collage"
+    assert resp.json()["detail"] == "Photos require a collage preset"
 
 
-def test_upload_urls_accepts_images_for_masonry_montage(client: TestClient) -> None:
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_upload_urls_accepts_images_for_collage_montage(
+    client: TestClient,
+    preset: str,
+) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
     item.edit_format = "montage"
-    item.montage_preset = "masonry"
+    item.montage_preset = preset
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -428,13 +432,13 @@ def test_upload_urls_accepts_images_for_masonry_montage(client: TestClient) -> N
     assert signed.call_args.kwargs["content_type"] == "image/jpeg"
 
 
-def test_upload_urls_rejects_images_when_stale_masonry_preset_is_not_montage(
+def test_upload_urls_rejects_images_when_stale_collage_preset_is_not_montage(
     client: TestClient,
 ) -> None:
     user = _user()
     item, plan = _owned_item(user.id)
     item.edit_format = "narrated_ready"
-    item.montage_preset = "masonry"
+    item.montage_preset = "polaroid_wall"
     db = _db_for(item, plan)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -445,7 +449,7 @@ def test_upload_urls_rejects_images_when_stale_masonry_preset_is_not_montage(
         },
     )
     assert resp.status_code == 400
-    assert resp.json()["detail"] == "Photos require Masonry collage"
+    assert resp.json()["detail"] == "Photos require a collage preset"
 
 
 # ── filming_guide serialization ───────────────────────────────────────────────
@@ -648,8 +652,12 @@ def test_patch_landscape_fit_rejects_junk(client: TestClient) -> None:
     assert item.landscape_fit == "fit"  # unchanged
 
 
-def test_patch_montage_preset_persists_masonry(client: TestClient) -> None:
-    """PATCH montage_preset='masonry' must be written to the item row."""
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_patch_montage_preset_persists_collage_presets(
+    client: TestClient,
+    preset: str,
+) -> None:
+    """PATCH montage_preset for collage presets must be written to the item row."""
     user = _user()
     item, plan = _owned_item(user.id)
     item.montage_preset = "classic"
@@ -659,12 +667,12 @@ def test_patch_montage_preset_persists_masonry(client: TestClient) -> None:
 
     resp = client.patch(
         f"/plan-items/{item.id}",
-        json={"montage_preset": "masonry"},
+        json={"montage_preset": preset},
         headers={"Authorization": "Bearer test"},
     )
     assert resp.status_code == 200
-    assert item.montage_preset == "masonry"
-    assert resp.json()["montage_preset"] == "masonry"
+    assert item.montage_preset == preset
+    assert resp.json()["montage_preset"] == preset
 
 
 def test_patch_montage_preset_rejects_junk(client: TestClient) -> None:

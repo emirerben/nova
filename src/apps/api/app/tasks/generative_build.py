@@ -45,8 +45,10 @@ from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
 from app.schemas.montage_preset import (
+    DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
     coerce_montage_preset,
+    is_collage_montage_preset,
 )
 from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
@@ -1359,11 +1361,11 @@ def _is_fast_reburn_eligible(
     return True
 
 
-def _is_masonry_audio_only_swap_eligible(existing: dict, new_track_id: str | None) -> bool:
-    """True when a song swap can preserve the rendered masonry visuals exactly."""
+def _is_collage_audio_only_swap_eligible(existing: dict, new_track_id: str | None) -> bool:
+    """True when a song swap can preserve rendered collage visuals exactly."""
     if new_track_id is None:
         return False
-    if existing.get("montage_preset_rendered") != MASONRY_MONTAGE_PRESET:
+    if not is_collage_montage_preset(existing.get("montage_preset_rendered")):
         return False
     if not existing.get("video_path"):
         return False
@@ -3237,7 +3239,7 @@ def _run_regenerate_variant(
         resolved_size_override_px = None
 
     audio_only_song_swap = (
-        _is_masonry_audio_only_swap_eligible(existing, new_track_id)
+        _is_collage_audio_only_swap_eligible(existing, new_track_id)
         and override_text is None
         and not remove_text
         and style_set_id is None
@@ -5141,12 +5143,12 @@ def _render_generative_variant(
         "intro_cluster_body_size_px": cluster_body_size_px_override,
         "intro_cluster_accent_size_px": cluster_accent_size_px_override,
     }
-    if resolved_montage_preset == MASONRY_MONTAGE_PRESET:
+    if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
         # User-selected preset + actual renderer outcome. Only present when the
         # user opted in so classic jobs keep their historical variant shape.
         base.update(
             {
-                "montage_preset": MASONRY_MONTAGE_PRESET,
+                "montage_preset": resolved_montage_preset,
                 "montage_preset_rendered": None,
                 "montage_preset_fallback": None,
             }
@@ -5169,7 +5171,7 @@ def _render_generative_variant(
             )
 
         masonry_requested = (
-            resolved_montage_preset == MASONRY_MONTAGE_PRESET and not voiceover_gcs_path
+            is_collage_montage_preset(resolved_montage_preset) and not voiceover_gcs_path
         )
         effective_available_footage_s = available_footage_s
         if masonry_requested:
@@ -5247,6 +5249,7 @@ def _render_generative_variant(
                 hero_safe_zone=hero_safe_zone,
                 hero_density=hero_density,
                 masonry_requested=masonry_requested,
+                montage_preset=resolved_montage_preset if masonry_requested else None,
                 duration_s=effective_available_footage_s,
             )
             _at_params, _agent_text_intro_px, _agent_text_intro_source = (
@@ -5417,10 +5420,11 @@ def _render_generative_variant(
                     duration_s=effective_available_footage_s,
                     audio_source_path=assembled_path if classic_assembly_done else None,
                     job_id=job_id,
+                    preset=resolved_montage_preset,
                 )
                 assembled_path = masonry_path
                 masonry_applied = True
-                base["montage_preset_rendered"] = MASONRY_MONTAGE_PRESET
+                base["montage_preset_rendered"] = resolved_montage_preset
                 record_pipeline_event(
                     "assembly",
                     "masonry_preset_applied",
@@ -7883,13 +7887,17 @@ def _placement_candidates_for_intro(
     hero_safe_zone: dict | None,
     hero_density: float,
     masonry_requested: bool,
+    montage_preset: str | None = None,
     duration_s: float,
 ) -> list[dict]:
     """Variant-level smart text placement candidates for editor/render use."""
     if masonry_requested:
         from app.pipeline.masonry_montage import masonry_text_placement_candidates  # noqa: PLC0415
 
-        return masonry_text_placement_candidates(duration_s=duration_s)
+        return masonry_text_placement_candidates(
+            duration_s=duration_s,
+            preset=montage_preset or MASONRY_MONTAGE_PRESET,
+        )
 
     from app.pipeline.overlay_sizing import text_placement_candidate_from_safe_zone  # noqa: PLC0415
 

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import types
 
+import pytest
+
 import app.tasks.generative_build as gb
 from app.agents.lyrics import LyricsExtractionAgent
 from tests.tasks.conftest import FakeJob as _FakeJob
@@ -404,7 +406,12 @@ def test_original_audio_variant_skips_mix(monkeypatch, tmp_path):
     assert res["video_path"].startswith("generative-jobs/")
 
 
-def test_masonry_preset_uses_collage_assembler_for_text_variant(monkeypatch, tmp_path):
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_collage_preset_uses_collage_assembler_for_text_variant(
+    monkeypatch,
+    tmp_path,
+    preset,
+):
     mix_calls: list = []
     _patch_render_helpers(monkeypatch, mix_calls)
 
@@ -449,13 +456,14 @@ def test_masonry_preset_uses_collage_assembler_for_text_variant(monkeypatch, tmp
         agent_text=None,
         agent_form={},
         variant_dir=str(vdir),
-        montage_preset="masonry",
+        montage_preset=preset,
     )
 
     assert res["ok"] is True
-    assert res["montage_preset"] == "masonry"
-    assert res["montage_preset_rendered"] == "masonry"
+    assert res["montage_preset"] == preset
+    assert res["montage_preset_rendered"] == preset
     assert len(masonry_calls) == 1
+    assert masonry_calls[0]["preset"] == preset
     assert masonry_calls[0]["duration_s"] == 15.0
 
 

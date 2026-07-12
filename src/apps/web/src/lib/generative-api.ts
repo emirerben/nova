@@ -20,6 +20,7 @@ export const SEQUENCE_TEXT_LOCKED_HINT =
   "Text is synced for this Editorial variant — switch to Classic to edit text";
 
 export type GenerativeTextMode = "lyrics" | "agent_text" | "none";
+export type RenderedMontagePreset = "masonry" | "polaroid_wall";
 
 export interface GenerativeVariant {
   variant_id: string;
@@ -56,8 +57,8 @@ export interface GenerativeVariant {
   // The archetype that actually rendered this variant (Lane D). null on montage
   // variants. Carried for verification + Lane E UI; current UI ignores it.
   resolved_archetype?: string | null;
-  montage_preset?: "masonry" | null;
-  montage_preset_rendered?: "masonry" | null;
+  montage_preset?: RenderedMontagePreset | null;
+  montage_preset_rendered?: RenderedMontagePreset | null;
   montage_preset_fallback?: string | null;
   // PR2 instrumentation fields — optional so older API builds degrade gracefully.
   render_started_at?: string | null;
