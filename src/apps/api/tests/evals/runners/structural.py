@@ -29,6 +29,7 @@ from app.agents.clip_metadata import (
 from app.agents.clip_plan_matcher import ClipPlanMatcherInput, ClipPlanMatcherOutput
 from app.agents.clip_router import ClipRouterInput, ClipRouterOutput
 from app.agents.creative_direction import CreativeDirectionOutput
+from app.agents.edit_copilot import EditCopilotOutput
 from app.agents.idea_expander import IdeaExpanderInput, IdeaExpanderOutput
 from app.agents.intro_writer import (
     _MAX_WORDS as INTRO_MAX_WORDS,
@@ -1651,6 +1652,51 @@ def check_style_intent(output: Any) -> list[str]:
     return failures
 
 
+def check_edit_copilot(output: Any) -> list[str]:
+    """Structural floor for nova.edit.copilot.
+
+    The parser already drops hallucinated ops. This floor pins the user-visible
+    contract: reply always exists, clarification never carries ops, suggestions
+    stay chip-sized, and every surviving op is in the exact v1 vocabulary.
+    """
+    if not isinstance(output, EditCopilotOutput):
+        return [f"output is {type(output).__name__}, not EditCopilotOutput"]
+
+    valid_intents = {"edit", "clarify", "describe", "reject", "unknown"}
+    valid_ops = {
+        "edit_text",
+        "patch_text_style",
+        "set_text_timing",
+        "add_text",
+        "remove_text",
+        "set_clip_duration",
+        "set_clip_in",
+        "reorder_clip",
+        "remove_clip",
+        "split_clip",
+    }
+    failures: list[str] = []
+
+    if output.intent not in valid_intents:
+        failures.append(f"intent={output.intent!r} not in {sorted(valid_intents)}")
+    if not (0.0 <= output.confidence <= 1.0):
+        failures.append(f"confidence={output.confidence} outside [0, 1]")
+    if not output.reply.strip():
+        failures.append("reply is empty")
+    if len(output.suggestions) > 5:
+        failures.append(f"suggestions has {len(output.suggestions)} items (max 5)")
+    if len(output.ops) > 8:
+        failures.append(f"ops has {len(output.ops)} items (max 8)")
+    if output.needs_clarification and output.ops:
+        failures.append("needs_clarification=true must return ops=[]")
+
+    for idx, op in enumerate(output.ops):
+        name = op.get("op") if isinstance(op, dict) else None
+        if name not in valid_ops:
+            failures.append(f"op {idx}: {name!r} not in v1 vocabulary")
+    return failures
+
+
 def check_style_observation(output: Any) -> list[str]:
     """Structural checks for nova.video.style_observation.
 
@@ -1903,6 +1949,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_style_derivation(output)
     if agent_name == "nova.plan.style_intent":
         return check_style_intent(output)
+    if agent_name == "nova.edit.copilot":
+        return check_edit_copilot(output)
     if agent_name == "nova.plan.conformance_feedback":
         return check_conformance_feedback(output)
     if agent_name == "nova.video.style_observation":

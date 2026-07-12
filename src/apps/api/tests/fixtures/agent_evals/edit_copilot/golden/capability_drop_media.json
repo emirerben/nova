@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "add a sticker over the second clip",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3}, {"output_start_s": 3, "output_end_s": 6, "duration_s": 3}],
+      "total_duration_s": 6
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.9,\"reply\":\"Visual overlays are edited in the overlay tools. Here I can adjust text or clip timing.\",\"suggestions\":[\"Add text instead\",\"Tighten clip 2\"],\"needs_clarification\":false}",
+  "output": {"intent": "reject", "ops": [], "confidence": 0.9, "reply": "Visual overlays are edited in the overlay tools. Here I can adjust text or clip timing.", "suggestions": ["Add text instead", "Tighten clip 2"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "media overlay redirect"}
+}

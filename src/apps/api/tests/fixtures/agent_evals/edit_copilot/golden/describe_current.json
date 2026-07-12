@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "what did you change?",
+    "prior_turns": [{"role": "assistant", "content": "Made the text smaller.", "applied": ["Size 64 -> 52"], "rejected": []}],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 3, "size_px": 52}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3}],
+      "total_duration_s": 3
+    }
+  },
+  "raw_text": "{\"intent\":\"describe\",\"ops\":[],\"confidence\":0.9,\"reply\":\"The last applied change made the first text bar smaller, from 64px to 52px.\",\"suggestions\":[\"Make it even smaller\",\"Change the font\"],\"needs_clarification\":false}",
+  "output": {"intent": "describe", "ops": [], "confidence": 0.9, "reply": "The last applied change made the first text bar smaller, from 64px to 52px.", "suggestions": ["Make it even smaller", "Change the font"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "describe no ops"}
+}

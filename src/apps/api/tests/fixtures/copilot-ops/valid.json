@@ -1,0 +1,48 @@
+{
+  "cases": [
+    {
+      "name": "edit text",
+      "op": {"op": "edit_text", "bar_index": 0, "text": "the morning part nobody posts"}
+    },
+    {
+      "name": "style patch",
+      "op": {
+        "op": "patch_text_style",
+        "bar_index": 0,
+        "patch": {"font_family": "Playfair Display", "size_px": 54, "color": "#FFFFFF"}
+      }
+    },
+    {
+      "name": "text timing",
+      "op": {"op": "set_text_timing", "bar_index": 0, "start_s": 0.2, "end_s": 2.8}
+    },
+    {
+      "name": "add text",
+      "op": {"op": "add_text", "text": "day 1", "start_s": 3.0, "end_s": 5.0}
+    },
+    {
+      "name": "remove text",
+      "op": {"op": "remove_text", "bar_index": 1}
+    },
+    {
+      "name": "clip duration seconds",
+      "op": {"op": "set_clip_duration", "slot_index": 1, "duration_s": 3.0}
+    },
+    {
+      "name": "clip in",
+      "op": {"op": "set_clip_in", "slot_index": 1, "in_s": 0.4}
+    },
+    {
+      "name": "reorder clip",
+      "op": {"op": "reorder_clip", "from_index": 2, "to_index": 0}
+    },
+    {
+      "name": "remove clip",
+      "op": {"op": "remove_clip", "slot_index": 2}
+    },
+    {
+      "name": "split clip assembled time",
+      "op": {"op": "split_clip", "slot_index": 1, "at_s": 5.0}
+    }
+  ]
+}

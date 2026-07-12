@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "split the second clip halfway through",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["timeline", "split_clips"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3}, {"output_start_s": 3, "output_end_s": 7, "duration_s": 4}],
+      "total_duration_s": 7
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"split_clip\",\"slot_index\":1,\"at_s\":5}],\"confidence\":0.9,\"reply\":\"Split the second clip at its midpoint.\",\"suggestions\":[\"Remove the second half\",\"Shorten the first half\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "split_clip", "slot_index": 1, "at_s": 5}], "confidence": 0.9, "reply": "Split the second clip at its midpoint.", "suggestions": ["Remove the second half", "Shorten the first half"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "split_clip assembled-output time"}
+}

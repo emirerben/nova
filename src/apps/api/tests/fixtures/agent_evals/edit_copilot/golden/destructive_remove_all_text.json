@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "remove all text",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}, {"text": "label", "start_s": 3, "end_s": 5}],
+      "slots": [{"output_start_s": 0, "output_end_s": 5, "duration_s": 5}],
+      "total_duration_s": 5
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"remove_text\",\"bar_index\":1},{\"op\":\"remove_text\",\"bar_index\":0}],\"confidence\":0.95,\"reply\":\"Removed the visible text bars.\",\"suggestions\":[\"Add a new hook\",\"Undo that\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "remove_text", "bar_index": 1}, {"op": "remove_text", "bar_index": 0}], "confidence": 0.95, "reply": "Removed the visible text bars.", "suggestions": ["Add a new hook", "Undo that"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "destructive text removal"}
+}

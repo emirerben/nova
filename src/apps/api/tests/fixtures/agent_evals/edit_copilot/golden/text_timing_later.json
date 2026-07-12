@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "make the hook stay on a little longer",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 2.4, "size_px": 64}],
+      "slots": [{"output_start_s": 0, "output_end_s": 5, "duration_s": 5}],
+      "total_duration_s": 5
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_text_timing\",\"bar_index\":0,\"end_s\":3.2}],\"confidence\":0.86,\"reply\":\"Extended the hook a little longer.\",\"suggestions\":[\"Start it later\",\"Make it smaller\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "set_text_timing", "bar_index": 0, "end_s": 3.2}], "confidence": 0.86, "reply": "Extended the hook a little longer.", "suggestions": ["Start it later", "Make it smaller"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "set_text_timing one-bound patch"}
+}
