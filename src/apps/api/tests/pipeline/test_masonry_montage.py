@@ -9,12 +9,23 @@ from app.pipeline.masonry_montage import (
     build_masonry_command,
     build_masonry_tiles,
     clamp_masonry_duration,
+    masonry_text_placement_candidates,
 )
 
 
 def test_clamp_masonry_duration_caps_to_reference_window() -> None:
     assert clamp_masonry_duration(99.0) == MASONRY_MAX_DURATION_S
     assert clamp_masonry_duration(4.25) == 4.25
+
+
+def test_masonry_text_placement_candidates_choose_whitespace() -> None:
+    candidates = masonry_text_placement_candidates(duration_s=8.0)
+
+    assert candidates
+    assert candidates[0]["source"] == "masonry_whitespace"
+    assert 0.0 < candidates[0]["x_frac"] < 1.0
+    assert 0.0 < candidates[0]["y_frac"] < 1.0
+    assert 0.2 <= candidates[0]["max_width_frac"] <= 0.9
 
 
 def test_build_masonry_tiles_cycles_uploaded_clips_and_writes_masks(tmp_path) -> None:

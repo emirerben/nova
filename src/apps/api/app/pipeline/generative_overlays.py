@@ -155,6 +155,7 @@ def build_intro_overlay(
     highlight_word: str | None = None,
     font_family: str | None = None,
     stroke_width: int | None = None,
+    shadow_enabled: bool | None = None,
     text_size_px: int | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
@@ -170,7 +171,7 @@ def build_intro_overlay(
     `effect`, `position`, `size_class`, `text_anchor` are defensively coerced to the
     renderer-known vocab; unknown values fall back to a safe default.
 
-    The trailing kwargs (`font_family`, `stroke_width`, `text_size_px`,
+    The trailing kwargs (`font_family`, `stroke_width`, `shadow_enabled`, `text_size_px`,
     `position_x_frac`, `position_y_frac`) carry curated style-set fields resolved by
     the caller (`_inject_agent_intro` → `resolve_overlay_style`). They are honored by
     BOTH renderers (the #296 parity invariant), so an intro now picks up the set's
@@ -210,6 +211,8 @@ def build_intro_overlay(
         overlay["font_family"] = font_family
     if stroke_width is not None:
         overlay["stroke_width"] = int(stroke_width)
+    if shadow_enabled is not None:
+        overlay["shadow_enabled"] = bool(shadow_enabled)
     if text_size_px is not None:
         overlay["text_size_px"] = int(text_size_px)
         overlay.pop("text_size", None)  # px is authoritative — drop the bucket
@@ -380,6 +383,7 @@ def _build_cluster_intro_overlays(
             "highlight_color": highlight_color,
             "font_family": block["font_family"],
             "stroke_width": stroke_width,
+            "shadow_enabled": style_kwargs.get("shadow_enabled"),
             "text_size_px": block["text_size_px"],
             "position_x_frac": block["position_x_frac"],
             "position_y_frac": block["position_y_frac"],
@@ -885,6 +889,7 @@ def build_overlays_from_text_elements(
                 end_s=reveal_end,
                 font_family=elem.font_family,
                 stroke_width=stroke_w,
+                shadow_enabled=elem.shadow_enabled,
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
@@ -917,6 +922,7 @@ def build_overlays_from_text_elements(
                 end_s=elem.end_s,
                 font_family=elem.font_family,
                 stroke_width=stroke_w,
+                shadow_enabled=elem.shadow_enabled,
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
@@ -946,6 +952,7 @@ def build_overlays_from_text_elements(
             end_s=elem.end_s,
             font_family=elem.font_family,
             stroke_width=stroke_w,
+            shadow_enabled=elem.shadow_enabled,
             text_size_px=text_size_px,
             position_x_frac=pos_x_frac,
             position_y_frac=pos_y_frac,

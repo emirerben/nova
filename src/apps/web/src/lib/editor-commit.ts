@@ -54,6 +54,8 @@ export interface EditorCommitRequest {
   timeline_slots?: EditorTimelineSlot[];
   /** Voice/bed mix 0..1 (gutter mutes map onto this). Omit when untouched. */
   mix?: EditorCommitMix;
+  /** New music track id. Omit when untouched. */
+  music_track_id?: string | null;
   /** Full replacement sound-effect placement list. Omit when untouched. */
   sound_effects?: SoundEffectPlacement[];
   /** Full replacement media-overlay card list. Omit when untouched. */
@@ -86,6 +88,7 @@ export interface EditorCommitResponse {
     caption_cues?: boolean;
     timeline?: boolean;
     mix?: boolean;
+    music?: boolean;
     sound_effects?: boolean;
     media_overlays?: boolean;
     title?: boolean;
@@ -133,6 +136,8 @@ export function buildEditorCommitRequest({
   slots,
   mixDirty = false,
   mixLevel,
+  musicDirty = false,
+  musicTrackId,
   sfxDirty = false,
   soundEffects = [],
   overlaysDirty = false,
@@ -150,6 +155,8 @@ export function buildEditorCommitRequest({
   slots: EditorCommitDraftSlot[];
   mixDirty?: boolean;
   mixLevel?: number | null;
+  musicDirty?: boolean;
+  musicTrackId?: string | null;
   sfxDirty?: boolean;
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
@@ -175,7 +182,7 @@ export function buildEditorCommitRequest({
   return {
     text_elements: textDirty ? elements : undefined,
     caption_cues: captionDirty ? (captionCues ?? []) : undefined,
-    timeline_slots: timelineDirty
+    timeline_slots: timelineDirty && !musicDirty
       ? slots.map((s) => ({
           slot_id: s.slotId,
           clip_index: s.clipIndex,
@@ -188,6 +195,7 @@ export function buildEditorCommitRequest({
     mix: mixDirty && mixEditable && normalizedMix != null
       ? { music_level: normalizedMix }
       : undefined,
+    music_track_id: musicDirty ? musicTrackId ?? null : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,

@@ -146,6 +146,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "caption_cues": False,
         "timeline": True,
         "mix": True,
+        "music": False,
         "sound_effects": False,
         "media_overlays": False,
     }
@@ -233,6 +234,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "caption_cues": True,
         "timeline": False,
         "mix": False,
+        "music": False,
         "sound_effects": False,
         "media_overlays": False,
     }
@@ -271,6 +273,73 @@ def test_text_only_commit_rides_overlay_jobs_queue(monkeypatch):
     gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
     assert len(calls) == 1
     assert calls[0]["queue"] == "overlay-jobs"
+
+
+def test_music_commit_validates_ready_track_and_kicks_one_full_render(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    track = types.SimpleNamespace(id="t2", analysis_status="ready", audio_gcs_path="music/t2.mp3")
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(music_track_id="t2"),
+        music_track=track,
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["music_track_id"] == "t2"
+    assert v["render_generation_id"] == prep["generation"]
+    assert prep["sections"]["music"] is True
+    assert prep["new_track_id"] == "t2"
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "song_text", prep)
+    assert len(calls) == 1
+    assert "queue" not in calls[0]
+    assert calls[0]["kwargs"]["render_gen_id"] == prep["generation"]
+    assert calls[0]["kwargs"]["new_track_id"] == "t2"
+
+
+@pytest.mark.parametrize(
+    ("variant_extra", "track"),
+    [
+        (
+            {"variant_id": "original_text", "music_track_id": None},
+            types.SimpleNamespace(
+                id="t2", analysis_status="ready", audio_gcs_path="music/t2.mp3"
+            ),
+        ),
+        (
+            {},
+            types.SimpleNamespace(
+                id="t2", analysis_status="failed", audio_gcs_path="music/t2.mp3"
+            ),
+        ),
+        ({}, types.SimpleNamespace(id="t2", analysis_status="ready", audio_gcs_path=None)),
+        ({}, None),
+    ],
+)
+def test_music_commit_rejects_original_or_unready_tracks(monkeypatch, variant_extra, track):
+    _arm(monkeypatch)
+    job = _job(**variant_extra)
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            variant_extra.get("variant_id", "song_text"),
+            _commit_req(music_track_id="t2"),
+            music_track=track,
+        )
+
+    assert exc.value.status_code == 422
+    assert job.assembly_plan == before
 
 
 def test_sfx_only_commit_persists_and_kicks_sfx_pass(monkeypatch):
@@ -1144,6 +1213,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "caption_cues": False,
         "timeline": False,
         "mix": False,
+        "music": False,
         "sound_effects": False,
         "media_overlays": False,
         "title": True,

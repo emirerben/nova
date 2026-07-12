@@ -28,7 +28,7 @@ from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
-from app.models import ContentPlan, Job, Persona, PlanItem, PlanItemAsset
+from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
 from app.routes.generative_jobs import (
     CAPTION_EDIT_ARCHETYPES,
     BedLevelRequest,
@@ -2221,11 +2221,18 @@ async def editor_commit_item(
     if locked_job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
 
+    selected_music_track = None
+    if commit_body.music_track_id is not None:
+        selected_music_track = (
+            await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
+        ).scalar_one_or_none()
+
     prep = prepare_editor_commit(
         locked_job,
         variant_id,
         commit_body,
         user_id=str(user.id),
+        music_track=selected_music_track,
     )
 
     if cleaned_title is not None:
@@ -2254,6 +2261,7 @@ async def editor_commit_item(
             caption_cues=prep["sections"]["caption_cues"],
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
+            music=prep["sections"]["music"],
             sound_effects=prep["sections"]["sound_effects"],
             media_overlays=prep["sections"]["media_overlays"],
             title=cleaned_title is not None,

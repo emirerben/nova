@@ -901,7 +901,7 @@ def _draw_centered_text(
     base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), int(255 * alpha))
     fill_color = color_override if color_override is not None else base_color
     stroke_px = int(overlay.get("outline_px") or overlay.get("stroke_width") or 0)
-    shadow_alpha = int(160 * alpha)
+    shadow_alpha = 0 if overlay.get("shadow_enabled") is False else int(160 * alpha)
 
     # Build gradient shader when text_gradient is set and no explicit
     # color_override (karaoke highlight keeps solid colour).

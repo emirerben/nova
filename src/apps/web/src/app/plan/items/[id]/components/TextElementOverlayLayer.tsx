@@ -63,7 +63,10 @@ export function TextElementOverlayContent({
         whiteSpace: "pre-wrap",
         wordBreak: "break-word",
         WebkitTextStroke: strokeWidth ? `${strokeWidth} #000000` : undefined,
-        textShadow: strokeWidth ? undefined : "0 2px 8px rgba(0,0,0,0.55)",
+        textShadow:
+          !strokeWidth && layout.shadowEnabled
+            ? "0 2px 8px rgba(0,0,0,0.55)"
+            : undefined,
         padding: "0.08em 0.18em",
       }}
     >

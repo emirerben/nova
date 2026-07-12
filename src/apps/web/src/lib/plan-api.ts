@@ -787,8 +787,20 @@ export interface TextElement {
   color?: string | null;
   highlight_color?: string | null;
   stroke_width?: number | null;
+  shadow_enabled?: boolean | null;
   alignment?: "left" | "center" | "right" | null;
-  effect?: "static" | "fade-in" | "slide-up" | "karaoke-line" | null;
+  effect?:
+    | "static"
+    | "fade-in"
+    | "slide-up"
+    | "karaoke-line"
+    | "pop-in"
+    | "scale-up"
+    | "typewriter"
+    | "stream-in"
+    | "bounce"
+    | "slide-in"
+    | null;
   /** Display-case transform, resolved at compile/layout time (T11 slice;
    * parity fixture tests/fixtures/text-element-parity/text_case.json). */
   text_case?: "none" | "upper" | "lower" | "title" | null;
@@ -844,6 +856,14 @@ export interface EditorCapabilities {
   /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
    *  | inherited overlay reasons. */
   suggestions_reason?: string | null;
+}
+
+export interface TextPlacementCandidate {
+  source: "clip_safe_zone" | "masonry_whitespace" | string;
+  x_frac: number;
+  y_frac: number;
+  max_width_frac: number;
+  confidence?: number | null;
 }
 
 export interface PlanItemVariant {
@@ -945,6 +965,8 @@ export interface PlanItemVariant {
    * they are first fetched.
    */
   text_elements?: TextElement[] | null;
+  /** Smart text placement candidates computed from composition/layout whitespace. */
+  text_placement_candidates?: TextPlacementCandidate[] | null;
   /**
    * T6: True once the user has applied a PUT text-elements edit. The flag
    * prevents the read adapter from overwriting user edits on re-render.

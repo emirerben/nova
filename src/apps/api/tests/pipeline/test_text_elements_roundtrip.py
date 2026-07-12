@@ -937,3 +937,23 @@ class TestCoerceTextElements:
         result = coerce_text_elements(raw)
         assert result is not None
         assert len(result) == 1
+
+
+def test_shadow_enabled_false_survives_validation_and_compile():
+    element = TextElement.model_validate(
+        {
+            "text": "No halo",
+            "start_s": 0.0,
+            "end_s": 2.0,
+            "role": "generative_intro",
+            "position": "custom",
+            "x_frac": 0.5,
+            "y_frac": 0.4,
+            "shadow_enabled": False,
+        }
+    )
+
+    assert element.model_dump()["shadow_enabled"] is False
+    overlays = build_overlays_from_text_elements([element], video_duration_s=4.0)
+    assert overlays
+    assert overlays[0]["shadow_enabled"] is False

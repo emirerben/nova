@@ -13,10 +13,9 @@ Design:
 - **Import-light.** No skia/PIL at module import (the heavy fit search lazy-imports
   `text_overlay_skia` inside `compute_overlay_size`), so this stays unit-testable
   and cheap to import from the orchestrator.
-- **Size only, position unchanged.** v1 sizes the centered overlay to the safe box;
-  it does NOT move the overlay to the safe zone (repositioning across the reframe
-  crop is the high-risk part — left as a follow-up). The renderer's `_shrink_to_fit`
-  remains the final clip-safety clamp.
+- **Size + placement candidates.** Size still comes from the safe box, and placement
+  now exposes bounded candidate centers for editor/render use. The renderer's
+  `_shrink_to_fit` remains the final clip-safety clamp.
 - **Degraded-safe.** A missing/invalid safe zone falls back to a full-width centre
   band — still a *computed* fit, never the old `jumbo` constant.
 
@@ -119,3 +118,39 @@ def clamp_intro_px(px: object) -> int:
     Raises ValueError on a non-numeric value so the API can 422."""
     value = int(px)  # raises ValueError/TypeError on junk — caller maps to 422
     return max(MIN_INTRO_PX, min(MAX_INTRO_PX, value))
+
+
+def text_placement_candidate_from_safe_zone(
+    safe_zone: object,
+    *,
+    visual_density: float = 5.0,
+    source: str = "clip_safe_zone",
+) -> dict | None:
+    """Return one normalized text placement candidate from a clip safe zone.
+
+    The safe zone is already expressed in final 9:16 frame coordinates by the clip
+    analyzer. Keep the candidate conservative: centered within the zone, inset by
+    the same width margin as sizing, and ranked lower as visual density rises.
+    """
+    if not isinstance(safe_zone, dict):
+        return None
+    try:
+        x = float(safe_zone.get("x"))
+        y = float(safe_zone.get("y"))
+        w = float(safe_zone.get("w"))
+        h = float(safe_zone.get("h"))
+    except (TypeError, ValueError):
+        return None
+    if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0 and 0.0 < w <= 1.0 and 0.0 < h <= 1.0):
+        return None
+    if x + w > 1.05 or y + h > 1.05:
+        return None
+    density = max(0.0, min(10.0, float(visual_density)))
+    max_width = max(0.2, min(0.9, w * _BOX_W_MARGIN))
+    return {
+        "source": source,
+        "x_frac": round(max(0.08, min(0.92, x + w / 2.0)), 4),
+        "y_frac": round(max(0.12, min(0.88, y + h / 2.0)), 4),
+        "max_width_frac": round(max_width, 4),
+        "confidence": round(max(0.25, 1.0 - density / 14.0), 3),
+    }

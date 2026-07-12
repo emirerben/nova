@@ -80,4 +80,25 @@ describe("TextElementOverlayLayer", () => {
 
     expect(screen.queryByText("READY NOW")).not.toBeInTheDocument();
   });
+
+  it("honors explicit shadow off when no stroke is present", () => {
+    render(
+      <TextElementOverlayLayer
+        elements={[
+          {
+            ...element,
+            stroke_width: 0,
+            shadow_enabled: false,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("READY NOW")).not.toHaveStyle({
+      textShadow: "0 2px 8px rgba(0,0,0,0.55)",
+    });
+    expect(resolveTextElementsLayout([{ ...element, shadow_enabled: false }])[0].shadowEnabled).toBe(
+      false,
+    );
+  });
 });
