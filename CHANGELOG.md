@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.27.0] — 2026-07-12
+
+### Added
+- **"Nova" chat editing copilot in the full editor (flag-gated, off in prod).** A texting-style drawer (first tool in the rail) turns natural-language feedback — "make the hook smaller and use a serif font", "tighten clip 2" — into structured edit ops applied instantly to the editor's local draft: zero-latency preview via the existing TS layout port and virtual clip player, one undo step per turn, system-authored receipt chips with old → new values, staged latency states, queued follow-up sends, and per-target fingerprints so a mid-turn manual edit is never overwritten. Backend: stateless `nova.edit.copilot` agent (Gemini flash) behind `POST /plan-items/{item}/variants/{v}/copilot/turn` — zero writes, rate-limited 20/min, hallucination-drop parse with capability gating, full eval harness (17 fixtures). Ships across all three editor layout modes (docked drawer / overlay compact strip / phone bottom sheet). Save still goes through the untouched editor-commit path. Flags: `EDIT_COPILOT_ENABLED` (Fly) + `NEXT_PUBLIC_EDIT_COPILOT_ENABLED` (Vercel, build-time), both default false. DESIGN.md §9 gains a scoped texting-bubble carve-out for this surface.
+
 ## [0.7.26.5] — 2026-07-12
 
 ### Fixed
