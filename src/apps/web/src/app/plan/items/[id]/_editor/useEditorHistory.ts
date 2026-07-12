@@ -218,23 +218,34 @@ export function useEditorHistory(opts: {
     [commit],
   );
 
+  // Any history mutation (not just record) advances version — the copilot's
+  // per-turn Undo chip guards on version equality, so an undo/redo/clear must
+  // invalidate the chip or a second click would consume older history entries.
+  const bumpVersion = useCallback(() => {
+    versionRef.current += 1;
+    setVersion(versionRef.current);
+  }, []);
+
   const undo = useCallback(() => {
     const res = undoSnapshot(histRef.current, getCurrentRef.current());
     if (!res) return;
     applyRef.current(res.doc);
     commit(res.history);
-  }, [commit]);
+    bumpVersion();
+  }, [bumpVersion, commit]);
 
   const redo = useCallback(() => {
     const res = redoSnapshot(histRef.current, getCurrentRef.current());
     if (!res) return;
     applyRef.current(res.doc);
     commit(res.history);
-  }, [commit]);
+    bumpVersion();
+  }, [bumpVersion, commit]);
 
   const clear = useCallback(() => {
     commit(initEditorHistoryState());
-  }, [commit]);
+    bumpVersion();
+  }, [bumpVersion, commit]);
 
   return {
     record,

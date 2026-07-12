@@ -210,11 +210,29 @@ describe("useEditorHistory (hook)", () => {
     expect(applied[applied.length - 1].bars.map((x) => x.id)).toEqual(["a"]);
     expect(result.current.canUndo).toBe(false);
     expect(result.current.canRedo).toBe(true);
+    // Undo advances version so the copilot's per-turn Undo chip (which guards
+    // on version equality) vanishes after firing instead of eating older entries.
+    expect(result.current.version).toBe(2);
 
     act(() => result.current.redo());
     expect(applied[applied.length - 1].bars.map((x) => x.id)).toEqual(["a", "b"]);
     expect(result.current.canRedo).toBe(false);
-    expect(result.current.version).toBe(1);
+    expect(result.current.version).toBe(3);
+  });
+
+  it("advances version on undo so a fired copilot Undo chip goes stale", () => {
+    let current: EditorDocument = doc([bar("a")]);
+    const { result } = renderHook(() =>
+      useEditorHistory({ getCurrent: () => current, apply: (d) => (current = d) }),
+    );
+    let applyVersion = 0;
+    act(() => {
+      applyVersion = result.current.record();
+    });
+    current = doc([bar("a"), bar("b")]);
+    expect(result.current.version).toBe(applyVersion); // chip visible
+    act(() => result.current.undo());
+    expect(result.current.version).not.toBe(applyVersion); // chip must vanish
   });
 
   it("increments version on non-coalesced records only", () => {

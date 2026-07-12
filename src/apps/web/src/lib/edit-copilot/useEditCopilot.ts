@@ -112,7 +112,10 @@ function summaries(result: ApplyCopilotOpsResult): {
   rejected: string[];
 } {
   return {
-    applied: result.applied.map((chip) => `${chip.label}: ${chip.from} → ${chip.to}`),
+    applied: result.applied.map(
+      (chip) =>
+        `${chip.label}: ${chip.from} → ${chip.to}${(chip.count ?? 1) > 1 ? ` (×${chip.count})` : ""}`,
+    ),
     rejected: result.rejected.map((op) => `${op.label}: ${op.detail}`),
   };
 }

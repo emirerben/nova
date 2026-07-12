@@ -186,3 +186,25 @@ describe("applyCopilotOps", () => {
     expect(res.rejected).toMatchObject([{ reason: "capability_disabled" }]);
   });
 });
+
+import { consolidateChips } from "@/lib/edit-copilot/apply-ops";
+
+describe("consolidateChips", () => {
+  it("drops no-op chips where from equals to", () => {
+    expect(
+      consolidateChips([
+        { label: "Size", from: "65", to: "52" },
+        { label: "size_class", from: "default", to: "default" },
+      ]),
+    ).toEqual([{ label: "Size", from: "65", to: "52" }]);
+  });
+
+  it("collapses identical chips into one with a count", () => {
+    const out = consolidateChips([
+      { label: "effect", from: "fade-in", to: "pop-in" },
+      { label: "effect", from: "fade-in", to: "pop-in" },
+      { label: "effect", from: "fade-in", to: "pop-in" },
+    ]);
+    expect(out).toEqual([{ label: "effect", from: "fade-in", to: "pop-in", count: 3 }]);
+  });
+});
