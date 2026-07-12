@@ -23,6 +23,7 @@ GCS path allowlist: overlay assets must live under the persistent
 
 from __future__ import annotations
 
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -54,7 +55,15 @@ class MediaOverlay(BaseModel):
     value from a stale client doesn't 422 a render path.
     """
 
-    id: str = Field(description="Stable uuid hex, server-assigned on first write.")
+    # Server-assigned when the client omits it (mirrors TextElement.id). Clients
+    # that round-trip existing cards keep their ids stable; a card sent without
+    # an id gets a fresh one on parse instead of failing validation (prod
+    # 2026-07-12: required-id cards were silently dropped by coerce, so a PUT
+    # without ids 200'd while persisting an EMPTY list).
+    id: str = Field(
+        default_factory=lambda: uuid.uuid4().hex,
+        description="Stable uuid hex, server-assigned when absent.",
+    )
     kind: Literal["image", "video"] = Field(
         description="Determines ingest path: image uses -loop 1; video uses tpad clone."
     )
@@ -182,7 +191,9 @@ def validate_overlay_gcs_path(path: str) -> None:
         raise ValueError(f"Overlay asset must be under '{_OVERLAY_GCS_PREFIX}', got: {path!r}")
 
 
-def coerce_media_overlays(raw: list | None) -> list[MediaOverlay] | None:
+def coerce_media_overlays(
+    raw: list | None, *, dropped_indices: list[int] | None = None
+) -> list[MediaOverlay] | None:
     """Parse + coerce a raw list into validated MediaOverlay objects.
 
     Returns None when the list is empty/None so callers can use the clean
@@ -190,16 +201,23 @@ def coerce_media_overlays(raw: list | None) -> list[MediaOverlay] | None:
     byte-identity invariant (the render path never fires when this is falsy).
 
     Non-raising on individual bad entries: they are dropped with a logged
-    warning rather than failing the entire overlay set.
+    warning rather than failing the entire overlay set. This leniency is
+    deliberate for agent-output / render paths; user-facing full-replace
+    endpoints must NOT rely on it — pass ``dropped_indices`` (an empty list;
+    the indices of dropped entries are appended to it) and fail loudly when
+    it comes back non-empty (see validate_media_overlays_for_user).
     """
     if not raw:
         return None
     result: list[MediaOverlay] = []
-    for item in raw:
+    for idx, item in enumerate(raw):
         if not isinstance(item, dict):
+            if dropped_indices is not None:
+                dropped_indices.append(idx)
             continue
         try:
             result.append(MediaOverlay.model_validate(item))
         except Exception:  # noqa: BLE001 — bad overlay entry → skip
-            pass
+            if dropped_indices is not None:
+                dropped_indices.append(idx)
     return result or None

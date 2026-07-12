@@ -174,6 +174,108 @@ class TestCoerceMediaOverlays:
         assert result is None
 
 
+class TestIdDefaultAssignment:
+    """Prod 2026-07-12: `id` was required, so a PUT payload without ids
+    validated to [] (coerce dropped every card) and the route 200'd having
+    cleared the user's cards. `id` is now server-assigned on parse, mirroring
+    TextElement.id."""
+
+    def test_missing_id_gets_server_assigned_uuid_hex(self):
+        raw = _card()
+        del raw["id"]
+        card = MediaOverlay.model_validate(raw)
+        assert card.id
+        assert len(card.id) == 32
+        int(card.id, 16)  # valid hex
+
+    def test_provided_id_is_preserved(self):
+        card = MediaOverlay.model_validate(_card(id="deadbeef"))
+        assert card.id == "deadbeef"
+
+    def test_assigned_ids_are_unique_per_card(self):
+        raw1, raw2 = _card(), _card()
+        del raw1["id"]
+        del raw2["id"]
+        c1 = MediaOverlay.model_validate(raw1)
+        c2 = MediaOverlay.model_validate(raw2)
+        assert c1.id != c2.id
+
+    def test_coerce_keeps_all_cards_without_ids(self):
+        # The prod repro: two id-less cards must round-trip, not drop to None.
+        raw1, raw2 = _card(), _card()
+        del raw1["id"]
+        del raw2["id"]
+        result = coerce_media_overlays([raw1, raw2])
+        assert result is not None
+        assert len(result) == 2
+        assert all(c.id for c in result)
+
+
+class TestCoerceDroppedIndices:
+    def test_no_drops_leaves_list_empty(self):
+        dropped: list[int] = []
+        result = coerce_media_overlays([_card()], dropped_indices=dropped)
+        assert result is not None
+        assert dropped == []
+
+    def test_reports_indices_of_dropped_entries(self):
+        dropped: list[int] = []
+        result = coerce_media_overlays(
+            [_card(), "not-a-dict", _card(kind="sticker"), _card()],  # type: ignore[list-item]
+            dropped_indices=dropped,
+        )
+        assert result is not None
+        assert len(result) == 2
+        assert dropped == [1, 2]
+
+    def test_all_dropped_returns_none_with_all_indices(self):
+        dropped: list[int] = []
+        result = coerce_media_overlays(
+            [{"kind": "sticker"}, 42],
+            dropped_indices=dropped,  # type: ignore[list-item]
+        )
+        assert result is None
+        assert dropped == [0, 1]
+
+
+class TestUserFacingValidatorRejectsDrops:
+    """validate_media_overlays_for_user must 422 (never silent-200) when any
+    card in a full-replace payload fails schema validation."""
+
+    @staticmethod
+    def _validate(raw: list[dict]) -> list[dict]:
+        from app.routes.generative_jobs import validate_media_overlays_for_user
+
+        return validate_media_overlays_for_user(overlays_raw=raw, user_id="u1")
+
+    def test_payload_without_ids_round_trips_all_cards(self):
+        raw1, raw2 = _card(), _card(start_s=5.0, end_s=8.0)
+        del raw1["id"]
+        del raw2["id"]
+        validated = self._validate([raw1, raw2])
+        assert len(validated) == 2
+        assert all(v["id"] for v in validated)
+
+    def test_malformed_card_raises_422_with_count(self):
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._validate([_card(), _card(kind="sticker")])
+        assert exc_info.value.status_code == 422
+        assert "1 of 2" in exc_info.value.detail
+        assert "indices: [1]" in exc_info.value.detail
+
+    def test_all_malformed_raises_422_not_empty_list(self):
+        # The exact prod repro shape: every card invalid → used to return []
+        # (silent full clear). Must now 422.
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._validate([{"kind": "sticker"}, {"kind": "hologram"}])
+        assert exc_info.value.status_code == 422
+        assert "2 of 2" in exc_info.value.detail
+
+
 class TestGcsPathValidation:
     def test_valid_prefix_accepted(self):
         # Should not raise
