@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.26.2] — 2026-07-12
+
+### Fixed
+- **Masonry Smart place is spatial now.** Masonry placement candidates search the actual tile whitespace over the reveal window instead of picking from static probe boxes, legacy editor fallback uses the same layout-aware geometry, and longer selected text reflows into a compact stack for narrow collage pockets.
+
 ## [0.7.26.1] — 2026-07-12
 
 ### Fixed
