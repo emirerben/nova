@@ -1526,7 +1526,22 @@ def validate_media_overlays_for_user(
     _user_prefix = f"users/{user_id}/"
     validated: list[dict] = []
     if overlays_raw:
-        cards = coerce_media_overlays(overlays_raw) or []
+        # Fail loudly on schema-invalid cards (prod 2026-07-12): coerce is
+        # deliberately lenient for agent/render paths, but a user-facing
+        # full-replace endpoint must never 200 while silently discarding cards
+        # it was sent — a payload of all-invalid cards used to persist [] and
+        # wipe the user's overlays.
+        dropped_indices: list[int] = []
+        cards = coerce_media_overlays(overlays_raw, dropped_indices=dropped_indices) or []
+        if dropped_indices:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{len(dropped_indices)} of {len(overlays_raw)} overlay card(s) "
+                    f"failed validation (indices: {dropped_indices}). "
+                    "No changes were saved."
+                ),
+            )
         for card in cards:
             try:
                 validate_overlay_gcs_path(card.src_gcs_path)

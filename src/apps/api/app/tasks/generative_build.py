@@ -3418,6 +3418,20 @@ def _run_regenerate_variant(
                 raise
         if _used_fast_path:
             _old_video_path_for_delete = result.pop("_old_video_path_for_delete", None)
+            # #626: decide the lane reapply from the FRESH persisted state (the
+            # burn took wall-clock time; a render=False lane autosave may have
+            # landed since `existing` was read). When a lane exists, defer the
+            # terminal "ready" to the reapply chain (OV-7, mirrors the caption
+            # terminals) — without the deferral a poll observes an effect-less
+            # "ready" between burn and reapply and can dispatch an edit that
+            # races the hook (prod job 4bee92f8: sfx_applying with no
+            # media_overlay_applying; cards persisted but absent from the video).
+            fast_will_reapply = _will_reapply_media_layers(
+                _fresh_variant_snapshot(job_id, variant_id) or existing
+            )
+            if fast_will_reapply:
+                result["render_status"] = "rendering"
+                result.pop("render_finished_at", None)
             # A20/E1: stale-write guard for reburns.  A subsequent editor commit
             # (or PUT /text-elements) overwrites `render_generation_id` in the DB;
             # if it differs from the token we were launched with, our result is
@@ -3435,12 +3449,28 @@ def _run_regenerate_variant(
 
                 delete_object_best_effort(_old_video_path_for_delete)
             # A text/style reburn overwrites video_path from the cached text-free
-            # base, so any persisted user media layers must be rebuilt.
-            _reapply_user_media_layers(
+            # base, so any persisted user media layers must be rebuilt. The chain
+            # re-reads persisted state under a row lock before each pass.
+            reapply_owned = _reapply_user_media_layers(
                 job_id=job_id,
                 variant_id=variant_id,
                 expected_render_gen_id=render_gen_id,
             )
+            if fast_will_reapply and not reapply_owned:
+                # R1-3: the terminal write above deferred status (OV-7) but the
+                # chain no-oped (e.g. lanes cleared mid-run via the render=False
+                # autosave) — finalize so the variant never strands in
+                # "rendering". Token-gated like every terminal write.
+                _update_variant_entry(
+                    job_id,
+                    variant_id,
+                    {
+                        "render_status": "ready",
+                        "render_finished_at": datetime.utcnow().isoformat() + "Z",
+                    },
+                    expected_render_gen_id=render_gen_id,
+                    outcome="reburn_reapply_noop",
+                )
             return
     # ── /Fast-reburn path ─────────────────────────────────────────────────────
 
@@ -3678,7 +3708,13 @@ def _run_regenerate_variant(
                 ),
             }
         retired_snapshot_keys: list[str] = []
-        persisted_media_overlays = existing.get("media_overlays") or None
+        # #626: `existing` predates the minutes-long re-render — re-read so a
+        # lane edit persisted mid-render (render=False autosave) is neither
+        # dropped by the merge below (the base result dict carries an explicit
+        # media_overlays=None) nor resurrected from the stale task-start list.
+        persisted_media_overlays = (_fresh_variant_snapshot(job_id, variant_id) or existing).get(
+            "media_overlays"
+        ) or None
         if persisted_media_overlays:
             # A fresh full render produces the clean base without user media cards.
             # Preserve the just-persisted cards through the result merge and STAGE
@@ -7174,7 +7210,15 @@ def _run_reburn_narrated_captions(
         )
         output_url = upload_public_read(out_local, new_gcs)
 
-    will_reapply = _will_reapply_media_layers(variant)
+    # #626: the burn above took wall-clock minutes — a lane save (the render=False
+    # overlay autosave writes media_overlays with no render_status gate and no gen
+    # bump) may have landed since the task-start read. Decide the reapply from the
+    # FRESH persisted lane state, not the stale snapshot, so a mid-burn save is
+    # still re-applied and a mid-burn clear isn't resurrected. The reapply preps
+    # re-read again under a row lock before running their pass.
+    will_reapply = _will_reapply_media_layers(
+        _fresh_variant_snapshot(job_id, variant_id) or variant
+    )
     # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
     # AST guard exempts merge-patch dicts assigned to locals named `patch`.
     patch: dict[str, Any] = {
@@ -7458,7 +7502,12 @@ def _run_reburn_narrated_bed_level(
         output_url = upload_public_read(out_local, new_video_gcs)
         upload_public_read(new_base_path, new_base_gcs)
 
-    will_reapply = _will_reapply_media_layers(variant)
+    # #626: decide the reapply from the FRESH persisted lane state — the rebuild
+    # above took wall-clock minutes and the render=False overlay autosave writes
+    # media_overlays with no render_status gate (see _run_reburn_narrated_captions).
+    will_reapply = _will_reapply_media_layers(
+        _fresh_variant_snapshot(job_id, variant_id) or variant
+    )
     # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
     # AST guard exempts merge-patch dicts assigned to locals named `patch`.
     patch: dict[str, Any] = {
@@ -7714,7 +7763,13 @@ def _run_retranscribe_subtitled(
         )
         output_url = upload_public_read(out_local, new_gcs)
 
-    will_reapply = _will_reapply_media_layers(variant)
+    # #626: decide the reapply from the FRESH persisted lane state — the
+    # transcription + burn above took wall-clock minutes and the render=False
+    # overlay autosave writes media_overlays with no render_status gate
+    # (see _run_reburn_narrated_captions).
+    will_reapply = _will_reapply_media_layers(
+        _fresh_variant_snapshot(job_id, variant_id) or variant
+    )
     # Local name `patch` is load-bearing: tests/test_media_overlay_byteidentity.py's
     # AST guard exempts merge-patch dicts assigned to locals named `patch`.
     patch: dict[str, Any] = {

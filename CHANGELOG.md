@@ -7,6 +7,15 @@ All notable changes to this project will be documented in this file.
 ### Added
 - **Polaroid wall montage preset.** Creators can now choose a Polaroid-style collage with thick white frames, larger hero cards, subtle shadows, organic rotation, and smart spacing that keeps cards from overlapping while preserving text-safe whitespace.
 - **Polaroid preset support across plan-item generation.** The new preset can accept still images like Masonry, renders through the collage compositor, preserves its preset metadata on variants, disables clip-timeline editing where a collage has no linear timeline, and keeps safe audio-only song swaps for text variants.
+## [0.7.26.4] — 2026-07-12
+
+### Fixed
+- **Caption/text reburns no longer drop persisted media overlays (#626).** The caption re-render terminals (caption Apply, background-sound change, language re-transcribe) decided whether to re-apply the effects lanes from a variant snapshot read before the multi-minute burn — a media-overlay save landing during that window (the position autosave writes cards with no render-status gate) was silently dropped: cards stayed persisted on the variant but vanished from the video (prod job `4bee92f8`, `sfx_applying` with no `media_overlay_applying`). All terminals now re-read the fresh persisted lane state before deciding, so racing lane edits are neither dropped nor resurrected. The subtitled text-element fast reburn also joins the deferred-terminal contract: it no longer flips "ready" before the overlay/SFX re-apply completes (#626 mechanism 1), and a no-op re-apply finalizes "ready" instead of stranding the variant. Full montage re-renders preserve the freshest card list rather than the task-start snapshot.
+
+## [0.7.26.3] — 2026-07-12
+
+### Fixed
+- **Media-overlay cards without ids are no longer silently wiped.** `PUT /plan-items/{item_id}/variants/{variant_id}/media-overlays` with cards missing the `id` field used to return 200 while persisting an empty list (every card dropped by lenient coercion). `MediaOverlay.id` is now server-assigned on parse (mirroring `TextElement.id`), and the user-facing validator rejects genuinely invalid cards with a 422 naming how many cards failed and at which indices, instead of silently clearing the set. Agent/render paths keep their lenient coercion.
 
 ## [0.7.26.2] — 2026-07-12
 
