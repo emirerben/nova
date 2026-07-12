@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.26.5] — 2026-07-12
+
+### Fixed
+- **Visuals-pool tiles update while analysis runs.** AssetPool previously fetched the asset list only on mount, so the `uploaded → analyzing → ready` progression (shimmer, "Analyzing…", subject micro-label) was invisible until a full page refresh. The pool now re-polls every 5s while any asset is in a non-terminal status and stops as soon as all assets reach ready/failed. Each poll preserves the already-signed `display_url` of tiles it already has (GCS re-signs on every read, so a blind replace would reload every thumbnail every 5s), runs one request at a time (no pile-up or out-of-order status flicker under load), and an epoch guard keeps a poll response that raced a local register/delete from resurrecting a removed tile or dropping a just-added one.
+
+### Added
+- **Detected brands are visible on pool tiles.** `PoolAssetOut` now carries `brands` from the analysis JSONB (ANALYSIS_VERSION 5, brand-aware matching), surfaced as a title tooltip on the tile's subject line so brand detection is verifiable without the admin debug view. Null on pre-v5 analyses until the backfill re-analyzes them.
+
 ## [0.7.26.4] — 2026-07-12
 
 ### Fixed
