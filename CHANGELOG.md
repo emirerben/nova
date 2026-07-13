@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.2] — 2026-07-13
+
+### Fixed
+- **Editing a clip no longer kills the music and exposes raw clip audio in the editor preview.** Any clip edit switches the preview to the client-side virtual preview (two crossfading source-clip decks + a separate music `<audio>`), which had three defects: (1) the decks were muted only by the Video-lane toggle, so raw footage audio always played even on song variants whose final render drops footage audio entirely — decks are now force-muted whenever a music track is active (gated on the track id, not the URL, so a broken music URL yields honest silence instead of misleading original sound); (2) the music `<audio>` depended on a lazily-fetched track list that was permanently clobbered to empty on a single fetch failure — the fetch is now a shared deduped `refreshMusicTracks` that keeps prior tracks on failure and auto-fires (once per edit session) when the virtual preview needs the active track's URL; (3) an expired signed music URL just paused forever — the element's error now triggers one refetch (fresh signed URLs) and resumes at the mapped offset, then gives up honestly into the existing "Music … preview after Save" hint. Pinned by 7 new `useVirtualPreview` Jest tests (deck muting matrix, silent-fallback, error → refetch → resume). Known residual (TODOS T-VPM-1): a track preview shorter than the cut still ends silently mid-preview.
+
 ## [0.7.30.1] — 2026-07-13
 
 ### Fixed
