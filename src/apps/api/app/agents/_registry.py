@@ -86,6 +86,8 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
     ("nova.plan.style_derivation", "app.agents.style_derivation", "StyleDerivationAgent"),
     # Creator Agent M2: parse a free-text style utterance into a typed intent.
     ("nova.plan.style_intent", "app.agents.style_intent", "StyleIntentAgent"),
+    # Edit Copilot v1: parse full-editor chat turns into draft edit ops.
+    ("nova.edit.copilot", "app.agents.edit_copilot", "EditCopilotAgent"),
     # Creator Agent M4: conformance verdict at clip-attach time (best-effort, display-only).
     (
         "nova.plan.conformance_feedback",

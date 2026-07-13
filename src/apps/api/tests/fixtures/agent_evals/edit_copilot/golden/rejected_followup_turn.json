@@ -1,0 +1,21 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "ok just make the first one shorter then",
+    "prior_turns": [
+      {"role": "user", "content": "cut clip 3 shorter"},
+      {"role": "assistant", "content": "Shortened clip 3.", "applied": [], "rejected": ["Clip 3 trim rejected: clip was removed"]}
+    ],
+    "variant_snapshot": {
+      "allowed_op_families": ["timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}],
+      "slots": [{"output_start_s": 0, "output_end_s": 4, "duration_s": 4}, {"output_start_s": 4, "output_end_s": 8, "duration_s": 4}],
+      "total_duration_s": 8
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"set_clip_duration\",\"slot_index\":0,\"duration_s\":3}],\"confidence\":0.86,\"reply\":\"Got it — shortened the first clip instead.\",\"suggestions\":[\"Tighten clip 2\",\"Split clip 1\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 3}], "confidence": 0.86, "reply": "Got it — shortened the first clip instead.", "suggestions": ["Tighten clip 2", "Split clip 1"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "follow-up trusts rejected outcome annotation"}
+}

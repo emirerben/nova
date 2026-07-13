@@ -14,6 +14,14 @@ import {
   sameSelection,
   useEditorSelection,
 } from "../../../app/plan/items/[id]/_editor/useEditorSelection";
+import {
+  resolveCopilotApplyFeedback,
+  shouldCloseToolOnSelection,
+  spaceShortcutAllowed,
+} from "../../../app/plan/items/[id]/_editor/EditorShell";
+import type { ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
+import type { DraftSlot } from "@/app/generative/timeline-math";
+import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 describe("cycleHit — overlap click-cycling", () => {
   it("returns null for no hits (empty canvas / video surface = deselect)", () => {
@@ -75,6 +83,77 @@ describe("deleteKeyAllowed — focus guard", () => {
     expect(deleteKeyAllowed({ tagName: "SELECT" })).toBe(false);
     expect(deleteKeyAllowed({ tagName: "input" })).toBe(false); // case-insensitive
     expect(deleteKeyAllowed({ tagName: "DIV", isContentEditable: true })).toBe(false);
+  });
+});
+
+describe("spaceShortcutAllowed — composer focus guard", () => {
+  it("lets Space type in the Nova composer instead of toggling playback", () => {
+    const input = document.createElement("input");
+    input.setAttribute("aria-label", "Tell Nova what to change");
+    expect(deleteKeyAllowed(input)).toBe(false);
+    expect(spaceShortcutAllowed(input)).toBe(false);
+  });
+
+  it("does not treat focused buttons as playback space targets", () => {
+    expect(spaceShortcutAllowed(document.createElement("button"))).toBe(false);
+  });
+});
+
+describe("overlay mode tool auto-close regression", () => {
+  it("still closes non-Nova tools when selecting an element", () => {
+    expect(
+      shouldCloseToolOnSelection({ layoutMode: "overlay", activeTool: "text" }),
+    ).toBe(true);
+    expect(
+      shouldCloseToolOnSelection({ layoutMode: "overlay", activeTool: "overlays" }),
+    ).toBe(true);
+  });
+
+  it("keeps the Nova strip open on selection and for copilot-driven selection", () => {
+    expect(
+      shouldCloseToolOnSelection({ layoutMode: "overlay", activeTool: "nova" }),
+    ).toBe(false);
+    expect(
+      shouldCloseToolOnSelection({
+        layoutMode: "overlay",
+        activeTool: "text",
+        preserveOverlayTool: true,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("resolveCopilotApplyFeedback — seek-on-apply target", () => {
+  const bars: TextElementBar[] = [
+    { id: "bar-1", text: "Hook", start_s: 4, end_s: 6, role: "generative_intro" },
+  ];
+  const slots: DraftSlot[] = [
+    { key: "slot-1", slotId: "slot-1", clipIndex: 0, inS: 0, durationS: 3, durationBeats: null, removed: false },
+    { key: "slot-2", slotId: "slot-2", clipIndex: 1, inS: 0, durationS: 4, durationBeats: null, removed: false },
+  ] as DraftSlot[];
+
+  it("targets the first changed text element midpoint before clip changes", () => {
+    const result: ApplyCopilotOpsResult = {
+      textActions: [{ type: "EDIT_TEXT", id: "bar-1", text: "Better hook" }],
+      nextSlots: [{ ...slots[0] }, { ...slots[1], durationS: 3 }],
+      applied: [],
+      rejected: [],
+    };
+
+    expect(resolveCopilotApplyFeedback({ result, bars, beforeSlots: slots, grid: [] }).first)
+      .toEqual({ kind: "text", id: "bar-1", seekS: 5 });
+  });
+
+  it("targets the first changed clip boundary when only slots changed", () => {
+    const result: ApplyCopilotOpsResult = {
+      textActions: [],
+      nextSlots: [{ ...slots[0] }, { ...slots[1], durationS: 3 }],
+      applied: [],
+      rejected: [],
+    };
+
+    expect(resolveCopilotApplyFeedback({ result, bars, beforeSlots: slots, grid: [] }).first)
+      .toEqual({ kind: "clip", id: "slot-2", seekS: 3 });
   });
 });
 

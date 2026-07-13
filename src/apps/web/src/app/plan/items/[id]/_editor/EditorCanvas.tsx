@@ -114,6 +114,8 @@ export default function EditorCanvas({
   sfxAudioUrls = {},
   selectedTextId,
   selectedOverlayId,
+  flashTextIds,
+  flashOverlayIds,
   currentTime,
   zoomPct,
   tool,
@@ -146,6 +148,8 @@ export default function EditorCanvas({
   sfxAudioUrls?: Record<string, string>;
   selectedTextId: string | null;
   selectedOverlayId?: string | null;
+  flashTextIds?: Set<string>;
+  flashOverlayIds?: Set<string>;
   currentTime: number;
   zoomPct: number;
   tool: "select" | "pan";
@@ -708,6 +712,7 @@ export default function EditorCanvas({
                     overlay={overlay}
                     currentTimeS={currentTime}
                     selected={selectedOverlayId === overlay.card.id}
+                    flashing={flashOverlayIds?.has(overlay.card.id) ?? false}
                     suggested={suggestedOverlayIds?.has(overlay.card.id) ?? false}
                     hovered={hoveredOverlayId === overlay.card.id}
                     dragOverride={
@@ -750,6 +755,7 @@ export default function EditorCanvas({
                       : 0;
                   const isSelected = selectedTextId === layout.id;
                   const isHovered = hoveredId === layout.id && !isSelected;
+                  const isFlashing = flashTextIds?.has(layout.id) ?? false;
                   const zIndex =
                     isSelected && allowManipulation
                       ? EDITOR_STAGE_Z.selectionHandle
@@ -816,6 +822,13 @@ export default function EditorCanvas({
                           aria-hidden
                           className="pointer-events-none absolute inset-0 rounded-[2px]"
                           style={{ outline: "1px solid rgba(161,161,170,0.6)" }}
+                        />
+                      )}
+
+                      {isFlashing && (
+                        <div
+                          aria-hidden
+                          className="pointer-events-none absolute -inset-1 rounded-[3px] outline outline-2 outline-offset-4 outline-lime-500 motion-safe:animate-pulse"
                         />
                       )}
 
@@ -947,6 +960,7 @@ function MediaOverlayCard({
   overlay,
   currentTimeS,
   selected,
+  flashing = false,
   suggested = false,
   hovered,
   dragOverride,
@@ -962,6 +976,7 @@ function MediaOverlayCard({
   overlay: VisibleMediaOverlay;
   currentTimeS: number;
   selected: boolean;
+  flashing?: boolean;
   /** ✓-accepted AI suggestion, unsaved — dashed lime outline + ✦ marker. */
   suggested?: boolean;
   hovered: boolean;
@@ -1086,6 +1101,12 @@ function MediaOverlayCard({
               </button>
             ))}
         </div>
+      )}
+      {flashing && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -inset-1 rounded outline outline-2 outline-offset-4 outline-lime-500 motion-safe:animate-pulse"
+        />
       )}
     </div>
   );

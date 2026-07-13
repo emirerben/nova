@@ -16,7 +16,7 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Body, Depends, File, HTTPException, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
@@ -28,7 +28,9 @@ from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
+from app.limiter import limiter
 from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
+from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse, run_copilot_turn
 from app.routes.generative_jobs import (
     CAPTION_EDIT_ARCHETYPES,
     BedLevelRequest,
@@ -74,9 +76,11 @@ from app.routes.generative_jobs import (
     persist_variant_captions,
     persist_variant_captions_enabled,
     prepare_editor_commit,
+    require_editable_variant,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
 )
+from app.routes.waitlist import get_real_ip
 from app.schemas.montage_preset import coerce_montage_preset
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
@@ -1601,6 +1605,40 @@ async def change_item_style(
     await db.commit()
     log.info("plan_item_change_style", item_id=item_id, variant_id=variant_id)
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
+@router.post(
+    "/{item_id}/variants/{variant_id}/copilot/turn",
+    response_model=CopilotTurnResponse,
+)
+@limiter.limit("20/minute", key_func=get_real_ip)
+async def plan_item_copilot_turn(
+    request: Request,
+    item_id: str,
+    variant_id: str,
+    body: CopilotTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CopilotTurnResponse:
+    """Run one stateless editor-copilot turn.
+
+    Zero writes to item/job/variant rows. The client snapshot is untrusted and
+    only passed to the agent for parsing; the editor applies returned ops to its
+    local draft state and Save still goes through editor-commit validation.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    _ = request  # required by the rate-limit decorator
+    if not settings.edit_copilot_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="edit_copilot_not_enabled",
+        )
+
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
+    return await run_copilot_turn(body, job_id=job.id)
 
 
 @router.post("/{item_id}/variants/{variant_id}/edit", response_model=PlanItemResponse)

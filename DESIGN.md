@@ -45,6 +45,7 @@ Token source: `src/apps/web/src/app/page.tsx` on origin/main.
 - **Section rhythm:** `max-w-[900px]` hero, alternating two-column steps, `FadeInOnScroll` (IO threshold 0.12) on every section.
 - **Shared primitives:** `LightShell`, `LightCard`, `Eyebrow`, `InkButton` in `src/apps/web/src/components/ui/` (canonical location since v0.4.87.0; `plan/_components/ui/` files are re-export stubs for backward compat).
 - **Editorial interview layout:** Fraunces question, LEFT-aligned answers, one prior-answer pull-quote with accent left-border (lime), NO message bubbles, NO bot avatar.
+- **Editor Nova copilot drawer exception:** the full-screen editor's Nova tool may use texting bubbles because it is a command/receipt surface, not an onboarding interview. Tokens: user bubble `bg-[#0c0c0e] text-white` with 18px radius / 6px bottom-right corner; assistant bubble `bg-zinc-100 text-[#0c0c0e]` with 18px radius / 6px bottom-left corner; change chips `border-lime-200 bg-lime-50 text-lime-800`; rejected chips `border-dashed border-zinc-300 bg-white text-[#71717a]`; suggestion chips `border-zinc-200 bg-white` with lime hover/focus.
 - **D16 lime contrast rule:** lime TEXT under ~18px and text-bearing lime fills → `lime-700`. Display ems, bars, dots, non-text fills → `lime-600`.
 
 ---
@@ -222,7 +223,7 @@ Celebrate then recede.
 - No 3-column icon-in-circle feature grids; no centered-everything; no decorative blobs/wavy dividers; no emoji as design elements.
 - **Serif display (Fraunces) is the brand voice;** system-ui display type is the "gave up" signal.
 - **Cards earn existence** — calendar cells, process cards, video tiles are interactions/content, not decoration.
-- **Chat = editorial interview** (see §3) — bubbles are an instant fail.
+- **Chat = editorial interview** (see §3) — bubbles are an instant fail except for the editor Nova copilot drawer scoped in §2.
 - **Empty states lead with the action, not the absence:** a serif invitation line + the single next-step CTA. Never icon-in-circle + "Nothing here yet!"; never apologize. On product surfaces an empty list is quiet zinc — no illustration.
 - **Copy: product language.** If deleting 30% improves it, keep deleting.
 

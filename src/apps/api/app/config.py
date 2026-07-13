@@ -453,6 +453,13 @@ class Settings(BaseSettings):
     # When False: both agent routes return 404 — byte-identical to pre-M2 behavior.
     style_agent_enabled: bool = False
 
+    # Chat-based full-editor copilot. When True,
+    # POST /plan-items/{item}/variants/{variant}/copilot/turn is live and returns
+    # proposed draft edit ops; it never writes Job/PlanItem rows. Frontend twin:
+    # NEXT_PUBLIC_EDIT_COPILOT_ENABLED gates the Nova drawer. Default off until
+    # localhost QA validates the local-op applier and save parity.
+    edit_copilot_enabled: bool = False
+
     # Creator Agent M4: ConformanceFeedbackAgent at clip-attach time (best-effort).
     # Ships OFF — fires async after attach_clips, never blocks the 200 response.
     # Enable after live-eval validation of the conformance_feedback agent:

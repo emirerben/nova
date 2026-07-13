@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "remove the boring middle clip",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3, "moment": "opening"}, {"output_start_s": 3, "output_end_s": 6, "duration_s": 3, "moment": "slow middle"}, {"output_start_s": 6, "output_end_s": 9, "duration_s": 3, "moment": "final reveal"}],
+      "total_duration_s": 9
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"remove_clip\",\"slot_index\":1}],\"confidence\":0.82,\"reply\":\"Removed the middle clip.\",\"suggestions\":[\"Tighten the opener\",\"Move the reveal earlier\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "remove_clip", "slot_index": 1}], "confidence": 0.82, "reply": "Removed the middle clip.", "suggestions": ["Tighten the opener", "Move the reveal earlier"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "remove_clip by ordinal and moment"}
+}

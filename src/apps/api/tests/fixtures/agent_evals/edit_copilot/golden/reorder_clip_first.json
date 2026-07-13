@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "put the last clip first",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}],
+      "slots": [{"output_start_s": 0, "output_end_s": 2, "duration_s": 2}, {"output_start_s": 2, "output_end_s": 4, "duration_s": 2}, {"output_start_s": 4, "output_end_s": 7, "duration_s": 3}],
+      "total_duration_s": 7
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"reorder_clip\",\"from_index\":2,\"to_index\":0}],\"confidence\":0.93,\"reply\":\"Moved the last clip to the beginning.\",\"suggestions\":[\"Shorten the new opener\",\"Add a hook label\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "reorder_clip", "from_index": 2, "to_index": 0}], "confidence": 0.93, "reply": "Moved the last clip to the beginning.", "suggestions": ["Shorten the new opener", "Add a hook label"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "reorder_clip"}
+}

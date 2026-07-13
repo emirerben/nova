@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "make it lime and have it pop in",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["style"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3, "color": "#FFFFFF", "effect": "static"}],
+      "slots": [{"output_start_s": 0, "output_end_s": 4, "duration_s": 4}],
+      "total_duration_s": 4
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"color\":\"#84CC16\",\"effect\":\"pop-in\"}}],\"confidence\":0.84,\"reply\":\"Changed the hook color and gave it a pop-in effect.\",\"suggestions\":[\"Add a highlight\",\"Make it bigger\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "patch_text_style", "bar_index": 0, "patch": {"color": "#84CC16", "effect": "pop-in"}}], "confidence": 0.84, "reply": "Changed the hook color and gave it a pop-in effect.", "suggestions": ["Add a highlight", "Make it bigger"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "style color and effect"}
+}
