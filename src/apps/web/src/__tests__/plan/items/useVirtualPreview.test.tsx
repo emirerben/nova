@@ -18,9 +18,17 @@ const SLOT: DraftSlot = {
 function Harness({
   onPlayingChange,
   soundMuted = false,
+  videoMuted = false,
+  musicTrackActive = false,
+  musicAudioUrl = "https://cdn.example.test/music.m4a",
+  onMusicError,
 }: {
   onPlayingChange: (playing: boolean) => void;
   soundMuted?: boolean;
+  videoMuted?: boolean;
+  musicTrackActive?: boolean;
+  musicAudioUrl?: string | null;
+  onMusicError?: () => void;
 }) {
   const preview = useVirtualPreview({
     enabled: true,
@@ -28,24 +36,31 @@ function Harness({
     clips: [{ clip_index: 0, signed_url: "https://cdn.example.test/clip.mp4" }],
     grid: [],
     currentTime: 0,
-    muted: false,
-    musicAudioUrl: "https://cdn.example.test/music.m4a",
+    muted: videoMuted,
+    musicAudioUrl,
     musicStartS: 55.71,
     soundMuted,
+    musicTrackActive,
     onTimeUpdate: jest.fn(),
     onDuration: jest.fn(),
     onPlayingChange,
     onSourceError: jest.fn(),
+    onMusicError,
   });
   const { ref: videoARef, ...videoAProps } = preview.videoAProps;
   const { ref: videoBRef, ...videoBProps } = preview.videoBProps;
-  const { ref: audioRef, ...audioProps } = preview.musicAudioProps!;
+  const music = preview.musicAudioProps;
 
   return (
     <>
       <video data-testid="deck-a" ref={videoARef} {...videoAProps} />
       <video data-testid="deck-b" ref={videoBRef} {...videoBProps} />
-      <audio data-testid="music" ref={audioRef} {...audioProps} />
+      {music ? (
+        (() => {
+          const { ref: audioRef, ...audioProps } = music;
+          return <audio data-testid="music" ref={audioRef} {...audioProps} />;
+        })()
+      ) : null}
       <button type="button" onClick={preview.play}>
         play
       </button>
@@ -132,5 +147,121 @@ describe("useVirtualPreview music transport", () => {
     );
     expect(audioPauseCalls.length).toBeGreaterThan(0);
     expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe("useVirtualPreview deck muting", () => {
+  beforeEach(() => {
+    jest.spyOn(window.HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    jest.spyOn(window.HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("mutes both decks when a music track is active even though the video lane is unmuted", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive videoMuted={false} />);
+    expect(screen.getByTestId("deck-a")).toHaveProperty("muted", true);
+    expect(screen.getByTestId("deck-b")).toHaveProperty("muted", true);
+  });
+
+  it("mutes decks and renders no music element when a track is active but its preview URL is missing", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive musicAudioUrl={null} />);
+    expect(screen.getByTestId("deck-a")).toHaveProperty("muted", true);
+    expect(screen.getByTestId("deck-b")).toHaveProperty("muted", true);
+    expect(screen.queryByTestId("music")).toBeNull();
+  });
+
+  it("keeps native clip audio when no music track is active", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive={false} />);
+    expect(screen.getByTestId("deck-a")).toHaveProperty("muted", false);
+    expect(screen.getByTestId("deck-b")).toHaveProperty("muted", false);
+  });
+
+  it("still honors the video-lane mute when no music track is active", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive={false} videoMuted />);
+    expect(screen.getByTestId("deck-a")).toHaveProperty("muted", true);
+    expect(screen.getByTestId("deck-b")).toHaveProperty("muted", true);
+  });
+
+  it("re-mutes decks when a track is picked mid-preview", () => {
+    const { rerender } = render(
+      <Harness onPlayingChange={jest.fn()} musicTrackActive={false} />,
+    );
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    expect(deckA.muted).toBe(false);
+
+    rerender(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+    expect(deckA.muted).toBe(true);
+  });
+});
+
+describe("useVirtualPreview music URL refresh", () => {
+  let playSpy: ReturnType<typeof jest.spyOn>;
+  let pauseSpy: ReturnType<typeof jest.spyOn>;
+
+  beforeEach(() => {
+    jest.spyOn(window.HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    playSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockImplementation(() => Promise.resolve());
+    pauseSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("invokes onMusicError and pauses only the music when the audio element errors", () => {
+    const onMusicError = jest.fn();
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive onMusicError={onMusicError} />);
+
+    fireEvent.error(screen.getByTestId("music"));
+
+    expect(onMusicError).toHaveBeenCalledTimes(1);
+    const audioPauseCalls = pauseSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "AUDIO",
+    );
+    const videoPauseCalls = pauseSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "VIDEO",
+    );
+    expect(audioPauseCalls.length).toBeGreaterThan(0);
+    expect(videoPauseCalls).toHaveLength(0);
+  });
+
+  it("resumes music at the mapped offset when a fresh URL arrives while playing", async () => {
+    const { rerender } = render(
+      <Harness
+        onPlayingChange={jest.fn()}
+        musicTrackActive
+        musicAudioUrl="https://cdn.example.test/music.m4a?sig=expired"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const playsBefore = playSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "AUDIO",
+    ).length;
+    expect(playsBefore).toBeGreaterThan(0);
+
+    rerender(
+      <Harness
+        onPlayingChange={jest.fn()}
+        musicTrackActive
+        musicAudioUrl="https://cdn.example.test/music.m4a?sig=fresh"
+      />,
+    );
+
+    await waitFor(() => {
+      const audioPlays = playSpy.mock.instances.filter(
+        (el: unknown) => (el as HTMLMediaElement).tagName === "AUDIO",
+      );
+      expect(audioPlays.length).toBeGreaterThan(playsBefore);
+    });
+    const music = screen.getByTestId("music") as HTMLAudioElement;
+    expect(Math.abs(music.currentTime - 55.71)).toBeLessThan(0.1);
   });
 });

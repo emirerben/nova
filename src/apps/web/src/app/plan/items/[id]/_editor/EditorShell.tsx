@@ -535,11 +535,43 @@ export default function EditorShell({
   const virtualRefetchAttemptedRef = useRef(false);
   const virtualRefetchInFlightRef = useRef(false);
 
+  // Virtual-preview music recovery state. The retry budget is one refetch per
+  // edit session per track — a missing audio blob mints a fresh (still broken)
+  // signed URL on every fetch, so re-arming on success would loop forever.
+  const [virtualMusicUnavailable, setVirtualMusicUnavailable] = useState(false);
+  const musicRefetchAttemptedRef = useRef(false);
+  const virtualMusicAutoFetchRef = useRef(false);
+  const musicTracksFetchRef = useRef<Promise<void> | null>(null);
+
+  const refreshMusicTracks = useCallback((): Promise<void> => {
+    if (musicTracksFetchRef.current) return musicTracksFetchRef.current;
+    setMusicTracksLoading(true);
+    const fetchPromise = getMusicTracks()
+      .then((res) => {
+        setMusicTracks(res.tracks);
+        setMusicTracksLoaded(true);
+      })
+      .catch(() => {
+        // Keep whatever tracks we already have and leave `musicTracksLoaded`
+        // false so the picker/virtual-preview gates can trigger a retry later.
+        setToast("Couldn't load music.");
+      })
+      .finally(() => {
+        setMusicTracksLoading(false);
+        musicTracksFetchRef.current = null;
+      });
+    musicTracksFetchRef.current = fetchPromise;
+    return fetchPromise;
+  }, []);
+
   useEffect(() => {
     if (!clipDirty) {
       setVirtualFallback(false);
       virtualRefetchAttemptedRef.current = false;
       virtualRefetchInFlightRef.current = false;
+      setVirtualMusicUnavailable(false);
+      musicRefetchAttemptedRef.current = false;
+      virtualMusicAutoFetchRef.current = false;
     }
   }, [clipDirty]);
 
@@ -765,6 +797,18 @@ export default function EditorShell({
     setVirtualFallback(true);
   }, [reloadClipTimeline]);
 
+  // Expired-signature recovery for the virtual-preview music element: one
+  // refetch (fresh signed URLs), then give up honestly — decks stay muted and
+  // the "preview after Save" hint covers the silent music.
+  const handleVirtualMusicError = useCallback(() => {
+    if (!musicRefetchAttemptedRef.current) {
+      musicRefetchAttemptedRef.current = true;
+      void refreshMusicTracks();
+      return;
+    }
+    setVirtualMusicUnavailable(true);
+  }, [refreshMusicTracks]);
+
   const virtualPreviewRequested =
     clipDirty && !virtualFallback && clip.loadState === "ready";
   const effectiveMusicTrackId = selectedMusicTrackId ?? variant?.music_track_id ?? null;
@@ -772,8 +816,35 @@ export default function EditorShell({
     ? musicTracks.find((track) => track.id === effectiveMusicTrackId) ?? null
     : null;
   const effectiveMusicTitle = virtualMusicTrack?.title ?? variant?.track_title ?? "Music";
-  const virtualMusicAudioUrl = virtualMusicTrack?.preview_audio_url ?? null;
+  const virtualMusicAudioUrl = virtualMusicUnavailable
+    ? null
+    : virtualMusicTrack?.preview_audio_url ?? null;
   const virtualMusicStartS = virtualMusicTrack?.preview_start_s ?? 0;
+
+  // Picking a different track supplies a brand-new URL — re-arm the retry
+  // budget and clear the gave-up flag.
+  useEffect(() => {
+    setVirtualMusicUnavailable(false);
+    musicRefetchAttemptedRef.current = false;
+    virtualMusicAutoFetchRef.current = false;
+  }, [effectiveMusicTrackId]);
+
+  // The virtual preview starts the moment a clip edit lands, but the music
+  // track list loads lazily — make sure the active track's preview URL is
+  // being fetched when the preview needs it (once per edit session).
+  useEffect(() => {
+    if (!virtualPreviewRequested || !effectiveMusicTrackId) return;
+    if (musicTracksLoaded || musicTracksLoading) return;
+    if (virtualMusicAutoFetchRef.current) return;
+    virtualMusicAutoFetchRef.current = true;
+    void refreshMusicTracks();
+  }, [
+    virtualPreviewRequested,
+    effectiveMusicTrackId,
+    musicTracksLoaded,
+    musicTracksLoading,
+    refreshMusicTracks,
+  ]);
   const virtualPreview = useVirtualPreview({
     enabled: virtualPreviewRequested,
     slots,
@@ -784,10 +855,12 @@ export default function EditorShell({
     musicAudioUrl: virtualMusicAudioUrl,
     musicStartS: virtualMusicStartS,
     soundMuted,
+    musicTrackActive: effectiveMusicTrackId != null,
     onTimeUpdate: setCurrentTime,
     onDuration: () => {},
     onPlayingChange: setPlaying,
     onSourceError: handleVirtualSourceError,
+    onMusicError: handleVirtualMusicError,
   });
   const virtualPreviewActive =
     virtualPreviewRequested &&
@@ -930,25 +1003,8 @@ export default function EditorShell({
     !musicTracksLoaded;
   useEffect(() => {
     if (!musicPickerShouldLoad) return;
-    let cancelled = false;
-    setMusicTracksLoading(true);
-    void getMusicTracks()
-      .then((res) => {
-        if (!cancelled) setMusicTracks(res.tracks);
-      })
-      .catch(() => {
-        if (!cancelled) setMusicTracks([]);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setMusicTracksLoaded(true);
-          setMusicTracksLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [musicPickerShouldLoad]);
+    void refreshMusicTracks();
+  }, [musicPickerShouldLoad, refreshMusicTracks]);
 
   useEffect(() => {
     if (localSfx.length === 0 || sfxGlossaryEffects.length === 0) return;
