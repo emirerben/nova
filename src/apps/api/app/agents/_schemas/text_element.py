@@ -158,6 +158,7 @@ def apply_text_case(text: str, case: str | None) -> str:
         return re.sub(r"\S+", lambda m: m.group(0)[:1].upper() + m.group(0)[1:].lower(), text)
     return text
 
+
 # Map from legacy burn-dict effects (which may include richer Skia effects)
 # to the TextElement effect enum.  Anything not listed falls back to "static".
 _BURN_EFFECT_TO_TEXT_ELEMENT: dict[str, str] = {
@@ -224,6 +225,10 @@ class TextElement(BaseModel):
         ge=0.0,
         le=1.0,
         description="Vertical center fraction [0, 1]; None unless position='custom'.",
+    )
+    rotation_deg: float | None = Field(
+        default=None,
+        description="Clockwise text rotation in degrees; silently clamped to [-360, 360].",
     )
     font_family: str | None = Field(
         default=None,
@@ -431,6 +436,17 @@ class TextElement(BaseModel):
         except (TypeError, ValueError):
             return None
 
+    @field_validator("rotation_deg", mode="before")
+    @classmethod
+    def _clamp_rotation_deg(cls, v: object) -> float | None:
+        """Silently clamp clockwise rotation to one full turn in either direction."""
+        if v is None:
+            return None
+        try:
+            return max(-360.0, min(360.0, float(v)))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
     @field_validator("color", "highlight_color", mode="before")
     @classmethod
     def _coerce_color(cls, v: object) -> str | None:
@@ -616,6 +632,8 @@ def _burn_dict_to_text_element(
     max_width_frac: float | None = (
         float(max_width_frac_raw) if max_width_frac_raw is not None else None
     )
+    rotation_deg_raw = burn_dict.get("rotation_deg")
+    rotation_deg: float | None = float(rotation_deg_raw) if rotation_deg_raw is not None else None
 
     # alignment from text_anchor
     text_anchor = str(burn_dict.get("text_anchor") or "center")
@@ -646,6 +664,7 @@ def _burn_dict_to_text_element(
             position=position,  # type: ignore[arg-type]
             x_frac=x_frac,
             y_frac=y_frac,
+            rotation_deg=rotation_deg,
             font_family=font_family,
             size_px=size_px,
             size_class=size_class,  # type: ignore[arg-type]
@@ -729,9 +748,7 @@ def append_ai_text_tombstones(variant: dict, elements: list[dict]) -> list[dict]
     if not projected:
         return elements
     incoming_ids = {
-        ident
-        for raw in elements
-        if (ident := text_element_source_identity(raw)) is not None
+        ident for raw in elements if (ident := text_element_source_identity(raw)) is not None
     }
     out = list(elements)
     for projected_elem in projected:
@@ -993,6 +1010,19 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
     style_kwargs: dict = {}
     if intro_text_size_px is not None:
         style_kwargs["text_size_px"] = int(intro_text_size_px)
+    placement_candidates = v.get("text_placement_candidates") or []
+    first_candidate = placement_candidates[0] if placement_candidates else None
+    if isinstance(first_candidate, dict):
+        style_kwargs.update(
+            {
+                "position": "center",
+                "position_x_frac": first_candidate.get("x_frac"),
+                "position_y_frac": first_candidate.get("y_frac"),
+                "max_width_frac": first_candidate.get("max_width_frac"),
+                "rotation_deg": first_candidate.get("rotation_deg"),
+                "text_anchor": "center",
+            }
+        )
 
     try:
         from app.pipeline.generative_overlays import (  # noqa: PLC0415

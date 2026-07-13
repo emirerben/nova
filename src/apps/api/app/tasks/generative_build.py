@@ -2455,6 +2455,34 @@ def _reburn_text_on_base(
         # Download the cached base
         download_to_file(base_gcs_path, local_base)
 
+        def _burn_text_for_variant(
+            input_path: str,
+            overlay_dicts: list[dict],
+            output_path: str,
+        ) -> None:
+            if is_collage_montage_preset(existing.get("montage_preset_rendered")):
+                from app.pipeline.masonry_montage import (  # noqa: PLC0415
+                    burn_masonry_text_overlays,
+                    masonry_board_width_for_preset,
+                )
+
+                try:
+                    burn_duration_s = float(probe_video(input_path).duration_s)
+                except Exception:  # noqa: BLE001
+                    burn_duration_s = MAX_INTRO_S
+                burn_masonry_text_overlays(
+                    input_path,
+                    overlay_dicts,
+                    output_path,
+                    tmpdir,
+                    duration_s=burn_duration_s,
+                    board_width=masonry_board_width_for_preset(
+                        existing.get("montage_preset_rendered")
+                    ),
+                )
+                return
+            burn_text_overlays_skia(input_path, overlay_dicts, output_path, tmpdir)
+
         # ── TextElement early branch (T3 — plan-item-timeline) ──────────────
         # When the user has edited text via the TextElement API (T4),
         # their explicitly-authored elements own the overlay completely.
@@ -2496,7 +2524,7 @@ def _reburn_text_on_base(
 
             _te_burn_dicts = _text_element_burn_dicts(existing)
             _te_final_path = os.path.join(tmpdir, "final.mp4")
-            burn_text_overlays_skia(local_base, _te_burn_dicts, _te_final_path, tmpdir)
+            _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path)
             _te_gcs_key = (existing.get("video_path") or "").lstrip("/")
             _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
             return {
@@ -2660,7 +2688,7 @@ def _reburn_text_on_base(
                         "sequence_mode": None,
                         "sequence_quote": None,
                     }
-            burn_text_overlays_skia(local_base, overlays, final_path, tmpdir)
+            _burn_text_for_variant(local_base, overlays, final_path)
 
             # Detect silent copy-through (burn failed with non-empty overlays)
             if (
@@ -5596,6 +5624,24 @@ def _render_generative_variant(
                 base_dur = MAX_INTRO_S
             reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
 
+            def _burn_agent_text_overlays(overlay_dicts: list[dict], output_path: str) -> None:
+                if masonry_applied:
+                    from app.pipeline.masonry_montage import (  # noqa: PLC0415
+                        burn_masonry_text_overlays,
+                        masonry_board_width_for_preset,
+                    )
+
+                    burn_masonry_text_overlays(
+                        audio_mixed_path,
+                        overlay_dicts,
+                        output_path,
+                        variant_dir,
+                        duration_s=base_dur,
+                        board_width=masonry_board_width_for_preset(resolved_montage_preset),
+                    )
+                    return
+                burn_text_overlays_skia(audio_mixed_path, overlay_dicts, output_path, variant_dir)
+
             # Editorial sequence auto-upgrade (D6/D16): when the kill switch is
             # ON and the layout resolved to "cluster", the variant gets the
             # typographic sequence. Source precedence:
@@ -5711,7 +5757,7 @@ def _render_generative_variant(
             else:
                 overlays = _static_intro_overlays()
                 _apply_static_layout(overlays)
-            burn_text_overlays_skia(audio_mixed_path, overlays, final_path, variant_dir)
+            _burn_agent_text_overlays(overlays, final_path)
 
             # D20: copy-through detection ported from the fast-reburn path. A
             # silent textless output must never ship as a "ready" variant.
@@ -5734,7 +5780,7 @@ def _render_generative_variant(
                     )
                     overlays = _static_intro_overlays()
                     _apply_static_layout(overlays)
-                    burn_text_overlays_skia(audio_mixed_path, overlays, final_path, variant_dir)
+                    _burn_agent_text_overlays(overlays, final_path)
                 if overlays and _burn_copy_through(final_path, audio_mixed_path):
                     raise RuntimeError(
                         f"burn_text_overlays_skia copy-through detected on variant "
@@ -8147,6 +8193,11 @@ def _resolve_intro_overlay_params(
             if knobs.get("position_y_frac") is not None
             else style.get("position_y_frac")
         ),
+        "rotation_deg": (
+            knobs["rotation_deg"]
+            if knobs.get("rotation_deg") is not None
+            else style.get("rotation_deg")
+        ),
     }
 
     first_candidate = (placement_candidates or [None])[0]
@@ -8166,6 +8217,7 @@ def _resolve_intro_overlay_params(
         params["position_x_frac"] = first_candidate.get("x_frac")
         params["position_y_frac"] = first_candidate.get("y_frac")
         params["max_width_frac"] = first_candidate.get("max_width_frac")
+        params["rotation_deg"] = first_candidate.get("rotation_deg")
         params["text_anchor"] = "center"
 
     # Layout (linear | cluster). Linear is forced when the kill switch is off or

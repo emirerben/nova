@@ -58,6 +58,8 @@ export interface TextElementBar {
   x_frac?: number | null;
   /** Fractional Y center [0,1] — explicit placement wins over `position`. */
   y_frac?: number | null;
+  /** Clockwise rotation in degrees. Used by masonry smart placement pockets. */
+  rotation_deg?: number | null;
   source_params?: Record<string, unknown>;
 }
 

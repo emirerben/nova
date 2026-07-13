@@ -29,10 +29,12 @@ export function textElementWrapperStyle({
   maxWidthFrac?: number;
   zIndex?: number;
 }): CSSProperties {
+  const anchorTransform = textElementAnchorTransform(layout.alignment);
+  const rotateTransform = layout.rotationDeg ? ` rotate(${layout.rotationDeg}deg)` : "";
   return {
     left: `${xFrac * 100}%`,
     top: `${yFrac * 100}%`,
-    transform: textElementAnchorTransform(layout.alignment),
+    transform: `${anchorTransform}${rotateTransform}`,
     width: `${maxWidthFrac * 100}%`,
     ...(zIndex !== undefined ? { zIndex } : {}),
   };

@@ -819,6 +819,7 @@ export interface TextElement {
   position?: "top" | "middle" | "bottom" | "custom";
   x_frac?: number | null;
   y_frac?: number | null;
+  rotation_deg?: number | null;
   font_family?: string | null;
   size_px?: number | null;
   size_class?: "small" | "medium" | "large" | "xlarge" | "xxlarge" | "jumbo" | null;
@@ -901,6 +902,8 @@ export interface TextPlacementCandidate {
   x_frac: number;
   y_frac: number;
   max_width_frac: number;
+  rotation_deg?: number | null;
+  masonry_motion?: Record<string, unknown> | null;
   confidence?: number | null;
 }
 

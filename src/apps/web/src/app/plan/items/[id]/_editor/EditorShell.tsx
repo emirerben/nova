@@ -87,8 +87,9 @@ import {
   textElementsLockedCopy,
 } from "./editor-capabilities";
 import {
-  reflowTextForSmartPlacement,
-  resolveSmartPlacementCandidate,
+  isMasonryVariant,
+  resolveSmartPlacementCandidates,
+  smartPlacementPatchForBar,
 } from "./editor-smart-placement";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
@@ -689,10 +690,15 @@ export default function EditorShell({
         : null,
     [selection, state.bars],
   );
-  const smartPlacementCandidate = useMemo(
-    () => resolveSmartPlacementCandidate(variant, selectedBar),
-    [selectedBar, variant],
-  );
+  const smartPlacementCandidates = useMemo(() => {
+    const targetBars = isMasonryVariant(variant)
+      ? state.bars.filter((bar) => bar.role !== "narrated_caption")
+      : selectedBar
+        ? [selectedBar]
+        : [];
+    return resolveSmartPlacementCandidates(variant, targetBars);
+  }, [selectedBar, state.bars, variant]);
+  const smartPlacementCandidate = selectedBar ? (smartPlacementCandidates[0] ?? null) : null;
 
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
@@ -1150,16 +1156,34 @@ export default function EditorShell({
   );
 
   const applySmartPlacement = useCallback(() => {
-    if (!selectedBar || !smartPlacementCandidate || readOnly) return;
-    const smartText = reflowTextForSmartPlacement(selectedBar.text, smartPlacementCandidate);
-    patchBar(selectedBar.id, {
-      ...(smartText !== selectedBar.text ? { text: smartText } : {}),
-      x_frac: smartPlacementCandidate.x_frac,
-      y_frac: smartPlacementCandidate.y_frac,
-      max_width_frac: smartPlacementCandidate.max_width_frac,
-      position: "custom",
-    });
-  }, [patchBar, readOnly, selectedBar, smartPlacementCandidate]);
+    if (readOnly) return;
+    if (isMasonryVariant(variant)) {
+      const targetBars = state.bars.filter((bar) => bar.role !== "narrated_caption");
+      if (targetBars.length === 0 || smartPlacementCandidates.length === 0) return;
+      history.record();
+      setTextDirty(true);
+      targetBars.forEach((bar, index) => {
+        const candidate = smartPlacementCandidates[index % smartPlacementCandidates.length];
+        dispatch({
+          type: "PATCH_BAR",
+          id: bar.id,
+          patch: smartPlacementPatchForBar(bar, candidate),
+        });
+      });
+      return;
+    }
+    if (!selectedBar || !smartPlacementCandidate) return;
+    patchBar(selectedBar.id, smartPlacementPatchForBar(selectedBar, smartPlacementCandidate));
+  }, [
+    history,
+    patchBar,
+    readOnly,
+    selectedBar,
+    smartPlacementCandidate,
+    smartPlacementCandidates,
+    state.bars,
+    variant,
+  ]);
 
   const pickMusicTrack = useCallback(
     (trackId: string) => {

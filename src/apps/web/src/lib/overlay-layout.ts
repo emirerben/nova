@@ -384,6 +384,8 @@ export interface TextElementLayout {
   maxWidthFrac: number;
   /** Maximum wrap-box width in 1080px-canvas coordinates. */
   maxWidthPx: number;
+  /** Clockwise text rotation in degrees. */
+  rotationDeg: number;
   /** Stroke width in 1080x1920 canvas pixels. */
   strokeWidth: number;
   /** Soft-shadow toggle. Undefined/null defaults to legacy enabled. */
@@ -421,6 +423,7 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       lineSpacing: resolveLineSpacing(el.line_spacing),
       maxWidthFrac: resolveMaxWidthFrac(el.max_width_frac),
       maxWidthPx: CANVAS_W * resolveMaxWidthFrac(el.max_width_frac),
+      rotationDeg: Number.isFinite(el.rotation_deg ?? NaN) ? Number(el.rotation_deg) : 0,
       strokeWidth: el.stroke_width ?? 0,
       shadowEnabled: el.shadow_enabled !== false,
       start_s: el.start_s,

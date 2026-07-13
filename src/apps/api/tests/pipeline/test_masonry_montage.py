@@ -8,8 +8,10 @@ from app.pipeline.masonry_montage import (
     MASONRY_MAX_DURATION_S,
     assemble_masonry_montage,
     build_masonry_command,
+    build_masonry_text_burn_command,
     build_masonry_tiles,
     clamp_masonry_duration,
+    masonry_board_width_for_preset,
     masonry_text_placement_candidates,
 )
 
@@ -45,9 +47,11 @@ def test_masonry_text_placement_candidates_choose_whitespace() -> None:
 
     assert candidates
     assert candidates[0]["source"] == "masonry_whitespace"
-    assert candidates[0]["x_frac"] > 0.75
-    assert candidates[0]["y_frac"] > 0.85
-    assert 0.2 <= candidates[0]["max_width_frac"] <= 0.32
+    assert candidates[0]["x_frac"] < 0.25
+    assert 0.45 <= candidates[0]["y_frac"] <= 0.55
+    assert candidates[0]["rotation_deg"] == 90.0
+    assert candidates[0]["masonry_motion"]["mode"] == "masonry_pan_x"
+    assert candidates[1]["y_frac"] < 0.12
 
 
 def test_polaroid_text_placement_candidates_use_polaroid_layout() -> None:
@@ -58,6 +62,12 @@ def test_polaroid_text_placement_candidates_use_polaroid_layout() -> None:
     assert 0.0 < candidates[0]["x_frac"] < 1.0
     assert 0.0 < candidates[0]["y_frac"] < 1.0
     assert 0.2 <= candidates[0]["max_width_frac"] <= 0.9
+    assert candidates[0]["masonry_motion"]["board_width_px"] == masonry_board_width_for_preset(
+        "polaroid_wall"
+    )
+    assert candidates[0]["masonry_motion"]["board_width_px"] > masonry_board_width_for_preset(
+        "masonry"
+    )
 
 
 def test_build_masonry_tiles_cycles_uploaded_clips_and_writes_masks(tmp_path) -> None:
@@ -224,3 +234,29 @@ def test_build_masonry_command_uses_alpha_masks_audio_and_fast_preset(tmp_path) 
     assert "-preset" in cmd
     assert cmd[cmd.index("-preset") + 1] == "fast"
     assert f"{MASONRY_MAX_DURATION_S:.3f}" in cmd
+
+
+def test_build_masonry_text_burn_command_pans_text_with_board() -> None:
+    cmd = build_masonry_text_burn_command(
+        input_path="/tmp/base.mp4",
+        sequences=[
+            {
+                "pattern": "/tmp/text%04d.png",
+                "first_frame": "/tmp/text0000.png",
+                "n_frames": 4,
+                "fps": 30,
+                "start_s": 0.0,
+                "end_s": 3.0,
+                "is_animated": True,
+            }
+        ],
+        output_path="/tmp/out.mp4",
+        duration_s=8.0,
+        board_width=1600,
+    )
+    graph = cmd[cmd.index("-filter_complex") + 1]
+
+    assert "overlay=x=-min(t\\,8.000)/8.000*520:y=0:eval=frame" in graph
+    assert "setpts=PTS+0.0000/TB" in graph
+    assert "-preset" in cmd
+    assert cmd[cmd.index("-preset") + 1] == "fast"

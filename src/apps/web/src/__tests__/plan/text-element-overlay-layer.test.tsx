@@ -76,6 +76,15 @@ describe("TextElementOverlayLayer", () => {
     });
   });
 
+  it("applies explicit text rotation in the wrapper transform", () => {
+    const [layout] = resolveTextElementsLayout([{ ...element, rotation_deg: 90 }]);
+
+    expect(layout.rotationDeg).toBe(90);
+    expect(textElementWrapperStyle({ layout })).toMatchObject({
+      transform: "translate(0, -50%) rotate(90deg)",
+    });
+  });
+
   it("filters by current playback time when provided", () => {
     render(<TextElementOverlayLayer elements={[element]} currentTime={6} />);
 
