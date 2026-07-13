@@ -16,6 +16,7 @@ export interface CopilotMessage {
   id: string;
   role: CopilotMessageRole;
   text: string;
+  pending?: boolean;
   applied?: string[];
   rejected?: string[];
   suggestions?: string[];
@@ -31,7 +32,10 @@ export interface UseEditCopilotOptions {
   itemId: string;
   variantId: string;
   buildSnapshot: () => CopilotSnapshot;
-  applyOps: (ops: CopilotOp[], snapshot: CopilotSnapshot) => ApplyCopilotOpsResult;
+  applyOps: (
+    ops: CopilotOp[],
+    snapshot: CopilotSnapshot,
+  ) => ApplyCopilotOpsResult;
   onApplied?: (
     result: ApplyCopilotOpsResult,
     response: EditCopilotTurnResponse,
@@ -54,8 +58,11 @@ export interface UseEditCopilotResult {
   clearRestoredInput: () => void;
 }
 
-export function editCopilotStorageKey(variantId: string): string {
-  return `nova-edit-copilot-thread:${variantId}`;
+export function editCopilotStorageKey(
+  itemId: string,
+  variantId: string,
+): string {
+  return `nova-edit-copilot-thread:${itemId}:${variantId}`;
 }
 
 let messageCounter = 0;
@@ -74,8 +81,9 @@ function storage(): Storage | null {
   }
 }
 
-function readThread(variantId: string): CopilotMessage[] {
-  const raw = storage()?.getItem(editCopilotStorageKey(variantId));
+function readThread(itemId: string, variantId: string): CopilotMessage[] {
+  if (!itemId || !variantId) return [];
+  const raw = storage()?.getItem(editCopilotStorageKey(itemId, variantId));
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as { v?: number; messages?: unknown };
@@ -96,19 +104,27 @@ function isCopilotMessage(value: unknown): value is CopilotMessage {
   );
 }
 
-function writeThread(variantId: string, messages: CopilotMessage[]) {
+function writeThread(
+  itemId: string,
+  variantId: string,
+  messages: CopilotMessage[],
+) {
+  if (!itemId || !variantId) return;
   // undoVersion is meaningless across mounts: the history counter restarts at 0
   // per editor session, so a persisted version could collide with a fresh
   // counter and revive a stale Undo chip against unrelated edits (review F3).
-  const persistable = messages.map(({ undoVersion: _drop, ...rest }) => rest);
+  const persistable = messages
+    .filter((message) => !message.pending)
+    .map(({ undoVersion: _dropUndo, pending: _dropPending, ...rest }) => rest);
   storage()?.setItem(
-    editCopilotStorageKey(variantId),
+    editCopilotStorageKey(itemId, variantId),
     JSON.stringify({ v: 1, messages: persistable }),
   );
 }
 
-function removeThread(variantId: string) {
-  storage()?.removeItem(editCopilotStorageKey(variantId));
+function removeThread(itemId: string, variantId: string) {
+  if (!itemId || !variantId) return;
+  storage()?.removeItem(editCopilotStorageKey(itemId, variantId));
 }
 
 function summaries(result: ApplyCopilotOpsResult): {
@@ -129,7 +145,9 @@ function appendRejectionSuffix(reply: string, rejected: string[]): string {
   return `${reply}\n\nCouldn't apply: ${rejected.join("; ")}`;
 }
 
-export function messagesToCopilotTurns(messages: CopilotMessage[]): EditCopilotTurn[] {
+export function messagesToCopilotTurns(
+  messages: CopilotMessage[],
+): EditCopilotTurn[] {
   return messages.slice(-12).map((message) => ({
     role: message.role,
     content: message.text,
@@ -142,8 +160,12 @@ export function messagesToCopilotTurns(messages: CopilotMessage[]): EditCopilotT
   }));
 }
 
-export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResult {
-  const [messages, setMessages] = useState<CopilotMessage[]>(() => readThread(opts.variantId));
+export function useEditCopilot(
+  opts: UseEditCopilotOptions,
+): UseEditCopilotResult {
+  const [messages, setMessages] = useState<CopilotMessage[]>(() =>
+    readThread(opts.itemId, opts.variantId),
+  );
   const [sending, setSending] = useState(false);
   const [queued, setQueued] = useState<QueuedCopilotMessage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -154,7 +176,11 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
   const messagesRef = useRef(messages);
   const sendingRef = useRef(false);
   const queuedRef = useRef<QueuedCopilotMessage | null>(null);
-  const activeTurnRef = useRef<{ id: number; text: string } | null>(null);
+  const activeTurnRef = useRef<{
+    id: number;
+    text: string;
+    userMessageId: string;
+  } | null>(null);
   const abandonedTurnsRef = useRef(new Set<number>());
   const turnIdRef = useRef(0);
   const runTurnRef = useRef<(text: string) => Promise<void>>(async () => {});
@@ -166,45 +192,64 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
   queuedRef.current = queued;
 
   useEffect(() => {
-    const restored = readThread(opts.variantId);
+    const restored = readThread(opts.itemId, opts.variantId);
+    // Prevent the A->B key-change commit from persisting A's still-rendered
+    // messages into B's bucket before the restored B thread lands.
+    skipNextPersistRef.current = true;
     setMessages(restored);
     messagesRef.current = restored;
     setQueued(null);
     queuedRef.current = null;
     setError(null);
     setRestoredInput("");
-  }, [opts.variantId]);
+  }, [opts.itemId, opts.variantId]);
 
   useEffect(() => {
     if (skipNextPersistRef.current) {
       skipNextPersistRef.current = false;
       return;
     }
-    writeThread(opts.variantId, messages);
-  }, [messages, opts.variantId]);
+    writeThread(opts.itemId, opts.variantId, messages);
+  }, [messages, opts.itemId, opts.variantId]);
 
   const runTurn = useCallback(async (text: string): Promise<void> => {
     const trimmed = text.trim();
     if (!trimmed) return;
+    if (!optsRef.current.itemId || !optsRef.current.variantId) return;
 
     setSending(true);
     sendingRef.current = true;
     turnIdRef.current += 1;
     const turnId = turnIdRef.current;
-    activeTurnRef.current = { id: turnId, text: trimmed };
     setError(null);
     setRestoredInput("");
 
-    const snapshot = optsRef.current.buildSnapshot();
     const priorTurns = messagesToCopilotTurns(messagesRef.current);
+    const userMessageId = nextMessageId("user");
+    const optimisticUserMessage: CopilotMessage = {
+      id: userMessageId,
+      role: "user",
+      text: trimmed,
+      pending: true,
+    };
+    const optimisticMessages = [...messagesRef.current, optimisticUserMessage];
+    messagesRef.current = optimisticMessages;
+    setMessages(optimisticMessages);
+    activeTurnRef.current = { id: turnId, text: trimmed, userMessageId };
+
+    const snapshot = optsRef.current.buildSnapshot();
     let succeeded = false;
 
     try {
-      const response = await editCopilotTurn(optsRef.current.itemId, optsRef.current.variantId, {
-        message: trimmed,
-        turns: priorTurns,
-        snapshot,
-      });
+      const response = await editCopilotTurn(
+        optsRef.current.itemId,
+        optsRef.current.variantId,
+        {
+          message: trimmed,
+          turns: priorTurns,
+          snapshot,
+        },
+      );
       const applyResult = response.needs_clarification
         ? { textActions: [], nextSlots: null, applied: [], rejected: [] }
         : optsRef.current.applyOps(response.ops, snapshot);
@@ -212,12 +257,22 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
         abandonedTurnsRef.current.delete(turnId);
         return;
       }
-      const applyMeta = optsRef.current.onApplied?.(applyResult, response, snapshot);
+      const applyMeta = optsRef.current.onApplied?.(
+        applyResult,
+        response,
+        snapshot,
+      );
       const outcome = summaries(applyResult);
-      const assistantText = appendRejectionSuffix(response.reply, outcome.rejected);
+      const assistantText = appendRejectionSuffix(
+        response.reply,
+        outcome.rejected,
+      );
       const nextMessages: CopilotMessage[] = [
-        ...messagesRef.current,
-        { id: nextMessageId("user"), role: "user", text: trimmed },
+        ...messagesRef.current.map((message) => {
+          if (message.id !== userMessageId) return message;
+          const { pending: _dropPending, ...rest } = message;
+          return rest;
+        }),
         {
           id: nextMessageId("assistant"),
           role: "assistant",
@@ -237,6 +292,11 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
         abandonedTurnsRef.current.delete(turnId);
         return;
       }
+      const nextMessages = messagesRef.current.filter(
+        (message) => message.id !== userMessageId,
+      );
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
       setError(
         err instanceof Error
           ? err.message
@@ -267,24 +327,33 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
 
   runTurnRef.current = runTurn;
 
-  const [fireQueued, setFireQueued] = useState<QueuedCopilotMessage | null>(null);
+  const [fireQueued, setFireQueued] = useState<QueuedCopilotMessage | null>(
+    null,
+  );
   useEffect(() => {
     if (!fireQueued) return;
     setFireQueued(null);
     void runTurnRef.current(fireQueued.text);
   }, [fireQueued]);
 
-  const send = useCallback(async (text: string) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    if (sendingRef.current) {
-      const next = { id: queuedRef.current?.id ?? nextMessageId("queued"), text: trimmed };
-      queuedRef.current = next;
-      setQueued(next);
-      return;
-    }
-    await runTurn(trimmed);
-  }, [runTurn]);
+  const send = useCallback(
+    async (text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      if (!optsRef.current.itemId || !optsRef.current.variantId) return;
+      if (sendingRef.current) {
+        const next = {
+          id: queuedRef.current?.id ?? nextMessageId("queued"),
+          text: trimmed,
+        };
+        queuedRef.current = next;
+        setQueued(next);
+        return;
+      }
+      await runTurn(trimmed);
+    },
+    [runTurn],
+  );
 
   const cancelQueued = useCallback(() => {
     queuedRef.current = null;
@@ -298,7 +367,10 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
       setQueued(null);
       return;
     }
-    const next = { id: queuedRef.current?.id ?? nextMessageId("queued"), text: trimmed };
+    const next = {
+      id: queuedRef.current?.id ?? nextMessageId("queued"),
+      text: trimmed,
+    };
     queuedRef.current = next;
     setQueued(next);
   }, []);
@@ -308,6 +380,11 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
     if (!active) return;
     abandonedTurnsRef.current.add(active.id);
     activeTurnRef.current = null;
+    const nextMessages = messagesRef.current.filter(
+      (message) => message.id !== active.userMessageId,
+    );
+    messagesRef.current = nextMessages;
+    setMessages(nextMessages);
     setRestoredInput(active.text);
     setSending(false);
     sendingRef.current = false;
@@ -324,7 +401,7 @@ export function useEditCopilot(opts: UseEditCopilotOptions): UseEditCopilotResul
     setRestoredInput("");
     setSuggestions([]);
     skipNextPersistRef.current = true;
-    removeThread(optsRef.current.variantId);
+    removeThread(optsRef.current.itemId, optsRef.current.variantId);
   }, []);
 
   const clearRestoredInput = useCallback(() => {

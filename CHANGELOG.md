@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.29.1] — 2026-07-13
+
+### Fixed
+- **Copilot chat threads no longer bleed across edit items.** Threads are now sessionStorage-keyed by `itemId:variantId` (was variant id only) — while the variant was still loading (or the editor URL lacked `?variant=`) the key collapsed to one shared bucket, so opening a different edit item showed the previous item's chat. Reads/writes/sends now refuse unresolved ids, and the persist effect skips the variant-switch commit so item A's messages can no longer be written into item B's bucket during the switch.
+- **Sent copilot messages appear instantly.** The user's message now renders as a chat bubble the moment it's sent (optimistically, with the thinking indicator below it) instead of only appearing together with Nova's reply. On transport failure or Stop, the bubble is removed and the text returns to the composer, matching the existing retry contract; in-flight bubbles are never persisted, so a tab closed mid-turn can't restore a dangling message with no reply.
+
 ## [0.7.29.0] — 2026-07-13
 
 ### Added
