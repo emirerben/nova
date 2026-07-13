@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.29.0] — 2026-07-13
+
+### Added
+- **Polaroid wall montage preset.** Creators can now choose a Polaroid-style collage with thick white frames, larger hero cards, subtle shadows, organic rotation, and smart spacing that keeps cards from overlapping while preserving text-safe whitespace.
+- **Polaroid preset support across plan-item generation.** The new preset can accept still images like Masonry, renders through the collage compositor, preserves its preset metadata on variants, disables clip-timeline editing where a collage has no linear timeline, and keeps safe audio-only song swaps for text variants.
+
 ## [0.7.28.0] — 2026-07-13
 
 ### Added

@@ -1546,12 +1546,13 @@ def test_capabilities_talking_head_archetype(monkeypatch):
     assert caps["overlays"] is True
 
 
-def test_capabilities_masonry_preset_disables_clip_timeline(monkeypatch):
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_capabilities_collage_preset_disables_clip_timeline(monkeypatch, preset):
     _arm(monkeypatch)
     job = _job(
         variant_id="song_text",
-        montage_preset="masonry",
-        montage_preset_rendered="masonry",
+        montage_preset=preset,
+        montage_preset_rendered=preset,
         mix=None,
     )
     caps = _caps(job, "song_text")

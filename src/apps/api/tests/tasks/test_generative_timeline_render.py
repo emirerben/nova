@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import types
 
+import pytest
+
 import app.tasks.generative_build as gb
 
 JOB_ID = "12345678-1234-5678-1234-567812345678"
@@ -738,14 +740,15 @@ def test_no_timeline_takes_fresh_match_as_today(monkeypatch):
     assert updates[-1]["ok"] is True
 
 
-def test_masonry_song_swap_takes_audio_only_path_without_timeline_reset(monkeypatch):
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_collage_song_swap_takes_audio_only_path_without_timeline_reset(monkeypatch, preset):
     variant = _existing_variant(
         variant_id="song_text",
         rank=1,
         text_mode="agent_text",
         music_track_id="t1",
-        montage_preset="masonry",
-        montage_preset_rendered="masonry",
+        montage_preset=preset,
+        montage_preset_rendered=preset,
         video_path=f"generative-jobs/{JOB_ID}/variant_1_song_text.mp4",
         base_video_path=f"generative-jobs/{JOB_ID}/base_1_song_text.mp4",
         user_timeline={"slots": [_tl_slot(1, in_s=2.0, duration_s=1.0)]},
@@ -787,14 +790,15 @@ def test_masonry_song_swap_takes_audio_only_path_without_timeline_reset(monkeypa
     assert job.assembly_plan["variants"][0]["user_timeline"] == variant["user_timeline"]
 
 
-def test_masonry_lyrics_swap_is_not_audio_only() -> None:
+@pytest.mark.parametrize("preset", ["masonry", "polaroid_wall"])
+def test_collage_lyrics_swap_is_not_audio_only(preset: str) -> None:
     variant = _existing_variant(
         variant_id="song_lyrics",
         text_mode="lyrics",
         music_track_id="t1",
-        montage_preset_rendered="masonry",
+        montage_preset_rendered=preset,
     )
-    assert gb._is_masonry_audio_only_swap_eligible(variant, "t2") is False
+    assert gb._is_collage_audio_only_swap_eligible(variant, "t2") is False
 
 
 def test_swap_song_clears_user_timeline_and_takes_fresh_match(monkeypatch):

@@ -81,7 +81,11 @@ from app.routes.generative_jobs import (
     validate_sound_effects_for_user,
 )
 from app.routes.waitlist import get_real_ip
-from app.schemas.montage_preset import coerce_montage_preset
+from app.schemas.montage_preset import (
+    MontagePreset,
+    coerce_montage_preset,
+    is_collage_montage_preset,
+)
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -143,15 +147,14 @@ def _is_image_clip_path(path: str) -> bool:
     return any(clean.endswith(ext) for ext in _IMAGE_FILE_EXTS)
 
 
-def _item_uses_masonry(item: PlanItem) -> bool:
-    return (
-        coerce_edit_format(getattr(item, "edit_format", None)) == "montage"
-        and coerce_montage_preset(getattr(item, "montage_preset", None)) == "masonry"
-    )
+def _item_uses_collage_preset(item: PlanItem) -> bool:
+    return coerce_edit_format(
+        getattr(item, "edit_format", None)
+    ) == "montage" and is_collage_montage_preset(getattr(item, "montage_preset", None))
 
 
 def _allowed_item_upload_content_types(item: PlanItem) -> set[str]:
-    if _item_uses_masonry(item):
+    if _item_uses_collage_preset(item):
         return _ALLOWED_CONTENT_TYPES | _IMAGE_CONTENT_TYPES
     return _ALLOWED_CONTENT_TYPES
 
@@ -237,8 +240,8 @@ class PlanItemResponse(BaseModel):
     # "talking_head"). Null for items generated before this field shipped.
     edit_format: str | None = None
     # Montage visual preset. "classic" preserves today's sequential montage;
-    # "masonry" opts into the collage-wall assembler.
-    montage_preset: Literal["classic", "masonry"] = "classic"
+    # collage presets opt into the collage-wall assembler.
+    montage_preset: MontagePreset = "classic"
     # Narrated-walkthrough voiceover (0056+). GCS key under voiceover-uploads/.
     # NULL = no voiceover attached; non-null = user has recorded or uploaded one.
     voiceover_gcs_path: str | None = None
@@ -437,7 +440,7 @@ class PlanItemEdit(BaseModel):
     # Ignored for portrait/square clips — they always crop regardless.
     landscape_fit: Literal["fit", "fill"] | None = None
     # Montage visual preset. Only affects montage renders; default classic.
-    montage_preset: Literal["classic", "masonry"] | None = None
+    montage_preset: MontagePreset | None = None
     # Per-item content_mode override (montage plan-vs-have toggle, 0058+).
     # When set, supersedes the persona-level content_mode for this item only.
     # "create_new" = "Planning to film"; "existing_footage" = "I already have footage".
@@ -682,7 +685,7 @@ async def create_upload_urls(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
-                    "Photos require Masonry collage"
+                    "Photos require a collage preset"
                     if f.content_type in _IMAGE_CONTENT_TYPES
                     else f"Unsupported content type: {f.content_type}"
                 ),
@@ -836,13 +839,13 @@ async def attach_clips(
             )
         )
         kind_by_path = {row.gcs_path: row.kind for row in asset_rows.scalars()}
-        allowed_asset_kinds = {"video", "image"} if _item_uses_masonry(item) else {"video"}
+        allowed_asset_kinds = {"video", "image"} if _item_uses_collage_preset(item) else {"video"}
         for p in new_pool_paths:
             if kind_by_path.get(p) not in allowed_asset_kinds:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=(
-                        "Photos require Masonry collage"
+                        "Photos require a collage preset"
                         if kind_by_path.get(p) == "image"
                         else "Only video visuals from the pool can be used in the edit"
                     ),
@@ -1323,12 +1326,12 @@ async def generate_item(
             status_code=status.HTTP_409_CONFLICT,
             detail="Upload at least one clip before generating",
         )
-    if not _item_uses_masonry(item) and any(
+    if not _item_uses_collage_preset(item) and any(
         _is_image_clip_path(p) for p in (item.clip_gcs_paths or [])
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Photos require Masonry collage",
+            detail="Photos require a collage preset",
         )
     # Idempotency guard (dogfood: double-clicking Generate minted two render
     # jobs). The Job is created async by the task, so also reject while the

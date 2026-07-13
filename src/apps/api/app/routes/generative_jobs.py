@@ -39,6 +39,7 @@ from app.auth import CurrentUserOrSynthetic, ensure_job_owner
 from app.database import get_db
 from app.models import Job, MusicTrack, User
 from app.routes.admin_music import _validate_clip_path_prefixes, _validate_voiceover_path
+from app.schemas.montage_preset import is_collage_montage_preset
 from app.services.media_overlay_preview import (
     convert_heif_overlay_preview,
     is_heif_overlay,
@@ -2389,7 +2390,7 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
         return "voiceover_bed_fit"  # slots are fit to the voice bed, not user cuts
     if variant.get("resolved_archetype") == "talking_head":
         return "no_slot_timeline"  # talking_head renders have no slot layout
-    if variant.get("montage_preset_rendered") == "masonry":
+    if is_collage_montage_preset(variant.get("montage_preset_rendered")):
         return "masonry_preset"  # collage tiles do not map to a linear slot timeline
     if vid not in _TIMELINE_EDITABLE_VARIANTS:
         return "unsupported_variant"

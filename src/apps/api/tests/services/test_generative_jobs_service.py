@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from app.schemas.montage_preset import coerce_montage_preset
 from app.services.generative_jobs import build_generative_job
 
 
@@ -119,7 +120,9 @@ def test_edit_format_passthrough_and_coercion() -> None:
     assert job2.all_candidates["edit_format"] == "montage"
 
 
-def test_montage_preset_omits_classic_and_stashes_masonry() -> None:
+def test_montage_preset_omits_classic_and_stashes_collage_presets() -> None:
+    assert coerce_montage_preset("polaroid_wall") == "polaroid_wall"
+
     classic = build_generative_job(
         user_id=uuid.uuid4(),
         clip_paths=["users/u/plan/i/a.mp4"],
@@ -127,12 +130,13 @@ def test_montage_preset_omits_classic_and_stashes_masonry() -> None:
     )
     assert "montage_preset" not in classic.all_candidates
 
-    masonry = build_generative_job(
-        user_id=uuid.uuid4(),
-        clip_paths=["users/u/plan/i/a.mp4"],
-        montage_preset="masonry",
-    )
-    assert masonry.all_candidates["montage_preset"] == "masonry"
+    for preset in ("masonry", "polaroid_wall"):
+        collage = build_generative_job(
+            user_id=uuid.uuid4(),
+            clip_paths=["users/u/plan/i/a.mp4"],
+            montage_preset=preset,
+        )
+        assert collage.all_candidates["montage_preset"] == preset
 
     unknown = build_generative_job(
         user_id=uuid.uuid4(),
