@@ -34,6 +34,16 @@
       "name": "split outside slot window",
       "reason": "split_clip.at_s is assembled-output time inside the slot output window",
       "op": {"op": "split_clip", "slot_index": 1, "at_s": 9.5}
+    },
+    {
+      "name": "intro layout missing layout",
+      "reason": "set_intro_layout requires layout",
+      "op": {"op": "set_intro_layout"}
+    },
+    {
+      "name": "intro layout invalid layout",
+      "reason": "layout must be linear or cluster",
+      "op": {"op": "set_intro_layout", "layout": "stacked"}
     }
   ]
 }

@@ -24,6 +24,7 @@ import {
   getPlanItem,
   getPlanItemJobStatus,
   deletePoolAsset,
+  editPlanItemVariant,
   NotAuthenticatedError,
   confirmOverlayUploads,
   listPoolAssets,
@@ -1626,12 +1627,40 @@ export default function EditorShell({
       state.bars.some((bar) => bar.role === "narrated_caption");
     const musicSwappable = !!variant?.music_track_id && !readOnly;
     const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
+    const introText = variant?.intro_text?.trim() ?? "";
+    const introWordCount = introText ? introText.split(/\s+/).filter(Boolean).length : 0;
+    const sequenceCapable = variant?.sequence_synced === true || variant?.intro_mode === "sequence";
+    const intro =
+      variant?.text_mode === "agent_text" && (introText || sequenceCapable)
+        ? {
+            layout:
+              sequenceCapable || variant.intro_layout === "cluster"
+                ? "cluster" as const
+                : "linear" as const,
+            mode: variant.intro_mode ?? null,
+            text: introText || null,
+            word_count: introWordCount,
+            sequence_capable: sequenceCapable,
+            cluster_eligible: sequenceCapable || (introWordCount >= 3 && introWordCount <= 6),
+            switch_blocked_reason: readOnly
+              ? "read_only" as const
+              : variant.render_status === "rendering"
+                ? "rendering" as const
+                : variant.text_elements_user_edited
+                  ? "manual_text_edits" as const
+                  : dirty
+                    ? "unsaved_edits" as const
+                    : null,
+          }
+        : undefined;
+    const renderLayoutSwitchable = intro != null && intro.switch_blocked_reason === null;
     const allowedFamilies = allowedOpFamiliesFromCapabilities(capabilities, {
       sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
       captionsPresent,
       musicSwappable,
       mixAllowed,
+      renderLayoutSwitchable,
       titleEditable: !readOnly,
       openTools,
       readOnly,
@@ -1657,6 +1686,8 @@ export default function EditorShell({
         candidates: musicTracks,
       },
       mixLevel,
+      intro,
+      renderLayoutSwitchable,
       title,
       readOnly: readOnly || allowedFamilies.length === 0,
     });
@@ -1667,6 +1698,7 @@ export default function EditorShell({
     clip.state.grid,
     effectiveMusicTitle,
     effectiveMusicTrackId,
+    dirty,
     localOverlays,
     localSfx,
     mixLevel,
@@ -1679,7 +1711,14 @@ export default function EditorShell({
     title,
     toolDisabledReasons,
     variant?.music_track_id,
+    variant?.intro_layout,
+    variant?.intro_mode,
+    variant?.intro_text,
+    variant?.render_status,
     variant?.resolved_archetype,
+    variant?.sequence_synced,
+    variant?.text_elements_user_edited,
+    variant?.text_mode,
   ]);
 
   const applyCopilotDraftOps = useCallback(
@@ -1724,6 +1763,7 @@ export default function EditorShell({
   );
 
   const flashTimerRef = useRef<number | null>(null);
+  const copilotRenderNavTimerRef = useRef<number | null>(null);
   const flashCopilotTargets = useCallback(
     (targets: {
       textIds?: string[];
@@ -1748,12 +1788,35 @@ export default function EditorShell({
   useEffect(
     () => () => {
       if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+      if (copilotRenderNavTimerRef.current !== null) {
+        window.clearTimeout(copilotRenderNavTimerRef.current);
+      }
     },
     [],
   );
 
   const handleCopilotOps = useCallback(
     (result: ApplyCopilotOpsResult): { undoVersion?: number } => {
+      if (result.renderRequest) {
+        if (!readOnly && variant) {
+          void editPlanItemVariant(itemId, variant.variant_id, {
+            intro_layout: result.renderRequest.layout,
+          })
+            .then(() => {
+              if (copilotRenderNavTimerRef.current !== null) {
+                window.clearTimeout(copilotRenderNavTimerRef.current);
+              }
+              copilotRenderNavTimerRef.current = window.setTimeout(() => {
+                copilotRenderNavTimerRef.current = null;
+                router.push(`/plan/items/${itemId}`);
+              }, 1400);
+            })
+            .catch((err) => {
+              setToast(err instanceof Error ? err.message : "Couldn't update the intro layout.");
+            });
+        }
+        return {};
+      }
       const hasAppliedChanges =
         result.textActions.length > 0 ||
         result.nextSlots !== null ||
@@ -1867,10 +1930,12 @@ export default function EditorShell({
       overlaySuggestions,
       pausePlayback,
       readOnly,
+      router,
       seekPlaybackTo,
       selectElement,
       slots,
       state.bars,
+      itemId,
       variant,
     ],
   );

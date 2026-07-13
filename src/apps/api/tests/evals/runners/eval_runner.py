@@ -527,6 +527,8 @@ def _post_eval_to_langfuse(
 # `nova.compose.template_recipe`; route audio to its own rubric file.
 _RUBRIC_FILENAME_OVERRIDES: dict[str, str] = {
     "nova.audio.template_recipe": "audio_template",
+    # rsplit would yield "copilot"; the rubric ships as edit_copilot.md.
+    "nova.edit.copilot": "edit_copilot",
 }
 
 

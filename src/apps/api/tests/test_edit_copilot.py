@@ -59,6 +59,7 @@ def _full_snapshot(*, allowed=None) -> dict:
             "caption",
             "music",
             "mix",
+            "render",
             "title",
             "tool",
         ]
@@ -119,11 +120,26 @@ def _full_snapshot(*, allowed=None) -> dict:
                 "candidates": [{"id": "track-1", "title": "New Song"}],
             },
             "mix": {"music_level": 0.5},
+            "intro": _intro(),
             "title": "Old title",
             "open_tools": ["text", "sounds", "overlays", "styles"],
         }
     )
     return snap
+
+
+def _intro(**overrides) -> dict:
+    intro = {
+        "layout": "linear",
+        "mode": "linear",
+        "text": "what a view today",
+        "word_count": 4,
+        "sequence_capable": False,
+        "cluster_eligible": True,
+        "switch_blocked_reason": None,
+    }
+    intro.update(overrides)
+    return intro
 
 
 def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None, snapshot=None):
@@ -150,7 +166,10 @@ def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None, snapsh
 def test_copilot_valid_op_fixtures_parse() -> None:
     data = json.loads((FIXTURE_DIR / "valid.json").read_text())
     for case in data["cases"]:
-        out = _parse([case["op"]])
+        snap = _full_snapshot()
+        if case["op"].get("op") == "set_intro_layout" and case["op"].get("layout") == "linear":
+            snap["intro"] = _intro(layout="cluster", mode="cluster")
+        out = _parse([case["op"]], snapshot=snap)
         assert len(out.ops) == 1, case["name"]
 
 
@@ -331,6 +350,76 @@ def test_copilot_set_mix_requires_mix_section() -> None:
     snap.pop("mix")
     out = _parse([{"op": "set_mix", "music_level": 0.25}], snapshot=snap)
     assert out.ops == []
+
+
+def test_copilot_set_intro_layout_parses() -> None:
+    out = _parse([{"op": "set_intro_layout", "layout": "cluster"}], snapshot=_full_snapshot())
+    assert out.ops == [{"op": "set_intro_layout", "layout": "cluster"}]
+
+
+def test_copilot_set_intro_layout_invalid_layout_drops_and_caps_confidence() -> None:
+    out = _parse(
+        [{"op": "set_intro_layout", "layout": "stacked"}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
+def test_copilot_set_intro_layout_family_not_allowed_drop() -> None:
+    out = _parse(
+        [{"op": "set_intro_layout", "layout": "cluster"}],
+        snapshot=_full_snapshot(allowed=["text"]),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_intro_layout_missing_intro_section_drop() -> None:
+    snap = _full_snapshot()
+    snap.pop("intro")
+    out = _parse([{"op": "set_intro_layout", "layout": "cluster"}], snapshot=snap)
+    assert out.ops == []
+    assert out.confidence == 0.9
+
+
+def test_copilot_set_intro_layout_same_layout_noop_drop() -> None:
+    out = _parse(
+        [{"op": "set_intro_layout", "layout": "linear"}],
+        confidence=0.9,
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == []
+    assert out.confidence == 0.9
+    assert not out.needs_clarification
+
+
+def test_copilot_set_intro_layout_cluster_ineligible_drop() -> None:
+    snap = _full_snapshot()
+    snap["intro"] = _intro(word_count=9, cluster_eligible=False)
+    out = _parse(
+        [{"op": "set_intro_layout", "layout": "cluster"}],
+        confidence=0.9,
+        snapshot=snap,
+    )
+    assert out.ops == []
+    assert out.confidence == 0.4
+    assert out.needs_clarification
+
+
+def test_copilot_set_intro_layout_sequence_capable_allows_cluster() -> None:
+    snap = _full_snapshot()
+    snap["intro"] = _intro(
+        mode="sequence",
+        text="too many words for regular cluster layout today",
+        word_count=8,
+        sequence_capable=True,
+        cluster_eligible=True,
+    )
+    out = _parse([{"op": "set_intro_layout", "layout": "cluster"}], snapshot=snap)
+    assert out.ops == [{"op": "set_intro_layout", "layout": "cluster"}]
 
 
 def test_copilot_patch_overlay_whitelist_and_empty_drop() -> None:

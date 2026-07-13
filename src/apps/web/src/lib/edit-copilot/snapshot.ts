@@ -121,6 +121,16 @@ export interface CopilotMusicCandidateSnapshot {
   title: string;
 }
 
+export interface CopilotIntroSnapshot {
+  layout: "linear" | "cluster";
+  mode: string | null;
+  text: string | null;
+  word_count: number;
+  sequence_capable: boolean;
+  cluster_eligible: boolean;
+  switch_blocked_reason: null | "unsaved_edits" | "manual_text_edits" | "read_only" | "rendering";
+}
+
 export interface CopilotSnapshot {
   text_bars: CopilotTextSnapshotBar[];
   slots: CopilotSlotSnapshot[];
@@ -152,6 +162,7 @@ export interface CopilotSnapshot {
   mix?: {
     music_level: number | null;
   };
+  intro?: CopilotIntroSnapshot;
   title?: string;
   open_tools?: Array<"text" | "sounds" | "overlays" | "styles">;
   allowed_op_families: CopilotOpFamily[];
@@ -170,6 +181,7 @@ export interface AllowedOpFamilyOptions {
   titleEditable?: boolean;
   openTools?: Array<"text" | "sounds" | "overlays" | "styles">;
   readOnly?: boolean;
+  renderLayoutSwitchable?: boolean;
 }
 
 export interface CaptionCueLike {
@@ -194,6 +206,7 @@ export interface BuildCopilotSnapshotOptions extends AllowedOpFamilyOptions {
     candidates: MusicTrackSummary[] | CopilotMusicCandidateSnapshot[];
   };
   mixLevel?: number | null;
+  intro?: CopilotIntroSnapshot;
   title?: string | null;
 }
 
@@ -218,7 +231,10 @@ export function allowedOpFamiliesFromCapabilities(
   capabilities: EditorCapabilities | null | undefined,
   options: AllowedOpFamilyOptions = {},
 ): CopilotOpFamily[] {
-  if (options.readOnly || allCoreCapabilitiesFalse(capabilities)) return [];
+  if (options.readOnly) return [];
+  if (allCoreCapabilitiesFalse(capabilities)) {
+    return options.renderLayoutSwitchable ? ["render"] : [];
+  }
   const families: CopilotOpFamily[] = [];
   if (capabilities?.text_elements !== false) families.push("text");
   if (capabilities?.timeline !== false) families.push("clip");
@@ -226,6 +242,7 @@ export function allowedOpFamiliesFromCapabilities(
   if (capabilities?.overlays !== false && options.overlaysEnabled) families.push("overlay");
   if (options.captionsPresent) families.push("caption");
   if (options.musicSwappable || options.mixAllowed) families.push("music");
+  if (options.renderLayoutSwitchable) families.push("render");
   if (options.titleEditable !== false) families.push("title");
   if ((options.openTools?.length ?? 0) > 0) families.push("tool");
   return families;
@@ -453,6 +470,12 @@ export function buildCopilotSnapshot(
   if (allowed.has("music") && options.mixLevel !== undefined) {
     snapshot.mix = {
       music_level: options.mixLevel == null ? null : roundCopilotNumber(options.mixLevel),
+    };
+  }
+  if (options.intro) {
+    snapshot.intro = {
+      ...options.intro,
+      text: truncate(options.intro.text, 300),
     };
   }
   if (allowed.has("title") && options.title != null) {

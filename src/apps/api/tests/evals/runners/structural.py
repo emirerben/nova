@@ -1686,6 +1686,7 @@ def check_edit_copilot(output: Any) -> list[str]:
         "set_caption_meta",
         "swap_music",
         "set_mix",
+        "set_intro_layout",
         "set_title",
         "open_tool",
     }

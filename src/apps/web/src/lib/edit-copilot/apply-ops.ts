@@ -93,6 +93,7 @@ export interface ApplyCopilotOpsResult {
   acceptedSuggestionRefs?: AcceptedSuggestionRef[];
   nextMusicTrackId?: string;
   nextMixLevel?: number;
+  renderRequest?: { kind: "set_intro_layout"; layout: "linear" | "cluster" };
   nextTitle?: string;
   captionMetaPatch?: CaptionMetaPatch;
   openTool?: "text" | "sounds" | "overlays" | "styles";
@@ -253,6 +254,7 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "set_caption_meta") return "Captions";
   if (op.op === "swap_music") return "Swapped song";
   if (op.op === "set_mix") return "Music volume";
+  if (op.op === "set_intro_layout") return "Intro layout";
   if (op.op === "set_title") return "Title set";
   if (op.op === "open_tool") return `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`;
   const _exhaustive: never = op;
@@ -392,6 +394,7 @@ export function applyCopilotOps(
   let acceptedSuggestionRefs: AcceptedSuggestionRef[] | undefined;
   let nextMusicTrackId: string | undefined;
   let nextMixLevel: number | undefined;
+  let renderRequest: ApplyCopilotOpsResult["renderRequest"];
   let nextTitle: string | undefined;
   let captionMetaPatch: CaptionMetaPatch | undefined;
   let openTool: ApplyCopilotOpsResult["openTool"];
@@ -406,6 +409,21 @@ export function applyCopilotOps(
 
   function currentOverlays(): MediaOverlay[] {
     return nextOverlays ?? workingOverlays;
+  }
+
+  function hasDraftMutation(): boolean {
+    return (
+      textActions.length > 0 ||
+      nextSlots !== null ||
+      nextSfx !== undefined ||
+      nextOverlays !== undefined ||
+      (acceptedSuggestionRefs?.length ?? 0) > 0 ||
+      nextMusicTrackId !== undefined ||
+      nextMixLevel !== undefined ||
+      nextTitle !== undefined ||
+      captionMetaPatch !== undefined ||
+      openTool !== undefined
+    );
   }
 
   for (const raw of rawOps) {
@@ -858,6 +876,35 @@ export function applyCopilotOps(
       }
       nextMixLevel = op.music_level;
       applied.push({ label: `Music volume ${Math.round(op.music_level * 100)}%`, from: fmt(ctx.mixLevel), to: fmt(op.music_level) });
+    } else if (op.op === "set_intro_layout") {
+      if (!ctx.snapshot.intro) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "intro layout is not available"));
+        continue;
+      }
+      if (renderRequest || hasDraftMutation() || rawOps.length > 1) {
+        rejected.push(reject(
+          op.op,
+          labelForOp(op),
+          "capability_disabled",
+          "a layout change re-renders the video — ask for it on its own",
+        ));
+        continue;
+      }
+      if (op.layout === ctx.snapshot.intro.layout) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "intro already uses this layout"));
+        continue;
+      }
+      if (op.layout === "cluster" && !ctx.snapshot.intro.cluster_eligible) {
+        rejected.push(reject(op.op, labelForOp(op), "invalid_op", "the editorial layout needs a 3-6 word hook"));
+        continue;
+      }
+      const label = (layout: "linear" | "cluster") => (layout === "cluster" ? "Editorial" : "Classic");
+      renderRequest = { kind: "set_intro_layout", layout: op.layout };
+      applied.push({
+        label: "Intro layout",
+        from: label(ctx.snapshot.intro.layout),
+        to: `${label(op.layout)} (re-rendering)`,
+      });
     } else if (op.op === "set_title") {
       if (ctx.snapshot.title === undefined || ctx.title === undefined) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "title is no longer available"));
@@ -891,6 +938,7 @@ export function applyCopilotOps(
     acceptedSuggestionRefs,
     nextMusicTrackId,
     nextMixLevel,
+    renderRequest,
     nextTitle,
     captionMetaPatch,
     openTool,
