@@ -41,7 +41,7 @@ const MASONRY_LAYOUT: Array<[number, number, number, number]> = [
 
 type Rect = [number, number, number, number];
 
-function isMasonryVariant(variant: PlanItemVariant | null | undefined): boolean {
+export function isMasonryVariant(variant: PlanItemVariant | null | undefined): boolean {
   return (
     variant?.montage_preset === "masonry" ||
     variant?.montage_preset_rendered === "masonry"
@@ -53,6 +53,85 @@ function clampDuration(durationS: number): number {
   return Math.max(0.1, Math.min(MASONRY_MAX_DURATION_S, durationS));
 }
 
+function masonryMotion(durationS: number): Record<string, unknown> {
+  const boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34;
+  return {
+    mode: "masonry_pan_x",
+    duration_s: clampDuration(durationS),
+    pan_px: Math.max(0, boardWidth - CANVAS_W),
+    board_width_px: boardWidth,
+    frame_width_px: CANVAS_W,
+  };
+}
+
+function candidateFromRect({
+  left,
+  top,
+  width,
+  height,
+  durationS,
+  rotationDeg = 0,
+  maxWidthFrac,
+  confidence,
+  source = "editor_fallback_masonry",
+}: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  durationS: number;
+  rotationDeg?: number;
+  maxWidthFrac?: number;
+  confidence: number;
+  source?: string;
+}): TextPlacementCandidate {
+  const resolvedMaxWidth =
+    maxWidthFrac ??
+    (rotationDeg
+      ? Math.min(0.82, Math.max(0.36, (height / CANVAS_W) * 0.86))
+      : Math.max(MASONRY_PLACEMENT_MIN_WIDTH_FRAC, Math.min(0.9, (width / CANVAS_W) * 0.92)));
+  return {
+    source,
+    x_frac: round4((left + width / 2) / CANVAS_W),
+    y_frac: round4((top + height / 2) / CANVAS_H),
+    max_width_frac: round4(Math.max(0.2, Math.min(0.9, resolvedMaxWidth))),
+    rotation_deg: rotationDeg,
+    confidence: round3(Math.max(0, Math.min(0.98, confidence))),
+    masonry_motion: masonryMotion(durationS),
+  };
+}
+
+function curatedMasonryCandidates(durationS: number, maxCandidates: number): TextPlacementCandidate[] {
+  return [
+    candidateFromRect({
+      left: 54,
+      top: 552,
+      width: 209,
+      height: 808,
+      durationS,
+      rotationDeg: 90,
+      confidence: 0.9,
+    }),
+    candidateFromRect({
+      left: 401,
+      top: 39,
+      width: 572,
+      height: 125,
+      durationS,
+      confidence: 0.86,
+    }),
+    candidateFromRect({
+      left: 802,
+      top: 1510,
+      width: 242,
+      height: 250,
+      durationS,
+      maxWidthFrac: 0.26,
+      confidence: 0.68,
+    }),
+  ].slice(0, Math.max(1, maxCandidates));
+}
+
 function masonryWhitespaceCandidates({
   durationS = MASONRY_MAX_DURATION_S,
   revealWindowS = 4,
@@ -62,9 +141,12 @@ function masonryWhitespaceCandidates({
   revealWindowS?: number;
   maxCandidates?: number;
 } = {}): TextPlacementCandidate[] {
+  const duration = clampDuration(durationS);
+  const curated = curatedMasonryCandidates(duration, maxCandidates);
+  if (curated.length >= maxCandidates) return curated.slice(0, Math.max(1, maxCandidates));
+
   const boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34;
   const panPx = Math.max(0, boardWidth - CANVAS_W);
-  const duration = clampDuration(durationS);
   const windowS = Math.max(0.1, Math.min(revealWindowS, duration));
   const samples = Array.from({ length: MASONRY_PLACEMENT_SAMPLE_COUNT }, (_unused, idx) =>
     (windowS * idx) / (MASONRY_PLACEMENT_SAMPLE_COUNT - 1),
@@ -89,7 +171,7 @@ function masonryWhitespaceCandidates({
     }
   }
 
-  return largestEmptyRects(obstacles, maxCandidates).map(([score, rect]) => {
+  const scanned = largestEmptyRects(obstacles, maxCandidates).map(([score, rect]) => {
     const [left, top, right, bottom] = rect;
     const width = right - left;
     const height = bottom - top;
@@ -98,21 +180,35 @@ function masonryWhitespaceCandidates({
       (top + bottom) / 2,
     );
     const areaRatio = (width * height) / Math.max(1, CANVAS_W * CANVAS_H);
-    return {
-      source: "editor_fallback_masonry",
-      x_frac: round4((left + right) / 2 / CANVAS_W),
-      y_frac: round4(Math.max(0.12, Math.min(0.9, yCenter / CANVAS_H))),
-      max_width_frac: round4(
-        Math.max(
-          MASONRY_PLACEMENT_MIN_WIDTH_FRAC,
-          Math.min(0.9, (width / CANVAS_W) * 0.92),
-        ),
+    return candidateFromRect({
+      left,
+      top: Math.max(0, yCenter - height / 2),
+      width,
+      height,
+      durationS: duration,
+      maxWidthFrac: Math.max(
+        MASONRY_PLACEMENT_MIN_WIDTH_FRAC,
+        Math.min(0.9, (width / CANVAS_W) * 0.92),
       ),
-      confidence: round3(
+      confidence:
         Math.max(0.35, Math.min(0.98, 0.55 + areaRatio * 8 + score * 0.08)),
-      ),
-    };
+    });
   });
+  const merged = [...curated];
+  for (const candidate of scanned) {
+    if (
+      merged.some(
+        (existing) =>
+          Math.abs(existing.x_frac - candidate.x_frac) < 0.06 &&
+          Math.abs(existing.y_frac - candidate.y_frac) < 0.06,
+      )
+    ) {
+      continue;
+    }
+    merged.push(candidate);
+    if (merged.length >= maxCandidates) break;
+  }
+  return merged.slice(0, Math.max(1, maxCandidates));
 }
 
 function largestEmptyRects(obstacles: Rect[], maxRects: number): Array<[number, Rect]> {
@@ -230,16 +326,61 @@ export function resolveSmartPlacementCandidate(
   selectedBar: TextElementBar | null | undefined,
 ): TextPlacementCandidate | null {
   if (!selectedBar) return null;
-  const serverCandidate = variant?.text_placement_candidates?.[0] ?? null;
-  if (serverCandidate) return serverCandidate;
-  if (isMasonryVariant(variant)) return masonryWhitespaceCandidates()[0] ?? null;
-  return DEFAULT_SMART_PLACE;
+  return resolveSmartPlacementCandidates(variant, [selectedBar])[0] ?? null;
+}
+
+export function resolveSmartPlacementCandidates(
+  variant: PlanItemVariant | null | undefined,
+  bars: TextElementBar[],
+): TextPlacementCandidate[] {
+  if (bars.length === 0) return [];
+  const serverCandidates = variant?.text_placement_candidates?.filter(Boolean) ?? [];
+  const wanted = Math.max(3, bars.length);
+  if (serverCandidates.length > 0) {
+    if (!isMasonryVariant(variant) || serverCandidates.length >= wanted) return serverCandidates;
+    const merged = [...serverCandidates];
+    for (const candidate of masonryWhitespaceCandidates({ maxCandidates: wanted })) {
+      if (
+        merged.some(
+          (existing) =>
+            Math.abs(existing.x_frac - candidate.x_frac) < 0.06 &&
+            Math.abs(existing.y_frac - candidate.y_frac) < 0.06,
+        )
+      ) {
+        continue;
+      }
+      merged.push(candidate);
+      if (merged.length >= wanted) break;
+    }
+    return merged;
+  }
+  if (isMasonryVariant(variant)) return masonryWhitespaceCandidates({ maxCandidates: wanted });
+  return [DEFAULT_SMART_PLACE];
+}
+
+export function smartPlacementPatchForBar(
+  bar: TextElementBar,
+  candidate: TextPlacementCandidate,
+): Partial<Omit<TextElementBar, "id" | "role">> {
+  const smartText = reflowTextForSmartPlacement(bar.text, candidate);
+  const sourceParams = { ...(bar.source_params ?? {}) };
+  if (candidate.masonry_motion) sourceParams.masonry_motion = candidate.masonry_motion;
+  return {
+    ...(smartText !== bar.text ? { text: smartText } : {}),
+    x_frac: candidate.x_frac,
+    y_frac: candidate.y_frac,
+    max_width_frac: candidate.max_width_frac,
+    rotation_deg: candidate.rotation_deg ?? null,
+    position: "custom",
+    source_params: Object.keys(sourceParams).length > 0 ? sourceParams : undefined,
+  };
 }
 
 export function reflowTextForSmartPlacement(
   text: string,
   candidate: TextPlacementCandidate,
 ): string {
+  if (candidate.rotation_deg) return text.trim().split(/\s+/).filter(Boolean).join(" ");
   if (candidate.max_width_frac > 0.36 || text.includes("\n")) return text;
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length < 4) return text;

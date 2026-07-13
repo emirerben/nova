@@ -90,6 +90,10 @@ FINAL_OUTPUT_REQUIRED: set[tuple[str, str]] = {
     # Masonry montage preset. This is the final visible collage encode before
     # optional text burn/audio replacement, so use the final-output budget.
     ("app/pipeline/masonry_montage.py", "build_masonry_command"),
+    # Masonry text burn. This overlays full-canvas text streams onto the
+    # visible collage and ships directly to users, so it uses the same final
+    # output budget as the base collage encode.
+    ("app/pipeline/masonry_montage.py", "build_masonry_text_burn_command"),
 }
 
 # libx264 presets ordered from fastest to slowest. Anything at or stricter

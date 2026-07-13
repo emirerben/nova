@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from itertools import cycle, islice
+from typing import Any
 
 import structlog
 
@@ -360,6 +363,118 @@ def clamp_masonry_duration(duration_s: float) -> float:
     return round(max(0.1, min(duration, MASONRY_MAX_DURATION_S)), 3)
 
 
+def masonry_board_width_for_preset(preset: str | None = None) -> int:
+    config = _preset_config(preset)
+    layout = _layout_for_config(config)
+    output_w = int(settings.output_width)
+    return max((x + w for x, _y, w, _h in layout), default=output_w) + 34
+
+
+def _masonry_board_width() -> int:
+    return masonry_board_width_for_preset(MASONRY_MONTAGE_PRESET)
+
+
+def _masonry_pan_px(*, board_width: int | None = None) -> int:
+    output_w = int(settings.output_width)
+    return max(0, int(board_width or _masonry_board_width()) - output_w)
+
+
+def _masonry_motion_metadata(*, duration_s: float, board_width: int | None = None) -> dict:
+    output_w = int(settings.output_width)
+    resolved_board_width = int(board_width or _masonry_board_width())
+    return {
+        "mode": "masonry_pan_x",
+        "duration_s": clamp_masonry_duration(duration_s),
+        "pan_px": _masonry_pan_px(board_width=resolved_board_width),
+        "board_width_px": resolved_board_width,
+        "frame_width_px": output_w,
+    }
+
+
+def _masonry_candidate_from_rect(
+    *,
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    duration_s: float,
+    max_width_frac: float | None = None,
+    rotation_deg: float = 0.0,
+    confidence: float = 0.75,
+    source: str = "masonry_whitespace",
+    board_width: int | None = None,
+) -> dict:
+    output_w = int(settings.output_width)
+    output_h = int(settings.output_height)
+    if max_width_frac is None:
+        if rotation_deg:
+            max_width_frac = min(0.82, max(0.36, (height / output_w) * 0.86))
+        else:
+            max_width_frac = max(_PLACEMENT_MIN_WIDTH_FRAC, min(0.9, (width / output_w) * 0.92))
+    return {
+        "source": source,
+        "x_frac": round((left + width / 2.0) / output_w, 4),
+        "y_frac": round((top + height / 2.0) / output_h, 4),
+        "max_width_frac": round(max(_PLACEMENT_MIN_WIDTH_FRAC, min(0.9, max_width_frac)), 4),
+        "rotation_deg": round(float(rotation_deg), 3),
+        "confidence": round(max(0.0, min(0.98, confidence)), 3),
+        "masonry_motion": _masonry_motion_metadata(
+            duration_s=duration_s,
+            board_width=board_width,
+        ),
+    }
+
+
+def _curated_masonry_text_candidates(
+    *,
+    duration_s: float,
+    max_candidates: int,
+    source: str,
+    board_width: int | None,
+) -> list[dict]:
+    """Hand-tuned board-space pockets for the canonical masonry wall.
+
+    The layout is deterministic, so these seed pockets capture the open spaces
+    users naturally drew in the annotator: a tall left gutter and a top horizontal
+    band. Algorithmic fallbacks below still cover future layout drift.
+    """
+    candidates = [
+        _masonry_candidate_from_rect(
+            left=54,
+            top=552,
+            width=209,
+            height=808,
+            duration_s=duration_s,
+            rotation_deg=90.0,
+            confidence=0.9,
+            source=source,
+            board_width=board_width,
+        ),
+        _masonry_candidate_from_rect(
+            left=401,
+            top=39,
+            width=572,
+            height=125,
+            duration_s=duration_s,
+            confidence=0.86,
+            source=source,
+            board_width=board_width,
+        ),
+        _masonry_candidate_from_rect(
+            left=802,
+            top=1510,
+            width=242,
+            height=250,
+            duration_s=duration_s,
+            max_width_frac=0.26,
+            confidence=0.68,
+            source=source,
+            board_width=board_width,
+        ),
+    ]
+    return candidates[: max(1, max_candidates)]
+
+
 def masonry_text_placement_candidates(
     *,
     duration_s: float,
@@ -378,9 +493,20 @@ def masonry_text_placement_candidates(
     layout = _layout_for_config(config)
     output_w = int(settings.output_width)
     output_h = int(settings.output_height)
-    board_width = max((x + w for x, _y, w, _h in layout), default=output_w) + 34
-    pan_px = max(0, board_width - output_w)
+    board_width = masonry_board_width_for_preset(config.preset)
+    pan_px = _masonry_pan_px(board_width=board_width)
     duration = clamp_masonry_duration(duration_s)
+    candidates: list[dict] = []
+    if config.preset == MASONRY_MONTAGE_PRESET:
+        candidates = _curated_masonry_text_candidates(
+            duration_s=duration,
+            max_candidates=max_candidates,
+            source=config.source,
+            board_width=board_width,
+        )
+        if len(candidates) >= max_candidates:
+            return candidates[: max(1, max_candidates)]
+
     window = max(0.1, min(float(reveal_window_s), duration))
     sample_count = max(2, _PLACEMENT_SAMPLE_COUNT)
     sample_times = [window * i / (sample_count - 1) for i in range(sample_count)]
@@ -415,7 +541,6 @@ def masonry_text_placement_candidates(
         max_rects=max(1, max_candidates),
     )
 
-    candidates: list[dict] = []
     for score, (left, top, right, bottom) in empty_rects:
         width = right - left
         height = bottom - top
@@ -426,24 +551,34 @@ def masonry_text_placement_candidates(
             (top + bottom) / 2.0,
         )
         area_ratio = (width * height) / max(1.0, float(output_w * output_h))
-        candidates.append(
-            {
-                "source": config.source,
-                "x_frac": round((left + right) / 2.0 / output_w, 4),
-                "y_frac": round(max(0.12, min(0.9, y_center / output_h)), 4),
-                "max_width_frac": round(
-                    max(_PLACEMENT_MIN_WIDTH_FRAC, min(0.9, (width / output_w) * 0.92)),
-                    4,
-                ),
-                "confidence": round(
-                    max(0.35, min(0.98, 0.55 + area_ratio * 8.0 + score * 0.08)), 3
-                ),
-            }
+        candidate = _masonry_candidate_from_rect(
+            left=left,
+            top=max(0.0, y_center - height / 2.0),
+            width=width,
+            height=height,
+            duration_s=duration,
+            max_width_frac=max(
+                _PLACEMENT_MIN_WIDTH_FRAC,
+                min(0.9, (width / output_w) * 0.92),
+            ),
+            confidence=max(0.35, min(0.98, 0.55 + area_ratio * 8.0 + score * 0.08)),
+            source=config.source,
+            board_width=board_width,
         )
+        if not any(
+            abs(candidate["x_frac"] - existing["x_frac"]) < 0.06
+            and abs(candidate["y_frac"] - existing["y_frac"]) < 0.06
+            for existing in candidates
+        ):
+            candidates.append(candidate)
+        if len(candidates) >= max_candidates:
+            break
 
     return candidates or _fallback_masonry_text_placement_candidates(
         max_candidates=max_candidates,
         source=config.source,
+        duration_s=duration,
+        board_width=board_width,
     )
 
 
@@ -544,14 +679,25 @@ def _rect_iou(
     return inter / max(1.0, area_a + area_b - inter)
 
 
-def _fallback_masonry_text_placement_candidates(*, max_candidates: int, source: str) -> list[dict]:
+def _fallback_masonry_text_placement_candidates(
+    *,
+    max_candidates: int,
+    source: str,
+    duration_s: float = MASONRY_MAX_DURATION_S,
+    board_width: int | None = None,
+) -> list[dict]:
     fallback = [
         {
             "source": source,
             "x_frac": 0.78,
             "y_frac": 0.82,
             "max_width_frac": 0.28,
+            "rotation_deg": 0.0,
             "confidence": 0.35,
+            "masonry_motion": _masonry_motion_metadata(
+                duration_s=duration_s,
+                board_width=board_width,
+            ),
         }
     ]
     return fallback[: max(1, max_candidates)]
@@ -843,6 +989,127 @@ def build_masonry_command(
         ]
     )
     return cmd
+
+
+def build_masonry_text_burn_command(
+    *,
+    input_path: str,
+    sequences: list[dict[str, Any]],
+    output_path: str,
+    duration_s: float,
+    board_width: int | None = None,
+) -> list[str]:
+    """Build an FFmpeg command that burns full-canvas text streams with board pan."""
+    if not sequences:
+        raise ValueError("masonry text burn requires at least one text sequence")
+    from app.pipeline.reframe import _encoding_args  # noqa: PLC0415
+
+    duration = clamp_masonry_duration(duration_s)
+    pan_px = _masonry_pan_px(board_width=board_width)
+    cmd: list[str] = ["ffmpeg", "-y", "-i", input_path]
+
+    for seq in sequences:
+        if seq.get("is_animated"):
+            cmd.extend(
+                [
+                    "-framerate",
+                    str(seq.get("fps", int(settings.output_fps))),
+                    "-start_number",
+                    "0",
+                    "-i",
+                    str(seq["pattern"]),
+                ]
+            )
+        else:
+            cmd.extend(["-loop", "1", "-t", f"{duration:.3f}", "-i", str(seq["first_frame"])])
+
+    filters = ["[0:v]null[base]"]
+    previous = "base"
+    x_expr = f"-min(t\\,{duration:.3f})/{duration:.3f}*{pan_px}"
+    for idx, seq in enumerate(sequences):
+        src = f"{idx + 1}:v"
+        start = float(seq.get("start_s", 0.0))
+        end = float(seq.get("end_s", duration))
+        layer = f"text{idx}"
+        if seq.get("is_animated"):
+            filters.append(f"[{src}]format=rgba,setpts=PTS+{start:.4f}/TB[{layer}]")
+        else:
+            filters.append(f"[{src}]format=rgba[{layer}]")
+        out = f"v{idx}"
+        filters.append(
+            f"[{previous}][{layer}]overlay=x={x_expr}:y=0:eval=frame"
+            f":enable='between(t,{start:.4f},{end:.4f})'"
+            f":eof_action=pass[{out}]"
+        )
+        previous = out
+
+    cmd.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            f"[{previous}]",
+            "-map",
+            "0:a?",
+            *_encoding_args(output_path, preset="fast"),
+        ]
+    )
+    return cmd
+
+
+def burn_masonry_text_overlays(
+    input_path: str,
+    overlays: list[dict],
+    output_path: str,
+    tmpdir: str,
+    *,
+    duration_s: float,
+    board_width: int | None = None,
+) -> None:
+    """Burn text onto a masonry render while moving it with the tile board."""
+    if not overlays:
+        shutil.copy2(input_path, output_path)
+        return
+
+    from app.pipeline.text_overlay_skia import render_text_overlay_sequences  # noqa: PLC0415
+
+    sequences, work_dir = render_text_overlay_sequences(
+        overlays,
+        tmpdir,
+        work_dir_name="masonry_text_burn",
+    )
+    try:
+        if not sequences:
+            shutil.copy2(input_path, output_path)
+            return
+        cmd = build_masonry_text_burn_command(
+            input_path=input_path,
+            sequences=sequences,
+            output_path=output_path,
+            duration_s=duration_s,
+            board_width=board_width,
+        )
+        burn_t0 = time.monotonic()
+        result = subprocess.run(cmd, capture_output=True, timeout=MASONRY_TIMEOUT_S, check=False)
+        elapsed_ms = int((time.monotonic() - burn_t0) * 1000)
+        if result.returncode != 0:
+            log.warning(
+                "masonry_text_burn_failed",
+                rc=result.returncode,
+                elapsed_ms=elapsed_ms,
+                stderr=result.stderr.decode("utf-8", "replace")[-800:],
+            )
+            shutil.copy2(input_path, output_path)
+            return
+        log.info(
+            "masonry_text_burn_done",
+            elapsed_ms=elapsed_ms,
+            sequence_count=len(sequences),
+            total_frames=sum(int(s.get("n_frames") or 0) for s in sequences),
+        )
+    finally:
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def assemble_masonry_montage(

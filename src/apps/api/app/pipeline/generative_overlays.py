@@ -159,6 +159,7 @@ def build_intro_overlay(
     text_size_px: int | None = None,
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
+    rotation_deg: float | None = None,
     letter_spacing: float | None = None,
     line_spacing: float | None = None,
     max_width_frac: float | None = None,
@@ -220,6 +221,8 @@ def build_intro_overlay(
         overlay["position_x_frac"] = float(position_x_frac)
     if position_y_frac is not None:
         overlay["position_y_frac"] = float(position_y_frac)
+    if rotation_deg is not None:
+        overlay["rotation_deg"] = float(rotation_deg)
 
     # Parity-gated spacing fields (T11): clamped here so the burn dict always
     # carries renderer-safe values (same clamps as the schema + the TS layout).
@@ -893,6 +896,7 @@ def build_overlays_from_text_elements(
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
+                rotation_deg=elem.rotation_deg,
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
                 max_width_frac=elem.max_width_frac,
@@ -926,6 +930,7 @@ def build_overlays_from_text_elements(
                 text_size_px=text_size_px,
                 position_x_frac=pos_x_frac,
                 position_y_frac=pos_y_frac,
+                rotation_deg=elem.rotation_deg,
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
                 max_width_frac=elem.max_width_frac,
@@ -956,6 +961,7 @@ def build_overlays_from_text_elements(
             text_size_px=text_size_px,
             position_x_frac=pos_x_frac,
             position_y_frac=pos_y_frac,
+            rotation_deg=elem.rotation_deg,
             letter_spacing=elem.letter_spacing,
             line_spacing=elem.line_spacing,
             max_width_frac=elem.max_width_frac,

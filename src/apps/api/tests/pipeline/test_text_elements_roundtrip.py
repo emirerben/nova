@@ -229,6 +229,33 @@ class TestLinearRoundTrip:
             "fade-in linear round-trip must be byte-identical"
         )
 
+    def test_text_placement_candidate_projects_into_text_element(self):
+        v = {
+            "intro_text": "Pocket story",
+            "intro_layout": "linear",
+            "intro_effect": "static",
+            "intro_text_color": "#111111",
+            "intro_text_size_px": 78,
+            "text_mode": "agent_text",
+            "text_placement_candidates": [
+                {
+                    "source": "masonry_whitespace",
+                    "x_frac": 0.1468,
+                    "y_frac": 0.4979,
+                    "max_width_frac": 0.64,
+                    "rotation_deg": 90.0,
+                }
+            ],
+        }
+        elements = text_elements_for_variant(v)
+
+        assert len(elements) == 1
+        assert elements[0].position == "custom"
+        assert elements[0].x_frac == 0.1468
+        assert elements[0].y_frac == 0.4979
+        assert elements[0].max_width_frac == 0.64
+        assert elements[0].rotation_deg == 90.0
+
     @pytest.mark.xfail(
         reason=(
             "Known limitation: 'pop-in' is in generative_overlays._SKIA_EFFECTS (the renderer "
@@ -491,6 +518,26 @@ class TestSizeClassRoundTrip:
         assert compiled[0]["letter_spacing"] == 0.12
         assert compiled[0]["line_spacing"] == 1.4
         assert compiled[0]["max_width_frac"] == 0.4
+
+    def test_adapter_preserves_rotation_from_burn_dict(self):
+        burn_dict = {
+            "text": "Rotated text",
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "role": "generative_intro",
+            "text_size_px": 72,
+            "text_anchor": "center",
+            "text_color": "#FFFFFF",
+            "highlight_color": "#FFD24A",
+            "effect": "static",
+            "rotation_deg": 90,
+        }
+        elem = _burn_dict_to_text_element(burn_dict)
+        assert elem is not None
+        assert elem.rotation_deg == 90.0
+
+        compiled = build_overlays_from_text_elements([elem], video_duration_s=10.0)
+        assert compiled[0]["rotation_deg"] == 90.0
 
     def test_size_class_roundtrip_via_adapter_xlarge(self):
         """A14 end-to-end: a burn dict with text_size='xlarge' round-trips to 'xlarge'."""

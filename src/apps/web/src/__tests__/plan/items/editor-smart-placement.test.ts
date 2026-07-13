@@ -1,6 +1,8 @@
 import {
   reflowTextForSmartPlacement,
   resolveSmartPlacementCandidate,
+  resolveSmartPlacementCandidates,
+  smartPlacementPatchForBar,
 } from "@/app/plan/items/[id]/_editor/editor-smart-placement";
 import type { PlanItemVariant, TextPlacementCandidate } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -57,18 +59,46 @@ describe("resolveSmartPlacementCandidate", () => {
       source: "editor_fallback_masonry",
       x_frac: expect.any(Number),
       y_frac: expect.any(Number),
-      max_width_frac: 0.2,
+      rotation_deg: 90,
+      masonry_motion: expect.objectContaining({ mode: "masonry_pan_x" }),
     });
     const candidate = resolveSmartPlacementCandidate(
       variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
       bar,
     );
-    expect(candidate?.x_frac).toBeGreaterThan(0.75);
-    expect(candidate?.y_frac).toBeGreaterThan(0.85);
+    expect(candidate?.x_frac).toBeLessThan(0.25);
+    expect(candidate?.y_frac).toBeGreaterThan(0.45);
   });
 
   it("stays unavailable until text is selected", () => {
     expect(resolveSmartPlacementCandidate(variant(), null)).toBeNull();
+  });
+
+  it("returns multiple masonry pockets for harmony placement", () => {
+    const candidates = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
+      [bar, { ...bar, id: "text-2" }],
+    );
+
+    expect(candidates).toHaveLength(3);
+    expect(candidates[0]).toMatchObject({ rotation_deg: 90 });
+    expect(candidates[1]?.y_frac).toBeLessThan(0.12);
+  });
+
+  it("extends short legacy server masonry candidate lists with fallback pockets", () => {
+    const candidates = resolveSmartPlacementCandidates(
+      variant({
+        montage_preset_rendered: "masonry",
+        text_placement_candidates: [
+          { source: "masonry_whitespace", x_frac: 0.82, y_frac: 0.85, max_width_frac: 0.2 },
+        ],
+      }),
+      [bar, { ...bar, id: "text-2" }],
+    );
+
+    expect(candidates).toHaveLength(3);
+    expect(candidates[0]).toMatchObject({ x_frac: 0.82 });
+    expect(candidates[1]).toMatchObject({ rotation_deg: 90 });
   });
 
   it("reflows longer copy into a compact stack for narrow smart placements", () => {
@@ -91,5 +121,39 @@ describe("resolveSmartPlacementCandidate", () => {
         max_width_frac: 0.2,
       }),
     ).toBe("already\nstacked");
+  });
+
+  it("keeps rotated masonry text as one line", () => {
+    expect(
+      reflowTextForSmartPlacement("already\nstacked pocket label", {
+        source: "masonry_whitespace",
+        x_frac: 0.15,
+        y_frac: 0.5,
+        max_width_frac: 0.64,
+        rotation_deg: 90,
+      }),
+    ).toBe("already stacked pocket label");
+  });
+
+  it("builds a smart placement patch with rotation and motion metadata", () => {
+    const patch = smartPlacementPatchForBar(bar, {
+      source: "masonry_whitespace",
+      x_frac: 0.15,
+      y_frac: 0.5,
+      max_width_frac: 0.64,
+      rotation_deg: 90,
+      masonry_motion: { mode: "masonry_pan_x", pan_px: 932 },
+    });
+
+    expect(patch).toMatchObject({
+      x_frac: 0.15,
+      y_frac: 0.5,
+      max_width_frac: 0.64,
+      rotation_deg: 90,
+      position: "custom",
+      source_params: {
+        masonry_motion: { mode: "masonry_pan_x", pan_px: 932 },
+      },
+    });
   });
 });

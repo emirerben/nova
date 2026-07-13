@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.1] — 2026-07-13
+
+### Fixed
+- **Masonry Smart place now moves text with the collage.** Smart placement uses the user-drawn side/top pockets as first-class masonry candidates, rotates the side-pocket text 90° clockwise, distributes global text blocks across distinct pockets instead of stacking them, and burns masonry text as full-canvas Skia layers that pan with the board so copy stays glued to the same whitespace as the moving tiles.
+
 ## [0.7.30.0] — 2026-07-13
 
 ### Added

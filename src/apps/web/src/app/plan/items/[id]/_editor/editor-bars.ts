@@ -107,6 +107,7 @@ export function convertApiTextElements(
     position: el.position ?? undefined,
     x_frac: el.x_frac ?? undefined,
     y_frac: el.y_frac ?? undefined,
+    rotation_deg: el.rotation_deg ?? undefined,
     source_params: el.source_params ?? undefined,
   })).filter((bar, i) => !apiElements?.[i]?.removed);
 }
@@ -205,6 +206,7 @@ export function barsToTextElements(
           (bar.position as TextElement["position"]) ?? original?.position,
         x_frac: bar.x_frac ?? null,
         y_frac: bar.y_frac ?? null,
+        rotation_deg: bar.rotation_deg ?? null,
         source_params: bar.source_params ?? null,
       };
     });

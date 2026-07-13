@@ -920,7 +920,10 @@ def _draw_centered_text(
 
     canvas.save()
     # Center transform on anchor for scale + translate
+    rotation_deg = _finite_float(overlay.get("rotation_deg"), 0.0)
     canvas.translate(cx, cy + y_translate)
+    if rotation_deg:
+        canvas.rotate(rotation_deg)
     canvas.scale(scale, scale)
     canvas.translate(-cx, -cy)
 
@@ -2142,26 +2145,20 @@ def _ffmpeg_burn_pngs(
         )
 
 
-# -- Public entry points: drop-in replacements for the Pillow burn functions -
-
-
-def burn_text_overlays_skia(
-    input_path: str,
+def render_text_overlay_sequences(
     overlays: list[dict],
-    output_path: str,
     tmpdir: str,
-) -> None:
-    """Drop-in replacement for `text_overlay._burn_text_overlays` when the
-    job is agentic or music.
+    *,
+    work_dir_name: str = "skia_text_burn",
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Render overlay dicts into transparent full-frame PNG streams.
 
-    Caller is responsible for honoring `settings.text_renderer_skia_enabled`
-    — this function does the Skia render unconditionally. The kill-switch
-    check lives in the orchestrator (or in the wrapper that selects between
-    Pillow and Skia at the burn site) so this module stays a pure renderer.
+    Most callers should use ``burn_text_overlays_skia``. Masonry collage needs the
+    PNG streams but applies its own board-motion overlay expression so the text
+    rides with the wall instead of staying pinned to the viewport.
     """
     if not overlays:
-        shutil.copy2(input_path, output_path)
-        return
+        return [], None
 
     # Resolve the timing window: production caller passes ABS_PASS_TIME_S /
     # ABS_PASS_SLOT_INDEX sentinels meaning "use the final-pass duration".
@@ -2169,7 +2166,7 @@ def burn_text_overlays_skia(
     # validation window, so pass the max end_s.
     max_end = max((float(o.get("end_s", 0.0)) for o in overlays), default=0.0)
     slot_duration_s = max_end + 1.0
-    work_dir = os.path.join(tmpdir, "skia_text_burn")
+    work_dir = os.path.join(tmpdir, work_dir_name)
     os.makedirs(work_dir, exist_ok=True)
 
     render_t0 = time.monotonic()
@@ -2194,8 +2191,7 @@ def burn_text_overlays_skia(
     render_ms = int((time.monotonic() - render_t0) * 1000)
 
     if not sequences:
-        shutil.copy2(input_path, output_path)
-        return
+        return [], work_dir
 
     log.info(
         "skia_burn_text_overlays",
@@ -2205,14 +2201,43 @@ def burn_text_overlays_skia(
         total_frames=sum(s["n_frames"] for s in sequences),
         render_ms=render_ms,
     )
+    return sequences, work_dir
+
+
+# -- Public entry points: drop-in replacements for the Pillow burn functions -
+
+
+def burn_text_overlays_skia(
+    input_path: str,
+    overlays: list[dict],
+    output_path: str,
+    tmpdir: str,
+) -> None:
+    """Drop-in replacement for `text_overlay._burn_text_overlays` when the
+    job is agentic or music.
+
+    Caller is responsible for honoring `settings.text_renderer_skia_enabled`
+    — this function does the Skia render unconditionally. The kill-switch
+    check lives in the orchestrator (or in the wrapper that selects between
+    Pillow and Skia at the burn site) so this module stays a pure renderer.
+    """
+    if not overlays:
+        shutil.copy2(input_path, output_path)
+        return
+
+    sequences, work_dir = render_text_overlay_sequences(overlays, tmpdir)
     try:
+        if not sequences:
+            shutil.copy2(input_path, output_path)
+            return
         _ffmpeg_burn_pngs(input_path, sequences, output_path)
     finally:
         # The full-frame 1080x1920 PNG sequences are only needed for the single
         # encode above. Free them the instant it returns so they don't pile up on
         # the worker's RAM-backed scratch across overlays and (serial) variants —
         # this is what was filling /tmp and OOM/timeout-killing renders in prod.
-        shutil.rmtree(work_dir, ignore_errors=True)
+        if work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
 def pre_burn_curtain_slot_text_skia(
