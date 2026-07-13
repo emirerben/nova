@@ -1,7 +1,15 @@
 import { isParityVerified } from "@/lib/parity-verified-fields";
 import type { TextEditorAction, TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
-import type { EditorCapabilities } from "@/lib/plan-api";
+import type {
+  EditorCapabilities,
+  MediaOverlay,
+  OverlaySuggestion,
+  PoolAsset,
+  SoundEffectPlacement,
+} from "@/lib/plan-api";
+import type { AcceptedSuggestionRef } from "@/lib/editor-commit";
+import type { SoundEffectSummary } from "@/lib/sfx-api";
 import {
   applyClipTimingInput,
   applyTextTimingInput,
@@ -14,15 +22,21 @@ import {
 import {
   copilotOpFamily,
   validateCopilotOp,
+  type CaptionMetaPatch,
   type CopilotOp,
+  type OverlayPatchKey,
   type TextStylePatch,
   type TextStylePatchKey,
 } from "./ops";
 import {
-  allowedOpFamiliesFromCapabilities,
+  roundCopilotNumber,
   type CopilotSnapshot,
+  type CopilotCaptionCueSnapshot,
   type CopilotSlotSnapshot,
   type CopilotTextSnapshotBar,
+  type CopilotSfxPlacementSnapshot,
+  type CopilotOverlayCardSnapshot,
+  type CopilotCaptionMetaSnapshot,
 } from "./snapshot";
 
 export type RejectedOpReason =
@@ -74,6 +88,14 @@ export interface RejectedOp {
 export interface ApplyCopilotOpsResult {
   textActions: TextEditorAction[];
   nextSlots: DraftSlot[] | null;
+  nextSfx?: SoundEffectPlacement[] | null;
+  nextOverlays?: MediaOverlay[] | null;
+  acceptedSuggestionRefs?: AcceptedSuggestionRef[];
+  nextMusicTrackId?: string;
+  nextMixLevel?: number;
+  nextTitle?: string;
+  captionMetaPatch?: CaptionMetaPatch;
+  openTool?: "text" | "sounds" | "overlays" | "styles";
   applied: ChangeChip[];
   rejected: RejectedOp[];
 }
@@ -85,12 +107,25 @@ export interface ApplyCopilotOpsContext {
   capabilities?: EditorCapabilities | null;
   grid?: number[];
   videoDurationS?: number;
+  sfx?: SoundEffectPlacement[];
+  sfxCatalog?: SoundEffectSummary[];
+  overlays?: MediaOverlay[];
+  poolAssets?: PoolAsset[];
+  pendingSuggestions?: OverlaySuggestion[];
+  musicTrackId?: string | null;
+  mixLevel?: number | null;
+  title?: string;
+  captionMeta?: CopilotCaptionMetaSnapshot | null;
   makeTextBarId?: () => string;
   makeSlotKey?: (slot: DraftSlot) => string;
+  makeSfxPlacementId?: () => string;
+  makeOverlayId?: () => string;
 }
 
 let textIdCounter = 0;
 let slotKeyCounter = 0;
+let sfxIdCounter = 0;
+let overlayIdCounter = 0;
 
 function defaultTextBarId(): string {
   textIdCounter += 1;
@@ -103,7 +138,17 @@ function defaultSlotKey(slot: DraftSlot): string {
 }
 
 function round(value: number): number {
-  return Math.round(value * 1000) / 1000;
+  return roundCopilotNumber(value);
+}
+
+function defaultSfxPlacementId(): string {
+  sfxIdCounter += 1;
+  return globalThis.crypto?.randomUUID?.() ?? `copilot-sfx-${sfxIdCounter}`;
+}
+
+function defaultOverlayId(): string {
+  overlayIdCounter += 1;
+  return globalThis.crypto?.randomUUID?.() ?? `copilot-overlay-${overlayIdCounter}`;
 }
 
 function fmt(value: unknown): string {
@@ -196,6 +241,20 @@ function labelForOp(op: CopilotOp): string {
   if (op.op === "reorder_clip") return `Move clip ${op.from_index + 1}`;
   if (op.op === "remove_clip") return `Remove clip ${op.slot_index + 1}`;
   if (op.op === "split_clip") return `Split clip ${op.slot_index + 1}`;
+  if (op.op === "add_sfx") return "Add sound";
+  if (op.op === "patch_sfx") return `Sound ${op.sfx_index + 1}`;
+  if (op.op === "remove_sfx") return `Remove sound ${op.sfx_index + 1}`;
+  if (op.op === "patch_overlay") return `Overlay ${op.overlay_index + 1}`;
+  if (op.op === "remove_overlay") return `Remove overlay ${op.overlay_index + 1}`;
+  if (op.op === "add_overlay") return "Add overlay";
+  if (op.op === "accept_overlay_suggestion") return "Accept overlay suggestion";
+  if (op.op === "edit_caption") return `Caption ${op.cue_index + 1} edited`;
+  if (op.op === "set_caption_timing") return `Caption ${op.cue_index + 1} timing`;
+  if (op.op === "set_caption_meta") return "Captions";
+  if (op.op === "swap_music") return "Swapped song";
+  if (op.op === "set_mix") return "Music volume";
+  if (op.op === "set_title") return "Title set";
+  if (op.op === "open_tool") return `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`;
   const _exhaustive: never = op;
   return _exhaustive;
 }
@@ -208,8 +267,88 @@ function slotSnapAt(snapshot: CopilotSnapshot, index: number): CopilotSlotSnapsh
   return snapshot.slots[index] ?? null;
 }
 
+function sfxSnapAt(snapshot: CopilotSnapshot, index: number): CopilotSfxPlacementSnapshot | null {
+  return snapshot.sfx?.placements[index] ?? null;
+}
+
+function overlaySnapAt(snapshot: CopilotSnapshot, index: number): CopilotOverlayCardSnapshot | null {
+  return snapshot.overlays?.cards[index] ?? null;
+}
+
+function captionSnapAt(snapshot: CopilotSnapshot, index: number): CopilotCaptionCueSnapshot | null {
+  return snapshot.captions?.cues[index] ?? null;
+}
+
 function textBarForSnap(bars: TextElementBar[], snap: CopilotTextSnapshotBar): TextElementBar | null {
   return bars.find((bar) => bar.id === snap.id) ?? null;
+}
+
+function captionBarForSnap(bars: TextElementBar[], snap: CopilotCaptionCueSnapshot): TextElementBar | null {
+  return bars.find((bar) => bar.id === snap.id && bar.role === "narrated_caption") ?? null;
+}
+
+function sfxForSnap(placements: SoundEffectPlacement[], snap: CopilotSfxPlacementSnapshot): SoundEffectPlacement | null {
+  return placements.find((placement) => placement.id === snap.id) ?? null;
+}
+
+function overlayForSnap(cards: MediaOverlay[], snap: CopilotOverlayCardSnapshot): MediaOverlay | null {
+  return cards.find((card) => card.id === snap.id) ?? null;
+}
+
+function sfxValue(
+  placement: SoundEffectPlacement,
+  snap: CopilotSfxPlacementSnapshot,
+  key: "at_s" | "gain",
+): unknown {
+  if (key === "at_s") return round(placement.at_s);
+  if (key === "gain") return round(placement.gain ?? snap.gain);
+  return undefined;
+}
+
+function sfxFingerprintMatches(
+  placement: SoundEffectPlacement,
+  snap: CopilotSfxPlacementSnapshot,
+  fields: Array<"at_s" | "gain">,
+): boolean {
+  return fields.every((field) => sameValue(sfxValue(placement, snap, field), snap[field]));
+}
+
+function overlayValue(
+  card: MediaOverlay,
+  snap: CopilotOverlayCardSnapshot,
+  key: OverlayPatchKey,
+): unknown {
+  if (key === "display_mode") return card.display_mode ?? "pip";
+  if (key === "position") return card.position;
+  if (key === "start_s" || key === "end_s" || key === "x_frac" || key === "y_frac" || key === "scale") {
+    return round(card[key] ?? snap[key]);
+  }
+  return undefined;
+}
+
+function overlayFingerprintMatches(
+  card: MediaOverlay,
+  snap: CopilotOverlayCardSnapshot,
+  fields: OverlayPatchKey[],
+): boolean {
+  return fields.every((field) => sameValue(overlayValue(card, snap, field), snap[field]));
+}
+
+function captionMetaValue(
+  meta: CopilotCaptionMetaSnapshot | null | undefined,
+  key: keyof CopilotCaptionMetaSnapshot,
+): unknown {
+  if (!meta) return undefined;
+  if (key === "y_frac") return round(meta.y_frac);
+  return meta[key];
+}
+
+function captionMetaFingerprintMatches(
+  meta: CopilotCaptionMetaSnapshot | null | undefined,
+  snap: CopilotCaptionMetaSnapshot,
+  fields: Array<keyof CopilotCaptionMetaSnapshot>,
+): boolean {
+  return fields.every((field) => sameValue(captionMetaValue(meta, field), snap[field]));
 }
 
 function applyStylePatch(
@@ -243,16 +382,30 @@ export function applyCopilotOps(
   const rejected: RejectedOp[] = [];
   const grid = ctx.grid ?? [];
   const videoDurationS = ctx.videoDurationS ?? Math.max(60, ctx.snapshot.total_duration_s);
-  const allowedFamilies = new Set(
-    ctx.capabilities
-      ? allowedOpFamiliesFromCapabilities(ctx.capabilities)
-      : ctx.snapshot.allowed_op_families,
-  );
+  const allowedFamilies = new Set(ctx.snapshot.allowed_op_families);
   let nextSlots: DraftSlot[] | null = null;
   let workingSlots = ctx.slots;
+  let nextSfx: SoundEffectPlacement[] | undefined;
+  let workingSfx = ctx.sfx ?? [];
+  let nextOverlays: MediaOverlay[] | undefined;
+  let workingOverlays = ctx.overlays ?? [];
+  let acceptedSuggestionRefs: AcceptedSuggestionRef[] | undefined;
+  let nextMusicTrackId: string | undefined;
+  let nextMixLevel: number | undefined;
+  let nextTitle: string | undefined;
+  let captionMetaPatch: CaptionMetaPatch | undefined;
+  let openTool: ApplyCopilotOpsResult["openTool"];
 
   function currentSlots(): DraftSlot[] {
     return nextSlots ?? workingSlots;
+  }
+
+  function currentSfx(): SoundEffectPlacement[] {
+    return nextSfx ?? workingSfx;
+  }
+
+  function currentOverlays(): MediaOverlay[] {
+    return nextOverlays ?? workingOverlays;
   }
 
   for (const raw of rawOps) {
@@ -478,8 +631,270 @@ export function applyCopilotOps(
       workingSlots = res.slots;
       nextSlots = res.slots;
       applied.push({ label: `Split clip ${op.slot_index + 1}`, from: "one clip", to: "two clips" });
+    } else if (op.op === "add_sfx") {
+      const snapCatalogEntry = ctx.snapshot.sfx?.catalog.find((effect) => effect.id === op.effect_id) ?? null;
+      const catalogEntry = (ctx.sfxCatalog ?? ctx.snapshot.sfx?.catalog ?? []).find((effect) => effect.id === op.effect_id) ?? null;
+      if (!snapCatalogEntry || !catalogEntry) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "sound effect is no longer available"));
+        continue;
+      }
+      const label = "name" in catalogEntry ? catalogEntry.name : snapCatalogEntry.name;
+      const duration = catalogEntry.duration_s ?? snapCatalogEntry.duration_s ?? null;
+      const placement: SoundEffectPlacement = {
+        id: ctx.makeSfxPlacementId?.() ?? defaultSfxPlacementId(),
+        sound_effect_id: op.effect_id,
+        src_gcs_path: "",
+        at_s: op.at_s,
+        gain: op.gain,
+        duration_s: duration,
+        label,
+      };
+      workingSfx = [...currentSfx(), placement];
+      nextSfx = workingSfx;
+      applied.push({ label: `Added "${label}"`, from: "none", to: fmtSeconds(op.at_s) });
+    } else if (op.op === "patch_sfx") {
+      const snap = sfxSnapAt(ctx.snapshot, op.sfx_index);
+      const placements = currentSfx();
+      const placement = snap ? sfxForSnap(placements, snap) : null;
+      if (!snap || !placement) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "sound placement no longer exists"));
+        continue;
+      }
+      const fields = [
+        ...(op.at_s !== undefined ? (["at_s"] as const) : []),
+        ...(op.gain !== undefined ? (["gain"] as const) : []),
+      ];
+      if (!sfxFingerprintMatches(placement, snap, fields)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "sound placement changed after Nova read it"));
+        continue;
+      }
+      const patch: Partial<SoundEffectPlacement> = {
+        ...(op.at_s !== undefined ? { at_s: op.at_s } : {}),
+        ...(op.gain !== undefined ? { gain: op.gain } : {}),
+      };
+      workingSfx = placements.map((sfx) => (sfx.id === placement.id ? { ...sfx, ...patch } : sfx));
+      nextSfx = workingSfx;
+      for (const field of fields) {
+        applied.push({
+          label: field === "at_s" ? "Moved sound" : "Sound volume",
+          from: field === "at_s" ? fmtSeconds(placement.at_s) : fmt(placement.gain),
+          to: field === "at_s" ? fmtSeconds(op.at_s ?? placement.at_s) : fmt(op.gain ?? placement.gain),
+        });
+      }
+    } else if (op.op === "remove_sfx") {
+      const snap = sfxSnapAt(ctx.snapshot, op.sfx_index);
+      const placements = currentSfx();
+      const placement = snap ? sfxForSnap(placements, snap) : null;
+      if (!snap || !placement) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "sound placement no longer exists"));
+        continue;
+      }
+      workingSfx = placements.filter((sfx) => sfx.id !== placement.id);
+      nextSfx = workingSfx;
+      applied.push({ label: `Removed "${placement.label ?? snap.label ?? "sound"}"`, from: "present", to: "removed" });
+    } else if (op.op === "patch_overlay") {
+      const snap = overlaySnapAt(ctx.snapshot, op.overlay_index);
+      const overlays = currentOverlays();
+      const card = snap ? overlayForSnap(overlays, snap) : null;
+      if (!snap || !card) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "overlay no longer exists"));
+        continue;
+      }
+      const patchKeys = Object.keys(op.patch) as OverlayPatchKey[];
+      if (!overlayFingerprintMatches(card, snap, patchKeys)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "overlay changed after Nova read it"));
+        continue;
+      }
+      workingOverlays = overlays.map((overlay) => (overlay.id === card.id ? { ...overlay, ...op.patch } : overlay));
+      nextOverlays = workingOverlays;
+      applied.push({
+        label: patchKeys.some((key) => key === "start_s" || key === "end_s") ? "Moved overlay" : "Overlay updated",
+        from: "previous",
+        to: "updated",
+      });
+    } else if (op.op === "remove_overlay") {
+      const snap = overlaySnapAt(ctx.snapshot, op.overlay_index);
+      const overlays = currentOverlays();
+      const card = snap ? overlayForSnap(overlays, snap) : null;
+      if (!snap || !card) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "overlay no longer exists"));
+        continue;
+      }
+      workingOverlays = overlays.filter((overlay) => overlay.id !== card.id);
+      nextOverlays = workingOverlays;
+      applied.push({ label: "Removed overlay", from: "present", to: "removed" });
+    } else if (op.op === "add_overlay") {
+      const snapAsset = ctx.snapshot.overlays?.asset_pool.find((asset) => asset.id === op.asset_id) ?? null;
+      const asset = (ctx.poolAssets ?? []).find((poolAsset) => poolAsset.id === op.asset_id && poolAsset.status === "ready") ?? null;
+      if (!snapAsset || !asset) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "overlay asset is no longer available"));
+        continue;
+      }
+      const overlays = currentOverlays();
+      const card: MediaOverlay = {
+        id: ctx.makeOverlayId?.() ?? defaultOverlayId(),
+        kind: asset.kind,
+        src_gcs_path: asset.gcs_path,
+        preview_url: asset.display_url,
+        preview_gcs_path: null,
+        position: op.position ?? "custom",
+        x_frac: op.x_frac ?? 0.5,
+        y_frac: op.y_frac ?? 0.5,
+        scale: op.scale ?? 0.35,
+        display_mode: op.display_mode ?? "pip",
+        start_s: op.start_s,
+        end_s: op.end_s,
+        z: overlays.length,
+      };
+      workingOverlays = [...overlays, card];
+      nextOverlays = workingOverlays;
+      applied.push({ label: "Added overlay", from: "none", to: asset.subject ?? asset.source_filename ?? asset.id });
+    } else if (op.op === "accept_overlay_suggestion") {
+      const snapSuggestion = ctx.snapshot.overlays?.pending_suggestions.find((suggestion) => suggestion.id === op.suggestion_id) ?? null;
+      const suggestion = (ctx.pendingSuggestions ?? []).find((pending) => pending.id === op.suggestion_id) ?? null;
+      if (!snapSuggestion || !suggestion) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "overlay suggestion is no longer available"));
+        continue;
+      }
+      const overlays = currentOverlays();
+      workingOverlays = [...overlays, { ...suggestion.overlay }];
+      nextOverlays = workingOverlays;
+      acceptedSuggestionRefs = acceptedSuggestionRefs ?? [];
+      if (!acceptedSuggestionRefs.some((ref) => ref.id === suggestion.id)) {
+        acceptedSuggestionRefs.push({ id: suggestion.id, overlayId: suggestion.overlay.id });
+      }
+      if (suggestion.sfx && allowedFamilies.has("sfx")) {
+        workingSfx = [...currentSfx(), { ...suggestion.sfx }];
+        nextSfx = workingSfx;
+      }
+      applied.push({ label: "Accepted overlay suggestion", from: "pending", to: snapSuggestion.reason || "accepted" });
+    } else if (op.op === "edit_caption") {
+      const snap = captionSnapAt(ctx.snapshot, op.cue_index);
+      const bar = snap ? captionBarForSnap(ctx.bars, snap) : null;
+      if (!snap || !bar) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "caption cue no longer exists"));
+        continue;
+      }
+      if (bar.text !== snap.text) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption text was changed after Nova read it"));
+        continue;
+      }
+      textActions.push({ type: "EDIT_TEXT", id: bar.id, text: op.text });
+      applied.push({ label: `Caption ${op.cue_index + 1} edited`, from: bar.text, to: op.text });
+    } else if (op.op === "set_caption_timing") {
+      const snap = captionSnapAt(ctx.snapshot, op.cue_index);
+      const bar = snap ? captionBarForSnap(ctx.bars, snap) : null;
+      if (!snap || !bar) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "caption cue no longer exists"));
+        continue;
+      }
+      const fields: Array<"start_s" | "end_s"> = [
+        ...(op.start_s !== undefined ? (["start_s"] as const) : []),
+        ...(op.end_s !== undefined ? (["end_s"] as const) : []),
+      ];
+      const matches = fields.every((field) => sameValue(round(bar[field]), snap[field]));
+      if (!matches) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption timing was changed after Nova read it"));
+        continue;
+      }
+      const next = applyTextTimingInput({
+        startS: op.start_s ?? bar.start_s,
+        endS: op.end_s ?? bar.end_s,
+        videoDurationS,
+      });
+      textActions.push({ type: "PATCH_BAR", id: bar.id, patch: next });
+      applied.push({
+        label: `Caption ${op.cue_index + 1} timing`,
+        from: `${fmtSeconds(bar.start_s)}-${fmtSeconds(bar.end_s)}`,
+        to: `${fmtSeconds(next.start_s)}-${fmtSeconds(next.end_s)}`,
+      });
+    } else if (op.op === "set_caption_meta") {
+      const snap = ctx.snapshot.captions?.meta ?? null;
+      if (!snap || !ctx.captionMeta) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "caption metadata no longer exists"));
+        continue;
+      }
+      const patchKeys = Object.keys(op.patch) as Array<keyof CopilotCaptionMetaSnapshot>;
+      if (!captionMetaFingerprintMatches(ctx.captionMeta, snap, patchKeys)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "caption settings changed after Nova read them"));
+        continue;
+      }
+      captionMetaPatch = { ...(captionMetaPatch ?? {}), ...op.patch };
+      for (const key of patchKeys) {
+        applied.push({
+          label: key === "style" && op.patch.style === "word" ? "Captions: word-by-word" : "Captions",
+          from: fmt(ctx.captionMeta[key]),
+          to: fmt(op.patch[key]),
+        });
+      }
+    } else if (op.op === "swap_music") {
+      const music = ctx.snapshot.music;
+      if (!music?.swappable || !music.candidates.some((track) => track.id === op.track_id)) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "song is no longer available"));
+        continue;
+      }
+      if ((ctx.musicTrackId ?? null) !== music.current_track_id) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "song changed after Nova read it"));
+        continue;
+      }
+      if (op.track_id === (ctx.musicTrackId ?? null)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "song is already selected"));
+        continue;
+      }
+      nextMusicTrackId = op.track_id;
+      applied.push({ label: "Swapped song", from: music.current_track_title ?? "current", to: music.candidates.find((t) => t.id === op.track_id)?.title ?? op.track_id });
+    } else if (op.op === "set_mix") {
+      if (!ctx.snapshot.mix) {
+        rejected.push(reject(op.op, labelForOp(op), "capability_disabled", "music mix is disabled for this variant"));
+        continue;
+      }
+      if (!sameValue(ctx.mixLevel ?? null, ctx.snapshot.mix.music_level)) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "music volume changed after Nova read it"));
+        continue;
+      }
+      if (sameValue(op.music_level, ctx.mixLevel ?? null)) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "music volume is already set"));
+        continue;
+      }
+      nextMixLevel = op.music_level;
+      applied.push({ label: `Music volume ${Math.round(op.music_level * 100)}%`, from: fmt(ctx.mixLevel), to: fmt(op.music_level) });
+    } else if (op.op === "set_title") {
+      if (ctx.snapshot.title === undefined || ctx.title === undefined) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "title is no longer available"));
+        continue;
+      }
+      if (ctx.title !== ctx.snapshot.title) {
+        rejected.push(reject(op.op, labelForOp(op), "user_changed", "title changed after Nova read it"));
+        continue;
+      }
+      if (op.title === ctx.title) {
+        rejected.push(reject(op.op, labelForOp(op), "no_effect", "title is already set"));
+        continue;
+      }
+      nextTitle = op.title;
+      applied.push({ label: "Title set", from: ctx.title, to: op.title });
+    } else if (op.op === "open_tool") {
+      if (!ctx.snapshot.open_tools?.includes(op.tool)) {
+        rejected.push(reject(op.op, labelForOp(op), "target_missing", "tool is not available"));
+        continue;
+      }
+      openTool = op.tool;
+      applied.push({ label: `Opened ${op.tool[0].toUpperCase()}${op.tool.slice(1)}`, from: "closed", to: "open" });
     }
   }
 
-  return { textActions, nextSlots, applied: consolidateChips(applied), rejected };
+  return {
+    textActions,
+    nextSlots,
+    nextSfx,
+    nextOverlays,
+    acceptedSuggestionRefs,
+    nextMusicTrackId,
+    nextMixLevel,
+    nextTitle,
+    captionMetaPatch,
+    openTool,
+    applied: consolidateChips(applied),
+    rejected,
+  };
 }

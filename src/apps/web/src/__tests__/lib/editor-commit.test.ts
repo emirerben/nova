@@ -77,6 +77,7 @@ describe("buildEditorCommitRequest", () => {
     expect(body).toEqual({
       text_elements: [element],
       caption_cues: undefined,
+      caption_meta: undefined,
       timeline_slots: [
         {
           slot_id: "slot-a",
@@ -139,6 +140,7 @@ describe("buildEditorCommitRequest", () => {
     });
 
     expect(body.text_elements).toBeUndefined();
+    expect(body.caption_meta).toBeUndefined();
     expect(body.timeline_slots).toBeUndefined();
     expect(body.mix).toBeUndefined();
     expect(body.sound_effects).toBeUndefined();
@@ -192,6 +194,72 @@ describe("buildEditorCommitRequest", () => {
     expect(body.music_track_id).toBe("track-new");
     expect(body.timeline_slots).toBeUndefined();
     expect(body.base_generation).toBe("gen-current");
+  });
+
+  it("emits caption_meta only when dirty", () => {
+    const clean = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      captionMeta: { enabled: false, style: "word", font: null, y_frac: 0.72 },
+      captionMetaDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(clean.caption_meta).toBeUndefined();
+
+    const dirty = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      captionMeta: { enabled: false, style: "word", font: null, y_frac: 0.72 },
+      captionMetaDirty: true,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(dirty.caption_meta).toEqual({
+      enabled: false,
+      style: "word",
+      font: null,
+      font_set: true,
+      y_frac: 0.72,
+    });
+  });
+
+  it("sets caption_meta font_set only when font is present", () => {
+    const withoutFont = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      captionMeta: { enabled: true, style: "sentence" },
+      captionMetaDirty: true,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+    expect(withoutFont.caption_meta).toEqual({
+      enabled: true,
+      style: "sentence",
+      font_set: false,
+    });
+
+    const resetFont = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      captionMeta: { font: null },
+      captionMetaDirty: true,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: {},
+    });
+    expect(resetFont.caption_meta).toEqual({ font: null, font_set: true });
   });
 });
 

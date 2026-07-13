@@ -18,22 +18,12 @@
  * a song/lyric variant renders no dead chrome).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef } from "react";
 import {
-  deletePoolAsset,
-  listPoolAssets,
-  registerPoolAsset,
-  requestPoolAssetUploadUrls,
-  sha256HexOfFile,
-  uploadToGcs,
   type OverlaySuggestion,
   type PoolAsset,
 } from "@/lib/plan-api";
-import {
-  isUnavailableError,
-  SUGGESTION_POLL_INTERVAL_MS,
-  useEditorOverlaySuggestions,
-} from "./useEditorOverlaySuggestions";
+import type { EditorOverlaySuggestionsState } from "./useEditorOverlaySuggestions";
 
 // Mirrors ALLOWED_ASSET_MIME_TYPES in AssetPool.tsx and
 // _OVERLAY_ALLOWED_CONTENT_TYPES on the backend.
@@ -69,125 +59,50 @@ export function hedgedReason(row: OverlaySuggestion): string {
 }
 
 /** Local tile for an in-flight upload (before the server row exists). */
-interface PendingUpload {
+export interface PendingUpload {
   localId: string;
   filename: string;
 }
 
+const EMPTY_SUGGESTIONS: EditorOverlaySuggestionsState = {
+  phase: "idle",
+  rows: [],
+  wishlist: [],
+  staleNotice: false,
+  stillWorking: false,
+  unavailable: false,
+  start: () => {},
+  removeRow: () => {},
+};
+
 export default function OverlaySuggestions({
-  itemId,
-  variantId,
+  suggestions = EMPTY_SUGGESTIONS,
+  assets = [],
+  maxAssets = 20,
+  pending = [],
+  poolUnavailable = false,
+  poolError = null,
+  onFiles = () => {},
+  onRemoveAsset = () => {},
   onAccept,
   onSeek,
 }: {
-  itemId: string;
-  variantId: string;
+  itemId?: string;
+  variantId?: string;
+  suggestions?: EditorOverlaySuggestionsState;
+  assets?: PoolAsset[];
+  maxAssets?: number;
+  pending?: PendingUpload[];
+  poolUnavailable?: boolean;
+  poolError?: string | null;
+  onFiles?: (fileList: FileList | File[] | null) => void;
+  onRemoveAsset?: (asset: PoolAsset) => void;
   /** Hand the accepted envelope to EditorShell (undo-recorded overlay + sfx). */
   onAccept: (suggestion: OverlaySuggestion) => void;
   /** Seek the editor transport (rows seek to max(0, start_s − 1)). */
   onSeek: (seconds: number) => void;
 }) {
-  const suggestions = useEditorOverlaySuggestions({ itemId, variantId, enabled: true });
-
-  // ── Pool strip state (compact AssetPool: presigned-primary upload flow) ────
-  const [assets, setAssets] = useState<PoolAsset[]>([]);
-  const [maxAssets, setMaxAssets] = useState(20);
-  const [pending, setPending] = useState<PendingUpload[]>([]);
-  const [poolUnavailable, setPoolUnavailable] = useState(false);
-  const [poolError, setPoolError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    listPoolAssets(itemId)
-      .then((res) => {
-        if (cancelled) return;
-        setAssets(res.assets);
-        setMaxAssets(res.max_assets);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        if (isUnavailableError(err)) setPoolUnavailable(true);
-        else setPoolError(err instanceof Error ? err.message : "Couldn't load your visuals.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [itemId]);
-
-  // Analyzing → ready: re-list while any asset is still being analyzed so the
-  // "Place visuals" gate flips without a drawer re-open.
-  const hasBusyAssets = assets.some(
-    (a) => a.status === "analyzing" || a.status === "uploaded" || a.status === "uploading",
-  );
-  useEffect(() => {
-    if (!hasBusyAssets || poolUnavailable) return;
-    const id = setInterval(() => {
-      listPoolAssets(itemId)
-        .then((res) => {
-          setAssets(res.assets);
-          setMaxAssets(res.max_assets);
-        })
-        .catch(() => {});
-    }, SUGGESTION_POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [hasBusyAssets, itemId, poolUnavailable]);
-
-  const handleFiles = useCallback(
-    async (fileList: FileList | File[] | null) => {
-      if (!fileList) return;
-      const files = Array.from(fileList).filter((f) => POOL_MIME_TYPES.includes(f.type));
-      if (files.length === 0) return;
-      setPoolError(null);
-
-      const locals: PendingUpload[] = files.map((f, i) => ({
-        localId: `pending-${Date.now()}-${i}-${f.name}`,
-        filename: f.name,
-      }));
-      setPending((prev) => [...prev, ...locals]);
-
-      // Presigned direct-PUT is PRIMARY (R1 / review C9+C14) — same flow and
-      // rationale as AssetPool.tsx: signed URL → PUT to GCS (relay fallback on
-      // CORS) → register with the client-side sha256 dedupe hash.
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const local = locals[i];
-        try {
-          const [signed] = await requestPoolAssetUploadUrls(itemId, [
-            { filename: file.name, content_type: file.type, file_size_bytes: file.size },
-          ]);
-          await uploadToGcs(signed.upload_url, file);
-          const contentHash = await sha256HexOfFile(file);
-          const registered = await registerPoolAsset(itemId, {
-            gcs_path: signed.gcs_path,
-            content_type: file.type,
-            content_hash: contentHash,
-            source_filename: file.name,
-          });
-          setPending((prev) => prev.filter((p) => p.localId !== local.localId));
-          if (!registered.deduped) setAssets((prev) => [...prev, registered]);
-        } catch (err) {
-          setPending((prev) => prev.filter((p) => p.localId !== local.localId));
-          if (isUnavailableError(err)) setPoolUnavailable(true);
-          else setPoolError(err instanceof Error ? err.message : "Upload failed");
-        }
-      }
-    },
-    [itemId],
-  );
-
-  const handleRemoveAsset = useCallback(
-    async (asset: PoolAsset) => {
-      try {
-        await deletePoolAsset(itemId, asset.id);
-        setAssets((prev) => prev.filter((a) => a.id !== asset.id));
-      } catch (err) {
-        if (isUnavailableError(err)) setPoolUnavailable(true);
-        else setPoolError(err instanceof Error ? err.message : "Couldn't remove that file");
-      }
-    },
-    [itemId],
-  );
 
   if (poolUnavailable || suggestions.unavailable) {
     return (
@@ -223,7 +138,7 @@ export default function OverlaySuggestions({
         aria-label="Add visuals to your pool"
         disabled={atCap}
         onChange={(e) => {
-          void handleFiles(e.target.files);
+          onFiles(e.target.files);
           e.target.value = "";
         }}
       />
@@ -246,7 +161,7 @@ export default function OverlaySuggestions({
         <>
           <ul className="flex flex-wrap gap-1.5" data-testid="suggestion-pool-strip">
             {assets.map((asset) => (
-              <PoolThumb key={asset.id} asset={asset} onRemove={() => handleRemoveAsset(asset)} />
+              <PoolThumb key={asset.id} asset={asset} onRemove={() => onRemoveAsset(asset)} />
             ))}
             {pending.map((p) => (
               <li

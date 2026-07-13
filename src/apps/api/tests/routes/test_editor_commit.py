@@ -144,6 +144,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
     assert prep["sections"] == {
         "text_elements": True,
         "caption_cues": False,
+        "caption_meta": False,
         "timeline": True,
         "mix": True,
         "music": False,
@@ -232,6 +233,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
     assert prep["sections"] == {
         "text_elements": False,
         "caption_cues": True,
+        "caption_meta": False,
         "timeline": False,
         "mix": False,
         "music": False,
@@ -256,6 +258,117 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
             "queue": "overlay-jobs",
         }
     ]
+
+
+def test_narrated_caption_meta_commit_persists_and_reburns_caption_task(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        caption_cues=[{"text": "Line", "start_s": 0.0, "end_s": 1.0}],
+        mix=None,
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "narrated",
+        _commit_req(
+            caption_meta=gj.EditorCommitCaptionMeta(
+                enabled=False,
+                style="word",
+                font="Playfair Display",
+                font_set=True,
+                y_frac=0.66,
+            )
+        ),
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert v["captions_enabled"] is False
+    assert v["voiceover_caption_style"] == "word"
+    assert v["voiceover_caption_font"] == "Playfair Display"
+    assert v["caption_margin_v"] == 653
+    assert v["render_generation_id"] == prep["generation"]
+    assert v["render_status"] == "rendering"
+    assert prep["sections"]["caption_meta"] is True
+    assert prep["sections"]["caption_cues"] is False
+
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        REBURN_NARRATED,
+        types.SimpleNamespace(apply_async=lambda **k: calls.append(k)),
+        raising=False,
+    )
+    gj.enqueue_editor_commit_render(str(job.id), "narrated", prep)
+    assert calls == [
+        {
+            "args": [str(job.id), "narrated"],
+            "kwargs": {"render_gen_id": prep["generation"]},
+            "queue": "overlay-jobs",
+        }
+    ]
+
+
+def test_narrated_caption_meta_font_null_resets_when_font_set(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        voiceover_caption_font="Playfair Display",
+        mix=None,
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "narrated",
+        _commit_req(caption_meta=gj.EditorCommitCaptionMeta(font=None, font_set=True)),
+    )
+
+    assert job.assembly_plan["variants"][0]["voiceover_caption_font"] is None
+
+
+def test_caption_meta_non_narrated_archetype_422(monkeypatch):
+    _arm(monkeypatch)
+    job = _job()
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_text",
+            _commit_req(caption_meta=gj.EditorCommitCaptionMeta(enabled=False)),
+        )
+
+    assert exc.value.status_code == 422
+    assert "Captions" in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
+def test_caption_meta_invalid_font_422(monkeypatch):
+    _arm(monkeypatch)
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "narrated",
+            _commit_req(caption_meta=gj.EditorCommitCaptionMeta(font="Not A Font", font_set=True)),
+        )
+
+    assert exc.value.status_code == 422
+    assert "Unknown caption font" in str(exc.value.detail)
+    assert job.assembly_plan == before
 
 
 def test_text_only_commit_rides_overlay_jobs_queue(monkeypatch):
@@ -311,15 +424,11 @@ def test_music_commit_validates_ready_track_and_kicks_one_full_render(monkeypatc
     [
         (
             {"variant_id": "original_text", "music_track_id": None},
-            types.SimpleNamespace(
-                id="t2", analysis_status="ready", audio_gcs_path="music/t2.mp3"
-            ),
+            types.SimpleNamespace(id="t2", analysis_status="ready", audio_gcs_path="music/t2.mp3"),
         ),
         (
             {},
-            types.SimpleNamespace(
-                id="t2", analysis_status="failed", audio_gcs_path="music/t2.mp3"
-            ),
+            types.SimpleNamespace(id="t2", analysis_status="failed", audio_gcs_path="music/t2.mp3"),
         ),
         ({}, types.SimpleNamespace(id="t2", analysis_status="ready", audio_gcs_path=None)),
         ({}, None),
@@ -1211,6 +1320,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
     assert body["sections"] == {
         "text_elements": True,
         "caption_cues": False,
+        "caption_meta": False,
         "timeline": False,
         "mix": False,
         "music": False,
@@ -1268,6 +1378,40 @@ def test_endpoint_empty_title_422_nothing_persisted(client: TestClient, monkeypa
         },
     )
     assert resp.status_code == 422
+    assert job.assembly_plan == before
+    assert item.theme == "Old title"
+    db.commit.assert_not_awaited()
+
+
+def test_endpoint_invalid_caption_meta_with_valid_title_persists_nothing(
+    client: TestClient, monkeypatch
+) -> None:
+    _arm(monkeypatch)
+    user = _user()
+    job = _job(
+        variant_id="narrated",
+        text_mode="none",
+        resolved_archetype="narrated",
+        base_video_path="generative-jobs/job/base-captionless.mp4",
+        mix=None,
+    )
+    before = copy.deepcopy(job.assembly_plan)
+    item, plan = _owned_item(user.id, job=job)
+    db = _db([item], plan, job)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.post(
+        f"/plan-items/{item.id}/variants/narrated/editor-commit",
+        json={
+            "caption_meta": {"font": "Not A Font", "font_set": True},
+            "title": "Valid title",
+            "base_generation": "2026-07-01T00:00:00Z",
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "Unknown caption font" in resp.text
     assert job.assembly_plan == before
     assert item.theme == "Old title"
     db.commit.assert_not_awaited()

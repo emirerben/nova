@@ -1,6 +1,14 @@
 import fontRegistryJson from "@/data/font-registry.json";
 
-export type CopilotOpFamily = "text" | "clip";
+export type CopilotOpFamily =
+  | "text"
+  | "clip"
+  | "sfx"
+  | "overlay"
+  | "caption"
+  | "music"
+  | "title"
+  | "tool";
 
 export const TEXT_STYLE_PATCH_KEYS = [
   "font_family",
@@ -21,6 +29,27 @@ export const TEXT_STYLE_PATCH_KEYS = [
 
 export type TextStylePatchKey = (typeof TEXT_STYLE_PATCH_KEYS)[number];
 
+export const OVERLAY_PATCH_KEYS = [
+  "start_s",
+  "end_s",
+  "position",
+  "x_frac",
+  "y_frac",
+  "scale",
+  "display_mode",
+] as const;
+
+export type OverlayPatchKey = (typeof OVERLAY_PATCH_KEYS)[number];
+
+export const CAPTION_META_KEYS = [
+  "enabled",
+  "style",
+  "font",
+  "y_frac",
+] as const;
+
+export type CaptionMetaKey = (typeof CAPTION_META_KEYS)[number];
+
 export type TextStylePatch = Partial<{
   font_family: string;
   size_px: number;
@@ -38,6 +67,23 @@ export type TextStylePatch = Partial<{
   y_frac: number | null;
 }>;
 
+export type OverlayPatch = Partial<{
+  start_s: number;
+  end_s: number;
+  position: "top" | "center" | "bottom" | "custom";
+  x_frac: number;
+  y_frac: number;
+  scale: number;
+  display_mode: "pip" | "fullscreen";
+}>;
+
+export type CaptionMetaPatch = Partial<{
+  enabled: boolean;
+  style: "sentence" | "word";
+  font: string | null;
+  y_frac: number;
+}>;
+
 export type CopilotOp =
   | { op: "edit_text"; bar_index: number; text: string }
   | { op: "patch_text_style"; bar_index: number; patch: TextStylePatch }
@@ -48,7 +94,31 @@ export type CopilotOp =
   | { op: "set_clip_in"; slot_index: number; in_s: number }
   | { op: "reorder_clip"; from_index: number; to_index: number }
   | { op: "remove_clip"; slot_index: number }
-  | { op: "split_clip"; slot_index: number; at_s: number };
+  | { op: "split_clip"; slot_index: number; at_s: number }
+  | { op: "add_sfx"; effect_id: string; at_s: number; gain: number }
+  | { op: "patch_sfx"; sfx_index: number; at_s?: number; gain?: number }
+  | { op: "remove_sfx"; sfx_index: number }
+  | { op: "patch_overlay"; overlay_index: number; patch: OverlayPatch }
+  | { op: "remove_overlay"; overlay_index: number }
+  | {
+      op: "add_overlay";
+      asset_id: string;
+      start_s: number;
+      end_s: number;
+      position?: "top" | "center" | "bottom" | "custom";
+      x_frac?: number;
+      y_frac?: number;
+      scale?: number;
+      display_mode?: "pip" | "fullscreen";
+    }
+  | { op: "accept_overlay_suggestion"; suggestion_id: string }
+  | { op: "edit_caption"; cue_index: number; text: string }
+  | { op: "set_caption_timing"; cue_index: number; start_s?: number; end_s?: number }
+  | { op: "set_caption_meta"; patch: CaptionMetaPatch }
+  | { op: "swap_music"; track_id: string }
+  | { op: "set_mix"; music_level: number }
+  | { op: "set_title"; title: string }
+  | { op: "open_tool"; tool: "text" | "sounds" | "overlays" | "styles" };
 
 export type CopilotOpName = CopilotOp["op"];
 
@@ -75,12 +145,31 @@ type StylePatchValidation =
   | { ok: true; patch: TextStylePatch }
   | { ok: false; rejection: OpValidationRejection };
 
+type OverlayPatchValidation =
+  | { ok: true; patch: OverlayPatch }
+  | { ok: false; rejection: OpValidationRejection };
+
+type CaptionMetaPatchValidation =
+  | { ok: true; patch: CaptionMetaPatch }
+  | { ok: false; rejection: OpValidationRejection };
+
 export interface CopilotValidationSnapshot {
+  total_duration_s?: number | null;
   text_bars?: unknown[];
   slots?: Array<{
     output_start_s?: number | null;
     output_end_s?: number | null;
   }>;
+  sfx?: {
+    placements?: unknown[];
+  };
+  overlays?: {
+    cards?: unknown[];
+    pending_suggestions?: unknown[];
+  };
+  captions?: {
+    cues?: unknown[];
+  };
 }
 
 interface FontRegistryFile {
@@ -111,8 +200,14 @@ const ALLOWED_EFFECTS = new Set([
 const ALLOWED_ALIGNMENTS = new Set(["left", "center", "right"]);
 const ALLOWED_TEXT_CASES = new Set(["none", "upper", "lower", "title"]);
 const ALLOWED_POSITIONS = new Set(["top", "middle", "bottom", "custom"]);
+const ALLOWED_OVERLAY_POSITIONS = new Set(["top", "center", "bottom", "custom"]);
+const ALLOWED_DISPLAY_MODES = new Set(["pip", "fullscreen"]);
+const ALLOWED_CAPTION_STYLES = new Set(["sentence", "word"]);
+const ALLOWED_TOOLS = new Set(["text", "sounds", "overlays", "styles"]);
 const HEX_COLOR = /^#[0-9A-Fa-f]{6}$/;
 const STYLE_PATCH_KEY_SET = new Set<string>(TEXT_STYLE_PATCH_KEYS);
+const OVERLAY_PATCH_KEY_SET = new Set<string>(OVERLAY_PATCH_KEYS);
+const CAPTION_META_KEY_SET = new Set<string>(CAPTION_META_KEYS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -142,8 +237,31 @@ function rejectStyle(reason: OpValidationReason, message: string): StylePatchVal
   return { ok: false, rejection: { reason, message } };
 }
 
-function hasIndex(snapshot: CopilotValidationSnapshot | undefined, kind: "text" | "slot", index: number) {
-  const arr = kind === "text" ? snapshot?.text_bars : snapshot?.slots;
+function rejectOverlayPatch(reason: OpValidationReason, message: string): OverlayPatchValidation {
+  return { ok: false, rejection: { reason, message } };
+}
+
+function rejectCaptionMetaPatch(reason: OpValidationReason, message: string): CaptionMetaPatchValidation {
+  return { ok: false, rejection: { reason, message } };
+}
+
+function hasIndex(
+  snapshot: CopilotValidationSnapshot | undefined,
+  kind: "text" | "slot" | "sfx" | "overlay" | "caption" | "suggestion",
+  index: number,
+) {
+  const arr =
+    kind === "text"
+      ? snapshot?.text_bars
+      : kind === "slot"
+        ? snapshot?.slots
+        : kind === "sfx"
+          ? snapshot?.sfx?.placements
+          : kind === "overlay"
+            ? snapshot?.overlays?.cards
+            : kind === "suggestion"
+              ? snapshot?.overlays?.pending_suggestions
+              : snapshot?.captions?.cues;
   return !arr || index < arr.length;
 }
 
@@ -200,6 +318,79 @@ function validateStylePatch(raw: unknown): StylePatchValidation {
   return { ok: true, patch };
 }
 
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return min;
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampAtS(value: number, snapshot: CopilotValidationSnapshot | undefined): number {
+  const total = snapshot?.total_duration_s;
+  if (!finiteNumber(total)) return Math.max(0, value);
+  return clamp(value, 0, Math.max(0, total - 0.1));
+}
+
+function cleanUserText(text: string, maxLength: number): string {
+  return text.replace(/\s+/g, " ").replace(/[\u0000-\u001F\u007F]/g, "").trim().slice(0, maxLength);
+}
+
+function validateOverlayPatch(raw: unknown): OverlayPatchValidation {
+  if (!isRecord(raw)) return rejectOverlayPatch("invalid_type", "patch must be an object");
+  const patch: OverlayPatch = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!OVERLAY_PATCH_KEY_SET.has(key)) continue;
+    if (key === "start_s" || key === "end_s") {
+      if (!nonNegativeNumber(value)) return rejectOverlayPatch("invalid_time", `${key} must be non-negative seconds`);
+      patch[key] = value;
+    } else if (key === "position") {
+      if (typeof value !== "string" || !ALLOWED_OVERLAY_POSITIONS.has(value)) {
+        return rejectOverlayPatch("invalid_value", "position is not supported");
+      }
+      patch.position = value as OverlayPatch["position"];
+    } else if (key === "display_mode") {
+      if (typeof value !== "string" || !ALLOWED_DISPLAY_MODES.has(value)) {
+        return rejectOverlayPatch("invalid_value", "display_mode must be pip or fullscreen");
+      }
+      patch.display_mode = value as OverlayPatch["display_mode"];
+    } else {
+      if (!finiteNumber(value)) return rejectOverlayPatch("invalid_type", `${key} must be a number`);
+      patch[key as "x_frac" | "y_frac" | "scale"] =
+        key === "scale" ? clamp(value, 0.05, 1) : clamp(value, 0, 1);
+    }
+  }
+  if (patch.start_s !== undefined && patch.end_s !== undefined && patch.end_s <= patch.start_s) {
+    return rejectOverlayPatch("invalid_time", "overlay end_s must be after start_s");
+  }
+  if (Object.keys(patch).length === 0) return rejectOverlayPatch("empty_patch", "patch contains no overlay fields");
+  return { ok: true, patch };
+}
+
+function validateCaptionMetaPatch(raw: unknown): CaptionMetaPatchValidation {
+  if (!isRecord(raw)) return rejectCaptionMetaPatch("invalid_type", "patch must be an object");
+  const patch: CaptionMetaPatch = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!CAPTION_META_KEY_SET.has(key)) continue;
+    if (key === "enabled") {
+      if (typeof value !== "boolean") return rejectCaptionMetaPatch("invalid_type", "enabled must be boolean");
+      patch.enabled = value;
+    } else if (key === "style") {
+      if (typeof value !== "string" || !ALLOWED_CAPTION_STYLES.has(value)) {
+        return rejectCaptionMetaPatch("invalid_value", "style must be sentence or word");
+      }
+      patch.style = value as CaptionMetaPatch["style"];
+    } else if (key === "font") {
+      if (value !== null && (typeof value !== "string" || value.trim() === "")) {
+        return rejectCaptionMetaPatch("invalid_value", "font must be a non-empty string or null");
+      }
+      patch.font = value === null ? null : (value as string).trim();
+    } else if (key === "y_frac") {
+      if (!finiteNumber(value)) return rejectCaptionMetaPatch("invalid_type", "y_frac must be a number");
+      patch.y_frac = clamp(value, 0.3, 0.9);
+    }
+  }
+  if (Object.keys(patch).length === 0) return rejectCaptionMetaPatch("empty_patch", "patch contains no caption meta fields");
+  return { ok: true, patch };
+}
+
 export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): CopilotOpFamily | null {
   if (
     op.op === "edit_text" ||
@@ -219,6 +410,21 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
   ) {
     return "clip";
   }
+  if (op.op === "add_sfx" || op.op === "patch_sfx" || op.op === "remove_sfx") return "sfx";
+  if (
+    op.op === "patch_overlay" ||
+    op.op === "remove_overlay" ||
+    op.op === "add_overlay" ||
+    op.op === "accept_overlay_suggestion"
+  ) {
+    return "overlay";
+  }
+  if (op.op === "edit_caption" || op.op === "set_caption_timing" || op.op === "set_caption_meta") {
+    return "caption";
+  }
+  if (op.op === "swap_music" || op.op === "set_mix") return "music";
+  if (op.op === "set_title") return "title";
+  if (op.op === "open_tool") return "tool";
   return null;
 }
 
@@ -345,6 +551,175 @@ export function validateCopilotOp(
         return reject("invalid_time", "split_clip.at_s must be inside the slot output window", opName);
       }
       return { ok: true, op: { op: opName, slot_index: raw.slot_index, at_s: raw.at_s } };
+    }
+    case "add_sfx": {
+      if (typeof raw.effect_id !== "string" || raw.effect_id.trim() === "" || !finiteNumber(raw.at_s)) {
+        return reject("missing_required", "add_sfx requires effect_id and at_s", opName);
+      }
+      const gain = raw.gain === undefined ? 1 : raw.gain;
+      if (!finiteNumber(gain)) return reject("invalid_type", "gain must be a number", opName);
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          effect_id: raw.effect_id,
+          at_s: clampAtS(raw.at_s, snapshot),
+          gain: clamp(gain, 0, 2),
+        },
+      };
+    }
+    case "patch_sfx": {
+      if (!integerIndex(raw.sfx_index)) return reject("missing_required", "patch_sfx requires sfx_index", opName);
+      if (!hasIndex(snapshot, "sfx", raw.sfx_index)) {
+        return reject("invalid_index", "sfx_index must point into snapshot sfx placements", opName);
+      }
+      const hasAt = raw.at_s !== undefined;
+      const hasGain = raw.gain !== undefined;
+      if (!hasAt && !hasGain) return reject("missing_required", "patch_sfx requires at_s or gain", opName);
+      if ((hasAt && !finiteNumber(raw.at_s)) || (hasGain && !finiteNumber(raw.gain))) {
+        return reject("invalid_type", "sfx patch values must be numbers", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          sfx_index: raw.sfx_index,
+          ...(hasAt ? { at_s: clampAtS(raw.at_s as number, snapshot) } : {}),
+          ...(hasGain ? { gain: clamp(raw.gain as number, 0, 2) } : {}),
+        },
+      };
+    }
+    case "remove_sfx": {
+      if (!integerIndex(raw.sfx_index)) return reject("missing_required", "remove_sfx requires sfx_index", opName);
+      if (!hasIndex(snapshot, "sfx", raw.sfx_index)) {
+        return reject("invalid_index", "sfx_index must point into snapshot sfx placements", opName);
+      }
+      return { ok: true, op: { op: opName, sfx_index: raw.sfx_index } };
+    }
+    case "patch_overlay": {
+      if (!integerIndex(raw.overlay_index)) {
+        return reject("missing_required", "patch_overlay requires overlay_index", opName);
+      }
+      if (!hasIndex(snapshot, "overlay", raw.overlay_index)) {
+        return reject("invalid_index", "overlay_index must point into snapshot overlay cards", opName);
+      }
+      const patch = validateOverlayPatch(raw.patch);
+      if (!patch.ok) return patch;
+      return { ok: true, op: { op: opName, overlay_index: raw.overlay_index, patch: patch.patch } };
+    }
+    case "remove_overlay": {
+      if (!integerIndex(raw.overlay_index)) return reject("missing_required", "remove_overlay requires overlay_index", opName);
+      if (!hasIndex(snapshot, "overlay", raw.overlay_index)) {
+        return reject("invalid_index", "overlay_index must point into snapshot overlay cards", opName);
+      }
+      return { ok: true, op: { op: opName, overlay_index: raw.overlay_index } };
+    }
+    case "add_overlay": {
+      if (
+        typeof raw.asset_id !== "string" ||
+        raw.asset_id.trim() === "" ||
+        !nonNegativeNumber(raw.start_s) ||
+        !nonNegativeNumber(raw.end_s)
+      ) {
+        return reject("missing_required", "add_overlay requires asset_id, start_s, and end_s", opName);
+      }
+      if (raw.end_s <= raw.start_s) return reject("invalid_time", "add_overlay end_s must be after start_s", opName);
+      const op: Extract<CopilotOp, { op: "add_overlay" }> = {
+        op: opName,
+        asset_id: raw.asset_id,
+        start_s: raw.start_s,
+        end_s: raw.end_s,
+      };
+      if (raw.position !== undefined) {
+        if (typeof raw.position !== "string" || !ALLOWED_OVERLAY_POSITIONS.has(raw.position)) {
+          return reject("invalid_value", "position is not supported", opName);
+        }
+        op.position = raw.position as typeof op.position;
+      }
+      if (raw.display_mode !== undefined) {
+        if (typeof raw.display_mode !== "string" || !ALLOWED_DISPLAY_MODES.has(raw.display_mode)) {
+          return reject("invalid_value", "display_mode must be pip or fullscreen", opName);
+        }
+        op.display_mode = raw.display_mode as typeof op.display_mode;
+      }
+      for (const key of ["x_frac", "y_frac", "scale"] as const) {
+        if (raw[key] === undefined) continue;
+        if (!finiteNumber(raw[key])) return reject("invalid_type", `${key} must be a number`, opName);
+        op[key] = key === "scale" ? clamp(raw[key], 0.05, 1) : clamp(raw[key], 0, 1);
+      }
+      return { ok: true, op };
+    }
+    case "accept_overlay_suggestion": {
+      if (typeof raw.suggestion_id !== "string" || raw.suggestion_id.trim() === "") {
+        return reject("missing_required", "accept_overlay_suggestion requires suggestion_id", opName);
+      }
+      return { ok: true, op: { op: opName, suggestion_id: raw.suggestion_id } };
+    }
+    case "edit_caption": {
+      if (!integerIndex(raw.cue_index) || typeof raw.text !== "string") {
+        return reject("missing_required", "edit_caption requires cue_index and text", opName);
+      }
+      if (!hasIndex(snapshot, "caption", raw.cue_index)) {
+        return reject("invalid_index", "cue_index must point into snapshot caption cues", opName);
+      }
+      const text = cleanUserText(raw.text, 500);
+      if (!text) return reject("invalid_value", "caption text must be non-empty", opName);
+      return { ok: true, op: { op: opName, cue_index: raw.cue_index, text } };
+    }
+    case "set_caption_timing": {
+      if (!integerIndex(raw.cue_index)) {
+        return reject("missing_required", "set_caption_timing requires cue_index", opName);
+      }
+      if (!hasIndex(snapshot, "caption", raw.cue_index)) {
+        return reject("invalid_index", "cue_index must point into snapshot caption cues", opName);
+      }
+      const hasStart = raw.start_s !== undefined;
+      const hasEnd = raw.end_s !== undefined;
+      if (!hasStart && !hasEnd) {
+        return reject("missing_required", "set_caption_timing requires start_s or end_s", opName);
+      }
+      if ((hasStart && !nonNegativeNumber(raw.start_s)) || (hasEnd && !nonNegativeNumber(raw.end_s))) {
+        return reject("invalid_time", "caption timing values must be non-negative seconds", opName);
+      }
+      if (hasStart && hasEnd && (raw.end_s as number) <= (raw.start_s as number)) {
+        return reject("invalid_time", "caption end_s must be after start_s", opName);
+      }
+      return {
+        ok: true,
+        op: {
+          op: opName,
+          cue_index: raw.cue_index,
+          ...(hasStart ? { start_s: raw.start_s as number } : {}),
+          ...(hasEnd ? { end_s: raw.end_s as number } : {}),
+        },
+      };
+    }
+    case "set_caption_meta": {
+      const patch = validateCaptionMetaPatch(raw.patch);
+      if (!patch.ok) return patch;
+      return { ok: true, op: { op: opName, patch: patch.patch } };
+    }
+    case "swap_music": {
+      if (typeof raw.track_id !== "string" || raw.track_id.trim() === "") {
+        return reject("missing_required", "swap_music requires track_id", opName);
+      }
+      return { ok: true, op: { op: opName, track_id: raw.track_id } };
+    }
+    case "set_mix": {
+      if (!finiteNumber(raw.music_level)) return reject("missing_required", "set_mix requires music_level", opName);
+      return { ok: true, op: { op: opName, music_level: clamp(raw.music_level, 0, 1) } };
+    }
+    case "set_title": {
+      if (typeof raw.title !== "string") return reject("missing_required", "set_title requires title", opName);
+      const title = cleanUserText(raw.title, 300);
+      if (!title) return reject("invalid_value", "title must be non-empty", opName);
+      return { ok: true, op: { op: opName, title } };
+    }
+    case "open_tool": {
+      if (typeof raw.tool !== "string" || !ALLOWED_TOOLS.has(raw.tool)) {
+        return reject("invalid_value", "open_tool.tool is not supported", opName);
+      }
+      return { ok: true, op: { op: opName, tool: raw.tool as Extract<CopilotOp, { op: "open_tool" }>["tool"] } };
     }
     default:
       return reject("unknown_op", "op name is not in the v1 vocabulary", opName);

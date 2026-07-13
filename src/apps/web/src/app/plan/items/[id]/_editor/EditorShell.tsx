@@ -23,14 +23,20 @@ import { useRouter } from "next/navigation";
 import {
   getPlanItem,
   getPlanItemJobStatus,
+  deletePoolAsset,
   NotAuthenticatedError,
   confirmOverlayUploads,
+  listPoolAssets,
+  registerPoolAsset,
   requestOverlayUploadUrls,
+  requestPoolAssetUploadUrls,
+  sha256HexOfFile,
   uploadToGcs,
   type MediaOverlay,
   type OverlaySuggestion,
   type PlanItem,
   type PlanItemVariant,
+  type PoolAsset,
   type SoundEffectPlacement,
   type TextElement,
 } from "@/lib/plan-api";
@@ -42,6 +48,7 @@ import {
   EditorCommitConflictError,
   type AcceptedSuggestionRef,
 } from "@/lib/editor-commit";
+import { captionMetaFromVariant } from "@/lib/caption-meta";
 import {
   buildPlanItemEditorReturnHref,
   editorCommitStartedRender,
@@ -51,9 +58,14 @@ import { type GenerativeStyleSet } from "@/lib/generative-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
 import { applyCopilotOps, type ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
-import { buildCopilotSnapshot, type CopilotSnapshot } from "@/lib/edit-copilot/snapshot";
+import {
+  allowedOpFamiliesFromCapabilities,
+  buildCopilotSnapshot,
+  type CopilotCaptionMetaSnapshot,
+  type CopilotSnapshot,
+} from "@/lib/edit-copilot/snapshot";
 import { useEditCopilot } from "@/lib/edit-copilot/useEditCopilot";
-import type { CopilotOp } from "@/lib/edit-copilot/ops";
+import type { CaptionMetaPatch, CopilotOp } from "@/lib/edit-copilot/ops";
 import {
   initTextEditorState,
   textReducer,
@@ -88,7 +100,7 @@ import {
 import TransportBar from "./TransportBar";
 import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
-import OverlaySuggestions from "./OverlaySuggestions";
+import OverlaySuggestions, { type PendingUpload } from "./OverlaySuggestions";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
@@ -113,6 +125,11 @@ import {
   useEditorHistory,
   type EditorDocument,
 } from "./useEditorHistory";
+import {
+  isUnavailableError,
+  SUGGESTION_POLL_INTERVAL_MS,
+  useEditorOverlaySuggestions,
+} from "./useEditorOverlaySuggestions";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -122,6 +139,18 @@ const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
 const COPILOT_SAVE_NOTICE_KEY = "nova-copilot-save-expectation-dismissed";
+const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? "").trim();
+const MEDIA_OVERLAYS_UI_ENABLED =
+  MEDIA_OVERLAYS_RAW.toLowerCase() === "true" || MEDIA_OVERLAYS_RAW === "1";
+const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+const POOL_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "video/mp4",
+  "video/quicktime",
+];
 
 export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   if (!deleteKeyAllowed(target)) return false;
@@ -358,6 +387,9 @@ export default function EditorShell({
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
   const [titleDirty, setTitleDirty] = useState(false);
+  const [captionMeta, setCaptionMeta] = useState<CopilotCaptionMetaSnapshot | null>(null);
+  const [captionMetaDirty, setCaptionMetaDirty] = useState(false);
+  const [captionMetaPatch, setCaptionMetaPatch] = useState<CaptionMetaPatch>({});
 
   useEffect(() => {
     if (!variant) return;
@@ -403,6 +435,11 @@ export default function EditorShell({
       setMixLevel(seededMix);
       setMixDirty(false);
       setSoundMuted(seededMix === 0);
+    }
+    if (!conflictReseed || !captionMetaDirty) {
+      setCaptionMeta(captionMetaFromVariant(variant));
+      setCaptionMetaDirty(false);
+      setCaptionMetaPatch({});
     }
     if (sections.titleAndStyle) setAppliedStyleSetId(null);
     // Dirty flags are read as a snapshot when a (re)seed fires; they must not
@@ -462,6 +499,11 @@ export default function EditorShell({
   );
   const [musicDirty, setMusicDirty] = useState(false);
   const [overlayUploading, setOverlayUploading] = useState(false);
+  const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
+  const [maxPoolAssets, setMaxPoolAssets] = useState(20);
+  const [pendingPoolUploads, setPendingPoolUploads] = useState<PendingUpload[]>([]);
+  const [poolUnavailable, setPoolUnavailable] = useState(false);
+  const [poolError, setPoolError] = useState<string | null>(null);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
@@ -553,10 +595,15 @@ export default function EditorShell({
       slots: localSlots,
       sfx: localSfx,
       overlays: localOverlays,
+      captionMeta,
+      captionMetaDirty,
+      captionMetaPatch,
       videoMuted,
       soundMuted,
       mixLevel,
       mixDirty,
+      musicTrackId: selectedMusicTrackId,
+      musicDirty,
       title,
     }),
     [
@@ -564,10 +611,15 @@ export default function EditorShell({
       localSlots,
       localSfx,
       localOverlays,
+      captionMeta,
+      captionMetaDirty,
+      captionMetaPatch,
       videoMuted,
       soundMuted,
       mixLevel,
       mixDirty,
+      selectedMusicTrackId,
+      musicDirty,
       title,
     ],
   );
@@ -583,6 +635,11 @@ export default function EditorShell({
       setSoundMuted(doc.soundMuted);
       setMixLevel(doc.mixLevel ?? null);
       setMixDirty(doc.mixDirty ?? false);
+      setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
+      setMusicDirty(doc.musicDirty ?? false);
+      setCaptionMeta(doc.captionMeta ?? null);
+      setCaptionMetaDirty(doc.captionMetaDirty ?? false);
+      setCaptionMetaPatch(doc.captionMetaPatch ?? {});
       setTitle(doc.title);
       setTextDirty(true);
       setSfxDirty(true);
@@ -596,7 +653,7 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select],
+    [state.bars, select, variant?.music_track_id],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
@@ -604,7 +661,7 @@ export default function EditorShell({
   // Every mutation (text, slots, mutes, title) records into the stack, so the
   // stack IS the dirty signal — and Save's history.clear() makes it read clean
   // (so the draft mirror doesn't immediately re-write the just-saved state).
-  const dirty = history.canUndo || history.canRedo || musicDirty;
+  const dirty = history.canUndo || history.canRedo || musicDirty || captionMetaDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -837,7 +894,7 @@ export default function EditorShell({
   }, []);
 
   useEffect(() => {
-    if (activeTool !== "sounds" || sfxGlossaryEffects.length > 0) {
+    if ((activeTool !== "sounds" && activeTool !== "nova") || sfxGlossaryEffects.length > 0) {
       return;
     }
     let cancelled = false;
@@ -861,6 +918,7 @@ export default function EditorShell({
     (!!variant?.music_track_id ||
       !!selectedMusicTrackId ||
       activeTool === "sounds" ||
+      activeTool === "nova" ||
       selection?.kind === "music") &&
     !musicTracksLoaded;
   useEffect(() => {
@@ -908,6 +966,112 @@ export default function EditorShell({
       return changed ? next : current;
     });
   }, [localSfx, sfxGlossaryEffects]);
+
+  const overlayPoolShouldLoad =
+    MEDIA_OVERLAYS_UI_ENABLED &&
+    capabilities?.overlays !== false &&
+    (activeTool === "nova" || activeTool === "overlays");
+  useEffect(() => {
+    if (!overlayPoolShouldLoad) return;
+    let cancelled = false;
+    listPoolAssets(itemId)
+      .then((res) => {
+        if (cancelled) return;
+        setPoolAssets(res.assets);
+        setMaxPoolAssets(res.max_assets);
+        setPoolUnavailable(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isUnavailableError(err)) setPoolUnavailable(true);
+        else setPoolError(err instanceof Error ? err.message : "Couldn't load your visuals.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, overlayPoolShouldLoad]);
+
+  const hasBusyPoolAssets = poolAssets.some(
+    (a) => a.status === "analyzing" || a.status === "uploaded" || a.status === "uploading",
+  );
+  useEffect(() => {
+    if (!overlayPoolShouldLoad || !hasBusyPoolAssets || poolUnavailable) return;
+    const id = setInterval(() => {
+      listPoolAssets(itemId)
+        .then((res) => {
+          setPoolAssets(res.assets);
+          setMaxPoolAssets(res.max_assets);
+        })
+        .catch(() => {});
+    }, SUGGESTION_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [hasBusyPoolAssets, itemId, overlayPoolShouldLoad, poolUnavailable]);
+
+  const overlaySuggestionsEnabled =
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" &&
+    capabilities?.suggestions === true &&
+    !readOnly;
+  const overlaySuggestionsShouldLoad =
+    overlaySuggestionsEnabled && (activeTool === "nova" || activeTool === "overlays");
+  const overlaySuggestions = useEditorOverlaySuggestions({
+    itemId,
+    variantId: variant?.variant_id ?? variantParam ?? "",
+    enabled: overlaySuggestionsShouldLoad,
+  });
+
+  const handlePoolFiles = useCallback(
+    (fileList: FileList | File[] | null) => {
+      if (!fileList) return;
+      const files = Array.from(fileList).filter((f) => POOL_MIME_TYPES.includes(f.type));
+      if (files.length === 0) return;
+      setPoolError(null);
+
+      const locals: PendingUpload[] = files.map((f, i) => ({
+        localId: `pending-${Date.now()}-${i}-${f.name}`,
+        filename: f.name,
+      }));
+      setPendingPoolUploads((prev) => [...prev, ...locals]);
+
+      void (async () => {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const local = locals[i];
+          try {
+            const [signed] = await requestPoolAssetUploadUrls(itemId, [
+              { filename: file.name, content_type: file.type, file_size_bytes: file.size },
+            ]);
+            await uploadToGcs(signed.upload_url, file);
+            const contentHash = await sha256HexOfFile(file);
+            const registered = await registerPoolAsset(itemId, {
+              gcs_path: signed.gcs_path,
+              content_type: file.type,
+              content_hash: contentHash,
+              source_filename: file.name,
+            });
+            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
+            if (!registered.deduped) setPoolAssets((prev) => [...prev, registered]);
+          } catch (err) {
+            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
+            if (isUnavailableError(err)) setPoolUnavailable(true);
+            else setPoolError(err instanceof Error ? err.message : "Upload failed");
+          }
+        }
+      })();
+    },
+    [itemId],
+  );
+
+  const handleRemovePoolAsset = useCallback(
+    (asset: PoolAsset) => {
+      void deletePoolAsset(itemId, asset.id)
+        .then(() => setPoolAssets((prev) => prev.filter((a) => a.id !== asset.id)))
+        .catch((err) => {
+          if (isUnavailableError(err)) setPoolUnavailable(true);
+          else setPoolError(err instanceof Error ? err.message : "Couldn't remove that file");
+        });
+    },
+    [itemId],
+  );
 
   const sampleWord = useMemo(() => {
     const first = selectedBar?.text.trim().split(/\s+/)[0];
@@ -999,10 +1163,12 @@ export default function EditorShell({
   const pickMusicTrack = useCallback(
     (trackId: string) => {
       if (readOnly || !variant?.music_track_id) return;
+      if (trackId === selectedMusicTrackId) return;
+      history.record();
       setSelectedMusicTrackId(trackId);
       setMusicDirty(trackId !== variant.music_track_id);
     },
-    [readOnly, variant?.music_track_id],
+    [history, readOnly, selectedMusicTrackId, variant?.music_track_id],
   );
 
   const previewTextTiming = useCallback(
@@ -1447,10 +1613,74 @@ export default function EditorShell({
     [capabilities, readOnly, readOnlyReason],
   );
 
-  const buildCopilotDraftSnapshot = useCallback(
-    () => buildCopilotSnapshot(state.bars, slots, clip.clips, capabilities, clip.state.grid),
-    [capabilities, clip.clips, clip.state.grid, slots, state.bars],
-  );
+  const buildCopilotDraftSnapshot = useCallback(() => {
+    const openTools = (["text", "sounds", "overlays", "styles"] as const).filter((tool) => {
+      if (toolDisabledReasons[tool]) return false;
+      if (tool === "sounds") return SOUND_EFFECTS_UI_ENABLED;
+      if (tool === "overlays") return MEDIA_OVERLAYS_UI_ENABLED;
+      return true;
+    });
+    const captionsPresent =
+      variant?.resolved_archetype === "narrated" &&
+      captionMeta != null &&
+      state.bars.some((bar) => bar.role === "narrated_caption");
+    const musicSwappable = !!variant?.music_track_id && !readOnly;
+    const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
+    const allowedFamilies = allowedOpFamiliesFromCapabilities(capabilities, {
+      sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
+      overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
+      captionsPresent,
+      musicSwappable,
+      mixAllowed,
+      titleEditable: !readOnly,
+      openTools,
+      readOnly,
+    });
+    return buildCopilotSnapshot(state.bars, slots, clip.clips, capabilities, clip.state.grid, {
+      sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
+      overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
+      captionsPresent,
+      musicSwappable,
+      mixAllowed,
+      titleEditable: !readOnly,
+      openTools,
+      sfxPlacements: localSfx,
+      sfxCatalog: sfxGlossaryEffects,
+      overlayCards: localOverlays,
+      poolAssets,
+      pendingSuggestions: overlaySuggestions.rows,
+      captionMeta: captionsPresent ? captionMeta : undefined,
+      musicState: {
+        swappable: musicSwappable,
+        currentTrackId: effectiveMusicTrackId,
+        currentTrackTitle: effectiveMusicTitle,
+        candidates: musicTracks,
+      },
+      mixLevel,
+      title,
+      readOnly: readOnly || allowedFamilies.length === 0,
+    });
+  }, [
+    capabilities,
+    captionMeta,
+    clip.clips,
+    clip.state.grid,
+    effectiveMusicTitle,
+    effectiveMusicTrackId,
+    localOverlays,
+    localSfx,
+    mixLevel,
+    musicTracks,
+    overlaySuggestions.rows,
+    poolAssets,
+    readOnly,
+    slots,
+    state.bars,
+    title,
+    toolDisabledReasons,
+    variant?.music_track_id,
+    variant?.resolved_archetype,
+  ]);
 
   const applyCopilotDraftOps = useCallback(
     (ops: CopilotOp[], snapshot: CopilotSnapshot) =>
@@ -1461,10 +1691,36 @@ export default function EditorShell({
         capabilities,
         grid: clip.state.grid,
         videoDurationS: previewDuration,
+        sfx: localSfx,
+        sfxCatalog: sfxGlossaryEffects,
+        overlays: localOverlays,
+        poolAssets,
+        pendingSuggestions: overlaySuggestions.rows,
+        musicTrackId: effectiveMusicTrackId,
+        mixLevel,
+        title,
+        captionMeta,
         makeTextBarId: () => crypto.randomUUID(),
         makeSlotKey: (slot) => `${slot.key}-split-${crypto.randomUUID()}`,
+        makeSfxPlacementId: () => crypto.randomUUID(),
+        makeOverlayId: () => crypto.randomUUID(),
       }),
-    [capabilities, clip.state.grid, previewDuration, slots, state.bars],
+    [
+      capabilities,
+      captionMeta,
+      clip.state.grid,
+      effectiveMusicTrackId,
+      localOverlays,
+      localSfx,
+      mixLevel,
+      overlaySuggestions.rows,
+      poolAssets,
+      previewDuration,
+      sfxGlossaryEffects,
+      slots,
+      state.bars,
+      title,
+    ],
   );
 
   const flashTimerRef = useRef<number | null>(null);
@@ -1499,16 +1755,72 @@ export default function EditorShell({
   const handleCopilotOps = useCallback(
     (result: ApplyCopilotOpsResult): { undoVersion?: number } => {
       const hasAppliedChanges =
-        result.textActions.length > 0 || result.nextSlots !== null;
-      if (!hasAppliedChanges || readOnly) return {};
+        result.textActions.length > 0 ||
+        result.nextSlots !== null ||
+        result.nextSfx != null ||
+        result.nextOverlays != null ||
+        (result.acceptedSuggestionRefs?.length ?? 0) > 0 ||
+        result.nextMusicTrackId !== undefined ||
+        result.nextMixLevel !== undefined ||
+        result.nextTitle !== undefined ||
+        result.captionMetaPatch !== undefined;
+      if (!hasAppliedChanges) {
+        if (result.openTool) setActiveTool(result.openTool);
+        return {};
+      }
+      if (readOnly) return {};
 
       const version = history.record();
+      const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
+      const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
       if (result.textActions.length > 0) setTextDirty(true);
       if (result.nextSlots) {
         setLocalSlots(result.nextSlots);
         setTimelineDirty(true);
       }
+      if (result.nextSfx) {
+        setLocalSfx(result.nextSfx);
+        setSfxDirty(true);
+      }
+      if (result.nextOverlays) {
+        setLocalOverlays(result.nextOverlays);
+        setOverlaysDirty(true);
+      }
+      if (result.acceptedSuggestionRefs?.length) {
+        setAcceptedSuggestions((cur) => {
+          const seen = new Set(cur.map((ref) => ref.id));
+          return [
+            ...cur,
+            ...result.acceptedSuggestionRefs!.filter((ref) => !seen.has(ref.id)),
+          ];
+        });
+        for (const ref of result.acceptedSuggestionRefs) {
+          overlaySuggestions.removeRow(ref.id, { accepted: true });
+        }
+      }
+      if (result.nextMusicTrackId !== undefined) {
+        setSelectedMusicTrackId(result.nextMusicTrackId);
+        setMusicDirty(result.nextMusicTrackId !== variant?.music_track_id);
+      }
+      if (result.nextMixLevel !== undefined) {
+        setMixLevel(result.nextMixLevel);
+        setSoundMuted(result.nextMixLevel === 0);
+        setMixDirty(true);
+      }
+      if (result.nextTitle !== undefined) {
+        setTitle(result.nextTitle);
+        setTitleDirty(true);
+      }
+      if (result.captionMetaPatch !== undefined) {
+        setCaptionMeta((current) => {
+          const base = current ?? (variant ? captionMetaFromVariant(variant) : null);
+          return base ? { ...base, ...result.captionMetaPatch } : base;
+        });
+        setCaptionMetaPatch((current) => ({ ...current, ...result.captionMetaPatch }));
+        setCaptionMetaDirty(true);
+      }
+      if (result.openTool) setActiveTool(result.openTool);
       setSessionHasCopilotEdits(true);
 
       const feedback = resolveCopilotApplyFeedback({
@@ -1517,12 +1829,28 @@ export default function EditorShell({
         beforeSlots: slots,
         grid: clip.state.grid,
       });
+      const changedOverlayIds = result.nextOverlays
+        ? result.nextOverlays
+            .filter((overlay) => JSON.stringify(beforeOverlayById.get(overlay.id)) !== JSON.stringify(overlay))
+            .map((overlay) => overlay.id)
+        : [];
+      const addedSfx = result.nextSfx?.find((sfx) => !beforeSfxIds.has(sfx.id)) ?? null;
       flashCopilotTargets({
         textIds: feedback.textIds,
-        timelineIds: [...feedback.textIds, ...feedback.slotIds],
+        overlayIds: changedOverlayIds,
+        timelineIds: [
+          ...feedback.textIds,
+          ...feedback.slotIds,
+          ...(result.nextSfx ? result.nextSfx.map((sfx) => sfx.id) : []),
+          ...changedOverlayIds,
+        ],
       });
 
-      if (feedback.first) {
+      if (addedSfx) {
+        pausePlayback();
+        seekPlaybackTo(addedSfx.at_s ?? 0);
+        selectElement("sfx", addedSfx.id, { preserveOverlayTool: true });
+      } else if (feedback.first) {
         pausePlayback();
         seekPlaybackTo(feedback.first.seekS);
         selectElement(feedback.first.kind, feedback.first.id, { preserveOverlayTool: true });
@@ -1534,12 +1862,16 @@ export default function EditorShell({
       clip.state.grid,
       flashCopilotTargets,
       history,
+      localOverlays,
+      localSfx,
+      overlaySuggestions,
       pausePlayback,
       readOnly,
       seekPlaybackTo,
       selectElement,
       slots,
       state.bars,
+      variant,
     ],
   );
 
@@ -1779,8 +2111,10 @@ export default function EditorShell({
       const commitRequest = buildEditorCommitRequest({
         elements: barsToTextElements(state.bars, originalsRef.current),
         captionCues,
+        captionMeta: captionMetaPatch,
         textDirty: textDirty && captionCues.length === 0,
         captionDirty: textDirty && captionCues.length > 0,
+        captionMetaDirty,
         timelineDirty,
         slots,
         mixDirty,
@@ -1820,6 +2154,8 @@ export default function EditorShell({
       setTitleDirty(false);
       setMixDirty(false);
       setMusicDirty(false);
+      setCaptionMetaDirty(false);
+      setCaptionMetaPatch({});
       setSaveState("idle");
       const renderStarted = editorCommitStartedRender(res.sections);
       setSaveMessage(renderStarted ? "Saved — rendering your latest version" : "Saved");
@@ -1857,6 +2193,8 @@ export default function EditorShell({
     mixLevel,
     musicDirty,
     selectedMusicTrackId,
+    captionMetaDirty,
+    captionMetaPatch,
     textDirty,
     sfxDirty,
     localSfx,
@@ -1888,10 +2226,15 @@ export default function EditorShell({
     localSlots,
     localSfx,
     localOverlays,
+    captionMeta,
+    captionMetaDirty,
+    captionMetaPatch,
     videoMuted,
     soundMuted,
     mixLevel,
     mixDirty,
+    selectedMusicTrackId,
+    musicDirty,
     title,
     getCurrent,
   ]);
@@ -2022,14 +2365,16 @@ export default function EditorShell({
   // AI suggestions inside the Overlays drawer — dual-gated (frontend flag +
   // the variant's honest capability). A false capability (e.g.
   // song_or_lyric_variant) renders NOTHING: no dead chrome in the drawer.
-  const suggestionsEnabled =
-    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" &&
-    capabilities?.suggestions === true &&
-    !readOnly;
-  const overlaySuggestionsNode = suggestionsEnabled ? (
+  const overlaySuggestionsNode = overlaySuggestionsEnabled ? (
     <OverlaySuggestions
-      itemId={itemId}
-      variantId={variant.variant_id}
+      suggestions={overlaySuggestions}
+      assets={poolAssets}
+      maxAssets={maxPoolAssets}
+      pending={pendingPoolUploads}
+      poolUnavailable={poolUnavailable}
+      poolError={poolError}
+      onFiles={handlePoolFiles}
+      onRemoveAsset={handleRemovePoolAsset}
       onAccept={handleAcceptSuggestion}
       onSeek={seekPlaybackTo}
     />

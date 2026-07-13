@@ -1674,6 +1674,20 @@ def check_edit_copilot(output: Any) -> list[str]:
         "reorder_clip",
         "remove_clip",
         "split_clip",
+        "add_sfx",
+        "patch_sfx",
+        "remove_sfx",
+        "add_overlay",
+        "patch_overlay",
+        "remove_overlay",
+        "accept_overlay_suggestion",
+        "edit_caption",
+        "set_caption_timing",
+        "set_caption_meta",
+        "swap_music",
+        "set_mix",
+        "set_title",
+        "open_tool",
     }
     failures: list[str] = []
 

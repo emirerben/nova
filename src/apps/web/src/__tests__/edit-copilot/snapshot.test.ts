@@ -1,6 +1,12 @@
-import { buildCopilotSnapshot } from "@/lib/edit-copilot/snapshot";
+import { describe, expect, it } from "@jest/globals";
+import {
+  allowedOpFamiliesFromCapabilities,
+  buildCopilotSnapshot,
+  COPILOT_SNAPSHOT_MAX_BYTES,
+} from "@/lib/edit-copilot/snapshot";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
+import type { MediaOverlay, OverlaySuggestion, PoolAsset, SoundEffectPlacement } from "@/lib/plan-api";
 
 function bar(over: Partial<TextElementBar> = {}): TextElementBar {
   return {
@@ -76,7 +82,7 @@ describe("buildCopilotSnapshot", () => {
     ]);
     expect(snapshot.total_duration_s).toBe(6);
     expect(snapshot.remaining_duration_s).toBe(54);
-    expect(snapshot.allowed_op_families).toEqual(["text", "clip"]);
+    expect(snapshot.allowed_op_families).toEqual(["text", "clip", "title"]);
   });
 
   it("removes disabled operation families from the snapshot", () => {
@@ -87,6 +93,220 @@ describe("buildCopilotSnapshot", () => {
       { text_elements: false, timeline: true },
     );
 
-    expect(snapshot.allowed_op_families).toEqual(["clip"]);
+    expect(snapshot.allowed_op_families).toEqual(["clip", "title"]);
+  });
+
+  it("emits new optional sections only when families are allowed and data is provided", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar({ role: "narrated_caption", id: "caption-1", text: "caption cue" })],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true, sfx: true, overlays: true },
+      [],
+      {
+        sfxEnabled: true,
+        sfxPlacements: [sfx({ at_s: 1.23456 })],
+        sfxCatalog: [effect({ name: "Very long sound effect name that truncates" })],
+        overlaysEnabled: true,
+        overlayCards: [overlay({ scale: 0.33333 })],
+        poolAssets: [asset({ status: "ready", subject: "A".repeat(70) }), asset({ id: "draft", status: "failed" })],
+        pendingSuggestions: [suggestion()],
+        captionsPresent: true,
+        captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.81234 },
+        musicState: {
+          swappable: true,
+          currentTrackId: "track-1",
+          currentTrackTitle: "Current Track",
+          candidates: [{ id: "track-2", title: "Candidate Track" }],
+        },
+        mixLevel: 0.45678,
+        title: "My edit",
+        openTools: ["text", "sounds", "overlays", "styles"],
+      },
+    );
+
+    expect(snapshot.allowed_op_families).toEqual([
+      "text",
+      "clip",
+      "sfx",
+      "overlay",
+      "caption",
+      "music",
+      "title",
+      "tool",
+    ]);
+    expect(snapshot.sfx?.placements[0].at_s).toBe(1.235);
+    expect(snapshot.sfx?.catalog[0].name).toHaveLength(32);
+    expect(snapshot.overlays?.cards[0].scale).toBe(0.333);
+    expect(snapshot.overlays?.asset_pool).toHaveLength(1);
+    expect(snapshot.overlays?.asset_pool[0].subject).toHaveLength(60);
+    expect(snapshot.captions?.meta.y_frac).toBe(0.812);
+    expect(snapshot.music?.candidates).toEqual([{ id: "track-2", title: "Candidate Track" }]);
+    expect(snapshot.mix).toEqual({ music_level: 0.457 });
+    expect(snapshot.title).toBe("My edit");
+    expect(snapshot.open_tools).toEqual(["text", "sounds", "overlays", "styles"]);
+  });
+
+  it("caps caption cues at 40 and marks truncation from total input count", () => {
+    const captions = Array.from({ length: 60 }, (_, i) => bar({
+      id: `caption-${i}`,
+      role: "narrated_caption",
+      text: `caption ${i}`,
+      start_s: i,
+      end_s: i + 0.5,
+    }));
+    const snapshot = buildCopilotSnapshot(captions, [slot()], [{ source_duration_s: 8 }], {}, [], {
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "word", font: "Inter", y_frac: 0.7 },
+    });
+
+    expect(snapshot.captions?.total_cues).toBe(60);
+    expect(snapshot.captions?.truncated).toBe(true);
+    expect(snapshot.captions?.cues).toHaveLength(40);
+  });
+
+  it("trims oversized snapshots under the byte budget in the fixed order", () => {
+    const capped = "x".repeat(80);
+    const longMoment = "x".repeat(2000);
+    const bars = Array.from({ length: 6 }, (_, i) =>
+      bar({ id: `bar-${i}`, text: capped, start_s: i, end_s: i + 0.5 }),
+    ).concat(
+      Array.from({ length: 40 }, (_, i) =>
+        bar({ id: `caption-${i}`, role: "narrated_caption", text: capped, start_s: i, end_s: i + 0.5 }),
+      ),
+    );
+    const slots = Array.from({ length: 12 }, (_, i) =>
+      slot({ key: `slot-${i}`, slotId: `slot-${i}`, clipIndex: 0, momentDescription: longMoment }),
+    );
+    const snapshot = buildCopilotSnapshot(bars, slots, [{ source_duration_s: 8 }], { sfx: true, overlays: true }, [], {
+      sfxEnabled: true,
+      sfxPlacements: Array.from({ length: 15 }, (_, i) => sfx({ id: `sfx-${i}` })),
+      sfxCatalog: Array.from({ length: 20 }, (_, i) => effect({ id: `effect-${i}` })),
+      overlaysEnabled: true,
+      overlayCards: Array.from({ length: 12 }, (_, i) => overlay({ id: `overlay-${i}` })),
+      poolAssets: Array.from({ length: 12 }, (_, i) => asset({ id: `asset-${i}`, subject: capped })),
+      pendingSuggestions: Array.from({ length: 6 }, (_, i) => suggestion({ id: `suggestion-${i}`, reason: capped })),
+      captionsPresent: true,
+      captionMeta: { enabled: true, style: "sentence", font: null, y_frac: 0.7 },
+      musicState: {
+        swappable: true,
+        currentTrackId: "track-1",
+        currentTrackTitle: capped,
+        candidates: Array.from({ length: 20 }, (_, i) => ({ id: `track-${i}`, title: capped })),
+      },
+      mixLevel: 0.5,
+      title: capped,
+      openTools: ["text", "sounds", "overlays", "styles"],
+    });
+
+    expect(byteLength(snapshot)).toBeLessThanOrEqual(COPILOT_SNAPSHOT_MAX_BYTES);
+    expect(snapshot.captions?.cues.length).toBeLessThanOrEqual(24);
+    expect(snapshot.overlays?.asset_pool.length).toBeLessThanOrEqual(6);
+    expect(snapshot.sfx?.catalog.length).toBeLessThanOrEqual(12);
+    expect(snapshot.music?.candidates.length).toBeLessThanOrEqual(10);
+    expect(snapshot.overlays?.pending_suggestions.length).toBeLessThanOrEqual(3);
+    expect(snapshot.slots.every((snapSlot) => (snapSlot.moment?.length ?? 0) <= 40)).toBe(true);
+  });
+
+  it("derives allowed families from server capabilities and client flags", () => {
+    expect(
+      allowedOpFamiliesFromCapabilities(
+        { text_elements: true, timeline: true, sfx: true, overlays: true },
+        {
+          sfxEnabled: false,
+          overlaysEnabled: true,
+          captionsPresent: true,
+          musicSwappable: false,
+          mixAllowed: true,
+          openTools: ["sounds"],
+        },
+      ),
+    ).toEqual(["text", "clip", "overlay", "caption", "music", "title", "tool"]);
+    expect(
+      allowedOpFamiliesFromCapabilities(
+        { text_elements: false, timeline: false, split_clips: false, mix: false, sfx: false, overlays: false },
+        { sfxEnabled: true, overlaysEnabled: true, captionsPresent: true, openTools: ["text"] },
+      ),
+    ).toEqual([]);
+    expect(allowedOpFamiliesFromCapabilities({}, { readOnly: true, openTools: ["text"] })).toEqual([]);
   });
 });
+
+function byteLength(value: unknown): number {
+  const json = JSON.stringify(value);
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(json).length;
+  return encodeURIComponent(json).replace(/%[0-9A-F]{2}/g, "x").length;
+}
+
+function sfx(over: Partial<SoundEffectPlacement> = {}): SoundEffectPlacement {
+  return {
+    id: "sfx-1",
+    sound_effect_id: "effect-1",
+    src_gcs_path: "",
+    at_s: 1,
+    gain: 1,
+    duration_s: 0.5,
+    label: "Whoosh",
+    ...over,
+  };
+}
+
+function effect(over: Record<string, unknown> = {}) {
+  return {
+    id: "effect-1",
+    name: "Whoosh",
+    duration_s: 0.5,
+    published_at: null,
+    archived_at: null,
+    status: "ready",
+    source_filename: null,
+    ...over,
+  };
+}
+
+function overlay(over: Partial<MediaOverlay> = {}): MediaOverlay {
+  return {
+    id: "overlay-1",
+    kind: "image",
+    src_gcs_path: "pool/card.png",
+    preview_url: "https://example.com/card.png",
+    position: "center",
+    x_frac: 0.5,
+    y_frac: 0.5,
+    scale: 0.35,
+    display_mode: "pip",
+    start_s: 1,
+    end_s: 3,
+    z: 0,
+    ...over,
+  };
+}
+
+function asset(over: Partial<PoolAsset> = {}): PoolAsset {
+  return {
+    id: "asset-1",
+    kind: "image",
+    status: "ready",
+    source_filename: "asset.png",
+    duration_s: null,
+    aspect: null,
+    subject: "coffee pour",
+    display_url: "https://example.com/asset.png",
+    deduped: false,
+    gcs_path: "pool/asset.png",
+    ...over,
+  };
+}
+
+function suggestion(over: Partial<OverlaySuggestion> = {}): OverlaySuggestion {
+  return {
+    id: "suggestion-1",
+    asset_id: "asset-1",
+    confidence_tier: "confident",
+    reason: "matches the hook",
+    transcript_anchor: "hook",
+    overlay: overlay({ id: "suggested-overlay", start_s: 2, end_s: 4 }),
+    sfx: null,
+    ...over,
+  };
+}

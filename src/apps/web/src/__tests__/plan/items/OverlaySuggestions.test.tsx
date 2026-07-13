@@ -24,7 +24,8 @@ import "@testing-library/jest-dom";
 import OverlaySuggestions, {
   hedgedReason,
 } from "@/app/plan/items/[id]/_editor/OverlaySuggestions";
-import type { OverlaySuggestion } from "@/lib/plan-api";
+import { useEditorOverlaySuggestions } from "@/app/plan/items/[id]/_editor/useEditorOverlaySuggestions";
+import { listPoolAssets, type OverlaySuggestion, type PoolAsset } from "@/lib/plan-api";
 
 const ASSETS_URL = "/api/plan/plan-items/item-1/assets";
 const SUGGESTIONS_URL = "/api/plan/plan-items/item-1/variants/var-1/overlay-suggestions";
@@ -107,16 +108,50 @@ async function renderSection(
 ) {
   const onAccept = jest.fn();
   const onSeek = jest.fn();
-  await act(async () => {
-    render(
+  function Harness() {
+    const suggestions = useEditorOverlaySuggestions({
+      itemId: "item-1",
+      variantId: "var-1",
+      enabled: true,
+    });
+    const [assets, setAssets] = React.useState<PoolAsset[]>([]);
+    const [maxAssets, setMaxAssets] = React.useState(20);
+    const [poolError, setPoolError] = React.useState<string | null>(null);
+    React.useEffect(() => {
+      let cancelled = false;
+      listPoolAssets("item-1")
+        .then((res) => {
+          if (cancelled) return;
+          setAssets(res.assets);
+          setMaxAssets(res.max_assets);
+        })
+        .catch((err) => {
+          if (!cancelled) setPoolError(err instanceof Error ? err.message : "pool error");
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, []);
+    return (
       <OverlaySuggestions
         itemId="item-1"
         variantId="var-1"
+        suggestions={suggestions}
+        assets={assets}
+        maxAssets={maxAssets}
+        pending={[]}
+        poolUnavailable={false}
+        poolError={poolError}
+        onFiles={() => {}}
+        onRemoveAsset={() => {}}
         onAccept={onAccept}
         onSeek={onSeek}
         {...props}
-      />,
+      />
     );
+  }
+  await act(async () => {
+    render(<Harness />);
   });
   return { onAccept, onSeek };
 }

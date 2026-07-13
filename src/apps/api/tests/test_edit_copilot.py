@@ -46,7 +46,87 @@ def _agent() -> EditCopilotAgent:
     return EditCopilotAgent(ModelClient())
 
 
-def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None):
+def _full_snapshot(*, allowed=None) -> dict:
+    snap = _snapshot(
+        allowed=allowed
+        if allowed is not None
+        else [
+            "text",
+            "style",
+            "timeline",
+            "sfx",
+            "overlay",
+            "caption",
+            "music",
+            "mix",
+            "title",
+            "tool",
+        ]
+    )
+    snap.update(
+        {
+            "sfx": {
+                "placements": [
+                    {
+                        "index": 0,
+                        "id": "pin-pop",
+                        "label": "Pop",
+                        "at_s": 1.0,
+                        "gain": 1.0,
+                        "duration_s": 0.2,
+                    }
+                ],
+                "catalog": [
+                    {"id": "pop", "name": "Pop", "duration_s": 0.2},
+                    {"id": "whoosh", "name": "Whoosh", "duration_s": 0.8},
+                ],
+            },
+            "overlays": {
+                "cards": [
+                    {
+                        "index": 0,
+                        "id": "ov-1",
+                        "kind": "image",
+                        "start_s": 1.0,
+                        "end_s": 3.0,
+                        "position": "bottom",
+                        "x_frac": 0.5,
+                        "y_frac": 0.8,
+                        "scale": 0.4,
+                        "display_mode": "pip",
+                    }
+                ],
+                "asset_pool": [
+                    {"id": "asset-1", "kind": "image", "subject": "cup", "duration_s": None}
+                ],
+                "pending_suggestions": [
+                    {"id": "sugg-1", "reason": "Show the cup", "start_s": 1.0, "end_s": 2.0}
+                ],
+            },
+            "captions": {
+                "total_cues": 2,
+                "truncated": False,
+                "cues": [
+                    {"index": 0, "id": "cue-1", "text": "helo", "start_s": 0.0, "end_s": 1.0},
+                    {"index": 1, "id": "cue-2", "text": "world", "start_s": 1.0, "end_s": 2.0},
+                ],
+                "meta": {"enabled": True, "style": "sentence", "font": None, "y_frac": 0.82},
+            },
+            "music": {
+                "swappable": True,
+                "current_track_id": "track-old",
+                "current_track_title": "Old Song",
+                "candidates": [{"id": "track-1", "title": "New Song"}],
+            },
+            "mix": {"music_level": 0.5},
+            "title": "Old title",
+            "open_tools": ["text", "sounds", "overlays", "styles"],
+        }
+    )
+    return snap
+
+
+def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None, snapshot=None):
     raw = json.dumps(
         {
             "intent": "edit",
@@ -62,7 +142,7 @@ def _parse(raw_ops: list[dict], *, confidence: float = 0.9, allowed=None):
         EditCopilotInput(
             utterance="change it",
             prior_turns=[],
-            variant_snapshot=_snapshot(allowed=allowed),
+            variant_snapshot=snapshot or _snapshot(allowed=allowed),
         ),
     )
 
@@ -121,6 +201,191 @@ def test_copilot_clip_duration_seconds_only() -> None:
     assert out.ops == []
     out2 = _parse([{"op": "set_clip_duration", "slot_index": 0, "duration_s": 0.2}])
     assert out2.ops == [{"op": "set_clip_duration", "slot_index": 0, "duration_s": 0.6}]
+
+
+def test_copilot_new_ops_coerce_and_clamp() -> None:
+    snap = _full_snapshot()
+    out = _parse(
+        [
+            {"op": "add_sfx", "effect_id": "pop", "at_s": 99, "gain": 5},
+            {"op": "patch_sfx", "sfx_index": 0, "at_s": -1, "gain": -2},
+            {
+                "op": "add_overlay",
+                "asset_id": "asset-1",
+                "start_s": 1,
+                "end_s": 2,
+                "x_frac": -1,
+                "y_frac": 2,
+                "scale": 2,
+                "display_mode": "pip",
+            },
+            {"op": "set_caption_meta", "patch": {"style": "word", "y_frac": 0.1}},
+            {"op": "set_mix", "music_level": 1.5},
+        ],
+        snapshot=snap,
+    )
+    assert out.ops == [
+        {"op": "add_sfx", "effect_id": "pop", "at_s": 9.9, "gain": 2.0},
+        {"op": "patch_sfx", "sfx_index": 0, "at_s": 0.0, "gain": 0.0},
+        {
+            "op": "add_overlay",
+            "asset_id": "asset-1",
+            "start_s": 1.0,
+            "end_s": 2.0,
+            "x_frac": 0.0,
+            "y_frac": 1.0,
+            "scale": 1.0,
+            "display_mode": "pip",
+        },
+        {"op": "set_caption_meta", "patch": {"style": "word", "y_frac": 0.3}},
+        {"op": "set_mix", "music_level": 1.0},
+    ]
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add_sfx", "at_s": 1},
+        {"op": "patch_sfx", "sfx_index": 0},
+        {"op": "patch_overlay", "overlay_index": 0},
+        {"op": "edit_caption", "cue_index": 0},
+        {"op": "set_caption_timing", "cue_index": 0},
+        {"op": "set_caption_meta"},
+        {"op": "swap_music"},
+        {"op": "set_mix"},
+        {"op": "set_title"},
+        {"op": "open_tool"},
+    ],
+)
+def test_copilot_new_ops_required_field_missing_drop(op: dict) -> None:
+    out = _parse([op], snapshot=_full_snapshot())
+    assert out.ops == []
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "patch_sfx", "sfx_index": -1, "gain": 1},
+        {"op": "patch_sfx", "sfx_index": 1, "gain": 1},
+        {"op": "patch_sfx", "sfx_index": 0.5, "gain": 1},
+        {"op": "patch_overlay", "overlay_index": -1, "patch": {"scale": 0.5}},
+        {"op": "patch_overlay", "overlay_index": 1, "patch": {"scale": 0.5}},
+        {"op": "patch_overlay", "overlay_index": "0.5", "patch": {"scale": 0.5}},
+        {"op": "edit_caption", "cue_index": -1, "text": "fixed"},
+        {"op": "edit_caption", "cue_index": 2, "text": "fixed"},
+        {"op": "edit_caption", "cue_index": 0.5, "text": "fixed"},
+    ],
+)
+def test_copilot_new_index_ops_oob_negative_and_non_int_drop(op: dict) -> None:
+    out = _parse([op], snapshot=_full_snapshot())
+    assert out.ops == []
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "add_sfx", "effect_id": "missing", "at_s": 1},
+        {"op": "add_overlay", "asset_id": "missing", "start_s": 1, "end_s": 2},
+        {"op": "accept_overlay_suggestion", "suggestion_id": "missing"},
+        {"op": "swap_music", "track_id": "missing"},
+        {"op": "open_tool", "tool": "missing"},
+    ],
+)
+def test_copilot_hallucinated_ids_and_unopenable_tool_drop(op: dict) -> None:
+    out = _parse([op], snapshot=_full_snapshot())
+    assert out.ops == []
+    assert out.confidence == 0.4
+
+
+def test_copilot_swap_music_requires_swappable() -> None:
+    snap = _full_snapshot()
+    snap["music"]["swappable"] = False
+    out = _parse([{"op": "swap_music", "track_id": "track-1"}], snapshot=snap)
+    assert out.ops == []
+
+
+@pytest.mark.parametrize(
+    ("op", "allowed"),
+    [
+        ({"op": "add_sfx", "effect_id": "pop", "at_s": 1}, ["text"]),
+        ({"op": "patch_overlay", "overlay_index": 0, "patch": {"scale": 0.5}}, ["text"]),
+        ({"op": "edit_caption", "cue_index": 0, "text": "fixed"}, ["text"]),
+        ({"op": "swap_music", "track_id": "track-1"}, ["text"]),
+        ({"op": "set_mix", "music_level": 0.5}, ["text"]),
+        ({"op": "set_title", "title": "New title"}, ["text"]),
+        ({"op": "open_tool", "tool": "sounds"}, ["text"]),
+    ],
+)
+def test_copilot_new_family_not_allowed_drop(op: dict, allowed: list[str]) -> None:
+    out = _parse([op], snapshot=_full_snapshot(allowed=allowed))
+    assert out.ops == []
+
+
+def test_copilot_set_mix_allowed_by_mix_subcapability() -> None:
+    out = _parse([{"op": "set_mix", "music_level": 0.25}], snapshot=_full_snapshot(allowed=["mix"]))
+    assert out.ops == [{"op": "set_mix", "music_level": 0.25}]
+
+
+def test_copilot_set_mix_requires_mix_section() -> None:
+    snap = _full_snapshot()
+    snap.pop("mix")
+    out = _parse([{"op": "set_mix", "music_level": 0.25}], snapshot=snap)
+    assert out.ops == []
+
+
+def test_copilot_patch_overlay_whitelist_and_empty_drop() -> None:
+    out = _parse(
+        [{"op": "patch_overlay", "overlay_index": 0, "patch": {"scale": 2, "unknown": "x"}}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [{"op": "patch_overlay", "overlay_index": 0, "patch": {"scale": 1.0}}]
+
+    empty = _parse(
+        [{"op": "patch_overlay", "overlay_index": 0, "patch": {"unknown": "x"}}],
+        snapshot=_full_snapshot(),
+    )
+    assert empty.ops == []
+
+
+def test_copilot_caption_meta_whitelist_and_empty_drop() -> None:
+    out = _parse(
+        [{"op": "set_caption_meta", "patch": {"enabled": False, "font": None, "unknown": "x"}}],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [{"op": "set_caption_meta", "patch": {"enabled": False, "font": None}}]
+
+    empty = _parse(
+        [{"op": "set_caption_meta", "patch": {"unknown": "x"}}],
+        snapshot=_full_snapshot(),
+    )
+    assert empty.ops == []
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "patch_overlay", "overlay_index": 0, "patch": {"start_s": 3, "end_s": 2}},
+        {"op": "add_overlay", "asset_id": "asset-1", "start_s": 3, "end_s": 2},
+        {"op": "set_caption_timing", "cue_index": 0, "start_s": 2, "end_s": 1},
+    ],
+)
+def test_copilot_new_timing_order_drops(op: dict) -> None:
+    out = _parse([op], snapshot=_full_snapshot())
+    assert out.ops == []
+
+
+def test_copilot_caption_edit_and_title_sanitize() -> None:
+    out = _parse(
+        [
+            {"op": "edit_caption", "cue_index": 0, "text": "  hello\u0000there  "},
+            {"op": "set_title", "title": "  New\u0000Title  "},
+        ],
+        snapshot=_full_snapshot(),
+    )
+    assert out.ops == [
+        {"op": "edit_caption", "cue_index": 0, "text": "hello there"},
+        {"op": "set_title", "title": "New Title"},
+    ]
 
 
 @pytest.fixture()

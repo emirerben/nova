@@ -25,6 +25,8 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import type { CaptionMetaPatch } from "@/lib/edit-copilot/ops";
+import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 
@@ -37,10 +39,15 @@ export interface EditorDocument {
   slots: DraftSlot[] | null;
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
+  captionMeta?: CopilotCaptionMetaSnapshot | null;
+  captionMetaDirty?: boolean;
+  captionMetaPatch?: CaptionMetaPatch;
   videoMuted: boolean;
   soundMuted: boolean;
   mixLevel?: number | null;
   mixDirty?: boolean;
+  musicTrackId?: string | null;
+  musicDirty?: boolean;
   title: string;
 }
 
@@ -151,11 +158,23 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         slots: Array.isArray(doc.slots) ? (doc.slots as DraftSlot[]) : null,
         ...(Array.isArray(doc.sfx) ? { sfx: doc.sfx as SoundEffectPlacement[] } : {}),
         ...(Array.isArray(doc.overlays) ? { overlays: doc.overlays as MediaOverlay[] } : {}),
+        captionMeta:
+          doc.captionMeta && typeof doc.captionMeta === "object"
+            ? (doc.captionMeta as CopilotCaptionMetaSnapshot)
+            : null,
+        captionMetaDirty: Boolean(doc.captionMetaDirty),
+        captionMetaPatch:
+          doc.captionMetaPatch && typeof doc.captionMetaPatch === "object"
+            ? (doc.captionMetaPatch as CaptionMetaPatch)
+            : undefined,
         videoMuted: Boolean(doc.videoMuted),
         soundMuted: Boolean(doc.soundMuted),
         mixLevel:
           typeof doc.mixLevel === "number" ? Math.max(0, Math.min(1, doc.mixLevel)) : null,
         mixDirty: Boolean(doc.mixDirty),
+        musicTrackId:
+          typeof doc.musicTrackId === "string" ? doc.musicTrackId : doc.musicTrackId === null ? null : undefined,
+        musicDirty: Boolean(doc.musicDirty),
         title: typeof doc.title === "string" ? doc.title : "",
       },
     };
