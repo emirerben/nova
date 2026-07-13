@@ -2,11 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.27.0] — 2026-07-12
+## [0.7.29.0] — 2026-07-13
 
 ### Added
 - **Polaroid wall montage preset.** Creators can now choose a Polaroid-style collage with thick white frames, larger hero cards, subtle shadows, organic rotation, and smart spacing that keeps cards from overlapping while preserving text-safe whitespace.
 - **Polaroid preset support across plan-item generation.** The new preset can accept still images like Masonry, renders through the collage compositor, preserves its preset metadata on variants, disables clip-timeline editing where a collage has no linear timeline, and keeps safe audio-only song swaps for text variants.
+
+## [0.7.28.0] — 2026-07-13
+
+### Added
+- **Nova copilot now covers the whole editor (24 ops, was 10).** "Add a sound effect" no longer dead-ends in a redirect — the chat copilot gained six op families beyond text/clip: sound effects (`add_sfx`/`patch_sfx`/`remove_sfx` against the glossary catalog), media overlays (`patch_overlay` retime/move/resize/promote-fullscreen, `add_overlay` from the visuals pool, `remove_overlay`, `accept_overlay_suggestion`), narrated captions (`edit_caption`, `set_caption_timing`, `set_caption_meta` for on/off, sentence/word style, font, vertical position), music (`swap_music` from the published library, `set_mix`), `set_title`, and a client-only `open_tool` escape hatch that opens the right tool drawer for things chat can't do directly (uploads, style presets). Snapshot gains flag-gated sections (SFX pins + catalog, overlay cards + asset pool + pending AI suggestions, caption cues + meta, music candidates, mix, title) with an 18KB size-aware trimmer under the unchanged 20KB server cap; every id the model references must exist in the snapshot (hallucination drop on both sides); per-family fingerprints keep the mid-turn-manual-edit soft-fail contract; one undo step per turn now also covers music swaps (previously not undoable). Redirects remain for flag-off families, subtitled-archetype captions, caption language/Apply, and curated style sets. Eval harness doubled to 34 golden fixtures (all pass in live mode against the v2 prompt).
+- **`editor-commit` gains a `caption_meta` section.** Caption enabled/style/font/position changes now ride the atomic Save (narrated archetype only, font registry-validated, `y_frac` → `caption_margin_v`), routed down the existing caption reburn lane — a caption-meta-only Save still re-renders. Previously these were instant per-call PATCH endpoints; the copilot needed a draft-local path so one chat turn can't fire multiple renders.
+
+## [0.7.27.0] — 2026-07-12
+
+### Added
+- **"Nova" chat editing copilot in the full editor (flag-gated, off in prod).** A texting-style drawer (first tool in the rail) turns natural-language feedback — "make the hook smaller and use a serif font", "tighten clip 2" — into structured edit ops applied instantly to the editor's local draft: zero-latency preview via the existing TS layout port and virtual clip player, one undo step per turn, system-authored receipt chips with old → new values, staged latency states, queued follow-up sends, and per-target fingerprints so a mid-turn manual edit is never overwritten. Backend: stateless `nova.edit.copilot` agent (Gemini flash) behind `POST /plan-items/{item}/variants/{v}/copilot/turn` — zero writes, rate-limited 20/min, hallucination-drop parse with capability gating, full eval harness (17 fixtures). Ships across all three editor layout modes (docked drawer / overlay compact strip / phone bottom sheet). Save still goes through the untouched editor-commit path. Flags: `EDIT_COPILOT_ENABLED` (Fly) + `NEXT_PUBLIC_EDIT_COPILOT_ENABLED` (Vercel, build-time), both default false. DESIGN.md §9 gains a scoped texting-bubble carve-out for this surface.
+
+## [0.7.26.5] — 2026-07-12
+
+### Fixed
+- **Visuals-pool tiles update while analysis runs.** AssetPool previously fetched the asset list only on mount, so the `uploaded → analyzing → ready` progression (shimmer, "Analyzing…", subject micro-label) was invisible until a full page refresh. The pool now re-polls every 5s while any asset is in a non-terminal status and stops as soon as all assets reach ready/failed. Each poll preserves the already-signed `display_url` of tiles it already has (GCS re-signs on every read, so a blind replace would reload every thumbnail every 5s), runs one request at a time (no pile-up or out-of-order status flicker under load), and an epoch guard keeps a poll response that raced a local register/delete from resurrecting a removed tile or dropping a just-added one.
+
+### Added
+- **Detected brands are visible on pool tiles.** `PoolAssetOut` now carries `brands` from the analysis JSONB (ANALYSIS_VERSION 5, brand-aware matching), surfaced as a title tooltip on the tile's subject line so brand detection is verifiable without the admin debug view. Null on pre-v5 analyses until the backfill re-analyzes them.
+
 ## [0.7.26.4] — 2026-07-12
 
 ### Fixed

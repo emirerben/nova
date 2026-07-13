@@ -1,4 +1,8 @@
-import { isInstantEditEligible, isTextLaneEligible } from "@/lib/variant-editor/eligibility";
+import {
+  isCaptionArchetype,
+  isInstantEditEligible,
+  isTextLaneEligible,
+} from "@/lib/variant-editor/eligibility";
 import type { EditableVariant } from "@/lib/variant-editor/types";
 
 function variant(overrides: Partial<EditableVariant> = {}): EditableVariant {
@@ -63,6 +67,31 @@ describe("isInstantEditEligible", () => {
         variant({ text_mode: "agent_text", resolved_archetype: "original_text" }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("isCaptionArchetype", () => {
+  it("is true for narrated and subtitled with a base video", () => {
+    expect(isCaptionArchetype(variant({ resolved_archetype: "narrated" }))).toBe(true);
+    expect(isCaptionArchetype(variant({ resolved_archetype: "subtitled" }))).toBe(true);
+  });
+
+  // Mirrors the backend _is_editable_caption_variant contract: a base-less
+  // caption variant must NOT be classified as editable — routing it to the
+  // Captions tab would open a CaptionEditor with nothing to render.
+  it("requires a base video", () => {
+    expect(
+      isCaptionArchetype(variant({ resolved_archetype: "subtitled", base_video_url: null })),
+    ).toBe(false);
+    expect(
+      isCaptionArchetype(variant({ resolved_archetype: "narrated", base_video_url: null })),
+    ).toBe(false);
+  });
+
+  it("is false for non-caption and missing archetypes", () => {
+    expect(isCaptionArchetype(variant({ resolved_archetype: "original_text" }))).toBe(false);
+    expect(isCaptionArchetype(variant({ resolved_archetype: null }))).toBe(false);
+    expect(isCaptionArchetype(variant())).toBe(false); // resolved_archetype undefined
   });
 });
 

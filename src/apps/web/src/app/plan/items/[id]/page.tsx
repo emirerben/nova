@@ -101,7 +101,11 @@ import {
   useVariantEditSession,
   type VariantEditSession,
 } from "@/lib/variant-editor/useVariantEditSession";
-import { isInstantEditEligible, isTextLaneEligible } from "@/lib/variant-editor/eligibility";
+import {
+  isCaptionArchetype,
+  isInstantEditEligible,
+  isTextLaneEligible,
+} from "@/lib/variant-editor/eligibility";
 import { IntroTextPreview } from "@/components/variant-editor/IntroTextPreview";
 import { resolveIntroParams } from "@/components/variant-editor/resolve-intro-params";
 import { EditToolbar } from "@/components/variant-editor/EditToolbar";
@@ -2160,6 +2164,45 @@ function FocusedResults({
   const instantEligible = variant ? isInstantEditEligible(variant) : false;
   const textLaneEligible = variant ? isTextLaneEligible(variant) : false;
 
+  // ── Auto-open the Captions tab for caption archetypes (caption-edit
+  // discoverability fix) ────────────────────────────────────────────────────
+  // Talking-to-camera / voiceover edits edit their captions in the Captions
+  // tab, not the timeline shell — landing with every tab collapsed reads as
+  // "there's nowhere to edit my captions". Open it for them once the render is
+  // ready. Precedence: a save/return render flow owns the screen
+  // (renderingAction != null) and the user's own tab choice wins, so we only
+  // auto-open on a clean, ready load with cues present, exactly once per mount.
+  const autoOpenedCaptionsRef = useRef(false);
+  const pendingCaptionScrollRef = useRef(false);
+  useEffect(() => {
+    if (autoOpenedCaptionsRef.current) return;
+    if (activeTab !== null) return; // user already picked a tab — don't override
+    if (renderingAction !== null) return; // a render/return flow is in progress
+    if (!variant || !isCaptionArchetype(variant)) return;
+    if (variant.render_status !== "ready" || !variant.caption_cues) return;
+    autoOpenedCaptionsRef.current = true;
+    pendingCaptionScrollRef.current = true;
+    setActiveTab("captions");
+  }, [variant, activeTab, renderingAction]);
+
+  // Bring the auto-opened Captions panel into view: it sits far down a long
+  // page, so silently opening it still reads as "nothing happened" for a user
+  // who arrived from the editor shell's Captions link. Mirrors the
+  // focusShotListAfterAccept scroll pattern (reduce-motion aware; block:"nearest"
+  // so an already-visible panel doesn't jump).
+  useEffect(() => {
+    if (activeTab !== "captions" || !pendingCaptionScrollRef.current) return;
+    pendingCaptionScrollRef.current = false;
+    window.requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>("[data-plan-captions-panel]");
+      if (!el) return;
+      const reduceMotion =
+        typeof window.matchMedia === "function" &&
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({ block: "nearest", behavior: reduceMotion ? "auto" : "smooth" });
+    });
+  }, [activeTab]);
+
   useEffect(() => {
     if (instantEligible && !editSession.isEditing) editSession.enterEdit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2484,14 +2527,12 @@ function FocusedResults({
             <div>
               <div className="flex gap-2">
                 {EDITOR_TABS.map((tab) => {
-                  // Archetype-gated (mirrors the backend's _is_editable_caption_variant),
-                  // NOT cue-count-gated — a cue-count gate would make the tab vanish the
-                  // moment subtitles are toggled off, trapping the user with no way back
-                  // on (the bug the plan-item redesign's User Challenge caught).
-                  const hasCaptions =
-                    (variant?.resolved_archetype === "narrated" ||
-                      variant?.resolved_archetype === "subtitled") &&
-                    !!variant?.base_video_url;
+                  // Archetype-gated (isCaptionArchetype mirrors the backend's
+                  // _is_editable_caption_variant), NOT cue-count-gated — a cue-count
+                  // gate would make the tab vanish the moment subtitles are toggled
+                  // off, trapping the user with no way back on (the bug the plan-item
+                  // redesign's User Challenge caught).
+                  const hasCaptions = !!variant && isCaptionArchetype(variant);
                   if (tab.id === "captions" && !hasCaptions) return null;
                   // Caption variants have no song to edit — only Captions + Clips.
                   if (hasCaptions && tab.id === "song") return null;
@@ -2505,7 +2546,15 @@ function FocusedResults({
                       key={tab.id}
                       type="button"
                       aria-pressed={isActive}
-                      onClick={() => setActiveTab(isActive ? null : tab.id)}
+                      onClick={() => {
+                        // Any manual tab interaction (open OR close) settles the
+                        // caption auto-open: a user who dismisses the Captions tab
+                        // must not have it force-reopened by a later "ready" poll
+                        // (FocusedResults is keyed by variant_id, so this ref
+                        // survives polls within the same variant).
+                        autoOpenedCaptionsRef.current = true;
+                        setActiveTab(isActive ? null : tab.id);
+                      }}
                       className={`flex flex-col items-center gap-0.5 rounded-xl border px-3 py-2 text-center transition-colors ${
                         isActive
                           ? "border-lime-600 bg-lime-50 text-lime-800"
@@ -2522,10 +2571,9 @@ function FocusedResults({
               {/* Inline editor panel — slides open below the tab row */}
               {activeTab !== null && variant && (
                 <div className="mt-3">
-                  {activeTab === "captions" &&
-                  variant.base_video_url &&
-                  variant.caption_cues ? (
-                    <div className="space-y-3">
+                  {activeTab === "captions" ? (
+                    variant.base_video_url && variant.caption_cues ? (
+                    <div className="space-y-3" data-plan-captions-panel>
                     <CaptionEditor
                       // Re-mount (re-seed cues) whenever a server render replaces them —
                       // a language re-transcribe swaps all cues, and the editor otherwise
@@ -2615,6 +2663,40 @@ function FocusedResults({
                       />
                     )}
                     </div>
+                    ) : (
+                      <div
+                        data-plan-captions-panel
+                        data-testid="captions-unavailable"
+                        className="rounded-xl border border-zinc-200 bg-white px-4 py-6 text-center text-[13px] text-[#3f3f46]"
+                      >
+                        {variant.render_status === "rendering" ? (
+                          "Your captions are still processing — check back in a moment."
+                        ) : textLaneEligible ? (
+                          // Flag-on subtitled clip with no detectable speech renders
+                          // ready with null cues (backend: "empty-caption state, NOT a
+                          // failure"). Don't dead-end — styled text for this variant
+                          // lives in the Timeline lane, so route there.
+                          <>
+                            No speech detected in this clip — add styled text in the
+                            Timeline tab instead.
+                            <button
+                              type="button"
+                              onClick={() => {
+                                autoOpenedCaptionsRef.current = true;
+                                setActiveTab("timeline");
+                              }}
+                              className="mt-3 inline-flex min-h-11 items-center justify-center rounded-full bg-[#0c0c0e] px-4 text-[13px] font-semibold text-white transition-opacity hover:opacity-80 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                            >
+                              Open the Timeline tab
+                            </button>
+                          </>
+                        ) : (
+                          // Ready render with no captions and no text lane — there is
+                          // simply nothing to caption (no "yet": none are coming).
+                          "No captions for this edit — there's no speech to caption."
+                        )}
+                      </div>
+                    )
                   ) : (
                     <FocusedVariantControls
                       itemId={itemId}

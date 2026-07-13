@@ -23,14 +23,20 @@ import { useRouter } from "next/navigation";
 import {
   getPlanItem,
   getPlanItemJobStatus,
+  deletePoolAsset,
   NotAuthenticatedError,
   confirmOverlayUploads,
+  listPoolAssets,
+  registerPoolAsset,
   requestOverlayUploadUrls,
+  requestPoolAssetUploadUrls,
+  sha256HexOfFile,
   uploadToGcs,
   type MediaOverlay,
   type OverlaySuggestion,
   type PlanItem,
   type PlanItemVariant,
+  type PoolAsset,
   type SoundEffectPlacement,
   type TextElement,
 } from "@/lib/plan-api";
@@ -42,6 +48,7 @@ import {
   EditorCommitConflictError,
   type AcceptedSuggestionRef,
 } from "@/lib/editor-commit";
+import { captionMetaFromVariant } from "@/lib/caption-meta";
 import {
   buildPlanItemEditorReturnHref,
   editorCommitStartedRender,
@@ -50,6 +57,15 @@ import { FONT_FACES } from "@/lib/font-faces";
 import { type GenerativeStyleSet } from "@/lib/generative-api";
 import { formatTimecode } from "@/lib/timeline/time-format";
 import { DEFAULT_TEXT_PRESET, TEXT_PRESETS, type TextPreset } from "@/lib/text-presets";
+import { applyCopilotOps, type ApplyCopilotOpsResult } from "@/lib/edit-copilot/apply-ops";
+import {
+  allowedOpFamiliesFromCapabilities,
+  buildCopilotSnapshot,
+  type CopilotCaptionMetaSnapshot,
+  type CopilotSnapshot,
+} from "@/lib/edit-copilot/snapshot";
+import { useEditCopilot } from "@/lib/edit-copilot/useEditCopilot";
+import type { CaptionMetaPatch, CopilotOp } from "@/lib/edit-copilot/ops";
 import {
   initTextEditorState,
   textReducer,
@@ -62,6 +78,7 @@ import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 import { barsToCaptionCues, barsToTextElements, seedBarsFromVariant } from "./editor-bars";
+import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
   CAPTIONS_TAB_REASON,
   computeToolDisabledReasons,
@@ -83,7 +100,7 @@ import {
 import TransportBar from "./TransportBar";
 import type { EditorTimelineBodyProps } from "./EditorTimelineBody";
 import EditorCanvas from "./EditorCanvas";
-import OverlaySuggestions from "./OverlaySuggestions";
+import OverlaySuggestions, { type PendingUpload } from "./OverlaySuggestions";
 import { computeReseedSections } from "./editor-reseed";
 import InspectorPanel from "./InspectorPanel";
 import InspectorRail, { type InspectorTab } from "./InspectorRail";
@@ -92,6 +109,7 @@ import ToolRail, { type EditorTool } from "./ToolRail";
 import PresetGrid, { presetMatchesFields } from "./PresetGrid";
 import { useVirtualPreview } from "./useVirtualPreview";
 import { useEditorLayoutMode } from "./useEditorLayoutMode";
+import type { EditorLayoutMode } from "./useEditorLayoutMode";
 import { slotsDifferFromBaseline } from "./virtual-timeline";
 import {
   deleteKeyAllowed,
@@ -107,6 +125,11 @@ import {
   useEditorHistory,
   type EditorDocument,
 } from "./useEditorHistory";
+import {
+  isUnavailableError,
+  SUGGESTION_POLL_INTERVAL_MS,
+  useEditorOverlaySuggestions,
+} from "./useEditorOverlaySuggestions";
 
 const ZOOM_OPTIONS = [100, 125, 150] as const;
 
@@ -115,10 +138,106 @@ const NEW_TEXT_DURATION_S = 2.0;
 const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
+const COPILOT_SAVE_NOTICE_KEY = "nova-copilot-save-expectation-dismissed";
+const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? "").trim();
+const MEDIA_OVERLAYS_UI_ENABLED =
+  MEDIA_OVERLAYS_RAW.toLowerCase() === "true" || MEDIA_OVERLAYS_RAW === "1";
+const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+const POOL_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/heic",
+  "video/mp4",
+  "video/quicktime",
+];
 
-function spaceShortcutAllowed(target: HTMLElement | null): boolean {
+export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   if (!deleteKeyAllowed(target)) return false;
   return (target?.tagName ?? "").toUpperCase() !== "BUTTON";
+}
+
+export function shouldCloseToolOnSelection({
+  layoutMode,
+  activeTool,
+  preserveOverlayTool,
+}: {
+  layoutMode: EditorLayoutMode;
+  activeTool: EditorTool | null;
+  preserveOverlayTool?: boolean;
+}): boolean {
+  return layoutMode === "overlay" && activeTool !== "nova" && !preserveOverlayTool;
+}
+
+export function resolveCopilotApplyFeedback({
+  result,
+  bars,
+  beforeSlots,
+  grid,
+}: {
+  result: ApplyCopilotOpsResult;
+  bars: TextElementBar[];
+  beforeSlots: DraftSlot[];
+  grid: number[];
+}): {
+  textIds: string[];
+  slotIds: string[];
+  first:
+    | { kind: "text"; id: string; seekS: number }
+    | { kind: "clip"; id: string; seekS: number }
+    | null;
+} {
+  const textIds = result.textActions
+    .map((action) => ("id" in action ? action.id : action.type === "ADD_TEXT" ? action.bar.id : null))
+    .filter((id): id is string => !!id);
+  const slotIds = result.nextSlots
+    ? result.nextSlots
+        .filter((slot) => {
+          const before = beforeSlots.find((s) => s.key === slot.key);
+          return !before || JSON.stringify(before) !== JSON.stringify(slot);
+        })
+        .map((slot) => slot.key)
+    : [];
+
+  // Never select/seek to a just-deleted element — selecting a DELETE_BAR
+  // target points at a ghost id (and light mode would open the edit sheet for
+  // a bar that no longer exists) (review F6). Deleted targets still flash on
+  // the timeline; selection goes to the first SURVIVING changed element.
+  const firstTextAction = result.textActions.find((action) => action.type !== "DELETE_BAR");
+  if (firstTextAction) {
+    const id =
+      "id" in firstTextAction
+        ? firstTextAction.id
+        : firstTextAction.type === "ADD_TEXT"
+          ? firstTextAction.bar.id
+          : null;
+    const bar =
+      firstTextAction.type === "ADD_TEXT"
+        ? firstTextAction.bar
+        : id
+          ? bars.find((b) => b.id === id) ?? null
+          : null;
+    if (id && bar) {
+      return { textIds, slotIds, first: { kind: "text", id, seekS: (bar.start_s + bar.end_s) / 2 } };
+    }
+  }
+
+  if (result.nextSlots) {
+    const layout = sequentialSlotLayout(result.nextSlots, grid);
+    for (const slotId of slotIds) {
+      const nextIndex = result.nextSlots.findIndex((slot) => slot.key === slotId);
+      const slot = result.nextSlots[nextIndex];
+      if (!slot || slot.removed) continue;
+      const win = layout.windows[nextIndex];
+      return {
+        textIds,
+        slotIds,
+        first: { kind: "clip", id: slotId, seekS: win?.startS ?? 0 },
+      };
+    }
+  }
+
+  return { textIds, slotIds, first: null };
 }
 
 function SelectCursorIcon() {
@@ -268,6 +387,9 @@ export default function EditorShell({
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
   const [titleDirty, setTitleDirty] = useState(false);
+  const [captionMeta, setCaptionMeta] = useState<CopilotCaptionMetaSnapshot | null>(null);
+  const [captionMetaDirty, setCaptionMetaDirty] = useState(false);
+  const [captionMetaPatch, setCaptionMetaPatch] = useState<CaptionMetaPatch>({});
 
   useEffect(() => {
     if (!variant) return;
@@ -314,6 +436,11 @@ export default function EditorShell({
       setMixDirty(false);
       setSoundMuted(seededMix === 0);
     }
+    if (!conflictReseed || !captionMetaDirty) {
+      setCaptionMeta(captionMetaFromVariant(variant));
+      setCaptionMetaDirty(false);
+      setCaptionMetaPatch({});
+    }
     if (sections.titleAndStyle) setAppliedStyleSetId(null);
     // Dirty flags are read as a snapshot when a (re)seed fires; they must not
     // retrigger it.
@@ -343,6 +470,11 @@ export default function EditorShell({
   const [lightSheetOpen, setLightSheetOpen] = useState(false);
   const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
   const [zoomPct, setZoomPct] = useState<number>(100);
+  const [flashTextIds, setFlashTextIds] = useState<Set<string>>(new Set());
+  const [flashOverlayIds, setFlashOverlayIds] = useState<Set<string>>(new Set());
+  const [flashTimelineIds, setFlashTimelineIds] = useState<Set<string>>(new Set());
+  const [sessionHasCopilotEdits, setSessionHasCopilotEdits] = useState(false);
+  const [copilotSaveNoticeDismissed, setCopilotSaveNoticeDismissed] = useState(true);
   const panEnabled = zoomPct > 100;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -367,6 +499,11 @@ export default function EditorShell({
   );
   const [musicDirty, setMusicDirty] = useState(false);
   const [overlayUploading, setOverlayUploading] = useState(false);
+  const [poolAssets, setPoolAssets] = useState<PoolAsset[]>([]);
+  const [maxPoolAssets, setMaxPoolAssets] = useState(20);
+  const [pendingPoolUploads, setPendingPoolUploads] = useState<PendingUpload[]>([]);
+  const [poolUnavailable, setPoolUnavailable] = useState(false);
+  const [poolError, setPoolError] = useState<string | null>(null);
 
   // Clip slots — the shell's local working state for split/delete (seeded from
   // the shared clip-timeline handle, then edited locally; persisted via
@@ -435,6 +572,13 @@ export default function EditorShell({
   // subtitled variants the shell is editable, but on-video text still lives
   // in the Captions tab — every add-text path must stay blocked.
   const textElementsLocked = !readOnly && capabilities?.text_elements === false;
+  // Caption archetypes edit captions in the item-page Captions tab, not this
+  // shell. Keyed off the archetype (+ base video) via isCaptionArchetype, NOT
+  // capabilities.text_elements — that flips to `true` for subtitled once
+  // SUBTITLED_TEXT_LANE_ENABLED ships, at which point a text_elements===false
+  // gate would silently drop the Captions signpost for the exact archetype that
+  // needs it. See isCaptionArchetype / DECISIONS (caption-edit discoverability).
+  const isCaptionEdit = !!variant && isCaptionArchetype(variant);
   const clipLockedToVoiceover =
     capabilities?.timeline === false &&
     (capabilities?.reason === "voiceover_bed_fit" ||
@@ -451,10 +595,15 @@ export default function EditorShell({
       slots: localSlots,
       sfx: localSfx,
       overlays: localOverlays,
+      captionMeta,
+      captionMetaDirty,
+      captionMetaPatch,
       videoMuted,
       soundMuted,
       mixLevel,
       mixDirty,
+      musicTrackId: selectedMusicTrackId,
+      musicDirty,
       title,
     }),
     [
@@ -462,10 +611,15 @@ export default function EditorShell({
       localSlots,
       localSfx,
       localOverlays,
+      captionMeta,
+      captionMetaDirty,
+      captionMetaPatch,
       videoMuted,
       soundMuted,
       mixLevel,
       mixDirty,
+      selectedMusicTrackId,
+      musicDirty,
       title,
     ],
   );
@@ -481,6 +635,11 @@ export default function EditorShell({
       setSoundMuted(doc.soundMuted);
       setMixLevel(doc.mixLevel ?? null);
       setMixDirty(doc.mixDirty ?? false);
+      setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
+      setMusicDirty(doc.musicDirty ?? false);
+      setCaptionMeta(doc.captionMeta ?? null);
+      setCaptionMetaDirty(doc.captionMetaDirty ?? false);
+      setCaptionMetaPatch(doc.captionMetaPatch ?? {});
       setTitle(doc.title);
       setTextDirty(true);
       setSfxDirty(true);
@@ -494,7 +653,7 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select],
+    [state.bars, select, variant?.music_track_id],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
@@ -502,7 +661,7 @@ export default function EditorShell({
   // Every mutation (text, slots, mutes, title) records into the stack, so the
   // stack IS the dirty signal — and Save's history.clear() makes it read clean
   // (so the draft mirror doesn't immediately re-write the just-saved state).
-  const dirty = history.canUndo || history.canRedo || musicDirty;
+  const dirty = history.canUndo || history.canRedo || musicDirty || captionMetaDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -711,7 +870,7 @@ export default function EditorShell({
 
   useEffect(() => {
     if (layoutMode === "light") {
-      setActiveTool(null);
+      setActiveTool((tool) => (tool === "nova" ? tool : null));
       setCanvasTool("select");
     } else {
       setLightSheetOpen(false);
@@ -725,7 +884,17 @@ export default function EditorShell({
   }, [canvasTool, panEnabled]);
 
   useEffect(() => {
-    if (activeTool !== "sounds" || sfxGlossaryEffects.length > 0) {
+    try {
+      setCopilotSaveNoticeDismissed(
+        window.localStorage.getItem(COPILOT_SAVE_NOTICE_KEY) === "true",
+      );
+    } catch {
+      setCopilotSaveNoticeDismissed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if ((activeTool !== "sounds" && activeTool !== "nova") || sfxGlossaryEffects.length > 0) {
       return;
     }
     let cancelled = false;
@@ -749,6 +918,7 @@ export default function EditorShell({
     (!!variant?.music_track_id ||
       !!selectedMusicTrackId ||
       activeTool === "sounds" ||
+      activeTool === "nova" ||
       selection?.kind === "music") &&
     !musicTracksLoaded;
   useEffect(() => {
@@ -797,6 +967,112 @@ export default function EditorShell({
     });
   }, [localSfx, sfxGlossaryEffects]);
 
+  const overlayPoolShouldLoad =
+    MEDIA_OVERLAYS_UI_ENABLED &&
+    capabilities?.overlays !== false &&
+    (activeTool === "nova" || activeTool === "overlays");
+  useEffect(() => {
+    if (!overlayPoolShouldLoad) return;
+    let cancelled = false;
+    listPoolAssets(itemId)
+      .then((res) => {
+        if (cancelled) return;
+        setPoolAssets(res.assets);
+        setMaxPoolAssets(res.max_assets);
+        setPoolUnavailable(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        if (isUnavailableError(err)) setPoolUnavailable(true);
+        else setPoolError(err instanceof Error ? err.message : "Couldn't load your visuals.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [itemId, overlayPoolShouldLoad]);
+
+  const hasBusyPoolAssets = poolAssets.some(
+    (a) => a.status === "analyzing" || a.status === "uploaded" || a.status === "uploading",
+  );
+  useEffect(() => {
+    if (!overlayPoolShouldLoad || !hasBusyPoolAssets || poolUnavailable) return;
+    const id = setInterval(() => {
+      listPoolAssets(itemId)
+        .then((res) => {
+          setPoolAssets(res.assets);
+          setMaxPoolAssets(res.max_assets);
+        })
+        .catch(() => {});
+    }, SUGGESTION_POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [hasBusyPoolAssets, itemId, overlayPoolShouldLoad, poolUnavailable]);
+
+  const overlaySuggestionsEnabled =
+    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" &&
+    capabilities?.suggestions === true &&
+    !readOnly;
+  const overlaySuggestionsShouldLoad =
+    overlaySuggestionsEnabled && (activeTool === "nova" || activeTool === "overlays");
+  const overlaySuggestions = useEditorOverlaySuggestions({
+    itemId,
+    variantId: variant?.variant_id ?? variantParam ?? "",
+    enabled: overlaySuggestionsShouldLoad,
+  });
+
+  const handlePoolFiles = useCallback(
+    (fileList: FileList | File[] | null) => {
+      if (!fileList) return;
+      const files = Array.from(fileList).filter((f) => POOL_MIME_TYPES.includes(f.type));
+      if (files.length === 0) return;
+      setPoolError(null);
+
+      const locals: PendingUpload[] = files.map((f, i) => ({
+        localId: `pending-${Date.now()}-${i}-${f.name}`,
+        filename: f.name,
+      }));
+      setPendingPoolUploads((prev) => [...prev, ...locals]);
+
+      void (async () => {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          const local = locals[i];
+          try {
+            const [signed] = await requestPoolAssetUploadUrls(itemId, [
+              { filename: file.name, content_type: file.type, file_size_bytes: file.size },
+            ]);
+            await uploadToGcs(signed.upload_url, file);
+            const contentHash = await sha256HexOfFile(file);
+            const registered = await registerPoolAsset(itemId, {
+              gcs_path: signed.gcs_path,
+              content_type: file.type,
+              content_hash: contentHash,
+              source_filename: file.name,
+            });
+            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
+            if (!registered.deduped) setPoolAssets((prev) => [...prev, registered]);
+          } catch (err) {
+            setPendingPoolUploads((prev) => prev.filter((p) => p.localId !== local.localId));
+            if (isUnavailableError(err)) setPoolUnavailable(true);
+            else setPoolError(err instanceof Error ? err.message : "Upload failed");
+          }
+        }
+      })();
+    },
+    [itemId],
+  );
+
+  const handleRemovePoolAsset = useCallback(
+    (asset: PoolAsset) => {
+      void deletePoolAsset(itemId, asset.id)
+        .then(() => setPoolAssets((prev) => prev.filter((a) => a.id !== asset.id)))
+        .catch((err) => {
+          if (isUnavailableError(err)) setPoolUnavailable(true);
+          else setPoolError(err instanceof Error ? err.message : "Couldn't remove that file");
+        });
+    },
+    [itemId],
+  );
+
   const sampleWord = useMemo(() => {
     const first = selectedBar?.text.trim().split(/\s+/)[0];
     return first && first.length > 0 ? first.slice(0, 8).toUpperCase() : null;
@@ -812,9 +1088,21 @@ export default function EditorShell({
   // ── Actions ─────────────────────────────────────────────────────────────────
 
   const selectElement = useCallback(
-    (kind: EditorSelectionKind, id: string) => {
+    (
+      kind: EditorSelectionKind,
+      id: string,
+      options: { preserveOverlayTool?: boolean } = {},
+    ) => {
       select(kind, id);
-      if (layoutMode === "overlay") setActiveTool(null);
+      if (
+        shouldCloseToolOnSelection({
+          layoutMode,
+          activeTool,
+          preserveOverlayTool: options.preserveOverlayTool,
+        })
+      ) {
+        setActiveTool(null);
+      }
       if (kind === "text") {
         setInspectorTab("basic"); // selecting anything activates + switches to Basic (D6)
         if (layoutMode === "light") setLightSheetOpen(true);
@@ -842,7 +1130,7 @@ export default function EditorShell({
         if (overlay) seekPlaybackTo(overlay.start_s);
       }
     },
-    [clip.state.grid, duration, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
+    [activeTool, clip.state.grid, duration, layoutMode, localOverlays, localSfx, seekPlaybackTo, select, slots, virtualPreviewActive],
   );
 
   const selectText = useCallback(
@@ -875,10 +1163,12 @@ export default function EditorShell({
   const pickMusicTrack = useCallback(
     (trackId: string) => {
       if (readOnly || !variant?.music_track_id) return;
+      if (trackId === selectedMusicTrackId) return;
+      history.record();
       setSelectedMusicTrackId(trackId);
       setMusicDirty(trackId !== variant.music_track_id);
     },
-    [readOnly, variant?.music_track_id],
+    [history, readOnly, selectedMusicTrackId, variant?.music_track_id],
   );
 
   const previewTextTiming = useCallback(
@@ -1323,6 +1613,276 @@ export default function EditorShell({
     [capabilities, readOnly, readOnlyReason],
   );
 
+  const buildCopilotDraftSnapshot = useCallback(() => {
+    const openTools = (["text", "sounds", "overlays", "styles"] as const).filter((tool) => {
+      if (toolDisabledReasons[tool]) return false;
+      if (tool === "sounds") return SOUND_EFFECTS_UI_ENABLED;
+      if (tool === "overlays") return MEDIA_OVERLAYS_UI_ENABLED;
+      return true;
+    });
+    const captionsPresent =
+      variant?.resolved_archetype === "narrated" &&
+      captionMeta != null &&
+      state.bars.some((bar) => bar.role === "narrated_caption");
+    const musicSwappable = !!variant?.music_track_id && !readOnly;
+    const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
+    const allowedFamilies = allowedOpFamiliesFromCapabilities(capabilities, {
+      sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
+      overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
+      captionsPresent,
+      musicSwappable,
+      mixAllowed,
+      titleEditable: !readOnly,
+      openTools,
+      readOnly,
+    });
+    return buildCopilotSnapshot(state.bars, slots, clip.clips, capabilities, clip.state.grid, {
+      sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
+      overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
+      captionsPresent,
+      musicSwappable,
+      mixAllowed,
+      titleEditable: !readOnly,
+      openTools,
+      sfxPlacements: localSfx,
+      sfxCatalog: sfxGlossaryEffects,
+      overlayCards: localOverlays,
+      poolAssets,
+      pendingSuggestions: overlaySuggestions.rows,
+      captionMeta: captionsPresent ? captionMeta : undefined,
+      musicState: {
+        swappable: musicSwappable,
+        currentTrackId: effectiveMusicTrackId,
+        currentTrackTitle: effectiveMusicTitle,
+        candidates: musicTracks,
+      },
+      mixLevel,
+      title,
+      readOnly: readOnly || allowedFamilies.length === 0,
+    });
+  }, [
+    capabilities,
+    captionMeta,
+    clip.clips,
+    clip.state.grid,
+    effectiveMusicTitle,
+    effectiveMusicTrackId,
+    localOverlays,
+    localSfx,
+    mixLevel,
+    musicTracks,
+    overlaySuggestions.rows,
+    poolAssets,
+    readOnly,
+    slots,
+    state.bars,
+    title,
+    toolDisabledReasons,
+    variant?.music_track_id,
+    variant?.resolved_archetype,
+  ]);
+
+  const applyCopilotDraftOps = useCallback(
+    (ops: CopilotOp[], snapshot: CopilotSnapshot) =>
+      applyCopilotOps(ops, {
+        bars: state.bars,
+        slots,
+        snapshot,
+        capabilities,
+        grid: clip.state.grid,
+        videoDurationS: previewDuration,
+        sfx: localSfx,
+        sfxCatalog: sfxGlossaryEffects,
+        overlays: localOverlays,
+        poolAssets,
+        pendingSuggestions: overlaySuggestions.rows,
+        musicTrackId: effectiveMusicTrackId,
+        mixLevel,
+        title,
+        captionMeta,
+        makeTextBarId: () => crypto.randomUUID(),
+        makeSlotKey: (slot) => `${slot.key}-split-${crypto.randomUUID()}`,
+        makeSfxPlacementId: () => crypto.randomUUID(),
+        makeOverlayId: () => crypto.randomUUID(),
+      }),
+    [
+      capabilities,
+      captionMeta,
+      clip.state.grid,
+      effectiveMusicTrackId,
+      localOverlays,
+      localSfx,
+      mixLevel,
+      overlaySuggestions.rows,
+      poolAssets,
+      previewDuration,
+      sfxGlossaryEffects,
+      slots,
+      state.bars,
+      title,
+    ],
+  );
+
+  const flashTimerRef = useRef<number | null>(null);
+  const flashCopilotTargets = useCallback(
+    (targets: {
+      textIds?: string[];
+      overlayIds?: string[];
+      timelineIds?: string[];
+    }) => {
+      // One flash timer at a time: a prior turn's timer must not truncate a
+      // newer flash mid-animation, and the timer is cleared on unmount (F7).
+      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+      setFlashTextIds(new Set(targets.textIds ?? []));
+      setFlashOverlayIds(new Set(targets.overlayIds ?? []));
+      setFlashTimelineIds(new Set(targets.timelineIds ?? []));
+      flashTimerRef.current = window.setTimeout(() => {
+        flashTimerRef.current = null;
+        setFlashTextIds(new Set());
+        setFlashOverlayIds(new Set());
+        setFlashTimelineIds(new Set());
+      }, 1600);
+    },
+    [],
+  );
+  useEffect(
+    () => () => {
+      if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
+    },
+    [],
+  );
+
+  const handleCopilotOps = useCallback(
+    (result: ApplyCopilotOpsResult): { undoVersion?: number } => {
+      const hasAppliedChanges =
+        result.textActions.length > 0 ||
+        result.nextSlots !== null ||
+        result.nextSfx != null ||
+        result.nextOverlays != null ||
+        (result.acceptedSuggestionRefs?.length ?? 0) > 0 ||
+        result.nextMusicTrackId !== undefined ||
+        result.nextMixLevel !== undefined ||
+        result.nextTitle !== undefined ||
+        result.captionMetaPatch !== undefined;
+      if (!hasAppliedChanges) {
+        if (result.openTool) setActiveTool(result.openTool);
+        return {};
+      }
+      if (readOnly) return {};
+
+      const version = history.record();
+      const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
+      const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
+      result.textActions.forEach((action) => dispatch(action));
+      if (result.textActions.length > 0) setTextDirty(true);
+      if (result.nextSlots) {
+        setLocalSlots(result.nextSlots);
+        setTimelineDirty(true);
+      }
+      if (result.nextSfx) {
+        setLocalSfx(result.nextSfx);
+        setSfxDirty(true);
+      }
+      if (result.nextOverlays) {
+        setLocalOverlays(result.nextOverlays);
+        setOverlaysDirty(true);
+      }
+      if (result.acceptedSuggestionRefs?.length) {
+        setAcceptedSuggestions((cur) => {
+          const seen = new Set(cur.map((ref) => ref.id));
+          return [
+            ...cur,
+            ...result.acceptedSuggestionRefs!.filter((ref) => !seen.has(ref.id)),
+          ];
+        });
+        for (const ref of result.acceptedSuggestionRefs) {
+          overlaySuggestions.removeRow(ref.id, { accepted: true });
+        }
+      }
+      if (result.nextMusicTrackId !== undefined) {
+        setSelectedMusicTrackId(result.nextMusicTrackId);
+        setMusicDirty(result.nextMusicTrackId !== variant?.music_track_id);
+      }
+      if (result.nextMixLevel !== undefined) {
+        setMixLevel(result.nextMixLevel);
+        setSoundMuted(result.nextMixLevel === 0);
+        setMixDirty(true);
+      }
+      if (result.nextTitle !== undefined) {
+        setTitle(result.nextTitle);
+        setTitleDirty(true);
+      }
+      if (result.captionMetaPatch !== undefined) {
+        setCaptionMeta((current) => {
+          const base = current ?? (variant ? captionMetaFromVariant(variant) : null);
+          return base ? { ...base, ...result.captionMetaPatch } : base;
+        });
+        setCaptionMetaPatch((current) => ({ ...current, ...result.captionMetaPatch }));
+        setCaptionMetaDirty(true);
+      }
+      if (result.openTool) setActiveTool(result.openTool);
+      setSessionHasCopilotEdits(true);
+
+      const feedback = resolveCopilotApplyFeedback({
+        result,
+        bars: state.bars,
+        beforeSlots: slots,
+        grid: clip.state.grid,
+      });
+      const changedOverlayIds = result.nextOverlays
+        ? result.nextOverlays
+            .filter((overlay) => JSON.stringify(beforeOverlayById.get(overlay.id)) !== JSON.stringify(overlay))
+            .map((overlay) => overlay.id)
+        : [];
+      const addedSfx = result.nextSfx?.find((sfx) => !beforeSfxIds.has(sfx.id)) ?? null;
+      flashCopilotTargets({
+        textIds: feedback.textIds,
+        overlayIds: changedOverlayIds,
+        timelineIds: [
+          ...feedback.textIds,
+          ...feedback.slotIds,
+          ...(result.nextSfx ? result.nextSfx.map((sfx) => sfx.id) : []),
+          ...changedOverlayIds,
+        ],
+      });
+
+      if (addedSfx) {
+        pausePlayback();
+        seekPlaybackTo(addedSfx.at_s ?? 0);
+        selectElement("sfx", addedSfx.id, { preserveOverlayTool: true });
+      } else if (feedback.first) {
+        pausePlayback();
+        seekPlaybackTo(feedback.first.seekS);
+        selectElement(feedback.first.kind, feedback.first.id, { preserveOverlayTool: true });
+      }
+
+      return { undoVersion: version };
+    },
+    [
+      clip.state.grid,
+      flashCopilotTargets,
+      history,
+      localOverlays,
+      localSfx,
+      overlaySuggestions,
+      pausePlayback,
+      readOnly,
+      seekPlaybackTo,
+      selectElement,
+      slots,
+      state.bars,
+      variant,
+    ],
+  );
+
+  const copilot = useEditCopilot({
+    itemId,
+    variantId: variant?.variant_id ?? variantParam ?? "",
+    buildSnapshot: buildCopilotDraftSnapshot,
+    applyOps: applyCopilotDraftOps,
+    onApplied: handleCopilotOps,
+  });
+
   const deleteSelected = useCallback(() => {
     if (!selection || readOnly) return;
     if (selection.kind === "text") {
@@ -1551,8 +2111,10 @@ export default function EditorShell({
       const commitRequest = buildEditorCommitRequest({
         elements: barsToTextElements(state.bars, originalsRef.current),
         captionCues,
+        captionMeta: captionMetaPatch,
         textDirty: textDirty && captionCues.length === 0,
         captionDirty: textDirty && captionCues.length > 0,
+        captionMetaDirty,
         timelineDirty,
         slots,
         mixDirty,
@@ -1592,6 +2154,8 @@ export default function EditorShell({
       setTitleDirty(false);
       setMixDirty(false);
       setMusicDirty(false);
+      setCaptionMetaDirty(false);
+      setCaptionMetaPatch({});
       setSaveState("idle");
       const renderStarted = editorCommitStartedRender(res.sections);
       setSaveMessage(renderStarted ? "Saved — rendering your latest version" : "Saved");
@@ -1629,6 +2193,8 @@ export default function EditorShell({
     mixLevel,
     musicDirty,
     selectedMusicTrackId,
+    captionMetaDirty,
+    captionMetaPatch,
     textDirty,
     sfxDirty,
     localSfx,
@@ -1660,10 +2226,15 @@ export default function EditorShell({
     localSlots,
     localSfx,
     localOverlays,
+    captionMeta,
+    captionMetaDirty,
+    captionMetaPatch,
     videoMuted,
     soundMuted,
     mixLevel,
     mixDirty,
+    selectedMusicTrackId,
+    musicDirty,
     title,
     getCurrent,
   ]);
@@ -1794,18 +2365,21 @@ export default function EditorShell({
   // AI suggestions inside the Overlays drawer — dual-gated (frontend flag +
   // the variant's honest capability). A false capability (e.g.
   // song_or_lyric_variant) renders NOTHING: no dead chrome in the drawer.
-  const suggestionsEnabled =
-    process.env.NEXT_PUBLIC_OVERLAY_AUTOPLACE_ENABLED === "true" &&
-    capabilities?.suggestions === true &&
-    !readOnly;
-  const overlaySuggestionsNode = suggestionsEnabled ? (
+  const overlaySuggestionsNode = overlaySuggestionsEnabled ? (
     <OverlaySuggestions
-      itemId={itemId}
-      variantId={variant.variant_id}
+      suggestions={overlaySuggestions}
+      assets={poolAssets}
+      maxAssets={maxPoolAssets}
+      pending={pendingPoolUploads}
+      poolUnavailable={poolUnavailable}
+      poolError={poolError}
+      onFiles={handlePoolFiles}
+      onRemoveAsset={handleRemovePoolAsset}
       onAccept={handleAcceptSuggestion}
       onSeek={seekPlaybackTo}
     />
   ) : null;
+  const showCopilotSaveNotice = sessionHasCopilotEdits && !copilotSaveNoticeDismissed;
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
@@ -1885,6 +2459,7 @@ export default function EditorShell({
     onScrubStart: () => {
       pausePlayback();
     },
+    flashIds: flashTimelineIds,
   };
 
   return (
@@ -1906,7 +2481,17 @@ export default function EditorShell({
           saving={saving}
           readOnly={readOnly}
           saveState={saveState}
+          showCopilotNotice={showCopilotSaveNotice}
           onBack={requestLeave}
+          onOpenNova={() => setActiveTool("nova")}
+          onDismissCopilotNotice={() => {
+            setCopilotSaveNoticeDismissed(true);
+            try {
+              window.localStorage.setItem(COPILOT_SAVE_NOTICE_KEY, "true");
+            } catch {
+              /* localStorage unavailable */
+            }
+          }}
           onSave={() => void handleSave()}
         />
       ) : (
@@ -2004,6 +2589,28 @@ export default function EditorShell({
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-2">
+            {showCopilotSaveNotice && (
+              <div className="flex max-w-[360px] items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
+                <span className="truncate">
+                  The preview is a close match — the saved video is rendered exactly.
+                </span>
+                <button
+                  type="button"
+                  aria-label="Dismiss preview match note"
+                  onClick={() => {
+                    setCopilotSaveNoticeDismissed(true);
+                    try {
+                      window.localStorage.setItem(COPILOT_SAVE_NOTICE_KEY, "true");
+                    } catch {
+                      /* localStorage unavailable */
+                    }
+                  }}
+                  className="min-h-8 px-1 text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {saveState === "idle" && saveMessage && (
               <span className="max-w-[280px] truncate rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] text-[#3f3f46]">
                 {saveMessage}
@@ -2044,6 +2651,8 @@ export default function EditorShell({
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
+            flashTextIds={flashTextIds}
+            flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
             zoomPct={100}
             tool="select"
@@ -2106,15 +2715,32 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
-	              overlayUploading={overlayUploading}
+              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
+              layoutMode={layoutMode}
+              copilot={{
+                messages: copilot.messages,
+                sending: copilot.sending,
+                queued: copilot.queued,
+                error: copilot.error,
+                restoredInput: copilot.restoredInput,
+                suggestions: copilot.suggestions,
+                historyVersion: history.version,
+                canUndo: history.canUndo,
+                onSend: (text) => void copilot.send(text),
+                onCancelQueued: copilot.cancelQueued,
+                onEditQueued: copilot.editQueued,
+                onStop: copilot.stop,
+                onUndo: history.undo,
+                onClearRestoredInput: copilot.clearRestoredInput,
+              }}
 	              onClose={() => setActiveTool(null)}
 	            />
           ) : (
             <div />
           ))}
-        {layoutMode === "overlay" && activeTool !== null && (
+        {layoutMode === "overlay" && activeTool !== null && activeTool !== "nova" && (
           <div className="absolute bottom-0 left-[92px] top-0 z-40 shadow-[18px_0_36px_rgba(12,12,14,0.16)]">
             <ToolDrawer
               tool={activeTool}
@@ -2132,11 +2758,41 @@ export default function EditorShell({
               currentMusicTrackId={selectedMusicTrackId}
               musicEditable={musicSwapEditable}
               onPickMusic={pickMusicTrack}
-	              overlayUploading={overlayUploading}
+              overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
+              layoutMode={layoutMode}
 	              onClose={() => setActiveTool(null)}
 	            />
+          </div>
+        )}
+        {layoutMode === "overlay" && activeTool === "nova" && (
+          <div className="absolute bottom-4 left-[108px] right-[344px] z-40">
+            <ToolDrawer
+              tool="nova"
+              sampleWord={sampleWord}
+              appliedPresetId={appliedPresetId}
+              onAddText={() => addTextAtPlayhead()}
+              onPickPreset={pickPreset}
+              layoutMode={layoutMode}
+              copilot={{
+                messages: copilot.messages,
+                sending: copilot.sending,
+                queued: copilot.queued,
+                error: copilot.error,
+                restoredInput: copilot.restoredInput,
+                suggestions: copilot.suggestions,
+                historyVersion: history.version,
+                canUndo: history.canUndo,
+                onSend: (text) => void copilot.send(text),
+                onCancelQueued: copilot.cancelQueued,
+                onEditQueued: copilot.editQueued,
+                onStop: copilot.stop,
+                onUndo: history.undo,
+                onClearRestoredInput: copilot.clearRestoredInput,
+              }}
+              onClose={() => setActiveTool(null)}
+            />
           </div>
         )}
         <div
@@ -2154,6 +2810,8 @@ export default function EditorShell({
             sfxAudioUrls={localSfxAudioUrls}
             selectedTextId={selection?.kind === "text" ? selection.id : null}
             selectedOverlayId={selection?.kind === "overlay" ? selection.id : null}
+            flashTextIds={flashTextIds}
+            flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
             zoomPct={zoomPct}
             tool={canvasTool}
@@ -2180,6 +2838,14 @@ export default function EditorShell({
 	          tab={inspectorTab}
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
+          captionsTabHref={
+            // CTA only when on-video text genuinely can't be edited here — once
+            // SUBTITLED_TEXT_LANE_ENABLED ships (text_elements true) the styled-text
+            // lane is editable in this shell, so keep the generic empty state and
+            // don't mask it. The signpost notice stays archetype-gated (captions
+            // always live in the Captions tab).
+            textElementsLocked && isCaptionEdit ? `/plan/items/${itemId}` : null
+          }
           contentRef={contentRef}
           onEditText={(text) => {
             if (selectedBar && !readOnly) {
@@ -2327,12 +2993,40 @@ export default function EditorShell({
         onSave={() => void handleSave()}
       />
 
+      {layoutMode === "light" && activeTool === "nova" && (
+        <ToolDrawer
+          tool="nova"
+          sampleWord={sampleWord}
+          appliedPresetId={appliedPresetId}
+          onAddText={() => addTextAtPlayhead()}
+          onPickPreset={pickPreset}
+          layoutMode={layoutMode}
+          copilot={{
+            messages: copilot.messages,
+            sending: copilot.sending,
+            queued: copilot.queued,
+            error: copilot.error,
+            restoredInput: copilot.restoredInput,
+            suggestions: copilot.suggestions,
+            historyVersion: history.version,
+            canUndo: history.canUndo,
+            onSend: (text) => void copilot.send(text),
+            onCancelQueued: copilot.cancelQueued,
+            onEditQueued: copilot.editQueued,
+            onStop: copilot.stop,
+            onUndo: history.undo,
+            onClearRestoredInput: copilot.clearRestoredInput,
+          }}
+          onClose={() => setActiveTool(null)}
+        />
+      )}
+
       {/* ── Read-only banner (ineligible variant, plan §9 / E4) ── */}
       {readOnly && (
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div className="rounded-lg border border-zinc-200 bg-white/95 px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm">
             This version can&apos;t be edited. {readOnlyReason}
-            {readOnlyReason === CAPTIONS_TAB_REASON && (
+            {(readOnlyReason === CAPTIONS_TAB_REASON || isCaptionEdit) && (
               <>
                 {" "}
                 <CaptionsTabLink itemId={itemId} />
@@ -2347,17 +3041,29 @@ export default function EditorShell({
              lives in the Captions tab — keep the deep-link discoverable. Quiet
              notice line (DESIGN.md §2 tokens), outside the layout branches so
              both the full editor and the light layout show it. */}
-      {textElementsLocked && (
+      {(textElementsLocked || (!readOnly && isCaptionEdit)) && (
         <div className="absolute left-1/2 top-[68px] z-[60] w-[min(560px,90vw)] -translate-x-1/2">
           <div
             data-testid="captions-tab-notice"
             className="rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-center text-[12px] text-[#3f3f46] shadow-sm"
           >
-            {textElementsLockedCopy(capabilities)}.
-            {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
+            {!readOnly && isCaptionEdit ? (
+              // Caption archetype (with base video): captions live in the Captions
+              // tab regardless of text_elements, so always show the reason + link.
               <>
-                {" "}
-                <CaptionsTabLink itemId={itemId} />
+                {CAPTIONS_TAB_REASON}. <CaptionsTabLink itemId={itemId} />
+              </>
+            ) : (
+              // Non-caption text lock (e.g. lyrics_sync): keep the reason-driven
+              // copy, appending the link only when the reason is the caption one.
+              <>
+                {textElementsLockedCopy(capabilities)}.
+                {textElementsLockedCopy(capabilities) === CAPTIONS_TAB_REASON && (
+                  <>
+                    {" "}
+                    <CaptionsTabLink itemId={itemId} />
+                  </>
+                )}
               </>
             )}
           </div>
@@ -2454,18 +3160,25 @@ function LightTopBar({
   saving,
   readOnly,
   saveState,
+  showCopilotNotice,
   onBack,
+  onOpenNova,
+  onDismissCopilotNotice,
   onSave,
 }: {
   dirty: boolean;
   saving: boolean;
   readOnly: boolean;
   saveState: "idle" | "saving" | "conflict" | "error" | "partial";
+  showCopilotNotice: boolean;
   onBack: () => void;
+  onOpenNova: () => void;
+  onDismissCopilotNotice: () => void;
   onSave: () => void;
 }) {
+  const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   return (
-    <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-3">
+    <header className="flex items-center justify-between gap-2 border-b border-zinc-200 bg-white px-3">
       <button
         type="button"
         aria-label="Back to the video page"
@@ -2474,7 +3187,36 @@ function LightTopBar({
       >
         ‹
       </button>
-      <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+      <div className="min-w-0 flex-1 text-center">
+        {showCopilotNotice ? (
+          <div className="mx-auto flex max-w-[320px] items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-2 py-1 text-[11px] text-[#3f3f46]">
+            <span className="truncate">
+              Preview is close; Save renders exactly.
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss preview match note"
+              onClick={onDismissCopilotNotice}
+              className="min-h-8 px-1 text-[#71717a] hover:text-[#0c0c0e] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              ✕
+            </button>
+          </div>
+        ) : (
+          <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
+        )}
+      </div>
+      {copilotEnabled && (
+        <button
+          type="button"
+          aria-label="Open Nova"
+          disabled={readOnly}
+          onClick={onOpenNova}
+          className="flex h-11 w-11 items-center justify-center rounded-lg border border-zinc-200 bg-white text-[15px] text-[#0c0c0e] hover:border-zinc-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          ✧
+        </button>
+      )}
       <button
         type="button"
         disabled={!dirty || saving || readOnly}

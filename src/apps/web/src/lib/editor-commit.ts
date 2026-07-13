@@ -45,11 +45,28 @@ export interface EditorCommitMix {
   original_level?: number | null;
 }
 
+export interface EditorCommitCaptionMetaDraft {
+  enabled?: boolean;
+  style?: "sentence" | "word";
+  font?: string | null;
+  y_frac?: number | null;
+}
+
+export interface EditorCommitCaptionMetaRequest {
+  enabled?: boolean;
+  style?: "sentence" | "word";
+  font?: string | null;
+  font_set: boolean;
+  y_frac?: number;
+}
+
 export interface EditorCommitRequest {
   /** Full replacement text-element list (same shape putTextElements sends). */
   text_elements?: TextElement[];
   /** Full replacement narrated caption cue list. */
   caption_cues?: CaptionCue[];
+  /** Narrated-caption display settings. Omit when untouched. */
+  caption_meta?: EditorCommitCaptionMetaRequest;
   /** Clip-slot overrides (timeline task). Omit when untouched. */
   timeline_slots?: EditorTimelineSlot[];
   /** Voice/bed mix 0..1 (gutter mutes map onto this). Omit when untouched. */
@@ -86,6 +103,7 @@ export interface EditorCommitResponse {
   sections: {
     text_elements?: boolean;
     caption_cues?: boolean;
+    caption_meta?: boolean;
     timeline?: boolean;
     mix?: boolean;
     music?: boolean;
@@ -130,8 +148,10 @@ export interface AcceptedSuggestionRef {
 export function buildEditorCommitRequest({
   elements,
   captionCues,
+  captionMeta,
   textDirty = true,
   captionDirty = false,
+  captionMetaDirty = false,
   timelineDirty,
   slots,
   mixDirty = false,
@@ -149,8 +169,10 @@ export function buildEditorCommitRequest({
 }: {
   elements: TextElement[];
   captionCues?: CaptionCue[];
+  captionMeta?: EditorCommitCaptionMetaDraft;
   textDirty?: boolean;
   captionDirty?: boolean;
+  captionMetaDirty?: boolean;
   timelineDirty: boolean;
   slots: EditorCommitDraftSlot[];
   mixDirty?: boolean;
@@ -179,9 +201,22 @@ export function buildEditorCommitRequest({
         .filter((a) => stagedOverlayIds.has(a.overlayId))
         .map((a) => a.id)
     : [];
+  const hasCaptionFont =
+    !!captionMeta && Object.prototype.hasOwnProperty.call(captionMeta, "font");
+  const captionMetaRequest: EditorCommitCaptionMetaRequest | undefined =
+    captionMetaDirty && captionMeta
+      ? {
+          ...(captionMeta.enabled !== undefined ? { enabled: captionMeta.enabled } : {}),
+          ...(captionMeta.style !== undefined ? { style: captionMeta.style } : {}),
+          ...(hasCaptionFont ? { font: captionMeta.font ?? null } : {}),
+          font_set: hasCaptionFont,
+          ...(typeof captionMeta.y_frac === "number" ? { y_frac: captionMeta.y_frac } : {}),
+        }
+      : undefined;
   return {
     text_elements: textDirty ? elements : undefined,
     caption_cues: captionDirty ? (captionCues ?? []) : undefined,
+    caption_meta: captionMetaRequest,
     timeline_slots: timelineDirty && !musicDirty
       ? slots.map((s) => ({
           slot_id: s.slotId,

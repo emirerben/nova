@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "change the song",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 3, "size_px": 64}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3}],
+      "total_duration_s": 3
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.94,\"reply\":\"Song swaps happen from the item page. I can still help with text or clip timing here.\",\"suggestions\":[\"Tighten the cuts\",\"Make the hook punchier\"],\"needs_clarification\":false}",
+  "output": {"intent": "reject", "ops": [], "confidence": 0.94, "reply": "Song swaps happen from the item page. I can still help with text or clip timing here.", "suggestions": ["Tighten the cuts", "Make the hook punchier"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "out-of-scope redirect"}
+}

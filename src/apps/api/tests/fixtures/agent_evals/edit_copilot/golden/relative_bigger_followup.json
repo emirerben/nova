@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "a bit more",
+    "prior_turns": [{"role": "user", "content": "make it bigger"}, {"role": "assistant", "content": "Made it bigger.", "applied": ["Size 48 -> 56"], "rejected": []}],
+    "variant_snapshot": {
+      "allowed_op_families": ["style"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "morning market", "start_s": 0, "end_s": 3, "font_family": "Inter", "size_px": 56}],
+      "slots": [{"output_start_s": 0, "output_end_s": 3, "duration_s": 3}],
+      "total_duration_s": 3
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"size_px\":62}}],\"confidence\":0.86,\"reply\":\"Bumped it up a little more.\",\"suggestions\":[\"Try a serif font\",\"Move it up\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "patch_text_style", "bar_index": 0, "patch": {"size_px": 62}}], "confidence": 0.86, "reply": "Bumped it up a little more.", "suggestions": ["Try a serif font", "Move it up"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "relative composing from current snapshot"}
+}

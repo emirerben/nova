@@ -16,7 +16,7 @@ import uuid
 from typing import Annotated, Literal
 
 import structlog
-from fastapi import APIRouter, Body, Depends, File, HTTPException, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, status
 from fastapi import UploadFile as MultipartFile
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
@@ -28,7 +28,9 @@ from app.agents._schemas.edit_format import coerce_edit_format
 from app.agents.music_matcher import _sanitize_text
 from app.auth import CurrentUser
 from app.database import get_db
+from app.limiter import limiter
 from app.models import ContentPlan, Job, MusicTrack, Persona, PlanItem, PlanItemAsset
+from app.routes._copilot import CopilotTurnBody, CopilotTurnResponse, run_copilot_turn
 from app.routes.generative_jobs import (
     CAPTION_EDIT_ARCHETYPES,
     BedLevelRequest,
@@ -74,9 +76,11 @@ from app.routes.generative_jobs import (
     persist_variant_captions,
     persist_variant_captions_enabled,
     prepare_editor_commit,
+    require_editable_variant,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
 )
+from app.routes.waitlist import get_real_ip
 from app.schemas.montage_preset import (
     MontagePreset,
     coerce_montage_preset,
@@ -1606,6 +1610,40 @@ async def change_item_style(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+@router.post(
+    "/{item_id}/variants/{variant_id}/copilot/turn",
+    response_model=CopilotTurnResponse,
+)
+@limiter.limit("20/minute", key_func=get_real_ip)
+async def plan_item_copilot_turn(
+    request: Request,
+    item_id: str,
+    variant_id: str,
+    body: CopilotTurnBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> CopilotTurnResponse:
+    """Run one stateless editor-copilot turn.
+
+    Zero writes to item/job/variant rows. The client snapshot is untrusted and
+    only passed to the agent for parsing; the editor applies returned ops to its
+    local draft state and Save still goes through editor-commit validation.
+    """
+    from app.config import settings  # noqa: PLC0415
+
+    _ = request  # required by the rate-limit decorator
+    if not settings.edit_copilot_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="edit_copilot_not_enabled",
+        )
+
+    job = await _owned_item_render_job(item_id, user.id, db)
+    require_editable_variant(job, variant_id)
+    # agent_run.job_id FKs jobs.id — pass the render job, never the plan-item id.
+    return await run_copilot_turn(body, job_id=job.id)
+
+
 @router.post("/{item_id}/variants/{variant_id}/edit", response_model=PlanItemResponse)
 async def edit_item_variant(
     item_id: str,
@@ -2262,6 +2300,7 @@ async def editor_commit_item(
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
             caption_cues=prep["sections"]["caption_cues"],
+            caption_meta=prep["sections"]["caption_meta"],
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],
@@ -2926,6 +2965,11 @@ class PoolAssetOut(BaseModel):
     width: int | None = None
     height: int | None = None
     subject: str | None  # analysis micro-label for the pool tile (2A state table)
+    # Brand/mascot identities from the analysis JSONB (ANALYSIS_VERSION 5,
+    # brand-aware matching) — surfaced so detection is verifiable from the pool
+    # tile. None on pre-v5 analyses until the backfill re-analyzes them;
+    # [] means analyzed with nothing detected.
+    brands: list[str] | None = None
     display_url: str | None
     deduped: bool = False
     # Object key under users/{uid}/plan/{item_id}/pool/ — inside attach_clips'
@@ -2945,6 +2989,10 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         display_url = storage.signed_get_url(asset.gcs_path, expiration_minutes=60)
     except Exception:  # noqa: BLE001 — thumbnail signing is best-effort, never 500s the list
         display_url = None
+    # str() coercion: a corrupt JSONB element must degrade, never fail response
+    # validation and 500 the whole list.
+    raw_brands = analysis.get("brands")
+    brands = [str(b) for b in raw_brands if b] if isinstance(raw_brands, list) else None
     return PoolAssetOut(
         id=str(asset.id),
         kind=asset.kind,
@@ -2955,6 +3003,7 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         width=analysis.get("width"),
         height=analysis.get("height"),
         subject=analysis.get("subject"),
+        brands=brands,
         display_url=display_url,
         deduped=deduped,
         gcs_path=asset.gcs_path,

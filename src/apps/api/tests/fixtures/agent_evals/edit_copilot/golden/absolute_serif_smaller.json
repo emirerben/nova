@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "make the text smaller and use a serif font",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 3, "font_family": "Inter", "size_px": 64, "color": "#FFFFFF"}],
+      "slots": [{"output_start_s": 0, "output_end_s": 4, "duration_s": 4}],
+      "total_duration_s": 4
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"font_family\":\"Playfair Display\",\"size_px\":52}}],\"confidence\":0.92,\"reply\":\"Made the hook smaller with a serif face.\",\"suggestions\":[\"Make it even smaller\",\"Move it lower\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Playfair Display", "size_px": 52}}], "confidence": 0.92, "reply": "Made the hook smaller with a serif face.", "suggestions": ["Make it even smaller", "Move it lower"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "absolute style request"}
+}

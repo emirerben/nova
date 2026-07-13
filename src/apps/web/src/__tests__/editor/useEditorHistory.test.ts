@@ -135,7 +135,14 @@ describe("serializeDraft / deserializeDraft", () => {
     const parsed = deserializeDraft(serializeDraft("v1", d));
     expect(parsed).not.toBeNull();
     expect(parsed!.variantId).toBe("v1");
-    expect(parsed!.doc).toEqual(d);
+    expect(parsed!.doc).toEqual({
+      ...d,
+      captionMeta: null,
+      captionMetaDirty: false,
+      captionMetaPatch: undefined,
+      musicTrackId: undefined,
+      musicDirty: false,
+    });
   });
 
   it("returns null for malformed / foreign input", () => {
@@ -158,6 +165,11 @@ describe("serializeDraft / deserializeDraft", () => {
       soundMuted: false,
       mixLevel: null,
       mixDirty: false,
+      captionMeta: null,
+      captionMetaDirty: false,
+      captionMetaPatch: undefined,
+      musicTrackId: undefined,
+      musicDirty: false,
       title: "",
     });
   });
@@ -198,20 +210,63 @@ describe("useEditorHistory (hook)", () => {
 
     expect(result.current.canUndo).toBe(false);
     expect(result.current.canRedo).toBe(false);
+    expect(result.current.version).toBe(0);
 
     // Command: record the pre-change doc, then mutate current.
     act(() => result.current.record());
     current = doc([bar("a"), bar("b")]);
     expect(result.current.canUndo).toBe(true);
+    expect(result.current.version).toBe(1);
 
     act(() => result.current.undo());
     expect(applied[applied.length - 1].bars.map((x) => x.id)).toEqual(["a"]);
     expect(result.current.canUndo).toBe(false);
     expect(result.current.canRedo).toBe(true);
+    // Undo advances version so the copilot's per-turn Undo chip (which guards
+    // on version equality) vanishes after firing instead of eating older entries.
+    expect(result.current.version).toBe(2);
 
     act(() => result.current.redo());
     expect(applied[applied.length - 1].bars.map((x) => x.id)).toEqual(["a", "b"]);
     expect(result.current.canRedo).toBe(false);
+    expect(result.current.version).toBe(3);
+  });
+
+  it("advances version on undo so a fired copilot Undo chip goes stale", () => {
+    let current: EditorDocument = doc([bar("a")]);
+    const { result } = renderHook(() =>
+      useEditorHistory({ getCurrent: () => current, apply: (d) => (current = d) }),
+    );
+    let applyVersion = 0;
+    act(() => {
+      applyVersion = result.current.record();
+    });
+    current = doc([bar("a"), bar("b")]);
+    expect(result.current.version).toBe(applyVersion); // chip visible
+    act(() => result.current.undo());
+    expect(result.current.version).not.toBe(applyVersion); // chip must vanish
+  });
+
+  it("increments version on non-coalesced records only", () => {
+    let current: EditorDocument = doc([bar("a")]);
+    const { result } = renderHook(() =>
+      useEditorHistory({ getCurrent: () => current, apply: (d) => (current = d) }),
+    );
+
+    act(() => {
+      expect(result.current.record("title")).toBe(1);
+    });
+    expect(result.current.version).toBe(1);
+
+    act(() => {
+      expect(result.current.record("title")).toBe(1);
+    });
+    expect(result.current.version).toBe(1);
+
+    act(() => {
+      expect(result.current.record()).toBe(2);
+    });
+    expect(result.current.version).toBe(2);
   });
 
   it("clear empties the stack (Save contract)", () => {

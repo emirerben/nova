@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "fix the captions",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style", "timeline"],
+      "has_narrated_captions": true,
+      "text_bars": [{"text": "hook", "start_s": 0, "end_s": 3}],
+      "slots": [{"output_start_s": 0, "output_end_s": 6, "duration_s": 6}],
+      "total_duration_s": 6
+    }
+  },
+  "raw_text": "{\"intent\":\"reject\",\"ops\":[],\"confidence\":0.92,\"reply\":\"Captions are edited in the caption editor. I can help with the visible hook text here.\",\"suggestions\":[\"Rewrite the hook\",\"Make text smaller\"],\"needs_clarification\":false}",
+  "output": {"intent": "reject", "ops": [], "confidence": 0.92, "reply": "Captions are edited in the caption editor. I can help with the visible hook text here.", "suggestions": ["Rewrite the hook", "Make text smaller"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "caption redirect with has_narrated_captions"}
+}

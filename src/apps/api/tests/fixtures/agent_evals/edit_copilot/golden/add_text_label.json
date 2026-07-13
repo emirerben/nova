@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "add day 1 text after the hook",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "old hook", "start_s": 0, "end_s": 2.5}],
+      "slots": [{"output_start_s": 0, "output_end_s": 6, "duration_s": 6}],
+      "total_duration_s": 6
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"add_text\",\"text\":\"day 1\",\"start_s\":2.6,\"end_s\":4.2}],\"confidence\":0.88,\"reply\":\"Added a short day 1 label after the hook.\",\"suggestions\":[\"Make it smaller\",\"Move it lower\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "add_text", "text": "day 1", "start_s": 2.6, "end_s": 4.2}], "confidence": 0.88, "reply": "Added a short day 1 label after the hook.", "suggestions": ["Make it smaller", "Move it lower"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "add_text"}
+}

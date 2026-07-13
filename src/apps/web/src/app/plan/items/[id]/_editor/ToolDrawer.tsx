@@ -25,7 +25,13 @@ import {
 } from "@/lib/text-presets";
 import PresetGrid from "./PresetGrid";
 import StylesDrawer from "./StylesDrawer";
+import CopilotDrawer from "./CopilotDrawer";
 import type { EditorTool } from "./ToolRail";
+import type { EditorLayoutMode } from "./useEditorLayoutMode";
+import type {
+  CopilotMessage,
+  QueuedCopilotMessage,
+} from "@/lib/edit-copilot/useEditCopilot";
 
 const CATEGORY_LABEL: Record<TextPresetCategory, string> = {
   favorite: "Favorite",
@@ -52,6 +58,8 @@ export default function ToolDrawer({
   overlayUploading = false,
   onOverlayUpload,
   overlaySuggestions = null,
+  layoutMode = "full",
+  copilot,
   onClose,
 }: {
   tool: EditorTool;
@@ -76,6 +84,23 @@ export default function ToolDrawer({
   /** "AI suggestions" section for the Overlays pane (EditorShell gates it on
    *  the autoplace flag + the variant's `suggestions` capability). */
   overlaySuggestions?: React.ReactNode;
+  layoutMode?: EditorLayoutMode;
+  copilot?: {
+    messages: CopilotMessage[];
+    sending: boolean;
+    queued: QueuedCopilotMessage | null;
+    error: string | null;
+    restoredInput: string;
+    suggestions: string[];
+    historyVersion: number;
+    canUndo: boolean;
+    onSend: (text: string) => void;
+    onCancelQueued: () => void;
+    onEditQueued: (text: string) => void;
+    onStop: () => void;
+    onUndo: () => void;
+    onClearRestoredInput: () => void;
+  };
   onClose: () => void;
 }) {
   const [category, setCategory] = useState<TextPresetCategory>("basic");
@@ -99,11 +124,37 @@ export default function ToolDrawer({
   };
 
   const title =
-    tool === "text"
+    tool === "nova"
+      ? "Nova"
+      : tool === "text"
       ? "Text"
       : tool === "styles"
         ? "Styles"
         : tool[0].toUpperCase() + tool.slice(1);
+
+  if (tool === "nova") {
+    if (!copilot) return null;
+    return (
+      <CopilotDrawer
+        layoutMode={layoutMode}
+        messages={copilot.messages}
+        sending={copilot.sending}
+        queued={copilot.queued}
+        error={copilot.error}
+        restoredInput={copilot.restoredInput}
+        suggestions={copilot.suggestions}
+        historyVersion={copilot.historyVersion}
+        canUndo={copilot.canUndo}
+        onSend={copilot.onSend}
+        onCancelQueued={copilot.onCancelQueued}
+        onEditQueued={copilot.onEditQueued}
+        onStop={copilot.onStop}
+        onUndo={copilot.onUndo}
+        onClearRestoredInput={copilot.onClearRestoredInput}
+        onClose={onClose}
+      />
+    );
+  }
 
   return (
     <div

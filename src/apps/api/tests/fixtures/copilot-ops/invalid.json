@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "name": "unknown op",
+      "reason": "op name is not in the v1 vocabulary",
+      "op": {"op": "swap_song", "track_id": "abc"}
+    },
+    {
+      "name": "bad font",
+      "reason": "font_family must be in the backend text-element registry",
+      "op": {"op": "patch_text_style", "bar_index": 0, "patch": {"font_family": "Papyrus"}}
+    },
+    {
+      "name": "missing required field",
+      "reason": "edit_text requires both bar_index and text",
+      "op": {"op": "edit_text", "bar_index": 0}
+    },
+    {
+      "name": "out of bounds text index",
+      "reason": "bar_index must point into the snapshot text bars",
+      "op": {"op": "remove_text", "bar_index": 99}
+    },
+    {
+      "name": "duration beats rejected",
+      "reason": "set_clip_duration accepts duration_s seconds only, not beats",
+      "op": {"op": "set_clip_duration", "slot_index": 0, "duration_beats": 4}
+    },
+    {
+      "name": "bad color",
+      "reason": "colors must be #RRGGBB",
+      "op": {"op": "patch_text_style", "bar_index": 0, "patch": {"color": "white"}}
+    },
+    {
+      "name": "split outside slot window",
+      "reason": "split_clip.at_s is assembled-output time inside the slot output window",
+      "op": {"op": "split_clip", "slot_index": 1, "at_s": 9.5}
+    }
+  ]
+}

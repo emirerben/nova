@@ -9,6 +9,9 @@
  *   5. Delete calls DELETE and removes the tile.
  *   6. status="failed" → quiet dashed-zinc failure tile, no red classes.
  *   7. Backend 404 (dual-flag trap) → "Visuals pool isn't available" line.
+ *   8. Status polling: non-terminal asset → 5s refetch flips the tile in place;
+ *      stops once every asset is terminal; never starts when all are terminal.
+ *   9. Detected brands ride the subject line's title attribute.
  *
  * fetch is mocked at the global level so the plan-api URL contract is exercised.
  */
@@ -452,5 +455,241 @@ describe("AssetPool — \u201cUse in edit\u201d promotion (pool asset \u2192 cli
       );
     });
     expect(screen.getByRole("button", { name: /in the edit/i })).toBeDisabled();
+  });
+});
+
+describe("AssetPool — analysis status polling", () => {
+  const LIST_URL = "/api/plan/plan-items/item-1/assets";
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("refetches every 5s while analyzing and flips the tile in place, then stops", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({ id: "asset-a", status: "analyzing", subject: null });
+    const ready = { ...analyzing, status: "ready", subject: "checkout screen" };
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [listCalls === 1 ? analyzing : ready], max_assets: 20 });
+      }
+      return undefined;
+    });
+    await renderPool();
+    expect(screen.getByText("Analyzing…")).toBeInTheDocument();
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    expect(listCalls).toBe(2);
+    expect(screen.getByText("checkout screen")).toBeInTheDocument();
+    expect(screen.queryByText("Analyzing…")).toBeNull();
+
+    // Every asset terminal → the interval is torn down; no further fetches.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(20_000);
+    });
+    expect(listCalls).toBe(2);
+  });
+
+  it("keeps polling through status=uploaded (analysis not yet dispatched)", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const uploaded = makeAsset({ id: "asset-u", status: "uploaded", subject: null });
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({ assets: [uploaded], max_assets: 20 });
+      }
+      return undefined;
+    });
+    await renderPool();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(10_000);
+    });
+    expect(listCalls).toBe(3); // mount + 2 ticks — still non-terminal, keep going
+  });
+
+  it("never starts polling when every asset is already terminal", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return jsonResponse({
+          assets: [
+            makeAsset({ status: "ready", subject: "done" }),
+            makeAsset({ status: "failed", display_url: null }),
+          ],
+          max_assets: 20,
+        });
+      }
+      return undefined;
+    });
+    await renderPool();
+    expect(listCalls).toBe(1);
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(20_000);
+    });
+    expect(listCalls).toBe(1);
+  });
+
+  it("epoch guard: a poll racing a delete does not resurrect the removed tile", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    // Keeps polling alive; the second tile is the one we delete mid-poll.
+    const spinner = makeAsset({ id: "asset-spin", status: "analyzing", subject: null });
+    const victim = makeAsset({
+      id: "asset-victim",
+      status: "ready",
+      subject: "doomed",
+      source_filename: "victim.png",
+    });
+    let getCalls = 0;
+    let releasePoll: (() => void) | null = null;
+    global.fetch = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "GET" && url === LIST_URL) {
+        getCalls += 1;
+        if (getCalls === 1) {
+          return jsonResponse({ assets: [spinner, victim], max_assets: 20 });
+        }
+        // The poll GET stays in flight until we release it — the server hasn't
+        // processed the delete yet, so it still returns the victim tile.
+        return await new Promise<Response>((resolve) => {
+          releasePoll = () => resolve(jsonResponse({ assets: [spinner, victim], max_assets: 20 }));
+        });
+      }
+      if (method === "DELETE" && url === `${LIST_URL}/asset-victim`) {
+        return jsonResponse({ ok: true });
+      }
+      throw new Error(`Unmocked fetch: ${method} ${url}`);
+    }) as unknown as typeof fetch;
+
+    await renderPool();
+    expect(screen.getByText("doomed")).toBeInTheDocument();
+
+    // Fire the poll tick → its GET is now in flight (releasePoll set, unresolved).
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    expect(releasePoll).not.toBeNull();
+
+    // Delete the victim WHILE the poll is in flight → bumps the epoch.
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Remove victim.png" }));
+    });
+    await waitFor(() => expect(screen.queryByText("doomed")).toBeNull());
+
+    // Resolve the stale poll — it carries the pre-delete epoch, so the guard
+    // drops it and the victim stays gone (no resurrection).
+    await act(async () => {
+      releasePoll!();
+      await Promise.resolve();
+    });
+    expect(screen.queryByText("doomed")).toBeNull();
+  });
+
+  it("stops polling and shows the unavailable line on a mid-poll 404", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    const analyzing = makeAsset({ id: "asset-a", status: "analyzing", subject: null });
+    let listCalls = 0;
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        listCalls += 1;
+        return listCalls === 1
+          ? jsonResponse({ assets: [analyzing], max_assets: 20 })
+          : jsonResponse({ detail: "Auto-placement not available." }, 404);
+      }
+      return undefined;
+    });
+    await renderPool();
+    expect(screen.getByText("Analyzing…")).toBeInTheDocument();
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    expect(listCalls).toBe(2);
+    expect(screen.getByText("Visuals pool isn't available right now.")).toBeInTheDocument();
+
+    // Effect tore down on unavailable → no further polling.
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(20_000);
+    });
+    expect(listCalls).toBe(2);
+  });
+
+  it("preserves the existing signed display_url across polls (no thumbnail reload)", async () => {
+    process.env[FLAG] = "true";
+    jest.useFakeTimers();
+    // A ready tile renders an <img src={display_url}>; a spinner keeps polling on.
+    const ready = makeAsset({
+      id: "asset-ready",
+      status: "ready",
+      subject: "dash",
+      display_url: "https://storage.example/signed/v1",
+    });
+    const spinner = makeAsset({ id: "asset-spin", status: "analyzing", subject: null });
+    mockFetch((method, url) => {
+      if (method === "GET" && url === LIST_URL) {
+        // Every read re-signs → a NEW url each time (GCS V4 behavior).
+        return jsonResponse({
+          assets: [
+            { ...ready, display_url: "https://storage.example/signed/v2-resigned" },
+            spinner,
+          ],
+          max_assets: 20,
+        });
+      }
+      return undefined;
+    });
+    // First mount call must carry the original v1 url so we can assert it sticks.
+    (global.fetch as jest.Mock).mockImplementationOnce(async () =>
+      jsonResponse({ assets: [ready, spinner], max_assets: 20 }),
+    );
+    await renderPool();
+    expect(screen.getByAltText("dash")).toHaveAttribute("src", "https://storage.example/signed/v1");
+
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5000);
+    });
+    // The poll re-signed to v2, but the merge kept the still-valid v1 → the
+    // <img> src never changes, so the browser never reloads the thumbnail.
+    expect(screen.getByAltText("dash")).toHaveAttribute("src", "https://storage.example/signed/v1");
+  });
+});
+
+describe("AssetPool — brand micro-label (analysis v5)", () => {
+  it("exposes detected brands via the subject line's title attribute", async () => {
+    process.env[FLAG] = "true";
+    const asset = makeAsset({
+      status: "ready",
+      subject: "checkout screen",
+      brands: ["Acme", "Duolingo"],
+    });
+    mockFetch(listRoute([asset]));
+    await renderPool();
+    expect(screen.getByText("checkout screen")).toHaveAttribute(
+      "title",
+      "Brands: Acme, Duolingo",
+    );
+  });
+
+  it("adds no title when brands are empty or absent (legacy analyses)", async () => {
+    process.env[FLAG] = "true";
+    const empty = makeAsset({ id: "asset-e", status: "ready", subject: "no brands", brands: [] });
+    const legacy = makeAsset({ id: "asset-l", status: "ready", subject: "old analysis" });
+    delete (legacy as Record<string, unknown>).brands;
+    mockFetch(listRoute([empty, legacy]));
+    await renderPool();
+    expect(screen.getByText("no brands")).not.toHaveAttribute("title");
+    expect(screen.getByText("old analysis")).not.toHaveAttribute("title");
   });
 });

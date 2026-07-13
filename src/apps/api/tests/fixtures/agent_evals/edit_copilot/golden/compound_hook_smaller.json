@@ -1,0 +1,18 @@
+{
+  "agent": "nova.edit.copilot",
+  "prompt_version": "2026-07-12-v1",
+  "input": {
+    "utterance": "make the hook punchier and the text smaller",
+    "prior_turns": [],
+    "variant_snapshot": {
+      "allowed_op_families": ["text", "style"],
+      "has_narrated_captions": false,
+      "text_bars": [{"text": "a nice morning in lisbon", "start_s": 0, "end_s": 3, "font_family": "Inter", "size_px": 68}],
+      "slots": [{"output_start_s": 0, "output_end_s": 4, "duration_s": 4, "moment": "sunrise street walk in Lisbon"}],
+      "total_duration_s": 4
+    }
+  },
+  "raw_text": "{\"intent\":\"edit\",\"ops\":[{\"op\":\"edit_text\",\"bar_index\":0,\"text\":\"lisbon before the city wakes\"},{\"op\":\"patch_text_style\",\"bar_index\":0,\"patch\":{\"size_px\":56}}],\"confidence\":0.88,\"reply\":\"Rewrote the hook and made it smaller.\",\"suggestions\":[\"Make it more dramatic\",\"Use a serif font\"],\"needs_clarification\":false}",
+  "output": {"intent": "edit", "ops": [{"op": "edit_text", "bar_index": 0, "text": "lisbon before the city wakes"}, {"op": "patch_text_style", "bar_index": 0, "patch": {"size_px": 56}}], "confidence": 0.88, "reply": "Rewrote the hook and made it smaller.", "suggestions": ["Make it more dramatic", "Use a serif font"], "needs_clarification": false},
+  "meta": {"source": "hand_authored_golden", "case": "compound text and style ops"}
+}

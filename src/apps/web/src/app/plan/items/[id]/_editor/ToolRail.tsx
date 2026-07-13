@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
+
 /**
  * ToolRail — the left icon-over-label rail (plan §2).
  *
@@ -18,9 +20,12 @@
  * pointer bonus.
  */
 
-export type EditorTool = "text" | "sounds" | "overlays" | "styles";
+export type EditorTool = "nova" | "text" | "sounds" | "overlays" | "styles";
+
+export const NOVA_TOOL_SEEN_KEY = "nova-tool-seen";
 
 const TOOLS: Array<{ id: EditorTool; icon: string; label: string }> = [
+  { id: "nova", icon: "✧", label: "Nova" },
   { id: "text", icon: "T", label: "Text" },
   { id: "sounds", icon: "♫", label: "Sounds" },
   { id: "overlays", icon: "▤", label: "Overlays" },
@@ -37,16 +42,43 @@ export default function ToolRail({
   disabledTools?: Partial<Record<EditorTool, string | null>>;
   onToggleTool: (tool: EditorTool) => void;
 }) {
+  const [novaSeen, setNovaSeen] = useState(true);
+  const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
+  const tools = useMemo(
+    () => TOOLS.filter((tool) => copilotEnabled || tool.id !== "nova"),
+    [copilotEnabled],
+  );
+
+  useEffect(() => {
+    if (!copilotEnabled) return;
+    try {
+      setNovaSeen(window.localStorage.getItem(NOVA_TOOL_SEEN_KEY) === "true");
+    } catch {
+      setNovaSeen(true);
+    }
+  }, [copilotEnabled]);
+
+  useEffect(() => {
+    if (activeTool !== "nova") return;
+    try {
+      window.localStorage.setItem(NOVA_TOOL_SEEN_KEY, "true");
+    } catch {
+      /* localStorage unavailable — discovery degrades silently */
+    }
+    setNovaSeen(true);
+  }, [activeTool]);
+
   return (
     <div
       data-region="tool-rail"
       className="flex w-[92px] flex-col items-center gap-2 border-r border-zinc-200 bg-white pt-3"
     >
-      {TOOLS.map((tool) => {
+      {tools.map((tool) => {
         const active = activeTool === tool.id;
         const disabledReason = disabledTools[tool.id];
         const enabled = !disabledReason;
         const reasonId = `tool-rail-reason-${tool.id}`;
+        const showNovaPing = tool.id === "nova" && !active && !novaSeen && enabled;
         return (
           <button
             key={tool.id}
@@ -60,7 +92,7 @@ export default function ToolRail({
               if (!enabled) return; // focusable-disabled: reachable, inert
               onToggleTool(tool.id);
             }}
-            className={`flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+            className={`relative flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl border focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
               active
                 ? "border-[#0c0c0e]"
                 : enabled
@@ -68,6 +100,12 @@ export default function ToolRail({
                   : "cursor-not-allowed border-transparent opacity-40"
             }`}
           >
+            {showNovaPing && (
+              <span className="pointer-events-none absolute ml-8 mt-[-42px] flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full rounded-full bg-lime-500 opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-lime-600" />
+              </span>
+            )}
             <span
               aria-hidden
               className={`text-[17px] leading-none ${

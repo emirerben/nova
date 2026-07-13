@@ -14,6 +14,10 @@
  * shimmer + micro-label while uploading/analyzing, dashed zinc "Couldn't read
  * this file" on failure (no red), serif invitation when empty, quiet "N of 20"
  * count, inline reason when the cap disables the add affordance.
+ *
+ * While any asset is mid-pipeline (uploaded/analyzing) the list re-polls every
+ * 5s so the server-side status flips and the subject micro-label land without
+ * a page refresh; polling stops once every asset is terminal (ready/failed).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -40,6 +44,27 @@ const ALLOWED_ASSET_MIME_TYPES = [
 
 const NOTICE_MS = 4000;
 const UNAVAILABLE_COPY = "Visuals pool isn't available right now.";
+
+// Analysis happens server-side after register (uploaded → analyzing → ready |
+// failed) — poll while any asset is mid-pipeline so tiles update in place.
+// Unknown future statuses deliberately DON'T poll (no runaway interval).
+const ASSET_POLL_MS = 5000;
+const NON_TERMINAL_ASSET_STATUSES = new Set(["uploaded", "uploading", "analyzing"]);
+
+/** Merge a fresh poll snapshot over the current tiles, KEEPING each existing
+ *  tile's already-signed `display_url`. `_asset_out` re-signs on every read and
+ *  a GCS V4 URL embeds a fresh timestamp+signature, so a blind replace hands
+ *  every ready `<img>`/`<video>` a new `src` each tick → the browser reloads
+ *  every thumbnail every 5s. The prior URL was signed for 60 min, so it's still
+ *  valid; reuse it and only new tiles (or ones that hadn't signed yet) take the
+ *  fresh URL. Status/subject/brands/etc. always come from the server snapshot. */
+function mergePreservingUrls(prev: PoolAsset[], next: PoolAsset[]): PoolAsset[] {
+  const prevById = new Map(prev.map((a) => [a.id, a]));
+  return next.map((a) => {
+    const existing = prevById.get(a.id);
+    return existing?.display_url ? { ...a, display_url: existing.display_url } : a;
+  });
+}
 
 /** Backend flag off → routes 404 with this detail (or a raw 404 wrapper). */
 function isUnavailableError(err: unknown): boolean {
@@ -84,6 +109,16 @@ export default function AssetPool({
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Bumped on every local list mutation (register append, delete). A poll
+  // response only applies when the epoch it was dispatched under is still
+  // current — a GET racing a register/delete would otherwise resurrect a
+  // removed tile or drop a just-registered one until the next tick.
+  const listEpoch = useRef(0);
+  // One poll in flight at a time. Signing up to 20 URLs server-side can exceed
+  // the 5s tick under load; without this a slow server gets a new request every
+  // tick (pile-up) and out-of-order responses flicker a ready tile back to
+  // "analyzing". The epoch guard can't catch that — both carry the same epoch.
+  const pollInFlight = useRef(false);
 
   const showNotice = useCallback((text: string) => {
     setNotice(text);
@@ -113,6 +148,42 @@ export default function AssetPool({
       cancelled = true;
     };
   }, [enabled, itemId]);
+
+  // Status polling — analysis progresses server-side; refetch every 5s while
+  // any asset is non-terminal so "Analyzing…" and the subject micro-label
+  // appear without a page refresh. The effect tears down (and the interval
+  // stops) as soon as every asset reaches ready/failed.
+  const hasNonTerminal = assets.some((a) => NON_TERMINAL_ASSET_STATUSES.has(a.status));
+  useEffect(() => {
+    if (!enabled || unavailable || !hasNonTerminal) return;
+    let cancelled = false;
+    const id = setInterval(() => {
+      if (pollInFlight.current) return;
+      pollInFlight.current = true;
+      const epoch = listEpoch.current;
+      listPoolAssets(itemId)
+        .then((res) => {
+          if (cancelled || epoch !== listEpoch.current) return;
+          setAssets((prev) => mergePreservingUrls(prev, res.assets));
+          setMaxAssets(res.max_assets);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          if (isUnavailableError(err)) setUnavailable(true);
+          // Transient poll errors stay silent — the next tick retries.
+        })
+        .finally(() => {
+          pollInFlight.current = false;
+        });
+    }, ASSET_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+      // A poll may still be resolving; free the lease so the next mount's
+      // interval isn't blocked by a stale in-flight flag.
+      pollInFlight.current = false;
+    };
+  }, [enabled, unavailable, hasNonTerminal, itemId]);
 
   const handleFiles = useCallback(
     async (fileList: FileList | File[] | null) => {
@@ -169,6 +240,7 @@ export default function AssetPool({
           if (registered.deduped) {
             showNotice("Already in your pool");
           } else {
+            listEpoch.current += 1;
             setAssets((prev) => [...prev, registered]);
           }
         } catch (err) {
@@ -185,6 +257,7 @@ export default function AssetPool({
     async (asset: PoolAsset) => {
       try {
         await deletePoolAsset(itemId, asset.id);
+        listEpoch.current += 1;
         setAssets((prev) => prev.filter((a) => a.id !== asset.id));
       } catch (err) {
         if (isUnavailableError(err)) setUnavailable(true);
@@ -384,6 +457,9 @@ function AssetTile({
   }
 
   const busy = asset.status === "analyzing" || asset.status === "uploading";
+  // Detected brand identities (analysis v5) ride the subject line's title
+  // attribute — enough to verify detection without new tile chrome.
+  const brands = asset.brands ?? [];
 
   return (
     <li className="group relative aspect-square overflow-hidden rounded-lg border border-zinc-200 bg-white">
@@ -398,7 +474,12 @@ function AssetTile({
       {/* bg-white/95 (not /85): the lime-700 action text must hold the 4.5:1
           contrast floor even over dark video frames (DESIGN.md §8). */}
       <span className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-white/95 px-1.5 py-1 text-[12px] text-[#71717a]">
-        <span className="truncate">{busy ? "Analyzing…" : (asset.subject ?? asset.kind)}</span>
+        <span
+          className="truncate"
+          title={!busy && brands.length > 0 ? `Brands: ${brands.join(", ")}` : undefined}
+        >
+          {busy ? "Analyzing…" : (asset.subject ?? asset.kind)}
+        </span>
         {/* "Use in edit" — video assets only: promotes the pool object to a real
             clip (B-roll / spine candidate). Images stay overlay-only in v1. */}
         {onUseInEdit && asset.kind === "video" && !busy && (
