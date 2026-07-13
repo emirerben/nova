@@ -27,6 +27,7 @@ export interface EditorReturnHrefInput {
 export interface EditorCommitSectionsLike {
   text_elements?: boolean;
   caption_cues?: boolean;
+  caption_meta?: boolean;
   timeline?: boolean;
   mix?: boolean;
   music?: boolean;
@@ -39,6 +40,7 @@ export function editorCommitStartedRender(sections: EditorCommitSectionsLike): b
   return Boolean(
     sections.text_elements ||
       sections.caption_cues ||
+      sections.caption_meta ||
       sections.timeline ||
       sections.mix ||
       sections.music ||

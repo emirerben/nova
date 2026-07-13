@@ -2297,6 +2297,7 @@ async def editor_commit_item(
         sections=EditorCommitSections(
             text_elements=prep["sections"]["text_elements"],
             caption_cues=prep["sections"]["caption_cues"],
+            caption_meta=prep["sections"]["caption_meta"],
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],

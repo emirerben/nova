@@ -496,6 +496,14 @@ class EditorCommitMix(BaseModel):
     original_level: float | None = Field(None, ge=0.0, le=1.0)
 
 
+class EditorCommitCaptionMeta(BaseModel):
+    enabled: bool | None = None
+    style: Literal["sentence", "word"] | None = None
+    font: str | None = None
+    font_set: bool = False
+    y_frac: float | None = Field(None, ge=0.30, le=0.90)
+
+
 class EditorCommitRequest(BaseModel):
     """One atomic editor Save: every provided section validates first; nothing
     persists unless ALL sections are valid. `base_generation` is the baseline the
@@ -506,6 +514,7 @@ class EditorCommitRequest(BaseModel):
 
     text_elements: list[dict] | None = None
     caption_cues: list[dict] | None = None
+    caption_meta: EditorCommitCaptionMeta | None = None
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
@@ -534,6 +543,7 @@ class EditorCommitRequest(BaseModel):
 class EditorCommitSections(BaseModel):
     text_elements: bool
     caption_cues: bool
+    caption_meta: bool
     timeline: bool
     mix: bool
     music: bool
@@ -2931,6 +2941,7 @@ def prepare_editor_commit(
     if (
         payload.text_elements is None
         and payload.caption_cues is None
+        and payload.caption_meta is None
         and payload.timeline_slots is None
         and payload.mix is None
         and payload.music_track_id is None
@@ -2990,6 +3001,34 @@ def prepare_editor_commit(
         validated_caption_cues = [
             CaptionCue.model_validate(c).model_dump(exclude_none=True) for c in payload.caption_cues
         ]
+
+    caption_meta_patch: dict | None = None
+    if payload.caption_meta is not None:
+        if variant.get("resolved_archetype") != "narrated" or not _is_editable_caption_variant(
+            variant
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"{CAPTION_TAB_COPY}.",
+            )
+        meta = payload.caption_meta
+        if meta.font_set:
+            from app.pipeline.narrated_assembler import is_valid_caption_font  # noqa: PLC0415
+
+            if not is_valid_caption_font(meta.font):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Unknown caption font.",
+                )
+        caption_meta_patch = {}
+        if meta.enabled is not None:
+            caption_meta_patch["captions_enabled"] = bool(meta.enabled)
+        if meta.style is not None:
+            caption_meta_patch["voiceover_caption_style"] = meta.style
+        if meta.font_set:
+            caption_meta_patch["voiceover_caption_font"] = meta.font
+        if meta.y_frac is not None:
+            caption_meta_patch["caption_margin_v"] = round((1.0 - meta.y_frac) * 1920)
 
     resolved_slots: list[dict] | None = None
     if payload.timeline_slots is not None:
@@ -3079,6 +3118,7 @@ def prepare_editor_commit(
     has_render_section = (
         validated_elements is not None
         or validated_caption_cues is not None
+        or caption_meta_patch is not None
         or resolved_slots is not None
         or payload.mix is not None
         or payload.music_track_id is not None
@@ -3100,6 +3140,8 @@ def prepare_editor_commit(
                 updated["text_elements_materialized_from"] = "sequence"
         if validated_caption_cues is not None:
             updated["caption_cues"] = validated_caption_cues
+        if caption_meta_patch is not None:
+            updated.update(caption_meta_patch)
         if resolved_slots is not None:
             updated["user_timeline"] = {"slots": resolved_slots}
         if payload.mix is not None:
@@ -3159,6 +3201,7 @@ def prepare_editor_commit(
         "sections": {
             "text_elements": payload.text_elements is not None,
             "caption_cues": payload.caption_cues is not None,
+            "caption_meta": payload.caption_meta is not None,
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
             "music": payload.music_track_id is not None,
@@ -3179,7 +3222,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     """
     if not prep["has_render_section"]:
         return
-    if prep["sections"].get("caption_cues") is True:
+    if prep["sections"].get("caption_cues") is True or prep["sections"].get("caption_meta") is True:
         from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
 
         # 2A: the reburn carries the freshly-bumped token so a superseded run
@@ -3204,6 +3247,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         sections.get("sound_effects") is True or sections.get("media_overlays") is True
     ) and not (
         sections.get("text_elements") is True
+        or sections.get("caption_meta") is True
         or sections.get("timeline") is True
         or sections.get("mix") is True
     )

@@ -135,7 +135,14 @@ describe("serializeDraft / deserializeDraft", () => {
     const parsed = deserializeDraft(serializeDraft("v1", d));
     expect(parsed).not.toBeNull();
     expect(parsed!.variantId).toBe("v1");
-    expect(parsed!.doc).toEqual(d);
+    expect(parsed!.doc).toEqual({
+      ...d,
+      captionMeta: null,
+      captionMetaDirty: false,
+      captionMetaPatch: undefined,
+      musicTrackId: undefined,
+      musicDirty: false,
+    });
   });
 
   it("returns null for malformed / foreign input", () => {
@@ -158,6 +165,11 @@ describe("serializeDraft / deserializeDraft", () => {
       soundMuted: false,
       mixLevel: null,
       mixDirty: false,
+      captionMeta: null,
+      captionMetaDirty: false,
+      captionMetaPatch: undefined,
+      musicTrackId: undefined,
+      musicDirty: false,
       title: "",
     });
   });

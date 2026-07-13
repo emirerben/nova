@@ -24,7 +24,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-12-v1"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-13-v2"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 _MAX_OPS = 8
 _TEXT_INDEX_KEYS = ("text_bars", "textBars", "bars", "text_elements", "textElements")
@@ -34,7 +34,28 @@ _VALID_INTENTS = {"edit", "clarify", "describe", "reject", "unknown"}
 _TEXT_OPS = {"edit_text", "set_text_timing", "add_text", "remove_text"}
 _STYLE_OPS = {"patch_text_style"}
 _CLIP_OPS = {"set_clip_duration", "set_clip_in", "reorder_clip", "remove_clip", "split_clip"}
-_VALID_OPS = _TEXT_OPS | _STYLE_OPS | _CLIP_OPS
+_SFX_OPS = {"add_sfx", "patch_sfx", "remove_sfx"}
+_OVERLAY_OPS = {
+    "add_overlay",
+    "patch_overlay",
+    "remove_overlay",
+    "accept_overlay_suggestion",
+}
+_CAPTION_OPS = {"edit_caption", "set_caption_timing", "set_caption_meta"}
+_MUSIC_OPS = {"swap_music", "set_mix"}
+_TITLE_OPS = {"set_title"}
+_TOOL_OPS = {"open_tool"}
+_VALID_OPS = (
+    _TEXT_OPS
+    | _STYLE_OPS
+    | _CLIP_OPS
+    | _SFX_OPS
+    | _OVERLAY_OPS
+    | _CAPTION_OPS
+    | _MUSIC_OPS
+    | _TITLE_OPS
+    | _TOOL_OPS
+)
 
 _OP_REQUIRED: dict[str, frozenset[str]] = {
     "edit_text": frozenset({"bar_index", "text"}),
@@ -47,6 +68,20 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
+    "add_sfx": frozenset({"effect_id", "at_s"}),
+    "patch_sfx": frozenset({"sfx_index"}),
+    "remove_sfx": frozenset({"sfx_index"}),
+    "add_overlay": frozenset({"asset_id", "start_s", "end_s"}),
+    "patch_overlay": frozenset({"overlay_index", "patch"}),
+    "remove_overlay": frozenset({"overlay_index"}),
+    "accept_overlay_suggestion": frozenset({"suggestion_id"}),
+    "edit_caption": frozenset({"cue_index", "text"}),
+    "set_caption_timing": frozenset({"cue_index"}),
+    "set_caption_meta": frozenset({"patch"}),
+    "swap_music": frozenset({"track_id"}),
+    "set_mix": frozenset({"music_level"}),
+    "set_title": frozenset({"title"}),
+    "open_tool": frozenset({"tool"}),
 }
 
 _OP_FIELDS: dict[str, frozenset[str]] = {
@@ -60,6 +95,31 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "reorder_clip": frozenset({"from_index", "to_index"}),
     "remove_clip": frozenset({"slot_index"}),
     "split_clip": frozenset({"slot_index", "at_s"}),
+    "add_sfx": frozenset({"effect_id", "at_s", "gain"}),
+    "patch_sfx": frozenset({"sfx_index", "at_s", "gain"}),
+    "remove_sfx": frozenset({"sfx_index"}),
+    "add_overlay": frozenset(
+        {
+            "asset_id",
+            "start_s",
+            "end_s",
+            "position",
+            "x_frac",
+            "y_frac",
+            "scale",
+            "display_mode",
+        }
+    ),
+    "patch_overlay": frozenset({"overlay_index", "patch"}),
+    "remove_overlay": frozenset({"overlay_index"}),
+    "accept_overlay_suggestion": frozenset({"suggestion_id"}),
+    "edit_caption": frozenset({"cue_index", "text"}),
+    "set_caption_timing": frozenset({"cue_index", "start_s", "end_s"}),
+    "set_caption_meta": frozenset({"patch"}),
+    "swap_music": frozenset({"track_id"}),
+    "set_mix": frozenset({"music_level"}),
+    "set_title": frozenset({"title"}),
+    "open_tool": frozenset({"tool"}),
 }
 
 _STYLE_PATCH_FIELDS = frozenset(
@@ -84,6 +144,22 @@ _STYLE_PATCH_FIELDS = frozenset(
 _VALID_ALIGNMENT = {"left", "center", "right"}
 _VALID_TEXT_CASE = {"none", "upper", "lower", "title"}
 _VALID_POSITION = {"top", "middle", "bottom", "custom"}
+_VALID_OVERLAY_POSITION = {"top", "center", "bottom", "custom"}
+_VALID_OVERLAY_DISPLAY_MODE = {"pip", "fullscreen"}
+_VALID_CAPTION_STYLE = {"sentence", "word"}
+_VALID_OPEN_TOOLS = {"text", "sounds", "overlays", "styles"}
+_OVERLAY_PATCH_FIELDS = frozenset(
+    {
+        "start_s",
+        "end_s",
+        "position",
+        "x_frac",
+        "y_frac",
+        "scale",
+        "display_mode",
+    }
+)
+_CAPTION_META_FIELDS = frozenset({"enabled", "style", "font", "y_frac"})
 _FONT_KIND_HINTS: dict[str, str] = {
     "playfair": "serif",
     "fraunces": "serif",
@@ -244,6 +320,161 @@ def _format_snapshot(snapshot: dict) -> str:
     else:
         lines.append("(none)")
 
+    if isinstance(snapshot.get("sfx"), dict):
+        sfx = snapshot["sfx"]
+        placements = sfx.get("placements") if isinstance(sfx.get("placements"), list) else []
+        catalog = sfx.get("catalog") if isinstance(sfx.get("catalog"), list) else []
+        lines.append("\nSFX PINS (sfx_index values are authoritative for this turn):")
+        if placements:
+            for placement in placements[:15]:
+                if not isinstance(placement, dict):
+                    continue
+                placement_id = _clean_prompt_data(placement.get("id"), max_chars=80)
+                label = _clean_prompt_data(placement.get("label"), max_chars=80)
+                lines.append(
+                    f"{placement.get('index')}. id={placement_id!r} "
+                    f"label={label!r} "
+                    f"at={_fmt_round3(_first_number(placement, ('at_s',)))}s "
+                    f"gain={_fmt_round3(_first_number(placement, ('gain',)))} "
+                    f"duration={_fmt_round3(_first_number(placement, ('duration_s',)))}s"
+                )
+        else:
+            lines.append("(none)")
+        lines.append("SFX CATALOG (use effect_id exactly as shown):")
+        if catalog:
+            for effect in catalog[:20]:
+                if not isinstance(effect, dict):
+                    continue
+                lines.append(
+                    f"- id={_clean_prompt_data(effect.get('id'), max_chars=80)!r} "
+                    f"name={_clean_prompt_data(effect.get('name'), max_chars=32)!r} "
+                    f"duration={_fmt_round3(_first_number(effect, ('duration_s',)))}s"
+                )
+        else:
+            lines.append("(none)")
+
+    if isinstance(snapshot.get("overlays"), dict):
+        overlays = snapshot["overlays"]
+        cards = overlays.get("cards") if isinstance(overlays.get("cards"), list) else []
+        asset_pool = (
+            overlays.get("asset_pool") if isinstance(overlays.get("asset_pool"), list) else []
+        )
+        suggestions = (
+            overlays.get("pending_suggestions")
+            if isinstance(overlays.get("pending_suggestions"), list)
+            else []
+        )
+        lines.append("\nOVERLAY CARDS (overlay_index values are authoritative for this turn):")
+        if cards:
+            for card in cards[:12]:
+                if not isinstance(card, dict):
+                    continue
+                lines.append(
+                    f"{card.get('index')}. id={_clean_prompt_data(card.get('id'), max_chars=80)!r} "
+                    f"kind={_clean_prompt_data(card.get('kind'), max_chars=40)!r} "
+                    f"timing={_fmt_round3(_first_number(card, ('start_s',)))}-"
+                    f"{_fmt_round3(_first_number(card, ('end_s',)))}s "
+                    f"position={_clean_prompt_data(card.get('position'), max_chars=40)!r} "
+                    f"x={_fmt_round3(_first_number(card, ('x_frac',)))} "
+                    f"y={_fmt_round3(_first_number(card, ('y_frac',)))} "
+                    f"scale={_fmt_round3(_first_number(card, ('scale',)))} "
+                    f"display={_clean_prompt_data(card.get('display_mode'), max_chars=40)!r}"
+                )
+        else:
+            lines.append("(none)")
+        lines.append("ASSET POOL (use asset_id exactly as shown):")
+        if asset_pool:
+            for asset in asset_pool[:12]:
+                if not isinstance(asset, dict):
+                    continue
+                lines.append(
+                    f"- id={_clean_prompt_data(asset.get('id'), max_chars=80)!r} "
+                    f"kind={_clean_prompt_data(asset.get('kind'), max_chars=40)!r} "
+                    f"subject={_clean_prompt_data(asset.get('subject'), max_chars=60)!r} "
+                    f"duration={_fmt_round3(_first_number(asset, ('duration_s',)))}s"
+                )
+        else:
+            lines.append("(none)")
+        lines.append("PENDING SUGGESTIONS (use suggestion_id exactly as shown):")
+        if suggestions:
+            for suggestion in suggestions[:6]:
+                if not isinstance(suggestion, dict):
+                    continue
+                lines.append(
+                    f"- id={_clean_prompt_data(suggestion.get('id'), max_chars=80)!r} "
+                    f"reason={_clean_prompt_data(suggestion.get('reason'), max_chars=80)!r} "
+                    f"timing={_fmt_round3(_first_number(suggestion, ('start_s',)))}-"
+                    f"{_fmt_round3(_first_number(suggestion, ('end_s',)))}s"
+                )
+        else:
+            lines.append("(none)")
+
+    if isinstance(snapshot.get("captions"), dict):
+        captions = snapshot["captions"]
+        cues = captions.get("cues") if isinstance(captions.get("cues"), list) else []
+        total_cues = captions.get("total_cues")
+        truncated = bool(captions.get("truncated"))
+        meta = captions.get("meta") if isinstance(captions.get("meta"), dict) else {}
+        lines.append("\nCAPTIONS (cue_index values are authoritative for this turn):")
+        if cues:
+            for cue in cues[:40]:
+                if not isinstance(cue, dict):
+                    continue
+                lines.append(
+                    f"{cue.get('index')}. id={_clean_prompt_data(cue.get('id'), max_chars=80)!r} "
+                    f"timing={_fmt_round3(_first_number(cue, ('start_s',)))}-"
+                    f"{_fmt_round3(_first_number(cue, ('end_s',)))}s "
+                    f"text={_clean_prompt_data(cue.get('text'), max_chars=80)!r}"
+                )
+        else:
+            lines.append("(none)")
+        lines.append(
+            "caption_meta: "
+            f"enabled={bool(meta.get('enabled'))} "
+            f"style={_clean_prompt_data(meta.get('style'), max_chars=40)!r} "
+            f"font={_clean_prompt_data(meta.get('font'), max_chars=80)!r} "
+            f"y_frac={_fmt_round3(_first_number(meta, ('y_frac',)))}"
+        )
+        if truncated:
+            lines.append(
+                f"showing {len(cues[:40])} of {total_cues} cues; "
+                "only listed indices are addressable"
+            )
+
+    if isinstance(snapshot.get("music"), dict):
+        music = snapshot["music"]
+        candidates = music.get("candidates") if isinstance(music.get("candidates"), list) else []
+        lines.append("\nMUSIC:")
+        lines.append(
+            f"current_track_id={_clean_prompt_data(music.get('current_track_id'), max_chars=80)!r} "
+            f"title={_clean_prompt_data(music.get('current_track_title'), max_chars=40)!r} "
+            f"swappable={bool(music.get('swappable'))}"
+        )
+        lines.append("CANDIDATES (use track_id exactly as shown):")
+        if candidates:
+            for track in candidates[:20]:
+                if not isinstance(track, dict):
+                    continue
+                lines.append(
+                    f"- id={_clean_prompt_data(track.get('id'), max_chars=80)!r} "
+                    f"title={_clean_prompt_data(track.get('title'), max_chars=40)!r}"
+                )
+        else:
+            lines.append("(none)")
+
+    if isinstance(snapshot.get("mix"), dict):
+        mix = snapshot["mix"]
+        lines.append("\nMIX:")
+        lines.append(f"music_level={_fmt_round3(_first_number(mix, ('music_level',)))}")
+
+    if "title" in snapshot:
+        lines.append(f"\nTITLE: {_clean_prompt_data(snapshot.get('title'), max_chars=300)!r}")
+
+    open_tools = snapshot.get("open_tools")
+    if isinstance(open_tools, list):
+        clean_tools = [_clean_prompt_data(tool, max_chars=30) for tool in open_tools]
+        lines.append(f"\nOPENABLE TOOLS: {', '.join(clean_tools) if clean_tools else '(none)'}")
+
     return "\n".join(lines)
 
 
@@ -255,6 +486,16 @@ def _fmt_range(start: float | None, end: float | None) -> str:
     if start is None or end is None:
         return "unknown"
     return f"{start:.2f}-{end:.2f}s"
+
+
+def _round_snapshot_float(value: float) -> float:
+    return round(float(value), 3)
+
+
+def _fmt_round3(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{_round_snapshot_float(value):.3f}"
 
 
 def _font_catalog() -> str:
@@ -269,6 +510,22 @@ def _font_catalog() -> str:
 
 def _effect_catalog() -> str:
     return "\n".join(f"- {effect}" for effect in sorted(_ALLOWED_EFFECTS))
+
+
+def _caption_font_catalog() -> str:
+    try:
+        from app.pipeline.text_overlay import _FONT_REGISTRY  # noqa: PLC0415
+
+        fonts = [
+            name
+            for name, entry in _FONT_REGISTRY.get("fonts", {}).items()
+            if isinstance(name, str) and isinstance(entry, dict) and not entry.get("deprecated")
+        ]
+    except Exception:  # noqa: BLE001
+        fonts = []
+    if not fonts:
+        return "- Fonts are validated at save time. Pass user-requested font names verbatim."
+    return "\n".join(f"- {font}" for font in sorted(fonts))
 
 
 class _ParseState:
@@ -309,6 +566,7 @@ class EditCopilotAgent(Agent[EditCopilotInput, EditCopilotOutput]):
             snapshot=_format_snapshot(input.variant_snapshot),
             font_catalog=_font_catalog(),
             effect_catalog=_effect_catalog(),
+            caption_font_catalog=_caption_font_catalog(),
         )
 
     def parse(self, raw_text: str, input: EditCopilotInput) -> EditCopilotOutput:  # noqa: A002
@@ -403,8 +661,13 @@ def _parse_op(raw_op: object, snapshot: dict, state: _ParseState) -> dict | None
         payload = {k: v for k, v in raw_op.items() if k not in {"op", "type"}}
     payload = {k: v for k, v in payload.items() if k in _OP_FIELDS[name]}
 
-    if name == "set_text_timing" and not ({"start_s", "end_s"} & payload.keys()):
+    if name in {"set_text_timing", "set_caption_timing"} and not (
+        {"start_s", "end_s"} & payload.keys()
+    ):
         log.warning("edit_copilot.drop_missing_timing_bound")
+        return None
+    if name == "patch_sfx" and not ({"at_s", "gain"} & payload.keys()):
+        log.warning("edit_copilot.drop_missing_sfx_patch")
         return None
     missing = _OP_REQUIRED[name] - payload.keys()
     if missing:
@@ -426,7 +689,7 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         return True
     if not isinstance(raw_allowed, list):
         return False
-    allowed = {str(x).strip() for x in raw_allowed if str(x).strip()}
+    allowed = {str(x).strip().lower() for x in raw_allowed if str(x).strip()}
     if name in allowed or "all" in allowed:
         return True
     if name in _TEXT_OPS:
@@ -435,6 +698,20 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"style", "text", "text_style"}
     elif name == "split_clip":
         aliases = {"clip", "clips", "timeline", "split_clips"}
+    elif name in _SFX_OPS:
+        aliases = {"sfx", "sound_effects", "sounds"}
+    elif name in _OVERLAY_OPS:
+        aliases = {"overlay", "overlays", "media"}
+    elif name in _CAPTION_OPS:
+        aliases = {"caption", "captions"}
+    elif name == "set_mix":
+        aliases = {"music", "audio", "mix"}
+    elif name in _MUSIC_OPS:
+        aliases = {"music", "audio"}
+    elif name in _TITLE_OPS:
+        aliases = {"title"}
+    elif name in _TOOL_OPS:
+        aliases = {"tool", "open_tool", "navigation"}
     else:
         aliases = {"clip", "clips", "timeline"}
     return bool(allowed & aliases)
@@ -443,6 +720,9 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
 def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
     text_count = _snapshot_len(snapshot, _TEXT_INDEX_KEYS)
     slot_count = _snapshot_len(snapshot, _SLOT_INDEX_KEYS)
+    sfx_count = _section_len(snapshot, "sfx", "placements")
+    overlay_count = _section_len(snapshot, "overlays", "cards")
+    cue_count = _section_len(snapshot, "captions", "cues")
     for key in ("bar_index",):
         if key in payload and not _index_in_bounds(payload[key], text_count):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
@@ -456,7 +736,32 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
                 index=payload.get(key),
             )
             return False
+    if "sfx_index" in payload and not _index_in_bounds(payload["sfx_index"], sfx_count):
+        log.warning("edit_copilot.drop_sfx_index_oob", op=name, index=payload.get("sfx_index"))
+        return False
+    if "overlay_index" in payload and not _index_in_bounds(payload["overlay_index"], overlay_count):
+        log.warning(
+            "edit_copilot.drop_overlay_index_oob",
+            op=name,
+            index=payload.get("overlay_index"),
+        )
+        return False
+    if "cue_index" in payload and not _index_in_bounds(payload["cue_index"], cue_count):
+        log.warning("edit_copilot.drop_cue_index_oob", op=name, index=payload.get("cue_index"))
+        return False
     return True
+
+
+def _section_list(snapshot: dict, section: str, key: str) -> list:
+    value = snapshot.get(section) if isinstance(snapshot, dict) else None
+    if not isinstance(value, dict):
+        return []
+    items = value.get(key)
+    return items if isinstance(items, list) else []
+
+
+def _section_len(snapshot: dict, section: str, key: str) -> int:
+    return len(_section_list(snapshot, section, key))
 
 
 def _index_in_bounds(value: object, count: int) -> bool:
@@ -483,19 +788,34 @@ def _coerce_payload(
 ) -> dict | None:
     out = dict(payload)
 
-    for key in ("bar_index", "slot_index", "from_index", "to_index"):
+    for key in (
+        "bar_index",
+        "slot_index",
+        "from_index",
+        "to_index",
+        "sfx_index",
+        "overlay_index",
+        "cue_index",
+    ):
         if key in out:
             try:
                 out[key] = int(out[key])
             except (TypeError, ValueError):
                 return None
 
-    if name in {"edit_text", "add_text"}:
+    if name in {"edit_text", "add_text", "edit_caption"}:
         text = _clean_user_text(out.get("text"))
         if text is None:
             state.invalid_value()
             return None
         out["text"] = text
+
+    if name == "set_title":
+        title = _clean_user_text(out.get("title"), max_chars=300)
+        if title is None:
+            state.invalid_value()
+            return None
+        out["title"] = title
 
     if name == "patch_text_style":
         patch = out.get("patch")
@@ -506,7 +826,25 @@ def _coerce_payload(
             return None
         out["patch"] = clean_patch
 
-    for key in ("start_s", "end_s", "in_s", "duration_s", "at_s"):
+    if name == "patch_overlay":
+        patch = out.get("patch")
+        if not isinstance(patch, dict):
+            return None
+        clean_patch = _coerce_overlay_patch(patch, state)
+        if not clean_patch:
+            return None
+        out["patch"] = clean_patch
+
+    if name == "set_caption_meta":
+        patch = out.get("patch")
+        if not isinstance(patch, dict):
+            return None
+        clean_patch = _coerce_caption_meta_patch(patch, state)
+        if not clean_patch:
+            return None
+        out["patch"] = clean_patch
+
+    for key in ("start_s", "end_s", "in_s", "duration_s", "at_s", "gain", "music_level", "scale"):
         if key in out:
             try:
                 out[key] = float(out[key])
@@ -521,13 +859,81 @@ def _coerce_payload(
     for key in ("start_s", "end_s", "at_s"):
         if key in out:
             out[key] = max(0.0, out[key])
+    for key in ("x_frac", "y_frac"):
+        if key in out:
+            num = _as_float(out[key])
+            if num is None:
+                state.invalid_value()
+                return None
+            out[key] = max(0.0, min(1.0, num))
+    if "scale" in out:
+        out["scale"] = max(0.05, min(1.0, out["scale"]))
+    if "gain" in out:
+        out["gain"] = max(0.0, min(2.0, out["gain"]))
+    if name == "add_sfx" and "gain" not in out:
+        out["gain"] = 1.0
+    if "music_level" in out:
+        out["music_level"] = max(0.0, min(1.0, out["music_level"]))
+
+    if name in _SFX_OPS and "at_s" in out:
+        total_s = _first_number(snapshot, ("total_duration_s", "duration_s", "duration"))
+        if total_s is not None:
+            out["at_s"] = min(out["at_s"], max(0.0, total_s - 0.1))
+
+    if name in {"add_overlay"}:
+        for key in ("position", "display_mode"):
+            if key in out and not isinstance(out[key], str):
+                state.invalid_value()
+                return None
+        if "position" in out and out["position"] not in _VALID_OVERLAY_POSITION:
+            state.invalid_value()
+            return None
+        if "display_mode" in out and out["display_mode"] not in _VALID_OVERLAY_DISPLAY_MODE:
+            state.invalid_value()
+            return None
 
     if (
-        name in {"set_text_timing", "add_text"}
+        name in {"set_text_timing", "add_text", "set_caption_timing", "add_overlay"}
         and out.get("start_s") is not None
         and out.get("end_s") is not None
     ):
         if out["end_s"] <= out["start_s"]:
+            state.invalid_value()
+            return None
+
+    if name == "add_sfx" and not _id_in_section(
+        out.get("effect_id"), snapshot, "sfx", "catalog", "id"
+    ):
+        state.invalid_value()
+        return None
+    if name == "add_overlay" and not _id_in_section(
+        out.get("asset_id"), snapshot, "overlays", "asset_pool", "id"
+    ):
+        state.invalid_value()
+        return None
+    if name == "accept_overlay_suggestion" and not _id_in_section(
+        out.get("suggestion_id"), snapshot, "overlays", "pending_suggestions", "id"
+    ):
+        state.invalid_value()
+        return None
+    if name == "swap_music":
+        music = snapshot.get("music") if isinstance(snapshot, dict) else None
+        if not isinstance(music, dict) or music.get("swappable") is not True:
+            state.invalid_value()
+            return None
+        if not _id_in_section(out.get("track_id"), snapshot, "music", "candidates", "id"):
+            state.invalid_value()
+            return None
+    if name == "set_mix" and not isinstance(snapshot.get("mix"), dict):
+        state.invalid_value()
+        return None
+    if name == "open_tool":
+        tool = out.get("tool")
+        if tool not in _VALID_OPEN_TOOLS:
+            state.invalid_value()
+            return None
+        open_tools = snapshot.get("open_tools") if isinstance(snapshot, dict) else None
+        if not isinstance(open_tools, list) or tool not in {str(item) for item in open_tools}:
             state.invalid_value()
             return None
 
@@ -543,14 +949,24 @@ def _coerce_payload(
     return out
 
 
-def _clean_user_text(value: object) -> str | None:
+def _id_in_section(value: object, snapshot: dict, section: str, list_key: str, id_key: str) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    return value in {
+        str(item.get(id_key))
+        for item in _section_list(snapshot, section, list_key)
+        if isinstance(item, dict) and item.get(id_key) is not None
+    }
+
+
+def _clean_user_text(value: object, *, max_chars: int = 500) -> str | None:
     if not isinstance(value, str):
         return None
     clean = re.sub(r"[\x00-\x1f\x7f]+", " ", value).strip()
     clean = re.sub(r"\s+", " ", clean)
     if not clean:
         return None
-    return clean[:500]
+    return clean[:max_chars]
 
 
 def _coerce_patch(patch: dict, state: _ParseState) -> dict:
@@ -624,6 +1040,78 @@ def _coerce_patch(patch: dict, state: _ParseState) -> dict:
                 state.invalid_value()
                 return {}
             out[key] = max(0.2, min(1.0, num))
+    return out
+
+
+def _coerce_overlay_patch(patch: dict, state: _ParseState) -> dict:
+    out: dict[str, Any] = {}
+    for key, value in patch.items():
+        if key not in _OVERLAY_PATCH_FIELDS:
+            continue
+        if key in {"start_s", "end_s"}:
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(0.0, num)
+        elif key == "position":
+            if value not in _VALID_OVERLAY_POSITION:
+                state.invalid_value()
+                return {}
+            out[key] = value
+        elif key in {"x_frac", "y_frac"}:
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(0.0, min(1.0, num))
+        elif key == "scale":
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(0.05, min(1.0, num))
+        elif key == "display_mode":
+            if value not in _VALID_OVERLAY_DISPLAY_MODE:
+                state.invalid_value()
+                return {}
+            out[key] = value
+    if out.get("start_s") is not None and out.get("end_s") is not None:
+        if out["end_s"] <= out["start_s"]:
+            state.invalid_value()
+            return {}
+    return out
+
+
+def _coerce_caption_meta_patch(patch: dict, state: _ParseState) -> dict:
+    out: dict[str, Any] = {}
+    for key, value in patch.items():
+        if key not in _CAPTION_META_FIELDS:
+            continue
+        if key == "enabled":
+            if not isinstance(value, bool):
+                state.invalid_value()
+                return {}
+            out[key] = value
+        elif key == "style":
+            if value not in _VALID_CAPTION_STYLE:
+                state.invalid_value()
+                return {}
+            out[key] = value
+        elif key == "font":
+            if value is None:
+                out[key] = None
+            elif isinstance(value, str) and value.strip():
+                out[key] = value.strip()
+            else:
+                state.invalid_value()
+                return {}
+        elif key == "y_frac":
+            num = _as_float(value)
+            if num is None:
+                state.invalid_value()
+                return {}
+            out[key] = max(0.30, min(0.90, num))
     return out
 
 

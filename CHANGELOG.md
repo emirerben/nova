@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.28.0] — 2026-07-13
+
+### Added
+- **Nova copilot now covers the whole editor (24 ops, was 10).** "Add a sound effect" no longer dead-ends in a redirect — the chat copilot gained six op families beyond text/clip: sound effects (`add_sfx`/`patch_sfx`/`remove_sfx` against the glossary catalog), media overlays (`patch_overlay` retime/move/resize/promote-fullscreen, `add_overlay` from the visuals pool, `remove_overlay`, `accept_overlay_suggestion`), narrated captions (`edit_caption`, `set_caption_timing`, `set_caption_meta` for on/off, sentence/word style, font, vertical position), music (`swap_music` from the published library, `set_mix`), `set_title`, and a client-only `open_tool` escape hatch that opens the right tool drawer for things chat can't do directly (uploads, style presets). Snapshot gains flag-gated sections (SFX pins + catalog, overlay cards + asset pool + pending AI suggestions, caption cues + meta, music candidates, mix, title) with an 18KB size-aware trimmer under the unchanged 20KB server cap; every id the model references must exist in the snapshot (hallucination drop on both sides); per-family fingerprints keep the mid-turn-manual-edit soft-fail contract; one undo step per turn now also covers music swaps (previously not undoable). Redirects remain for flag-off families, subtitled-archetype captions, caption language/Apply, and curated style sets. Eval harness doubled to 34 golden fixtures (all pass in live mode against the v2 prompt).
+- **`editor-commit` gains a `caption_meta` section.** Caption enabled/style/font/position changes now ride the atomic Save (narrated archetype only, font registry-validated, `y_frac` → `caption_margin_v`), routed down the existing caption reburn lane — a caption-meta-only Save still re-renders. Previously these were instant per-call PATCH endpoints; the copilot needed a draft-local path so one chat turn can't fire multiple renders.
+
 ## [0.7.27.0] — 2026-07-12
 
 ### Added
