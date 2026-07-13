@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.0] — 2026-07-13
+
+### Added
+- **The copilot can now switch the intro layout — "make it editorial" works in chat.** New `render` op family with one op, `set_intro_layout` (`linear`/`cluster`): unlike every other copilot op it does not touch the local draft — the frontend maps it onto the existing Classic/Editorial re-render path (`editPlanItemVariant` → `dispatch_edit_variant`), which delegates word-emphasis roles to the intro-writer agent and re-renders through the cluster layout engine. The snapshot gains an `intro` section (effective layout, hook word count, sequence capability, cluster eligibility, and a `switch_blocked_reason`) so the agent knows when conversion is possible and explains itself when it isn't: hooks outside the 3–6 word gate get an offer to shorten first, unsaved edits get "save first", manually-edited text and rendering/read-only variants get the right redirect. The op must be emitted alone, is rejected in mixed batches, is not locally undoable (the reply says a ~2-minute re-render is starting and Nova returns the user to the video page), and the server's existing 409/422 validation remains the backstop. Prompt bumped to `2026-07-13-v3` with three new golden eval fixtures (happy path, word-gate redirect, unsaved-edits redirect).
+
 ## [0.7.29.1] — 2026-07-13
 
 ### Fixed

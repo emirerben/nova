@@ -89,11 +89,17 @@ Tools:
 
 - open_tool: {"op":"open_tool","tool":"sounds"}
 
+Render:
+
+- set_intro_layout: {"op":"set_intro_layout","layout":"cluster"}
+
 Never invent an id. effect_id, asset_id, suggestion_id, and track_id must be copied exactly from CURRENT DRAFT. If the requested id or item is absent, reject or redirect instead of guessing.
 
 All at_s, start_s, and end_s values are final assembled-timeline seconds, not source-local seconds.
 
 open_tool still uses intent "edit"; the client opens a drawer instead of changing the draft. If you return any other intent, server-side code strips ops.
+
+set_intro_layout changes the intro between Classic ("linear") and Editorial ("cluster"). It starts a server re-render; it is not a local draft edit. Use it only when "render" is in allowed_op_families and CURRENT DRAFT includes the INTRO section. Emit set_intro_layout ALONE, never combined with any other op. For layout "cluster", cluster_eligible must be true. If cluster_eligible is false, do not emit set_intro_layout; explain that the editorial layout needs a 3-6 word hook and offer to shorten the hook with edit_text as a separate step. If the intro already uses the requested layout, say so and emit no ops. If switch_blocked_reason is set, emit no ops and explain it: unsaved_edits means "Save your edits first, then ask me to switch the layout."; manual_text_edits means layout switching isn't available once text was edited manually; read_only or rendering means it can't be changed right now. When you do emit set_intro_layout, the reply MUST say a re-render is starting, it takes about 2 minutes, Nova will take them back to the video page, and it can't be undone from chat.
 
 If you return swap_music, the reply must warn: saving a song swap can reset custom cuts to the new beat grid.
 
@@ -107,6 +113,7 @@ If a family is not listed in allowed_op_families, or its section is absent from 
 - captions or subtitles: "Captions are edited in the caption editor."
 - media overlays, stickers, images, or cutaways: "Visual overlays are edited in the overlay tools."
 - sound effects: "Sound effects are edited in the sound effects lane."
+- intro layout, editorial layout, word-cluster layout, or Classic/Editorial switching: "Intro layout switching is available from the video page after saving."
 - restyle-all or template preset changes: "Use the style controls for broad preset changes."
 
 Permanent redirects, even when a related family is available:

@@ -7,6 +7,7 @@ export type CopilotOpFamily =
   | "overlay"
   | "caption"
   | "music"
+  | "render"
   | "title"
   | "tool";
 
@@ -117,6 +118,7 @@ export type CopilotOp =
   | { op: "set_caption_meta"; patch: CaptionMetaPatch }
   | { op: "swap_music"; track_id: string }
   | { op: "set_mix"; music_level: number }
+  | { op: "set_intro_layout"; layout: "linear" | "cluster" }
   | { op: "set_title"; title: string }
   | { op: "open_tool"; tool: "text" | "sounds" | "overlays" | "styles" };
 
@@ -423,6 +425,7 @@ export function copilotOpFamily(op: Pick<CopilotOp, "op"> | { op: string }): Cop
     return "caption";
   }
   if (op.op === "swap_music" || op.op === "set_mix") return "music";
+  if (op.op === "set_intro_layout") return "render";
   if (op.op === "set_title") return "title";
   if (op.op === "open_tool") return "tool";
   return null;
@@ -708,6 +711,13 @@ export function validateCopilotOp(
     case "set_mix": {
       if (!finiteNumber(raw.music_level)) return reject("missing_required", "set_mix requires music_level", opName);
       return { ok: true, op: { op: opName, music_level: clamp(raw.music_level, 0, 1) } };
+    }
+    case "set_intro_layout": {
+      if (raw.layout === undefined) return reject("missing_required", "set_intro_layout requires layout", opName);
+      if (raw.layout !== "linear" && raw.layout !== "cluster") {
+        return reject("invalid_value", "layout must be linear or cluster", opName);
+      }
+      return { ok: true, op: { op: opName, layout: raw.layout } };
     }
     case "set_title": {
       if (typeof raw.title !== "string") return reject("missing_required", "set_title requires title", opName);

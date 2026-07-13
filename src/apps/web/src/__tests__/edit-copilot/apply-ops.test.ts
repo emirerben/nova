@@ -332,6 +332,89 @@ describe("applyCopilotOps", () => {
     expect(noMix.rejected).toMatchObject([{ reason: "capability_disabled" }]);
   });
 
+  it("maps set_intro_layout to a renderRequest without touching the draft", () => {
+    const base = extendedCtx();
+    const snapshot = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const],
+      intro: {
+        layout: "linear" as const,
+        mode: "linear",
+        text: "what a view today",
+        word_count: 4,
+        sequence_capable: false,
+        cluster_eligible: true,
+        switch_blocked_reason: null,
+      },
+    };
+    const res = applyCopilotOps([{ op: "set_intro_layout", layout: "cluster" }], {
+      ...base,
+      snapshot,
+    });
+
+    expect(res.renderRequest).toEqual({ kind: "set_intro_layout", layout: "cluster" });
+    expect(res.textActions).toEqual([]);
+    expect(res.nextSlots).toBeNull();
+    expect(res.nextSfx).toBeUndefined();
+    expect(res.nextOverlays).toBeUndefined();
+    expect(res.applied).toEqual([
+      { label: "Intro layout", from: "Classic", to: "Editorial (re-rendering)" },
+    ]);
+  });
+
+  it("rejects set_intro_layout for same layout, ineligible cluster, missing intro, and mixed batches", () => {
+    const base = extendedCtx();
+    const withIntro = {
+      ...base.snapshot,
+      allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const],
+      intro: {
+        layout: "linear" as const,
+        mode: "linear",
+        text: "what a view today",
+        word_count: 4,
+        sequence_capable: false,
+        cluster_eligible: true,
+        switch_blocked_reason: null,
+      },
+    };
+
+    const same = applyCopilotOps([{ op: "set_intro_layout", layout: "linear" }], {
+      ...base,
+      snapshot: withIntro,
+    });
+    expect(same.rejected).toMatchObject([{ reason: "no_effect", detail: "intro already uses this layout" }]);
+
+    const ineligible = applyCopilotOps([{ op: "set_intro_layout", layout: "cluster" }], {
+      ...base,
+      snapshot: {
+        ...withIntro,
+        intro: { ...withIntro.intro, word_count: 9, cluster_eligible: false },
+      },
+    });
+    expect(ineligible.rejected).toMatchObject([{ reason: "invalid_op", detail: "the editorial layout needs a 3-6 word hook" }]);
+
+    const missing = applyCopilotOps([{ op: "set_intro_layout", layout: "cluster" }], {
+      ...base,
+      snapshot: { ...base.snapshot, allowed_op_families: [...base.snapshot.allowed_op_families, "render" as const] },
+    });
+    expect(missing.rejected).toMatchObject([{ reason: "target_missing" }]);
+
+    const mixed = applyCopilotOps(
+      [
+        { op: "set_intro_layout", layout: "cluster" },
+        { op: "edit_text", bar_index: 0, text: "new hook" },
+      ],
+      { ...base, snapshot: withIntro },
+    );
+    expect(mixed.renderRequest).toBeUndefined();
+    expect(mixed.rejected).toMatchObject([
+      {
+        op: "set_intro_layout",
+        detail: "a layout change re-renders the video — ask for it on its own",
+      },
+    ]);
+  });
+
   it("aggregates multiple output channels in one call and rejects disabled families", () => {
     const res = applyCopilotOps(
       [

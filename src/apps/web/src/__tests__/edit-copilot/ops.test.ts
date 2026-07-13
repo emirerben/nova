@@ -94,4 +94,15 @@ describe("edit-copilot extended op validation", () => {
     expect(validateCopilotOp({ op: "open_tool", tool: "timeline" }, validationSnapshot))
       .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
   });
+
+  it("validates render layout ops shape-only", () => {
+    expect(validateCopilotOp({ op: "set_intro_layout", layout: "cluster" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "set_intro_layout", layout: "cluster" } });
+    expect(validateCopilotOp({ op: "set_intro_layout", layout: "linear" }, validationSnapshot))
+      .toMatchObject({ ok: true, op: { op: "set_intro_layout", layout: "linear" } });
+    expect(validateCopilotOp({ op: "set_intro_layout" }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "missing_required" } });
+    expect(validateCopilotOp({ op: "set_intro_layout", layout: "stacked" }, validationSnapshot))
+      .toMatchObject({ ok: false, rejection: { reason: "invalid_value" } });
+  });
 });

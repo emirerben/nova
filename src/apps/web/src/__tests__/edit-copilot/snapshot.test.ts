@@ -208,6 +208,65 @@ describe("buildCopilotSnapshot", () => {
     expect(snapshot.slots.every((snapSlot) => (snapSlot.moment?.length ?? 0) <= 40)).toBe(true);
   });
 
+  it("emits the intro section and render family only when the variant can switch layouts", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        intro: {
+          layout: "linear",
+          mode: "linear",
+          text: "what a view today",
+          word_count: 4,
+          sequence_capable: false,
+          cluster_eligible: true,
+          switch_blocked_reason: null,
+        },
+        renderLayoutSwitchable: true,
+      },
+    );
+
+    expect(snapshot.intro).toEqual({
+      layout: "linear",
+      mode: "linear",
+      text: "what a view today",
+      word_count: 4,
+      sequence_capable: false,
+      cluster_eligible: true,
+      switch_blocked_reason: null,
+    });
+    expect(snapshot.allowed_op_families).toContain("render");
+  });
+
+  it("withholds the render family but keeps the intro section when switching is blocked", () => {
+    const snapshot = buildCopilotSnapshot(
+      [bar()],
+      [slot()],
+      [{ source_duration_s: 8 }],
+      { text_elements: true, timeline: true },
+      [],
+      {
+        intro: {
+          layout: "cluster",
+          mode: "sequence",
+          text: "one two three four five six seven",
+          word_count: 7,
+          sequence_capable: true,
+          cluster_eligible: true,
+          switch_blocked_reason: "unsaved_edits",
+        },
+        renderLayoutSwitchable: false,
+      },
+    );
+
+    expect(snapshot.intro?.switch_blocked_reason).toBe("unsaved_edits");
+    expect(snapshot.intro?.layout).toBe("cluster");
+    expect(snapshot.allowed_op_families).not.toContain("render");
+  });
+
   it("derives allowed families from server capabilities and client flags", () => {
     expect(
       allowedOpFamiliesFromCapabilities(

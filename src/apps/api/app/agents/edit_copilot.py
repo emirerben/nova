@@ -24,7 +24,7 @@ from app.pipeline.prompt_loader import load_prompt
 
 log = structlog.get_logger()
 
-EDIT_COPILOT_PROMPT_VERSION = "2026-07-13-v2"
+EDIT_COPILOT_PROMPT_VERSION = "2026-07-13-v3"
 _CONFIDENCE_CLARIFY_THRESHOLD = 0.55
 _MAX_OPS = 8
 _TEXT_INDEX_KEYS = ("text_bars", "textBars", "bars", "text_elements", "textElements")
@@ -43,6 +43,7 @@ _OVERLAY_OPS = {
 }
 _CAPTION_OPS = {"edit_caption", "set_caption_timing", "set_caption_meta"}
 _MUSIC_OPS = {"swap_music", "set_mix"}
+_RENDER_OPS = frozenset({"set_intro_layout"})
 _TITLE_OPS = {"set_title"}
 _TOOL_OPS = {"open_tool"}
 _VALID_OPS = (
@@ -53,6 +54,7 @@ _VALID_OPS = (
     | _OVERLAY_OPS
     | _CAPTION_OPS
     | _MUSIC_OPS
+    | _RENDER_OPS
     | _TITLE_OPS
     | _TOOL_OPS
 )
@@ -80,6 +82,7 @@ _OP_REQUIRED: dict[str, frozenset[str]] = {
     "set_caption_meta": frozenset({"patch"}),
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
+    "set_intro_layout": frozenset({"layout"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
 }
@@ -118,6 +121,7 @@ _OP_FIELDS: dict[str, frozenset[str]] = {
     "set_caption_meta": frozenset({"patch"}),
     "swap_music": frozenset({"track_id"}),
     "set_mix": frozenset({"music_level"}),
+    "set_intro_layout": frozenset({"layout"}),
     "set_title": frozenset({"title"}),
     "open_tool": frozenset({"tool"}),
 }
@@ -269,6 +273,27 @@ def _format_snapshot(snapshot: dict) -> str:
     ]
     if total_s is not None:
         lines.append(f"total_duration_s: {total_s:.2f} (cap 60.00)")
+
+    intro = snapshot.get("intro")
+    if isinstance(intro, dict):
+        lines.append("\nINTRO (layout re-render — not a draft edit):")
+        lines.append(
+            "layout="
+            f"{_clean_prompt_data(intro.get('layout'), max_chars=40)!r} "
+            "mode="
+            f"{_clean_prompt_data(intro.get('mode'), max_chars=40)!r} "
+            "word_count="
+            f"{_clean_prompt_data(intro.get('word_count'), max_chars=20)!r}"
+        )
+        lines.append(
+            "sequence_capable="
+            f"{bool(intro.get('sequence_capable'))} "
+            "cluster_eligible="
+            f"{bool(intro.get('cluster_eligible'))} "
+            "switch_blocked_reason="
+            f"{_clean_prompt_data(intro.get('switch_blocked_reason'), max_chars=40)!r}"
+        )
+        lines.append(f"text={_clean_prompt_data(intro.get('text'), max_chars=300)!r}")
 
     lines.append("\nTEXT BARS (indices are authoritative for this turn):")
     if text_bars:
@@ -708,6 +733,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
         aliases = {"music", "audio", "mix"}
     elif name in _MUSIC_OPS:
         aliases = {"music", "audio"}
+    elif name in _RENDER_OPS:
+        aliases = {"render", "layout", "intro_layout"}
     elif name in _TITLE_OPS:
         aliases = {"title"}
     elif name in _TOOL_OPS:
@@ -936,6 +963,22 @@ def _coerce_payload(
         if not isinstance(open_tools, list) or tool not in {str(item) for item in open_tools}:
             state.invalid_value()
             return None
+
+    if name == "set_intro_layout":
+        layout = out.get("layout")
+        if layout not in {"linear", "cluster"}:
+            state.invalid_value()
+            return None
+        intro = snapshot.get("intro") if isinstance(snapshot, dict) else None
+        if not isinstance(intro, dict):
+            log.warning("edit_copilot.drop_missing_intro_section")
+            return None
+        if layout == intro.get("layout"):
+            return None
+        if layout == "cluster" and intro.get("cluster_eligible") is not True:
+            state.invalid_value()
+            return None
+        out["layout"] = layout
 
     if name == "split_clip":
         slots = _snapshot_list(snapshot, _SLOT_INDEX_KEYS)
