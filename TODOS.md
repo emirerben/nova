@@ -8,6 +8,14 @@ ingested_via: put_page
 
 # Nova — Deferred Work
 
+## Editor virtual preview — follow-ups (from v0.7.30.1)
+
+### T-VPM-1 — Music preview shorter than the edited cut ends silently
+**What:** In the clip-edit virtual preview, `mapVirtualTimeToMusicTime` maps virtual time to `preview_start_s + t` with no wrap or clamp against the preview clip's duration — when the track's preview audio is shorter than the edited cut, music reaches native `ended` mid-preview and the tail plays silent.
+**Why:** v0.7.30.1 fixed music dying entirely on clip edits (deck mute + URL refresh); this residual case still under-represents the final render, which loops/fits the full track section.
+**Context:** `src/apps/web/src/app/plan/items/[id]/_editor/virtual-timeline.ts` (`mapVirtualTimeToMusicTime`), `useVirtualPreview.ts` music sync. Needs the track's preview duration plumbed into the mapping to wrap (or clamp + restart) sensibly. Related: the Sound-lane toggle routes through `patchMixLevel(0)` on mix-capable variants, which the virtual music element ignores.
+**Effort:** S (CC: ~30 min)
+
 ## Plan 010 — SFX/overlay lanes on caption archetypes (follow-ups)
 
 ### T-CAPFX-1 — Caption keep-out hint in the overlay placement UI

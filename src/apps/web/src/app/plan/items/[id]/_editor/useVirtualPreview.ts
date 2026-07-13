@@ -29,10 +29,17 @@ export interface UseVirtualPreviewOptions {
   musicAudioUrl?: string | null;
   musicStartS?: number;
   soundMuted?: boolean;
+  /**
+   * A music track is selected for this cut, whether or not its preview URL is
+   * available. The final render drops footage audio entirely when a track is
+   * mixed in, so the decks must stay silent even if the music itself fails.
+   */
+  musicTrackActive?: boolean;
   onTimeUpdate: (timeS: number) => void;
   onDuration: (durationS: number) => void;
   onPlayingChange: (playing: boolean) => void;
   onSourceError: () => void;
+  onMusicError?: () => void;
 }
 
 export interface VirtualPreviewVideoProps {
@@ -111,11 +118,14 @@ export function useVirtualPreview({
   musicAudioUrl,
   musicStartS = 0,
   soundMuted = false,
+  musicTrackActive = false,
   onTimeUpdate,
   onDuration,
   onPlayingChange,
   onSourceError,
+  onMusicError,
 }: UseVirtualPreviewOptions): VirtualPreviewController {
+  const deckMuted = muted || musicTrackActive;
   const timeline = useMemo(
     () => buildVirtualTimeline(slots, clips, grid),
     [clips, grid, slots],
@@ -151,9 +161,9 @@ export function useVirtualPreview({
 
   useEffect(() => {
     for (const video of [videoARef.current, videoBRef.current]) {
-      if (video) video.muted = muted;
+      if (video) video.muted = deckMuted;
     }
-  }, [muted]);
+  }, [deckMuted]);
 
   useEffect(() => {
     for (const audio of getVirtualMusicAudio(musicAudioRef)) {
@@ -402,6 +412,14 @@ export function useVirtualPreview({
     showMapping(currentTimeRef.current, false);
   }, [enabled, onSourceError, pause, showMapping, timeline]);
 
+  // When a fresh music URL arrives (e.g. re-signed after an expired-signature
+  // error), resync so playback resumes at the mapped offset. An identical URL
+  // won't re-fire this; music then resumes on the next play/seek.
+  useEffect(() => {
+    if (!enabledRef.current || !musicAudioUrl) return;
+    syncMusicToVirtualTime(currentTimeRef.current, playingRef.current);
+  }, [musicAudioUrl, syncMusicToVirtualTime]);
+
   const musicAudioProps: VirtualPreviewAudioProps | null = musicAudioUrl
     ? {
         ref: musicAudioRef,
@@ -411,6 +429,7 @@ export function useVirtualPreview({
         "data-virtual-preview-music": true,
         onError: () => {
           musicAudioRef.current?.pause();
+          onMusicError?.();
         },
       }
     : null;
@@ -418,7 +437,7 @@ export function useVirtualPreview({
   function videoProps(deck: Deck): VirtualPreviewVideoProps {
     return {
       ref: refForDeck(deck),
-      muted,
+      muted: deckMuted,
       playsInline: true,
       preload: "auto",
       "data-virtual-preview-deck": deck,
