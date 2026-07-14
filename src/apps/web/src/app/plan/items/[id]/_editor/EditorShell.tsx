@@ -542,6 +542,12 @@ export default function EditorShell({
   const musicRefetchAttemptedRef = useRef(false);
   const virtualMusicAutoFetchRef = useRef(false);
   const musicTracksFetchRef = useRef<Promise<void> | null>(null);
+  // Local blob copy of the track audio (see the fetch effect below) — declared
+  // here so the error handler can drop it before retrying with a fresh URL.
+  const [virtualMusicBlob, setVirtualMusicBlob] = useState<{
+    trackId: string;
+    url: string;
+  } | null>(null);
 
   const refreshMusicTracks = useCallback((): Promise<void> => {
     if (musicTracksFetchRef.current) return musicTracksFetchRef.current;
@@ -801,6 +807,12 @@ export default function EditorShell({
   // refetch (fresh signed URLs), then give up honestly — decks stay muted and
   // the "preview after Save" hint covers the silent music.
   const handleVirtualMusicError = useCallback(() => {
+    // Drop any blob copy first — if it errored (or masked a bad fetch), the
+    // retry must go back to a freshly-signed remote URL.
+    setVirtualMusicBlob((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url);
+      return null;
+    });
     if (!musicRefetchAttemptedRef.current) {
       musicRefetchAttemptedRef.current = true;
       void refreshMusicTracks();
@@ -822,13 +834,57 @@ export default function EditorShell({
   // is still the variant's — a picker selection must never reuse it.
   const variantMusicFallbackActive =
     !!variant?.music_track_id && effectiveMusicTrackId === variant.music_track_id;
-  const virtualMusicAudioUrl = virtualMusicUnavailable
+  const virtualMusicRemoteUrl = virtualMusicUnavailable
     ? null
     : virtualMusicTrack?.preview_audio_url ??
       (variantMusicFallbackActive ? variant?.music_preview_url ?? null : null);
   const virtualMusicStartS =
     virtualMusicTrack?.preview_start_s ??
     (variantMusicFallbackActive ? variant?.music_preview_start_s ?? 0 : 0);
+
+  // Blob-cache the track audio (a few MB of m4a) once per track: streaming the
+  // signed GCS URL rebuffers mid-preview on real networks (measured: 5 music
+  // `waiting` stalls in an 18s preview), and every rebuffer is an audible gap.
+  // A local object URL can never starve. Best-effort — CORS/network failure
+  // just keeps streaming from the remote URL.
+  useEffect(() => {
+    if (!virtualPreviewRequested || !effectiveMusicTrackId || !virtualMusicRemoteUrl) return;
+    if (virtualMusicBlob?.trackId === effectiveMusicTrackId) return;
+    const controller = new AbortController();
+    let cancelled = false;
+    fetch(virtualMusicRemoteUrl, { signal: controller.signal })
+      .then((res) => {
+        if (!res.ok) throw new Error(`music fetch ${res.status}`);
+        return res.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        setVirtualMusicBlob((prev) => {
+          if (prev) URL.revokeObjectURL(prev.url);
+          return { trackId: effectiveMusicTrackId, url: URL.createObjectURL(blob) };
+        });
+      })
+      .catch(() => {
+        // Keep streaming the remote URL.
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [virtualPreviewRequested, effectiveMusicTrackId, virtualMusicRemoteUrl, virtualMusicBlob]);
+  useEffect(
+    () => () => {
+      setVirtualMusicBlob((prev) => {
+        if (prev) URL.revokeObjectURL(prev.url);
+        return null;
+      });
+    },
+    [],
+  );
+  const virtualMusicAudioUrl =
+    virtualMusicBlob?.trackId === effectiveMusicTrackId && !virtualMusicUnavailable
+      ? virtualMusicBlob.url
+      : virtualMusicRemoteUrl;
 
   // Picking a different track supplies a brand-new URL — re-arm the retry
   // budget and clear the gave-up flag.

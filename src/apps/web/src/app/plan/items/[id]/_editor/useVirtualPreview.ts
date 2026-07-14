@@ -14,10 +14,18 @@ import {
 
 type Deck = "a" | "b";
 
-// How long the active deck must stay stalled before the music is held. Long
-// enough to swallow the transient `waiting` every boundary swap emits, short
-// enough that a real network stall doesn't let the music drift audibly far.
-const MUSIC_HOLD_DELAY_MS = 250;
+// ── Sync policy: the MUSIC is the master clock ────────────────────────────
+// While the music is audibly running, it is never paused, rewound, or seeked
+// for the video's sake — every disturbance of a playing audio element is an
+// audible artifact, and video-side stalls are frequent on real networks
+// (each sub-second boundary reloads a deck source). Instead, the VIDEO yields:
+// when it falls behind the music, it jumps forward to the mapped position.
+// The music is only hard-seeked on authoritative jumps (play start, scrub,
+// timeline edit, src change) and forward-caught when it stalled BEHIND the
+// video on its own (never backward).
+const VIDEO_LAG_JUMP_S = 0.3;
+const MUSIC_FORWARD_CATCH_S = 0.35;
+const MUSIC_HARD_SEEK_S = 0.25;
 
 interface PendingSeek {
   timeS: number;
@@ -94,6 +102,17 @@ function otherDeck(deck: Deck): Deck {
   return deck === "a" ? "b" : "a";
 }
 
+function playIgnoringAbort(el: HTMLMediaElement, onFailure: () => void) {
+  void el.play().catch((err: unknown) => {
+    // A src swap mid-play rejects the pending play() with AbortError — that's
+    // routine (deck source reloads, the music blob swap), NOT a playback
+    // failure. Treating it as fatal paused the whole transport the moment the
+    // music src changed under a running preview.
+    if ((err as DOMException | null)?.name === "AbortError") return;
+    onFailure();
+  });
+}
+
 function safeSetCurrentTime(video: HTMLMediaElement, timeS: number) {
   try {
     video.currentTime = Math.max(0, timeS);
@@ -156,13 +175,6 @@ export function useVirtualPreview({
   const deckSlotRef = useRef<Record<Deck, string | null>>({ a: null, b: null });
   const pendingSeekRef = useRef<Record<Deck, PendingSeek | null>>({ a: null, b: null });
   const playingRef = useRef(false);
-  // Stall-hold state: the music is paused only when the active deck has been
-  // stalled for MUSIC_HOLD_DELAY_MS. Sub-second boundary swaps fire a transient
-  // `waiting` on almost every clip (seek + first-frame decode) — pausing the
-  // music on each one produced an audible gap at every cut (measured live:
-  // 33 pause/play cycles in 90s on a beat-synced edit).
-  const musicHoldTimerRef = useRef<number | null>(null);
-  const musicHeldRef = useRef(false);
 
   currentTimeRef.current = currentTime;
   timelineRef.current = timeline;
@@ -191,19 +203,8 @@ export function useVirtualPreview({
     return deck === "a" ? videoARef : videoBRef;
   }, []);
 
-  const clearMusicHold = useCallback(() => {
-    if (musicHoldTimerRef.current != null) {
-      window.clearTimeout(musicHoldTimerRef.current);
-      musicHoldTimerRef.current = null;
-    }
-    musicHeldRef.current = false;
-  }, []);
-
-  useEffect(() => clearMusicHold, [clearMusicHold]);
-
   const pauseAll = useCallback(() => {
     playingRef.current = false;
-    clearMusicHold();
     pendingSeekRef.current.a = null;
     pendingSeekRef.current.b = null;
     videoARef.current?.pause();
@@ -212,7 +213,7 @@ export function useVirtualPreview({
       audio.pause();
     }
     onPlayingChange(false);
-  }, [clearMusicHold, onPlayingChange]);
+  }, [onPlayingChange]);
 
   const loadDeck = useCallback(
     (deck: Deck, entry: VirtualTimelineEntry, timeS: number | null, play: boolean) => {
@@ -236,9 +237,7 @@ export function useVirtualPreview({
         safeSetCurrentTime(video, timeS);
       }
       if (play) {
-        void video.play().catch(() => {
-          pauseAll();
-        });
+        playIgnoringAbort(video, pauseAll);
       }
     },
     [pauseAll, refForDeck],
@@ -253,25 +252,29 @@ export function useVirtualPreview({
     [loadDeck],
   );
 
-  const syncMusicToVirtualTime = useCallback((virtualTimeS: number, play: boolean) => {
-    const audio = getVirtualMusicAudio(musicAudioRef)[0];
-    if (!audio || !musicAudioUrlRef.current) return;
-    const musicTimeS = mapVirtualTimeToMusicTime(virtualTimeS, musicStartSRef.current);
-    // Same tolerance as the drift resync in handleTimeUpdate: a tighter
-    // threshold here made boundary swaps issue audible catch-up seeks.
-    if (Math.abs(audio.currentTime - musicTimeS) > 0.25) {
-      safeSetCurrentTime(audio, musicTimeS);
-    }
-    if (play && playingRef.current) {
-      if (audio.paused) {
-        void audio.play().catch(() => {
-          pauseAll();
-        });
+  const syncMusicToVirtualTime = useCallback(
+    (virtualTimeS: number, play: boolean, mode: "hard" | "soft" = "hard") => {
+      const audio = getVirtualMusicAudio(musicAudioRef)[0];
+      if (!audio || !musicAudioUrlRef.current) return;
+      const musicTimeS = mapVirtualTimeToMusicTime(virtualTimeS, musicStartSRef.current);
+      const behindS = musicTimeS - audio.currentTime; // >0: the music is behind
+      // "hard" = authoritative jump (play start, scrub, timeline edit, src
+      // change): seek in either direction. "soft" = continuous sync (boundary
+      // swaps): NEVER rewind a running music element — only catch it up when
+      // it fell behind on its own.
+      if (mode === "hard" ? Math.abs(behindS) > MUSIC_HARD_SEEK_S : behindS > MUSIC_FORWARD_CATCH_S) {
+        safeSetCurrentTime(audio, musicTimeS);
       }
-    } else {
-      audio.pause();
-    }
-  }, [pauseAll]);
+      if (play && playingRef.current) {
+        if (audio.paused) {
+          playIgnoringAbort(audio, pauseAll);
+        }
+      } else {
+        audio.pause();
+      }
+    },
+    [pauseAll],
+  );
 
   const showMapping = useCallback(
     (timeS: number, play: boolean) => {
@@ -339,7 +342,7 @@ export function useVirtualPreview({
       activeDeckRef.current = nextDeck;
       setActiveDeck(nextDeck);
       preloadNext(prevDeck, entryIndex + 1);
-      syncMusicToVirtualTime(next.startS, true);
+      syncMusicToVirtualTime(next.startS, true, "soft");
       onTimeUpdate(next.startS);
     },
     [loadDeck, onTimeUpdate, pause, preloadNext, refForDeck, syncMusicToVirtualTime],
@@ -370,9 +373,7 @@ export function useVirtualPreview({
       pendingSeekRef.current[deck] = null;
       safeSetCurrentTime(video, pending.timeS);
       if (pending.play) {
-        void video.play().catch(() => {
-          pauseAll();
-        });
+        playIgnoringAbort(video, pauseAll);
       }
     },
     [pauseAll, refForDeck],
@@ -397,10 +398,23 @@ export function useVirtualPreview({
         Math.min(entry.startS + entry.durationS, entry.startS + localOffsetS),
       );
       const audio = getVirtualMusicAudio(musicAudioRef)[0];
-      if (audio && musicAudioUrlRef.current && !audio.paused) {
-        const target = mapVirtualTimeToMusicTime(virtualTimeS, musicStartSRef.current);
-        if (Math.abs(audio.currentTime - target) > 0.25) {
-          safeSetCurrentTime(audio, target);
+      if (audio && musicAudioUrlRef.current && !audio.paused && playingRef.current) {
+        const audioVirtualS = audio.currentTime - Math.max(0, musicStartSRef.current);
+        const diffS = audioVirtualS - virtualTimeS;
+        if (diffS > VIDEO_LAG_JUMP_S) {
+          // The video fell behind the running music (deck stall / slow load):
+          // the music is the master clock, so jump the VIDEO forward to the
+          // mapped position — possibly into a later entry.
+          showMapping(Math.min(audioVirtualS, timelineRef.current.totalDurationS), true);
+          return;
+        }
+        if (diffS < -MUSIC_FORWARD_CATCH_S) {
+          // The music stalled on its own and recovered behind the video —
+          // forward-catch it (never rewind a running music element).
+          safeSetCurrentTime(
+            audio,
+            mapVirtualTimeToMusicTime(virtualTimeS, musicStartSRef.current),
+          );
         }
       }
       onTimeUpdate(virtualTimeS);
@@ -409,7 +423,7 @@ export function useVirtualPreview({
         finishEntry(entryIndex);
       }
     },
-    [finishEntry, onTimeUpdate, refForDeck],
+    [finishEntry, onTimeUpdate, refForDeck, showMapping],
   );
 
   const handleEnded = useCallback(
@@ -485,40 +499,13 @@ export function useVirtualPreview({
       onCanPlay: () => setBuffering(false),
       onPlaying: () => {
         setBuffering(false);
-        if (deck === activeDeckRef.current) {
-          onPlayingChange(true);
-          if (musicHoldTimerRef.current != null) {
-            window.clearTimeout(musicHoldTimerRef.current);
-            musicHoldTimerRef.current = null;
-          }
-          // Re-attach the music only if the stall-hold actually paused it —
-          // touching a running music element at every boundary is itself a
-          // stutter source.
-          if (musicHeldRef.current && playingRef.current) {
-            musicHeldRef.current = false;
-            syncMusicToVirtualTime(currentTimeRef.current, true);
-          }
-        }
+        if (deck === activeDeckRef.current) onPlayingChange(true);
       },
-      onWaiting: () => {
-        setBuffering(true);
-        // A genuinely stalled active deck freezes virtual time while the music
-        // runs ahead; the >0.25s drift resync then seeks the music BACKWARD on
-        // every timeupdate (audible skip-back). Hold the music — but only after
-        // MUSIC_HOLD_DELAY_MS: boundary swaps fire a transient `waiting` on
-        // nearly every cut, and an instant hold gapped the music at each one.
-        if (deck === activeDeckRef.current && playingRef.current) {
-          if (musicHoldTimerRef.current != null) {
-            window.clearTimeout(musicHoldTimerRef.current);
-          }
-          musicHoldTimerRef.current = window.setTimeout(() => {
-            musicHoldTimerRef.current = null;
-            if (!playingRef.current) return;
-            getVirtualMusicAudio(musicAudioRef)[0]?.pause();
-            musicHeldRef.current = true;
-          }, MUSIC_HOLD_DELAY_MS);
-        }
-      },
+      // Deck stalls do NOT touch the music: it is the master clock, and the
+      // video catch-up in handleTimeUpdate re-aligns the picture when the
+      // deck recovers. (Both the instant hold and the debounced hold gapped
+      // the music audibly — boundary swaps stall briefly on almost every cut.)
+      onWaiting: () => setBuffering(true),
       onSeeking: () => setBuffering(true),
       onSeeked: () => setBuffering(false),
       onTimeUpdate: () => handleTimeUpdate(deck),

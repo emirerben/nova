@@ -150,6 +150,29 @@ describe("useVirtualPreview music transport", () => {
     expect(audioPauseCalls.length).toBeGreaterThan(0);
   });
 
+  it("does not pause the transport when play() rejects with AbortError (src swap)", async () => {
+    const onPlayingChange = jest.fn();
+    playSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockImplementation(function playMock(this: HTMLMediaElement) {
+        if (this.tagName === "AUDIO") {
+          // What the browser throws when a src change lands under a pending play().
+          return Promise.reject(new DOMException("interrupted", "AbortError"));
+        }
+        return Promise.resolve();
+      });
+
+    render(<Harness onPlayingChange={onPlayingChange} />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onPlayingChange).not.toHaveBeenCalledWith(false);
+    const videoPauseCalls = pauseSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "VIDEO",
+    );
+    expect(videoPauseCalls).toHaveLength(0);
+  });
+
   it("maps the sound-lane mute to the virtual music element", () => {
     const { rerender } = render(<Harness onPlayingChange={jest.fn()} soundMuted />);
     expect(screen.getByTestId("music")).toHaveProperty("muted", true);
@@ -340,7 +363,7 @@ describe("useVirtualPreview transport", () => {
     expect(audioPlays()).toBeGreaterThan(playsBefore);
   });
 
-  it("ignores the transient boundary `waiting` blip (no music hold)", () => {
+  it("never pauses the music when the active deck stalls (music is the master clock)", () => {
     jest.useFakeTimers();
     try {
       render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
@@ -350,35 +373,64 @@ describe("useVirtualPreview transport", () => {
       const pausesBefore = audioPauses();
       const playsBefore = audioPlays();
       fireEvent.waiting(deckA);
-      fireEvent.playing(deckA); // deck recovers before the debounce fires
-      jest.advanceTimersByTime(1000);
+      jest.advanceTimersByTime(2000); // stall persists — music must not care
+      fireEvent.playing(deckA);
 
       expect(audioPauses()).toBe(pausesBefore);
-      // The running music must not be re-touched on recovery either.
       expect(audioPlays()).toBe(playsBefore);
     } finally {
       jest.useRealTimers();
     }
   });
 
-  it("holds the music after a sustained stall and resumes with the deck", () => {
-    jest.useFakeTimers();
-    try {
-      render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
-      fireEvent.click(screen.getByRole("button", { name: "play" }));
+  it("jumps the video forward when it falls behind the running music", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
 
-      const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
-      const pausesBefore = audioPauses();
-      fireEvent.waiting(deckA);
-      jest.advanceTimersByTime(1000); // stall persists past the debounce
-      expect(audioPauses()).toBeGreaterThan(pausesBefore);
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const music = screen.getByTestId("music") as HTMLAudioElement;
+    Object.defineProperty(music, "paused", { value: false, configurable: true });
 
-      const playsBefore = audioPlays();
-      fireEvent.playing(deckA);
-      expect(audioPlays()).toBeGreaterThan(playsBefore);
-    } finally {
-      jest.useRealTimers();
-    }
+    music.currentTime = 55.71 + 1.0; // music ran 1s ahead while the deck stalled
+    deckA.currentTime = 1.4; // deck frozen at its in-point (virtual time 0)
+    fireEvent.timeUpdate(deckA);
+
+    // Video yields to the music: seeked forward to inS + audio-derived offset.
+    expect(Math.abs(deckA.currentTime - 2.4)).toBeLessThan(0.05);
+    // The running music was NOT touched.
+    expect(Math.abs(music.currentTime - 56.71)).toBeLessThan(0.01);
+  });
+
+  it("forward-catches the music when it fell behind on its own", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const music = screen.getByTestId("music") as HTMLAudioElement;
+    Object.defineProperty(music, "paused", { value: false, configurable: true });
+
+    music.currentTime = 55.71; // music stalled at the cut start
+    deckA.currentTime = 1.4 + 1.5; // video advanced to virtual time 1.5
+    fireEvent.timeUpdate(deckA);
+
+    expect(Math.abs(music.currentTime - (55.71 + 1.5))).toBeLessThan(0.05);
+  });
+
+  it("never rewinds the music at a boundary swap", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={TWO_SLOTS} />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const music = screen.getByTestId("music") as HTMLAudioElement;
+    Object.defineProperty(music, "paused", { value: false, configurable: true });
+
+    // Music slightly AHEAD of the boundary target (55.71 + 2 = 57.71).
+    music.currentTime = 58.5;
+    deckA.currentTime = 3.4; // native end of entry 0
+    fireEvent.ended(deckA);
+
+    // Soft sync at the swap must not rewind the running music.
+    expect(music.currentTime).toBe(58.5);
   });
 
   it("keeps the music playing when the timeline changes mid-play", () => {
