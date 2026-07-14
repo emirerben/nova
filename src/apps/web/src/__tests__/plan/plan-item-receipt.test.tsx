@@ -1,13 +1,6 @@
 /**
- * Plan 009 T5 — page-level wiring for the overlay_apply_receipt (ARCH-4).
- *
- * The page passes the FOCUSED variant's `overlay_apply_receipt` into
- * SuggestionRail's `applyReceipt` prop, which renders the quiet zinc line
- * alongside the rail's variant-level status copy. Covers:
- *  - a demoted receipt on the variant renders through the page;
- *  - a null receipt renders nothing (while the rail itself still mounts).
- *
- * Modeled on plan-item-fullscreen-download-block.test.tsx.
+ * Plan item page cleanup: the result page no longer renders SuggestionRail as
+ * an inline editor surface, so overlay_apply_receipt stays out of this page.
  */
 
 // @ts-nocheck
@@ -47,6 +40,7 @@ import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
+  useRouter: jest.fn(() => ({ push: jest.fn() })),
   useSearchParams: jest.fn(() => new URLSearchParams()),
 }));
 
@@ -211,8 +205,8 @@ afterEach(() => {
   delete process.env[FLAG];
 });
 
-describe("Plan item page — overlay_apply_receipt wiring (ARCH-4)", () => {
-  it("renders the focused variant's demote receipt through the rail", async () => {
+describe("Plan item page — overlay_apply_receipt cleanup", () => {
+  it("does not render the overlay receipt rail on the cleaned-up result page", async () => {
     setData([
       makeVariant({
         overlay_apply_receipt: {
@@ -226,37 +220,8 @@ describe("Plan item page — overlay_apply_receipt wiring (ARCH-4)", () => {
       render(<PlanItemPage />);
     });
 
-    expect(screen.getByTestId("overlay-apply-receipt")).toHaveTextContent(
-      "1 visual shown smaller to protect your intro",
-    );
-  });
-
-  it("renders both demote and drop lines when the receipt carries both", async () => {
-    setData([
-      makeVariant({
-        overlay_apply_receipt: { demoted: 2, dropped: 1, reason: "overlap" },
-      }),
-    ]);
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    const receipt = screen.getByTestId("overlay-apply-receipt");
-    expect(receipt).toHaveTextContent("2 visuals shown smaller");
-    expect(receipt).toHaveTextContent("1 visual couldn't fit and was skipped");
-  });
-
-  it("renders nothing when the receipt is null — the rail itself still mounts", async () => {
-    setData([makeVariant({ overlay_apply_receipt: null })]);
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    // Rail is mounted (its entry button renders)…
-    expect(
-      screen.getByRole("button", { name: /place visuals for me/i }),
-    ).toBeInTheDocument();
-    // …but no receipt line.
+    expect(screen.queryByRole("button", { name: /place visuals for me/i })).toBeNull();
     expect(screen.queryByTestId("overlay-apply-receipt")).toBeNull();
+    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
   });
 });

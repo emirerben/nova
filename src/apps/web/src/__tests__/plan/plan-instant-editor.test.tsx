@@ -42,11 +42,12 @@ Object.defineProperty(window, "matchMedia", {
   })),
 });
 
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
+  useRouter: jest.fn(() => ({ push: jest.fn() })),
   useSearchParams: jest.fn(() => new URLSearchParams()),
 }));
 
@@ -215,141 +216,34 @@ beforeEach(() => {
   mockUseSfxPreview.mockClear();
 });
 
-describe("Plan item page — deferred-burn editor", () => {
-  it("eligible variant shows burned output at rest, overlay only while editing", async () => {
+describe("Plan item page — native editor handoff cleanup", () => {
+  it("keeps inline editor controls hidden on the result page", async () => {
     setData(makeItem(), [eligibleVariant]);
     await act(async () => {
       render(<PlanItemPage />);
     });
 
-    // HERO at rest (draft clean = no uncommitted edits): the burned output_url is shown,
-    // NOT the live DOM overlay. This is preview-parity: what you see at rest IS the download.
-    expect(screen.queryByTestId("intro-text-preview")).toBeNull();
-
-    // Editor row is visible with tab buttons. Text + Font tabs were retired in PR-4.
-    expect(screen.queryByRole("button", { name: /T Text/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Aa Font/i })).toBeNull();
-
-    // Open the Timeline tab → text controls (PlanVariantEditor) render directly below
-    // the timeline in the text-controls area (T5: "Edit text ▼" expand button removed).
-    await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i }));
-    });
-    // PlanVariantEditor shows "Remove text" in the text-controls area below the timeline.
-    expect(screen.getAllByRole("button", { name: /^Remove text$/ }).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByRole("radiogroup", { name: /intro text layout/i })).toBeInTheDocument();
-    // EditToolbar (font/size) is also inline — slider present, A+ stepper hidden.
-    expect(screen.queryByRole("button", { name: /bigger intro text/i })).toBeNull();
-    expect(screen.getByRole("slider", { name: /intro text size/i })).toBeInTheDocument();
-
-    // Download is always visible (not behind a tab).
+    expect(screen.queryByRole("button", { name: /Timeline/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Remove text$/ })).toBeNull();
+    expect(screen.queryByRole("slider", { name: /intro text size/i })).toBeNull();
+    expect(screen.queryByText(/Unsaved — downloads will include your changes/i)).toBeNull();
     expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
-
-    // Making a draft edit flips isDirty → overlay switches on for live WYSIWYG feedback.
-    // textLaneOpen=true restores LiveEditPreview in the hero for instant-edit variants.
-    const slider = screen.getByRole("slider", { name: /intro text size/i });
-    fireEvent.change(slider, { target: { value: "62" } });
-    expect(screen.getByTestId("intro-text-preview")).toBeInTheDocument();
-  });
-
-  it("changing a control updates the draft and does NOT call the server render endpoint", async () => {
-    setData(makeItem(), [eligibleVariant]);
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    // Open Timeline tab → expand Text lane → EditToolbar slider is inline (PR-4).
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
-    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
-
-    // Bump the text size via the EditToolbar range slider — this is a draft mutation.
-    // (The A+ stepper is hidden in the deferred path; the slider replaces it.)
-    const slider = screen.getByRole("slider", { name: /intro text size/i });
-    fireEvent.change(slider, { target: { value: "62" } });
-
-    // NONE of the render endpoints fired — the bake is deferred to Download.
-    expect(mockSetPlanItemIntroSize).not.toHaveBeenCalled();
     expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
-    expect(mockRetextPlanItem).not.toHaveBeenCalled();
-
-    // Unsaved hint near Download appears once the draft is dirty.
-    expect(screen.getByText(/Unsaved — downloads will include your changes/i)).toBeInTheDocument();
-  });
-
-  it("clicking Download triggers exactly one batched editPlanItemVariant bake", async () => {
-    setData(makeItem(), [eligibleVariant]);
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-
-    // Open Timeline → expand Text lane to access both EditToolbar (slider) and PlanVariantEditor (PR-4).
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
-    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
-
-    // Accumulate two draft edits: size bump + remove text (batched, no network).
-    // Size via range slider (A+ stepper is hidden in the deferred path).
-    const slider = screen.getByRole("slider", { name: /intro text size/i });
-    fireEvent.change(slider, { target: { value: "62" } });
-
-    await act(async () => {
-      // Both PlanVariantEditor and EditToolbar are inline in the text panel.
-      screen.getAllByRole("button", { name: /^Remove text$/ })[0].click();
-    });
-    expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
-
-    // Download = the bake: ONE editPlanItemVariant call with the batched payload.
-    await act(async () => {
-      screen.getByRole("button", { name: /preparing your video|^Download$/i }).click();
-    });
-
-    expect(mockEditPlanItemVariant).toHaveBeenCalledTimes(1);
-    const [itemId, variantId, payload] = mockEditPlanItemVariant.mock.calls[0];
-    expect(itemId).toBe("test-item-id");
-    expect(variantId).toBe("song_text");
-    // Removing the text wins over the size bump in the batched payload.
-    expect(payload).toMatchObject({ remove_text: true });
-    // The legacy per-field endpoints were never used.
     expect(mockSetPlanItemIntroSize).not.toHaveBeenCalled();
     expect(mockRetextPlanItem).not.toHaveBeenCalled();
   });
 
-  it("ineligible (sequence-synced) variant keeps the legacy server-render controls", async () => {
-    setData(makeItem(), [sequenceVariant]);
-    await act(async () => {
-      render(<PlanItemPage />);
-    });
-    // No live overlay preview — ineligible variant always shows Hero.
-    expect(screen.queryByTestId("intro-text-preview")).toBeNull();
-
-    // Open Timeline → expand Text lane to expose PlanVariantEditor controls (PR-4).
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
-    await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Edit text/i })[0]); });
-
-    // Legacy PlanVariantEditor renders the synced badge + Remove text control.
-    expect(screen.getByText(/Editorial · synced/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
-
-    // A legacy size nudge re-renders SERVER-side (not the deferred draft path).
-    await act(async () => {
-      screen.getByRole("button", { name: /bigger intro text/i }).click();
-    });
-    expect(mockSetPlanItemIntroSize).toHaveBeenCalledTimes(1);
-    expect(mockEditPlanItemVariant).not.toHaveBeenCalled();
-  });
-
-  it("ineligible (no base_video_url) variant keeps the legacy controls", async () => {
+  it("does not fall back to legacy controls for sequence or no-base variants", async () => {
     const noBase = { ...eligibleVariant, base_video_url: null, base_video_path: null };
-    setData(makeItem(), [noBase]);
+    setData(makeItem(), [sequenceVariant, noBase]);
     await act(async () => {
       render(<PlanItemPage />);
     });
-    expect(screen.queryByTestId("intro-text-preview")).toBeNull();
 
-    // Open Timeline → PlanVariantEditor controls are now directly visible below the
-    // timeline (T5: the "Edit text ▼" expand button was replaced by the interactive bar lane).
-    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /▭|Timeline/i })); });
-    // "Remove text" comes from PlanVariantEditor rendered in the text-controls area.
-    expect(screen.getByRole("button", { name: /^Remove text$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Timeline/i })).toBeNull();
+    expect(screen.queryByText(/Editorial · synced/)).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Remove text$/ })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Download$/ })).toBeInTheDocument();
   });
 
   // Regression for the #576 follow-up: instant-eligible variants (agent_text intro)
