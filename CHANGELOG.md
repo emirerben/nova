@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.5] — 2026-07-14
+
+### Fixed
+- **Virtual-preview music no longer gaps at every clip boundary (stutter reported after deleting a clip).** Measured live on a beat-synced edit with sub-second cuts: the music element received 33 pause/play cycles + 16 catch-up seeks in 90s of preview playback. Two mechanisms, both introduced or exposed by v0.7.30.3's stall-hold: (1) the hold paused the music on EVERY active-deck `waiting` event — but boundary swaps emit a transient `waiting` on nearly every cut (seek + first-frame decode), so the hold gapped the music at each boundary; it is now debounced 250ms (`MUSIC_HOLD_DELAY_MS`) so only sustained stalls hold the music, and recovery only re-touches the music if it was actually held. (2) `swapToNext`'s covered path re-seeked the incoming deck to a position the preload had already parked it at — the redundant same-position seek fired `seeking`/`waiting` churn every boundary; `loadDeck` now skips seeks within 0.05s of the current position. Also unified the music seek tolerance at 0.25s (the swap-time 0.08s threshold issued audible catch-up seeks). Re-measured after the fix: 1 hold + 5 seeks over a full playthrough (the residual seeks are the music element's own network stalls). Test-harness lesson pinned in the suite: inline array/fn props re-fire the hook's timeline effect every render and mask/skew transport behavior — all Harness props are now module-stable.
+
+
+
 ## [0.7.30.4] — 2026-07-14
 
 ### Changed
