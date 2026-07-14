@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.3] — 2026-07-14
+
+### Changed
+- **Plan item result pages now hand off to the native editor instead of acting like a mini editor.** Content-plan renders now produce one primary output, auto-open the full-screen editor once when that output is editable, and keep the item page focused on generation, playback, download, and feedback.
+- **Uploaded item clips now render as a compact filmstrip.** The page removes post-render Landscape clips, Other takes, the inline timeline controls, the default "Not sure which clip fits?" prompt, and hides "Plan this for me" once footage is already uploaded.
+
 ## [0.7.30.2] — 2026-07-13
 
 ### Fixed

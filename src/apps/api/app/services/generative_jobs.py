@@ -21,6 +21,7 @@ from app.schemas.montage_preset import (
 )
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
+CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
 
 
 # Upper bounds on the persona context stashed onto the job. Keeps a runaway
@@ -172,6 +173,7 @@ def build_generative_job(
     clip_notes: dict[str, str] | None = None,
     landscape_fit: str = "fill",
     montage_preset: str = DEFAULT_MONTAGE_PRESET,
+    variant_policy: str | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -198,6 +200,8 @@ def build_generative_job(
         "language": language,
         "edit_format": coerce_edit_format(edit_format),
     }
+    if variant_policy == CONTENT_PLAN_PRIMARY_VARIANT_POLICY:
+        all_candidates["variant_policy"] = CONTENT_PLAN_PRIMARY_VARIANT_POLICY
     # Optional voiceover bed (audio-only). Validated against its own prefix so it can
     # never be mistaken for a footage clip. Omitted entirely when absent → public/song
     # jobs keep their exact pre-voiceover all_candidates shape.

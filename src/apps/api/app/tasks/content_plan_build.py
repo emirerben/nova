@@ -439,7 +439,10 @@ def _dispatch_item_render(
     `item.clip_gcs_paths` must already be set on the session before calling.
     """
     from app.schemas.montage_preset import coerce_montage_preset  # noqa: PLC0415
-    from app.services.generative_jobs import build_generative_job  # noqa: PLC0415
+    from app.services.generative_jobs import (  # noqa: PLC0415
+        CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+        build_generative_job,
+    )
     from app.services.job_dispatch import enqueue_orchestrator_sync  # noqa: PLC0415
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
@@ -504,6 +507,7 @@ def _dispatch_item_render(
                 for a in (item.clip_assignments or [])
                 if isinstance(a, dict) and a.get("gcs_path") and a.get("user_note")
             },
+            variant_policy=CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))

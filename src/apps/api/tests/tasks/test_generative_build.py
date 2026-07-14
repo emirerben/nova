@@ -108,6 +108,65 @@ def test_variant_specs_missing_language_fails_open():
     assert specs[0]["variant_id"] == "song_lyrics"
 
 
+def test_content_plan_primary_montage_prefers_song_text_when_track_matches():
+    specs = gb._specs_for_archetype(
+        "montage",
+        _track(),
+        variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    )
+    assert [s["variant_id"] for s in specs] == ["song_text"]
+    assert specs[0]["track"] is not None
+
+
+def test_content_plan_primary_montage_uses_original_without_track():
+    specs = gb._specs_for_archetype(
+        "montage",
+        None,
+        variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    )
+    assert [s["variant_id"] for s in specs] == ["original_text"]
+    assert specs[0]["track"] is None
+
+
+def test_content_plan_primary_voiceover_prefers_music_when_track_matches():
+    specs = gb._specs_for_archetype(
+        "voiceover",
+        _track(),
+        voiceover_gcs_path="voiceover-uploads/abc/voice.m4a",
+        variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    )
+    assert [s["variant_id"] for s in specs] == ["voiceover_music"]
+    assert specs[0]["track"] is not None
+    assert specs[0]["mix"] == gb._VOICEOVER_MUSIC_DEFAULT_MIX
+
+
+def test_content_plan_primary_voiceover_uses_voiceover_only_without_track():
+    specs = gb._specs_for_archetype(
+        "voiceover",
+        None,
+        voiceover_gcs_path="voiceover-uploads/abc/voice.m4a",
+        variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    )
+    assert [s["variant_id"] for s in specs] == ["voiceover_only"]
+    assert specs[0]["track"] is None
+    assert specs[0]["mix"] == gb._VOICEOVER_ONLY_DEFAULT_MIX
+
+
+def test_content_plan_primary_single_archetypes_stay_single():
+    for archetype, variant_id in [
+        ("subtitled", "subtitled"),
+        ("narrated", "narrated"),
+        ("talking_head", "talking_head"),
+    ]:
+        specs = gb._specs_for_archetype(
+            archetype,
+            _track(),
+            voiceover_gcs_path="voiceover-uploads/abc/voice.m4a",
+            variant_policy=gb.CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+        )
+        assert [s["variant_id"] for s in specs] == [variant_id]
+
+
 def test_classify_error_types_lyric_failures():
     from app.pipeline.text_overlay_skia import MissingGlyphsError
 

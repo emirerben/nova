@@ -11,7 +11,10 @@ import uuid
 import pytest
 
 from app.schemas.montage_preset import coerce_montage_preset
-from app.services.generative_jobs import build_generative_job
+from app.services.generative_jobs import (
+    CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+    build_generative_job,
+)
 
 
 def test_build_default_generative_job() -> None:
@@ -34,9 +37,16 @@ def test_content_plan_mode_sets_reverse_link() -> None:
         clip_paths=["users/u/plan/i/a.mp4"],
         mode="content_plan",
         content_plan_item_id=item_id,
+        variant_policy=CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
     )
     assert job.mode == "content_plan"
     assert job.content_plan_item_id == item_id
+    assert job.all_candidates["variant_policy"] == CONTENT_PLAN_PRIMARY_VARIANT_POLICY
+
+
+def test_public_generative_job_omits_variant_policy() -> None:
+    job = build_generative_job(user_id=uuid.uuid4(), clip_paths=["slot-uploads/a.mp4"])
+    assert "variant_policy" not in job.all_candidates
 
 
 def test_public_job_omits_persona_key() -> None:

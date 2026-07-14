@@ -34,6 +34,7 @@ process.env.NEXT_PUBLIC_SUBTITLED_ENABLED = "true";
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
+  useRouter: jest.fn(() => ({ push: jest.fn() })),
   useSearchParams: jest.fn(() => new URLSearchParams()),
 }));
 
@@ -224,13 +225,29 @@ describe("PlanItemPage — masonry collage item UX", () => {
         renderMasonryItem({ montage_preset });
       });
 
-      expect(screen.getByText("Collage clips")).toBeInTheDocument();
+      expect(screen.getByText("Your clips")).toBeInTheDocument();
       expect(screen.queryByTestId("shot-slot-uploader")).not.toBeInTheDocument();
       expect(
         screen.getByLabelText("Upload video clips for this idea").getAttribute("accept"),
       ).toContain("image/webp");
     },
   );
+
+  it("renders uploaded clips as a compact filmstrip", async () => {
+    await act(async () => {
+      renderMasonryItem({
+        clip_gcs_paths: ["users/u/plan/i/001-room.mov", "users/u/plan/i/002-detail.png"],
+        clip_assignments: [
+          { gcs_path: "users/u/plan/i/001-room.mov", shot_id: null, user_note: "" },
+          { gcs_path: "users/u/plan/i/002-detail.png", shot_id: null, user_note: "closeup" },
+        ],
+      });
+    });
+
+    expect(screen.getByTestId("uploaded-clip-filmstrip")).toBeInTheDocument();
+    expect(screen.getByText("room.mov")).toBeInTheDocument();
+    expect(screen.getByText("detail.png")).toBeInTheDocument();
+  });
 
   it.each(["masonry", "polaroid_wall"])(
     "hides visual-pool affordances for %s items",
@@ -280,8 +297,8 @@ describe("PlanItemPage — ProgressTheater renders with phase data", () => {
   });
 });
 
-describe("PlanItemPage — variant count from job not a constant", () => {
-  it("test_variant_count_from_job: renders exactly as many variants as job returns", async () => {
+describe("PlanItemPage — result cleanup", () => {
+  it("hides legacy alternates and inline timeline controls", async () => {
     const item = makeItem({
       status: "ready",
       current_job_id: "job-456",
@@ -308,12 +325,9 @@ describe("PlanItemPage — variant count from job not a constant", () => {
       render(<PlanItemPage />);
     });
 
-    // Hero + rail: the page renders the results section without crashing.
-    // With 2 ready variants the light-shell is present and the results area renders.
     expect(screen.getByTestId("light-shell")).toBeInTheDocument();
-    // The "Other takes" label appears when there are alternates to show.
-    expect(screen.getByText(/Other takes/i)).toBeInTheDocument();
-    // No EXPECTED_VARIANTS=3 in sight — the page uses job.variants.length.
+    expect(screen.queryByText(/Other takes/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: /Timeline/i })).toBeNull();
   });
 });
 
@@ -544,7 +558,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     // Generate button should be enabled — off_brief verdict never blocks it.
-    const generateBtn = screen.getByRole("button", { name: /generate videos/i });
+    const generateBtn = screen.getByRole("button", { name: /generate video/i });
     expect(generateBtn).not.toBeDisabled();
   });
 
@@ -570,7 +584,7 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: /generate videos/i }));
+      fireEvent.click(screen.getByRole("button", { name: /generate video/i }));
     });
 
     await waitFor(() => {
@@ -889,6 +903,30 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
       render(<PlanItemPage />);
     });
 
+    expect(screen.queryByRole("button", { name: /Plan this for me/i })).toBeNull();
+  });
+
+  it("hides Plan this for me when uploaded clips already exist", async () => {
+    const item = makeItem({
+      status: "awaiting_clips",
+      content_mode: "existing_footage",
+      clip_gcs_paths: ["users/u/plan/i/source.mp4"],
+      clip_assignments: [
+        { gcs_path: "users/u/plan/i/source.mp4", shot_id: null, user_note: "" },
+      ],
+      filming_guide: [],
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByTestId("uploaded-clip-filmstrip")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Plan this for me/i })).toBeNull();
   });
 });

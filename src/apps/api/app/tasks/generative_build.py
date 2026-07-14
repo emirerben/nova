@@ -50,6 +50,7 @@ from app.schemas.montage_preset import (
     coerce_montage_preset,
     is_collage_montage_preset,
 )
+from app.services.generative_jobs import CONTENT_PLAN_PRIMARY_VARIANT_POLICY
 from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
 
@@ -251,6 +252,9 @@ def _run_generative_job(job_id: str) -> None:
         # chose letterbox; absent = fill (the legacy crop default). Use (or {})
         # to guard the rare in-flight job where all_candidates is None.
         landscape_fit: str = (all_candidates or {}).get("landscape_fit") or "fill"
+        # Content-plan item renders are intentionally single-output for now. Public
+        # generative jobs omit this key and keep the full multi-variant behavior.
+        variant_policy: str | None = (all_candidates or {}).get("variant_policy") or None
         # Per-item silence-cut opt-out (plans/010 10A — support's per-item remedy).
         # Surface: Job.assembly_plan["silence_cut_disabled"] = true, set via
         # POST /admin/jobs/{id}/silence-cut-disable (admin_jobs.py). Read HERE at
@@ -685,6 +689,7 @@ def _run_generative_job(job_id: str) -> None:
             voiceover_gcs_path=voiceover_gcs_path,
             voiceover_bed_level=voiceover_bed_level,
             voiceover_caption_style=voiceover_caption_style,
+            variant_policy=variant_policy,
         )
         for spec in initial_specs:
             _upsert_variant_entry(
@@ -716,7 +721,11 @@ def _run_generative_job(job_id: str) -> None:
             # the resolution-time stash above).
             _persist_archetype_fallback(job_id, edit_format, "spine_extraction_failed")
             # Re-upsert the montage fallback specs so the tile set stays consistent.
-            fallback_specs = _variant_specs(best_track)
+            fallback_specs = _specs_for_archetype(
+                "montage",
+                best_track,
+                variant_policy=variant_policy,
+            )
             for spec in fallback_specs:
                 _upsert_variant_entry(
                     job_id,
@@ -3978,6 +3987,12 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
     return specs
 
 
+def _content_plan_primary_montage_spec(best_track: MusicTrack | None) -> dict[str, Any]:
+    if best_track is not None:
+        return {"variant_id": "song_text", "text_mode": "agent_text", "track": best_track}
+    return {"variant_id": "original_text", "text_mode": "agent_text", "track": None}
+
+
 # ── Archetype dispatch (Lane D) ─────────────────────────────────────────────────
 
 
@@ -4261,6 +4276,7 @@ def _specs_for_archetype(
     voiceover_gcs_path: str | None = None,
     voiceover_bed_level: float | None = None,
     voiceover_caption_style: str | None = None,
+    variant_policy: str | None = None,
 ) -> list[dict[str, Any]]:
     """The variant set to render for a resolved archetype (single source of truth).
 
@@ -4274,6 +4290,17 @@ def _specs_for_archetype(
     `_variant_specs` default to montage (no `archetype` key).
     """
     if archetype == "voiceover":
+        if variant_policy == CONTENT_PLAN_PRIMARY_VARIANT_POLICY and best_track is not None:
+            return [
+                {
+                    "variant_id": "voiceover_music",
+                    "text_mode": "agent_text",
+                    "track": best_track,
+                    "archetype": "voiceover",
+                    "voiceover_gcs_path": voiceover_gcs_path,
+                    "mix": _VOICEOVER_MUSIC_DEFAULT_MIX,
+                }
+            ]
         specs: list[dict[str, Any]] = [
             {
                 "variant_id": "voiceover_only",
@@ -4333,6 +4360,8 @@ def _specs_for_archetype(
                 "caption_style": "word" if voiceover_caption_style == "word" else "sentence",
             }
         ]
+    if variant_policy == CONTENT_PLAN_PRIMARY_VARIANT_POLICY:
+        return [_content_plan_primary_montage_spec(best_track)]
     return _variant_specs(best_track)
 
 
