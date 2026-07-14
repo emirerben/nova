@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { type Dispatch, type SetStateAction, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   attachClips,
@@ -169,6 +169,32 @@ type EditorCapabilities = {
   mix: boolean;
   reason: string | null;
 };
+
+function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
+  const capabilities = (
+    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
+  )?.editor_capabilities;
+  if (
+    capabilities &&
+    !capabilities.text_elements &&
+    !capabilities.timeline &&
+    !capabilities.split_clips &&
+    !capabilities.mix
+  ) {
+    return capabilities.reason ?? "Editing isn't available for this variant.";
+  }
+  return null;
+}
+
+function canOpenPlanItemEditor(variant: PlanItemVariant | null): boolean {
+  return Boolean(
+    TIKTOK_EDITOR_ENABLED &&
+      variant?.output_url &&
+      variant.render_status !== "rendering" &&
+      planItemEditorDisabledReason(variant) === null,
+  );
+}
+
 const RENDER_REGISTER_ERROR = "The render didn't register — give it another go.";
 type PendingEdit = {
   priorFinishedAt: string | null;
@@ -363,6 +389,7 @@ function deriveReceiptText(job: PlanItemJobStatus): string {
 
 export default function PlanItemPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const itemId = params.id;
   const editorReturnSignal = useMemo(
@@ -488,6 +515,7 @@ export default function PlanItemPage() {
   const awaitingJobSince = useRef<number | null>(null);
   const forceFreshFetchRef = useRef(false);
   const consumedEditorReturnRef = useRef<string | null>(null);
+  const autoOpenedEditorRef = useRef<string | null>(null);
 
   useEffect(() => {
     getMusicTracks()
@@ -697,6 +725,38 @@ export default function PlanItemPage() {
       setFocusedVariantId(firstReady.variant_id);
     }
   }, [variants, focusedVariantId]);
+
+  useEffect(() => {
+    if (!TIKTOK_EDITOR_ENABLED) return;
+    if (!item || item.status !== "ready") return;
+    if (editorReturnSignal !== null) return;
+    const readyVariants = variants.filter(
+      (v) => v.render_status === "ready" && Boolean(v.output_url),
+    );
+    if (readyVariants.length !== 1) return;
+    const variant = readyVariants[0];
+    if (!canOpenPlanItemEditor(variant)) return;
+    const jobId = item.current_job_id ?? "no-job";
+    const markerKey = `plan-item:auto-open-editor:${item.id}:${jobId}:${variant.variant_id}`;
+    if (autoOpenedEditorRef.current === markerKey) return;
+    autoOpenedEditorRef.current = markerKey;
+    try {
+      if (window.sessionStorage.getItem(markerKey) === "1") return;
+      window.sessionStorage.setItem(markerKey, "1");
+    } catch {
+      // Storage can be unavailable in private/embedded contexts; the navigation
+      // is still useful, but the URL return guard below prevents immediate loops.
+    }
+    router.push(
+      `/plan/items/${itemId}/edit?variant=${encodeURIComponent(variant.variant_id)}`,
+    );
+  }, [
+    editorReturnSignal,
+    item,
+    itemId,
+    router,
+    variants,
+  ]);
 
   // "✓ Updated" cue: detect when the focused variant's render_finished_at advances
   // (the exact moment StableVideo swaps in fresh bytes) and flash a transient badge.
@@ -1012,6 +1072,8 @@ export default function PlanItemPage() {
 
   const clipCount = item.clip_gcs_paths.length;
   const isGenerating = item.status === "generating";
+  const showResults = isGenerating || variants.length > 0;
+  const showSetupControls = !isGenerating && variants.length === 0;
   // Conformance in-flight: clips attached + guide present + verdict pending,
   // bounded by the poll window — resolves to the tile, the on-track line, or
   // (when guards skipped the run) silently vanishes. Never hangs.
@@ -1021,10 +1083,18 @@ export default function PlanItemPage() {
     item.instruction_level !== "none" &&
     !item.conformance?.verdict &&
     conformancePolls.current < 3;
+  const showKriaHelper =
+    askKria !== null ||
+    conformanceChecking ||
+    Boolean(
+      item.conformance?.verdict &&
+        !item.conformance.dismissed &&
+        !item.conformance.suppressed &&
+        (item.conformance.confidence ?? 0) >= 0.6,
+    );
   const focused = variants.find((v) => v.variant_id === focusedVariantId) ?? null;
   const focusedEditable =
     focused && (!!focused.output_url || focused.render_status === "failed");
-  const showResults = isGenerating || variants.length > 0;
 
   // "N shots left" caption under the Generate button.
   const totalShots = item.filming_guide?.length ?? 0;
@@ -1091,6 +1161,8 @@ export default function PlanItemPage() {
             {item.theme && <p className="mb-2 mt-2 text-[#3f3f46]">{item.idea}</p>}
             <SeedProvenanceBadge item={item} />
 
+            {showSetupControls && (
+              <>
             {/* Notes textarea — editable, saves on blur */}
             <textarea
               defaultValue={item.notes ?? ""}
@@ -1304,27 +1376,8 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Landscape-clip fit — read-only status display post-render */}
-            {variants.length > 0 && (() => {
-              const applied = LANDSCAPE_FIT_OPTIONS.find(
-                (o) => o.value === (item.landscape_fit ?? "fit")
-              );
-              if (!applied) return null;
-              return (
-                <div className="mb-4">
-                  <p className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                    Landscape clips
-                  </p>
-                  <p className="text-sm font-medium text-lime-800">
-                    {applied.label}
-                    <span className="ml-1 font-normal text-zinc-400">· {applied.desc}</span>
-                  </p>
-                </div>
-              );
-            })()}
-
             {/* AI plan proposal — available only until the item has a shot list. */}
-            {totalShots === 0 && !expandProposal && !expandContextOpen && (
+            {totalShots === 0 && clipCount === 0 && !expandProposal && !expandContextOpen && (
               <div className="mb-4">
                 <button
                   type="button"
@@ -1345,7 +1398,7 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {totalShots === 0 && !expandProposal && expandContextOpen && (
+            {totalShots === 0 && clipCount === 0 && !expandProposal && expandContextOpen && (
               <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-4">
                 <p className="font-display text-lg font-medium text-[#0c0c0e]">
                   A little context helps.
@@ -1395,7 +1448,7 @@ export default function PlanItemPage() {
             )}
 
             {/* AI plan proposal card */}
-            {totalShots === 0 && expandProposal && (
+            {totalShots === 0 && clipCount === 0 && expandProposal && (
               <div className="mb-4">
                 <div className="rounded-xl border border-lime-200 bg-lime-50 p-4">
                   <p className="text-[11px] font-semibold uppercase tracking-[.15em] text-lime-700">
@@ -1577,7 +1630,7 @@ export default function PlanItemPage() {
             ) : isCollagePreset ? (
               <div>
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
-                  Collage clips
+                  Your clips
                 </p>
                 <PoolUploadCard
                   clips={item.clip_assignments ?? []}
@@ -1665,7 +1718,7 @@ export default function PlanItemPage() {
                     ? "Starting…"
                     : uploaderBusy
                       ? FINISHING_UPLOAD_HINT
-                      : "Generate videos"}
+                      : "Generate video"}
                 </InkButton>
                 {/* #71717a, not the faint #a1a1aa: this line now carries must-read
                     gating copy (why the button is off / what drives the edit) —
@@ -1674,8 +1727,9 @@ export default function PlanItemPage() {
               </div>
             )}
 
-            {/* Kria helper — inline, below Generate (WS1: moved from right rail) */}
-            <div className="mt-4">
+            {/* Kria helper — inline, below Generate when there is an actual read. */}
+            {showKriaHelper && (
+              <div className="mt-4">
               <KriaHelper
                 item={item}
                 conformanceChecking={conformanceChecking}
@@ -1695,7 +1749,10 @@ export default function PlanItemPage() {
                   refetch();
                 }}
               />
-            </div>
+              </div>
+            )}
+              </>
+            )}
 
             {/* Error banner — outside the fork so it shows on both item types */}
             {error && (
@@ -1763,8 +1820,6 @@ export default function PlanItemPage() {
             item={item}
             variant={focused}
             variants={variants}
-            focusedVariantId={focusedVariantId}
-            onFocus={setFocusedVariantId}
             tracks={tracks}
             styleSets={styleSets}
             isGenerating={isGenerating}
@@ -1905,8 +1960,6 @@ function FocusedResults({
   item,
   variant,
   variants,
-  focusedVariantId,
-  onFocus,
   tracks,
   styleSets,
   isGenerating,
@@ -1930,8 +1983,6 @@ function FocusedResults({
   item: PlanItem;
   variant: PlanItemVariant | null;
   variants: PlanItemVariant[];
-  focusedVariantId: string | null;
-  onFocus: (id: string) => void;
   tracks: MusicTrackSummary[];
   styleSets: GenerativeStyleSet[];
   isGenerating: boolean;
@@ -2312,8 +2363,9 @@ function FocusedResults({
     if (variant.output_url) downloadVideo(variant.output_url, downloadName);
   }, [variant, editSession, instantEligible, sfxPlacements, needsSfxBake, sfxIsPersistDirty, overlayCards, failedOverlayCount, itemId, downloadName, markVariantRendering, onError]);
 
-  // Alternates: the non-focused ready variants (up to 3 shown as small thumbs)
-  const alternates = variants.filter((v) => v.variant_id !== focusedVariantId);
+  // Item pages now present one primary output. Keep the deeper inline editor
+  // machinery dormant here; the full-screen editor owns post-render editing.
+  const showInlineEditorControls = false;
   // "Kria's pick" is always the first variant (index 0 in the variants array)
   const isKriaPick = variant != null && variants.length > 0 && variants[0].variant_id === variant.variant_id;
 
@@ -2418,25 +2470,9 @@ function FocusedResults({
               </span>
             </div>
           )}
-          {/* Edit entry: full-screen TikTok-style editor shell (flag-gated) */}
-          {editorEntryEligible && (
-            <div className="mt-2 flex justify-center">
-              {editorEntryDisabledReason ? (
-                <InkButton type="button" variant="ghost" disabled title={editorEntryDisabledReason}>
-                  Edit
-                </InkButton>
-              ) : (
-                <Link href={`/plan/items/${itemId}/edit?variant=${variant!.variant_id}`}>
-                  <InkButton type="button" variant="ghost">
-                    Edit
-                  </InkButton>
-                </Link>
-              )}
-            </div>
-          )}
         </div>
 
-        {/* ── RAIL: rationale + alternates + editor ── */}
+        {/* ── RAIL: rationale + actions + feedback ── */}
         <div className="min-w-0 flex-1 space-y-5">
 
           {/* Rationale blurb */}
@@ -2449,59 +2485,6 @@ function FocusedResults({
             <p className="text-sm text-[#71717a]">
               Edit controls unlock as soon as a variant finishes rendering.
             </p>
-          )}
-
-          {/* Alternates row — small thumbnails, click to swap hero */}
-          {alternates.length > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#a1a1aa]">
-                Other takes
-              </p>
-              <div className="flex gap-2">
-                {alternates.slice(0, 3).map((v) => {
-                  const altLabel: Record<string, string> = {
-                    lyrics: "Lyrics",
-                    agent_text: "AI text",
-                    none: "Original",
-                  };
-                  const label = altLabel[v.text_mode] ?? "Edit";
-                  const rendering = v.render_status === "rendering";
-                  const failed = v.render_status === "failed";
-                  return (
-                    <button
-                      key={v.variant_id}
-                      type="button"
-                      aria-label={`Switch to ${label} — ${v.track_title ?? "original audio"}`}
-                      onClick={() => onFocus(v.variant_id)}
-                      className="group relative aspect-[9/16] w-14 shrink-0 overflow-hidden rounded-lg border border-zinc-200 bg-zinc-100 transition-colors hover:border-zinc-400"
-                    >
-                      {v.output_url ? (
-                        <StableVideo
-                          src={v.output_url}
-                          identity={v.render_finished_at ?? undefined}
-                          muted
-                          preload="metadata"
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="h-full w-full bg-zinc-200" />
-                      )}
-                      <span className="absolute inset-x-0 bottom-0 truncate bg-black/40 px-1 py-0.5 text-[8px] text-white">
-                        {label}
-                      </span>
-                      {rendering && (
-                        <span className="absolute inset-0 flex items-center justify-center bg-white/60 text-[10px] text-lime-700">
-                          …
-                        </span>
-                      )}
-                      {failed && (
-                        <span className="absolute right-0.5 top-0.5 text-[10px]">⚠</span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
           )}
 
           {/* ── Unplaced shots info card ── */}
@@ -2523,7 +2506,7 @@ function FocusedResults({
           )}
 
           {/* ── Editor row: 4 icon+label buttons ── */}
-          {focusedEditable && (
+          {showInlineEditorControls && focusedEditable && (
             <div>
               <div className="flex gap-2">
                 {EDITOR_TABS.map((tab) => {
@@ -2740,14 +2723,37 @@ function FocusedResults({
           {/* Download button */}
           {variant && (instantEligible ? variant.base_video_url : variant.output_url) && (
             <>
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={baking}
-                className="inline-flex min-h-11 w-full items-center justify-center rounded-full bg-[#0c0c0e] px-5 py-2 text-sm font-semibold text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {baking ? "Preparing your video…" : "Download"}
-              </button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                {editorEntryEligible && (
+                  editorEntryDisabledReason ? (
+                    <InkButton
+                      type="button"
+                      disabled
+                      title={editorEntryDisabledReason}
+                      className="w-full sm:flex-1"
+                    >
+                      Edit
+                    </InkButton>
+                  ) : (
+                    <Link
+                      href={`/plan/items/${itemId}/edit?variant=${variant.variant_id}`}
+                      className="w-full sm:flex-1"
+                    >
+                      <InkButton type="button" className="w-full">
+                        Edit
+                      </InkButton>
+                    </Link>
+                  )
+                )}
+                <button
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={baking}
+                  className="inline-flex min-h-11 w-full items-center justify-center rounded-full border border-zinc-200 bg-white px-5 py-2 text-sm font-semibold text-[#0c0c0e] transition-colors hover:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-1"
+                >
+                  {baking ? "Preparing your video…" : "Download"}
+                </button>
+              </div>
               {/* Plan 009 T4: failed card media blocks the overlay-bake path —
                   say so inline instead of silently no-oping the click. */}
               {failedOverlayCount > 0 && (
@@ -4158,22 +4164,7 @@ function KriaHelper({
             </button>
           </div>
         </div>
-      ) : (
-        <p className="flex items-start gap-2 text-sm text-[#71717a]">
-          <span
-            className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-lime-600"
-            aria-hidden="true"
-          />
-          Not sure which clip fits?{" "}
-          <button
-            type="button"
-            onClick={onOpen}
-            className="font-medium text-lime-700 underline-offset-2 hover:underline"
-          >
-            Ask Kria ↗
-          </button>
-        </p>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -4205,50 +4196,82 @@ function PoolUploadCard({
 }) {
   const atCap = maxClips != null && clips.length >= maxClips;
   return (
-    <div className="mb-8 rounded-2xl border border-zinc-200 bg-white p-5">
+    <div className="mb-8 rounded-xl border border-zinc-200 bg-white p-4">
       {clips.length > 0 && (
-        <ul className="mb-4 space-y-3">
+        <ul
+          className="mb-4 flex gap-3 overflow-x-auto pb-2"
+          aria-label="Uploaded clips"
+          data-testid="uploaded-clip-filmstrip"
+        >
           {clips.map((a) => {
             const raw = a.gcs_path.split("/").pop() ?? a.gcs_path;
             const name = raw.includes("-") ? raw.slice(raw.indexOf("-") + 1) : raw;
+            const kind = /\.(jpe?g|png|webp|heic|heif)$/i.test(name) ? "IMG" : "VID";
             return (
               <li
                 key={a.gcs_path}
-                className="border-b border-zinc-100 pb-3 last:border-0 last:pb-0"
+                className="min-w-[190px] max-w-[220px] rounded-lg border border-zinc-200 bg-[#fafaf8] p-2"
               >
-                <div className="flex items-center gap-3">
-                  {a.machine_matched ? (
-                    <span className="flex min-w-0 items-center gap-1 rounded border border-dashed border-lime-300 bg-white px-2 py-0.5 text-xs text-lime-800">
-                      <span className="max-w-[180px] truncate">{name}</span>
-                      <span className="shrink-0 text-lime-700">· Matched — keep?</span>
-                    </span>
-                  ) : (
-                    <span className="flex min-w-0 items-center gap-1 rounded border border-lime-200 bg-lime-50 px-2 py-0.5 text-xs text-lime-800">
-                      <span>✓</span>
-                      <span className="max-w-[220px] truncate">{name}</span>
-                    </span>
-                  )}
-                  {a.machine_matched && (
-                    <button
-                      type="button"
-                      onClick={() => onKeep(a)}
-                      className="shrink-0 text-xs font-medium text-lime-700 underline underline-offset-2 hover:text-lime-800"
-                    >
-                      Keep
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onRemove(a)}
-                    className="shrink-0 text-xs text-[#71717a] underline underline-offset-2 hover:text-[#0c0c0e]"
+                <div className="flex gap-2">
+                  <span
+                    className="flex h-12 w-10 shrink-0 items-center justify-center rounded-md bg-zinc-900 text-[10px] font-semibold tracking-wide text-white"
+                    aria-hidden="true"
                   >
-                    Remove
-                  </button>
+                    {kind}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-start justify-between gap-2">
+                      <span
+                        className={`min-w-0 truncate text-xs font-medium ${
+                          a.machine_matched ? "text-lime-800" : "text-[#0c0c0e]"
+                        }`}
+                        title={name}
+                      >
+                        {name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => onRemove(a)}
+                        className="shrink-0 rounded-full px-1.5 text-sm leading-5 text-[#71717a] hover:bg-zinc-100 hover:text-[#0c0c0e]"
+                        aria-label={`Remove ${name}`}
+                      >
+                        ×
+                      </button>
+                    </div>
+                    {a.machine_matched ? (
+                      <div className="mt-1 flex items-center gap-2">
+                        <span className="rounded border border-dashed border-lime-300 bg-white px-1.5 py-0.5 text-[10px] text-lime-800">
+                          Matched
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onKeep(a)}
+                          className="text-[11px] font-medium text-lime-700 underline-offset-2 hover:underline"
+                        >
+                          Keep
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="mt-1 inline-flex rounded border border-lime-200 bg-lime-50 px-1.5 py-0.5 text-[10px] text-lime-800">
+                        Added
+                      </span>
+                    )}
+                  </div>
                 </div>
-                <ClipNoteControl
-                  note={a.user_note ?? ""}
-                  onSave={(note) => onNoteChange(a, note)}
-                />
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] text-[#71717a] marker:text-zinc-300">
+                    Notes
+                    {a.user_note ? (
+                      <span className="ml-1 text-lime-700">saved</span>
+                    ) : null}
+                  </summary>
+                  <div className="mt-2">
+                    <ClipNoteControl
+                      note={a.user_note ?? ""}
+                      onSave={(note) => onNoteChange(a, note)}
+                    />
+                  </div>
+                </details>
               </li>
             );
           })}

@@ -71,6 +71,7 @@ def test_persona_forwarded_to_build_generative_job() -> None:
     assert kwargs["persona_pillars"] == ["morning routines", "discipline"]
     assert kwargs["item_theme"] == "first 5am workout"
     assert kwargs["item_idea"] == "film the dark early start"
+    assert kwargs["variant_policy"] == "content_plan_primary"
 
 
 def test_missing_persona_falls_back_to_empty() -> None:

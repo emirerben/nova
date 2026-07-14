@@ -39,6 +39,8 @@ Object.defineProperty(window, "matchMedia", {
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 
+process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED = "true";
+
 // jsdom doesn't implement HTMLMediaElement playback; useSfxPreview instantiates
 // <audio> per placement and calls load()/play(). Stub them so variants carrying
 // sound_effects can render without "Not implemented" throws.
@@ -48,9 +50,13 @@ window.HTMLMediaElement.prototype.pause = jest.fn();
 
 // ─── Mocks ───────────────────────────────────────────────────────────────────
 
+const mockRouterPush = jest.fn();
+let mockSearchParams = new URLSearchParams();
+
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "test-item-id" })),
-  useSearchParams: jest.fn(() => new URLSearchParams()),
+  useRouter: jest.fn(() => ({ push: mockRouterPush })),
+  useSearchParams: jest.fn(() => mockSearchParams),
 }));
 
 const mockRefetch = jest.fn();
@@ -122,43 +128,32 @@ jest.mock("@/app/library/_components/FeedbackButtons", () => ({
   default: () => <div data-testid="feedback-buttons" />,
 }));
 
-// PlanVariantEditor spy — captures the `variant` and `onSwap` props each render.
-// Remains a dumb div so no child-rendering complexity leaks in.
-let spyVariant: any = null;
-let spyOnSwap: ((trackId: string) => Promise<void>) | null = null;
 jest.mock("@/app/plan/_components/PlanVariantEditor", () => ({
   __esModule: true,
-  default: ({ variant, onSwap }: any) => {
-    spyVariant = variant;
-    spyOnSwap = onSwap;
-    return <div data-testid="plan-variant-editor" />;
-  },
+  default: () => <div data-testid="plan-variant-editor" />,
 }));
 
-import PlanItemPage from "@/app/plan/items/[id]/page";
 import type { PlanItemJobStatus } from "@/lib/plan-api";
-import { swapPlanItemSong, renderVariantSfx, setVariantSoundEffects } from "@/lib/plan-api";
+import { renderVariantSfx, setVariantSoundEffects } from "@/lib/plan-api";
 import { downloadVideo } from "@/lib/download-video";
-const mockSwap = swapPlanItemSong as jest.MockedFunction<typeof swapPlanItemSong>;
+const PlanItemPage = require("@/app/plan/items/[id]/page").default;
 const mockRenderSfx = renderVariantSfx as jest.MockedFunction<typeof renderVariantSfx>;
 const mockSetSfx = setVariantSoundEffects as jest.MockedFunction<typeof setVariantSoundEffects>;
 const mockDownloadVideo = downloadVideo as jest.MockedFunction<typeof downloadVideo>;
 
-/**
- * Surface PlanVariantEditor by opening the Timeline tab and expanding its Text panel.
- * The makeServerVariant uses text_mode "original_text" (no music_track_id), so the
- * Song tab is hidden. Text editing is now inline in the Timeline Text lane (PR-4).
- */
-async function openSongTab() {
-  // Click the Timeline tab (▭) — opens showTimelineSection which renders
-  // PlanVariantEditor in the text-controls area below UnifiedTimeline (T5).
-  // The old "Edit text ▼" expand button is gone (T5 replaced it with interactive bars).
-  const timelineTab = screen.queryByRole("button", { name: /▭.*Timeline|Timeline/i });
-  if (timelineTab) {
-    await act(async () => { fireEvent.click(timelineTab); });
-  }
-  // PlanVariantEditor is now directly rendered below the timeline for text-mode
-  // variants — no additional click needed (T5 architecture change).
+function setEditorReturn({
+  variantId = "v1",
+  generation = "gen-1",
+  priorFinishedAt = "2026-06-01T10:00:00Z",
+  renderStarted = true,
+} = {}) {
+  mockSearchParams = new URLSearchParams({
+    editor_saved: "1",
+    editor_variant: variantId,
+    editor_generation: generation,
+    editor_prior_finished_at: priorFinishedAt,
+    editor_render: renderStarted ? "1" : "0",
+  });
 }
 
 // ─── Factory helpers ──────────────────────────────────────────────────────────
@@ -223,23 +218,23 @@ function makeServerVariant(
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-describe("pendingEdits fingerprint (render_finished_at)", () => {
+describe("pendingEdits fingerprint (editor return)", () => {
   const ITEM = makeItem();
   const OUTPUT_URL = "https://cdn/v1.mp4";
 
   beforeEach(() => {
-    spyVariant = null;
-    spyOnSwap = null;
+    mockSearchParams = new URLSearchParams();
+    mockRouterPush.mockReset();
     mockRefetch.mockReset();
-    mockSwap.mockReset();
+    window.sessionStorage.clear();
     jest.clearAllMocks();
   });
 
-  it("test_pin_stays_on_same_render_finished_at: pre-edit ready race does not clear the pin", async () => {
-    // Scenario A: the poll after submission returns "ready" with the SAME
-    // render_finished_at as before the edit — the pin must NOT clear.
+  it("pins a returned editor render until render_finished_at advances", async () => {
     const TS = "2026-06-01T10:00:00Z";
+    const TS2 = "2026-06-01T10:02:30Z";
     const initialVariant = makeServerVariant("v1", "ready", OUTPUT_URL, TS);
+    setEditorReturn({ priorFinishedAt: TS, renderStarted: true });
 
     mockUsePolledJobStatus.mockReturnValue({
       data: { item: ITEM, job: makeJob({ variants: [initialVariant] }) },
@@ -248,23 +243,8 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
     });
 
     const { rerender } = await act(async () => render(<PlanItemPage />));
+    expect(await screen.findByLabelText("Rendering new version")).toBeInTheDocument();
 
-    // Open the Song tab to expose PlanVariantEditor and capture spyOnSwap.
-    await openSongTab();
-
-    // Variant is ready; editor shows it as ready.
-    expect(spyVariant?.render_status).toBe("ready");
-    expect(spyOnSwap).not.toBeNull();
-
-    // Trigger a song-swap edit — goes through runEdit → markVariantRendering.
-    mockSwap.mockResolvedValueOnce(undefined);
-    await act(async () => {
-      await spyOnSwap!("track-99");
-    });
-
-    // pendingEdits now has { priorFinishedAt: "TS", sawRendering: false }.
-    // The next poll returns "ready" with the SAME render_finished_at —
-    // the Celery task hasn't run yet (pre-edit race window).
     mockUsePolledJobStatus.mockReturnValue({
       data: {
         item: ITEM,
@@ -276,32 +256,8 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
       refetch: mockRefetch,
     });
     await act(async () => { rerender(<PlanItemPage />); });
+    expect(screen.getByLabelText("Rendering new version")).toBeInTheDocument();
 
-    // Pin must NOT have cleared — variant forced to "rendering".
-    expect(spyVariant?.render_status).toBe("rendering");
-  });
-
-  it("test_pin_clears_on_advanced_render_finished_at: fresh fingerprint clears the pin", async () => {
-    // Scenario B: poll returns "ready" with a NEW render_finished_at — the
-    // actual completed render. The pin must clear and controls re-enable.
-    const TS1 = "2026-06-01T10:00:00Z";
-    const TS2 = "2026-06-01T10:02:30Z"; // advanced
-    const initialVariant = makeServerVariant("v1", "ready", OUTPUT_URL, TS1);
-
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item: ITEM, job: makeJob({ variants: [initialVariant] }) },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    const { rerender } = await act(async () => render(<PlanItemPage />));
-    await openSongTab();
-    expect(spyVariant?.render_status).toBe("ready");
-
-    mockSwap.mockResolvedValueOnce(undefined);
-    await act(async () => { await spyOnSwap!("track-99"); });
-
-    // Poll with advanced timestamp + "ready" — this is the real completed render.
     mockUsePolledJobStatus.mockReturnValue({
       data: {
         item: ITEM,
@@ -313,102 +269,62 @@ describe("pendingEdits fingerprint (render_finished_at)", () => {
       refetch: mockRefetch,
     });
     await act(async () => { rerender(<PlanItemPage />); });
-
-    // Pin IS cleared — variant render_status is back to "ready".
-    expect(spyVariant?.render_status).toBe("ready");
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
   });
 
-  it("test_pin_clears_after_saw_rendering: sawRendering path clears on subsequent ready", async () => {
-    // Scenario C: the poll first returns "rendering" (sawRendering → true),
-    // then "ready" with the same timestamp. The pin must clear.
+  it("does not pin an editor return when no render was started", async () => {
     const TS = "2026-06-01T10:00:00Z";
-    const initialVariant = makeServerVariant("v1", "ready", OUTPUT_URL, TS);
+    setEditorReturn({ priorFinishedAt: TS, renderStarted: false });
 
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item: ITEM, job: makeJob({ variants: [initialVariant] }) },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    const { rerender } = await act(async () => render(<PlanItemPage />));
-    await openSongTab();
-    expect(spyVariant?.render_status).toBe("ready");
-
-    mockSwap.mockResolvedValueOnce(undefined);
-    await act(async () => { await spyOnSwap!("track-99"); });
-
-    // Poll 1: variant is "rendering" — sawRendering flips to true.
-    mockUsePolledJobStatus.mockReturnValue({
-      data: {
-        item: ITEM,
-        job: makeJob({ variants: [{ ...initialVariant, render_status: "rendering" }] }),
-      },
-      error: null,
-      refetch: mockRefetch,
-    });
-    await act(async () => { rerender(<PlanItemPage />); });
-
-    // While rendering, variant is still "rendering" (server truth, no override needed).
-    expect(spyVariant?.render_status).toBe("rendering");
-
-    // Poll 2: variant is "ready" with same timestamp — but sawRendering = true
-    // so isFreshRender is true → pin clears.
     mockUsePolledJobStatus.mockReturnValue({
       data: {
         item: ITEM,
         job: makeJob({
-          variants: [{ ...initialVariant, render_status: "ready", render_finished_at: TS }],
+          variants: [makeServerVariant("v1", "ready", OUTPUT_URL, TS)],
         }),
       },
       error: null,
       refetch: mockRefetch,
     });
-    await act(async () => { rerender(<PlanItemPage />); });
 
-    // Pin cleared — controls re-enabled.
-    expect(spyVariant?.render_status).toBe("ready");
+    await act(async () => render(<PlanItemPage />));
+    expect(screen.queryByLabelText("Rendering new version")).toBeNull();
   });
 
-  it("test_pin_clears_on_failed_with_fresh_fingerprint: failed render clears the pin", async () => {
-    // Scenario D: render fails with a new render_finished_at. Pin must clear
-    // so the standard failure UI (with retry) can take over.
-    const TS1 = "2026-06-01T10:00:00Z";
-    const TS2 = "2026-06-01T10:01:00Z";
-    const initialVariant = makeServerVariant("v1", "ready", OUTPUT_URL, TS1);
-
-    mockUsePolledJobStatus.mockReturnValue({
-      data: { item: ITEM, job: makeJob({ variants: [initialVariant] }) },
-      error: null,
-      refetch: mockRefetch,
-    });
-
-    const { rerender } = await act(async () => render(<PlanItemPage />));
-    await openSongTab();
-
-    mockSwap.mockResolvedValueOnce(undefined);
-    await act(async () => { await spyOnSwap!("track-99"); });
-
+  it("auto-opens the native editor once for a single ready editable variant", async () => {
     mockUsePolledJobStatus.mockReturnValue({
       data: {
         item: ITEM,
         job: makeJob({
-          variants: [
-            {
-              ...initialVariant,
-              render_status: "failed",
-              render_finished_at: TS2,
-              error_class: "RenderFailed",
-            },
-          ],
+          variants: [makeServerVariant("v1", "ready", OUTPUT_URL, "2026-06-01T10:00:00Z")],
         }),
       },
       error: null,
       refetch: mockRefetch,
     });
-    await act(async () => { rerender(<PlanItemPage />); });
 
-    // Pin cleared on failed + new fingerprint.
-    expect(spyVariant?.render_status).toBe("failed");
+    const { rerender } = await act(async () => render(<PlanItemPage />));
+    expect(mockRouterPush).toHaveBeenCalledWith("/plan/items/test-item-id/edit?variant=v1");
+
+    await act(async () => { rerender(<PlanItemPage />); });
+    expect(mockRouterPush).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not auto-open again on editor return", async () => {
+    setEditorReturn({ renderStarted: false });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: {
+        item: ITEM,
+        job: makeJob({
+          variants: [makeServerVariant("v1", "ready", OUTPUT_URL, "2026-06-01T10:00:00Z")],
+        }),
+      },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => render(<PlanItemPage />));
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 });
 

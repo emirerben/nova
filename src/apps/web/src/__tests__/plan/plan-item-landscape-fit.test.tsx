@@ -44,6 +44,7 @@ import "@testing-library/jest-dom";
 
 jest.mock("next/navigation", () => ({
   useParams: jest.fn(() => ({ id: "item-lf-1" })),
+  useRouter: jest.fn(() => ({ push: jest.fn() })),
   useSearchParams: jest.fn(() => new URLSearchParams()),
 }));
 
@@ -367,8 +368,9 @@ describe("Fit/Fill landscape-clip toggle", () => {
     expect(screen.queryByRole("button", { name: /^Fill/i })).toBeNull();
   });
 
-  it("5. post-render: read-only 'Landscape clips' label visible, interactive toggle absent", async () => {
-    // variants.length > 0 → read-only display; interactive buttons gone.
+  it("5. post-render: landscape fit section is absent and interactive toggle absent", async () => {
+    // variants.length > 0 → the pre-render fit control disappears; no read-only
+    // Landscape clips section is rendered on the cleaned-up result page.
     setData(
       makeItem({ status: "ready", landscape_fit: "fit" }),
       [sampleVariant],
@@ -381,13 +383,9 @@ describe("Fit/Fill landscape-clip toggle", () => {
     expect(screen.queryByRole("button", { name: /^Fit/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Fill/i })).toBeNull();
 
-    // Read-only label must show the applied fit heading and the active option.
-    expect(screen.getAllByText(/Landscape clips/i).length).toBeGreaterThanOrEqual(1);
-    // The <p> with applied.label renders "Fit" as a text node (not a button).
-    expect(screen.getByText(/\bFit\b/)).toBeInTheDocument();
-    // Description text is also shown.
+    expect(screen.queryByText(/Landscape clips/i)).toBeNull();
     expect(
-      screen.getByText(/Keep horizontal, black bars top & bottom/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/Keep horizontal, black bars top & bottom/i),
+    ).toBeNull();
   });
 });
