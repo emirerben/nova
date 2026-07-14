@@ -31,6 +31,20 @@ const DEFAULT_CLIPS = [
   { clip_index: 1, signed_url: "https://cdn.example.test/clip2.mp4" },
 ];
 
+// Stable slot arrays — an inline array prop rebuilds the timeline every
+// render, re-firing the hook's timeline effect (production slots are stable
+// state). Tests that WANT a timeline change pass a different constant.
+const ONE_SLOT = [SLOT];
+const EMPTY_GRID: number[] = [];
+const TWO_SLOTS = [SLOT, SLOT_2];
+
+// Stable callbacks — inline jest.fn() props change identity every render,
+// which re-fires the hook's timeline effect and skews play/pause counts
+// (production passes stable useCallback/setState handlers).
+const NOOP_TIME_UPDATE = () => {};
+const NOOP_DURATION = () => {};
+const NOOP_SOURCE_ERROR = () => {};
+
 function Harness({
   onPlayingChange,
   soundMuted = false,
@@ -38,7 +52,7 @@ function Harness({
   musicTrackActive = false,
   musicAudioUrl = "https://cdn.example.test/music.m4a",
   onMusicError,
-  slots = [SLOT],
+  slots = ONE_SLOT,
 }: {
   onPlayingChange: (playing: boolean) => void;
   soundMuted?: boolean;
@@ -52,17 +66,17 @@ function Harness({
     enabled: true,
     slots,
     clips: DEFAULT_CLIPS,
-    grid: [],
+    grid: EMPTY_GRID,
     currentTime: 0,
     muted: videoMuted,
     musicAudioUrl,
     musicStartS: 55.71,
     soundMuted,
     musicTrackActive,
-    onTimeUpdate: jest.fn(),
-    onDuration: jest.fn(),
+    onTimeUpdate: NOOP_TIME_UPDATE,
+    onDuration: NOOP_DURATION,
     onPlayingChange,
-    onSourceError: jest.fn(),
+    onSourceError: NOOP_SOURCE_ERROR,
     onMusicError,
   });
   const { ref: videoARef, ...videoAProps } = preview.videoAProps;
@@ -326,36 +340,63 @@ describe("useVirtualPreview transport", () => {
     expect(audioPlays()).toBeGreaterThan(playsBefore);
   });
 
-  it("holds the music while the active deck buffers and resumes with it", () => {
-    render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
-    fireEvent.click(screen.getByRole("button", { name: "play" }));
+  it("ignores the transient boundary `waiting` blip (no music hold)", () => {
+    jest.useFakeTimers();
+    try {
+      render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+      fireEvent.click(screen.getByRole("button", { name: "play" }));
 
-    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
-    const pausesBefore = audioPauses();
-    fireEvent.waiting(deckA);
-    expect(audioPauses()).toBeGreaterThan(pausesBefore);
+      const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+      const pausesBefore = audioPauses();
+      const playsBefore = audioPlays();
+      fireEvent.waiting(deckA);
+      fireEvent.playing(deckA); // deck recovers before the debounce fires
+      jest.advanceTimersByTime(1000);
 
-    const playsBefore = audioPlays();
-    fireEvent.playing(deckA);
-    expect(audioPlays()).toBeGreaterThan(playsBefore);
+      expect(audioPauses()).toBe(pausesBefore);
+      // The running music must not be re-touched on recovery either.
+      expect(audioPlays()).toBe(playsBefore);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("holds the music after a sustained stall and resumes with the deck", () => {
+    jest.useFakeTimers();
+    try {
+      render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+      fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+      const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+      const pausesBefore = audioPauses();
+      fireEvent.waiting(deckA);
+      jest.advanceTimersByTime(1000); // stall persists past the debounce
+      expect(audioPauses()).toBeGreaterThan(pausesBefore);
+
+      const playsBefore = audioPlays();
+      fireEvent.playing(deckA);
+      expect(audioPlays()).toBeGreaterThan(playsBefore);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("keeps the music playing when the timeline changes mid-play", () => {
     const { rerender } = render(
-      <Harness onPlayingChange={jest.fn()} musicTrackActive slots={[SLOT]} />,
+      <Harness onPlayingChange={jest.fn()} musicTrackActive slots={ONE_SLOT} />,
     );
     fireEvent.click(screen.getByRole("button", { name: "play" }));
 
     const pausesBefore = audioPauses();
     const playsBefore = audioPlays();
-    rerender(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={[SLOT, SLOT_2]} />);
+    rerender(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={TWO_SLOTS} />);
 
     expect(audioPauses()).toBe(pausesBefore);
     expect(audioPlays()).toBeGreaterThan(playsBefore);
   });
 
   it("plays the incoming deck exactly once on a boundary swap (no frame-0 restart)", () => {
-    render(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={[SLOT, SLOT_2]} />);
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={TWO_SLOTS} />);
     fireEvent.click(screen.getByRole("button", { name: "play" }));
 
     const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
