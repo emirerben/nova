@@ -68,6 +68,7 @@ export interface VirtualPreviewAudioProps {
   muted: boolean;
   preload: "auto";
   "data-virtual-preview-music": true;
+  onLoadedMetadata: () => void;
   onError: () => void;
 }
 
@@ -144,7 +145,10 @@ export function useVirtualPreview({
   const musicAudioUrlRef = useRef(musicAudioUrl ?? null);
   const musicStartSRef = useRef(musicStartS);
   const soundMutedRef = useRef(soundMuted);
-  const deckSlotRef = useRef<Record<Deck, number | null>>({ a: null, b: null });
+  // Decks bind to slot KEYS, not array indices: splits/inserts shift every
+  // later slot's index, so an index-bound deck would resolve to the wrong
+  // entry between an edit and the timeline-change effect re-mapping it.
+  const deckSlotRef = useRef<Record<Deck, string | null>>({ a: null, b: null });
   const pendingSeekRef = useRef<Record<Deck, PendingSeek | null>>({ a: null, b: null });
   const playingRef = useRef(false);
 
@@ -192,9 +196,9 @@ export function useVirtualPreview({
       const video = refForDeck(deck).current;
       if (!video || !entry.sourceUrl) return;
 
-      const needsSource = deckSlotRef.current[deck] !== entry.slotIndex || video.src !== entry.sourceUrl;
+      const needsSource = deckSlotRef.current[deck] !== entry.slotKey || video.src !== entry.sourceUrl;
       if (needsSource) {
-        deckSlotRef.current[deck] = entry.slotIndex;
+        deckSlotRef.current[deck] = entry.slotKey;
         pendingSeekRef.current[deck] = timeS == null ? null : { timeS, play };
         video.src = entry.sourceUrl;
         video.preload = "auto";
@@ -295,24 +299,20 @@ export function useVirtualPreview({
       const prevDeck = activeDeckRef.current;
       const nextDeck = otherDeck(prevDeck);
       const prevVideo = refForDeck(prevDeck).current;
-      const nextVideo = refForDeck(nextDeck).current;
 
       prevVideo?.pause();
+      // loadDeck owns the seek+play: covered decks seek and play immediately,
+      // fresh sources defer to the onLoadedMetadata pending-seek. Seeking or
+      // playing the element here as well made a fresh source play from frame
+      // 0 and then snap to the in-point (visible "restart"/repeat).
       loadDeck(nextDeck, next, next.inS, true);
       activeDeckRef.current = nextDeck;
       setActiveDeck(nextDeck);
       preloadNext(prevDeck, entryIndex + 1);
       syncMusicToVirtualTime(next.startS, true);
       onTimeUpdate(next.startS);
-
-      if (nextVideo) {
-        safeSetCurrentTime(nextVideo, next.inS);
-        void nextVideo.play().catch(() => {
-          pauseAll();
-        });
-      }
     },
-    [loadDeck, onTimeUpdate, pause, pauseAll, preloadNext, refForDeck, syncMusicToVirtualTime],
+    [loadDeck, onTimeUpdate, pause, preloadNext, refForDeck, syncMusicToVirtualTime],
   );
 
   const finishEntry = useCallback(
@@ -351,12 +351,12 @@ export function useVirtualPreview({
   const handleTimeUpdate = useCallback(
     (deck: Deck) => {
       if (!enabledRef.current || deck !== activeDeckRef.current) return;
-      const slotIndex = deckSlotRef.current[deck];
+      const slotKey = deckSlotRef.current[deck];
       const video = refForDeck(deck).current;
-      if (slotIndex == null || !video) return;
+      if (slotKey == null || !video) return;
 
       const entryIndex = timelineRef.current.entries.findIndex(
-        (entry) => entry.slotIndex === slotIndex,
+        (entry) => entry.slotKey === slotKey,
       );
       const entry = timelineRef.current.entries[entryIndex];
       if (!entry) return;
@@ -385,10 +385,10 @@ export function useVirtualPreview({
   const handleEnded = useCallback(
     (deck: Deck) => {
       if (!enabledRef.current || deck !== activeDeckRef.current) return;
-      const slotIndex = deckSlotRef.current[deck];
-      if (slotIndex == null) return;
+      const slotKey = deckSlotRef.current[deck];
+      if (slotKey == null) return;
       const entryIndex = timelineRef.current.entries.findIndex(
-        (entry) => entry.slotIndex === slotIndex,
+        (entry) => entry.slotKey === slotKey,
       );
       finishEntry(entryIndex);
     },
@@ -409,7 +409,10 @@ export function useVirtualPreview({
       onSourceError();
       return;
     }
-    showMapping(currentTimeRef.current, false);
+    // Preserve transport state across edits: re-mapping with play=false while
+    // playing paused the music but left the video rolling until the next
+    // boundary (music dropout on every mid-play edit).
+    showMapping(currentTimeRef.current, playingRef.current);
   }, [enabled, onSourceError, pause, showMapping, timeline]);
 
   // When a fresh music URL arrives (e.g. re-signed after an expired-signature
@@ -427,6 +430,12 @@ export function useVirtualPreview({
         muted: soundMuted,
         preload: "auto",
         "data-virtual-preview-music": true,
+        // Seeks issued before metadata exists are swallowed (safeSetCurrentTime),
+        // so a mid-play src swap (song picker) started the new track at 0:00.
+        // Mirror the video decks' pending-seek: re-map once metadata is ready.
+        onLoadedMetadata: () => {
+          syncMusicToVirtualTime(currentTimeRef.current, playingRef.current);
+        },
         onError: () => {
           musicAudioRef.current?.pause();
           onMusicError?.();
@@ -446,9 +455,25 @@ export function useVirtualPreview({
       onCanPlay: () => setBuffering(false),
       onPlaying: () => {
         setBuffering(false);
-        if (deck === activeDeckRef.current) onPlayingChange(true);
+        if (deck === activeDeckRef.current) {
+          onPlayingChange(true);
+          // Re-attach the music after a stall (see onWaiting): re-map to the
+          // frozen virtual time and resume together with the video.
+          if (playingRef.current) {
+            syncMusicToVirtualTime(currentTimeRef.current, true);
+          }
+        }
       },
-      onWaiting: () => setBuffering(true),
+      onWaiting: () => {
+        setBuffering(true);
+        // The active deck stalled: virtual time freezes while the music runs
+        // ahead, and the >0.25s drift resync then seeks the music BACKWARD on
+        // every timeupdate (audible skip-back stutter). Hold the music until
+        // the video actually advances again (onPlaying resumes it in sync).
+        if (deck === activeDeckRef.current && playingRef.current) {
+          getVirtualMusicAudio(musicAudioRef)[0]?.pause();
+        }
+      },
       onSeeking: () => setBuffering(true),
       onSeeked: () => setBuffering(false),
       onTimeUpdate: () => handleTimeUpdate(deck),

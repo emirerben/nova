@@ -816,10 +816,19 @@ export default function EditorShell({
     ? musicTracks.find((track) => track.id === effectiveMusicTrackId) ?? null
     : null;
   const effectiveMusicTitle = virtualMusicTrack?.title ?? variant?.track_title ?? "Music";
+  // Fallback for tracks the public gallery doesn't list (the matcher considers
+  // unpublished tracks): the status response carries a fresh-signed preview URL
+  // for the variant's OWN matched track. Only valid while the effective track
+  // is still the variant's — a picker selection must never reuse it.
+  const variantMusicFallbackActive =
+    !!variant?.music_track_id && effectiveMusicTrackId === variant.music_track_id;
   const virtualMusicAudioUrl = virtualMusicUnavailable
     ? null
-    : virtualMusicTrack?.preview_audio_url ?? null;
-  const virtualMusicStartS = virtualMusicTrack?.preview_start_s ?? 0;
+    : virtualMusicTrack?.preview_audio_url ??
+      (variantMusicFallbackActive ? variant?.music_preview_url ?? null : null);
+  const virtualMusicStartS =
+    virtualMusicTrack?.preview_start_s ??
+    (variantMusicFallbackActive ? variant?.music_preview_start_s ?? 0 : 0);
 
   // Picking a different track supplies a brand-new URL — re-arm the retry
   // budget and clear the gave-up flag.

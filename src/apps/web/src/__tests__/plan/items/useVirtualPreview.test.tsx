@@ -15,6 +15,22 @@ const SLOT: DraftSlot = {
   momentDescription: null,
 };
 
+const SLOT_2: DraftSlot = {
+  key: "slot-2",
+  slotId: "slot-2",
+  clipIndex: 1,
+  inS: 0.5,
+  durationBeats: null,
+  durationS: 2,
+  removed: false,
+  momentDescription: null,
+};
+
+const DEFAULT_CLIPS = [
+  { clip_index: 0, signed_url: "https://cdn.example.test/clip.mp4" },
+  { clip_index: 1, signed_url: "https://cdn.example.test/clip2.mp4" },
+];
+
 function Harness({
   onPlayingChange,
   soundMuted = false,
@@ -22,6 +38,7 @@ function Harness({
   musicTrackActive = false,
   musicAudioUrl = "https://cdn.example.test/music.m4a",
   onMusicError,
+  slots = [SLOT],
 }: {
   onPlayingChange: (playing: boolean) => void;
   soundMuted?: boolean;
@@ -29,11 +46,12 @@ function Harness({
   musicTrackActive?: boolean;
   musicAudioUrl?: string | null;
   onMusicError?: () => void;
+  slots?: DraftSlot[];
 }) {
   const preview = useVirtualPreview({
     enabled: true,
-    slots: [SLOT],
-    clips: [{ clip_index: 0, signed_url: "https://cdn.example.test/clip.mp4" }],
+    slots,
+    clips: DEFAULT_CLIPS,
     grid: [],
     currentTime: 0,
     muted: videoMuted,
@@ -263,5 +281,93 @@ describe("useVirtualPreview music URL refresh", () => {
     });
     const music = screen.getByTestId("music") as HTMLAudioElement;
     expect(Math.abs(music.currentTime - 55.71)).toBeLessThan(0.1);
+  });
+});
+
+describe("useVirtualPreview transport", () => {
+  let playSpy: ReturnType<typeof jest.spyOn>;
+  let pauseSpy: ReturnType<typeof jest.spyOn>;
+
+  const audioPlays = () =>
+    playSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "AUDIO",
+    ).length;
+  const audioPauses = () =>
+    pauseSpy.mock.instances.filter(
+      (el: unknown) => (el as HTMLMediaElement).tagName === "AUDIO",
+    ).length;
+  const playsOn = (el: HTMLMediaElement) =>
+    playSpy.mock.instances.filter((inst: unknown) => inst === el).length;
+
+  beforeEach(() => {
+    jest.spyOn(window.HTMLMediaElement.prototype, "load").mockImplementation(() => {});
+    playSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "play")
+      .mockImplementation(() => Promise.resolve());
+    pauseSpy = jest
+      .spyOn(window.HTMLMediaElement.prototype, "pause")
+      .mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it("seeks the music to the mapped offset once its metadata loads", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const music = screen.getByTestId("music") as HTMLAudioElement;
+    music.currentTime = 0;
+    const playsBefore = audioPlays();
+    fireEvent.loadedMetadata(music);
+
+    expect(Math.abs(music.currentTime - 55.71)).toBeLessThan(0.1);
+    expect(audioPlays()).toBeGreaterThan(playsBefore);
+  });
+
+  it("holds the music while the active deck buffers and resumes with it", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const pausesBefore = audioPauses();
+    fireEvent.waiting(deckA);
+    expect(audioPauses()).toBeGreaterThan(pausesBefore);
+
+    const playsBefore = audioPlays();
+    fireEvent.playing(deckA);
+    expect(audioPlays()).toBeGreaterThan(playsBefore);
+  });
+
+  it("keeps the music playing when the timeline changes mid-play", () => {
+    const { rerender } = render(
+      <Harness onPlayingChange={jest.fn()} musicTrackActive slots={[SLOT]} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const pausesBefore = audioPauses();
+    const playsBefore = audioPlays();
+    rerender(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={[SLOT, SLOT_2]} />);
+
+    expect(audioPauses()).toBe(pausesBefore);
+    expect(audioPlays()).toBeGreaterThan(playsBefore);
+  });
+
+  it("plays the incoming deck exactly once on a boundary swap (no frame-0 restart)", () => {
+    render(<Harness onPlayingChange={jest.fn()} musicTrackActive slots={[SLOT, SLOT_2]} />);
+    fireEvent.click(screen.getByRole("button", { name: "play" }));
+
+    const deckA = screen.getByTestId("deck-a") as HTMLVideoElement;
+    const deckB = screen.getByTestId("deck-b") as HTMLVideoElement;
+
+    // The preload bound deck B to SLOT_2's source without playing it.
+    expect(playsOn(deckB)).toBe(0);
+
+    deckA.currentTime = 3.4; // inS 1.4 + durationS 2 => native end of entry 0
+    fireEvent.ended(deckA);
+
+    expect(playsOn(deckB)).toBe(1);
+    expect(Math.abs(deckB.currentTime - 0.5)).toBeLessThan(0.05);
   });
 });

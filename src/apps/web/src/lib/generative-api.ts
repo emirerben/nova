@@ -28,6 +28,14 @@ export interface GenerativeVariant {
   text_mode: GenerativeTextMode;
   music_track_id: string | null;
   track_title: string | null;
+  /**
+   * Fresh-signed preview URL (+ best-section offset) for the matched track,
+   * minted on every status read. Present even for unpublished tracks (which
+   * the public /music-tracks gallery filters out) — the editor's virtual
+   * preview falls back to this when the gallery has no entry for the track.
+   */
+  music_preview_url?: string | null;
+  music_preview_start_s?: number | null;
   style_set_id: string | null;
   output_url: string | null;
   video_path: string | null;
