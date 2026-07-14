@@ -2,11 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.30.3] — 2026-07-14
+## [0.7.30.4] — 2026-07-14
 
 ### Changed
 - **Plan item result pages now hand off to the native editor instead of acting like a mini editor.** Content-plan renders now produce one primary output, auto-open the full-screen editor once when that output is editable, and keep the item page focused on generation, playback, download, and feedback.
 - **Uploaded item clips now render as a compact filmstrip.** The page removes post-render Landscape clips, Other takes, the inline timeline controls, the default "Not sure which clip fits?" prompt, and hides "Plan this for me" once footage is already uploaded.
+
+## [0.7.30.3] — 2026-07-14
+
+### Fixed
+- **Song variants matched to an unpublished track are no longer silent in the editor's clip-edit preview.** The virtual preview sourced its music URL exclusively from the public `/music-tracks` gallery, which filters to published tracks — but the generative matcher deliberately considers the whole library, so an unpublished match had no playable URL (v0.7.30.2 then correctly muted the clip decks, leaving the preview fully silent). The job status response now attaches a fresh-signed `music_preview_url` + `music_preview_start_s` to each variant for its OWN matched track (owner-gated, batched lookup, no publish filter — mirrors swap-song semantics; the public gallery stays published-only), and the editor falls back to it whenever the gallery has no entry. A picker selection never reuses the variant fallback (it belongs to the matched track only).
+- **Virtual-preview transport: music stutter and clip "restart / shows twice" artifacts.** Four fixes in `useVirtualPreview`: (1) when the active deck stalls (buffering), the music is held and resumed in sync instead of letting the >0.25s drift resync seek it backwards on every timeupdate (the "weird stops, lags at certain points"); (2) the music `<audio>` now has an `onLoadedMetadata` re-map — mirroring the video decks' pending-seek — so picking another song mid-play resumes at the mapped section offset instead of starting the new track at 0:00; (3) editing the timeline mid-play preserves the transport state (previously the re-map forced `play=false`, pausing the music while the video kept rolling until the next boundary); (4) `swapToNext` no longer force-seeks/plays the incoming deck a second time — a fresh-source deck used to play from frame 0 and then snap to its in-point, which read as clips restarting or repeating; the seek/play is owned by `loadDeck`'s pending-seek. Decks now bind to slot KEYS rather than array indices, so splits/inserts can't transiently bind a playing deck to the wrong entry. Pinned by 4 new transport Jest tests + a status-route pytest (unpublished-track preview URL).
 
 ## [0.7.30.2] — 2026-07-13
 

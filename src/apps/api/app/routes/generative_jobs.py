@@ -199,6 +199,14 @@ class GenerativeVariant(BaseModel):
     video_path: str | None = None
     music_track_id: str | None = None
     track_title: str | None = None
+    # Fresh-signed preview URL (+ best-section offset) for the variant's matched
+    # track, minted on every status read. The editor's virtual preview cannot
+    # rely on the public /music-tracks gallery for this: the generative matcher
+    # deliberately considers unpublished tracks, which the gallery filters out.
+    # Owner-gated response, so only tracks the user's own variants reference
+    # are signed — the unpublished library is not enumerable through this.
+    music_preview_url: str | None = None
+    music_preview_start_s: float | None = None
     text_mode: str | None = None
     style_set_id: str | None = None
     rank: int | None = None
@@ -3392,6 +3400,36 @@ async def list_generative_style_sets() -> StyleSetListResponse:
     )
 
 
+async def _attach_music_previews(variants: list[dict], db: AsyncSession) -> None:
+    """Attach a fresh-signed music preview URL + start offset to each variant.
+
+    Batched lookup by the variants' own music_track_ids, deliberately WITHOUT a
+    published_at filter — the matcher considers unpublished tracks (mirrors
+    dispatch_swap_song semantics). Best-effort: signing/lookup failures leave
+    the fields None, never fail the status read.
+    """
+    from app.routes.music import _preview_audio_url  # noqa: PLC0415
+
+    track_ids = {v.get("music_track_id") for v in variants if v.get("music_track_id")}
+    if not track_ids:
+        return
+    try:
+        result = await db.execute(select(MusicTrack).where(MusicTrack.id.in_(track_ids)))
+        tracks = {str(t.id): t for t in result.scalars().all()}
+    except Exception:
+        return
+    for variant in variants:
+        track = tracks.get(variant.get("music_track_id") or "")
+        if track is None:
+            continue
+        cfg = track.track_config or {}
+        variant["music_preview_url"] = _preview_audio_url(track.audio_gcs_path)
+        try:
+            variant["music_preview_start_s"] = round(float(cfg.get("best_start_s", 0.0)), 2)
+        except (TypeError, ValueError):
+            variant["music_preview_start_s"] = 0.0
+
+
 @router.get("/{job_id}/status", response_model=GenerativeJobStatusResponse)
 async def get_generative_job_status(
     job_id: str,
@@ -3416,6 +3454,7 @@ async def get_generative_job_status(
         baselines = scale_render_variants(baselines, pending_count)
 
     variants = _variants_for_response(job)
+    await _attach_music_previews(variants, db)
 
     # Null-safe, never-raising read of the style-downgrade stash: a corrupt or
     # non-dict value from a hand-edited row degrades to null rather than a 500.
