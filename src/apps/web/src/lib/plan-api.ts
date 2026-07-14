@@ -918,6 +918,14 @@ export interface PlanItemVariant {
   text_mode: "lyrics" | "agent_text" | "none";
   music_track_id?: string | null;
   track_title?: string | null;
+  /**
+   * Fresh-signed preview URL (+ best-section offset) for the matched track,
+   * minted on every status read — present even for unpublished tracks, which
+   * the public /music-tracks gallery filters out. The editor's virtual
+   * preview falls back to these when the gallery has no entry for the track.
+   */
+  music_preview_url?: string | null;
+  music_preview_start_s?: number | null;
   style_set_id: string | null;
   // Agent-decided (or user-pinned) intro size — drives the ±size stepper.
   intro_text_size_px: number | null;

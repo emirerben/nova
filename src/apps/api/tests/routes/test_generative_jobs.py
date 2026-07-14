@@ -1543,3 +1543,74 @@ async def test_status_archetype_fallback_null_when_absent_or_malformed(monkeypat
 
         resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=object())
         assert resp.archetype_fallback is None
+
+
+async def test_status_attaches_music_preview_for_unpublished_track(monkeypatch):
+    """The editor's virtual preview needs a playable URL for the variant's matched
+    track even when the track is UNPUBLISHED (the public /music-tracks gallery
+    filters those out, but the matcher deliberately considers them). /status must
+    mint a fresh-signed music_preview_url + best-section offset per variant."""
+    import types
+    import uuid
+    from datetime import datetime
+
+    import app.routes.generative_jobs as gj
+    import app.routes.music as music_routes
+    import app.services.phase_baselines as pb
+
+    track_id = str(uuid.uuid4())
+    track = types.SimpleNamespace(
+        id=track_id,
+        audio_gcs_path="music/unpublished.m4a",
+        track_config={"best_start_s": 12.345},
+        published_at=None,  # unpublished — must still be previewable here
+    )
+    job = types.SimpleNamespace(
+        id=uuid.uuid4(),
+        status="variants_ready",
+        mode="content_plan",
+        assembly_plan={
+            "variants": [
+                {"variant_id": "song_text", "music_track_id": track_id},
+                {"variant_id": "original_text", "music_track_id": None},
+            ]
+        },
+        error_detail=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+        all_candidates={},
+        current_phase=None,
+        phase_log=None,
+        started_at=None,
+        finished_at=None,
+    )
+
+    class _Result:
+        def scalars(self):
+            return self
+
+        def all(self):
+            return [track]
+
+    class _DB:
+        async def execute(self, stmt):
+            return _Result()
+
+    async def _load(job_id, db, user, allowed_modes=None):
+        return job
+
+    monkeypatch.setattr(gj, "_load_generative_job", _load)
+    monkeypatch.setattr(pb, "get_baselines", lambda mode: None)
+    monkeypatch.setattr(
+        music_routes, "_preview_audio_url", lambda path: f"https://signed.example/{path}"
+    )
+
+    resp = await gj.get_generative_job_status(str(job.id), current_user=object(), db=_DB())
+
+    # GenerativeJobStatusResponse.variants is list[dict] — raw pass-through.
+    song = next(v for v in resp.variants if v["variant_id"] == "song_text")
+    assert song["music_preview_url"] == "https://signed.example/music/unpublished.m4a"
+    assert song["music_preview_start_s"] == 12.35
+    original = next(v for v in resp.variants if v["variant_id"] == "original_text")
+    assert original.get("music_preview_url") is None
+    assert original.get("music_preview_start_s") is None
