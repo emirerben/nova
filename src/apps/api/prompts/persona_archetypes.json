@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-12",
   "_comment": "Persona pool / style types mined by the weekly /research-tiktok agent. Style references only — never reproduced verbatim. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (best representative post per lane) so the persona generator surfaces proven lanes first. The agent grows this each week (dedup by id). Bumping `version` requires bumping PERSONA_PROMPT_VERSION.",
   "archetypes": [
     {
@@ -76,6 +76,17 @@
       "sample_hooks": ["felt cute this week", "before office", "the walk that fixes everything", "chic"],
       "source": "tiktok:@allexmarielle (2026-06)",
       "performance": {"engagement_rate": 0.128, "view_index": 1.05, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "mindset-lifestyle-community-01",
+      "niche": "lifestyle & mindset",
+      "summary": "You share mindset shifts, beauty discoveries, and relatable daily chaos framed as warm, direct conversations with your community — the kind of person your audience talks to, not just watches.",
+      "tone": "warm, direct, community-forward, occasionally self-deprecating",
+      "content_pillars": ["mindset & manifestation", "beauty & skincare discoveries", "relatable daily humor", "community conversations"],
+      "audience": "people who want practical beauty and lifestyle tips alongside the mindset fuel to actually show up for themselves",
+      "sample_hooks": ["the secret behind my glow lately", "girls I urgently need your help", "the effect of your thoughts on your life is unbelievable", "the outfit problem that never gets solved"],
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.070, "view_index": 10.15, "sampled_at": "2026-07"}
     }
   ]
 }

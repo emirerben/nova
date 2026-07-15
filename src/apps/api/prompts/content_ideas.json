@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-12",
   "_comment": "Idea bank mined by the weekly /research-tiktok agent from high-performing posts. Templated for adaptation, niche-tagged. Seeded 2026-05-29 from 4 public accounts; 2026-05-30 added optional `performance` (view_index = views / account median, engagement_rate) so the runtime ranking prefers ideas that actually performed. Bumping `version` requires bumping CONTENT_PLAN_PROMPT_VERSION.",
   "ideas": [
     {
@@ -212,6 +212,36 @@
       "filming_context": "15-30s of an aspirational scene — a city café, a mountain trail, a dream apartment — let it breathe; no narration needed",
       "source": "tiktok:@izzsiomoi (2026-06)",
       "performance": {"engagement_rate": 0.032, "view_index": 1.57, "sampled_at": "2026-06"}
+    },
+    {
+      "id": "identity-subversion-ootd-01",
+      "niche": "professional lifestyle & city aesthetics",
+      "pillar": "work outfits (#9to5)",
+      "idea": "what you wore to [context] as someone who doesn't [expected identity or label] — the relatable twist that reframes the outfit",
+      "hook_pattern": "what I wore to [context] as someone who doesn't [surprising qualifier]",
+      "filming_context": "7-10s mirror or tripod clip; single outfit, natural light; the hook lives in the caption, not voice-over — brevity is the format",
+      "source": "tiktok:@allexmarielle (2026-07)",
+      "performance": {"engagement_rate": 0.144, "view_index": 2.31, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "defeat-relatable-humor-01",
+      "niche": "solo travel & outdoors",
+      "pillar": "solo travel",
+      "idea": "admit a small but relatable defeat — 'gave up and just [obvious thing]' — over a travel or lifestyle moment that still looks beautiful",
+      "hook_pattern": "gave up and [admitted the easy path]",
+      "filming_context": "5-10s single clip of the moment you gave up; let the visual be beautiful, let the caption carry the punchline — contrast between the beautiful setting and the defeat is the hook",
+      "source": "tiktok:@izzsiomoi (2026-07)",
+      "performance": {"engagement_rate": 0.010, "view_index": 23.3, "sampled_at": "2026-07"}
+    },
+    {
+      "id": "mindset-thought-effect-01",
+      "niche": "lifestyle & mindset",
+      "pillar": "mindset & manifestation",
+      "idea": "a short clip where you share one mindset shift that quietly changed how you move through the day — spoken directly to camera, no filter",
+      "hook_pattern": "the effect of your thoughts on your life is [outcome]",
+      "filming_context": "60-90s direct-to-camera in good natural light; one idea, one story, no cuts; personal and conversational — the rawness is the hook",
+      "source": "tiktok:@nermozdemir (2026-07)",
+      "performance": {"engagement_rate": 0.070, "view_index": 4.54, "sampled_at": "2026-07"}
     }
   ]
 }

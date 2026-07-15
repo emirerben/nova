@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-12",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,24 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "reply-as-answer-corpus-10",
+      "factor": "When your clip IS the answer to an implied question, strip the caption to match the question's framing exactly — the video delivers the payoff, the caption sets the expectation",
+      "why": "The viewer's brain completes the loop: caption sets the question, video resolves it. The simplicity triggers reshares because it functions perfectly as a reply or stitch hook for anyone who has asked the same question",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "A 16s travel clip captioned as a minimal answer to an unasked question — no hashtags, no setup — indexed ~323x the account median, the single highest-performing organic post in our corpus",
+      "source": "tiktok market research 2026-07 (solo-travel account)"
+    },
+    {
+      "id": "defeat-relatable-corpus-11",
+      "factor": "Admitting a small, relatable defeat ('gave up and just did the obvious thing') over a beautiful or aspirational moment creates instant viewer identification and drives shares",
+      "why": "Viewers who've had the same small defeat recognize themselves immediately and send the clip; the beauty or aspiration of the backdrop provides the tension that makes the humor land",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "A 5s clip framing a product as a small personal defeat — 'gave up and used [the obvious solution]' — indexed ~23x the account median at 1% engagement (save-and-share driven, not comment-driven)",
+      "source": "tiktok market research 2026-07 (solo-travel account)"
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-12",
   "examples": [
     {
       "id": "pov-surprise-karaoke-01",
@@ -322,6 +322,19 @@
       "highlight_color": "#FFE08A",
       "niche": "professional lifestyle & city aesthetics",
       "source": "tiktok market research 2026-06"
+    },
+    {
+      "id": "identity-subversion-bottom-static-01",
+      "content_profile": "outfit or fashion moment from someone with an unexpected relationship to style — the creator qualifies themselves against the expected type, making the look more relatable",
+      "effect": "static",
+      "text": "as someone who doesn't work in fashion",
+      "highlight_word": "doesn't",
+      "position": "bottom",
+      "size_class": "medium",
+      "text_color": "#FFFFFF",
+      "highlight_color": "#FFD24A",
+      "niche": "professional lifestyle & city aesthetics",
+      "source": "tiktok market research 2026-07"
     }
   ]
 }
