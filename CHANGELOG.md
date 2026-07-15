@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.6] — 2026-07-15
+
+### Fixed
+- **Virtual-preview music is now the master clock — stutter-immune to video stalls (third report of music stutter after clip edits).** The v0.7.30.5 debounced stall-hold still gapped the music whenever a deck stall outlasted 250ms (routine on real networks: every sub-second boundary reloads a deck source), and the music element itself rebuffered mid-preview (measured: 5 audio `waiting` stalls in 18s of streaming a signed GCS m4a). Redesign: (1) **audio-master sync** — a running music element is never paused, rewound, or seeked for the video's sake; when the video falls behind the music by >0.3s it jumps FORWARD to the mapped position (possibly into a later entry), and the music is only hard-seeked on authoritative jumps (play/scrub/edit/src change) or forward-caught when it stalled behind on its own; (2) **track audio blob-cache** — the editor fetches the track once to an object URL (CORS verified against the GCS bucket), so the music can never starve mid-preview; best-effort with streaming fallback, dropped on error before the signed-URL retry; (3) **AbortError-tolerant play()** — a src swap under a pending `play()` rejects with AbortError, and the old `catch → pauseAll` killed the whole transport the moment the blob swap landed (or a deck source reloaded under a pending play). Measured end-to-end after the fix (real browser, delete a clip, full playthrough): music pause events = 1 (end of cut), zero mid-play corrective seeks, 16 deck reloads + 3 deck stalls with the music untouched throughout. Suite now 18 Jest tests (audio-master matrix: no hold on stalls, video forward-jump, music forward-catch, no boundary rewind, AbortError tolerance).
+
+
+
 ## [0.7.30.5] — 2026-07-14
 
 ### Fixed
