@@ -257,6 +257,12 @@ def classify_slot_kind(filename: str, content_type: str) -> str:
             detail=f"unsupported content_type {content_type!r}",
         )
 
+    # Audio-only MP4 exports are common from screen/audio tools. Browsers and
+    # OSes often keep the .mp4 container name even when the MIME is correctly
+    # audio/mp4; treat that as a voiceover, not as a video/extension mismatch.
+    if ct_kind == "audio" and ext == ".mp4":
+        return "audio"
+
     if ext and (ext_kind is None or ext_kind != ct_kind):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

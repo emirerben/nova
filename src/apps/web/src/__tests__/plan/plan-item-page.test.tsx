@@ -57,6 +57,7 @@ jest.mock("@/lib/plan-api", () => ({
   generatePlanItem: jest.fn(),
   expandIdea: jest.fn(),
   updatePlanItem: jest.fn(),
+  setItemVoiceover: jest.fn(),
   swapPlanItemSong: jest.fn(),
   retextPlanItem: jest.fn(),
   changePlanItemStyle: jest.fn(),
@@ -70,8 +71,10 @@ jest.mock("@/lib/plan-api", () => ({
   },
 }));
 
+const mockUploadVoiceover = jest.fn();
 jest.mock("@/lib/generative-api", () => ({
   getGenerativeStyleSets: jest.fn().mockResolvedValue([]),
+  uploadVoiceover: (...args: unknown[]) => mockUploadVoiceover(...args),
   // The focused-variant timeline session lazy-GETs on mount; a never-resolving
   // promise keeps the "Edit clips" entry hidden without act() noise.
   getTimeline: jest.fn(() => new Promise(() => {})),
@@ -120,11 +123,24 @@ jest.mock("@/app/plan/items/[id]/components/ShotSlotUploader", () => ({
   ClipNoteControl: () => <div data-testid="clip-note-control" />,
 }));
 
-import { expandIdea, generatePlanItem, updatePlanItem, type PlanItemJobStatus } from "@/lib/plan-api";
+import {
+  attachClips,
+  expandIdea,
+  generatePlanItem,
+  requestUploadUrls,
+  setItemVoiceover,
+  updatePlanItem,
+  uploadToGcs,
+  type PlanItemJobStatus,
+} from "@/lib/plan-api";
 const PlanItemPage = require("@/app/plan/items/[id]/page").default;
+const mockAttachClips = attachClips as jest.MockedFunction<typeof attachClips>;
 const mockExpandIdea = expandIdea as jest.MockedFunction<typeof expandIdea>;
 const mockGeneratePlanItem = generatePlanItem as jest.MockedFunction<typeof generatePlanItem>;
+const mockRequestUploadUrls = requestUploadUrls as jest.MockedFunction<typeof requestUploadUrls>;
+const mockSetItemVoiceover = setItemVoiceover as jest.MockedFunction<typeof setItemVoiceover>;
 const mockUpdatePlanItem = updatePlanItem as jest.MockedFunction<typeof updatePlanItem>;
+const mockUploadToGcs = uploadToGcs as jest.MockedFunction<typeof uploadToGcs>;
 
 // ===== Factory helpers =====
 
@@ -844,6 +860,53 @@ describe("PlanItemPage — Plan this for me proposal flow", () => {
     expect(screen.getByText("Plan summary")).toBeInTheDocument();
     expect(screen.getByText("Your clips")).toBeInTheDocument();
     expect(screen.queryByText(/shot left/i)).toBeNull();
+  });
+
+  it("routes narrated-ready audio-only mp4 uploads to the voiceover lane", async () => {
+    const item = makeItem({
+      edit_format: "narrated_ready",
+      clip_assignments: [],
+      voiceover_gcs_path: null,
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+    mockUploadVoiceover.mockReset();
+    mockUploadVoiceover.mockResolvedValue({
+      gcs_path: "voiceover-uploads/audio-only/voice.m4a",
+      kind: "audio",
+    });
+    mockSetItemVoiceover.mockResolvedValue({
+      ...item,
+      voiceover_gcs_path: "voiceover-uploads/audio-only/voice.m4a",
+    });
+    mockRequestUploadUrls.mockReset();
+    mockAttachClips.mockReset();
+    mockUploadToGcs.mockReset();
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const input = screen.getByLabelText("Upload video clips for this idea") as HTMLInputElement;
+    const file = new File(["aac"], "audio_only.mp4", { type: "audio/mp4" });
+
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+
+    await waitFor(() => {
+      expect(mockUploadVoiceover).toHaveBeenCalledWith(file);
+    });
+    expect(mockSetItemVoiceover).toHaveBeenCalledWith(
+      "test-item-id",
+      "voiceover-uploads/audio-only/voice.m4a",
+    );
+    expect(mockRequestUploadUrls).not.toHaveBeenCalled();
+    expect(mockUploadToGcs).not.toHaveBeenCalled();
+    expect(mockAttachClips).not.toHaveBeenCalled();
   });
 
   it("keeps talking-to-camera items on single-clip upload even when a plan exists", async () => {

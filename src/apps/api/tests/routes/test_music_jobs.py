@@ -219,6 +219,7 @@ def test_classify_slot_kind_accepts_audio() -> None:
 
     assert classify_slot_kind("voice.mp3", "audio/mpeg") == "audio"
     assert classify_slot_kind("voice.m4a", "audio/mp4") == "audio"
+    assert classify_slot_kind("audio_only.mp4", "audio/mp4") == "audio"
     assert classify_slot_kind("voice.wav", "audio/wav") == "audio"
     # MediaRecorder blob: webm audio with the synthetic name we upload.
     assert classify_slot_kind("voiceover.webm", "audio/webm") == "audio"

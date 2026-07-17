@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.31.1] — 2026-07-17
+
+### Fixed
+- **Narrated-ready audio-only MP4 uploads now become voiceovers instead of clips.** Uploading an exported audio file such as `audio_only.mp4` routes it through the voiceover lane, accepts the backend's audio classification, and leaves the uploaded video clip pool untouched so generated narrated edits can use the intended soundtrack.
+
 ## [0.7.31.0] — 2026-07-17
 
 ### Added

@@ -106,7 +106,7 @@ export function VoiceRecorder({
             Upload audio
             <input
               type="file"
-              accept="audio/*"
+              accept="audio/*,.mp4,.m4a,.mp3,.wav,.webm,.ogg,.aac"
               className="sr-only"
               onChange={(e) => {
                 const file = e.target.files?.[0];
