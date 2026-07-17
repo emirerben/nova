@@ -21,6 +21,7 @@ import {
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
+  type EditorCapabilities,
   type IdeaExpandProposal,
   type PlanItem,
   type PlanItemJobStatus,
@@ -161,27 +162,26 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // and the server's editor_capabilities are unconditionally present; this flag
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
-// Server-derived per-variant capability map (routes/generative_jobs.py
-// `_editor_capabilities`). Not yet in the shared PlanItemVariant type — declared
-// locally here since only the Edit-entry gate reads it.
-type EditorCapabilities = {
-  text_elements: boolean;
-  timeline: boolean;
-  split_clips: boolean;
-  mix: boolean;
-  reason: string | null;
-};
-
-function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
-  const capabilities = (
-    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
-  )?.editor_capabilities;
+// Edit-entry gate: mirrors EditorShell.tsx's own `readOnly` definition (all
+// six capabilities false ⇒ nothing editable). Previously checked only 4 of 6
+// (missing sfx/overlays) via a stale local duplicate of EditorCapabilities —
+// that meant a variant with sfx/overlays already granted (e.g. a lyrics-synced
+// song variant, which the backend intentionally keeps additive-only-editable)
+// could never even open the editor. computeToolDisabledReasons (used inside
+// EditorShell) independently keeps text/styles locked for such variants, so
+// widening this gate cannot expose a path the backend doesn't already guard.
+// Exported (not just component-internal) so the gate itself is unit-testable
+// without mounting the full page — same rationale as _editor/editor-capabilities.ts.
+export function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
+  const capabilities = variant?.editor_capabilities;
   if (
     capabilities &&
     !capabilities.text_elements &&
     !capabilities.timeline &&
     !capabilities.split_clips &&
-    !capabilities.mix
+    !capabilities.mix &&
+    !capabilities.sfx &&
+    !capabilities.overlays
   ) {
     return editorReasonCopy(capabilities.reason);
   }
@@ -2532,17 +2532,7 @@ function FocusedResults({
     !!variant &&
     !!variant.output_url &&
     variant.render_status !== "rendering";
-  const editorCapabilities = (
-    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
-  )?.editor_capabilities;
-  const editorEntryDisabledReason =
-    editorCapabilities &&
-    !editorCapabilities.text_elements &&
-    !editorCapabilities.timeline &&
-    !editorCapabilities.split_clips &&
-    !editorCapabilities.mix
-      ? editorReasonCopy(editorCapabilities.reason)
-      : null;
+  const editorEntryDisabledReason = planItemEditorDisabledReason(variant);
 
   // The editor panel reveals PlanVariantEditor filtered to the active tab.
   // We keep one PlanVariantEditor instance and use the tab to scroll/focus.

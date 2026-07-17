@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  changePlanItemStyle,
   getPlanItem,
   getPlanItemJobStatus,
   deletePoolAsset,
@@ -664,6 +665,15 @@ export default function EditorShell({
   // subtitled variants the shell is editable, but on-video text still lives
   // in the Captions tab — every add-text path must stay blocked.
   const textElementsLocked = !readOnly && capabilities?.text_elements === false;
+  // Lyrics-synced variants can't have per-element text edited (it's beat-
+  // synced to vocal onsets — see lyric_injector.py), but a whole-style-set
+  // swap is safe and already supported server-side: dispatch_change_style
+  // re-derives lyric timing deterministically from the track, only the
+  // visual style changes. computeToolDisabledReasons keeps Styles enabled
+  // for this case; restyleLyrics (below) is the branch that actually routes
+  // the commit through that safe path instead of the blocked bars/
+  // text_elements path restyleAll uses for every other variant type.
+  const isLyrics = variant?.text_mode === "lyrics";
   // Caption archetypes edit captions in the item-page Captions tab, not this
   // shell. Keyed off the archetype (+ base video) via isCaptionArchetype, NOT
   // capabilities.text_elements — that flips to `true` for subtitled once
@@ -1844,6 +1854,39 @@ export default function EditorShell({
     [readOnly, state.bars, history],
   );
 
+  // Lyrics-variant restyle: NOT a local bars patch — per-element text_elements
+  // edits are blocked server-side for lyrics (validate_text_elements_payload
+  // 422s), because the lyric captions aren't user-authored bars, they're
+  // injector-generated overlays timed to vocal onsets. dispatch_change_style
+  // is the safe equivalent: it re-renders the whole variant, re-deriving lyric
+  // timing deterministically from the track while only the visual style
+  // changes. Same client call the outer plan-item page already uses for its
+  // own style picker (page.tsx, "Applying style…"). Always a full re-render
+  // (lyrics variants never get a base_video_path, so there's no fast-reburn
+  // path) — hand off to the item page immediately so its existing
+  // rendering-in-progress UI takes over, same as a normal Save.
+  const restyleLyrics = useCallback(
+    async (styleSet: GenerativeStyleSet) => {
+      if (readOnly || !variant || saveState === "saving") return;
+      setSaveState("saving");
+      setSaveMessage(null);
+      try {
+        await changePlanItemStyle(itemId, variant.variant_id, styleSet.id);
+        setAppliedStyleSetId(styleSet.id);
+        setSaveState("idle");
+        router.push(`/plan/items/${itemId}`);
+      } catch (err) {
+        setSaveState("error");
+        setSaveMessage(err instanceof Error ? err.message : "Couldn't apply that style.");
+      }
+    },
+    [readOnly, variant, saveState, itemId, router],
+  );
+
+  // Single entry point both StylesDrawer instances bind to — branches per
+  // variant type so callers don't need to know about the lyrics special case.
+  const onRestyleAll = isLyrics ? restyleLyrics : restyleAll;
+
   const pickPreset = useCallback(
     (preset: TextPreset) => {
       if (selectedBar) {
@@ -1871,8 +1914,8 @@ export default function EditorShell({
       ? capabilities.split_clips !== false
       : variant?.text_mode === "agent_text";
   const toolDisabledReasons = useMemo<Partial<Record<EditorTool, string>>>(
-    () => computeToolDisabledReasons({ capabilities, readOnly, readOnlyReason }),
-    [capabilities, readOnly, readOnlyReason],
+    () => computeToolDisabledReasons({ capabilities, readOnly, readOnlyReason, isLyrics }),
+    [capabilities, readOnly, readOnlyReason, isLyrics],
   );
 
   const buildCopilotDraftSnapshot = useCallback(() => {
@@ -3047,7 +3090,7 @@ export default function EditorShell({
               smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
 	              appliedStyleSetId={appliedStyleSetId}
-	              onRestyleAll={restyleAll}
+	              onRestyleAll={onRestyleAll}
 	              sfxEffects={sfxGlossaryEffects}
 	              sfxLoading={sfxGlossaryLoading}
 	              onAddSfx={addSfxFromGlossary}
@@ -3094,7 +3137,7 @@ export default function EditorShell({
               smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
 	              appliedStyleSetId={appliedStyleSetId}
-	              onRestyleAll={restyleAll}
+	              onRestyleAll={onRestyleAll}
 	              sfxEffects={sfxGlossaryEffects}
 	              sfxLoading={sfxGlossaryLoading}
 	              onAddSfx={addSfxFromGlossary}
