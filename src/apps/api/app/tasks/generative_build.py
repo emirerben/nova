@@ -74,6 +74,11 @@ _NARRATIVE_FLOOR_WARN_THRESHOLD = 24
 # Deliberately low — silencedetect undercounts quiet/lapel speech; we only want to
 # reject footage that is essentially silent (b-roll, ambience, music-over).
 _MIN_SPINE_COVERAGE = 0.15
+# A self-narration multi-clip talking_head needs enough spine timeline to show
+# the speaker, then place at least one B-roll cutaway. The assembler's fixed
+# cadence uses a 1.5s lead-in and drops windows shorter than 0.5s, so a <=2s
+# spine would render as a single clip even when many clips were uploaded.
+_MIN_TALKING_HEAD_SPINE_WITH_BROLL_S = 2.0
 
 # Voiceover edits: the user's recorded/uploaded voice is the audio bed. `mix` is the
 # voice-prominence slider (1.0 = bed fully ducked, voice only; 0.0 = bed full).
@@ -306,6 +311,11 @@ def _run_generative_job(job_id: str) -> None:
         clip_id_to_gcs = ingest["clip_id_to_gcs"]
         clip_id_to_local = ingest["clip_id_to_local"]
         probe_map = ingest["probe_map"]
+        clip_durations_s = {
+            cid: float(getattr(probe_map.get(path), "duration_s", 0.0) or 0.0)
+            for cid, path in clip_id_to_local.items()
+            if probe_map.get(path) is not None
+        }
         hero = ingest["hero"]
         # The edit can never be longer than the footage the user actually uploaded.
         # This hard ceiling flows into every variant: it shrinks the song's
@@ -463,6 +473,7 @@ def _run_generative_job(job_id: str) -> None:
             voiceover_gcs_path=voiceover_gcs_path,
             filming_guide=filming_guide_candidates,
             footage_type_bias=_footage_type_bias,
+            clip_durations_s=clip_durations_s,
         )
         _set_status(job_id, "rendering")
         # Persist the style-downgrade reason so the item page can explain a montage
@@ -3988,9 +3999,7 @@ def _variant_specs(best_track: MusicTrack | None) -> list[dict[str, Any]]:
 
 
 def _content_plan_primary_montage_spec(best_track: MusicTrack | None) -> dict[str, Any]:
-    if best_track is not None:
-        return {"variant_id": "song_text", "text_mode": "agent_text", "track": best_track}
-    return {"variant_id": "original_text", "text_mode": "agent_text", "track": None}
+    return _variant_specs(best_track)[0]
 
 
 # ── Archetype dispatch (Lane D) ─────────────────────────────────────────────────
@@ -4005,6 +4014,7 @@ def _resolve_archetype(
     voiceover_gcs_path: str | None = None,
     filming_guide: list[dict] | None = None,
     footage_type_bias: list[str] | None = None,
+    clip_durations_s: dict[str, float] | None = None,
 ) -> tuple[str, str | None, str | None]:
     """Resolve the declared edit_format against footage → (archetype, spine, fallback_reason).
 
@@ -4028,8 +4038,9 @@ def _resolve_archetype(
 
     Reasons for montage fallback: `archetype_not_implemented` (day_vlog/single_hero —
     no assembler yet), `flag_disabled` (kill switch off), `no_speech` (no clip clears
-    `_MIN_SPINE_COVERAGE`), `archetype_bias_no_speech` (bias suggested talking_head but
-    no speech found).
+    `_MIN_SPINE_COVERAGE`), `spine_too_short` (self-narration picked a multi-clip
+    talking_head spine too short to show B-roll), `archetype_bias_no_speech`
+    (bias suggested talking_head but no speech found).
 
     The third tuple element is the montage-fallback reason (None when a non-montage
     archetype was selected or montage was the declared format). The orchestrator
@@ -4089,6 +4100,13 @@ def _resolve_archetype(
         if spine_id is None or coverage < _MIN_SPINE_COVERAGE:
             return _fallback("no_speech")
         selected = "subtitled" if len(clip_id_to_local) == 1 else "talking_head"
+        spine_duration_s = (clip_durations_s or {}).get(spine_id)
+        if (
+            selected == "talking_head"
+            and spine_duration_s is not None
+            and spine_duration_s <= _MIN_TALKING_HEAD_SPINE_WITH_BROLL_S
+        ):
+            return _fallback("spine_too_short")
         record_pipeline_event(
             "assembly",
             "archetype_selected",
