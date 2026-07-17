@@ -376,6 +376,63 @@ export function smartPlacementPatchForBar(
   };
 }
 
+export function splitTextForSmartPlacement(
+  text: string,
+  candidates: TextPlacementCandidate[],
+): string[] {
+  const normalized = normalizeSmartText(text);
+  if (!normalized) return [];
+  const maxChunks = Math.max(1, candidates.length || 1);
+  if (maxChunks === 1) return [normalized];
+
+  const manualLines = text
+    .split(/\n+/)
+    .map(normalizeSmartText)
+    .filter(Boolean);
+  if (manualLines.length >= 2) {
+    return balanceTextSegments(manualLines, Math.min(maxChunks, manualLines.length));
+  }
+
+  const sentenceParts = (normalized.match(/[^.!?]+[.!?]?/g) ?? [normalized])
+    .map(normalizeSmartText)
+    .filter(Boolean);
+  if (sentenceParts.length >= 2) {
+    return balanceTextSegments(sentenceParts, Math.min(maxChunks, sentenceParts.length));
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  const targetChunks = smartChunkCountForWords(words.length, maxChunks);
+  if (targetChunks <= 1) return [normalized];
+
+  if (candidates[0]?.rotation_deg) {
+    const rotatedWords = Math.min(
+      words.length - (targetChunks - 1),
+      words.length <= 6 ? 2 : 3,
+    );
+    const first = words.slice(0, rotatedWords).join(" ");
+    const rest = balancedLines(words.slice(rotatedWords), targetChunks - 1);
+    return [first, ...rest].map(normalizeSmartText).filter(Boolean);
+  }
+
+  return balancedLines(words, targetChunks).map(normalizeSmartText).filter(Boolean);
+}
+
+function normalizeSmartText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function smartChunkCountForWords(wordCount: number, maxChunks: number): number {
+  if (wordCount <= 3) return 1;
+  if (wordCount <= 4) return Math.min(2, maxChunks);
+  if (wordCount <= 12) return Math.min(3, maxChunks);
+  return Math.min(4, maxChunks);
+}
+
+function balanceTextSegments(segments: string[], lineCount: number): string[] {
+  if (segments.length <= lineCount) return segments;
+  return balancedLines(segments, lineCount);
+}
+
 export function reflowTextForSmartPlacement(
   text: string,
   candidate: TextPlacementCandidate,

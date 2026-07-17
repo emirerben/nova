@@ -44,6 +44,10 @@ export default function ToolDrawer({
   sampleWord,
   appliedPresetId,
   onAddText,
+  onSplitSmartPlaceText,
+  splitSmartPlaceAvailable = false,
+  onSmartPlaceAll,
+  smartPlaceAllAvailable = false,
   onPickPreset,
   appliedStyleSetId = null,
   onRestyleAll,
@@ -66,6 +70,10 @@ export default function ToolDrawer({
   sampleWord: string | null;
   appliedPresetId: string | null;
   onAddText: () => void;
+  onSplitSmartPlaceText?: (text: string) => boolean;
+  splitSmartPlaceAvailable?: boolean;
+  onSmartPlaceAll?: () => void;
+  smartPlaceAllAvailable?: boolean;
   onPickPreset: (preset: TextPreset) => void;
   appliedStyleSetId?: string | null;
   onRestyleAll?: (styleSet: GenerativeStyleSet) => void;
@@ -105,6 +113,7 @@ export default function ToolDrawer({
 }) {
   const [category, setCategory] = useState<TextPresetCategory>("basic");
   const [favoritePresetIds, setFavoritePresetIds] = useState<string[]>([]);
+  const [smartTextDraft, setSmartTextDraft] = useState("");
 
   useEffect(() => {
     setFavoritePresetIds(readTextPresetFavorites(window.localStorage));
@@ -185,6 +194,44 @@ export default function ToolDrawer({
           >
             Add text
           </button>
+
+          <div className="mt-4 border-t border-zinc-100 pt-4">
+            <div className="mb-2 flex items-center justify-between">
+              <p className="text-[12px] font-semibold text-[#3f3f46]">Composition</p>
+              <button
+                type="button"
+                onClick={onSmartPlaceAll}
+                disabled={!smartPlaceAllAvailable || !onSmartPlaceAll}
+                className="min-h-8 rounded-lg border border-zinc-200 bg-white px-2.5 text-[11px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+              >
+                Smart place all
+              </button>
+            </div>
+            <textarea
+              value={smartTextDraft}
+              onChange={(event) => setSmartTextDraft(event.target.value)}
+              rows={3}
+              aria-label="Composition text"
+              placeholder="One full title"
+              className="w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                if (onSplitSmartPlaceText?.(smartTextDraft)) {
+                  setSmartTextDraft("");
+                }
+              }}
+              disabled={
+                !splitSmartPlaceAvailable ||
+                !onSplitSmartPlaceText ||
+                smartTextDraft.trim().length === 0
+              }
+              className="mt-2 min-h-10 w-full rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#27272a] disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+            >
+              Split & place
+            </button>
+          </div>
 
           <p className="mb-2 mt-5 text-[12px] font-semibold text-[#3f3f46]">Presets</p>
           <div className="mb-3 flex flex-wrap gap-1.5" role="tablist" aria-label="Preset categories">
