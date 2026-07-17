@@ -42,13 +42,18 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _CORS_ALLOW_ORIGIN_REGEX = r"https://nova-.*-emirerbens-projects\.vercel\.app"
-_CANONICAL_WEB_ORIGIN = "https://usekria.com"
+# usekria.com apex 308-redirects to www.usekria.com (Vercel domain config), so the
+# origin every real browser sends is the `www` form — it must be allowlisted
+# alongside the apex, not instead of it.
+_CANONICAL_WEB_ORIGIN = "https://www.usekria.com"
+_APEX_WEB_ORIGIN = "https://usekria.com"
 _LEGACY_WEB_ORIGIN = "https://nova-video.vercel.app"
-_CODE_ALLOWED_ORIGINS = {_CANONICAL_WEB_ORIGIN, _LEGACY_WEB_ORIGIN}
+_CODE_ALLOWED_ORIGINS = {_CANONICAL_WEB_ORIGIN, _APEX_WEB_ORIGIN, _LEGACY_WEB_ORIGIN}
 
 
 def _allowed_origins() -> list[str]:
     return sorted(set(settings.allowed_origins) | _CODE_ALLOWED_ORIGINS)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -75,9 +80,7 @@ def _cors_headers_for(request: Request) -> dict[str, str]:
     origin = request.headers.get("origin")
     if not origin:
         return {}
-    allowed = origin in _allowed_origins() or bool(
-        re.fullmatch(_CORS_ALLOW_ORIGIN_REGEX, origin)
-    )
+    allowed = origin in _allowed_origins() or bool(re.fullmatch(_CORS_ALLOW_ORIGIN_REGEX, origin))
     if not allowed:
         return {}
     return {
