@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.31.2] — 2026-07-17
+
+### Fixed
+- **Text-behind-subject occlusion is now solid and frame-accurate.** The matte engine read source frames sequentially at a 15fps inference cadence, so on 30fps sources the mask track played at half speed and progressively lagged the subject — text blinked in and out roughly every second. Masks are now sampled time-aligned at every source frame with real MediaPipe timestamps, and get the v3 "solid object" treatment (3-frame temporal median, 0.40 confidence hard cut, tiny-fragment drop, thin feather) so text never ghosts through subjects. The sanity gate now rejects only degenerate mattes, keeping the effect for small/distant subjects. Prod fix: `libgles2` added to the Docker image — without it ImageSegmenter creation failed silently and every prod render skipped the effect entirely; the docker-build CI job now creates a real segmenter so this can't regress.
+
 ## [0.7.31.1] — 2026-07-17
 
 ### Fixed

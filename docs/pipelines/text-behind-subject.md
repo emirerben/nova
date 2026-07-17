@@ -21,8 +21,13 @@ above the burned text — would need a second full-frame FFmpeg overlay pass per
 occluded overlay and a matte with a hard, cutout-quality edge. Instead:
 
 - A per-frame **grayscale matte** (`app/pipeline/subject_matte.py`) gives a
-  soft person-probability mask, one small (270×480) frame per rendered output
-  tick.
+  solid-object person mask, one small (270×480) frame per rendered output
+  tick. Segmentation samples time-aligned at (up to) every source frame, then
+  gets the v3 treatment at compute time: trailing 3-frame temporal median →
+  hard cut at 0.40 confidence → tiny-fragment drop (< 0.2% of frame:
+  background passers-by, speckle) → thin edge feather. The stored matte
+  already carries the treatment, so readers and both renderers stay
+  treatment-agnostic.
 - The Skia text renderer (`app/pipeline/text_overlay_skia.py`) draws each
   occluded overlay's glyphs as a straight-alpha RGBA frame, then multiplies the
   **alpha channel** by `(1 - mask)` before PNG-encoding it
@@ -48,10 +53,13 @@ agnostic.
 
 Public surface of `subject_matte.py`:
 
-- `compute_subject_matte(video_path, windows, out_path, *, inference_fps=15)
-  -> MatteStats | None` — runs MediaPipe's `ImageSegmenter` (selfie
-  segmenter, `VIDEO` running mode, soft confidence masks) over the given
-  `MatteWindow`s, writes a grayscale H.264 mp4 + sidecar JSON. Best-effort:
+- `compute_subject_matte(video_path, windows, out_path) -> MatteStats |
+  None` — runs MediaPipe's `ImageSegmenter` (selfie segmenter, `VIDEO`
+  running mode, real per-frame timestamps) over the given `MatteWindow`s,
+  time-aligned to the source fps (`CAP_PROP_FPS`; a tick only advances the
+  capture as far as real time has advanced — never sequential half-rate
+  reads), applies the v3 mask treatment, and writes a grayscale H.264 mp4 +
+  sidecar JSON. Best-effort:
   every failure mode (missing model, unreadable video, mediapipe not
   installed, wall-clock budget blown) returns `None` and never raises.
 - `matte_is_sane(stats) -> bool` — the sanity gate (see below).
@@ -95,18 +103,29 @@ cache-miss → compute + sanity-gate + upload + open. **Any** step failing
 never fails. A bad recompute never clobbers a previously-good cached path
 (`matte_gcs_path` only advances on success).
 
+## Prod runtime dependency: libgles2
+
+`import mediapipe` succeeds without libGLESv2, but **ImageSegmenter creation
+fails** — and because the matte engine is best-effort, the effect silently
+degrades to plain pasted-on-top text. The prod Dockerfile installs `libgles2`
+and `.github/workflows/docker-build.yml` creates a real VIDEO-mode segmenter
+(+ one inference) inside the built image on every PR so this can't regress.
+
 ## Sanity gate
 
 `matte_is_sane(stats)`:
 
 ```python
-0.05 <= stats.mean_coverage <= 0.60 and stats.max_coverage > 0.02
+stats.max_coverage >= 0.01 and stats.mean_coverage <= 0.85
 ```
 
-Guards against two degenerate mattes: near-zero coverage (no person detected
-— occlusion would be a no-op, so don't bother) and near-total coverage (an
-extreme close-up filling the frame — the text would end up almost entirely
-hidden). Either failure falls back to plain text via the same
+Rejects only degenerate mattes: the segmenter never found anyone at all
+(`max_coverage < 1%`) or the mask swallowed essentially the whole frame
+(`mean_coverage > 85%` — the text would end up almost entirely hidden).
+There is deliberately **no lower bound on mean coverage**: a small/distant
+subject (~0.8% of frame on a beach wide shot) is a legitimate occluder and
+must keep the effect. Coverage stats are computed on the post-treatment
+masks (what actually multiplies text alpha). Either failure falls back to plain text via the same
 `text_behind_subject_fallback` path as a hard compute error.
 
 ## AI decision path: `overlay_format_matcher.behind_subject`

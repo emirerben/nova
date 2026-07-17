@@ -7,12 +7,17 @@ FROM python:3.11-slim
 # Skia runtime (libegl1 — required by skia-python's app/pipeline/text_overlay_skia.py;
 # without it the module's `import skia` raises `libEGL.so.1: cannot open shared object
 # file` at worker boot, before the kill switch can be read).
+# libgles2 — required by mediapipe's ImageSegmenter (subject_matte.py). WITHOUT it,
+# `import mediapipe` still succeeds but segmenter CREATION fails at runtime, and the
+# matte engine's best-effort design silently skips the text-behind-subject effect on
+# every prod render. Guarded by the segmenter smoke check in docker-build.yml.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     fonts-dejavu-core \
     libmagic1 \
     libgl1 \
     libegl1 \
+    libgles2 \
     libglib2.0-0 \
     libheif1 \
     curl \
