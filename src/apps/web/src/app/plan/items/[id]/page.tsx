@@ -97,6 +97,7 @@ import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { barsToTextElements, seedBarsFromVariant } from "./_editor/editor-bars";
+import { editorReasonCopy } from "./_editor/editor-capabilities";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -182,7 +183,7 @@ function planItemEditorDisabledReason(variant: PlanItemVariant | null): string |
     !capabilities.split_clips &&
     !capabilities.mix
   ) {
-    return capabilities.reason ?? "Editing isn't available for this variant.";
+    return editorReasonCopy(capabilities.reason);
   }
   return null;
 }
@@ -2540,7 +2541,7 @@ function FocusedResults({
     !editorCapabilities.timeline &&
     !editorCapabilities.split_clips &&
     !editorCapabilities.mix
-      ? (editorCapabilities.reason ?? "Editing isn't available for this variant.")
+      ? editorReasonCopy(editorCapabilities.reason)
       : null;
 
   // The editor panel reveals PlanVariantEditor filtered to the active tab.
