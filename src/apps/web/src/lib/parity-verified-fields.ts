@@ -47,6 +47,10 @@ export const PARITY_VERIFIED_FIELDS = [
   "letter_spacing", // tests/fixtures/text-element-parity/letter_spacing.json
   "line_spacing", // tests/fixtures/text-element-parity/line_spacing.json
   "max_width_frac", // tests/fixtures/text-element-parity/max_width_frac.json
+  // `behind_subject` is deliberately NOT registered here: it's a render-only
+  // compositing flag (Skia subject-matte occlusion), not a layout field. The
+  // browser CSS preview has no subject segmentation, so it can never render
+  // this field identically to the burn — there is no parity fixture to write.
 ] as const;
 
 export type ParityVerifiedField = (typeof PARITY_VERIFIED_FIELDS)[number];

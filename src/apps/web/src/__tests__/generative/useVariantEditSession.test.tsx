@@ -50,6 +50,7 @@ const baselineDraft: EditDraft = {
   clusterHeroSizePx: null,
   clusterBodySizePx: null,
   clusterAccentSizePx: null,
+  behindSubject: false,
 };
 
 describe("buildEditPayload", () => {
@@ -87,6 +88,17 @@ describe("buildEditPayload", () => {
       remove_text: true,
     });
   });
+
+  it("emits text_behind_subject only when it differs from baseline", () => {
+    expect(buildEditPayload(baselineDraft, baselineDraft)).toEqual({});
+    expect(
+      buildEditPayload({ ...baselineDraft, behindSubject: true }, baselineDraft),
+    ).toEqual({ text_behind_subject: true });
+    const onBaseline = { ...baselineDraft, behindSubject: true };
+    expect(
+      buildEditPayload({ ...onBaseline, behindSubject: false }, onBaseline),
+    ).toEqual({ text_behind_subject: false });
+  });
 });
 
 describe("useVariantEditSession", () => {
@@ -100,6 +112,25 @@ describe("useVariantEditSession", () => {
 
     act(() => result.current.setText("typed live"));
     expect(result.current.isDirty).toBe(true);
+  });
+
+  it("seeds behindSubject from intro_behind_subject and tracks the toggle", () => {
+    const { result } = renderHook(() =>
+      useVariantEditSession(makeVariant({ intro_behind_subject: true }), jest.fn()),
+    );
+
+    act(() => result.current.enterEdit());
+    expect(result.current.draft.behindSubject).toBe(true);
+    expect(result.current.isDirty).toBe(false);
+
+    act(() => result.current.setBehindSubject(false));
+    expect(result.current.isDirty).toBe(true);
+  });
+
+  it("defaults behindSubject to false when intro_behind_subject is absent", () => {
+    const { result } = renderHook(() => useVariantEditSession(makeVariant(), jest.fn()));
+    act(() => result.current.enterEdit());
+    expect(result.current.draft.behindSubject).toBe(false);
   });
 
   it("polls do not clobber the draft while editing", () => {

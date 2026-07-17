@@ -539,6 +539,42 @@ class TestSizeClassRoundTrip:
         compiled = build_overlays_from_text_elements([elem], video_duration_s=10.0)
         assert compiled[0]["rotation_deg"] == 90.0
 
+    def test_adapter_preserves_behind_subject_true_from_burn_dict(self):
+        burn_dict = {
+            "text": "Occluded text",
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "role": "generative_intro",
+            "text_size_px": 72,
+            "text_anchor": "center",
+            "text_color": "#FFFFFF",
+            "highlight_color": "#FFD24A",
+            "effect": "static",
+            "behind_subject": True,
+        }
+        elem = _burn_dict_to_text_element(burn_dict)
+        assert elem is not None
+        assert elem.behind_subject is True
+
+        compiled = build_overlays_from_text_elements([elem], video_duration_s=10.0)
+        assert compiled[0]["behind_subject"] is True
+
+    def test_adapter_defaults_behind_subject_false_when_absent(self):
+        burn_dict = {
+            "text": "Normal text",
+            "start_s": 0.0,
+            "end_s": 3.0,
+            "role": "generative_intro",
+            "text_size_px": 72,
+            "text_anchor": "center",
+            "text_color": "#FFFFFF",
+            "highlight_color": "#FFD24A",
+            "effect": "static",
+        }
+        elem = _burn_dict_to_text_element(burn_dict)
+        assert elem is not None
+        assert elem.behind_subject is False
+
     def test_size_class_roundtrip_via_adapter_xlarge(self):
         """A14 end-to-end: a burn dict with text_size='xlarge' round-trips to 'xlarge'."""
         burn_dict = {
@@ -984,6 +1020,19 @@ class TestCoerceTextElements:
         result = coerce_text_elements(raw)
         assert result is not None
         assert len(result) == 1
+
+    def test_behind_subject_survives_coercion(self):
+        """behind_subject is a declared field — not whitelist-dropped by coercion."""
+        raw = [{"text": "OK", "start_s": 0.0, "end_s": 1.0, "behind_subject": True}]
+        result = coerce_text_elements(raw)
+        assert result is not None
+        assert result[0].behind_subject is True
+
+    def test_behind_subject_defaults_false_when_absent(self):
+        raw = [{"text": "OK", "start_s": 0.0, "end_s": 1.0}]
+        result = coerce_text_elements(raw)
+        assert result is not None
+        assert result[0].behind_subject is False
 
 
 def test_shadow_enabled_false_survives_validation_and_compile():

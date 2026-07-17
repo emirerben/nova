@@ -2549,7 +2549,7 @@ def test_burn_frees_png_work_dir_after_encode(tmp_workdir, monkeypatch):
     variants (the prod /tmp-exhaustion fix)."""
     seen = {}
 
-    def fake_render(_overlays, _slot_dur, work_dir):
+    def fake_render(_overlays, _slot_dur, work_dir, *, matte=None):
         os.makedirs(work_dir, exist_ok=True)
         with open(os.path.join(work_dir, "frame0000.png"), "wb") as f:
             f.write(b"png-bytes")

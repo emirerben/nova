@@ -59,6 +59,19 @@ jobs:
           cache-from: type=gha,scope=docker-build-check
           cache-to: type=gha,scope=docker-build-check,mode=max
 
+      # Runtime smoke check — text-behind-subject added mediapipe as a prod
+      # dep. mediapipe pulls in opencv-contrib-python as a transitive dep,
+      # which ships the same top-level `cv2` module name as
+      # opencv-python-headless (already installed for other pipeline code) —
+      # a version conflict between the two resolves fine at `pip install`
+      # but can explode at first `import cv2` inside the actual built image.
+      # Proves the three imports resolve together in the image, not just the
+      # dev venv (local pytest never builds the Docker image).
+      - name: Smoke-check cv2/skia/mediapipe import at runtime
+        run: |
+          docker run --rm --entrypoint python nova-build-test:ci -c \
+            'import cv2, skia, mediapipe; print("cv2/skia/mediapipe import OK")'
+
       # Runtime smoke check — catches version-mismatch bugs that pass
       # `pip install` but explode at first import. Motivating incident
       # (May 2026): PR #150 (v0.4.15.0) pinned torch CPU but not

@@ -158,12 +158,13 @@ Use subprocess FFmpeg directly. See agents/VIDEO_CONTEXT.md for patterns.
 - See `docs/pipelines/music.md` for internals (beat detection algo, recipe slice math, admin proxy, clip validation detail).
 
 ## Generative-edits pipeline
-- NO reference template and NO pre-selected song: the user uploads clips; `orchestrate_generative_job` analyzes them, auto-matches a track, writes its own intro overlay, and renders THREE variants: `song_lyrics`, `song_text`, `original_text`.
-- **Best-effort by design:** if no labeled track matches, song variants are skipped and `original_text` still renders — a generative job never hard-fails on an empty library.
-- Per-variant state is authoritative in `Job.assembly_plan["variants"]` (the task owns it) — no new DB column. Jobs are plain `Job` rows with `mode == "generative"`.
-- **Intro-text persistence:** rendered intro text + highlight word are stored on `variants[i]["intro_text"]` / `["intro_highlight_word"]`. On re-render without override, persisted text is reused (no LLM). intro_writer only runs on first render or legacy variants.
-- **Fast reburn base:** for `agent_text` montage variants, the audio-mixed text-free base is stored at `variants[i]["base_video_path"]` (GCS key). Font/text/size edits download the base and reburn only the overlay (seconds). Kill switch: `GENERATIVE_FAST_REBURN_ENABLED=false` + worker restart.
-- See `docs/pipelines/generative.md` for how the music engine is reused and per-variant mechanics.
+- No reference template, no pre-selected song: `orchestrate_generative_job` analyzes uploaded clips, auto-matches a track, writes its own intro overlay, renders 3 variants: `song_lyrics`, `song_text`, `original_text`.
+- **Best-effort:** unmatched track -> song variants skip; `original_text` renders (never hard-fails on empty library).
+- Per-variant state lives in `Job.assembly_plan["variants"]` (task-owned); jobs are `Job` rows with `mode == "generative"`.
+- **Intro-text persistence:** text + highlight word persist on `variants[i]["intro_text"]`/`["intro_highlight_word"]`; re-render without override reuses them (no LLM); intro_writer runs only on first render or legacy variants.
+- **Fast reburn base:** `agent_text` variants cache the text-free base at `variants[i]["base_video_path"]`; font/text/size edits reburn only the overlay (seconds). Kill switch: `GENERATIVE_FAST_REBURN_ENABLED=false` + worker restart.
+- **Text-behind-subject:** `TEXT_BEHIND_SUBJECT_ENABLED` (default `false`); MediaPipe matte occludes text behind subject; `fly secrets set TEXT_BEHIND_SUBJECT_ENABLED=false --app nova-video` + restart to disable. See `docs/pipelines/text-behind-subject.md`.
+- See `docs/pipelines/generative.md` (music reuse, variant mechanics).
 
 ## Template pipeline
 - **Single-pass CFR-before-xfade invariant:** every per-clip chain in `app/pipeline/single_pass.py` (`_per_clip_filter_chain`) must end with `fps={output_fps}, setpts=PTS-STARTPTS, settb=AVTB` before its labelled output. The trailing `fps=` filter is PTS-independent and handles `avg_frame_rate=1/0` inputs (some phone HEVC, HEIF-derived video, screen recordings) where `framerate=fps=N` aborts. Locked by `test_per_clip_chain_forces_cfr_before_xfade` in `tests/pipeline/test_single_pass.py`. See agents/DECISIONS.md (2026-05-18).

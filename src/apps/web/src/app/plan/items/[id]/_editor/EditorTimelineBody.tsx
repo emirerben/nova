@@ -69,6 +69,9 @@ const GUTTER_PX = 64;
 const SFX_SUB_LANE_BASE_HEIGHT_PX = 32;
 const MUSIC_BED_HEIGHT_PX = 32;
 
+const TEXT_BEHIND_SUBJECT_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
+
 export interface EditorSfxBar {
   id: string;
   at_s: number;
@@ -856,6 +859,15 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                               <span className="truncate">
                                 {b.text || "Text"}
                               </span>
+                              {TEXT_BEHIND_SUBJECT_UI_ENABLED && b.behind_subject && (
+                                <span
+                                  aria-label="Behind subject"
+                                  title="Behind subject"
+                                  className="shrink-0 opacity-80"
+                                >
+                                  ⧉
+                                </span>
+                              )}
                             </span>
                           </BarButton>
                         );

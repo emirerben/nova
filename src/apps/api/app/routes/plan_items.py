@@ -1676,6 +1676,7 @@ async def edit_item_variant(
         cluster_hero_size_px=req.cluster_hero_size_px,
         cluster_body_size_px=req.cluster_body_size_px,
         cluster_accent_size_px=req.cluster_accent_size_px,
+        text_behind_subject=req.text_behind_subject,
     )
     await db.commit()
     log.info(
@@ -1690,6 +1691,7 @@ async def edit_item_variant(
         cluster_hero_font=req.cluster_hero_font,
         cluster_body_font=req.cluster_body_font,
         cluster_accent_font=req.cluster_accent_font,
+        text_behind_subject=req.text_behind_subject,
     )
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 

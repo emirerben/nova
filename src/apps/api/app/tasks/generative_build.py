@@ -1206,6 +1206,7 @@ def regenerate_generative_variant(
     render_gen_id: str | None = None,
     intro_start_s_override: float | None = None,
     intro_end_s_override: float | None = None,
+    text_behind_subject: bool | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1217,6 +1218,10 @@ def regenerate_generative_variant(
     precedence over the variant's persisted `user_timeline`. On montage
     song_text/original_text variants an active timeline skips the whole
     ingest+Gemini+match leg (see `_run_regenerate_variant`).
+
+    `text_behind_subject`: explicit text-behind-subject toggle (None = leave the
+    persisted `intro_behind_subject` decision alone). Kwarg name is a frozen
+    contract with the route layer's `.delay(...)` call.
     """
     log.info(
         "generative_regenerate_start",
@@ -1260,6 +1265,7 @@ def regenerate_generative_variant(
                 render_gen_id=render_gen_id,
                 intro_start_s_override=intro_start_s_override,
                 intro_end_s_override=intro_end_s_override,
+                text_behind_subject=text_behind_subject,
             )
         except OperationalError:
             raise
@@ -1297,6 +1303,7 @@ def _resolve_regen_text(
     run_text_agents_fn,  # callable: () -> (agent_text, agent_form)
     persisted_layout: str | None = None,
     persisted_word_roles: list[str] | None = None,
+    persisted_behind_subject: bool | None = None,
 ) -> tuple:
     """Return (agent_text, agent_form, text_mode) without running the LLM when possible.
 
@@ -1312,6 +1319,12 @@ def _resolve_regen_text(
     to the old words) so they are dropped — the layout engine re-derives roles
     heuristically, and falls back to linear when the new text doesn't suit a
     cluster. Absent fields (legacy variants) → "linear"/None, byte-identical.
+
+    `persisted_behind_subject` mirrors `persisted_layout`: folded into the
+    reconstructed `agent_form["behind_subject"]` on the no-LLM branches (2 and 3)
+    so `_resolve_intro_overlay_params`'s agent-form fallback tier sees it. The
+    LLM fall-through branch (4) is NOT folded — a fresh `OverlayFormatMatcherAgent`
+    run makes its own behind_subject decision, which must not be clobbered.
     """
     import types as _types  # noqa: PLC0415
 
@@ -1329,7 +1342,11 @@ def _resolve_regen_text(
             # word_roles deliberately absent: stale roles must never be applied
             # to user-typed words (the engine re-derives them).
             agent_text = _types.SimpleNamespace(text=cleaned, highlight_word=None)
-            agent_form = {"effect": "karaoke-line", "layout": persisted_layout or "linear"}
+            agent_form = {
+                "effect": "karaoke-line",
+                "layout": persisted_layout or "linear",
+                "behind_subject": bool(persisted_behind_subject),
+            }
             # A text-removed variant ("none" — truthy!) must flip back to
             # "agent_text" when the user supplies new text, or _reburn_text_on_base
             # skips the burn and the edit silently no-ops. Lyrics keep their mode.
@@ -1351,7 +1368,11 @@ def _resolve_regen_text(
             highlight_word=persisted_highlight,
             word_roles=persisted_word_roles,
         )
-        agent_form = {"effect": "karaoke-line", "layout": persisted_layout or "linear"}
+        agent_form = {
+            "effect": "karaoke-line",
+            "layout": persisted_layout or "linear",
+            "behind_subject": bool(persisted_behind_subject),
+        }
         return agent_text, agent_form, "agent_text"
 
     # Fall through: run intro_writer (first render or legacy variant without persisted text).
@@ -2416,6 +2437,122 @@ def _maybe_add_text_elements_snapshot(result: dict) -> None:
         pass
 
 
+# ── Text-behind-subject matte resolution (shared: first render + reburn) ────
+
+# Padding applied to each behind_subject overlay's [start_s, end_s] window before
+# computing the matte, so the occlusion mask covers a hair before/after the text
+# is actually on screen (reveal/hold crossfade edges, frame-rounding at burn time).
+_SUBJECT_MATTE_WINDOW_PAD_S = 0.25
+
+
+def _behind_subject_windows(overlays: list[dict], duration_s: float) -> list:
+    """Union of padded, duration-clamped windows for every `behind_subject: True`
+    overlay. Adjacent/overlapping windows are merged so `compute_subject_matte`
+    never re-computes the same span twice. `duration_s` <= 0 skips the upper
+    clamp (caller couldn't probe the video — matte compute will still bound
+    itself against the actual decoded frame count)."""
+    from app.pipeline.subject_matte import MatteWindow  # noqa: PLC0415
+
+    raw: list[tuple[float, float]] = []
+    for ov in overlays:
+        if not ov.get("behind_subject"):
+            continue
+        start_s = max(0.0, float(ov.get("start_s", 0.0)) - _SUBJECT_MATTE_WINDOW_PAD_S)
+        end_s = float(ov.get("end_s", 0.0)) + _SUBJECT_MATTE_WINDOW_PAD_S
+        if duration_s > 0:
+            end_s = min(end_s, duration_s)
+        if end_s > start_s:
+            raw.append((start_s, end_s))
+    if not raw:
+        return []
+    raw.sort()
+    merged = [list(raw[0])]
+    for start_s, end_s in raw[1:]:
+        if start_s <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end_s)
+        else:
+            merged.append([start_s, end_s])
+    return [MatteWindow(start_s=s, end_s=e) for s, e in merged]
+
+
+def _resolve_subject_matte_for_burn(
+    *,
+    video_path: str,
+    overlays: list[dict],
+    tmpdir: str,
+    cached_matte_path: str | None,
+    upload_key_base: str,
+    duration_s: float,
+    job_id: str,
+    variant_id: str,
+) -> tuple[Any, str | None, list[dict]]:
+    """Best-effort matte resolution for a burn about to happen.
+
+    Returns ``(provider_or_None, matte_gcs_path_or_None, overlays)``. When the
+    flag is off, no overlay requests occlusion, or ANY step fails (download,
+    compute, sanity check, upload, provider open), ``overlays`` comes back as a
+    COPY with every `behind_subject` key stripped — the caller burns plain text
+    instead of failing the render — and a `text_behind_subject_fallback` warning
+    is logged with the reason. `matte_gcs_path` is `cached_matte_path` unchanged
+    on failure (a bad recompute must never clobber a previously-good cache).
+
+    Cache contract: `cached_matte_path` set → downloaded and opened, never
+    recomputed (the "steady state" fast-reburn path). `None` → a fresh matte is
+    computed over the union of `behind_subject` windows (padded, duration-
+    clamped), sanity-gated, uploaded next to `upload_key_base`, and returned as
+    the new `matte_gcs_path` for the caller to persist.
+    """
+    if not getattr(settings, "text_behind_subject_enabled", False):
+        return None, cached_matte_path, overlays
+    behind = [ov for ov in overlays if ov.get("behind_subject")]
+    if not behind:
+        return None, cached_matte_path, overlays
+
+    from app.pipeline.subject_matte import (  # noqa: PLC0415
+        SubjectMatteProvider,
+        compute_subject_matte,
+        matte_is_sane,
+    )
+    from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
+
+    provider = None
+    matte_gcs_path = cached_matte_path
+    try:
+        if cached_matte_path:
+            local_matte = os.path.join(tmpdir, "cached_subject_matte.mp4")
+            download_to_file(cached_matte_path, local_matte)
+            download_to_file(f"{cached_matte_path}.json", f"{local_matte}.json")
+            provider = SubjectMatteProvider.open(local_matte)
+            if provider is None:
+                raise RuntimeError("cached matte failed to open")
+        else:
+            windows = _behind_subject_windows(behind, duration_s)
+            if not windows:
+                raise RuntimeError("no renderable behind_subject windows")
+            local_matte = os.path.join(tmpdir, "computed_subject_matte.mp4")
+            stats = compute_subject_matte(video_path, windows, local_matte)
+            if stats is None or not matte_is_sane(stats):
+                raise RuntimeError(f"matte compute failed or insane: {stats}")
+            upload_key = f"{upload_key_base}.matte.mp4"
+            upload_public_read(local_matte, upload_key)
+            upload_public_read(f"{local_matte}.json", f"{upload_key}.json")
+            provider = SubjectMatteProvider.open(local_matte)
+            if provider is None:
+                raise RuntimeError("freshly computed matte failed to open")
+            matte_gcs_path = upload_key
+    except Exception as exc:  # noqa: BLE001 — best-effort, never fails the burn
+        log.warning(
+            "text_behind_subject_fallback",
+            job_id=job_id,
+            variant_id=variant_id,
+            error=str(exc),
+        )
+        stripped = [{k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlays]
+        return None, cached_matte_path, stripped
+
+    return provider, matte_gcs_path, overlays
+
+
 def _reburn_text_on_base(
     *,
     job_id: str,
@@ -2440,6 +2577,7 @@ def _reburn_text_on_base(
     cluster_accent_size_px_override: int | None = None,
     intro_start_s_override: float | None = None,
     intro_end_s_override: float | None = None,
+    text_behind_subject: bool | None = None,
 ) -> dict:
     """Fast reburn: download base → rebuild overlay → burn → upload.
 
@@ -2454,6 +2592,14 @@ def _reburn_text_on_base(
     variant renders the static intro from the persisted text and the persisted
     transcript/scenes are CLEARED (the variant is no longer synced; the route-side
     cluster word gate applies to it again from then on).
+
+    `text_behind_subject`: explicit task kwarg for the text-behind-subject toggle
+    (frozen contract with `regenerate_generative_variant`). None falls back to
+    the persisted `existing["intro_behind_subject"]`. When resolved True and the
+    flag is on, a cached `existing["subject_matte_path"]` is reused; absent, a
+    fresh matte is computed on the downloaded base and cached for next time. Any
+    matte failure strips `behind_subject` from every overlay about to burn and
+    falls back to plain text — never fails the reburn.
     """
     import tempfile  # noqa: PLC0415
 
@@ -2479,6 +2625,8 @@ def _reburn_text_on_base(
             input_path: str,
             overlay_dicts: list[dict],
             output_path: str,
+            *,
+            matte=None,
         ) -> None:
             if is_collage_montage_preset(existing.get("montage_preset_rendered")):
                 from app.pipeline.masonry_montage import (  # noqa: PLC0415
@@ -2486,6 +2634,13 @@ def _reburn_text_on_base(
                     masonry_board_width_for_preset,
                 )
 
+                # Masonry's board-motion burn has no matte-occlusion support
+                # (Lane B scoped it to the standard burn path only) — any
+                # behind_subject key reaching here would just render as normal
+                # text, so strip it defensively rather than ship a half-effect.
+                overlay_dicts = [
+                    {k: v for k, v in ov.items() if k != "behind_subject"} for ov in overlay_dicts
+                ]
                 try:
                     burn_duration_s = float(probe_video(input_path).duration_s)
                 except Exception:  # noqa: BLE001
@@ -2501,7 +2656,7 @@ def _reburn_text_on_base(
                     ),
                 )
                 return
-            burn_text_overlays_skia(input_path, overlay_dicts, output_path, tmpdir)
+            burn_text_overlays_skia(input_path, overlay_dicts, output_path, tmpdir, matte=matte)
 
         # ── TextElement early branch (T3 — plan-item-timeline) ──────────────
         # When the user has edited text via the TextElement API (T4),
@@ -2544,7 +2699,21 @@ def _reburn_text_on_base(
 
             _te_burn_dicts = _text_element_burn_dicts(existing)
             _te_final_path = os.path.join(tmpdir, "final.mp4")
-            _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path)
+            try:
+                _te_dur = float(probe_video(local_base).duration_s)
+            except Exception:  # noqa: BLE001
+                _te_dur = MAX_INTRO_S
+            _te_provider, _te_matte_path, _te_burn_dicts = _resolve_subject_matte_for_burn(
+                video_path=local_base,
+                overlays=_te_burn_dicts,
+                tmpdir=tmpdir,
+                cached_matte_path=existing.get("subject_matte_path"),
+                upload_key_base=base_gcs_path,
+                duration_s=_te_dur,
+                job_id=job_id,
+                variant_id=variant_id,
+            )
+            _burn_text_for_variant(local_base, _te_burn_dicts, _te_final_path, matte=_te_provider)
             _te_gcs_key = (existing.get("video_path") or "").lstrip("/")
             _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
             return {
@@ -2559,6 +2728,7 @@ def _reburn_text_on_base(
                 "intro_size_source": existing.get("intro_size_source"),
                 "text_elements_user_edited": True,
                 "text_placement_candidates": existing.get("text_placement_candidates"),
+                "subject_matte_path": _te_matte_path,
             }
 
         # Resolve size (pixel-stability rule)
@@ -2592,6 +2762,8 @@ def _reburn_text_on_base(
         editorial_enabled = bool(getattr(settings, "editorial_sequence_enabled", True))
         was_sequence = existing.get("intro_mode") == "sequence"
         sequence_patch: dict = {}
+        reburn_behind_subject = False
+        reburn_matte_path = existing.get("subject_matte_path")
 
         if agent_text is not None and text_mode == "agent_text":
             # Always pass final_size_px as size_override_px so we never try to
@@ -2608,12 +2780,22 @@ def _reburn_text_on_base(
                 effect_override=effect_override,
                 text_color_override=text_color_override,
                 placement_candidates=existing.get("text_placement_candidates") or None,
+                # Precedence mirrors `layout`: task kwarg > persisted (present-key
+                # check via .get, absent → None) > agent_form's behind_subject.
+                behind_subject_override=(
+                    text_behind_subject
+                    if text_behind_subject is not None
+                    else existing.get("intro_behind_subject")
+                ),
             )
             # Preserve the original source label — size_override_px always wins
             # inside the resolver, which would label it "user"; restore the real
             # source so pixel-stability logic downstream remains correct.
             intro_source = final_size_source
             reburn_word_roles = params.get("word_roles")
+            # Sticky (pre-gate) decision — must be popped before `params` is ever
+            # spread into build_persistent_intro_overlays (not a builder kwarg).
+            reburn_behind_subject = params.pop("_bs_pregate", False)
 
             overlays: list[dict] | None = None
             persisted_scenes = existing.get("scenes") or None
@@ -2708,7 +2890,17 @@ def _reburn_text_on_base(
                         "sequence_mode": None,
                         "sequence_quote": None,
                     }
-            _burn_text_for_variant(local_base, overlays, final_path)
+            _matte_provider, reburn_matte_path, overlays = _resolve_subject_matte_for_burn(
+                video_path=local_base,
+                overlays=overlays,
+                tmpdir=tmpdir,
+                cached_matte_path=existing.get("subject_matte_path"),
+                upload_key_base=base_gcs_path,
+                duration_s=base_dur,
+                job_id=job_id,
+                variant_id=variant_id,
+            )
+            _burn_text_for_variant(local_base, overlays, final_path, matte=_matte_provider)
 
             # Detect silent copy-through (burn failed with non-empty overlays)
             if (
@@ -2747,6 +2939,11 @@ def _reburn_text_on_base(
             "intro_mode": (reburn_mode if agent_text else None),
             "intro_text_size_px": intro_px if agent_text else existing_size_px,
             "intro_size_source": intro_source if agent_text else existing_size_source,
+            # Sticky (pre-gate) decision + cached matte key. remove_text/none mode
+            # carries the persisted matte forward unchanged (removing text doesn't
+            # invalidate a still-valid cache; behind_subject just resets to False).
+            "intro_behind_subject": (reburn_behind_subject if agent_text else False),
+            "subject_matte_path": reburn_matte_path,
             "style_set_id": resolved_style_set_id,
             "text_mode": text_mode,
             "render_status": "ready",
@@ -3019,6 +3216,7 @@ def _run_regenerate_variant(
     render_gen_id: str | None = None,
     intro_start_s_override: float | None = None,
     intro_end_s_override: float | None = None,
+    text_behind_subject: bool | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -3050,6 +3248,7 @@ def _run_regenerate_variant(
         and cluster_hero_size_px_override is None
         and cluster_body_size_px_override is None
         and cluster_accent_size_px_override is None
+        and text_behind_subject is None
     )
     if _is_overlay_only and settings.media_overlays_enabled:
         _run_media_overlay_pass(
@@ -3089,6 +3288,7 @@ def _run_regenerate_variant(
         and cluster_hero_size_px_override is None
         and cluster_body_size_px_override is None
         and cluster_accent_size_px_override is None
+        and text_behind_subject is None
     )
     if _is_sfx_only and _settings_sfx.sound_effects_enabled:
         _run_sfx_pass(
@@ -3308,6 +3508,7 @@ def _run_regenerate_variant(
         and sfx_override is None
         and intro_start_s_override is None
         and intro_end_s_override is None
+        and text_behind_subject is None
     )
     if audio_only_song_swap and new_track_id is not None:
         with _sync_session() as db:
@@ -3441,6 +3642,7 @@ def _run_regenerate_variant(
                 cluster_accent_size_px_override=resolved_cluster_accent_size_override,
                 intro_start_s_override=intro_start_s_override,
                 intro_end_s_override=intro_end_s_override,
+                text_behind_subject=text_behind_subject,
             )
             _used_fast_path = True
         except Exception as _fast_exc:  # noqa: BLE001
@@ -3576,6 +3778,7 @@ def _run_regenerate_variant(
                 run_text_agents_fn=lambda: (None, None),
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
+                persisted_behind_subject=existing.get("intro_behind_subject"),
             )
         else:
             # PERF/TODO: this re-runs the full clip ingest (re-download + re-Gemini
@@ -3643,6 +3846,7 @@ def _run_regenerate_variant(
                 ),
                 persisted_layout=persisted_layout,
                 persisted_word_roles=persisted_word_roles,
+                persisted_behind_subject=existing.get("intro_behind_subject"),
             )
 
             # Rhythm-mode quote authoring on a full re-render (same grounding
@@ -3715,6 +3919,7 @@ def _run_regenerate_variant(
             cluster_accent_size_px_override=resolved_cluster_accent_size_override,
             landscape_fit=landscape_fit_regen,
             montage_preset=montage_preset_regen,
+            behind_subject_override=text_behind_subject,
         )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -3788,6 +3993,19 @@ def _run_regenerate_variant(
         # Write accepted — the retired snapshot blobs are unreachable; free them
         # (D16-C) before the reapply pass mints fresh ones.
         _free_media_snapshot_keys(retired_snapshot_keys)
+        # Text-behind-subject: a full re-render's matte upload key is deterministic
+        # (base_video_path + ".matte.mp4", same as `base_gcs` itself), so a fresh
+        # recompute overwrites the SAME blob — no orphan there. The orphan case is
+        # the OTHER direction: the previous render had a matte and this one didn't
+        # recompute one (behind_subject/flag now off, or no overlay needs it), so
+        # the old blob at that deterministic key is unreferenced from here on.
+        old_matte_path = existing.get("subject_matte_path")
+        new_matte_path = result.get("subject_matte_path")
+        if old_matte_path and old_matte_path != new_matte_path:
+            from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+            delete_object_best_effort(old_matte_path)
+            delete_object_best_effort(f"{old_matte_path}.json")
         # A full re-render re-assembles video_path without user media layers.
         _reapply_user_media_layers(
             job_id=job_id,
@@ -5118,6 +5336,7 @@ def _render_generative_variant(
     cluster_accent_size_px_override: int | None = None,
     landscape_fit: str = "fill",
     montage_preset: str = "classic",
+    behind_subject_override: bool | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -5157,6 +5376,12 @@ def _render_generative_variant(
     font, position, colors, etc. They win over the curated set's values inside
     `_resolve_intro_overlay_params`. Persisted on the variant entry so re-renders
     (swap-song/retext/restyle) re-apply them without re-reading the persona row.
+
+    `behind_subject_override` (text-behind-subject): explicit sticky decision
+    from a re-render's task kwarg. None on a first render (the resolver falls
+    back to the AI form's `behind_subject` decision). Gated against
+    `settings.text_behind_subject_enabled` inside `_resolve_intro_overlay_params`
+    — off means no matte is ever computed here regardless of this value.
     """
     from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
     from app.pipeline.music_recipe import generate_music_recipe  # noqa: PLC0415
@@ -5229,6 +5454,13 @@ def _render_generative_variant(
         # Cached text-free, audio-mixed base for fast-reburn on style/font/size edits.
         # None for lyrics variants (full path in v1) and voiceover variants.
         "base_video_path": None,
+        # Text-behind-subject (occlusion). intro_behind_subject is the sticky
+        # pre-gate decision (task kwarg > persisted > agent form); overwritten
+        # below once resolved. subject_matte_path is the cached matte's GCS key
+        # (set once compute succeeds; None when the flag is off, no overlay
+        # requested occlusion, or the compute/upload failed).
+        "intro_behind_subject": False,
+        "subject_matte_path": None,
         # Post-assembly clip timeline (clip timeline editor). Rewritten on EVERY
         # full montage assembly; None for voiceover/spine variants.
         "ai_timeline": None,
@@ -5377,8 +5609,12 @@ def _render_generative_variant(
                     effect_override=effect_override,
                     text_color_override=text_color_override,
                     placement_candidates=text_placement_candidates,
+                    behind_subject_override=behind_subject_override,
                 )
             )
+            # Sticky (pre-gate) decision — must be popped before `_at_params` is
+            # ever spread into build_persistent_intro_overlays (not a builder kwarg).
+            base["intro_behind_subject"] = _at_params.pop("_bs_pregate", False)
             base["text_placement_candidates"] = text_placement_candidates or None
             base["intro_text_size_px"] = _agent_text_intro_px
             base["intro_size_source"] = _agent_text_intro_source
@@ -5671,13 +5907,21 @@ def _render_generative_variant(
                 base_dur = MAX_INTRO_S
             reveal_window_s = min(base_dur, MAX_INTRO_S) if base_dur > 0 else MAX_INTRO_S
 
-            def _burn_agent_text_overlays(overlay_dicts: list[dict], output_path: str) -> None:
+            def _burn_agent_text_overlays(
+                overlay_dicts: list[dict], output_path: str, *, matte=None
+            ) -> None:
                 if masonry_applied:
                     from app.pipeline.masonry_montage import (  # noqa: PLC0415
                         burn_masonry_text_overlays,
                         masonry_board_width_for_preset,
                     )
 
+                    # Masonry's board-motion burn has no matte-occlusion support
+                    # (Lane B scoped it to the standard burn path only).
+                    overlay_dicts = [
+                        {k: v for k, v in ov.items() if k != "behind_subject"}
+                        for ov in overlay_dicts
+                    ]
                     burn_masonry_text_overlays(
                         audio_mixed_path,
                         overlay_dicts,
@@ -5687,7 +5931,30 @@ def _render_generative_variant(
                         board_width=masonry_board_width_for_preset(resolved_montage_preset),
                     )
                     return
-                burn_text_overlays_skia(audio_mixed_path, overlay_dicts, output_path, variant_dir)
+                burn_text_overlays_skia(
+                    audio_mixed_path, overlay_dicts, output_path, variant_dir, matte=matte
+                )
+
+            def _burn_agent_text_overlays_with_matte(
+                overlay_dicts: list[dict], output_path: str
+            ) -> None:
+                # Text-behind-subject: resolve (or compute-and-cache) the matte for
+                # THIS overlay set, then burn. `base["subject_matte_path"]` doubles
+                # as the resolution cache key — a copy-through retry below re-burns
+                # a fresh overlay set on the SAME base, so the second call reuses
+                # whatever the first call just computed instead of recomputing.
+                provider, matte_path, overlay_dicts = _resolve_subject_matte_for_burn(
+                    video_path=audio_mixed_path,
+                    overlays=overlay_dicts,
+                    tmpdir=variant_dir,
+                    cached_matte_path=base.get("subject_matte_path"),
+                    upload_key_base=base_gcs,
+                    duration_s=base_dur,
+                    job_id=job_id,
+                    variant_id=variant_id,
+                )
+                base["subject_matte_path"] = matte_path
+                _burn_agent_text_overlays(overlay_dicts, output_path, matte=provider)
 
             # Editorial sequence auto-upgrade (D6/D16): when the kill switch is
             # ON and the layout resolved to "cluster", the variant gets the
@@ -5804,7 +6071,7 @@ def _render_generative_variant(
             else:
                 overlays = _static_intro_overlays()
                 _apply_static_layout(overlays)
-            _burn_agent_text_overlays(overlays, final_path)
+            _burn_agent_text_overlays_with_matte(overlays, final_path)
 
             # D20: copy-through detection ported from the fast-reburn path. A
             # silent textless output must never ship as a "ready" variant.
@@ -5827,7 +6094,7 @@ def _render_generative_variant(
                     )
                     overlays = _static_intro_overlays()
                     _apply_static_layout(overlays)
-                    _burn_agent_text_overlays(overlays, final_path)
+                    _burn_agent_text_overlays_with_matte(overlays, final_path)
                 if overlays and _burn_copy_through(final_path, audio_mixed_path):
                     raise RuntimeError(
                         f"burn_text_overlays_skia copy-through detected on variant "
@@ -5944,6 +6211,12 @@ def _render_talking_head_variant(
         # No text-free base cached for talking_head in v1 (the assembler's spine
         # extraction is the expensive step, not text burn; fast-reburn not yet applied).
         "base_video_path": None,
+        # Text-behind-subject: resolved (overwritten below) but never rendered —
+        # talking_head has no fast-reburn path in v1, so no matte is ever computed
+        # here; a behind_subject overlay burns as plain text (matte=None is a
+        # safe, logged fallback per the Skia renderer's contract).
+        "intro_behind_subject": False,
+        "subject_matte_path": None,
         # Media-overlay cards (slice 1) — see montage finalize dict for docs.
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
@@ -6023,6 +6296,10 @@ def _render_talking_head_variant(
                 user_style_knobs=user_style_knobs,
                 language=language,
             )
+            # Sticky (pre-gate) decision — no override kwarg here: talking_head has
+            # no fast-reburn / re-render path (v1), so there is no task kwarg to
+            # thread. Popped so `params` stays a valid builder-kwargs dict below.
+            base["intro_behind_subject"] = params.pop("_bs_pregate", False)
             # No song → no beats; the intro reveals on an even split. Slot-0-relative
             # timestamps (from 0) are already absolute on the composite, which is what
             # burn_text_overlays_skia expects.
@@ -8104,6 +8381,7 @@ def _inject_agent_intro(
         language=language,
         placement_candidates=placement_candidates,
     )
+    params.pop("_bs_pregate", None)  # private resolver key; not a builder kwarg
     recipe_dict = inject_persistent_intro(
         recipe_dict,
         HERO_SLOT_INDEX,
@@ -8128,6 +8406,7 @@ def _resolve_intro_overlay_params(
     effect_override: str | None = None,
     text_color_override: str | None = None,
     placement_candidates: list[dict] | None = None,
+    behind_subject_override: bool | None = None,
 ) -> tuple[dict, int | None, str | None]:
     """Resolve the hero-intro look + size into kwargs for the overlay builders.
 
@@ -8149,6 +8428,22 @@ def _resolve_intro_overlay_params(
 
     Knob precedence (most-specific wins):
       user_style_knobs > curated-set value > agent advisory > hardcoded default.
+
+    `behind_subject` precedence (text-behind-subject occlusion), mirroring the
+    `layout` pattern above — the persisted variant value is folded into
+    `agent_form["behind_subject"]` by the CALLER (same convention as
+    `agent_form["layout"]`), so this resolver only sees two inputs:
+      1. `behind_subject_override` (task kwarg) — wins when not None.
+      2. `agent_form.get("behind_subject")` — the AI decision (first render) or
+         the caller-folded persisted value (re-render).
+    The resolved (pre-gate) decision is stashed under the private
+    `params["_bs_pregate"]` key for the caller to persist onto
+    `variant["intro_behind_subject"]` — callers MUST `pop()` it before
+    spreading `params` into `inject_persistent_intro`/`build_persistent_intro_overlays`
+    (neither accepts that key). `params["behind_subject"]` itself is the
+    GATED value actually used for rendering: `resolved AND
+    settings.text_behind_subject_enabled` — the single chokepoint where the
+    kill switch forces every source to False.
     """
     # Curated style set owns the intro look (font, size, color, effect, position).
     # The agent_form fields drop to ADVISORY: `resolve_overlay_style` lets the set
@@ -8292,6 +8587,20 @@ def _resolve_intro_overlay_params(
     params["layout_reason"] = layout_reason
     params["word_roles"] = getattr(agent_text, "word_roles", None)
     params["language"] = language
+
+    # behind_subject: task kwarg > agent_form (AI decision, or the persisted
+    # value the caller folded in — same convention as agent_form["layout"]).
+    _bs_resolved = (
+        behind_subject_override
+        if behind_subject_override is not None
+        else bool(agent_form.get("behind_subject", False))
+    )
+    params["behind_subject"] = _bs_resolved and bool(
+        getattr(settings, "text_behind_subject_enabled", False)
+    )
+    # Private: pre-gate decision for sticky persistence. Callers MUST pop this
+    # before spreading params into a builder function (see docstring above).
+    params["_bs_pregate"] = _bs_resolved
     return params, intro_px, intro_source
 
 

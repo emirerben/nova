@@ -130,7 +130,7 @@ def _patch_reburn_helpers(monkeypatch, tmp_path):
     # Skia burn: write a differently-sized file so the copy-through guard passes.
     burn_calls: list = []
 
-    def _fake_burn(base, overlays, out, tmpdir):
+    def _fake_burn(base, overlays, out, tmpdir, *, matte=None):
         burn_calls.append({"base": base, "overlays": overlays})
         with open(out, "wb") as fh:
             fh.write(b"\x01" * 24)
