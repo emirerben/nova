@@ -89,6 +89,7 @@ import {
 import {
   isMasonryVariant,
   resolveSmartPlacementCandidates,
+  splitTextForSmartPlacement,
   smartPlacementPatchForBar,
 } from "./editor-smart-placement";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
@@ -153,6 +154,55 @@ const POOL_MIME_TYPES = [
   "video/mp4",
   "video/quicktime",
 ];
+
+function textTimingAtPlayhead({
+  currentTime,
+  previewDuration,
+}: {
+  currentTime: number;
+  previewDuration: number;
+}): Pick<TextElementBar, "start_s" | "end_s"> {
+  const start = Math.max(0, Math.round(currentTime * 10) / 10);
+  const end =
+    previewDuration > 0
+      ? Math.min(previewDuration, start + NEW_TEXT_DURATION_S)
+      : start + NEW_TEXT_DURATION_S;
+  return {
+    start_s: start,
+    end_s: Math.max(end, start + 0.5),
+  };
+}
+
+function newTextBar({
+  id,
+  text,
+  timing,
+  preset,
+}: {
+  id: string;
+  text: string;
+  timing: Pick<TextElementBar, "start_s" | "end_s">;
+  preset: TextPreset;
+}): TextElementBar {
+  return {
+    id,
+    text,
+    start_s: timing.start_s,
+    end_s: timing.end_s,
+    role: "generative_intro",
+    x_frac: 0.5,
+    y_frac: NEW_TEXT_Y_FRAC,
+    position: "custom",
+    size_px: NEW_TEXT_SIZE_PX,
+    alignment: "center",
+    font_family: preset.fields.font_family ?? undefined,
+    color: preset.fields.color ?? undefined,
+    highlight_color: preset.fields.highlight_color ?? undefined,
+    stroke_width: preset.fields.stroke_width ?? undefined,
+    shadow_enabled: false,
+    effect: preset.fields.effect ?? undefined,
+  };
+}
 
 export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
   if (!deleteKeyAllowed(target)) return false;
@@ -737,6 +787,11 @@ export default function EditorShell({
     return resolveSmartPlacementCandidates(variant, targetBars);
   }, [selectedBar, state.bars, variant]);
   const smartPlacementCandidate = selectedBar ? (smartPlacementCandidates[0] ?? null) : null;
+  const smartPlaceAllAvailable =
+    !readOnly &&
+    isMasonryVariant(variant) &&
+    state.bars.some((bar) => bar.role !== "narrated_caption") &&
+    smartPlacementCandidates.length > 0;
 
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
@@ -1664,29 +1719,12 @@ export default function EditorShell({
       }
       history.record();
       setTextDirty(true);
-      const start = Math.max(0, Math.round(currentTime * 10) / 10);
-      const end =
-        previewDuration > 0
-          ? Math.min(previewDuration, start + NEW_TEXT_DURATION_S)
-          : start + NEW_TEXT_DURATION_S;
-      const bar: TextElementBar = {
+      const bar = newTextBar({
         id: crypto.randomUUID(),
         text: NEW_TEXT_CONTENT,
-        start_s: start,
-        end_s: Math.max(end, start + 0.5),
-        role: "generative_intro",
-        x_frac: 0.5,
-        y_frac: NEW_TEXT_Y_FRAC,
-        position: "custom",
-        size_px: NEW_TEXT_SIZE_PX,
-        alignment: "center",
-        font_family: preset.fields.font_family ?? undefined,
-        color: preset.fields.color ?? undefined,
-        highlight_color: preset.fields.highlight_color ?? undefined,
-        stroke_width: preset.fields.stroke_width ?? undefined,
-        shadow_enabled: false,
-        effect: preset.fields.effect ?? undefined,
-      };
+        timing: textTimingAtPlayhead({ currentTime, previewDuration }),
+        preset,
+      });
       dispatch({ type: "ADD_TEXT", bar });
       selectText(bar.id);
     },
@@ -1698,6 +1736,56 @@ export default function EditorShell({
       textElementsLocked,
       capabilities,
       history,
+    ],
+  );
+
+  const splitAndSmartPlaceText = useCallback(
+    (text: string): boolean => {
+      if (readOnly) return false;
+      if (textElementsLocked) {
+        setToast(textElementsLockedCopy(capabilities));
+        return false;
+      }
+      const draft = text.trim();
+      if (!draft) return false;
+      const candidateSeedBars = Array.from({ length: 4 }, (_unused, index) =>
+        newTextBar({
+          id: `smart-draft-${index}`,
+          text: draft,
+          timing: { start_s: 0, end_s: NEW_TEXT_DURATION_S },
+          preset: DEFAULT_TEXT_PRESET,
+        }),
+      );
+      const candidates = resolveSmartPlacementCandidates(variant, candidateSeedBars);
+      const chunks = splitTextForSmartPlacement(draft, candidates);
+      if (chunks.length === 0) return false;
+      const timing = textTimingAtPlayhead({ currentTime, previewDuration });
+      const bars = chunks.map((chunk, index) => {
+        const bar = newTextBar({
+          id: crypto.randomUUID(),
+          text: chunk,
+          timing,
+          preset: DEFAULT_TEXT_PRESET,
+        });
+        const candidate = candidates[index % Math.max(1, candidates.length)];
+        return candidate ? { ...bar, ...smartPlacementPatchForBar(bar, candidate) } : bar;
+      });
+      history.record();
+      setTextDirty(true);
+      bars.forEach((bar) => dispatch({ type: "ADD_TEXT", bar }));
+      selectText(bars[0].id);
+      setInspectorTab("basic");
+      return true;
+    },
+    [
+      capabilities,
+      currentTime,
+      history,
+      previewDuration,
+      readOnly,
+      selectText,
+      textElementsLocked,
+      variant,
     ],
   );
 
@@ -2914,6 +3002,10 @@ export default function EditorShell({
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
+              onSplitSmartPlaceText={splitAndSmartPlaceText}
+              splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
+              onSmartPlaceAll={applySmartPlacement}
+              smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
 	              appliedStyleSetId={appliedStyleSetId}
 	              onRestyleAll={restyleAll}
@@ -2957,6 +3049,10 @@ export default function EditorShell({
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
+              onSplitSmartPlaceText={splitAndSmartPlaceText}
+              splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
+              onSmartPlaceAll={applySmartPlacement}
+              smartPlaceAllAvailable={smartPlaceAllAvailable}
               onPickPreset={pickPreset}
 	              appliedStyleSetId={appliedStyleSetId}
 	              onRestyleAll={restyleAll}

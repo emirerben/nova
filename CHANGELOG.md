@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.30.7] — 2026-07-17
+
+### Added
+- **The editor Text drawer can now split one composed title into coordinated smart-placed blocks.** Masonry users can paste a full phrase into the new Composition draft, click "Split & place", and get multiple text elements distributed across distinct collage pockets using the existing motion-aware placement metadata. The drawer also exposes "Smart place all" for existing masonry text blocks, so users can reflow the whole text composition without selecting one block at a time.
+
 ## [0.7.30.6] — 2026-07-15
 
 ### Fixed
