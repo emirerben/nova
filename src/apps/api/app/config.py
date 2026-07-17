@@ -268,6 +268,20 @@ class Settings(BaseSettings):
     # scheduling time.
     lyric_dynamic_crossfade_enabled: bool = True
 
+    # Text-behind-subject occlusion. When True, generative-edit overlays the
+    # OverlayFormatMatcherAgent (or a user-authored TextElement) flags with
+    # `behind_subject: True` are burned with a per-frame person-segmentation
+    # matte (`app.pipeline.subject_matte`) so a moving subject occludes the
+    # text instead of sitting on top of it. Default OFF: no matte is ever
+    # computed, no burn dict carries `behind_subject`, and no extra GCS
+    # object is written — `_resolve_intro_overlay_params` (generative_build.py)
+    # is the single chokepoint that ANDs the resolved decision with this flag,
+    # so flipping it off mid-flight degrades every in-flight job to plain text
+    # instead of failing it. Flip to False on Fly
+    # (`fly secrets set TEXT_BEHIND_SUBJECT_ENABLED=false --app nova-video`
+    # then restart workers) to disable instantly.
+    text_behind_subject_enabled: bool = False
+
     # Linear LRCLIB re-anchor for synced lyrics. When True (default), the
     # alignment layer can fit a small per-time drift curve before falling
     # back to the existing uniform median / single-L0 paths. This catches

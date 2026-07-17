@@ -2,10 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.31.0] — 2026-07-17
+
+### Added
+- **"Text behind subject" occlusion — text placed as if it's an object in the scene, with the person passing in front of it (IG/CapCut-style).** New matte engine (`app/pipeline/subject_matte.py`, MediaPipe selfie segmenter, Apache-2.0) computes a per-frame person mask over the text's window on the text-free base video; the Skia burn multiplies each text frame's alpha by the inverse mask, so the ffmpeg filtergraph and encoder args are unchanged. The matte is cached to GCS next to `base_video_path` and reused on every fast text reburn; toggling the effect on for a pre-feature variant computes the matte on that edit (once, then cached). Users toggle it per variant in the instant editor and per text element in the timeline editor's Inspector (preview shows a badge — occlusion renders at burn time); the overlay format matcher decides it automatically for AI edits (single clear subject; prompt_version 2026-07-17). Best-effort throughout: any matte failure (model missing, budget blown, insane coverage, GCS error) strips the flag, logs `text_behind_subject_fallback`, and renders normal text — a job never fails on occlusion. Hold-to-EOF intros get a dedicated 120s frame ceiling (`BEHIND_SUBJECT_FRAME_CEILING`) so occluded text can't vanish mid-video. Dark behind `TEXT_BEHIND_SUBJECT_ENABLED` (Fly) + `NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED` (Vercel), both default false, off = byte-identical; flip Fly first (old-api version skew silently drops the toggle). See `docs/pipelines/text-behind-subject.md`.
+
 ## [0.7.30.7] — 2026-07-17
 
 ### Fixed
 - **Instagram-style plan-item recreations preserve multi-clip montage intent instead of collapsing to one talking-head clip.** The web edit flow no longer rewrites stored `talking_head` items to `subtitled` before generation, and the plan-item page treats existing `talking_head` uploads as a multi-clip pool unless the user explicitly picks the single-clip subtitled format. Content-plan generation now forwards the selected edit format and all uploaded clip paths unchanged, chooses the lyric-capable montage variant first when the matched track has cached lyrics, and falls back to montage when self-narration would otherwise pick a too-short speech spine that cannot schedule B-roll cutaways.
+### Added
+- **The editor Text drawer can now split one composed title into coordinated smart-placed blocks.** Masonry users can paste a full phrase into the new Composition draft, click "Split & place", and get multiple text elements distributed across distinct collage pockets using the existing motion-aware placement metadata. The drawer also exposes "Smart place all" for existing masonry text blocks, so users can reflow the whole text composition without selecting one block at a time.
 
 ## [0.7.30.6] — 2026-07-15
 

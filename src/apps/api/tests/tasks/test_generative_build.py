@@ -442,7 +442,7 @@ def _patch_render_helpers(monkeypatch, mix_calls: list):
     # 16-byte base so detection passes for these routing-focused tests.
     import app.pipeline.text_overlay_skia as skia_mod
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir):
+    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         with open(out_path, "wb") as f:
             f.write(b"\x01" * 24)
 
@@ -2463,7 +2463,7 @@ def _patch_reburn_helpers(monkeypatch, *, base_content=b"\x00" * 32, final_conte
     else:
         _final = final_content
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir):
+    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         burn_calls.append({"base": base_path, "overlays": overlays, "out": out_path})
         with open(out_path, "wb") as f:
             f.write(_final)
@@ -2839,7 +2839,7 @@ def test_fast_path_burn_copy_through_marks_failed(monkeypatch):
         # Return non-empty overlays so the copy-through check fires.
         return [{"type": "text", "text": "hi"}]
 
-    def _copy_through_burn(base_path, overlays, out_path, tmpdir):
+    def _copy_through_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         # Write same byte count as base → simulates copy-through (no actual burn).
         with open(out_path, "wb") as f:
             f.write(base_content)

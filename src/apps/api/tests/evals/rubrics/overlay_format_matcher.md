@@ -22,8 +22,13 @@ Score each output on these dimensions, **integer 1-5**:
    - 3: defensible but not obviously right (linear on a short phrase that could carry a cluster, or cluster on a borderline compact hook)
    - 1: cluster on a wordy/karaoke-driven hook, or cluster + karaoke-line
 
+5. **behind_subject_fits_content** — Is `behind_subject` a sensible occlusion call given the hero clip's `subject`/`description`? `true` only belongs on a single, clearly-framed person who occupies a meaningful but not overwhelming part of the frame (room for the text to sit behind them). `false` belongs everywhere else: no clear single person, a subject filling nearly the whole frame, or a busy/cluttered scene.
+   - 5: the call matches the described framing; a human editor would agree
+   - 3: defensible but borderline (e.g. `true` on an ambiguous framing description)
+   - 1: `true` on a scene with no clear single subject, or on a subject filling the whole frame (text would be hidden)
+
 Pass threshold: avg ≥ 3.5
 
 Return ONLY:
 
-    {"scores": {"form_fits_content": 4, "legibility": 4, "exemplar_grounding": 4, "layout_fits_content": 4}, "reasoning": "<one sentence>"}
+    {"scores": {"form_fits_content": 4, "legibility": 4, "exemplar_grounding": 4, "layout_fits_content": 4, "behind_subject_fits_content": 4}, "reasoning": "<one sentence>"}

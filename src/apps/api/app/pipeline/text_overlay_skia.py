@@ -44,8 +44,9 @@ import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, Protocol
 
+import numpy as np
 import skia
 import structlog
 from PIL import Image
@@ -96,6 +97,24 @@ LONG_RUNNING_TEXT_FRAME_CEILING = int(FPS * 30)
 # bounded regardless: held/blank frames are hard links, so unique-PNG count —
 # not this ceiling — drives scratch usage.
 SEQUENCE_COMPOSITE_FRAME_CEILING = int(FPS * 120)
+
+# behind_subject overlays get their own, larger ceiling. Generative intro
+# overlays can be hold-to-EOF (effect="static", end_s spanning nearly the
+# whole clip — see generative_overlays.py's _HOLD_TO_END_S); a normal static
+# overlay that long would take the single-PNG `-loop 1` path and just persist
+# forever, but behind_subject overlays can't use that trick — the subject
+# mask differs every frame, so every second of the window needs a real,
+# uniquely-masked PNG (see the hold-economy note on `_generate_overlay_sequence`
+# below). Without a dedicated ceiling these fall back to
+# LONG_RUNNING_TEXT_FRAME_CEILING (30s) and the text silently vanishes for
+# the remainder of the video once the PNG sequence runs out (eof_action=pass
+# on the ffmpeg overlay input). 120s == SEQUENCE_COMPOSITE_FRAME_CEILING,
+# deliberately: it covers Nova's sub-60s output target with 2x margin. Frame
+# economy stays fine at this length — behind frames are mostly-transparent
+# text-on-alpha PNGs (small), and PNG encode parallelizes over
+# _ENCODE_WORKERS — so do NOT re-enable hold-linking for behind_subject to
+# "save" frames here.
+BEHIND_SUBJECT_FRAME_CEILING = int(FPS * 120)
 
 # Encoder thread pool: Pillow PNG encode releases the GIL during compression,
 # so threading actually helps. 4 workers matches the production Celery worker
@@ -168,9 +187,17 @@ def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     before late words can highlight or before the next cumulative stage starts.
     Sequence overlays (role="generative_sequence") hold an editorial scene
     through its full transcript window — often well past the 120-frame cap —
-    so they use the same generous sanity ceiling.
+    so they use the same generous sanity ceiling. `behind_subject` overlays
+    get a long ceiling too (their own, larger one —
+    BEHIND_SUBJECT_FRAME_CEILING, selected by the caller): every frame renders
+    uniquely (the hold-frame hard-link economy is disabled once occlusion is
+    on, since the subject moves), and hold-to-EOF generative intro overlays
+    can span nearly the whole clip, so a plain 5s intro would otherwise blow
+    the 120-frame cap and vanish mid-word.
     """
     if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
+        return True
+    if overlay.get("behind_subject"):
         return True
     effect = overlay.get("effect", "none")
     return effect in {"lyric-line", "karaoke-line"} or (
@@ -1686,6 +1713,75 @@ def _write_png_pillow(img: skia.Image, out_path: str) -> None:
     pil.save(out_path, "PNG", compress_level=3)
 
 
+# -- Subject-matte occlusion (behind_subject) ---------------------------------
+#
+# `behind_subject: True` on a burn dict multiplies the text layer's per-frame
+# alpha by (1 - subject_mask) so a person composited over the burned video
+# appears IN FRONT of the text. The matte provider (app.pipeline.subject_matte,
+# a concurrently-developed sibling module) is consumed structurally via
+# `SubjectMatteProvider` — this module never imports it, so Lane B has zero
+# build-order dependency on Lane A.
+
+
+class SubjectMatteProvider(Protocol):
+    def mask_at(self, t_abs: float) -> np.ndarray | None: ...
+
+
+def _apply_subject_mask(rgba: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Zero out text alpha where `mask` says the subject sits on top.
+
+    `rgba` must be STRAIGHT (non-premultiplied) alpha uint8 (H, W, 4) — the
+    format `_skia_image_to_rgba_array` produces (see `_write_png_pillow` for
+    why: Skia's N32Premul surface is unpremultiplied during the readPixels
+    copy). Straight alpha means only the alpha channel needs scaling; RGB is
+    untouched. Premultiplied output would additionally require scaling RGB by
+    the same factor, or the occluded edge shows bright fringing.
+
+    `mask` is float32 in [0, 1], shape (H, W). A shape mismatch fails open
+    (returns `rgba` unchanged) rather than raising mid-render.
+    """
+    if mask.shape != rgba.shape[:2]:
+        log.warning(
+            "text_behind_subject_mask_shape_mismatch",
+            mask_shape=tuple(mask.shape),
+            rgba_shape=tuple(rgba.shape[:2]),
+        )
+        return rgba
+    factor = 1.0 - np.clip(mask, 0.0, 1.0).astype(np.float32)
+    out = rgba.copy()
+    out[..., 3] = np.clip(out[..., 3].astype(np.float32) * factor, 0, 255).astype(np.uint8)
+    return out
+
+
+def _skia_image_to_rgba_array(img: skia.Image) -> np.ndarray:
+    """Read a Skia Image into a straight-alpha (H, W, 4) uint8 numpy array.
+
+    Same `kUnpremul_AlphaType` readPixels copy as `_write_png_pillow`, shared
+    here so the behind_subject frame path can mask the alpha channel before
+    PNG encode instead of after."""
+    info = skia.ImageInfo.Make(
+        img.width(),
+        img.height(),
+        skia.ColorType.kRGBA_8888_ColorType,
+        skia.AlphaType.kUnpremul_AlphaType,
+    )
+    row_bytes = img.width() * 4
+    buf = bytearray(row_bytes * img.height())
+    if not img.readPixels(info, buf, row_bytes, 0, 0):
+        log.warning("skia_readpixels_failed_falling_back_to_tobytes")
+        buf = img.tobytes()
+    return np.frombuffer(bytes(buf), dtype=np.uint8).reshape(img.height(), img.width(), 4)
+
+
+def _write_rgba_array_png(arr: np.ndarray, out_path: str) -> None:
+    """Encode a straight-alpha (H, W, 4) uint8 array to PNG via Pillow.
+
+    Used by the behind_subject frame path once `_apply_subject_mask` has
+    already scaled alpha on the numpy array — mirrors `_write_png_pillow`'s
+    compress_level so both paths produce the same PNG weight."""
+    Image.fromarray(arr, "RGBA").save(out_path, "PNG", compress_level=3)
+
+
 # -- Public API: render overlays to FFmpeg-ready PNG sequences ---------------
 
 
@@ -1740,7 +1836,13 @@ def _sequence_hold_plan(
     return render_indices, settled_idx, hold_indices
 
 
-def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[str, Any] | None:
+def _generate_overlay_sequence(
+    overlay: dict,
+    work_dir: str,
+    idx: int,
+    *,
+    matte: SubjectMatteProvider | None = None,
+) -> dict[str, Any] | None:
     """Render every frame for one overlay, return a single config describing
     the sequence (or single PNG for static effects)."""
     start_s = float(overlay.get("start_s", 0.0))
@@ -1752,7 +1854,16 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
     pattern_prefix = f"skia_overlay_{idx:03d}_f"
     _record_font_resolved_event(overlay, idx)
 
-    if not _is_animated(overlay):
+    wants_behind = bool(overlay.get("behind_subject"))
+    behind = wants_behind and matte is not None
+    if wants_behind and matte is None:
+        log.warning(
+            "text_behind_subject_no_matte_fallback",
+            role=overlay.get("role"),
+            text=_overlay_text(overlay)[:40],
+        )
+
+    if not _is_animated(overlay) and not behind:
         out_path = os.path.join(work_dir, f"{pattern_prefix}0000.png")
         img = _draw_frame(overlay, 0.0, duration_s)
         _write_png_pillow(img, out_path)
@@ -1771,24 +1882,30 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
     # Lyric-timed effects (`lyric-line`, `karaoke-line`, suffix pop-in reveal
     # stages) settle visually but must stay present until their audio boundary;
     # applying the ~4s cap there chops late words/tails before the next stage.
-    # They instead use a generous sanity ceiling so a malformed transcript with
-    # `end_s = 240.0` cannot blow scratch disk on the encode worker:
+    # They instead use a generous sanity ceiling (LONG_RUNNING_TEXT_FRAME_CEILING,
+    # or BEHIND_SUBJECT_FRAME_CEILING for behind_subject overlays — see that
+    # constant's comment) so a malformed transcript with `end_s = 240.0`
+    # cannot blow scratch disk on the encode worker:
     # 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs 7200 frames ×
     # 1MB ≈ 7GB unbounded.
     effect = overlay.get("effect", "none")
     wanted = max(1, int(round(duration_s * FPS)))
     uses_long_ceiling = _uses_long_running_frame_ceiling(overlay)
+    # behind_subject gets the larger BEHIND_SUBJECT_FRAME_CEILING (hold-to-EOF
+    # windows must outlive the video); every other long-running effect keeps
+    # the tighter 30s LONG_RUNNING_TEXT_FRAME_CEILING. Single source of truth
+    # so the clamp below and the +1 seam-frame clamp further down can't drift.
+    long_ceiling = BEHIND_SUBJECT_FRAME_CEILING if wants_behind else LONG_RUNNING_TEXT_FRAME_CEILING
     if uses_long_ceiling:
-        ceiling = LONG_RUNNING_TEXT_FRAME_CEILING
-        if wanted > ceiling:
+        if wanted > long_ceiling:
             log.warning(
                 "skia_long_running_text_duration_clamped",
                 effect=effect,
                 duration_s=duration_s,
                 wanted_frames=wanted,
-                clamped_to=ceiling,
+                clamped_to=long_ceiling,
             )
-        n_frames = min(ceiling, wanted)
+        n_frames = min(long_ceiling, wanted)
     else:
         n_frames = min(MAX_OVERLAY_FRAMES, wanted)
     frame_dur = 1.0 / FPS
@@ -1802,19 +1919,45 @@ def _generate_overlay_sequence(overlay: dict, work_dir: str, idx: int) -> dict[s
     # at t_local >= duration), so it just holds the line through the seam; the
     # `between(t, start, end)` enable still gates the overlay off at `end`.
     n_render = (
-        min(LONG_RUNNING_TEXT_FRAME_CEILING, n_frames + 1)
+        min(long_ceiling, n_frames + 1)
         if uses_long_ceiling
         else min(MAX_OVERLAY_FRAMES, n_frames + 1)
     )
 
+    # behind_subject: text is occluded by the moving subject, so the settled
+    # frame differs every time the mask differs — cache the drawn RGBA once
+    # for non-animated overlays (the glyphs never change) and re-mask it per
+    # frame; animated overlays still redraw the glyphs per frame and get
+    # masked on top, same as the static case.
+    static_behind_arr = (
+        _skia_image_to_rgba_array(_draw_frame(overlay, 0.0, duration_s))
+        if behind and not _is_animated(overlay)
+        else None
+    )
+
     def _render_one(i: int) -> None:
         t_local = i * frame_dur
-        img = _draw_frame(overlay, t_local, duration_s)
-        _write_png_pillow(img, os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png"))
+        out_path = os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png")
+        if behind:
+            arr = (
+                static_behind_arr
+                if static_behind_arr is not None
+                else _skia_image_to_rgba_array(_draw_frame(overlay, t_local, duration_s))
+            )
+            mask = matte.mask_at(start_s + t_local)
+            if mask is not None:
+                arr = _apply_subject_mask(arr, mask)
+            _write_rgba_array_png(arr, out_path)
+        else:
+            img = _draw_frame(overlay, t_local, duration_s)
+            _write_png_pillow(img, out_path)
 
     # Sequence overlays render only their fade-in head + fade-out tail; the
     # settled middle is hard-linked from one frame (see _sequence_hold_plan).
-    hold_plan = _sequence_hold_plan(overlay, n_render, frame_dur, duration_s)
+    # behind_subject disables the hold economy — the mask can change on every
+    # frame even when the glyphs don't, so a hard-linked frame would freeze
+    # the occlusion at whatever the settled frame's mask happened to be.
+    hold_plan = None if behind else _sequence_hold_plan(overlay, n_render, frame_dur, duration_s)
     if hold_plan is None:
         render_indices: list[int] = list(range(n_render))
         settled_idx = -1
@@ -1871,7 +2014,11 @@ def _validate_and_clamp(overlay: dict, slot_duration_s: float) -> dict | None:
 
 
 def _render_overlay_sequences(
-    overlays: list[dict], slot_duration_s: float, work_dir: str
+    overlays: list[dict],
+    slot_duration_s: float,
+    work_dir: str,
+    *,
+    matte: SubjectMatteProvider | None = None,
 ) -> list[dict[str, Any]]:
     """Validate every overlay against slot_duration_s, then render PNG
     sequences. Returns list of overlay-sequence configs ready for FFmpeg."""
@@ -1880,7 +2027,7 @@ def _render_overlay_sequences(
         clamped = _validate_and_clamp(overlay, slot_duration_s)
         if clamped is None:
             continue
-        seq = _generate_overlay_sequence(clamped, work_dir, i)
+        seq = _generate_overlay_sequence(clamped, work_dir, i, matte=matte)
         if seq is not None:
             out.append(seq)
     return out
@@ -2145,20 +2292,45 @@ def _ffmpeg_burn_pngs(
         )
 
 
+def _strip_behind_subject_for_sequence_role(overlays: list[dict]) -> list[dict]:
+    """behind_subject is not supported on role="generative_sequence" overlays
+    in v1 — they always route through `_render_sequence_composite` once
+    there are >= 2 of them, and that composite path has no matte hook.
+    Stripping (rather than raising) matches this module's existing
+    "unknown/unsupported field degrades gracefully" posture."""
+    out: list[dict] = []
+    for overlay in overlays:
+        if overlay.get("role") == SEQUENCE_OVERLAY_ROLE and overlay.get("behind_subject"):
+            log.warning(
+                "text_behind_subject_unsupported_for_sequence_role",
+                text=_overlay_text(overlay)[:40],
+            )
+            overlay = dict(overlay)
+            overlay.pop("behind_subject", None)
+        out.append(overlay)
+    return out
+
+
 def render_text_overlay_sequences(
     overlays: list[dict],
     tmpdir: str,
     *,
     work_dir_name: str = "skia_text_burn",
+    matte: SubjectMatteProvider | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Render overlay dicts into transparent full-frame PNG streams.
 
     Most callers should use ``burn_text_overlays_skia``. Masonry collage needs the
     PNG streams but applies its own board-motion overlay expression so the text
     rides with the wall instead of staying pinned to the viewport.
+
+    ``matte`` is an optional `SubjectMatteProvider` (duck-typed, see that
+    Protocol) consulted only for overlays carrying `behind_subject: True`.
     """
     if not overlays:
         return [], None
+
+    overlays = _strip_behind_subject_for_sequence_role(overlays)
 
     # Resolve the timing window: production caller passes ABS_PASS_TIME_S /
     # ABS_PASS_SLOT_INDEX sentinels meaning "use the final-pass duration".
@@ -2181,10 +2353,10 @@ def render_text_overlay_sequences(
     if len(sequence_overlays) >= 2:
         composite = _render_sequence_composite(sequence_overlays, slot_duration_s, work_dir)
     if composite is None:
-        sequences = _render_overlay_sequences(overlays, slot_duration_s, work_dir)
+        sequences = _render_overlay_sequences(overlays, slot_duration_s, work_dir, matte=matte)
     else:
         non_sequence = [o for o in overlays if o.get("role") != SEQUENCE_OVERLAY_ROLE]
-        sequences = _render_overlay_sequences(non_sequence, slot_duration_s, work_dir)
+        sequences = _render_overlay_sequences(non_sequence, slot_duration_s, work_dir, matte=matte)
         # Appended last → the composite draws on top of non-sequence overlays
         # in the filtergraph chain (sequence text wins any window overlap).
         sequences.append(composite)
@@ -2212,6 +2384,8 @@ def burn_text_overlays_skia(
     overlays: list[dict],
     output_path: str,
     tmpdir: str,
+    *,
+    matte: SubjectMatteProvider | None = None,
 ) -> None:
     """Drop-in replacement for `text_overlay._burn_text_overlays` when the
     job is agentic or music.
@@ -2220,12 +2394,17 @@ def burn_text_overlays_skia(
     — this function does the Skia render unconditionally. The kill-switch
     check lives in the orchestrator (or in the wrapper that selects between
     Pillow and Skia at the burn site) so this module stays a pure renderer.
+
+    ``matte`` is an optional `SubjectMatteProvider` — overlays carrying
+    `behind_subject: True` occlude behind whatever the provider's `mask_at`
+    reports at each frame's absolute timestamp. Omitting it degrades any
+    `behind_subject` overlay to a normal render (logged, not an error).
     """
     if not overlays:
         shutil.copy2(input_path, output_path)
         return
 
-    sequences, work_dir = render_text_overlay_sequences(overlays, tmpdir)
+    sequences, work_dir = render_text_overlay_sequences(overlays, tmpdir, matte=matte)
     try:
         if not sequences:
             shutil.copy2(input_path, output_path)

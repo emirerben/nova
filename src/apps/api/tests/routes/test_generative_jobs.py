@@ -1021,6 +1021,139 @@ def test_dispatch_edit_remove_text_only(monkeypatch):
     assert calls[0][1]["remove_text"] is True
 
 
+# ── Instant edit: text_behind_subject (text-behind-subject occlusion) ────────────
+
+
+def test_dispatch_edit_text_behind_subject_passed_through_when_flag_on(monkeypatch):
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "text_behind_subject_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        text_behind_subject=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["text_behind_subject"] is True
+
+
+def test_dispatch_edit_text_behind_subject_coerced_to_none_when_flag_off(monkeypatch):
+    """Fail-open: a stale client sending the field while the flag is off is
+    silently coerced, not 4xx'd — as long as another field carries the edit."""
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "text_behind_subject_enabled", False)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id="travel_editorial",
+        text_size_px=None,
+        text_behind_subject=True,
+    )
+
+    assert len(calls) == 1
+    assert calls[0][1]["text_behind_subject"] is None
+    assert calls[0][1]["style_set_id"] == "travel_editorial"
+
+
+def test_dispatch_edit_text_behind_subject_alone_rejected_when_flag_off(monkeypatch):
+    """When it's the ONLY field sent and the flag is off, coercion leaves an
+    empty edit — same 422 as sending nothing."""
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "text_behind_subject_enabled", False)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            text_behind_subject=True,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_text_behind_subject_alone_is_a_valid_edit_when_flag_on(monkeypatch):
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "text_behind_subject_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    dispatch_edit_variant(
+        _editable_job(),
+        "song_text",
+        text=None,
+        remove_text=False,
+        style_set_id=None,
+        text_size_px=None,
+        text_behind_subject=False,
+    )
+    assert len(calls) == 1
+    assert calls[0][1]["text_behind_subject"] is False
+
+
+def test_dispatch_edit_text_behind_subject_rejected_on_sequence_variant(monkeypatch):
+    from fastapi import HTTPException
+
+    from app.config import settings
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    monkeypatch.setattr(settings, "text_behind_subject_enabled", True)
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _sequence_job(),
+            "original_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            text_behind_subject=True,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
+def test_dispatch_edit_none_text_behind_subject_is_not_an_edit_field(monkeypatch):
+    """None means 'unchanged' — omitting it must not, by itself, satisfy the
+    'at least one edit field' requirement."""
+    from fastapi import HTTPException
+
+    from app.routes.generative_jobs import dispatch_edit_variant
+
+    calls = _capture_delay(monkeypatch)
+    with pytest.raises(HTTPException) as exc:
+        dispatch_edit_variant(
+            _editable_job(),
+            "song_text",
+            text=None,
+            remove_text=False,
+            style_set_id=None,
+            text_size_px=None,
+            text_behind_subject=None,
+        )
+    assert exc.value.status_code == 422
+    assert calls == []
+
+
 # ── Instant edit: style-set intro preview block ──────────────────────────────────
 
 

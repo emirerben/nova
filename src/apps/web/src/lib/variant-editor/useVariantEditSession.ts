@@ -52,6 +52,10 @@ export interface EditDraft {
   clusterHeroSizePx: number | null;
   clusterBodySizePx: number | null;
   clusterAccentSizePx: number | null;
+  /** Occlude the AI-intro overlay behind the moving subject. Unlike the
+   * font/animation/color overrides, this has no "inherit" state — always a
+   * concrete boolean. */
+  behindSubject: boolean;
 }
 
 export interface VariantEditSession {
@@ -83,6 +87,7 @@ export interface VariantEditSession {
   setClusterHeroSizePx: (px: number) => void;
   setClusterBodySizePx: (px: number) => void;
   setClusterAccentSizePx: (px: number) => void;
+  setBehindSubject: (behindSubject: boolean) => void;
   /** Increments each time the entrance animation should replay in the preview. */
   playToken: number;
   /** Replay the entrance animation in the preview now. */
@@ -106,6 +111,7 @@ function draftFromVariant(variant: EditableVariant): EditDraft {
     clusterHeroSizePx: variant.intro_cluster_hero_size_px ?? null,
     clusterBodySizePx: variant.intro_cluster_body_size_px ?? null,
     clusterAccentSizePx: variant.intro_cluster_accent_size_px ?? null,
+    behindSubject: variant.intro_behind_subject ?? false,
   };
 }
 
@@ -124,7 +130,8 @@ function draftsEqual(a: EditDraft, b: EditDraft): boolean {
     a.clusterAccentFont === b.clusterAccentFont &&
     a.clusterHeroSizePx === b.clusterHeroSizePx &&
     a.clusterBodySizePx === b.clusterBodySizePx &&
-    a.clusterAccentSizePx === b.clusterAccentSizePx
+    a.clusterAccentSizePx === b.clusterAccentSizePx &&
+    a.behindSubject === b.behindSubject
   );
 }
 
@@ -182,6 +189,9 @@ export function buildEditPayload(draft: EditDraft, baseline: EditDraft): EditVar
   }
   if (draft.clusterAccentSizePx !== null && draft.clusterAccentSizePx !== baseline.clusterAccentSizePx) {
     payload.cluster_accent_size_px = draft.clusterAccentSizePx;
+  }
+  if (draft.behindSubject !== baseline.behindSubject) {
+    payload.text_behind_subject = draft.behindSubject;
   }
   return payload;
 }
@@ -291,6 +301,10 @@ export function useVariantEditSession(
   );
   const setClusterAccentSizePx = useCallback(
     (clusterAccentSizePx: number) => setDraft((d) => ({ ...d, clusterAccentSizePx })),
+    [],
+  );
+  const setBehindSubject = useCallback(
+    (behindSubject: boolean) => setDraft((d) => ({ ...d, behindSubject })),
     [],
   );
   const replay = useCallback(() => setPlayToken((t) => t + 1), []);
@@ -437,6 +451,7 @@ export function useVariantEditSession(
     setClusterHeroSizePx,
     setClusterBodySizePx,
     setClusterAccentSizePx,
+    setBehindSubject,
     playToken,
     replay,
     commit,

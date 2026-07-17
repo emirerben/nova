@@ -2,6 +2,7 @@ import {
   reflowTextForSmartPlacement,
   resolveSmartPlacementCandidate,
   resolveSmartPlacementCandidates,
+  splitTextForSmartPlacement,
   smartPlacementPatchForBar,
 } from "@/app/plan/items/[id]/_editor/editor-smart-placement";
 import type { PlanItemVariant, TextPlacementCandidate } from "@/lib/plan-api";
@@ -155,5 +156,31 @@ describe("resolveSmartPlacementCandidate", () => {
         masonry_motion: { mode: "masonry_pan_x", pan_px: 932 },
       },
     });
+  });
+
+  it("splits a whole masonry title into coherent pocket-sized blocks", () => {
+    const candidates = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
+      [bar, { ...bar, id: "text-2" }, { ...bar, id: "text-3" }],
+    );
+
+    expect(splitTextForSmartPlacement("take the scenic route home", candidates)).toEqual([
+      "take the",
+      "scenic",
+      "route home",
+    ]);
+  });
+
+  it("keeps manual line breaks as intended split blocks", () => {
+    const candidates = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
+      [bar, { ...bar, id: "text-2" }, { ...bar, id: "text-3" }],
+    );
+
+    expect(splitTextForSmartPlacement("first pocket\nsecond pocket\nthird pocket", candidates)).toEqual([
+      "first pocket",
+      "second pocket",
+      "third pocket",
+    ]);
   });
 });

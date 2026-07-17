@@ -58,11 +58,31 @@ class OverlayFormatMatcherOutput(BaseModel):
     layout: str = "linear"
     layout_source: str = "coerced_default"
     matched_example_ids: list[str] = Field(default_factory=list)
+    # Occlusion flag: render the text behind the detected subject (CapCut/IG
+    # "text behind object" effect). Composes with `effect`/`layout` — it does
+    # not pick an animation, it picks a depth relationship. See
+    # `match_overlay_format.txt` for the decision guidance.
+    behind_subject: bool = False
 
 
 def _coerce_choice(value: object, allowed: tuple[str, ...], default: str) -> str:
     v = str(value or "").strip()
     return v if v in allowed else default
+
+
+def _coerce_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes"):
+            return True
+        if v in ("false", "0", "no"):
+            return False
+        return default
+    if isinstance(value, int) and not isinstance(value, bool):
+        return bool(value)
+    return default
 
 
 def _coerce_hex(value: object, default: str) -> str:
@@ -114,7 +134,8 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
         # 2026-05-29 — overlay_examples.json grown with market-research hooks.
         # 2026-05-28 — added $language_hint block (en|tr).
         # 2026-06-14 — weekly research refresh: added professional-ootd-static-01 overlay example.
-        prompt_version="2026-06-14",
+        # 2026-07-17 — added `behind_subject` occlusion-flag decision (text-behind-subject).
+        prompt_version="2026-07-17",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,
@@ -191,6 +212,7 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
                 layout=layout,
                 layout_source=layout_source,
                 matched_example_ids=matched,
+                behind_subject=_coerce_bool(data.get("behind_subject"), False),
             )
         except ValidationError as exc:
             raise SchemaError(f"overlay_format_matcher: output validation — {exc}") from exc
@@ -199,7 +221,8 @@ class OverlayFormatMatcherAgent(Agent[OverlayFormatMatcherInput, OverlayFormatMa
         return (
             "\n\nIMPORTANT: Return ONLY a JSON object with keys effect, position, "
             "size_class, text_color, highlight_color, text_anchor, layout, "
-            "matched_example_ids. "
+            "behind_subject, matched_example_ids. "
             f"`effect` MUST be one of: {', '.join(_SKIA_EFFECTS)}. "
-            f"`layout` MUST be one of: {', '.join(_LAYOUTS)}."
+            f"`layout` MUST be one of: {', '.join(_LAYOUTS)}. "
+            "`behind_subject` MUST be a JSON boolean (true or false)."
         )

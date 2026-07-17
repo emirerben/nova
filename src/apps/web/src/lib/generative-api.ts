@@ -59,6 +59,10 @@ export interface GenerativeVariant {
   intro_mode?: "sequence" | "cluster" | "linear" | null;
   // Convenience flag from the backend: true iff intro_mode === "sequence".
   sequence_synced?: boolean | null;
+  // Whether the AI-intro overlay is occluded behind the moving subject
+  // (text-behind-subject feature). Absent/false on legacy variants and when
+  // the backend flag is off. See `text_behind_subject` on EditVariantPayload.
+  intro_behind_subject?: boolean | null;
   // Voice/bed mix for voiceover variants (0..1; 1.0 = voice only / bed ducked,
   // 0.0 = bed full). null on non-voiceover variants.
   mix?: number | null;
@@ -351,6 +355,10 @@ export interface EditVariantPayload {
   cluster_hero_size_px?: number;
   cluster_body_size_px?: number;
   cluster_accent_size_px?: number;
+  /** Occlude the AI-intro overlay behind the moving subject. Tri-state at the
+   * wire level (undefined = keep current); gated server-side by
+   * settings.text_behind_subject_enabled. */
+  text_behind_subject?: boolean;
 }
 
 export async function editVariant(

@@ -109,6 +109,7 @@ export function convertApiTextElements(
     y_frac: el.y_frac ?? undefined,
     rotation_deg: el.rotation_deg ?? undefined,
     source_params: el.source_params ?? undefined,
+    behind_subject: el.behind_subject ?? undefined,
   })).filter((bar, i) => !apiElements?.[i]?.removed);
 }
 
@@ -208,6 +209,7 @@ export function barsToTextElements(
         y_frac: bar.y_frac ?? null,
         rotation_deg: bar.rotation_deg ?? null,
         source_params: bar.source_params ?? null,
+        behind_subject: bar.behind_subject ?? false,
       };
     });
 }
