@@ -135,6 +135,10 @@ PARITY_VERIFIED_FIELDS: frozenset[str] = frozenset(
         "letter_spacing",  # tests/fixtures/text-element-parity/letter_spacing.json
         "line_spacing",  # tests/fixtures/text-element-parity/line_spacing.json
         "max_width_frac",  # tests/fixtures/text-element-parity/max_width_frac.json
+        # `behind_subject` is deliberately NOT registered here: it's a render-only
+        # compositing flag (Skia subject-matte occlusion), not a layout field. The
+        # browser CSS preview has no subject segmentation, so it can never render
+        # this field identically to the burn — there is no parity fixture to write.
     }
 )
 
@@ -355,6 +359,15 @@ class TextElement(BaseModel):
         description=(
             "Explicit tombstone for a generated AI text source the user deleted. "
             "Hidden on GET and skipped by the renderer so projection does not resurrect it."
+        ),
+    )
+    behind_subject: bool = Field(
+        default=False,
+        description=(
+            "Occlude this text behind the moving subject via the Skia subject-matte "
+            "compositing hook (text_overlay_skia.py). NOT in PARITY_VERIFIED_FIELDS — "
+            "it's a render-only compositing flag, not a layout field, and the browser "
+            "CSS preview cannot segment the subject to show it."
         ),
     )
 
@@ -647,6 +660,8 @@ def _burn_dict_to_text_element(
     fade_out_ms = burn_dict.get("fade_out_ms")
     word_timings = burn_dict.get("word_timings")
 
+    behind_subject = bool(burn_dict.get("behind_subject"))
+
     # source_params: preserve key generator params for round-trip safety (A2)
     source_params: dict = {
         "mode": intro_mode,
@@ -680,6 +695,7 @@ def _burn_dict_to_text_element(
             fade_out_ms=fade_out_ms,
             word_timings=word_timings,
             source_params=source_params,
+            behind_subject=behind_subject,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(

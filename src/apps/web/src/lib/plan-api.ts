@@ -858,6 +858,10 @@ export interface TextElement {
   word_timings?: Record<string, unknown>[] | null;
   source_params?: Record<string, unknown> | null;
   removed?: boolean;
+  /** Occlude this text behind the moving subject (text-behind-subject feature).
+   * Render-only compositing flag — NOT in PARITY_VERIFIED_FIELDS, since the
+   * browser CSS preview cannot segment the subject to show it. */
+  behind_subject?: boolean;
 }
 
 /**
@@ -940,6 +944,10 @@ export interface PlanItemVariant {
   intro_mode?: "sequence" | "cluster" | "linear" | null;
   // Convenience flag from the backend: true iff intro_mode === "sequence".
   sequence_synced?: boolean | null;
+  // Whether the AI-intro overlay is occluded behind the moving subject
+  // (text-behind-subject feature). Absent/false on legacy variants and when
+  // the backend flag is off. See `text_behind_subject` on EditVariantPayload.
+  intro_behind_subject?: boolean | null;
   // Instant editor: fresh-signed playback URL + GCS key of the text-free
   // fast-reburn base. The API's `_variants_for_response` already signs these for
   // plan-item renders (the plan flow just discarded them before); their presence

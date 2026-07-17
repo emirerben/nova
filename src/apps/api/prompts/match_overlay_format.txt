@@ -39,6 +39,19 @@ $example_lines
 - `linear` — one centered text block (the default). Right when the hook needs karaoke momentum, word-by-word timing, or more than 6 words. Also use it when the likely phrasing is dense, explanatory, transcript-like, or sentence-like.
 - `cluster` — an editorial word-cluster: the hook's key words render as separate blocks with mixed sizes at offset positions (magazine-style), fading in one after another. Choose it when the best hook shape is a SHORT 3-6 word phrase with strong standalone words and enough visual breathing room. This is content-agnostic: energetic, people, lifestyle, food, travel, and scenic clips can all use cluster when the hook shape fits. If you match a `layout=cluster` example and the likely hook is 3-6 strong words, prefer `layout=cluster` over linear/karaoke. Never pair `cluster` with `karaoke-line` — use `fade-in`.
 
+## Text behind subject
+
+`behind_subject` decides whether the text should be occluded by the hero clip's subject — the person appears to stand IN FRONT of the text, like the CapCut/IG "text behind object" effect. It is an occlusion flag, not an animation: it composes with whatever `effect` and `layout` you already picked.
+
+Set `behind_subject: true` ONLY when the hero clip's `subject`/`description` describe a single, clearly-framed person — e.g. a talking-head-style shot or someone prominently in frame — who occupies a meaningful but not overwhelming part of the frame, leaving room for the text to sit in a zone the subject partially overlaps or moves through.
+
+Set `behind_subject: false` when:
+- `subject`/`description` don't clearly describe a single person (no subject, an object, a landscape, or a crowd/multi-person scene).
+- The subject reads as filling nearly the whole frame (an extreme close-up) — the text would end up mostly hidden.
+- The scene reads as busy or cluttered — a legible occlusion needs a clean silhouette to cut against.
+
+Default to `false` when unsure — a wrong `true` produces an illegible overlay, while `false` just renders the text in front as normal.
+
 ## Output
 
 Return ONLY this JSON object (no markdown):
@@ -51,5 +64,6 @@ Return ONLY this JSON object (no markdown):
   "highlight_color": "#RRGGBB",
   "text_anchor": one of [$valid_anchors],
   "layout": one of [$valid_layouts],
+  "behind_subject": true or false,
   "matched_example_ids": ["<ids from the library you matched against>"]
 }

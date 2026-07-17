@@ -37,6 +37,7 @@ function makeSession(over: Partial<VariantEditSession> = {}): VariantEditSession
       clusterHeroSizePx: null,
       clusterBodySizePx: null,
       clusterAccentSizePx: null,
+      behindSubject: false,
     },
     isDirty: false,
     commitError: null,
@@ -56,6 +57,7 @@ function makeSession(over: Partial<VariantEditSession> = {}): VariantEditSession
     setClusterHeroSizePx: jest.fn(),
     setClusterBodySizePx: jest.fn(),
     setClusterAccentSizePx: jest.fn(),
+    setBehindSubject: jest.fn(),
     playToken: 0,
     replay: jest.fn(),
     commit: jest.fn(async () => {}),
@@ -119,6 +121,7 @@ describe("EditToolbar — linear layout", () => {
             clusterHeroSizePx: null,
             clusterBodySizePx: null,
             clusterAccentSizePx: null,
+            behindSubject: false,
           },
         })}
         styleSets={STYLE_SETS}
@@ -151,6 +154,7 @@ describe("EditToolbar — cluster layout", () => {
         clusterHeroSizePx: null,
         clusterBodySizePx: null,
         clusterAccentSizePx: null,
+        behindSubject: false,
       },
       ...over,
     });

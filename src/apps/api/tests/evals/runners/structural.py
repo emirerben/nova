@@ -1236,6 +1236,8 @@ def check_overlay_format_matcher(output: OverlayFormatMatcherOutput) -> list[str
         failures.append(f"text_anchor={output.text_anchor!r} not in {_ANCHORS}")
     if output.layout_source not in ("model", "coerced_default"):
         failures.append(f"layout_source={output.layout_source!r} is invalid")
+    if not isinstance(output.behind_subject, bool):
+        failures.append(f"behind_subject={output.behind_subject!r} is not a bool")
     for field_name in ("text_color", "highlight_color"):
         val = getattr(output, field_name)
         if not _HEX_RE.match(val):

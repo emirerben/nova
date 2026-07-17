@@ -62,6 +62,33 @@ dependencies = [
     # declaring `terminal_refusal`. Opted in per-agent via
     # `AgentSpec.enable_json_repair`. Pure-Python, ~50KB, MIT.
     "json-repair>=0.30",
+    # ImageSegmenter (selfie segmenter, VIDEO mode) for the subject-matte
+    # occlusion engine (app.pipeline.subject_matte). Imported LAZILY inside
+    # subject_matte.py functions so the module stays importable without it
+    # (structural eval-CI constraint) and any matte failure degrades to
+    # None instead of breaking a render job.
+    #
+    # KNOWN COLLISION: mediapipe's own metadata declares `opencv-contrib-python`
+    # (GUI-linked build) as a hard dependency — NOT `opencv-python-headless`,
+    # which this project deliberately uses (slim image, no X11 needed). pip
+    # has no "provides" concept across opencv-python/-headless/-contrib/
+    # -contrib-headless distribution names, so both get installed side by
+    # side and whichever installs last physically overwrites the shared
+    # `cv2/` package directory on disk — non-deterministic across rebuilds.
+    # Verified locally (2026-07-17): `pip install mediapipe` pulls
+    # opencv-contrib-python 5.0.0.93 alongside the existing
+    # opencv-python-headless 5.0.0.93; both `import cv2` and `import
+    # mediapipe` work afterward because the prod Dockerfile already installs
+    # libgl1/libegl1/libglib2.0-0 for skia-python, which also happen to
+    # satisfy opencv-contrib-python's runtime needs. Risk is image-size
+    # bloat (+~55MB wheel) and non-determinism, not a hard crash — but if a
+    # future integration pass wants to keep the image headless-only, the
+    # clean fix is `pip install mediapipe --no-deps` in the Dockerfile pip
+    # layer plus explicitly listing mediapipe's other transitive deps
+    # (absl-py, flatbuffers, sounddevice, matplotlib) here, since the
+    # ImageSegmenter task API path does not import cv2 itself (only
+    # mediapipe's drawing_utils / legacy solutions API + its own tests do).
+    "mediapipe>=0.10,<0.11",
 ]
 
 [project.optional-dependencies]

@@ -163,6 +163,7 @@ def build_intro_overlay(
     letter_spacing: float | None = None,
     line_spacing: float | None = None,
     max_width_frac: float | None = None,
+    behind_subject: bool = False,
 ) -> dict | None:
     """Build a single hero-intro overlay dict in the Skia overlay schema.
 
@@ -177,6 +178,11 @@ def build_intro_overlay(
     the caller (`_inject_agent_intro` → `resolve_overlay_style`). They are honored by
     BOTH renderers (the #296 parity invariant), so an intro now picks up the set's
     typography. When `text_size_px` is given it wins over the `size_class` bucket.
+
+    `behind_subject` (text-behind-subject occlusion) is only ever set on the
+    returned dict when True — flag-off / not-requested output must stay
+    byte-identical to today's burn dict (the Skia renderer keys its occlusion
+    path off the KEY'S PRESENCE, not its truthiness).
     """
     clean = (text or "").strip()
     if not clean:
@@ -205,6 +211,8 @@ def build_intro_overlay(
         # subject substitution must never rewrite agent-authored intro text.
         "subject_substitute": False,
     }
+    if behind_subject:
+        overlay["behind_subject"] = True
 
     # Style-set passthrough. font_family is the headline win (the intro previously
     # rendered with no explicit font); text_size_px overrides the size bucket.
@@ -340,6 +348,7 @@ def _build_cluster_intro_overlays(
     cluster_style: dict | None = None,
     language: str = "en",
     hook_window_s: float = _HOLD_TO_END_S,
+    behind_subject: bool = False,
     **style_kwargs,
 ) -> list[dict] | None:
     """Build the editorial word-cluster intro: one [reveal, hold] pair PER block.
@@ -390,6 +399,7 @@ def _build_cluster_intro_overlays(
             "text_size_px": block["text_size_px"],
             "position_x_frac": block["position_x_frac"],
             "position_y_frac": block["position_y_frac"],
+            "behind_subject": behind_subject,
         }
         reveal_end = min(block["start_offset_s"] + block["reveal_s"], _HOLD_TO_END_S)
         reveal = build_intro_overlay(
@@ -437,6 +447,7 @@ def build_persistent_intro_overlays(
     hook_window_s: float = _HOLD_TO_END_S,
     start_s: float | None = None,
     end_s: float | None = None,
+    behind_subject: bool = False,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -502,6 +513,7 @@ def build_persistent_intro_overlays(
                 cluster_style=cluster_style,
                 language=language,
                 hook_window_s=effective_hook_s,
+                behind_subject=behind_subject,
                 **style_kwargs,
             )
         except Exception as exc:
@@ -549,6 +561,7 @@ def build_persistent_intro_overlays(
         beats=beats,
         text_color=text_color,
         highlight_color=highlight_color,
+        behind_subject=behind_subject,
         **style_kwargs,
     )
     if reveal is not None:
@@ -564,6 +577,7 @@ def build_persistent_intro_overlays(
         end_s=min(effective_hook_s, _HOLD_TO_END_S),
         text_color=settled_color,
         highlight_color=highlight_color,
+        behind_subject=behind_subject,
         **style_kwargs,
     )
     if hold is not None:
@@ -863,6 +877,9 @@ def build_overlays_from_text_elements(
         size_class = elem.size_class or _DEFAULT_SIZE_CLASS
         text_size_px = int(elem.size_px) if elem.size_px is not None else None
         stroke_w = int(elem.stroke_width) if elem.stroke_width is not None else None
+        # getattr: Lane E's TextElement.behind_subject field may not be on disk
+        # yet (concurrent lane) — absent field reads as False, byte-identical.
+        elem_behind_subject = bool(getattr(elem, "behind_subject", False))
 
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
@@ -900,6 +917,7 @@ def build_overlays_from_text_elements(
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
                 max_width_frac=elem.max_width_frac,
+                behind_subject=elem_behind_subject,
             )
             if reveal is not None:
                 reveal["role"] = elem.role
@@ -934,6 +952,7 @@ def build_overlays_from_text_elements(
                 letter_spacing=elem.letter_spacing,
                 line_spacing=elem.line_spacing,
                 max_width_frac=elem.max_width_frac,
+                behind_subject=elem_behind_subject,
             )
             if hold is not None:
                 hold["role"] = elem.role
@@ -965,6 +984,7 @@ def build_overlays_from_text_elements(
             letter_spacing=elem.letter_spacing,
             line_spacing=elem.line_spacing,
             max_width_frac=elem.max_width_frac,
+            behind_subject=elem_behind_subject,
         )
         if overlay is None:
             continue

@@ -163,3 +163,42 @@ def test_linear_keeps_karaoke():
     raw = json.dumps({"effect": "karaoke-line", "layout": "linear"})
     out = _agent().parse(raw, _input())
     assert out.effect == "karaoke-line"
+
+
+# -- behind_subject (occlusion flag) --------------------------------------------
+
+
+def test_behind_subject_true_preserved():
+    raw = json.dumps({"effect": "static", "behind_subject": True})
+    out = _agent().parse(raw, _input())
+    assert out.behind_subject is True
+
+
+def test_behind_subject_absent_defaults_false():
+    raw = json.dumps({"effect": "static"})
+    out = _agent().parse(raw, _input())
+    assert out.behind_subject is False
+
+
+def test_behind_subject_string_true_coerced():
+    raw = json.dumps({"effect": "static", "behind_subject": "true"})
+    out = _agent().parse(raw, _input())
+    assert out.behind_subject is True
+
+
+def test_behind_subject_string_false_coerced():
+    raw = json.dumps({"effect": "static", "behind_subject": "false"})
+    out = _agent().parse(raw, _input())
+    assert out.behind_subject is False
+
+
+def test_behind_subject_garbage_value_defaults_false():
+    raw = json.dumps({"effect": "static", "behind_subject": "maybe"})
+    out = _agent().parse(raw, _input())
+    assert out.behind_subject is False
+
+
+def test_behind_subject_garbage_type_defaults_false():
+    raw = json.dumps({"effect": "static", "behind_subject": {"nested": True}})
+    out = _agent().parse(raw, _input())
+    assert out.behind_subject is False

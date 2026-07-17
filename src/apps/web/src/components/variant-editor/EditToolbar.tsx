@@ -12,6 +12,9 @@ import {
 import type { IntroOverlayParams } from "@/lib/overlay-layout";
 import type { VariantEditSession } from "@/lib/variant-editor/useVariantEditSession";
 
+const TEXT_BEHIND_SUBJECT_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
+
 export function EditToolbar({
   session,
   styleSets: _styleSets,
@@ -214,6 +217,25 @@ export function EditToolbar({
                 onChange={(e) => session.setSize(Number(e.target.value))}
                 className="w-full accent-lime-600"
               />
+            </div>
+          )}
+
+          {TEXT_BEHIND_SUBJECT_UI_ENABLED && (
+            <div>
+              <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#71717a]">
+                Behind subject
+              </div>
+              <button
+                onClick={() => session.setBehindSubject(!draft.behindSubject)}
+                aria-pressed={draft.behindSubject}
+                className={`rounded-lg border px-3 py-1 text-xs transition-colors ${
+                  draft.behindSubject
+                    ? "border-lime-600 bg-lime-50 text-lime-800"
+                    : "border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                }`}
+              >
+                {draft.behindSubject ? "On" : "Off"}
+              </button>
             </div>
           )}
         </>

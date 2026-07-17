@@ -388,6 +388,11 @@ class EditVariantRequest(BaseModel):
     cluster_hero_size_px: int | None = Field(None, gt=0)
     cluster_body_size_px: int | None = Field(None, gt=0)
     cluster_accent_size_px: int | None = Field(None, gt=0)
+    # Occlude the AI-intro overlay behind the moving subject (text-behind-subject
+    # feature). Tri-state: None = keep current. Gated server-side by
+    # settings.text_behind_subject_enabled; a stale client sending this while the
+    # flag is off is coerced to None (not rejected) in dispatch_edit_variant.
+    text_behind_subject: bool | None = None
 
 
 class TextElementsRequest(BaseModel):
@@ -2078,6 +2083,7 @@ def dispatch_edit_variant(
     cluster_hero_size_px: int | None = None,
     cluster_body_size_px: int | None = None,
     cluster_accent_size_px: int | None = None,
+    text_behind_subject: bool | None = None,
 ) -> None:
     """Validate + enqueue a combined text/style/size/layout edit as ONE re-render.
 
@@ -2087,6 +2093,21 @@ def dispatch_edit_variant(
     already accepts all overrides together.
     """
     variant = require_editable_variant(job, variant_id)
+
+    # Server-side flag gate (text-behind-subject): a stale client with the FE
+    # flag cached on can still submit this field after a rollback — coerce to
+    # None rather than 4xx, matching the fail-open safety rule this repo uses
+    # for kill-switched edit fields.
+    if text_behind_subject is not None:
+        from app.config import settings as _tbs_settings  # noqa: PLC0415
+
+        if not _tbs_settings.text_behind_subject_enabled:
+            log.info(
+                "text_behind_subject_edit_flag_disabled",
+                job_id=str(job.id),
+                variant_id=variant_id,
+            )
+            text_behind_subject = None
 
     # A15: once the user has edited via the timeline TextElement editor, the
     # instant-edit surface (which only understands the single-block linear intro)
@@ -2115,6 +2136,7 @@ def dispatch_edit_variant(
         and cluster_hero_size_px is None
         and cluster_body_size_px is None
         and cluster_accent_size_px is None
+        and text_behind_subject is None
     ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -2132,6 +2154,15 @@ def dispatch_edit_variant(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=_SEQUENCE_TEXT_LOCKED_DETAIL,
+        )
+    # Behind-subject occlusion is not supported on sequence-role overlays in v1
+    # (the renderer already strips it defensively — see
+    # _strip_behind_subject_for_sequence_role in text_overlay_skia.py — but reject
+    # here so the client gets an actionable 422 instead of a silent no-op).
+    if variant.get("intro_mode") == "sequence" and text_behind_subject is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Behind-subject text isn't supported on synced (sequence) variants yet.",
         )
     if text is not None and not text.strip():
         raise HTTPException(
@@ -2290,6 +2321,7 @@ def dispatch_edit_variant(
         cluster_hero_size_px_override=cluster_hero_size_px,
         cluster_body_size_px_override=cluster_body_size_px,
         cluster_accent_size_px_override=cluster_accent_size_px,
+        text_behind_subject=text_behind_subject,
     )
 
 
@@ -3682,6 +3714,7 @@ async def edit_variant(
         cluster_hero_size_px=req.cluster_hero_size_px,
         cluster_body_size_px=req.cluster_body_size_px,
         cluster_accent_size_px=req.cluster_accent_size_px,
+        text_behind_subject=req.text_behind_subject,
     )
     await db.commit()
     log.info(
@@ -3699,6 +3732,7 @@ async def edit_variant(
         cluster_hero_font=req.cluster_hero_font,
         cluster_body_font=req.cluster_body_font,
         cluster_accent_font=req.cluster_accent_font,
+        text_behind_subject=req.text_behind_subject,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 

@@ -61,6 +61,10 @@ export interface TextElementBar {
   /** Clockwise rotation in degrees. Used by masonry smart placement pockets. */
   rotation_deg?: number | null;
   source_params?: Record<string, unknown>;
+  /** Occlude this text behind the moving subject (text-behind-subject feature).
+   * Render-only compositing flag — the canvas preview cannot segment the
+   * subject, so this has no visual effect here beyond the inspector toggle. */
+  behind_subject?: boolean;
 }
 
 // ── Reducer state ─────────────────────────────────────────────────────────────

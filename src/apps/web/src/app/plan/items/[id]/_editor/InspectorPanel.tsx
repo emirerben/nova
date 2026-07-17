@@ -74,10 +74,14 @@ const EDITABLE_ROW_FIELDS = new Set([
   "letter_spacing",
   "line_spacing",
   "max_width_frac",
+  "behind_subject",
 ]);
 
 const EDITOR_TEXT_SIZE_MIN = 8;
 const EDITOR_TEXT_SIZE_MAX = 300;
+
+const TEXT_BEHIND_SUBJECT_UI_ENABLED =
+  process.env.NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED === "true";
 
 export interface InspectorClipTiming {
   slot: DraftSlot;
@@ -1089,6 +1093,18 @@ function TextInspector({
           className="h-4 w-4 accent-[#0c0c0e]"
         />
       </label>
+
+      {TEXT_BEHIND_SUBJECT_UI_ENABLED && (
+        <label className="flex h-11 items-center justify-between border-b border-zinc-100">
+          <span className="text-[13px] text-[#3f3f46]">Behind subject</span>
+          <input
+            type="checkbox"
+            checked={bar.behind_subject ?? false}
+            onChange={(e) => onPatch({ behind_subject: e.target.checked })}
+            className="h-4 w-4 accent-[#0c0c0e]"
+          />
+        </label>
+      )}
 
       {/* Stroke — collapsed behind + */}
       <div className="border-b border-zinc-100">

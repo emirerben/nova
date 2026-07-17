@@ -288,9 +288,14 @@ def test_overlay_bank_version_couples_to_agent_versions():
     # Bump 2026-06-14: weekly research refresh — added professional-ootd-static-01
     #                  (office fashion / professional aesthetic lane).
     # Intro bumped to 2026-06-18: added clip_notes context block (plan-item shot notes).
+    # Matcher bumped to 2026-07-17: added the `behind_subject` occlusion-flag decision
+    #                  (text-behind-subject) to match_overlay_format.txt — a
+    #                  consuming-agent prompt change with no bank-content edit, so
+    #                  only the matcher's own prompt_version moves; library_version()
+    #                  is untouched.
     assert library_version() == "2026-06-14"
     assert IntroTextWriterAgent.spec.prompt_version == "2026-06-18"
-    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-06-14"
+    assert OverlayFormatMatcherAgent.spec.prompt_version == "2026-07-17"
 
 
 @pytest.mark.parametrize(

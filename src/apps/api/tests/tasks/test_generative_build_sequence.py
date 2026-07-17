@@ -144,7 +144,7 @@ def _patch_render_helpers(monkeypatch):
 
     burn_calls: list[dict] = []
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir):
+    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         burn_calls.append({"base": base_path, "overlays": overlays, "out": out_path})
         with open(out_path, "wb") as f:
             f.write(b"\x01" * 24)  # different size than the 16-byte base
@@ -829,7 +829,7 @@ def test_sequence_copy_through_falls_back_to_static_burn(monkeypatch, tmp_path):
     # static-fallback burn succeeds.
     state = {"n": 0}
 
-    def _flaky_burn(base_path, overlays, out_path, tmpdir):
+    def _flaky_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         state["n"] += 1
         burn_calls.append({"overlays": overlays})
         size = 16 if state["n"] == 1 else 24
@@ -859,7 +859,7 @@ def test_static_copy_through_fails_variant(monkeypatch, tmp_path):
     _bomb_emphasis_agent(monkeypatch)
     _patch_trace(monkeypatch)
 
-    def _copy_through_burn(base_path, overlays, out_path, tmpdir):
+    def _copy_through_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         with open(out_path, "wb") as f:
             f.write(b"\x00" * 16)  # same size as the base every time
 
@@ -913,7 +913,7 @@ def _patch_reburn_helpers(monkeypatch, *, base_content=b"\x00" * 32):
         with open(local_path, "wb") as f:
             f.write(base_content)
 
-    def _fake_burn(base_path, overlays, out_path, tmpdir):
+    def _fake_burn(base_path, overlays, out_path, tmpdir, *, matte=None):
         burn_calls.append({"overlays": overlays})
         with open(out_path, "wb") as f:
             f.write(b"\x01" * (len(base_content) + 8))
