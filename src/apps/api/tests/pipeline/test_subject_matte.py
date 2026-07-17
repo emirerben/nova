@@ -294,7 +294,39 @@ def _mediapipe_available() -> bool:
     return True
 
 
+def _segmenter_usable() -> bool:
+    """True when an ImageSegmenter can actually be created here.
+
+    Importing mediapipe is not enough: GL-less hosts (e.g. the test-api CI
+    runner, which lacks libGLESv2 — same constraint as the skia-free eval
+    CI) import fine but fail at segmenter creation, making compute's
+    best-effort None legitimate. Only environments that pass this probe
+    (local dev, the prod Docker image) run the strict end-to-end assertion.
+    """
+    if not _mediapipe_available():
+        return False
+    try:
+        from mediapipe.tasks import python as mp_python  # noqa: PLC0415
+        from mediapipe.tasks.python import vision as mp_vision  # noqa: PLC0415
+
+        from app.pipeline.subject_matte import _resolve_model_path  # noqa: PLC0415
+
+        options = mp_vision.ImageSegmenterOptions(
+            base_options=mp_python.BaseOptions(model_asset_path=_resolve_model_path()),
+            running_mode=mp_vision.RunningMode.VIDEO,
+            output_confidence_masks=True,
+            output_category_mask=False,
+        )
+        mp_vision.ImageSegmenter.create_from_options(options).close()
+    except Exception:  # noqa: BLE001 — any creation failure means unusable here
+        return False
+    return True
+
+
 needs_mediapipe = pytest.mark.skipif(not _mediapipe_available(), reason="mediapipe not installed")
+needs_segmenter = pytest.mark.skipif(
+    not _segmenter_usable(), reason="mediapipe segmenter not usable on this host (no GL)"
+)
 
 
 def _build_testsrc_clip(out_path: Path, duration: float = 1.0) -> Path:
@@ -321,7 +353,7 @@ def _build_testsrc_clip(out_path: Path, duration: float = 1.0) -> Path:
 
 
 @needs_ffmpeg
-@needs_mediapipe
+@needs_segmenter
 class TestComputeSubjectMatteEndToEnd:
     def test_real_clip_never_raises(self, tmp_path: Path) -> None:
         video_path = _build_testsrc_clip(tmp_path / "clip.mp4", duration=1.0)
@@ -333,7 +365,7 @@ class TestComputeSubjectMatteEndToEnd:
             str(out_path),
         )
 
-        # This test only runs when mediapipe is importable (needs_mediapipe),
+        # This test only runs where a segmenter is creatable (needs_segmenter),
         # so a None result here would mask a real regression in the writer
         # path rather than a legitimate best-effort skip — assert success.
         assert result is not None and isinstance(result, MatteStats)
