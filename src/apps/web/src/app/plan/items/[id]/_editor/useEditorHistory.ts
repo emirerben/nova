@@ -62,10 +62,12 @@ export interface EditorHistoryState {
    * content) collapses into a single undo step. Cleared by undo/redo.
    */
   lastTag: string | null;
+  /** False once the depth cap evicts the original baseline snapshot. */
+  baselineReachable?: boolean;
 }
 
 export function initEditorHistoryState(): EditorHistoryState {
-  return { past: [], future: [], lastTag: null };
+  return { past: [], future: [], lastTag: null, baselineReachable: true };
 }
 
 /**
@@ -79,8 +81,12 @@ export function recordSnapshot(
 ): EditorHistoryState {
   if (tag !== null && tag === h.lastTag) return h;
   const past = [...h.past, prev];
-  if (past.length > EDITOR_HISTORY_DEPTH) past.shift();
-  return { past, future: [], lastTag: tag };
+  let baselineReachable = h.baselineReachable !== false;
+  if (past.length > EDITOR_HISTORY_DEPTH) {
+    past.shift();
+    baselineReachable = false;
+  }
+  return { past, future: [], lastTag: tag, baselineReachable };
 }
 
 /** Compute the undo transition, or null when there is nothing to undo. */
@@ -95,6 +101,7 @@ export function undoSnapshot(
       past: h.past.slice(0, -1),
       future: [current, ...h.future],
       lastTag: null,
+      baselineReachable: h.baselineReachable,
     },
     doc,
   };
@@ -112,6 +119,7 @@ export function redoSnapshot(
       past: [...h.past, current],
       future: h.future.slice(1),
       lastTag: null,
+      baselineReachable: h.baselineReachable,
     },
     doc,
   };
@@ -198,6 +206,8 @@ export interface EditorHistory {
   clear: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  /** True only when undo reached the original saved document. */
+  isAtBaseline: boolean;
   /** Monotonic command counter; increments on every non-coalesced record(). */
   version: number;
 }
@@ -273,6 +283,7 @@ export function useEditorHistory(opts: {
     clear,
     canUndo: hist.past.length > 0,
     canRedo: hist.future.length > 0,
+    isAtBaseline: hist.past.length === 0 && hist.baselineReachable !== false,
     version,
   };
 }

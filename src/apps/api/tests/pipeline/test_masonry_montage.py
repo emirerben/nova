@@ -6,6 +6,11 @@ from pathlib import Path
 
 from app.pipeline.masonry_montage import (
     MASONRY_MAX_DURATION_S,
+    _layout_for_config,
+    _preset_config,
+    _rotated_bounds,
+    _rotation_for_config,
+    _rotation_for_empty_pocket,
     assemble_masonry_montage,
     build_masonry_command,
     build_masonry_text_burn_command,
@@ -42,16 +47,105 @@ def test_clamp_masonry_duration_caps_to_reference_window() -> None:
     assert clamp_masonry_duration(4.25) == 4.25
 
 
-def test_masonry_text_placement_candidates_choose_whitespace() -> None:
+def _candidate_envelope(candidate):  # noqa: ANN001
+    motion = candidate["masonry_motion"]
+    return tuple(
+        motion[key]
+        for key in (
+            "pocket_left_px",
+            "pocket_top_px",
+            "pocket_right_px",
+            "pocket_bottom_px",
+        )
+    )
+
+
+def _overlap_area(a, b):  # noqa: ANN001
+    return max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
+def test_masonry_text_placement_candidates_choose_stable_board_whitespace() -> None:
     candidates = masonry_text_placement_candidates(duration_s=8.0)
 
-    assert candidates
-    assert candidates[0]["source"] == "masonry_whitespace"
-    assert candidates[0]["x_frac"] < 0.25
-    assert 0.45 <= candidates[0]["y_frac"] <= 0.55
-    assert candidates[0]["rotation_deg"] == 90.0
+    assert [
+        (item["x_frac"], item["y_frac"], item["max_width_frac"], item["rotation_deg"])
+        for item in candidates
+    ] == [
+        (0.5861, 0.6625, 0.2266, 0.0),
+        (0.8602, 0.9359, 0.2, 0.0),
+    ]
+    assert all(candidate["source"] == "masonry_whitespace" for candidate in candidates)
     assert candidates[0]["masonry_motion"]["mode"] == "masonry_pan_x"
-    assert candidates[1]["y_frac"] < 0.12
+    midpoint_scroll = candidates[0]["masonry_motion"]["pan_px"] * 2 / 8
+    for candidate in candidates:
+        left, _top, right, _bottom = _candidate_envelope(candidate)
+        visible = max(0, min(right - midpoint_scroll, 1044) - max(left - midpoint_scroll, 36))
+        assert visible / (right - left) >= 0.98
+
+
+def test_masonry_candidate_envelopes_never_overlap_visible_tiles_during_reveal() -> None:
+    duration = 8.0
+    candidates = masonry_text_placement_candidates(duration_s=duration)
+    config = _preset_config("masonry")
+    layout = _layout_for_config(config)
+    pan_px = candidates[0]["masonry_motion"]["pan_px"]
+
+    for sample in range(7):
+        time_s = 4.0 * sample / 6
+        scroll = pan_px * min(time_s, duration) / duration
+        tile_rects = [
+            (
+                x - config.placement_margin_px - scroll,
+                y - config.placement_margin_px,
+                x + width + config.placement_margin_px - scroll,
+                y + height + config.placement_margin_px,
+            )
+            for x, y, width, height in layout
+        ]
+        for candidate in candidates:
+            left, top, right, bottom = _candidate_envelope(candidate)
+            envelope = (left - scroll, top, right - scroll, bottom)
+            assert all(_overlap_area(envelope, tile) == 0 for tile in tile_rects)
+
+
+def test_masonry_leading_candidate_envelopes_are_pairwise_non_overlapping() -> None:
+    candidates = masonry_text_placement_candidates(duration_s=8.0)
+    envelopes = [_candidate_envelope(candidate) for candidate in candidates]
+
+    for index, envelope in enumerate(envelopes):
+        assert all(_overlap_area(envelope, other) == 0 for other in envelopes[index + 1 :])
+
+
+def test_masonry_candidate_count_and_short_duration_are_deterministic() -> None:
+    one = masonry_text_placement_candidates(duration_s=0.25, max_candidates=1)
+    again = masonry_text_placement_candidates(duration_s=0.25, max_candidates=1)
+
+    assert one == again
+    assert len(one) == 1
+    assert one[0]["masonry_motion"]["duration_s"] == 0.25
+
+
+def test_masonry_returns_no_candidate_when_layout_has_no_safe_pocket(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.pipeline.masonry_montage._layout_for_config",
+        lambda _config: [(0, 0, 1080, 1920)],
+    )
+
+    assert masonry_text_placement_candidates(duration_s=8.0) == []
+
+
+def test_rotation_requires_a_qualifying_empty_vertical_pocket(monkeypatch) -> None:
+    assert _rotation_for_empty_pocket(width=240, height=500) == 90.0
+    assert _rotation_for_empty_pocket(width=400, height=500) == 0.0
+    monkeypatch.setattr(
+        "app.pipeline.masonry_montage._layout_for_config",
+        lambda _config: [(0, 0, 720, 1920)],
+    )
+
+    candidates = masonry_text_placement_candidates(duration_s=8.0, max_candidates=1)
+
+    assert candidates
+    assert candidates[0]["rotation_deg"] == 90.0
 
 
 def test_polaroid_text_placement_candidates_use_polaroid_layout() -> None:
@@ -68,6 +162,27 @@ def test_polaroid_text_placement_candidates_use_polaroid_layout() -> None:
     assert candidates[0]["masonry_motion"]["board_width_px"] > masonry_board_width_for_preset(
         "masonry"
     )
+
+    config = _preset_config("polaroid_wall")
+    tile_rects = []
+    for index, (x, y, width, height) in enumerate(_layout_for_config(config)):
+        rotated_width, rotated_height = _rotated_bounds(
+            width,
+            height,
+            _rotation_for_config(config, index),
+        )
+        left = x - (rotated_width - width) / 2 - config.placement_margin_px
+        top = y - (rotated_height - height) / 2 - config.placement_margin_px
+        tile_rects.append(
+            (
+                left,
+                top,
+                left + rotated_width + config.placement_margin_px * 2,
+                top + rotated_height + config.placement_margin_px * 2,
+            )
+        )
+    for candidate in candidates:
+        assert all(_overlap_area(_candidate_envelope(candidate), tile) == 0 for tile in tile_rects)
 
 
 def test_build_masonry_tiles_cycles_uploaded_clips_and_writes_masks(tmp_path) -> None:

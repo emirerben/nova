@@ -6,6 +6,8 @@ import {
   TEXT_LANE_BASE_HEIGHT_PX,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
 import {
+  EDITOR_HISTORY_DEPTH,
+  initEditorHistoryState,
   recordSnapshot,
   undoSnapshot,
   type EditorDocument,
@@ -116,6 +118,27 @@ describe("deriveTextLaneRows", () => {
       ["second", 1],
       ["third", 2],
     ]);
+  });
+});
+
+describe("bounded editor history", () => {
+  it("does not report the saved baseline after the oldest snapshot is evicted", () => {
+    let history = initEditorHistoryState();
+    let current = doc([]);
+    for (let index = 0; index <= EDITOR_HISTORY_DEPTH; index += 1) {
+      history = recordSnapshot(history, current);
+      current = doc([bar(`edit-${index}`)]);
+    }
+
+    while (history.past.length > 0) {
+      const undo = undoSnapshot(history, current);
+      expect(undo).not.toBeNull();
+      history = undo!.history;
+      current = undo!.doc;
+    }
+
+    expect(history.baselineReachable).toBe(false);
+    expect(current.bars[0]?.id).toBe("edit-0");
   });
 });
 

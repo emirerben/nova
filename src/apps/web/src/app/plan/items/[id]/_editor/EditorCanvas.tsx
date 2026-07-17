@@ -51,6 +51,11 @@ import {
 } from "./editor-media-overlays";
 import { cycleHit } from "./useEditorSelection";
 import type { VirtualPreviewController } from "./useVirtualPreview";
+import {
+  collageMotionForVariant,
+  isCollageVariant,
+  masonryMotionOffsetFrac,
+} from "./editor-smart-placement";
 
 /** Min/max font size (1080×1920 canvas px) reachable via corner-drag scale.
  * Wider than the inspector's INTRO_SIZE envelope on purpose — the canvas can
@@ -117,6 +122,7 @@ export default function EditorCanvas({
   flashTextIds,
   flashOverlayIds,
   currentTime,
+  masonryDurationS,
   zoomPct,
   tool,
   videoRef,
@@ -151,6 +157,8 @@ export default function EditorCanvas({
   flashTextIds?: Set<string>;
   flashOverlayIds?: Set<string>;
   currentTime: number;
+  /** Current preview/render duration used by the masonry board pan. */
+  masonryDurationS: number;
   zoomPct: number;
   tool: "select" | "pan";
   /** Owned by the shell so the future TransportBar can drive the same video. */
@@ -743,7 +751,15 @@ export default function EditorCanvas({
                     dragOverride?.target === "text" && dragOverride.id === layout.id
                       ? dragOverride
                       : null;
-                  const xFrac = override?.x_frac ?? layout.xFrac;
+                  const boardXFrac = override?.x_frac ?? layout.xFrac;
+                  const xFrac =
+                    boardXFrac -
+                    (isCollageVariant(variant)
+                      ? masonryMotionOffsetFrac(
+                          collageMotionForVariant(variant, masonryDurationS),
+                          currentTime,
+                        )
+                      : 0);
                   const yFrac = override?.y_frac ?? layout.yFrac;
                   const sizePx = override?.size_px ?? layout.sizePx;
                   const maxWidthFrac = override?.max_width_frac ?? layout.maxWidthFrac;

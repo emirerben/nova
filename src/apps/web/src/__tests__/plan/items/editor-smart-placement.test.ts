@@ -1,8 +1,11 @@
 import {
+  allocateSmartPlacementCandidates,
+  masonryMotionOffsetFrac,
   reflowTextForSmartPlacement,
   resolveSmartPlacementCandidate,
   resolveSmartPlacementCandidates,
   splitTextForSmartPlacement,
+  smartPlacementCandidateFitsBar,
   smartPlacementPatchForBar,
 } from "@/app/plan/items/[id]/_editor/editor-smart-placement";
 import type { PlanItemVariant, TextPlacementCandidate } from "@/lib/plan-api";
@@ -34,7 +37,7 @@ function variant(overrides: Partial<PlanItemVariant> = {}): PlanItemVariant {
 }
 
 describe("resolveSmartPlacementCandidate", () => {
-  it("uses server placement candidates when present", () => {
+  it("uses server placement candidates for non-masonry variants", () => {
     const candidate: TextPlacementCandidate = {
       source: "masonry_whitespace",
       x_frac: 0.22,
@@ -50,56 +53,149 @@ describe("resolveSmartPlacementCandidate", () => {
     ).toBe(candidate);
   });
 
-  it("falls back for existing masonry variants generated before candidates existed", () => {
-    expect(
-      resolveSmartPlacementCandidate(
-        variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
-        bar,
-      ),
-    ).toMatchObject({
-      source: "editor_fallback_masonry",
-      x_frac: expect.any(Number),
-      y_frac: expect.any(Number),
-      rotation_deg: 90,
-      masonry_motion: expect.objectContaining({ mode: "masonry_pan_x" }),
-    });
+  it("discovers safe pockets for masonry variants generated before candidates existed", () => {
     const candidate = resolveSmartPlacementCandidate(
       variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
       bar,
+      8,
     );
-    expect(candidate?.x_frac).toBeLessThan(0.25);
-    expect(candidate?.y_frac).toBeGreaterThan(0.45);
+    expect(candidate).toMatchObject({
+      source: "masonry_whitespace",
+      x_frac: 0.5861,
+      y_frac: 0.6625,
+      max_width_frac: 0.2266,
+      rotation_deg: 0,
+      masonry_motion: expect.objectContaining({ mode: "masonry_pan_x", duration_s: 8 }),
+    });
   });
 
   it("stays unavailable until text is selected", () => {
     expect(resolveSmartPlacementCandidate(variant(), null)).toBeNull();
   });
 
-  it("returns multiple masonry pockets for harmony placement", () => {
+  it("matches backend canonical masonry pockets", () => {
     const candidates = resolveSmartPlacementCandidates(
       variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
       [bar, { ...bar, id: "text-2" }],
+      8,
     );
 
-    expect(candidates).toHaveLength(3);
-    expect(candidates[0]).toMatchObject({ rotation_deg: 90 });
-    expect(candidates[1]?.y_frac).toBeLessThan(0.12);
+    expect(
+      candidates.map(({ x_frac, y_frac, max_width_frac, rotation_deg }) => [
+        x_frac,
+        y_frac,
+        max_width_frac,
+        rotation_deg,
+      ]),
+    ).toEqual([
+      [0.5861, 0.6625, 0.2266, 0],
+      [0.8602, 0.9359, 0.2, 0],
+    ]);
   });
 
-  it("extends short legacy server masonry candidate lists with fallback pockets", () => {
+  it("rejects persisted legacy curated masonry coordinates", () => {
     const candidates = resolveSmartPlacementCandidates(
       variant({
         montage_preset_rendered: "masonry",
         text_placement_candidates: [
-          { source: "masonry_whitespace", x_frac: 0.82, y_frac: 0.85, max_width_frac: 0.2 },
+          {
+            source: "masonry_whitespace",
+            x_frac: 0.1468,
+            y_frac: 0.4979,
+            max_width_frac: 0.6435,
+            rotation_deg: 90,
+          },
+          {
+            source: "masonry_whitespace",
+            x_frac: 0.6379,
+            y_frac: 0.0529,
+            max_width_frac: 0.4873,
+          },
         ],
       }),
       [bar, { ...bar, id: "text-2" }],
+      8,
     );
 
-    expect(candidates).toHaveLength(3);
-    expect(candidates[0]).toMatchObject({ x_frac: 0.82 });
-    expect(candidates[1]).toMatchObject({ rotation_deg: 90 });
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((candidate) => [candidate.x_frac, candidate.y_frac])).not.toContainEqual([
+      0.1468,
+      0.4979,
+    ]);
+    expect(candidates[0]).toMatchObject({ x_frac: 0.5861, y_frac: 0.6625 });
+  });
+
+  it("allocates distinct pockets to simultaneous bars", () => {
+    const bars = [bar, { ...bar, id: "text-2" }];
+    const candidates = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry" }),
+      bars,
+      8,
+    );
+
+    expect(allocateSmartPlacementCandidates(bars, candidates)).toEqual(candidates);
+  });
+
+  it("reuses a pocket for non-overlapping bars", () => {
+    const bars = [bar, { ...bar, id: "text-2", start_s: 2, end_s: 4 }];
+    const candidate: TextPlacementCandidate = {
+      source: "masonry_whitespace",
+      x_frac: 0.8,
+      y_frac: 0.8,
+      max_width_frac: 0.2,
+    };
+
+    expect(allocateSmartPlacementCandidates(bars, [candidate])).toEqual([
+      candidate,
+      candidate,
+    ]);
+  });
+
+  it("aborts when simultaneous bars exceed safe capacity", () => {
+    const bars = [bar, { ...bar, id: "text-2" }];
+    const candidate: TextPlacementCandidate = {
+      source: "masonry_whitespace",
+      x_frac: 0.8,
+      y_frac: 0.8,
+      max_width_frac: 0.2,
+    };
+
+    expect(allocateSmartPlacementCandidates(bars, [candidate])).toBeNull();
+  });
+
+  it("uses the same masonry pan expression as the final renderer", () => {
+    const motion = {
+      mode: "masonry_pan_x",
+      duration_s: 8,
+      pan_px: 932,
+      board_width_px: 2012,
+      frame_width_px: 1080,
+    };
+
+    expect(masonryMotionOffsetFrac(motion, 0)).toBe(0);
+    expect(masonryMotionOffsetFrac(motion, 2)).toBeCloseTo(233 / 1080, 8);
+    expect(masonryMotionOffsetFrac(motion, 99)).toBeCloseTo(932 / 1080, 8);
+  });
+
+  it("rejects malformed or impossible masonry motion metadata", () => {
+    expect(
+      masonryMotionOffsetFrac(
+        { mode: "masonry_pan_x", duration_s: "8", pan_px: 932, frame_width_px: 1080 },
+        2,
+      ),
+    ).toBe(0);
+    expect(
+      masonryMotionOffsetFrac(
+        {
+          mode: "masonry_pan_x",
+          duration_s: 8,
+          pan_px: 933,
+          board_width_px: 2012,
+          frame_width_px: 1080,
+        },
+        2,
+      ),
+    ).toBe(0);
   });
 
   it("reflows longer copy into a compact stack for narrow smart placements", () => {
@@ -136,6 +232,30 @@ describe("resolveSmartPlacementCandidate", () => {
     ).toBe("already stacked pocket label");
   });
 
+  it("rejects rotated text whose rendered footprint exceeds the vertical pocket", () => {
+    const candidate: TextPlacementCandidate = {
+      source: "masonry_whitespace",
+      x_frac: 0.5,
+      y_frac: 0.5,
+      max_width_frac: 0.4,
+      rotation_deg: 90,
+      masonry_motion: {
+        pocket_left_px: 400,
+        pocket_top_px: 500,
+        pocket_right_px: 520,
+        pocket_bottom_px: 900,
+      },
+    };
+
+    expect(smartPlacementCandidateFitsBar({ ...bar, text: "tall" }, candidate)).toBe(true);
+    expect(
+      smartPlacementCandidateFitsBar(
+        { ...bar, text: "a label that is much too long for this pocket" },
+        candidate,
+      ),
+    ).toBe(false);
+  });
+
   it("builds a smart placement patch with rotation and motion metadata", () => {
     const patch = smartPlacementPatchForBar(bar, {
       source: "masonry_whitespace",
@@ -158,6 +278,31 @@ describe("resolveSmartPlacementCandidate", () => {
     });
   });
 
+  it("rejects copy that cannot fit a pocket at a readable size", () => {
+    const candidate = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry" }),
+      [bar],
+      8,
+    )[0];
+    const longBar = { ...bar, text: "find your favorite hidden swimming spot", size_px: 96 };
+
+    expect(smartPlacementCandidateFitsBar(longBar, candidate)).toBe(false);
+  });
+
+  it("fits short copy without shrinking below the readable minimum", () => {
+    const candidate = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry" }),
+      [bar],
+      8,
+    )[0];
+    const shortBar = { ...bar, text: "pocket", size_px: 96 };
+    const patch = smartPlacementPatchForBar(shortBar, candidate);
+
+    expect(smartPlacementCandidateFitsBar(shortBar, candidate)).toBe(true);
+    expect(patch.size_px).toBeGreaterThanOrEqual(40);
+    expect(patch.size_px).toBeLessThan(96);
+  });
+
   it("splits a whole masonry title into coherent pocket-sized blocks", () => {
     const candidates = resolveSmartPlacementCandidates(
       variant({ montage_preset_rendered: "masonry", text_placement_candidates: null }),
@@ -165,10 +310,25 @@ describe("resolveSmartPlacementCandidate", () => {
     );
 
     expect(splitTextForSmartPlacement("take the scenic route home", candidates)).toEqual([
-      "take the",
-      "scenic",
+      "take the scenic",
       "route home",
     ]);
+  });
+
+  it("caps split output to the available concurrent pockets", () => {
+    const candidates = resolveSmartPlacementCandidates(
+      variant({ montage_preset_rendered: "masonry" }),
+      Array.from({ length: 6 }, (_unused, index) => ({ ...bar, id: `text-${index}` })),
+      8,
+    );
+
+    expect(candidates).toHaveLength(2);
+    expect(
+      splitTextForSmartPlacement(
+        "one two three four five six seven eight nine ten eleven twelve thirteen",
+        candidates,
+      ),
+    ).toHaveLength(2);
   });
 
   it("keeps manual line breaks as intended split blocks", () => {
@@ -179,8 +339,7 @@ describe("resolveSmartPlacementCandidate", () => {
 
     expect(splitTextForSmartPlacement("first pocket\nsecond pocket\nthird pocket", candidates)).toEqual([
       "first pocket",
-      "second pocket",
-      "third pocket",
+      "second pocket third pocket",
     ]);
   });
 });
