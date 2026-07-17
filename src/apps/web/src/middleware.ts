@@ -1,5 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { ADMIN_REALM, CANONICAL_WEB_ORIGIN, LEGACY_WEB_ORIGIN, LOCAL_WEB_ORIGIN } from "@/lib/brand";
+import {
+  ADMIN_REALM,
+  APEX_WEB_ORIGIN,
+  CANONICAL_WEB_ORIGIN,
+  LEGACY_WEB_ORIGIN,
+  LOCAL_WEB_ORIGIN,
+} from "@/lib/brand";
 
 // SECURITY: Stopgap shared-secret BasicAuth gate for /admin/* and /api/admin/*.
 // The Vercel deployment is "Deployment Protection: preview-only (production is public)"
@@ -21,6 +27,7 @@ const PASS = process.env.ADMIN_BASIC_AUTH_PASSWORD ?? "";
 
 const ALLOWED_ORIGINS = new Set<string>([
   CANONICAL_WEB_ORIGIN,
+  APEX_WEB_ORIGIN,
   LEGACY_WEB_ORIGIN,
   LOCAL_WEB_ORIGIN,
 ]);
