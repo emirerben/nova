@@ -5,7 +5,7 @@
  * editor-reseed.ts).
  */
 
-import type { EditorCapabilities } from "@/lib/plan-api";
+import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
 import type { EditorTool } from "./ToolRail";
 
 export const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Captions tab";
@@ -103,4 +103,29 @@ export function computeToolDisabledReasons({
     );
   }
   return out;
+}
+
+/**
+ * Edit-entry gate for the plan-item detail page (page.tsx): mirrors
+ * EditorShell's own `readOnly` definition above (all six capabilities false
+ * ⇒ nothing editable). Lives here rather than in page.tsx itself — Next.js's
+ * App Router only allows a fixed whitelist of named exports from a `page.tsx`
+ * file (default, generateMetadata, ...); anything else fails `next build`
+ * with "is not a valid Page export field". Same rationale as the rest of this
+ * module: pure gating logic, unit-testable without mounting a component.
+ */
+export function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
+  const capabilities = variant?.editor_capabilities;
+  if (
+    capabilities &&
+    !capabilities.text_elements &&
+    !capabilities.timeline &&
+    !capabilities.split_clips &&
+    !capabilities.mix &&
+    !capabilities.sfx &&
+    !capabilities.overlays
+  ) {
+    return editorReasonCopy(capabilities.reason);
+  }
+  return null;
 }

@@ -13,7 +13,7 @@
  * though the backend intentionally leaves those additive tools editable.
  */
 
-import { planItemEditorDisabledReason } from "@/app/plan/items/[id]/page";
+import { planItemEditorDisabledReason } from "@/app/plan/items/[id]/_editor/editor-capabilities";
 import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
 
 function makeVariant(editor_capabilities: EditorCapabilities | undefined): PlanItemVariant {

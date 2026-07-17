@@ -98,7 +98,7 @@ import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { barsToTextElements, seedBarsFromVariant } from "./_editor/editor-bars";
-import { editorReasonCopy } from "./_editor/editor-capabilities";
+import { planItemEditorDisabledReason } from "./_editor/editor-capabilities";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -162,32 +162,6 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // and the server's editor_capabilities are unconditionally present; this flag
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
-// Edit-entry gate: mirrors EditorShell.tsx's own `readOnly` definition (all
-// six capabilities false ⇒ nothing editable). Previously checked only 4 of 6
-// (missing sfx/overlays) via a stale local duplicate of EditorCapabilities —
-// that meant a variant with sfx/overlays already granted (e.g. a lyrics-synced
-// song variant, which the backend intentionally keeps additive-only-editable)
-// could never even open the editor. computeToolDisabledReasons (used inside
-// EditorShell) independently keeps text/styles locked for such variants, so
-// widening this gate cannot expose a path the backend doesn't already guard.
-// Exported (not just component-internal) so the gate itself is unit-testable
-// without mounting the full page — same rationale as _editor/editor-capabilities.ts.
-export function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
-  const capabilities = variant?.editor_capabilities;
-  if (
-    capabilities &&
-    !capabilities.text_elements &&
-    !capabilities.timeline &&
-    !capabilities.split_clips &&
-    !capabilities.mix &&
-    !capabilities.sfx &&
-    !capabilities.overlays
-  ) {
-    return editorReasonCopy(capabilities.reason);
-  }
-  return null;
-}
-
 function canOpenPlanItemEditor(variant: PlanItemVariant | null): boolean {
   return Boolean(
     TIKTOK_EDITOR_ENABLED &&
