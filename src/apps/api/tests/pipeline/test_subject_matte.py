@@ -392,11 +392,9 @@ def _build_brightness_ramp_clip(out_path: Path, n_frames: int = 30, fps: int = 3
     return out_path
 
 
-def _install_fake_mediapipe(
-    monkeypatch: pytest.MonkeyPatch, calls: list[tuple[float, int]]
-) -> None:
-    """Fake mediapipe module tree that records (input brightness, ts_ms) per
-    segment_for_video call and returns an empty mask."""
+def _install_fake_mediapipe(monkeypatch: pytest.MonkeyPatch, calls: list[float]) -> None:
+    """Fake mediapipe module tree that records the input brightness per
+    segment() call and returns an empty mask."""
     import sys
     import types
 
@@ -412,9 +410,9 @@ def _install_fake_mediapipe(
         confidence_masks = [_FakeMask()]
 
     class _FakeSegmenter:
-        def segment_for_video(self, image: _FakeImage, ts_ms: int) -> _FakeResult:
+        def segment(self, image: _FakeImage) -> _FakeResult:
             assert image.data is not None
-            calls.append((float(image.data.mean()), ts_ms))
+            calls.append(float(image.data.mean()))
             return _FakeResult()
 
         def close(self) -> None:
@@ -429,7 +427,7 @@ def _install_fake_mediapipe(
     python_mod.BaseOptions = lambda **kwargs: types.SimpleNamespace(**kwargs)  # type: ignore[attr-defined]
     vision_mod = types.ModuleType("mediapipe.tasks.python.vision")
     vision_mod.ImageSegmenterOptions = lambda **kwargs: types.SimpleNamespace(**kwargs)  # type: ignore[attr-defined]
-    vision_mod.RunningMode = types.SimpleNamespace(VIDEO="video")  # type: ignore[attr-defined]
+    vision_mod.RunningMode = types.SimpleNamespace(IMAGE="image")  # type: ignore[attr-defined]
     vision_mod.ImageSegmenter = types.SimpleNamespace(  # type: ignore[attr-defined]
         create_from_options=lambda options: _FakeSegmenter()
     )
@@ -445,11 +443,11 @@ def _install_fake_mediapipe(
 
 @needs_ffmpeg
 class TestTimeAlignment:
-    def test_30fps_source_sampled_at_every_frame_with_real_timestamps(
+    def test_30fps_source_sampled_at_every_frame(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
-        calls: list[tuple[float, int]] = []
+        calls: list[float] = []
         _install_fake_mediapipe(monkeypatch, calls)
 
         result = compute_subject_matte(
@@ -463,18 +461,13 @@ class TestTimeAlignment:
         # loop made exactly 15 calls here and only ever saw frames 0..14.
         assert len(calls) == 30
 
-        for k, (brightness, ts_ms) in enumerate(calls):
+        for k, brightness in enumerate(calls):
             # Brightness identifies the source frame: call k must see frame
             # k (value k*8), not frame k//2. Lossless encode, so tight tol.
             assert brightness == pytest.approx(k * 8, abs=3.0), (
                 f"call {k} saw source frame ~{brightness / 8:.1f}, expected {k} "
                 "— matte sampling is time-stretched again"
             )
-            # Real video timestamps (ms), not a 1ms-per-call counter.
-            if k > 0:
-                assert abs(ts_ms - k * 1000.0 / 30.0) <= 2.0
-
-        assert [ts for _, ts in calls] == sorted({ts for _, ts in calls})
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +502,7 @@ def _segmenter_usable() -> bool:
 
         options = mp_vision.ImageSegmenterOptions(
             base_options=mp_python.BaseOptions(model_asset_path=_resolve_model_path()),
-            running_mode=mp_vision.RunningMode.VIDEO,
+            running_mode=mp_vision.RunningMode.IMAGE,
             output_confidence_masks=True,
             output_category_mask=False,
         )

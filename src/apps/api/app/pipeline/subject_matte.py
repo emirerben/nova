@@ -10,7 +10,8 @@ failure (missing model, unreadable video, mediapipe not installed, wall-clock
 budget blown, corrupt matte file) and never raises. A matte failure must
 never fail a render job — it just means the occlusion effect is skipped.
 
-Uses MediaPipe's ImageSegmenter task (selfie segmenter, VIDEO running mode).
+Uses MediaPipe's ImageSegmenter task (selfie segmenter, stateless IMAGE
+running mode — one independent segmentation per frame).
 Masks are sampled time-aligned at (up to) every source frame, temporally
 median-filtered over 3 samples, hard-cut at 0.40 confidence, cleaned of tiny
 fragments, and lightly feathered — the "solid object" treatment. The stored
@@ -220,10 +221,16 @@ def _compute_subject_matte_inner(
     from mediapipe.tasks import python as mp_python  # noqa: PLC0415
     from mediapipe.tasks.python import vision as mp_vision  # noqa: PLC0415
 
+    # IMAGE running mode — stateless, one independent segmentation per frame.
+    # VIDEO mode's internal temporal filter balloons and oscillates on busy
+    # footage (night crowd scenes): its propagated state alternately swallowed
+    # and released the whole text region, which survived every downstream
+    # cleanup. Frame-to-frame stability comes from our own temporal median in
+    # _postprocess_mask instead, which we can reason about and test.
     base_options = mp_python.BaseOptions(model_asset_path=model_path)
     options = mp_vision.ImageSegmenterOptions(
         base_options=base_options,
-        running_mode=mp_vision.RunningMode.VIDEO,
+        running_mode=mp_vision.RunningMode.IMAGE,
         output_confidence_masks=True,
         output_category_mask=False,
     )
@@ -235,7 +242,6 @@ def _compute_subject_matte_inner(
     written_windows: list[tuple[float, float]] = []
     coverages: list[float] = []
     frame_count = 0
-    last_ts_ms = 0
 
     try:
         proc = _spawn_matte_writer(out_path)
@@ -287,12 +293,7 @@ def _compute_subject_matte_inner(
                 if frame is not None:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                    # Real video timestamps — MediaPipe's VIDEO-mode temporal
-                    # tracking is calibrated by inter-frame spacing.
-                    ts_ms = int((window.start_s + (frames_read - 1) / src_fps) * 1000.0)
-                    ts_ms = max(ts_ms, last_ts_ms + 1)
-                    last_ts_ms = ts_ms
-                    result = segmenter.segment_for_video(mp_image, ts_ms)
+                    result = segmenter.segment(mp_image)
                     mask = result.confidence_masks[0].numpy_view().copy()
                     frame_count += 1
                     recent_soft.append(

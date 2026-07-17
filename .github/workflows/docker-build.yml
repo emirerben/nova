@@ -77,7 +77,7 @@ jobs:
       # (July 2026), imports passed, local pytest passed (macOS ships its own
       # GL), and every prod matte failed silently — text-behind-subject
       # rendered as plain pasted-on-top text because the matte engine is
-      # best-effort by design. Creating a real VIDEO-mode segmenter from the
+      # best-effort by design. Creating a real IMAGE-mode segmenter from the
       # bundled model and running one inference catches that class on the PR.
       - name: Smoke-check mediapipe ImageSegmenter runs at runtime
         run: |
@@ -90,13 +90,13 @@ jobs:
           opts = mp_vision.ImageSegmenterOptions(
               base_options=mp_python.BaseOptions(
                   model_asset_path="assets/models/selfie_segmenter.tflite"),
-              running_mode=mp_vision.RunningMode.VIDEO,
+              running_mode=mp_vision.RunningMode.IMAGE,
               output_confidence_masks=True,
           )
           seg = mp_vision.ImageSegmenter.create_from_options(opts)
           frame = np.zeros((64, 64, 3), dtype=np.uint8)
           image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-          result = seg.segment_for_video(image, 1)
+          result = seg.segment(image)
           assert result.confidence_masks, "segmenter returned no masks"
           seg.close()
           print("ImageSegmenter smoke check passed")

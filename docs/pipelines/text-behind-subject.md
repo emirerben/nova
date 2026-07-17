@@ -54,8 +54,9 @@ agnostic.
 Public surface of `subject_matte.py`:
 
 - `compute_subject_matte(video_path, windows, out_path) -> MatteStats |
-  None` — runs MediaPipe's `ImageSegmenter` (selfie segmenter, `VIDEO`
-  running mode, real per-frame timestamps) over the given `MatteWindow`s,
+  None` — runs MediaPipe's `ImageSegmenter` (selfie segmenter, stateless
+  `IMAGE` running mode — VIDEO mode's internal temporal filter balloons on
+  busy footage) over the given `MatteWindow`s,
   time-aligned to the source fps (`CAP_PROP_FPS`; a tick only advances the
   capture as far as real time has advanced — never sequential half-rate
   reads), applies the v3 mask treatment, and writes a grayscale H.264 mp4 +
@@ -108,7 +109,7 @@ never fails. A bad recompute never clobbers a previously-good cached path
 `import mediapipe` succeeds without libGLESv2, but **ImageSegmenter creation
 fails** — and because the matte engine is best-effort, the effect silently
 degrades to plain pasted-on-top text. The prod Dockerfile installs `libgles2`
-and `.github/workflows/docker-build.yml` creates a real VIDEO-mode segmenter
+and `.github/workflows/docker-build.yml` creates a real IMAGE-mode segmenter
 (+ one inference) inside the built image on every PR so this can't regress.
 
 ## Sanity gate
