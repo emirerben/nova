@@ -211,6 +211,10 @@ const EDIT_FORMAT_LABELS: Record<string, { label: string; desc: string }> = {
   montage: { label: "Montage", desc: "Multiple clips cut to music" },
   narrated_planned: { label: "Voiceover", desc: "Tell the story with narration" },
   subtitled: { label: "Talking to camera", desc: "You on screen, with auto subtitles" },
+  talking_head: {
+    label: "Talking-head B-roll",
+    desc: "Use a spoken clip as the spine, with other clips cut in",
+  },
 };
 
 // Shared by the interactive Fit/Fill toggle (pre-render) and the read-only
@@ -842,8 +846,9 @@ export default function PlanItemPage() {
   const rawEditFormat = item?.edit_format ?? "montage";
   const resolvedFormat = resolvePickerFormat(item?.edit_format, SUBTITLED_ENABLED);
   const montagePreset = item?.montage_preset ?? "classic";
+  const isMontage = resolvedFormat === "montage";
   const isCollagePreset =
-    resolvedFormat === "montage" && COLLAGE_MONTAGE_PRESETS.has(montagePreset);
+    isMontage && COLLAGE_MONTAGE_PRESETS.has(montagePreset);
   const itemUploadAccept =
     isCollagePreset
       ? MASONRY_UPLOAD_ACCEPT
@@ -853,10 +858,19 @@ export default function PlanItemPage() {
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
   // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
   const isSubtitled = resolvedFormat === "subtitled";
+  // Explicit talking_head is backend-native and multi-clip: one clip supplies
+  // the speech spine and the others can become B-roll. Keep it out of the
+  // single-clip subtitled branch.
+  const isTalkingHead = resolvedFormat === "talking_head";
   const isFilmThis = contentMode !== "existing_footage";
   const hasGuide = (item?.filming_guide?.length ?? 0) > 0;
   const isInstructed =
-    isFilmThis && hasGuide && !isCollagePreset && !isSubtitled && !isNarratedReady;
+    isFilmThis &&
+    hasGuide &&
+    !isCollagePreset &&
+    !isSubtitled &&
+    !isTalkingHead &&
+    !isNarratedReady;
   const showVisualPools = !isCollagePreset;
 
   // Legacy pool upload handler (uninstructed items only).
@@ -1189,6 +1203,9 @@ export default function PlanItemPage() {
                   {(
                     [
                       { value: "montage", ...EDIT_FORMAT_LABELS.montage },
+                      ...(isTalkingHead
+                        ? [{ value: "talking_head", ...EDIT_FORMAT_LABELS.talking_head }]
+                        : []),
                       { value: "narrated_planned", ...EDIT_FORMAT_LABELS.narrated_planned },
                       ...(SUBTITLED_ENABLED
                         ? [{ value: "subtitled", ...EDIT_FORMAT_LABELS.subtitled }]
@@ -1261,7 +1278,7 @@ export default function PlanItemPage() {
                     Flips the per-item content_mode override so the user can skip shot-plan
                     generation and go straight to the pool uploader. Only shown when Montage
                     is the active style (narrated + subtitled have no content_mode sub-modes). */}
-                {!isNarrated && !isSubtitled && (
+                {isMontage && (
                   <div className="mt-3 space-y-3">
                     <div className="flex gap-2">
                       {(
@@ -1579,11 +1596,12 @@ export default function PlanItemPage() {
 
             {/* Uploader — branches:
                 0. subtitled: one talk-to-camera clip → pool upload (no shot plan)
-                1. narrated_ready: audio-first flow, pool upload, no step spine
-                2. masonry montage → compact pool strip even when guide present
-                3. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
-                4. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
-                5. existing_footage → PoolUploadCard (use footage you already have) */}
+                1. talking_head: speech spine + B-roll clips → pool upload
+                2. narrated_ready: audio-first flow, pool upload, no step spine
+                3. masonry montage → compact pool strip even when guide present
+                4. isInstructed (create_new/mixed + guide present) → ShotSlotUploader
+                5. isFilmThis but no guide yet → no uploader until Plan this for me is accepted
+                6. existing_footage → PoolUploadCard (use footage you already have) */}
             {isSubtitled ? (
               <div>
                 <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
@@ -1601,6 +1619,24 @@ export default function PlanItemPage() {
                   onRemove={removeUninstructedClip}
                   onNoteChange={saveUninstructedNote}
                   maxClips={1}
+                  accept={itemUploadAccept}
+                />
+              </div>
+            ) : isTalkingHead ? (
+              <div>
+                <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+                  Your clips
+                </p>
+                <p className="mb-4 text-sm text-[#71717a]">
+                  Upload the clip with the spoken audio plus any extra clips you want cut in.
+                </p>
+                <PoolUploadCard
+                  clips={item.clip_assignments ?? []}
+                  uploading={uploading}
+                  onFiles={handleFiles}
+                  onKeep={keepUninstructedMatch}
+                  onRemove={removeUninstructedClip}
+                  onNoteChange={saveUninstructedNote}
                   accept={itemUploadAccept}
                 />
               </div>

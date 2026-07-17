@@ -562,16 +562,18 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     expect(generateBtn).not.toBeDisabled();
   });
 
-  it("test_talking_head_persists_resolved_edit_format_before_generate", async () => {
+  it("test_talking_head_preserves_backend_edit_format_before_generate", async () => {
     mockUpdatePlanItem.mockClear();
     mockGeneratePlanItem.mockClear();
     const item = makeItem({
       status: "awaiting_clips",
       edit_format: "talking_head",
-      clip_gcs_paths: ["users/u1/plan/item1/clip.mp4"],
+      clip_gcs_paths: [
+        "users/u1/plan/item1/spoken.mp4",
+        "users/u1/plan/item1/broll.mp4",
+      ],
     });
 
-    mockUpdatePlanItem.mockResolvedValue({ ...item, edit_format: "subtitled" });
     mockGeneratePlanItem.mockResolvedValue(item);
     mockUsePolledJobStatus.mockReturnValue({
       data: { item, job: null },
@@ -588,12 +590,9 @@ describe("PlanItemPage — conformance verdict tile (D10 redesign)", () => {
     });
 
     await waitFor(() => {
-      expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", { edit_format: "subtitled" });
       expect(mockGeneratePlanItem).toHaveBeenCalledWith("test-item-id");
     });
-    expect(mockUpdatePlanItem.mock.invocationCallOrder[0]).toBeLessThan(
-      mockGeneratePlanItem.mock.invocationCallOrder[0],
-    );
+    expect(mockUpdatePlanItem).not.toHaveBeenCalled();
   });
 });
 

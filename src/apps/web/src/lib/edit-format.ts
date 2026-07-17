@@ -1,17 +1,14 @@
-export type PickerEditFormat = "montage" | "narrated_planned" | "subtitled";
+export type PickerEditFormat = "montage" | "narrated_planned" | "subtitled" | "talking_head";
 
 /**
  * Planner-only vocab the item page must normalize AND persist before a render
- * dispatches — the backend renders these as montage fallback while the picker
- * shows a different flow. Backend-native formats (narrated family, subtitled,
- * montage) must NOT be re-persisted from the resolved value: that would
- * destroy sub-modes like narrated_ready or stomp a stored subtitled when the
- * frontend flag is off.
+ * dispatches. Backend-native formats (narrated family, subtitled, montage, and
+ * talking_head) must NOT be re-persisted from the resolved picker value: that
+ * would destroy sub-modes like narrated_ready or collapse a multi-clip
+ * talking_head item into the single-clip subtitled path.
  */
 export function needsFormatPersist(editFormat: string | null | undefined): boolean {
-  return (
-    editFormat === "talking_head" || editFormat === "day_vlog" || editFormat === "single_hero"
-  );
+  return editFormat === "day_vlog" || editFormat === "single_hero";
 }
 
 /**
@@ -24,8 +21,9 @@ export function resolvePickerFormat(
 ): PickerEditFormat {
   switch (editFormat) {
     case "subtitled":
-    case "talking_head":
       return subtitledEnabled ? "subtitled" : "montage";
+    case "talking_head":
+      return "talking_head";
     case "narrated":
     case "narrated_planned":
     case "narrated_ready":

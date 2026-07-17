@@ -290,11 +290,31 @@ def test_resolve_self_narration_multi_clip_selects_talking_head_spine(monkeypatc
         {"c1": "/a.mp4", "c2": "/b.mp4"},
         job_id="j",
         voiceover_gcs_path=None,
+        clip_durations_s={"c1": 3.0, "c2": 8.0},
     )
     assert (archetype, spine, reason) == ("talking_head", "c2", None)
     sel = [e for e in events if e[1] == "archetype_selected"]
     assert sel and sel[0][2]["via"] == "narrated_self_narration"
     assert sel[0][2]["spine_clip_id"] == "c2"
+
+
+def test_resolve_self_narration_short_spine_falls_back_to_montage(monkeypatch):
+    """Tiny source clips should not auto-pick talking_head: the assembler would
+    have no room to schedule B-roll and would render a single-clip result."""
+    monkeypatch.setattr(gb.settings, "narrated_self_narration_enabled", True, raising=False)
+    coverage = {"/a.mp4": 0.2, "/b.mp4": 0.9}
+    monkeypatch.setattr(clip_speech, "speech_coverage", lambda path: coverage[path])
+    events = _trace_capture(monkeypatch)
+    archetype, spine, reason = gb._resolve_archetype(
+        "narrated_ready",
+        [_Meta("c1"), _Meta("c2")],
+        {"c1": "/a.mp4", "c2": "/b.mp4"},
+        job_id="j",
+        voiceover_gcs_path=None,
+        clip_durations_s={"c1": 1.4, "c2": 1.8},
+    )
+    assert (archetype, spine, reason) == ("montage", None, "spine_too_short")
+    assert any(e[1] == "archetype_fallback" and e[2]["reason"] == "spine_too_short" for e in events)
 
 
 def test_resolve_self_narration_no_speech_falls_back_with_reason(monkeypatch):

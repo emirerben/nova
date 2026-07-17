@@ -74,6 +74,52 @@ def test_persona_forwarded_to_build_generative_job() -> None:
     assert kwargs["variant_policy"] == "content_plan_primary"
 
 
+def test_multi_clip_talking_head_forwarded_to_build_generative_job() -> None:
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = [
+        "users/u/plan/i/spoken.mp4",
+        "users/u/plan/i/broll-1.mp4",
+    ]
+    item.clip_assignments = [
+        {"gcs_path": item.clip_gcs_paths[0], "shot_id": None, "user_note": ""},
+        {"gcs_path": item.clip_gcs_paths[1], "shot_id": None, "user_note": ""},
+    ]
+    item.filming_guide = []
+    item.theme = "recreate reel"
+    item.idea = "multi-clip lyric-style edit"
+    item.edit_format = "talking_head"
+    item.voiceover_gcs_path = None
+    item.landscape_fit = "fit"
+    item.montage_preset = "classic"
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
+
+    plan = MagicMock()
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+    plan.preference_summary = ""
+
+    persona_row = MagicMock()
+    persona_row.persona = {"tone": "direct", "content_pillars": []}
+
+    job = MagicMock()
+    job.id = uuid.uuid4()
+
+    ctx = _session_with(item, plan, persona_row)
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        generate_plan_item_videos.run(str(item.id))
+
+    kwargs = mock_build.call_args.kwargs
+    assert kwargs["clip_paths"] == item.clip_gcs_paths
+    assert kwargs["edit_format"] == "talking_head"
+
+
 def test_missing_persona_falls_back_to_empty() -> None:
     # A plan item whose persona row is gone must NOT block the render — the task
     # passes empty persona fields and the builder omits the key downstream.
