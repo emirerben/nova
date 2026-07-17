@@ -19,12 +19,15 @@ from app.tasks.generative_build import _maybe_autoplace_after_finalize
 JOB_ID = str(uuid.uuid4())
 
 
-def _job(variants: list[dict], *, item_id=None) -> MagicMock:
+def _job(variants: list[dict], *, item_id=None, smart: bool = False) -> MagicMock:
     job = MagicMock()
     job.id = uuid.UUID(JOB_ID)
     job.user_id = uuid.uuid4()
     job.content_plan_item_id = item_id
     job.assembly_plan = {"variants": variants}
+    job.all_candidates = (
+        {"smart_captions": {"preset_id": "cigdem", "preset_version": "v1"}} if smart else {}
+    )
     return job
 
 
@@ -55,7 +58,7 @@ def _variant(vid="original_text", *, track=None, attempted=False, status="ready"
 CHAIN = "app.tasks.generative_build"
 
 
-def _run(job, *, autoplace=True, autoapply=True, ready_assets=2):
+def _run(job, *, autoplace=True, autoapply=True, ready_assets=2, smart_enabled=True):
     ctx, db = _db_for(job, ready_assets)
     dispatched = []
     task = MagicMock()
@@ -67,6 +70,7 @@ def _run(job, *, autoplace=True, autoapply=True, ready_assets=2):
     ):
         mock_settings.overlay_autoplace_enabled = autoplace
         mock_settings.overlay_autoapply_enabled = autoapply
+        mock_settings.smart_captions_enabled = smart_enabled
         mock_settings.autoplace_queue = "autoplace-jobs"
         _maybe_autoplace_after_finalize(JOB_ID)
     return dispatched, db
@@ -103,7 +107,7 @@ def test_song_variants_skipped_speech_dispatched() -> None:
     dispatched, db = _run(job)
     assert len(dispatched) == 1
     assert dispatched[0]["args"][1] == "original_text"
-    assert dispatched[0]["kwargs"] == {"auto_apply": True}
+    assert dispatched[0]["kwargs"] == {"auto_apply": True, "smart_mode": False}
     db.commit.assert_called_once()  # attempted marker persisted
 
 
@@ -124,7 +128,26 @@ def test_autoapply_flag_off_dispatches_suggest_only() -> None:
     job = _job([_variant()], item_id=uuid.uuid4())
     dispatched, _ = _run(job, autoapply=False)
     assert len(dispatched) == 1
-    assert dispatched[0]["kwargs"] == {"auto_apply": False}
+    assert dispatched[0]["kwargs"] == {"auto_apply": False, "smart_mode": False}
+
+
+def test_smart_mode_forces_match_and_autoapply_while_generic_rollout_is_off() -> None:
+    job = _job([_variant("subtitled")], item_id=uuid.uuid4(), smart=True)
+    dispatched, _ = _run(job, autoplace=False, autoapply=False)
+    assert len(dispatched) == 1
+    assert dispatched[0]["kwargs"] == {"auto_apply": True, "smart_mode": True}
+
+
+def test_smart_master_kill_switch_stops_persisted_smart_context() -> None:
+    job = _job([_variant("subtitled")], item_id=uuid.uuid4(), smart=True)
+    dispatched, db = _run(
+        job,
+        autoplace=False,
+        autoapply=False,
+        smart_enabled=False,
+    )
+    assert dispatched == []
+    db.commit.assert_not_called()
 
 
 # ── shared apply helper (G1-A) ────────────────────────────────────────────────

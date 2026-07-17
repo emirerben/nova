@@ -233,6 +233,22 @@ def _run_generative_job(job_id: str) -> None:
         # Per-user style (Creator Agent M1). Absent on legacy/public jobs →
         # all render branches fall through to today's byte-identical behavior.
         user_style: dict = all_candidates.get("user_style") or {}
+        # Smart Captions creator preset is resolved from the server-owned
+        # assignment at dispatch time and pinned into this job. Re-check the
+        # master/base-renderer gates here so a mid-rollout kill switch wins.
+        _raw_smart = all_candidates.get("smart_captions")
+        smart_captions: dict[str, str] | None = None
+        if (
+            settings.smart_captions_enabled
+            and settings.subtitled_archetype_enabled
+            and isinstance(_raw_smart, dict)
+            and str(_raw_smart.get("preset_id") or "").strip()
+            and str(_raw_smart.get("preset_version") or "").strip()
+        ):
+            smart_captions = {
+                "preset_id": str(_raw_smart["preset_id"]),
+                "preset_version": str(_raw_smart["preset_version"]),
+            }
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
         # footage after ingest (see _resolve_archetype).
@@ -593,6 +609,7 @@ def _run_generative_job(job_id: str) -> None:
                         landscape_fit=landscape_fit,
                         silence_cut_disabled=silence_cut_disabled,
                         silence_cut_cache=silence_cut_cache,
+                        smart_captions=smart_captions,
                     )
                 else:
                     result = _render_generative_variant(
@@ -841,12 +858,18 @@ def _maybe_autoplace_after_finalize(job_id: str) -> None:
     from app.models import PlanItemAsset  # noqa: PLC0415
     from app.tasks.autoplace import match_overlay_suggestions  # noqa: PLC0415
 
-    if not _settings.overlay_autoplace_enabled:
-        return
-
     with _sync_session() as db:
         job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
         if job is None or job.content_plan_item_id is None:
+            return
+        # The persisted context pins the preset/version for determinism, but the
+        # master switch remains an emergency kill switch throughout the job. A
+        # rollout disabled while the render is in flight must not force the
+        # zero-click matcher/apply chain afterward.
+        smart_mode = bool(
+            _settings.smart_captions_enabled and (job.all_candidates or {}).get("smart_captions")
+        )
+        if not _settings.overlay_autoplace_enabled and not smart_mode:
             return
         ready_assets = int(
             db.execute(
@@ -878,11 +901,15 @@ def _maybe_autoplace_after_finalize(job_id: str) -> None:
         flag_modified(job, "assembly_plan")
         db.commit()
 
-    auto_apply = bool(_settings.overlay_autoapply_enabled)
+    # Smart Captions is explicitly a zero-click cinematic render: selecting it
+    # opts this item into auto-apply even when generic autoplace remains in
+    # suggest-only rollout. Lane-level media/SFX kill switches still win inside
+    # the shared apply helper.
+    auto_apply = bool(_settings.overlay_autoapply_enabled or smart_mode)
     for variant_id in eligible:
         match_overlay_suggestions.apply_async(
             args=[job_id, variant_id, user_id],
-            kwargs={"auto_apply": auto_apply},
+            kwargs={"auto_apply": auto_apply, "smart_mode": smart_mode},
             queue=_settings.autoplace_queue,
         )
     log.info(
@@ -890,6 +917,7 @@ def _maybe_autoplace_after_finalize(job_id: str) -> None:
         job_id=job_id,
         variants=eligible,
         auto_apply=auto_apply,
+        smart_mode=smart_mode,
     )
 
 
@@ -7255,6 +7283,7 @@ def _render_subtitled_variant(
     landscape_fit: str = "fill",
     silence_cut_disabled: bool = False,
     silence_cut_cache: _SilenceCutCache | None = None,
+    smart_captions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Render the subtitled single-clip variant.
 
@@ -7344,11 +7373,18 @@ def _render_subtitled_variant(
         "resolved_archetype": "subtitled",
         "media_overlays": None,
         "pre_media_overlay_video_path": None,
+        "sound_effects": None,
+        "pre_sfx_video_path": None,
+        "smart_captions_applied": False,
+        "smart_edit_document": None,
+        "smart_compiled_patch": None,
+        "smart_planner_versions": None,
+        "text_elements_materialized_from": None,
         # Silence-cut summary {removed, time_saved_s, version} (plans/010) — set
         # only when the stage ran to a plan; drives the admin cut-plan viewer.
         "silence_cut": None,
     }
-    if getattr(settings, "subtitled_text_lane_enabled", False):
+    if getattr(settings, "subtitled_text_lane_enabled", False) or smart_captions is not None:
         base["text_elements"] = []
         base["text_elements_user_edited"] = False
     try:
@@ -7576,8 +7612,68 @@ def _render_subtitled_variant(
         # instead of a stacked 4-line block.
         cues = resplit_cues_into_sentences(cues)
 
+        # Smart Captions semantic pass. It operates on the corrected, final cue
+        # text and its word timings, then compiles only closed tokens into Nova's
+        # existing caption/text/SFX lanes. Any planner/compiler bug fails open to
+        # the normal subtitled render — the feature may add polish, never block
+        # the creator's base video.
+        smart_compiled = None
+        if smart_captions is not None and cues:
+            try:
+                from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
+                from app.smart_edit.compiler import compile_smart_plan  # noqa: PLC0415
+                from app.smart_edit.planner import plan_smart_captions  # noqa: PLC0415
+
+                smart_plan = plan_smart_captions(
+                    cues,
+                    preset_version=smart_captions["preset_version"],
+                    language=detected_lang,
+                )
+                if smart_plan is not None:
+                    smart_compiled = compile_smart_plan(smart_plan.document, cues)
+                    cues = smart_compiled.caption_cues
+                    base.update(
+                        {
+                            "smart_captions_applied": True,
+                            "smart_edit_document": smart_plan.document.model_dump(mode="json"),
+                            "smart_compiled_patch": smart_compiled.compiled_patch,
+                            "smart_planner_versions": {
+                                **smart_plan.planner_versions,
+                                "compiler": smart_compiled.compiled_patch["compiler_version"],
+                            },
+                            "text_elements": smart_compiled.text_elements,
+                            # Smart titles/numbers are authored output, not a
+                            # transient projection from caption cues. Mark this
+                            # list authoritative so the legacy snapshot helper
+                            # and the editor's projection merge cannot replace it
+                            # immediately after render finalization.
+                            "text_elements_user_edited": True,
+                            "text_elements_materialized_from": "smart_captions",
+                        }
+                    )
+                    record_pipeline_event(
+                        "smart_captions",
+                        "plan_compiled",
+                        {
+                            "events": len(smart_plan.document.events),
+                            "styled_captions": smart_compiled.validation_receipt[
+                                "styled_caption_count"
+                            ],
+                            "titles": len(smart_compiled.text_elements),
+                            "sfx_intents": len(smart_compiled.sfx_intents),
+                            "boundary_effects": len(smart_compiled.boundary_effects),
+                        },
+                    )
+            except Exception as exc:  # noqa: BLE001 — Smart polish fails open
+                log.warning(
+                    "smart_captions_plan_failed",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:300],
+                )
+
         final_path = os.path.join(variant_dir, "final.mp4")
-        if getattr(settings, "subtitled_text_lane_enabled", False):
+        if getattr(settings, "subtitled_text_lane_enabled", False) or smart_compiled is not None:
             final_path = _compose_subtitled_final(
                 base_path,
                 {
@@ -7610,7 +7706,69 @@ def _render_subtitled_variant(
             raise RuntimeError("subtitled variant produced empty output")
 
         output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
-        output_url = upload_public_read(final_path, output_gcs)
+        output_url: str
+        sound_effects: list[dict[str, Any]] = []
+        pre_sfx_gcs: str | None = None
+        if smart_compiled is not None and settings.sound_effects_enabled:
+            try:
+                from sqlalchemy import select as _select  # noqa: PLC0415
+
+                from app.models import SoundEffect  # noqa: PLC0415
+                from app.pipeline.sound_effects import apply_sound_effects  # noqa: PLC0415
+                from app.smart_edit.compiler import resolve_sfx_placements  # noqa: PLC0415
+
+                with _sync_session() as db:
+                    glossary = [
+                        {
+                            "id": row.id,
+                            "name": row.name,
+                            "audio_gcs_path": row.audio_gcs_path,
+                            "duration_s": row.duration_s,
+                        }
+                        for row in db.execute(
+                            _select(SoundEffect).where(
+                                SoundEffect.status == "ready",
+                                SoundEffect.audio_gcs_path.is_not(None),
+                                SoundEffect.published_at.is_not(None),
+                                SoundEffect.archived_at.is_(None),
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    ]
+                sound_effects = resolve_sfx_placements(
+                    smart_compiled.sfx_intents,
+                    glossary,
+                )
+                if sound_effects:
+                    from app.agents._schemas.sound_effect import (  # noqa: PLC0415
+                        coerce_sound_effects,
+                    )
+
+                    pre_sfx_gcs = (
+                        f"generative-jobs/{job_id}/variant_{rank}_{variant_id}_pre_sfx.mp4"
+                    )
+                    upload_public_read(final_path, pre_sfx_gcs)
+                    output_url = apply_sound_effects(
+                        pre_sfx_gcs,
+                        coerce_sound_effects(sound_effects) or [],
+                        output_gcs,
+                        job_id=job_id,
+                    )
+                else:
+                    output_url = upload_public_read(final_path, output_gcs)
+            except Exception as exc:  # noqa: BLE001 — clean caption video wins
+                log.warning(
+                    "smart_captions_sfx_failed_open",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:300],
+                )
+                sound_effects = []
+                pre_sfx_gcs = None
+                output_url = upload_public_read(final_path, output_gcs)
+        else:
+            output_url = upload_public_read(final_path, output_gcs)
         # Persist the caption-free base when captions exist. With the text lane on,
         # persist it even for cue-less clips so later user-authored text can fast-reburn.
         base_gcs: str | None = None
@@ -7657,6 +7815,15 @@ def _render_subtitled_variant(
             "caption_language": detected_lang,
             "media_overlays": base["media_overlays"],
             "pre_media_overlay_video_path": base["pre_media_overlay_video_path"],
+            "sound_effects": sound_effects or None,
+            "pre_sfx_video_path": pre_sfx_gcs,
+            "smart_captions_applied": base["smart_captions_applied"],
+            "smart_edit_document": base["smart_edit_document"],
+            "smart_compiled_patch": base["smart_compiled_patch"],
+            "smart_planner_versions": base["smart_planner_versions"],
+            "text_elements": base.get("text_elements"),
+            "text_elements_user_edited": base.get("text_elements_user_edited"),
+            "text_elements_materialized_from": base.get("text_elements_materialized_from"),
             "silence_cut": silence_cut_summary,
         }
     except Exception as exc:
@@ -9224,6 +9391,14 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # subtitled caption language ("en"/"tr") — MUST survive so the editor
                     # chip shows it and the re-transcribe override reads the current one.
                     "caption_language": r.get("caption_language"),
+                    # Smart Captions initial semantic plan + deterministic lane
+                    # compilation. These are admin/debug evidence and the future
+                    # immutable-revision seed; the public response model may omit
+                    # them, but finalization must not destroy worker output.
+                    "smart_captions_applied": r.get("smart_captions_applied", False),
+                    "smart_edit_document": r.get("smart_edit_document"),
+                    "smart_compiled_patch": r.get("smart_compiled_patch"),
+                    "smart_planner_versions": r.get("smart_planner_versions"),
                     # TextElement lane state — MUST survive finalization for any variant
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),
@@ -9239,6 +9414,7 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # Output orientation — initial renders are portrait today, but
                     # keep the persisted value authoritative rather than implied.
                     "orientation": r.get("orientation"),
+                    "text_elements_materialized_from": r.get("text_elements_materialized_from"),
                     # render fingerprint — the caption editor's remount key reads it, so
                     # stripping it here would silently degrade re-seeding after reburns.
                     "render_finished_at": r.get("render_finished_at"),

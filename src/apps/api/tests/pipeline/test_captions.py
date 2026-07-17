@@ -157,7 +157,7 @@ def test_resplit_boundaries():
 
 
 def test_resplit_does_not_split_after_turkish_ordinals():
-    """"3. gün böyle geçti." must NOT split into a dangling "3." caption (the
+    """ "3. gün böyle geçti." must NOT split into a dangling "3." caption (the
     fragment-merge can't rescue it — "3." carries terminal punctuation)."""
     cues = [{"text": "Bu 3. gün böyle geçti. Devam ediyoruz.", "start_s": 0.0, "end_s": 4.0}]
     out = resplit_cues_into_sentences(cues)
@@ -536,6 +536,37 @@ def test_generate_ass_from_edited_cues(tmp_path) -> None:
     assert "cooled down" not in content
     # two cues → two Dialogue lines
     assert content.count("Dialogue:") == 2
+
+
+def test_generate_ass_from_smart_cue_uses_closed_high_contrast_style(tmp_path) -> None:
+    out = tmp_path / "smart.ass"
+    generate_ass_from_cues(
+        [
+            {
+                "text": "Birincisi Selocanlar",
+                "start_s": 1.0,
+                "end_s": 2.5,
+                "smart_style": "list_item",
+            }
+        ],
+        str(out),
+        font_name="TikTok Sans",
+        pop_in=True,
+    )
+    content = out.read_text(encoding="utf-8")
+    assert "\\fs82\\c&HFFFFFF&\\bord8\\shad2" in content
+    assert "Birincisi Selocanlar" in content
+
+
+def test_unknown_smart_caption_style_is_byte_identical_to_legacy(tmp_path) -> None:
+    baseline = tmp_path / "baseline.ass"
+    unknown = tmp_path / "unknown.ass"
+    cue = {"text": "plain caption", "start_s": 0.0, "end_s": 1.0}
+    generate_ass_from_cues([cue], str(baseline), font_name="TikTok Sans")
+    generate_ass_from_cues(
+        [{**cue, "smart_style": "not-a-token"}], str(unknown), font_name="TikTok Sans"
+    )
+    assert baseline.read_bytes() == unknown.read_bytes()
 
 
 def test_generate_ass_from_cues_skips_blank_text(tmp_path) -> None:

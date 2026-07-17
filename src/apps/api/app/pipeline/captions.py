@@ -251,6 +251,18 @@ _ACTIVE_WORD_ASS_COLOR = "&H0016CC84"
 # stays byte-identical for narrated.
 _SENTENCE_POP_TAGS = "{\\fad(120,0)\\fscx94\\fscy94\\t(0,140,\\fscx100\\fscy100)}"
 
+# Smart Captions cue roles compile to a CLOSED set of ASS override blocks. The
+# default/absent path emits no extra bytes, preserving every legacy/narrated ASS
+# file. Colours use ASS BGR ordering: #84CC16 → &H16CC84&.
+_SMART_CAPTION_TAGS: dict[str, str] = {
+    "hook": "{\\fs82\\c&H16CC84&\\bord8\\shad2}",
+    "context": "{\\fs76\\c&H16CC84&\\bord8\\shad2}",
+    "list_item": "{\\fs82\\c&HFFFFFF&\\bord8\\shad2}",
+    "example": "{\\fs70\\c&HF5F5F5&\\bord7\\shad2}",
+    "payoff": "{\\fs82\\c&H16CC84&\\bord8\\shad2}",
+    "cta": "{\\fs78\\c&H16CC84&\\bord8\\shad2}",
+}
+
 # Splits corrected text into display sentences at terminal punctuation. The
 # negative lookbehind keeps Turkish ordinals/abbreviations together: "3. gün"
 # must not split into a dangling "3." caption.
@@ -553,9 +565,10 @@ def _format_cue_lines(cues: list[dict], *, prefix_tags: str = "") -> list[str]:
             continue
         start = max(0.0, float(c["start_s"]))
         end = max(start + 0.01, float(c["end_s"]))
+        smart_tags = _SMART_CAPTION_TAGS.get(str(c.get("smart_style") or ""), "")
         lines.append(
             f"Dialogue: 0,{format_ass_time(start)},{format_ass_time(end)},Default,,0,0,0,,"
-            f"{prefix_tags}{text}"
+            f"{prefix_tags}{smart_tags}{text}"
         )
     return lines
 

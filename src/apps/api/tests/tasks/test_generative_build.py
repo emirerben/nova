@@ -3996,6 +3996,57 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert job.status == "variants_ready"
 
 
+def test_finalize_job_preserves_smart_caption_plan_and_authoritative_titles(monkeypatch):
+    """Smart output must survive the finalizer's explicit variant whitelist."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    titles = [
+        {
+            "id": "smart-number-1",
+            "text": "1",
+            "start_s": 4.0,
+            "end_s": 5.5,
+            "role": "generative_intro",
+            "font_family": "Inter-Bold",
+            "x_frac": 0.5,
+            "y_frac": 0.075,
+        }
+    ]
+    result = {
+        "variant_id": "subtitled",
+        "rank": 1,
+        "text_mode": "none",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/v.mp4",
+        "resolved_archetype": "subtitled",
+        "smart_captions_applied": True,
+        "smart_edit_document": {"version": "1", "events": []},
+        "smart_compiled_patch": {"compiler_version": "test"},
+        "smart_planner_versions": {"planner": "test", "compiler": "test"},
+        "text_elements": titles,
+        "text_elements_user_edited": True,
+        "text_elements_materialized_from": "smart_captions",
+    }
+
+    gb._finalize_job(str(uuid.uuid4()), [result])
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["smart_captions_applied"] is True
+    assert variant["smart_edit_document"] == {"version": "1", "events": []}
+    assert variant["smart_compiled_patch"] == {"compiler_version": "test"}
+    assert variant["smart_planner_versions"] == {
+        "planner": "test",
+        "compiler": "test",
+    }
+    assert variant["text_elements"] == titles
+    assert variant["text_elements_user_edited"] is True
+    assert variant["text_elements_materialized_from"] == "smart_captions"
+
+
 def test_subtitled_caption_margin_resolves_identically_for_first_and_reburn(monkeypatch, tmp_path):
     from app.pipeline.captions import SUBTITLED_CAPTION_MARGIN_V
 

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Date,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -435,6 +436,223 @@ class Job(Base):
     )
 
 
+class CreatorStyleAssignment(Base):
+    """Server-owned assignment of a reviewed creator-style preset.
+
+    The browser never selects ``preset_id`` directly.  Smart Captions resolves
+    this row from the authenticated user and pins the version into each plan.
+    """
+
+    __tablename__ = "creator_style_assignments"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    preset_id: Mapped[str] = mapped_column(Text, nullable=False)
+    preset_version: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    assigned_by: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SmartEditPlan(Base):
+    """Immutable Smart Captions context with mutable revision pointers.
+
+    State topology (revision rows remain append-only):
+
+        active plan -> requested_revision -> ready_revision -> accepted_revision
+             |                                      |
+             +-- retranscription creates successor +-- last-good stays playable
+
+    A plan is retired instead of rewritten when its base bytes or transcript
+    identity changes.  The partial unique index guarantees one active plan per
+    job variant.
+    """
+
+    __tablename__ = "smart_edit_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    variant_id: Mapped[str] = mapped_column(Text, nullable=False)
+    source_base_gcs_path: Mapped[str] = mapped_column(Text, nullable=False)
+    source_base_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    transcript_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    schema_version: Mapped[str] = mapped_column(Text, nullable=False)
+    preset_id: Mapped[str] = mapped_column(Text, nullable=False)
+    preset_version: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_pack_id: Mapped[str] = mapped_column(Text, nullable=False)
+    asset_pack_version: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(Text, nullable=False)
+    normalized_words: Mapped[list] = mapped_column(JSONB, nullable=False)
+    face_observations: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    requested_revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    ready_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    accepted_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="building")
+    supersedes_plan_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("smart_edit_plans.id", ondelete="SET NULL"), nullable=True
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "requested_revision >= 0",
+            name="ck_smart_edit_plans_requested_revision",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(normalized_words) = 'array' AND jsonb_array_length(normalized_words) > 0",
+            name="ck_smart_edit_plans_normalized_words",
+        ),
+        CheckConstraint(
+            "ready_revision IS NULL OR "
+            "(ready_revision >= 0 AND ready_revision <= requested_revision)",
+            name="ck_smart_edit_plans_ready_revision",
+        ),
+        CheckConstraint(
+            "accepted_revision IS NULL OR "
+            "(ready_revision IS NOT NULL AND accepted_revision >= 0 "
+            "AND accepted_revision <= ready_revision)",
+            name="ck_smart_edit_plans_accepted_revision",
+        ),
+        CheckConstraint(
+            "state IN ('building', 'rendering', 'ready', 'rerendering', 'failed', 'retired')",
+            name="ck_smart_edit_plans_state",
+        ),
+        Index(
+            "uq_smart_edit_plans_active_job_variant",
+            "job_id",
+            "variant_id",
+            unique=True,
+            postgresql_where=text("retired_at IS NULL"),
+        ),
+        Index("idx_smart_edit_plans_job_id", "job_id"),
+        Index("idx_smart_edit_plans_supersedes", "supersedes_plan_id"),
+        Index("idx_smart_edit_plans_user_updated", "user_id", "updated_at"),
+    )
+
+
+class SmartEditPlanRevision(Base):
+    """Append-only semantic plan, compiled lanes, and render evidence."""
+
+    __tablename__ = "smart_edit_plan_revisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("smart_edit_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Full SmartEditPlanDocument JSON object.  No server default: every revision
+    # must be created through a validated document boundary.
+    document: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    compiled_patch: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    correction: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    planner_versions: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
+    validation_receipt: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    render_generation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    output_gcs_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    output_gcs_generation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    output_duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_probe_receipt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    stage_artifacts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    render_receipt: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="requested")
+    error_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    render_started_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+    render_finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "revision", name="uq_smart_edit_revision_number"),
+        CheckConstraint(
+            "revision >= 0 AND "
+            "((revision = 0 AND parent_revision IS NULL) OR "
+            "(revision > 0 AND parent_revision = revision - 1))",
+            name="ck_smart_edit_revision_lineage",
+        ),
+        CheckConstraint(
+            "status IN ('requested', 'rendering', 'ready', 'failed')",
+            name="ck_smart_edit_revision_status",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(document) = 'object'",
+            name="ck_smart_edit_revision_document",
+        ),
+        CheckConstraint(
+            "(revision = 0 AND correction IS NULL AND idempotency_key IS NULL) OR "
+            "(revision > 0 AND correction IS NOT NULL AND idempotency_key IS NOT NULL)",
+            name="ck_smart_edit_revision_correction",
+        ),
+        Index(
+            "uq_smart_edit_revision_idempotency",
+            "plan_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+        ),
+        Index("idx_smart_edit_revisions_plan_status", "plan_id", "status"),
+    )
+
+
+class SmartEditDispatch(Base):
+    """Transactional outbox row for eventually dispatching a revision render."""
+
+    __tablename__ = "smart_edit_dispatches"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    plan_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    render_generation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False, server_default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    available_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["plan_id", "revision"],
+            ["smart_edit_plan_revisions.plan_id", "smart_edit_plan_revisions.revision"],
+            name="fk_smart_edit_dispatch_revision",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "plan_id",
+            "revision",
+            "render_generation_id",
+            name="uq_smart_edit_dispatch_generation",
+        ),
+        CheckConstraint("revision >= 0", name="ck_smart_edit_dispatch_revision"),
+        CheckConstraint("attempt_count >= 0", name="ck_smart_edit_dispatch_attempt_count"),
+        CheckConstraint(
+            "state IN ('pending', 'dispatched', 'completed', 'failed', 'cancelled')",
+            name="ck_smart_edit_dispatch_state",
+        ),
+        Index("idx_smart_edit_dispatches_claim", "state", "available_at"),
+    )
+
+
 class JobClip(Base):
     __tablename__ = "job_clips"
 
@@ -713,6 +931,12 @@ class PlanItem(Base):
     # upload UI; the render archetype (montage/narrated/…) is driven solely by
     # edit_format + voiceover_gcs_path + filming_guide.
     content_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Per-video Smart Captions choice.  Availability remains server-computed
+    # from feature flags + creator assignment + edit format; a stored True does
+    # not bypass a later kill switch.
+    smart_captions_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.
@@ -784,6 +1008,10 @@ class PlanItem(Base):
     current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
 
     __table_args__ = (
+        CheckConstraint(
+            "NOT smart_captions_enabled OR COALESCE(edit_format, '') = 'subtitled'",
+            name="ck_plan_items_smart_captions_format",
+        ),
         Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),
         Index("idx_plan_items_content_plan_id_position", "content_plan_id", "position"),
     )

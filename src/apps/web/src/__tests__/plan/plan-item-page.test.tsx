@@ -160,9 +160,95 @@ function makeItem(overrides = {}) {
     content_mode: "create_new",
     instruction_level: "full" as const,
     conformance: null,
+    smart_captions_enabled: false,
+    smart_captions_available: false,
+    smart_captions_unavailable_reason: "feature_disabled",
     ...overrides,
   };
 }
+
+describe("PlanItemPage — Smart captions availability", () => {
+  beforeEach(() => {
+    mockUpdatePlanItem.mockReset();
+    mockRefetch.mockReset();
+  });
+
+  it("shows the server-authorized switch and persists the per-video choice", async () => {
+    const item = makeItem({
+      edit_format: "subtitled",
+      smart_captions_available: true,
+      smart_captions_unavailable_reason: null,
+    });
+    mockUpdatePlanItem.mockResolvedValue({ ...item, smart_captions_enabled: true });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    const smartSwitch = screen.getByRole("switch", { name: "Smart captions" });
+    expect(smartSwitch).toHaveAttribute("aria-checked", "false");
+
+    await act(async () => {
+      fireEvent.click(smartSwitch);
+    });
+
+    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
+      smart_captions_enabled: true,
+    });
+    expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it("does not expose the switch when the backend capability denies it", async () => {
+    const item = makeItem({
+      edit_format: "subtitled",
+      smart_captions_available: false,
+      smart_captions_unavailable_reason: "not_assigned",
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.queryByRole("switch", { name: "Smart captions" })).toBeNull();
+  });
+
+  it("keeps the choice unchanged and shows an error when persistence fails", async () => {
+    const item = makeItem({
+      edit_format: "subtitled",
+      smart_captions_available: true,
+      smart_captions_unavailable_reason: null,
+    });
+    mockUpdatePlanItem.mockRejectedValue(new Error("conflict"));
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "Smart captions" }));
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Couldn't update Smart captions — try again.",
+    );
+    expect(mockRefetch).not.toHaveBeenCalled();
+  });
+});
 
 function makeJob(overrides: Partial<PlanItemJobStatus> = {}): PlanItemJobStatus {
   return {

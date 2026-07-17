@@ -120,6 +120,55 @@ def test_multi_clip_talking_head_forwarded_to_build_generative_job() -> None:
     assert kwargs["edit_format"] == "talking_head"
 
 
+def test_smart_captions_context_is_resolved_and_pinned_at_dispatch() -> None:
+    item = MagicMock()
+    item.id = uuid.uuid4()
+    item.content_plan_id = uuid.uuid4()
+    item.clip_gcs_paths = ["users/u/plan/i/talking.mp4"]
+    item.clip_assignments = []
+    item.filming_guide = []
+    item.theme = "brand mascots"
+    item.idea = "explain four examples"
+    item.edit_format = "subtitled"
+    item.smart_captions_enabled = True
+    item.voiceover_gcs_path = None
+    item.landscape_fit = "fit"
+    item.montage_preset = "classic"
+    item.voiceover_bed_level = None
+    item.voiceover_caption_style = None
+
+    plan = MagicMock()
+    plan.user_id = uuid.uuid4()
+    plan.persona_id = uuid.uuid4()
+    plan.preference_summary = ""
+
+    persona_row = MagicMock()
+    persona_row.persona = {"tone": "direct", "content_pillars": []}
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    smart_context = {"preset_id": "cigdem", "preset_version": "v1"}
+
+    ctx = _session_with(item, plan, persona_row)
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=ctx),
+        patch(
+            "app.services.smart_captions.resolve_smart_captions_context_sync",
+            return_value=smart_context,
+        ) as mock_resolve,
+        patch("app.services.generative_jobs.build_generative_job", return_value=job) as mock_build,
+        patch("app.services.job_dispatch.enqueue_orchestrator_sync"),
+    ):
+        generate_plan_item_videos.run(str(item.id))
+
+    mock_resolve.assert_called_once_with(
+        user_id=plan.user_id,
+        edit_format="subtitled",
+        requested=True,
+        db=ctx.__enter__.return_value,
+    )
+    assert mock_build.call_args.kwargs["smart_captions"] == smart_context
+
+
 def test_missing_persona_falls_back_to_empty() -> None:
     # A plan item whose persona row is gone must NOT block the render — the task
     # passes empty persona fields and the builder omits the key downstream.

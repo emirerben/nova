@@ -138,7 +138,9 @@ def _snap_to_word_start(start_s: float, words: list[dict]) -> float:
     return best if best_d <= _SNAP_TOLERANCE_S else start_s
 
 
-def map_sfx_intent(intent: str, glossary: list[dict]) -> dict | None:
+def map_sfx_intent(
+    intent: str, glossary: list[dict], *, allow_fallback: bool = True
+) -> dict | None:
     """Rule-based intent → glossary effect (decision 9A). Returns partial
     SoundEffectPlacement fields, or None ("none" intent / empty glossary).
 
@@ -157,7 +159,13 @@ def map_sfx_intent(intent: str, glossary: list[dict]) -> dict | None:
                     "duration_s": fx.get("duration_s"),
                     "label": str(fx.get("name", ""))[:40],
                 }
-    # No name match — fall back to the first usable effect (a pop is a pop).
+    if not allow_fallback:
+        # Smart Captions never substitutes an unrelated/meme/female-voice clip
+        # merely because the glossary contains one. Silence is safer than the
+        # wrong sound at a numbered heading.
+        return None
+    # Legacy suggestion path: no name match falls back to the first usable
+    # effect. Keep this default byte/behaviour-compatible for existing jobs.
     for fx in glossary:
         if fx.get("audio_gcs_path"):
             return {

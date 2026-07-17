@@ -465,6 +465,8 @@ export default function PlanItemPage() {
   const [loading, setLoading] = useState(true);
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [smartCaptionsSaving, setSmartCaptionsSaving] = useState(false);
+  const [smartCaptionsError, setSmartCaptionsError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   // Landscape auto-detect: the Fit/Fill picker only appears once a wide clip is
   // detected on upload — hidden by default (the common case is portrait clips).
@@ -1296,7 +1298,12 @@ export default function PlanItemPage() {
                         type="button"
                         onClick={async () => {
                           if (active) return;
-                          await updatePlanItem(item.id, { edit_format: value }).catch(() => null);
+                          await updatePlanItem(item.id, {
+                            edit_format: value,
+                            ...(value !== "subtitled" && item.smart_captions_enabled
+                              ? { smart_captions_enabled: false }
+                              : {}),
+                          }).catch(() => null);
                           refetch();
                         }}
                         className={`flex flex-1 flex-col rounded-xl border px-3 py-2.5 text-left transition-colors ${
@@ -1313,6 +1320,74 @@ export default function PlanItemPage() {
                     );
                   })}
                 </div>
+
+                {resolvedFormat === "subtitled" && item.smart_captions_available && (
+                  <div
+                    className={`mt-3 flex items-center justify-between gap-4 rounded-xl border px-4 py-3 ${
+                      item.smart_captions_enabled
+                        ? "border-lime-200 bg-lime-50"
+                        : "border-zinc-200 bg-white"
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p
+                        className={`text-sm font-semibold ${
+                          item.smart_captions_enabled ? "text-lime-800" : "text-[#0c0c0e]"
+                        }`}
+                      >
+                        Smart captions
+                      </p>
+                      <p
+                        className={`mt-0.5 text-xs leading-5 ${
+                          item.smart_captions_enabled ? "text-lime-800" : "text-[#71717a]"
+                        }`}
+                      >
+                        Shape captions, contextual visuals, sounds, and transitions around what you say.
+                      </p>
+                      {smartCaptionsError && (
+                        <p role="alert" className="mt-1 text-xs font-medium text-[#3f3f46]">
+                          {smartCaptionsError}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-label="Smart captions"
+                      aria-checked={item.smart_captions_enabled === true}
+                      aria-busy={smartCaptionsSaving}
+                      disabled={smartCaptionsSaving}
+                      onClick={async () => {
+                        setSmartCaptionsSaving(true);
+                        setSmartCaptionsError(null);
+                        try {
+                          await updatePlanItem(item.id, {
+                            smart_captions_enabled: item.smart_captions_enabled !== true,
+                          });
+                          await refetch();
+                        } catch {
+                          setSmartCaptionsError("Couldn't update Smart captions — try again.");
+                        } finally {
+                          setSmartCaptionsSaving(false);
+                        }
+                      }}
+                      className="relative h-11 w-14 shrink-0 rounded-full transition-transform hover:opacity-90 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-lime-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`absolute inset-x-1 top-2 h-7 rounded-full transition-colors ${
+                          item.smart_captions_enabled ? "bg-lime-600" : "bg-zinc-300"
+                        }`}
+                      />
+                      <span
+                        aria-hidden="true"
+                        className={`absolute left-2 top-3 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${
+                          item.smart_captions_enabled ? "translate-x-6" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
 
                 {/* Narrated sub-mode picker */}
                 {isNarrated && (
