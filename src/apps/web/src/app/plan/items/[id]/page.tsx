@@ -65,6 +65,7 @@ import {
   getGenerativeStyleSets,
   type GenerativeStyleSet,
   GENERATIVE_TERMINAL_STATUSES,
+  uploadVoiceover,
 } from "@/lib/generative-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { FONT_FACES } from "@/lib/font-faces";
@@ -292,7 +293,11 @@ function MontagePresetPreview({ value }: { value: MontagePreset }) {
 }
 
 const VIDEO_UPLOAD_ACCEPT = "video/mp4,video/quicktime";
+const AUDIO_UPLOAD_ACCEPT = "audio/*,.mp3,.m4a,.mp4,.wav,.webm,.ogg,.aac";
+const NARRATED_READY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},${AUDIO_UPLOAD_ACCEPT}`;
 const MASONRY_UPLOAD_ACCEPT = `${VIDEO_UPLOAD_ACCEPT},image/jpeg,image/png,image/webp,image/heic,image/heif`;
+const AUDIO_UPLOAD_EXTENSIONS = new Set([".mp3", ".m4a", ".wav", ".webm", ".ogg", ".aac"]);
+const AUDIO_ONLY_PROBE_EXTENSIONS = new Set([".mp4", ".m4v", ".mov"]);
 
 function uploadContentType(file: File): string {
   if (file.type) return file.type;
@@ -304,6 +309,84 @@ function uploadContentType(file: File): string {
   if (name.endsWith(".heif")) return "image/heif";
   if (name.endsWith(".mov")) return "video/quicktime";
   return "video/mp4";
+}
+
+function fileExtension(file: File): string {
+  const name = file.name.toLowerCase();
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot) : "";
+}
+
+function isKnownAudioUpload(file: File): boolean {
+  const type = (file.type || "").toLowerCase();
+  if (type.startsWith("audio/")) return true;
+  return AUDIO_UPLOAD_EXTENSIONS.has(fileExtension(file));
+}
+
+function canProbeForMissingVideoTrack(file: File): boolean {
+  const type = (file.type || "").toLowerCase();
+  return (
+    AUDIO_ONLY_PROBE_EXTENSIONS.has(fileExtension(file)) ||
+    type === "video/mp4" ||
+    type === "video/quicktime"
+  );
+}
+
+function probeHasVideoTrack(file: File): Promise<boolean | null> {
+  if (typeof document === "undefined" || typeof URL === "undefined" || !URL.createObjectURL) {
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    const objectUrl = URL.createObjectURL(file);
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (value: boolean | null) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      video.onloadedmetadata = null;
+      video.onerror = null;
+      URL.revokeObjectURL(objectUrl);
+      video.removeAttribute("src");
+      try {
+        video.load();
+      } catch {
+        // Some test/browser environments do not implement load() for blob URLs.
+      }
+      resolve(value);
+    };
+
+    video.preload = "metadata";
+    video.muted = true;
+    video.onloadedmetadata = () => finish(video.videoWidth > 0 || video.videoHeight > 0);
+    video.onerror = () => finish(null);
+    timer = setTimeout(() => finish(null), 500);
+    video.src = objectUrl;
+  });
+}
+
+async function shouldRouteToNarratedVoiceover(file: File): Promise<boolean> {
+  if (isKnownAudioUpload(file)) return true;
+  if (!canProbeForMissingVideoTrack(file)) return false;
+  const hasVideoTrack = await probeHasVideoTrack(file);
+  return hasVideoTrack === false;
+}
+
+async function splitNarratedReadyUploads(files: File[]): Promise<{
+  voiceoverFiles: File[];
+  clipFiles: File[];
+}> {
+  const decisions = await Promise.all(files.map((file) => shouldRouteToNarratedVoiceover(file)));
+  return files.reduce(
+    (acc, file, idx) => {
+      if (decisions[idx]) acc.voiceoverFiles.push(file);
+      else acc.clipFiles.push(file);
+      return acc;
+    },
+    { voiceoverFiles: [] as File[], clipFiles: [] as File[] },
+  );
 }
 
 function expandContextPrompt(format: PickerEditFormat): string {
@@ -849,12 +932,13 @@ export default function PlanItemPage() {
   const isMontage = resolvedFormat === "montage";
   const isCollagePreset =
     isMontage && COLLAGE_MONTAGE_PRESETS.has(montagePreset);
-  const itemUploadAccept =
-    isCollagePreset
-      ? MASONRY_UPLOAD_ACCEPT
-      : VIDEO_UPLOAD_ACCEPT;
   const isNarrated = resolvedFormat === "narrated_planned";
   const isNarratedReady = isNarrated && rawEditFormat === "narrated_ready";
+  const itemUploadAccept = isNarratedReady
+    ? NARRATED_READY_UPLOAD_ACCEPT
+    : isCollagePreset
+      ? MASONRY_UPLOAD_ACCEPT
+      : VIDEO_UPLOAD_ACCEPT;
   // Subtitled single-clip: one talk-to-camera clip, auto-captioned. No shot plan,
   // no voiceover, no content_mode sub-modes — it uploads one clip and generates.
   const isSubtitled = resolvedFormat === "subtitled";
@@ -880,7 +964,23 @@ export default function PlanItemPage() {
     setError(null);
     conformancePolls.current = 0;
     try {
-      const list = Array.from(files);
+      let list = Array.from(files);
+      if (isNarratedReady) {
+        const { voiceoverFiles, clipFiles } = await splitNarratedReadyUploads(list);
+        if (voiceoverFiles.length > 1) {
+          throw new Error("Upload one voiceover audio file at a time");
+        }
+        if (voiceoverFiles.length === 1) {
+          const uploaded = await uploadVoiceover(voiceoverFiles[0]);
+          if (uploaded.kind !== "audio") {
+            throw new Error("Upload an audio file for the voiceover");
+          }
+          const saved = await handleVoiceover(uploaded.gcs_path);
+          if (!saved) return;
+        }
+        list = clipFiles;
+        if (list.length === 0) return;
+      }
       void detectLandscapeClip(list).then((found) => {
         if (found) setHasLandscapeClip(true);
       });
@@ -971,14 +1071,16 @@ export default function PlanItemPage() {
     }
   }
 
-  async function handleVoiceover(gcsPath: string | null) {
+  async function handleVoiceover(gcsPath: string | null): Promise<boolean> {
     setVoiceoverGcsPath(gcsPath);
     setVoiceoverSaving(true);
     try {
       await setItemVoiceover(itemId, gcsPath);
       refetch();
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save voiceover");
+      return false;
     } finally {
       setVoiceoverSaving(false);
     }

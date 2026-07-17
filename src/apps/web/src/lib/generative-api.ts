@@ -183,7 +183,18 @@ export async function uploadVoiceover(
   // A MediaRecorder Blob has no filename; give it one so the backend can sniff
   // the extension. A real File already carries its name, so prefer that.
   if (file instanceof File) {
-    fd.append("file", file);
+    const name = file.name.toLowerCase();
+    if (name.endsWith(".mp4") && !(file.type || "").toLowerCase().startsWith("audio/")) {
+      fd.append(
+        "file",
+        new File([file], file.name.replace(/\.mp4$/i, ".m4a"), {
+          type: "audio/mp4",
+          lastModified: file.lastModified,
+        }),
+      );
+    } else {
+      fd.append("file", file);
+    }
   } else {
     fd.append("file", file, filename);
   }
@@ -192,7 +203,11 @@ export async function uploadVoiceover(
     const detail = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(detail.detail ?? "Voiceover upload failed");
   }
-  return res.json();
+  const body = await res.json();
+  if (body.kind !== "audio") {
+    throw new Error("Voiceover upload must be an audio file");
+  }
+  return body;
 }
 
 export async function createGenerativeJob(
