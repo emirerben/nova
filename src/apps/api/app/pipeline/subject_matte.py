@@ -39,9 +39,11 @@ MATTE_FPS = 30
 MATTE_MODEL_PATH = "assets/models/selfie_segmenter.tflite"
 MATTE_WALL_CLOCK_BUDGET_S = 90
 
-# Stored matte resolution (~1/4 of 1080x1920). Small enough that a 5s matte
-# (150 frames @ 270x480 grayscale) is ~20MB fully loaded in memory by
-# SubjectMatteProvider.
+# Stored matte resolution (~1/4 of 1080x1920). Hold-to-EOF overlays (see
+# generative_overlays.py's _HOLD_TO_END_S) span windows up to the full clip,
+# not just a few seconds — a 60s window is ~1800 frames @ 270x480 grayscale,
+# ~230MB fully loaded in memory by SubjectMatteProvider. That transient is
+# accepted on the worker's 6GB budget (see CLAUDE.md worker VM sizing).
 _MATTE_WIDTH = 270
 _MATTE_HEIGHT = 480
 
@@ -328,8 +330,6 @@ class SubjectMatteProvider:
         self._frames = frames
         self._windows = windows
         self._fps = fps
-        self._last_index: int | None = None
-        self._last_mask: np.ndarray | None = None
 
     @classmethod
     def open(cls, matte_path: str) -> SubjectMatteProvider | None:
@@ -399,6 +399,12 @@ class SubjectMatteProvider:
         return None
 
     def mask_at(self, t_abs: float) -> np.ndarray | None:
+        # No memoization here: this provider is called concurrently from a
+        # ThreadPoolExecutor (see text_overlay_skia's per-frame render pool),
+        # where distinct threads request distinct frames — a single-entry
+        # cache never legitimately hits and would need a lock to be safe.
+        # cv2.resize is cheap relative to the PNG encode it feeds, so we
+        # just resize on every call.
         window = self._find_window(t_abs)
         if window is None:
             return None
@@ -408,11 +414,8 @@ class SubjectMatteProvider:
         offset = max(0, min(offset, window.frame_count - 1))
         global_index = window.first_frame_index + offset
 
-        if self._last_index == global_index and self._last_mask is not None:
-            return self._last_mask
-
         small = self._frames[global_index]
-        upscaled = (
+        return (
             cv2.resize(
                 small,
                 (_OUTPUT_WIDTH, _OUTPUT_HEIGHT),
@@ -420,7 +423,3 @@ class SubjectMatteProvider:
             ).astype(np.float32)
             / 255.0
         )
-
-        self._last_index = global_index
-        self._last_mask = upscaled
-        return upscaled

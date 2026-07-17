@@ -156,6 +156,39 @@ flag back on later doesn't require re-deciding anything) — every caller of
   SFX/media-overlays/fullscreen-cutaways: keep Fly + Vercel in sync.
 - **Rollback:** `fly secrets set TEXT_BEHIND_SUBJECT_ENABLED=false --app
   nova-video` + `fly machine restart <id>` (api + worker).
+- **Version-skew trap (same class as `FULLSCREEN_CUTAWAYS_ENABLED`, see
+  CLAUDE.md):** `EditVariantRequest` (`routes/generative_jobs.py`) is a
+  Pydantic model with `extra="ignore"` — a NEW web client sending the
+  behind-subject toggle against an OLD api that doesn't declare that field
+  yet has it silently dropped: the request still returns 200 OK, but renders
+  with no occlusion, no error surfaced anywhere. Keep the Vercel
+  (`NEXT_PUBLIC_TEXT_BEHIND_SUBJECT_ENABLED`) flag OFF until the Fly api
+  deploy carrying the field is live, then flip Fly, then Vercel.
+
+## Frame ceiling: `BEHIND_SUBJECT_FRAME_CEILING`
+
+`behind_subject` overlays render as a per-frame PNG sequence (the hold-frame
+hard-link economy other long-running effects use is disabled — the subject
+mask can change even when the glyphs don't). Generative intro overlays can be
+hold-to-EOF (`effect="static"`, `end_s` spanning nearly the whole clip — see
+`_HOLD_TO_END_S` in `generative_overlays.py`); a plain static overlay that
+long would take the `-loop 1` single-PNG path and just persist forever, but a
+`behind_subject` overlay can't — every frame needs its own masked PNG, so the
+sequence needs an explicit frame-count ceiling to bound worst-case scratch
+disk on the encode worker.
+
+`text_overlay_skia.py` gives `behind_subject` its own, larger ceiling —
+`BEHIND_SUBJECT_FRAME_CEILING = FPS * 120` (3600 frames / 120s) — instead of
+the tighter `LONG_RUNNING_TEXT_FRAME_CEILING` (30s/900 frames) other
+long-running effects (lyric-line, karaoke-line, sequence overlays) use. 120s
+was chosen to equal `SEQUENCE_COMPOSITE_FRAME_CEILING`: 2x Nova's sub-60s
+output target. **Text truncates past the ceiling** — a window longer than
+120s renders only its first 3600 frames and logs
+`skia_long_running_text_duration_clamped` (`clamped_to=3600`); the overlay's
+`between(t, start, end)` FFmpeg enable still gates it off at `end_s`, so past
+the truncation point the text simply stops appearing for the remainder of the
+window instead of erroring. See `tests/pipeline/test_text_behind_subject_render.py`
+for the 45s-not-clamped / 150s-clamped-with-warning pins.
 
 ## Known limits (v1)
 

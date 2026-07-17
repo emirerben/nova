@@ -160,7 +160,8 @@ def _build_synthetic_matte(
             frame_index += 1
         written_windows.append([start_s, end_s])
 
-    proc.stdin.close()
+    # communicate() sends EOF on stdin itself; closing it first makes the
+    # flush inside communicate() raise "flush of closed file" on py3.11.
     _, stderr = proc.communicate(timeout=30)
     assert proc.returncode == 0, stderr.decode(errors="replace")
 
@@ -265,13 +266,19 @@ class TestMaskAt:
         # Gap between windows (t=5.0) is outside both windows.
         assert provider.mask_at(5.0) is None
 
-    def test_caches_repeated_lookup_of_same_frame(self, tmp_path: Path) -> None:
+    def test_repeated_lookup_of_same_frame_is_consistent(self, tmp_path: Path) -> None:
+        # No memoization by design (mask_at is called concurrently from a
+        # ThreadPoolExecutor) — repeated lookups of the same t_abs must
+        # still resolve to equal (freshly-resized) mask values.
         matte_path = _build_synthetic_matte(tmp_path, [(0.0, 1.0)])
         provider = SubjectMatteProvider.open(str(matte_path))
         assert provider is not None
         first = provider.mask_at(0.5)
         second = provider.mask_at(0.5)
-        assert first is second  # cached, same object returned
+        assert first is not None
+        assert second is not None
+        assert first is not second  # not cached, distinct arrays
+        assert np.array_equal(first, second)
 
 
 # ---------------------------------------------------------------------------
@@ -326,8 +333,10 @@ class TestComputeSubjectMatteEndToEnd:
             str(out_path),
         )
 
-        assert result is None or isinstance(result, MatteStats)
-        if result is not None:
-            assert out_path.exists()
-            assert (tmp_path / "matte.mp4.json").exists()
-            assert result.frame_count > 0
+        # This test only runs when mediapipe is importable (needs_mediapipe),
+        # so a None result here would mask a real regression in the writer
+        # path rather than a legitimate best-effort skip — assert success.
+        assert result is not None and isinstance(result, MatteStats)
+        assert out_path.exists()
+        assert (tmp_path / "matte.mp4.json").exists()
+        assert result.frame_count > 0

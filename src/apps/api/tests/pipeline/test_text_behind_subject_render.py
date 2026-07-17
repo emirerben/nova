@@ -255,6 +255,82 @@ def test_behind_subject_disables_hold_frame_economy_for_sequence_role_case(tmp_w
     assert all(os.stat(f).st_nlink == 1 for f in frames)
 
 
+# -- Frame ceiling: behind_subject gets its own, larger ceiling --------------
+#
+# Generative intro overlays can be hold-to-EOF (effect="static", end_s
+# spanning nearly the whole clip). Without behind_subject those take the
+# `-loop 1` single-PNG static path and persist forever; WITH behind_subject
+# they're forced onto this animated per-frame path (the mask varies per
+# frame), which is bounded by BEHIND_SUBJECT_FRAME_CEILING (120s) instead of
+# the tighter LONG_RUNNING_TEXT_FRAME_CEILING (30s) other long-running
+# effects use. These tests monkeypatch the PNG write + mask-apply to keep
+# runtime sane at 1000s of frames — frame COUNT/clamp behavior is what's
+# under test here, pixel correctness is covered by the smaller-window tests
+# above.
+
+
+class _FastMatte:
+    """Cheap matte stub for large-window ceiling tests: records calls without
+    allocating a full-resolution mask array per call (paired with a
+    monkeypatched `_apply_subject_mask` that ignores mask contents)."""
+
+    def __init__(self):
+        self.calls: list[float] = []
+
+    def mask_at(self, t_abs: float) -> np.ndarray | None:
+        self.calls.append(t_abs)
+        return np.zeros((1, 1), dtype=np.float32)
+
+
+def test_behind_subject_45s_window_not_clamped_at_long_running_ceiling(tmp_workdir, monkeypatch):
+    """A 45s hold-to-EOF window (1350 frames) must NOT be clamped at the 30s/
+    900-frame LONG_RUNNING_TEXT_FRAME_CEILING other long-running effects use —
+    behind_subject gets the larger BEHIND_SUBJECT_FRAME_CEILING (120s)."""
+    monkeypatch.setattr(tos, "_write_rgba_array_png", lambda arr, out_path: None)
+    monkeypatch.setattr(tos, "_apply_subject_mask", lambda rgba, mask: rgba)
+
+    overlay = _behind_overlay(end_s=45.0, effect="static")
+    matte = _FastMatte()
+    with mock.patch.object(tos, "log", wraps=tos.log) as mock_log:
+        seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0, matte=matte)
+
+    assert seq is not None
+    wanted = int(round(45.0 * tos.FPS))
+    assert wanted == 1350
+    assert seq["n_frames"] == wanted + 1  # + seam hold frame, same as any animated sequence
+    assert seq["n_frames"] > tos.LONG_RUNNING_TEXT_FRAME_CEILING
+    assert seq["n_frames"] <= tos.BEHIND_SUBJECT_FRAME_CEILING
+    assert len(matte.calls) == seq["n_frames"]
+    for call in mock_log.warning.call_args_list:
+        assert call.args[0] != "skia_long_running_text_duration_clamped"
+
+
+def test_behind_subject_150s_window_clamps_at_behind_subject_ceiling_with_warning(
+    tmp_workdir, monkeypatch
+):
+    """A window past the 120s BEHIND_SUBJECT_FRAME_CEILING must clamp to
+    exactly 3600 frames and log the existing truncation warning."""
+    monkeypatch.setattr(tos, "_write_rgba_array_png", lambda arr, out_path: None)
+    monkeypatch.setattr(tos, "_apply_subject_mask", lambda rgba, mask: rgba)
+
+    overlay = _behind_overlay(end_s=150.0, effect="static")
+    matte = _FastMatte()
+    with mock.patch.object(tos, "log", wraps=tos.log) as mock_log:
+        seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0, matte=matte)
+
+    assert seq is not None
+    assert tos.BEHIND_SUBJECT_FRAME_CEILING == 3600
+    assert seq["n_frames"] == tos.BEHIND_SUBJECT_FRAME_CEILING
+    assert len(matte.calls) == tos.BEHIND_SUBJECT_FRAME_CEILING
+    mock_log.warning.assert_any_call(
+        "skia_long_running_text_duration_clamped",
+        effect="static",
+        duration_s=150.0,
+        wanted_frames=4500,
+        clamped_to=tos.BEHIND_SUBJECT_FRAME_CEILING,
+    )
+
+
 # -- Sequence-role overlays: behind_subject unsupported in v1 -----------------
 
 

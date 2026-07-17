@@ -98,6 +98,24 @@ LONG_RUNNING_TEXT_FRAME_CEILING = int(FPS * 30)
 # not this ceiling — drives scratch usage.
 SEQUENCE_COMPOSITE_FRAME_CEILING = int(FPS * 120)
 
+# behind_subject overlays get their own, larger ceiling. Generative intro
+# overlays can be hold-to-EOF (effect="static", end_s spanning nearly the
+# whole clip — see generative_overlays.py's _HOLD_TO_END_S); a normal static
+# overlay that long would take the single-PNG `-loop 1` path and just persist
+# forever, but behind_subject overlays can't use that trick — the subject
+# mask differs every frame, so every second of the window needs a real,
+# uniquely-masked PNG (see the hold-economy note on `_generate_overlay_sequence`
+# below). Without a dedicated ceiling these fall back to
+# LONG_RUNNING_TEXT_FRAME_CEILING (30s) and the text silently vanishes for
+# the remainder of the video once the PNG sequence runs out (eof_action=pass
+# on the ffmpeg overlay input). 120s == SEQUENCE_COMPOSITE_FRAME_CEILING,
+# deliberately: it covers Nova's sub-60s output target with 2x margin. Frame
+# economy stays fine at this length — behind frames are mostly-transparent
+# text-on-alpha PNGs (small), and PNG encode parallelizes over
+# _ENCODE_WORKERS — so do NOT re-enable hold-linking for behind_subject to
+# "save" frames here.
+BEHIND_SUBJECT_FRAME_CEILING = int(FPS * 120)
+
 # Encoder thread pool: Pillow PNG encode releases the GIL during compression,
 # so threading actually helps. 4 workers matches the production Celery worker
 # CPU count (shared-cpu-4x). Skia rendering is also GIL-released inside the
@@ -170,9 +188,12 @@ def _uses_long_running_frame_ceiling(overlay: dict) -> bool:
     Sequence overlays (role="generative_sequence") hold an editorial scene
     through its full transcript window — often well past the 120-frame cap —
     so they use the same generous sanity ceiling. `behind_subject` overlays
-    get it too: every frame renders uniquely (the hold-frame hard-link economy
-    is disabled once occlusion is on, since the subject moves), so a plain 5s
-    intro would otherwise blow the 120-frame cap and vanish mid-word.
+    get a long ceiling too (their own, larger one —
+    BEHIND_SUBJECT_FRAME_CEILING, selected by the caller): every frame renders
+    uniquely (the hold-frame hard-link economy is disabled once occlusion is
+    on, since the subject moves), and hold-to-EOF generative intro overlays
+    can span nearly the whole clip, so a plain 5s intro would otherwise blow
+    the 120-frame cap and vanish mid-word.
     """
     if overlay.get("role") == SEQUENCE_OVERLAY_ROLE:
         return True
@@ -1861,24 +1882,30 @@ def _generate_overlay_sequence(
     # Lyric-timed effects (`lyric-line`, `karaoke-line`, suffix pop-in reveal
     # stages) settle visually but must stay present until their audio boundary;
     # applying the ~4s cap there chops late words/tails before the next stage.
-    # They instead use a generous sanity ceiling so a malformed transcript with
-    # `end_s = 240.0` cannot blow scratch disk on the encode worker:
+    # They instead use a generous sanity ceiling (LONG_RUNNING_TEXT_FRAME_CEILING,
+    # or BEHIND_SUBJECT_FRAME_CEILING for behind_subject overlays — see that
+    # constant's comment) so a malformed transcript with `end_s = 240.0`
+    # cannot blow scratch disk on the encode worker:
     # 30s × 30fps = 900 frames × ~1MB PNG ≈ 1GB worst case, vs 7200 frames ×
     # 1MB ≈ 7GB unbounded.
     effect = overlay.get("effect", "none")
     wanted = max(1, int(round(duration_s * FPS)))
     uses_long_ceiling = _uses_long_running_frame_ceiling(overlay)
+    # behind_subject gets the larger BEHIND_SUBJECT_FRAME_CEILING (hold-to-EOF
+    # windows must outlive the video); every other long-running effect keeps
+    # the tighter 30s LONG_RUNNING_TEXT_FRAME_CEILING. Single source of truth
+    # so the clamp below and the +1 seam-frame clamp further down can't drift.
+    long_ceiling = BEHIND_SUBJECT_FRAME_CEILING if wants_behind else LONG_RUNNING_TEXT_FRAME_CEILING
     if uses_long_ceiling:
-        ceiling = LONG_RUNNING_TEXT_FRAME_CEILING
-        if wanted > ceiling:
+        if wanted > long_ceiling:
             log.warning(
                 "skia_long_running_text_duration_clamped",
                 effect=effect,
                 duration_s=duration_s,
                 wanted_frames=wanted,
-                clamped_to=ceiling,
+                clamped_to=long_ceiling,
             )
-        n_frames = min(ceiling, wanted)
+        n_frames = min(long_ceiling, wanted)
     else:
         n_frames = min(MAX_OVERLAY_FRAMES, wanted)
     frame_dur = 1.0 / FPS
@@ -1892,7 +1919,7 @@ def _generate_overlay_sequence(
     # at t_local >= duration), so it just holds the line through the seam; the
     # `between(t, start, end)` enable still gates the overlay off at `end`.
     n_render = (
-        min(LONG_RUNNING_TEXT_FRAME_CEILING, n_frames + 1)
+        min(long_ceiling, n_frames + 1)
         if uses_long_ceiling
         else min(MAX_OVERLAY_FRAMES, n_frames + 1)
     )
