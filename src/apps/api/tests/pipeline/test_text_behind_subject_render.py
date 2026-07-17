@@ -213,10 +213,13 @@ def test_behind_subject_with_matte_renders_animated_masked_sequence(tmp_workdir)
     # subject's mask can move even when the settled text doesn't.
     assert all(os.stat(f).st_nlink == 1 for f in frames)
 
-    # matte was consulted once per rendered frame, at the frame's absolute t.
-    assert len(matte.calls) == seq["n_frames"]
-    assert matte.calls[0] == pytest.approx(0.0)
-    assert matte.calls[-1] == pytest.approx((seq["n_frames"] - 1) / tos.FPS)
+    # matte was consulted twice per rendered frame (visibility-policy pre-pass
+    # + the render itself), covering every frame's absolute t.
+    assert len(matte.calls) == 2 * seq["n_frames"]
+    distinct = sorted(set(matte.calls))
+    assert len(distinct) == seq["n_frames"]
+    assert distinct[0] == pytest.approx(0.0)
+    assert distinct[-1] == pytest.approx((seq["n_frames"] - 1) / tos.FPS)
 
     unmasked = tos._skia_image_to_rgba_array(tos._draw_frame(overlay, 0.0, 1.0))
     masked = np.array(Image.open(frames[0]).convert("RGBA"))
@@ -239,6 +242,98 @@ def test_behind_subject_animated_overlay_masks_every_frame(tmp_workdir):
     for f in frames:
         arr = np.array(Image.open(f).convert("RGBA"))
         assert arr[..., 3].max() == 0, f"{f} should be fully occluded (mask=1.0)"
+
+
+# -- Visibility policy: hide fully instead of strobing shredded fragments ----
+
+
+class _ScriptedMatte:
+    """Matte stub returning a full mask inside [hide_start, hide_end) and no
+    mask elsewhere — models a crowd/large object sweeping over the text."""
+
+    def __init__(self, hide_start: float, hide_end: float):
+        self.hide_start = hide_start
+        self.hide_end = hide_end
+
+    def mask_at(self, t_abs: float) -> np.ndarray | None:
+        if self.hide_start <= t_abs < self.hide_end:
+            return np.ones((tos.CANVAS_H, tos.CANVAS_W), dtype=np.float32)
+        return np.zeros((tos.CANVAS_H, tos.CANVAS_W), dtype=np.float32)
+
+
+class _SeriesMatte:
+    """Matte stub replaying a scripted per-frame occlusion fraction (uniform
+    mask of that value, so occ_frac == value against any text alpha)."""
+
+    def __init__(self, series: list[float], frame_dur: float):
+        self.series = series
+        self.frame_dur = frame_dur
+
+    def mask_at(self, t_abs: float) -> np.ndarray | None:
+        i = min(len(self.series) - 1, max(0, int(round(t_abs / self.frame_dur))))
+        return np.full((tos.CANVAS_H, tos.CANVAS_W), self.series[i], dtype=np.float32)
+
+
+def _scales_for_series(series: list[float]) -> np.ndarray | None:
+    frame_dur = 1.0 / tos.FPS
+    alpha = np.ones((tos.CANVAS_H, tos.CANVAS_W), dtype=np.float32)
+    return tos._behind_visibility_scales(
+        _SeriesMatte(series, frame_dur), alpha, 0.0, len(series), frame_dur
+    )
+
+
+def test_visibility_policy_disengaged_below_hide_threshold_returns_none():
+    # Occlusion oscillating below the 0.70 hide threshold — policy never
+    # engages, so the render path keeps pure per-pixel masking.
+    assert _scales_for_series([0.55, 0.65, 0.55, 0.65, 0.69, 0.55]) is None
+
+
+def test_visibility_policy_hides_and_fades_on_heavy_occlusion():
+    scales = _scales_for_series([0.0, 0.0, 0.9, 0.9, 0.9, 0.9, 0.9])
+    assert scales is not None
+    assert scales[0] == pytest.approx(1.0)
+    assert scales[1] == pytest.approx(1.0)
+    # 3-frame fade once hidden engages, then fully hidden.
+    assert scales[2] < 1.0
+    assert scales[4] == pytest.approx(0.0)
+    assert scales[6] == pytest.approx(0.0)
+
+
+def test_visibility_policy_hysteresis_does_not_flap_in_the_gap():
+    # Once hidden, occlusion dropping into the (0.50, 0.70) gap must NOT
+    # reveal the text — that oscillation is exactly the strobing bug.
+    series = [0.9, 0.9, 0.9, 0.9, 0.60, 0.68, 0.55, 0.65, 0.60, 0.66]
+    scales = _scales_for_series(series)
+    assert scales is not None
+    assert scales[-1] == pytest.approx(0.0), "text must stay hidden through the gap"
+
+
+def test_visibility_policy_reveals_when_clearly_visible_again():
+    series = [0.9] * 6 + [0.2] * 6
+    scales = _scales_for_series(series)
+    assert scales is not None
+    assert scales[5] == pytest.approx(0.0)
+    assert scales[-1] == pytest.approx(1.0), "text fades back once occlusion clears"
+
+
+def test_heavily_occluded_window_writes_fully_transparent_frames(tmp_workdir):
+    """Integration: a full-occlusion stretch in the middle of the window
+    produces fully transparent PNGs (no shredded fragments), and the text
+    returns after the subject clears."""
+    overlay = _behind_overlay(end_s=1.0)
+    matte = _ScriptedMatte(hide_start=0.3, hide_end=0.6)
+    seq = tos._generate_overlay_sequence(overlay, tmp_workdir, 0, matte=matte)
+    assert seq is not None
+
+    frames = sorted(
+        os.path.join(tmp_workdir, f) for f in os.listdir(tmp_workdir) if f.endswith(".png")
+    )
+    mid = np.array(Image.open(frames[15]).convert("RGBA"))  # t=0.5, inside hide window
+    assert mid[..., 3].max() == 0, "mid-occlusion frame must be fully transparent"
+    first = np.array(Image.open(frames[0]).convert("RGBA"))
+    assert first[..., 3].max() > 200, "pre-occlusion frame keeps opaque text"
+    last = np.array(Image.open(frames[-1]).convert("RGBA"))
+    assert last[..., 3].max() > 200, "post-occlusion frame recovers opaque text"
 
 
 def test_behind_subject_disables_hold_frame_economy_for_sequence_role_case(tmp_workdir):
@@ -300,7 +395,8 @@ def test_behind_subject_45s_window_not_clamped_at_long_running_ceiling(tmp_workd
     assert seq["n_frames"] == wanted + 1  # + seam hold frame, same as any animated sequence
     assert seq["n_frames"] > tos.LONG_RUNNING_TEXT_FRAME_CEILING
     assert seq["n_frames"] <= tos.BEHIND_SUBJECT_FRAME_CEILING
-    assert len(matte.calls) == seq["n_frames"]
+    # Twice per frame: visibility-policy pre-pass + render.
+    assert len(matte.calls) == 2 * seq["n_frames"]
     for call in mock_log.warning.call_args_list:
         assert call.args[0] != "skia_long_running_text_duration_clamped"
 
@@ -321,7 +417,8 @@ def test_behind_subject_150s_window_clamps_at_behind_subject_ceiling_with_warnin
     assert seq is not None
     assert tos.BEHIND_SUBJECT_FRAME_CEILING == 3600
     assert seq["n_frames"] == tos.BEHIND_SUBJECT_FRAME_CEILING
-    assert len(matte.calls) == tos.BEHIND_SUBJECT_FRAME_CEILING
+    # Twice per frame: visibility-policy pre-pass + render.
+    assert len(matte.calls) == 2 * tos.BEHIND_SUBJECT_FRAME_CEILING
     mock_log.warning.assert_any_call(
         "skia_long_running_text_duration_clamped",
         effect="static",

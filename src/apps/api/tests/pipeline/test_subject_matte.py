@@ -38,25 +38,115 @@ def _stats(mean: float, min_: float = 0.0, max_: float = 0.5) -> MatteStats:
 
 
 class TestMatteIsSane:
-    def test_below_floor(self) -> None:
-        assert matte_is_sane(_stats(0.04, max_=0.5)) is False
+    def test_small_distant_subject_is_sane(self) -> None:
+        # A person at ~0.8% of frame (beach wide shot) is a legitimate
+        # subject — the old 5% mean floor disabled the effect for them.
+        assert matte_is_sane(_stats(0.008, max_=0.3)) is True
 
-    def test_at_floor(self) -> None:
-        assert matte_is_sane(_stats(0.05, max_=0.5)) is True
+    def test_tiny_mean_with_real_peak_is_sane(self) -> None:
+        assert matte_is_sane(_stats(0.001, max_=0.05)) is True
 
-    def test_at_ceiling(self) -> None:
-        assert matte_is_sane(_stats(0.60, max_=0.5)) is True
+    def test_never_found_anyone_is_degenerate(self) -> None:
+        # max_coverage below 1% — the segmenter never confidently found a
+        # person in any frame.
+        assert matte_is_sane(_stats(0.001, max_=0.009)) is False
 
-    def test_above_ceiling(self) -> None:
-        assert matte_is_sane(_stats(0.61, max_=0.5)) is False
+    def test_max_coverage_at_floor(self) -> None:
+        assert matte_is_sane(_stats(0.005, max_=0.01)) is True
 
-    def test_degenerate_max_coverage(self) -> None:
-        # mean in-range but max_coverage barely above zero — a matte that's
-        # never confidently "person" anywhere, likely a false segmentation.
-        assert matte_is_sane(_stats(0.10, max_=0.01)) is False
+    def test_swallowed_frame_is_degenerate(self) -> None:
+        # mean coverage above 85% — the mask ate essentially the whole
+        # frame; occluding text with it would just hide the text.
+        assert matte_is_sane(_stats(0.86, max_=1.0)) is False
 
-    def test_max_coverage_just_above_floor(self) -> None:
-        assert matte_is_sane(_stats(0.10, max_=0.021)) is True
+    def test_mean_at_ceiling(self) -> None:
+        assert matte_is_sane(_stats(0.85, max_=1.0)) is True
+
+    def test_unstable_presence_is_rejected(self) -> None:
+        # Beach-wide-shot anchor: segmenter dropouts flap the mask on/off
+        # (5 flips at 1.56/s measured) — occlusion would blink, reject.
+        stats = _stats(0.007, max_=0.3)
+        stats.presence_flips = 5
+        stats.presence_flips_per_s = 1.56
+        assert matte_is_sane(stats) is False
+
+    def test_legit_scene_cut_is_not_rejected(self) -> None:
+        # Argentina-montage anchor: one flip at a scene cut (0.29/s) is fine.
+        stats = _stats(0.14, max_=0.4)
+        stats.presence_flips = 1
+        stats.presence_flips_per_s = 0.29
+        assert matte_is_sane(stats) is True
+
+    def test_few_flips_at_high_rate_is_not_rejected(self) -> None:
+        # A very short window can have a high flip RATE with only 1-2 flips
+        # (e.g. subject steps out once) — both conditions must trip.
+        stats = _stats(0.05, max_=0.3)
+        stats.presence_flips = 2
+        stats.presence_flips_per_s = 2.0
+        assert matte_is_sane(stats) is True
+
+    def test_many_slow_flips_is_not_rejected(self) -> None:
+        # Long window, occasional legitimate exits/entries — rate stays low.
+        stats = _stats(0.05, max_=0.3)
+        stats.presence_flips = 5
+        stats.presence_flips_per_s = 0.2
+        assert matte_is_sane(stats) is True
+
+
+# ---------------------------------------------------------------------------
+# _postprocess_mask — pure numpy/cv2, no fixtures, no mediapipe.
+# ---------------------------------------------------------------------------
+
+
+def _soft(value: float, shape: tuple[int, int] = (48, 27)) -> np.ndarray:
+    return np.full(shape, value, dtype=np.float32)
+
+
+class TestPostprocessMask:
+    def test_hard_cut_below_threshold_is_background(self) -> None:
+        from collections import deque
+
+        out = subject_matte._postprocess_mask(deque([_soft(0.39)]))
+        assert float(out.max()) == 0.0
+
+    def test_hard_cut_above_threshold_is_solid(self) -> None:
+        from collections import deque
+
+        out = subject_matte._postprocess_mask(deque([_soft(0.41)]))
+        # Interior is fully solid — the soft 0.41 confidence does not leak
+        # into alpha as 41% ghosting.
+        assert float(out[24, 13]) == pytest.approx(1.0, abs=1e-3)
+
+    def test_temporal_median_suppresses_single_frame_spike(self) -> None:
+        from collections import deque
+
+        spike = deque([_soft(0.0), _soft(0.9), _soft(0.0)], maxlen=3)
+        out = subject_matte._postprocess_mask(spike)
+        assert float(out.max()) == 0.0
+
+    def test_tiny_fragment_dropped_large_subject_kept(self) -> None:
+        from collections import deque
+
+        mask = np.zeros((480, 270), dtype=np.float32)
+        # Large subject: ~0.8% of frame (the beach person) — must survive.
+        mask[100:140, 100:126] = 0.9  # 40*26 = 1040 px ≈ 0.8%
+        # Tiny fragment: well under the 0.2% floor — must be dropped.
+        mask[300:306, 50:56] = 0.9  # 36 px ≈ 0.03%
+        out = subject_matte._postprocess_mask(deque([mask]))
+        assert float(out[120, 113]) > 0.9
+        assert float(out[303, 53]) == 0.0
+
+    def test_output_range_and_dtype(self) -> None:
+        from collections import deque
+
+        mask = np.zeros((480, 270), dtype=np.float32)
+        mask[100:200, 80:180] = 1.0
+        out = subject_matte._postprocess_mask(deque([mask]))
+        assert out.shape == mask.shape
+        assert float(out.min()) >= 0.0
+        assert float(out.max()) <= 1.0
+        # Feather produces intermediate values at the edge, solid interior.
+        assert float(out[150, 130]) == pytest.approx(1.0, abs=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +372,216 @@ class TestMaskAt:
 
 
 # ---------------------------------------------------------------------------
+# Time-alignment regression — fake mediapipe injected via sys.modules, so it
+# runs everywhere (no GL needed). Pins the fix for the "text blinks every
+# second" prod bug: the old loop read source frames sequentially at a 15fps
+# inference cadence, so on a 30fps source the matte content played at half
+# speed and progressively lagged the real subject.
+# ---------------------------------------------------------------------------
+
+
+def _build_brightness_ramp_clip(out_path: Path, n_frames: int = 30, fps: int = 30) -> Path:
+    """30fps clip where frame k is a flat gray of value k*8 — brightness
+    identifies the source frame on the other side of the decode."""
+    proc = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-s",
+            "64x64",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-qp",
+            "0",
+            "-pix_fmt",
+            "yuv420p",
+            str(out_path),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stdin is not None
+    for k in range(n_frames):
+        proc.stdin.write(np.full((64, 64), k * 8, dtype=np.uint8).tobytes())
+    _, stderr = proc.communicate(timeout=30)
+    assert proc.returncode == 0, stderr.decode(errors="replace")
+    return out_path
+
+
+def _install_fake_mediapipe(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[float],
+    shapes: list[tuple[int, int]] | None = None,
+    mask_value: np.ndarray | None = None,
+) -> None:
+    """Fake mediapipe module tree that records the input brightness (and
+    optionally input shape) per segment() call and returns `mask_value`
+    (an empty mask by default)."""
+    import sys
+    import types
+
+    class _FakeImage:
+        def __init__(self, image_format: object = None, data: np.ndarray | None = None) -> None:
+            self.data = data
+
+    class _FakeMask:
+        def numpy_view(self) -> np.ndarray:
+            if mask_value is not None:
+                return mask_value
+            return np.zeros((16, 16), dtype=np.float32)
+
+    class _FakeResult:
+        confidence_masks = [_FakeMask()]
+
+    class _FakeSegmenter:
+        def segment(self, image: _FakeImage) -> _FakeResult:
+            assert image.data is not None
+            calls.append(float(image.data.mean()))
+            if shapes is not None:
+                shapes.append(image.data.shape[:2])
+            return _FakeResult()
+
+        def close(self) -> None:
+            pass
+
+    mp_mod = types.ModuleType("mediapipe")
+    mp_mod.Image = _FakeImage  # type: ignore[attr-defined]
+    mp_mod.ImageFormat = types.SimpleNamespace(SRGB="srgb")  # type: ignore[attr-defined]
+
+    tasks_mod = types.ModuleType("mediapipe.tasks")
+    python_mod = types.ModuleType("mediapipe.tasks.python")
+    python_mod.BaseOptions = lambda **kwargs: types.SimpleNamespace(**kwargs)  # type: ignore[attr-defined]
+    vision_mod = types.ModuleType("mediapipe.tasks.python.vision")
+    vision_mod.ImageSegmenterOptions = lambda **kwargs: types.SimpleNamespace(**kwargs)  # type: ignore[attr-defined]
+    vision_mod.RunningMode = types.SimpleNamespace(IMAGE="image")  # type: ignore[attr-defined]
+    vision_mod.ImageSegmenter = types.SimpleNamespace(  # type: ignore[attr-defined]
+        create_from_options=lambda options: _FakeSegmenter()
+    )
+    mp_mod.tasks = tasks_mod  # type: ignore[attr-defined]
+    tasks_mod.python = python_mod  # type: ignore[attr-defined]
+    python_mod.vision = vision_mod  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "mediapipe", mp_mod)
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks", tasks_mod)
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks.python", python_mod)
+    monkeypatch.setitem(sys.modules, "mediapipe.tasks.python.vision", vision_mod)
+
+
+@needs_ffmpeg
+class TestTimeAlignment:
+    def test_30fps_source_sampled_at_every_frame(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, calls)
+
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+        )
+        assert result is not None
+
+        # Full-rate: one inference per source frame. The old 15fps-bucket
+        # loop made exactly 15 calls here and only ever saw frames 0..14.
+        assert len(calls) == 30
+
+        for k, brightness in enumerate(calls):
+            # Brightness identifies the source frame: call k must see frame
+            # k (value k*8), not frame k//2. Lossless encode, so tight tol.
+            assert brightness == pytest.approx(k * 8, abs=3.0), (
+                f"call {k} saw source frame ~{brightness / 8:.1f}, expected {k} "
+                "— matte sampling is time-stretched again"
+            )
+
+
+class TestSmallSubjectRoiRefinement:
+    def test_small_subject_triggers_roi_second_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A small detected subject re-runs the window on a zoomed crop —
+        the fix for segmenter dropouts on distant people (beach wide shot:
+        full-frame peak confidence flapped 0.0->1.0->0.0; ROI-zoomed
+        inference held 1.00 on every frame)."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        shapes: list[tuple[int, int]] = []
+        blob = np.zeros((16, 16), dtype=np.float32)
+        blob[6:9, 6:9] = 0.9  # ~3.5% bbox after resize — a small subject
+        _install_fake_mediapipe(monkeypatch, calls, shapes=shapes, mask_value=blob)
+
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+        )
+        assert result is not None
+        # Pass 1 (full frame) + pass 2 (ROI crop): 30 ticks each.
+        assert len(calls) == 60
+        assert result.frame_count == 60
+        full = [sh for sh in shapes if sh == (64, 64)]
+        crops = [sh for sh in shapes if sh != (64, 64)]
+        assert len(full) == 30
+        assert len(crops) == 30
+        # The crop really is a zoom: strictly smaller than the frame.
+        assert all(h < 64 and w < 64 for h, w in crops)
+
+    def test_no_detection_skips_roi_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp2.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, calls)  # empty masks
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+        )
+        assert result is not None
+        assert len(calls) == 30  # single pass only
+
+
+class TestSmallSubjectRoiGeometry:
+    def test_large_union_returns_none(self) -> None:
+        big = np.full((480, 270), 255, dtype=np.uint8)
+        assert subject_matte._small_subject_roi([big]) is None
+
+    def test_empty_union_returns_none(self) -> None:
+        empty = np.zeros((480, 270), dtype=np.uint8)
+        assert subject_matte._small_subject_roi([empty]) is None
+
+    def test_small_blob_returns_padded_clamped_fractions(self) -> None:
+        m = np.zeros((480, 270), dtype=np.uint8)
+        m[230:250, 125:145] = 255  # centered ~7% x ~4% blob
+        roi = subject_matte._small_subject_roi([m])
+        assert roi is not None
+        fx0, fx1, fy0, fy1 = roi
+        assert 0.0 <= fx0 < fx1 <= 1.0
+        assert 0.0 <= fy0 < fy1 <= 1.0
+        # Padded to at least the minimum crop side.
+        assert fx1 - fx0 >= subject_matte._ROI_MIN_SIDE_FRAC - 1e-6
+        assert fy1 - fy0 >= subject_matte._ROI_MIN_SIDE_FRAC - 1e-6
+        # Blob center stays inside the crop.
+        assert fx0 < 0.5 < fx1
+        assert fy0 < 0.5 < fy1
+
+
+# ---------------------------------------------------------------------------
 # Real end-to-end smoke test — needs mediapipe + the downloaded model.
 # ---------------------------------------------------------------------------
 
@@ -313,7 +613,7 @@ def _segmenter_usable() -> bool:
 
         options = mp_vision.ImageSegmenterOptions(
             base_options=mp_python.BaseOptions(model_asset_path=_resolve_model_path()),
-            running_mode=mp_vision.RunningMode.VIDEO,
+            running_mode=mp_vision.RunningMode.IMAGE,
             output_confidence_masks=True,
             output_category_mask=False,
         )
@@ -339,7 +639,9 @@ def _build_testsrc_clip(out_path: Path, duration: float = 1.0) -> Path:
         "-f",
         "lavfi",
         "-i",
-        f"testsrc=duration={duration}:size=320x568:rate=15",
+        # 30fps like real prod sources. The original rate=15 exactly matched
+        # the old inference cadence and hid the time-stretch bug in CI.
+        f"testsrc=duration={duration}:size=320x568:rate=30",
         "-c:v",
         "libx264",
         "-preset",
