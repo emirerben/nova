@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 - **Instagram-style plan-item recreations preserve multi-clip montage intent instead of collapsing to one talking-head clip.** The web edit flow no longer rewrites stored `talking_head` items to `subtitled` before generation, and the plan-item page treats existing `talking_head` uploads as a multi-clip pool unless the user explicitly picks the single-clip subtitled format. Content-plan generation now forwards the selected edit format and all uploaded clip paths unchanged, chooses the lyric-capable montage variant first when the matched track has cached lyrics, and falls back to montage when self-narration would otherwise pick a too-short speech spine that cannot schedule B-roll cutaways.
+### Added
+- **The editor Text drawer can now split one composed title into coordinated smart-placed blocks.** Masonry users can paste a full phrase into the new Composition draft, click "Split & place", and get multiple text elements distributed across distinct collage pockets using the existing motion-aware placement metadata. The drawer also exposes "Smart place all" for existing masonry text blocks, so users can reflow the whole text composition without selecting one block at a time.
 
 ## [0.7.30.6] — 2026-07-15
 
