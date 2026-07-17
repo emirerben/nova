@@ -422,9 +422,15 @@ def _build_brightness_ramp_clip(out_path: Path, n_frames: int = 30, fps: int = 3
     return out_path
 
 
-def _install_fake_mediapipe(monkeypatch: pytest.MonkeyPatch, calls: list[float]) -> None:
-    """Fake mediapipe module tree that records the input brightness per
-    segment() call and returns an empty mask."""
+def _install_fake_mediapipe(
+    monkeypatch: pytest.MonkeyPatch,
+    calls: list[float],
+    shapes: list[tuple[int, int]] | None = None,
+    mask_value: np.ndarray | None = None,
+) -> None:
+    """Fake mediapipe module tree that records the input brightness (and
+    optionally input shape) per segment() call and returns `mask_value`
+    (an empty mask by default)."""
     import sys
     import types
 
@@ -434,6 +440,8 @@ def _install_fake_mediapipe(monkeypatch: pytest.MonkeyPatch, calls: list[float])
 
     class _FakeMask:
         def numpy_view(self) -> np.ndarray:
+            if mask_value is not None:
+                return mask_value
             return np.zeros((16, 16), dtype=np.float32)
 
     class _FakeResult:
@@ -443,6 +451,8 @@ def _install_fake_mediapipe(monkeypatch: pytest.MonkeyPatch, calls: list[float])
         def segment(self, image: _FakeImage) -> _FakeResult:
             assert image.data is not None
             calls.append(float(image.data.mean()))
+            if shapes is not None:
+                shapes.append(image.data.shape[:2])
             return _FakeResult()
 
         def close(self) -> None:
@@ -498,6 +508,77 @@ class TestTimeAlignment:
                 f"call {k} saw source frame ~{brightness / 8:.1f}, expected {k} "
                 "— matte sampling is time-stretched again"
             )
+
+
+class TestSmallSubjectRoiRefinement:
+    def test_small_subject_triggers_roi_second_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A small detected subject re-runs the window on a zoomed crop —
+        the fix for segmenter dropouts on distant people (beach wide shot:
+        full-frame peak confidence flapped 0.0->1.0->0.0; ROI-zoomed
+        inference held 1.00 on every frame)."""
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp.mp4")
+        calls: list[float] = []
+        shapes: list[tuple[int, int]] = []
+        blob = np.zeros((16, 16), dtype=np.float32)
+        blob[6:9, 6:9] = 0.9  # ~3.5% bbox after resize — a small subject
+        _install_fake_mediapipe(monkeypatch, calls, shapes=shapes, mask_value=blob)
+
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+        )
+        assert result is not None
+        # Pass 1 (full frame) + pass 2 (ROI crop): 30 ticks each.
+        assert len(calls) == 60
+        assert result.frame_count == 60
+        full = [sh for sh in shapes if sh == (64, 64)]
+        crops = [sh for sh in shapes if sh != (64, 64)]
+        assert len(full) == 30
+        assert len(crops) == 30
+        # The crop really is a zoom: strictly smaller than the frame.
+        assert all(h < 64 and w < 64 for h, w in crops)
+
+    def test_no_detection_skips_roi_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        video_path = _build_brightness_ramp_clip(tmp_path / "ramp2.mp4")
+        calls: list[float] = []
+        _install_fake_mediapipe(monkeypatch, calls)  # empty masks
+        result = compute_subject_matte(
+            str(video_path),
+            [MatteWindow(0.0, 1.0)],
+            str(tmp_path / "matte.mp4"),
+        )
+        assert result is not None
+        assert len(calls) == 30  # single pass only
+
+
+class TestSmallSubjectRoiGeometry:
+    def test_large_union_returns_none(self) -> None:
+        big = np.full((480, 270), 255, dtype=np.uint8)
+        assert subject_matte._small_subject_roi([big]) is None
+
+    def test_empty_union_returns_none(self) -> None:
+        empty = np.zeros((480, 270), dtype=np.uint8)
+        assert subject_matte._small_subject_roi([empty]) is None
+
+    def test_small_blob_returns_padded_clamped_fractions(self) -> None:
+        m = np.zeros((480, 270), dtype=np.uint8)
+        m[230:250, 125:145] = 255  # centered ~7% x ~4% blob
+        roi = subject_matte._small_subject_roi([m])
+        assert roi is not None
+        fx0, fx1, fy0, fy1 = roi
+        assert 0.0 <= fx0 < fx1 <= 1.0
+        assert 0.0 <= fy0 < fy1 <= 1.0
+        # Padded to at least the minimum crop side.
+        assert fx1 - fx0 >= subject_matte._ROI_MIN_SIDE_FRAC - 1e-6
+        assert fy1 - fy0 >= subject_matte._ROI_MIN_SIDE_FRAC - 1e-6
+        # Blob center stays inside the crop.
+        assert fx0 < 0.5 < fx1
+        assert fy0 < 0.5 < fy1
 
 
 # ---------------------------------------------------------------------------

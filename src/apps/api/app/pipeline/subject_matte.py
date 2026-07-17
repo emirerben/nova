@@ -79,6 +79,22 @@ _FEATHER_SIGMA_PX = 1.2
 # CAP_PROP_FPS sanity range — outside it we fall back to MATTE_FPS.
 _MAX_REASONABLE_SRC_FPS = 240.0
 
+# --- Small-subject ROI refinement ------------------------------------------
+# The selfie segmenter squeezes the whole frame into its ~256px input, so a
+# distant person is a handful of model pixels — confidence flaps 0.0→1.0→0.0
+# across frames (beach wide shot). When the full-frame pass finds only a
+# small subject region, a second pass re-segments a zoomed crop around it:
+# the same person fills the model input and detection becomes rock-stable
+# (measured: peak confidence 1.00 on every frame, 0 presence flips, vs 5
+# flips full-frame).
+# Trigger: union bbox of the treated pass-1 mask covers less than this
+# fraction of the frame.
+_ROI_SMALL_UNION_FRAC = 0.25
+# Padding around the union bbox (factor on each dimension) and the minimum
+# crop side (as a fraction of the frame) so the model keeps context.
+_ROI_PAD_FACTOR = 2.0
+_ROI_MIN_SIDE_FRAC = 0.2
+
 _FFMPEG_MUX_TIMEOUT_S = 30
 
 
@@ -224,6 +240,35 @@ def _source_fps(cap: cv2.VideoCapture) -> float:
     return fps
 
 
+def _small_subject_roi(
+    treated_u8: list[np.ndarray],
+) -> tuple[float, float, float, float] | None:
+    """Fractional crop (fx0, fx1, fy0, fy1) around a small subject region,
+    or None when the subject region is large enough for full-frame inference
+    (or nothing was detected at all). Input masks are uint8 [0, 255]."""
+    union = np.zeros_like(treated_u8[0], dtype=bool)
+    for mask in treated_u8:
+        union |= mask >= 128
+    if not union.any():
+        return None
+    ys, xs = np.where(union)
+    bw = (xs.max() - xs.min() + 1) / _MATTE_WIDTH
+    bh = (ys.max() - ys.min() + 1) / _MATTE_HEIGHT
+    if bw * bh > _ROI_SMALL_UNION_FRAC:
+        return None
+    cx = (xs.min() + xs.max() + 1) / 2.0 / _MATTE_WIDTH
+    cy = (ys.min() + ys.max() + 1) / 2.0 / _MATTE_HEIGHT
+    w = max(bw * _ROI_PAD_FACTOR, _ROI_MIN_SIDE_FRAC)
+    h = max(bh * _ROI_PAD_FACTOR, _ROI_MIN_SIDE_FRAC)
+    fx0 = float(np.clip(cx - w / 2.0, 0.0, 1.0))
+    fx1 = float(np.clip(cx + w / 2.0, 0.0, 1.0))
+    fy0 = float(np.clip(cy - h / 2.0, 0.0, 1.0))
+    fy1 = float(np.clip(cy + h / 2.0, 0.0, 1.0))
+    if fx1 <= fx0 or fy1 <= fy0:
+        return None
+    return (fx0, fx1, fy0, fy1)
+
+
 def _compute_subject_matte_inner(
     video_path: str,
     windows: list[MatteWindow],
@@ -279,33 +324,38 @@ def _compute_subject_matte_inner(
         proc = _spawn_matte_writer(out_path)
         assert proc.stdin is not None
 
-        for window in windows:
-            _budget_check(start_time)
-            if window.end_s <= window.start_s:
-                log.warning(
-                    "subject_matte_skipping_empty_window",
-                    start_s=window.start_s,
-                    end_s=window.end_s,
-                )
-                continue
+        def collect_window_masks(
+            window: MatteWindow,
+            roi_frac: tuple[float, float, float, float] | None,
+        ) -> tuple[list[np.ndarray], int]:
+            """One TREATED uint8 mask (matte res) per output tick; holds
+            duplicate the previous mask. Returns (masks, inference_count).
+            Buffered as uint8 so a 120s hold-to-EOF window stays in the same
+            memory class as SubjectMatteProvider's full load (~470MB), never
+            float32 (~1.9GB).
 
+            Time-aligned sampling: for output tick t_rel the capture is
+            advanced until it has consumed every source frame up to t_rel
+            (frames_read tracks source time as frames_read / src_fps).
+            Inference runs on the newest frame covering the tick — i.e. at
+            (up to) every source frame, never time-stretched. The old
+            sequential 15fps-bucket read consumed source frames at half rate
+            on 30fps sources, so the matte lagged the subject by up to half
+            the window — the "text blinks every second" bug.
+
+            With roi_frac, inference runs on that fractional crop of the
+            frame and the result is pasted back into a full-frame mask (the
+            small-subject refinement pass — everything outside the padded
+            union of pass-1 detections is known background).
+            """
             cap.set(cv2.CAP_PROP_POS_MSEC, window.start_s * 1000.0)
             num_output_frames = max(1, round((window.end_s - window.start_s) * MATTE_FPS))
-
-            # Time-aligned sampling: for output tick t_rel the capture is
-            # advanced until it has consumed every source frame up to t_rel
-            # (frames_read tracks source time as frames_read / src_fps).
-            # Inference runs on the newest frame covering the tick — i.e. at
-            # (up to) every source frame, never time-stretched. The old
-            # sequential 15fps-bucket read consumed source frames at half
-            # rate on 30fps sources, so the matte lagged the subject by up
-            # to half the window — the "text blinks every second" bug.
-            frames_read = 0
+            masks: list[np.ndarray] = []
             recent_soft: deque[np.ndarray] = deque(maxlen=_TEMPORAL_MEDIAN_FRAMES)
-            last_mask_small: np.ndarray | None = None
-            produced = 0
+            frames_read = 0
+            inferences = 0
+            last: np.ndarray | None = None
             source_exhausted = False
-            prev_present: bool | None = None
 
             for i in range(num_output_frames):
                 _budget_check(start_time)
@@ -324,36 +374,86 @@ def _compute_subject_matte_inner(
                     frames_read += 1
 
                 if frame is not None:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    if roi_frac is None:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    else:
+                        fx0, fx1, fy0, fy1 = roi_frac
+                        fh, fw = frame.shape[:2]
+                        x0, x1 = int(fx0 * fw), max(int(fx0 * fw) + 1, int(fx1 * fw))
+                        y0, y1 = int(fy0 * fh), max(int(fy0 * fh) + 1, int(fy1 * fh))
+                        rgb = cv2.cvtColor(
+                            np.ascontiguousarray(frame[y0:y1, x0:x1]), cv2.COLOR_BGR2RGB
+                        )
                     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                    result = segmenter.segment(mp_image)
-                    mask = result.confidence_masks[0].numpy_view().copy()
-                    frame_count += 1
-                    recent_soft.append(
-                        cv2.resize(
+                    mask = segmenter.segment(mp_image).confidence_masks[0].numpy_view().copy()
+                    inferences += 1
+                    if roi_frac is None:
+                        soft = cv2.resize(
                             mask,
                             (_MATTE_WIDTH, _MATTE_HEIGHT),
                             interpolation=cv2.INTER_LINEAR,
                         )
-                    )
-                    last_mask_small = _postprocess_mask(recent_soft)
-                    coverages.append(float(np.mean(last_mask_small)))
-                elif last_mask_small is None:
+                    else:
+                        fx0, fx1, fy0, fy1 = roi_frac
+                        mx0 = int(fx0 * _MATTE_WIDTH)
+                        mx1 = max(mx0 + 1, int(fx1 * _MATTE_WIDTH))
+                        my0 = int(fy0 * _MATTE_HEIGHT)
+                        my1 = max(my0 + 1, int(fy1 * _MATTE_HEIGHT))
+                        soft = np.zeros((_MATTE_HEIGHT, _MATTE_WIDTH), dtype=np.float32)
+                        soft[my0:my1, mx0:mx1] = cv2.resize(
+                            mask, (mx1 - mx0, my1 - my0), interpolation=cv2.INTER_LINEAR
+                        )
+                    recent_soft.append(soft)
+                    last = np.clip(_postprocess_mask(recent_soft) * 255.0, 0, 255).astype(np.uint8)
+                elif last is None:
                     # Video shorter than the window — nothing usable yet.
                     break
                 # else: video exhausted mid-window (or a sub-src_fps tick);
-                # hold the last processed mask.
+                # hold the last treated mask.
 
-                if last_mask_small is None:
+                if last is None:
                     break
+                masks.append(last)
+            return masks, inferences
 
-                present = float(np.mean(last_mask_small)) >= _PRESENCE_COVERAGE_FLOOR
+        for window in windows:
+            _budget_check(start_time)
+            if window.end_s <= window.start_s:
+                log.warning(
+                    "subject_matte_skipping_empty_window",
+                    start_s=window.start_s,
+                    end_s=window.end_s,
+                )
+                continue
+
+            treated, inferences = collect_window_masks(window, None)
+            if not treated:
+                continue
+
+            roi = _small_subject_roi(treated)
+            if roi is not None:
+                roi_treated, roi_inferences = collect_window_masks(window, roi)
+                if roi_treated:
+                    treated = roi_treated
+                    inferences += roi_inferences
+                    log.info(
+                        "subject_matte_roi_refined",
+                        start_s=window.start_s,
+                        end_s=window.end_s,
+                        roi=[round(v, 3) for v in roi],
+                    )
+
+            frame_count += inferences
+            prev_present: bool | None = None
+            produced = 0
+            for treated_mask in treated:
+                mean_frac = float(np.mean(treated_mask)) / 255.0
+                coverages.append(mean_frac)
+                present = mean_frac >= _PRESENCE_COVERAGE_FLOOR
                 if prev_present is not None and present != prev_present:
                     presence_flips += 1
                 prev_present = present
-
-                frame_u8 = np.clip(last_mask_small * 255.0, 0, 255).astype(np.uint8)
-                proc.stdin.write(frame_u8.tobytes())
+                proc.stdin.write(treated_mask.tobytes())
                 produced += 1
 
             if produced == 0:

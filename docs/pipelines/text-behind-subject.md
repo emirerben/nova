@@ -60,7 +60,13 @@ Public surface of `subject_matte.py`:
   time-aligned to the source fps (`CAP_PROP_FPS`; a tick only advances the
   capture as far as real time has advanced — never sequential half-rate
   reads), applies the v3 mask treatment, and writes a grayscale H.264 mp4 +
-  sidecar JSON. Best-effort:
+  sidecar JSON. When the full-frame pass detects only a
+  small subject region (union bbox < 25% of frame), a second pass re-segments
+  a zoomed crop around it (2x-padded, min 20% side) — a distant person is a
+  handful of pixels in the model's ~256px input and confidence flaps
+  0.0→1.0→0.0 full-frame, but fills the input and holds 1.00 when zoomed
+  (`_small_subject_roi` + the `roi_frac` path; log event
+  `subject_matte_roi_refined`). Best-effort:
   every failure mode (missing model, unreadable video, mediapipe not
   installed, wall-clock budget blown) returns `None` and never raises.
 - `matte_is_sane(stats) -> bool` — the sanity gate (see below).
