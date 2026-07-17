@@ -87,8 +87,10 @@ import {
   textElementsLockedCopy,
 } from "./editor-capabilities";
 import {
+  allocateSmartPlacementCandidates,
   isMasonryVariant,
   resolveSmartPlacementCandidates,
+  smartPlacementCandidateFitsBar,
   splitTextForSmartPlacement,
   smartPlacementPatchForBar,
 } from "./editor-smart-placement";
@@ -748,10 +750,10 @@ export default function EditorShell({
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
 
-  // Every mutation (text, slots, mutes, title) records into the stack, so the
-  // stack IS the dirty signal — and Save's history.clear() makes it read clean
-  // (so the draft mirror doesn't immediately re-write the just-saved state).
-  const dirty = history.canUndo || history.canRedo || musicDirty || captionMetaDirty;
+  // Every mutation (text, slots, mutes, title) records into the undo stack.
+  // A redo-only stack is clean only when the original baseline is still
+  // reachable; after the bounded stack evicts it, empty `past` remains dirty.
+  const dirty = !history.isAtBaseline || musicDirty || captionMetaDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -778,21 +780,6 @@ export default function EditorShell({
         : null,
     [selection, state.bars],
   );
-  const smartPlacementCandidates = useMemo(() => {
-    const targetBars = isMasonryVariant(variant)
-      ? state.bars.filter((bar) => bar.role !== "narrated_caption")
-      : selectedBar
-        ? [selectedBar]
-        : [];
-    return resolveSmartPlacementCandidates(variant, targetBars);
-  }, [selectedBar, state.bars, variant]);
-  const smartPlacementCandidate = selectedBar ? (smartPlacementCandidates[0] ?? null) : null;
-  const smartPlaceAllAvailable =
-    !readOnly &&
-    isMasonryVariant(variant) &&
-    state.bars.some((bar) => bar.role !== "narrated_caption") &&
-    smartPlacementCandidates.length > 0;
-
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
     for (const slot of slots) {
@@ -992,6 +979,20 @@ export default function EditorShell({
   const previewDuration = virtualPreviewActive
     ? virtualPreview.timeline.totalDurationS
     : duration;
+  const smartPlacementCandidates = useMemo(() => {
+    const targetBars = isMasonryVariant(variant)
+      ? state.bars.filter((bar) => bar.role !== "narrated_caption")
+      : selectedBar
+        ? [selectedBar]
+        : [];
+    return resolveSmartPlacementCandidates(variant, targetBars, previewDuration);
+  }, [previewDuration, selectedBar, state.bars, variant]);
+  const smartPlacementCandidate = selectedBar ? (smartPlacementCandidates[0] ?? null) : null;
+  const smartPlaceAllAvailable =
+    !readOnly &&
+    isMasonryVariant(variant) &&
+    state.bars.some((bar) => bar.role !== "narrated_caption") &&
+    smartPlacementCandidates.length > 0;
 
   useEffect(() => {
     if (!virtualPreviewRequested) return;
@@ -1336,10 +1337,18 @@ export default function EditorShell({
     if (isMasonryVariant(variant)) {
       const targetBars = state.bars.filter((bar) => bar.role !== "narrated_caption");
       if (targetBars.length === 0 || smartPlacementCandidates.length === 0) return;
+      const assignments = allocateSmartPlacementCandidates(
+        targetBars,
+        smartPlacementCandidates,
+      );
+      if (!assignments) {
+        setToast("Not enough empty masonry pockets for all overlapping text blocks.");
+        return;
+      }
       history.record();
       setTextDirty(true);
       targetBars.forEach((bar, index) => {
-        const candidate = smartPlacementCandidates[index % smartPlacementCandidates.length];
+        const candidate = assignments[index];
         dispatch({
           type: "PATCH_BAR",
           id: bar.id,
@@ -1756,18 +1765,37 @@ export default function EditorShell({
           preset: DEFAULT_TEXT_PRESET,
         }),
       );
-      const candidates = resolveSmartPlacementCandidates(variant, candidateSeedBars);
+      const candidates = resolveSmartPlacementCandidates(
+        variant,
+        candidateSeedBars,
+        previewDuration,
+      );
+      if (candidates.length === 0) {
+        setToast("No empty masonry pocket is available for this text.");
+        return false;
+      }
       const chunks = splitTextForSmartPlacement(draft, candidates);
       if (chunks.length === 0) return false;
       const timing = textTimingAtPlayhead({ currentTime, previewDuration });
-      const bars = chunks.map((chunk, index) => {
-        const bar = newTextBar({
+      const baseBars = chunks.map((chunk) =>
+        newTextBar({
           id: crypto.randomUUID(),
           text: chunk,
           timing,
           preset: DEFAULT_TEXT_PRESET,
-        });
-        const candidate = candidates[index % Math.max(1, candidates.length)];
+        }),
+      );
+      if (
+        baseBars.some(
+          (bar, index) =>
+            !candidates[index] || !smartPlacementCandidateFitsBar(bar, candidates[index]),
+        )
+      ) {
+        setToast("The available masonry pockets are too small for readable text.");
+        return false;
+      }
+      const bars = baseBars.map((bar, index) => {
+        const candidate = candidates[index];
         return candidate ? { ...bar, ...smartPlacementPatchForBar(bar, candidate) } : bar;
       });
       history.record();
@@ -2507,13 +2535,22 @@ export default function EditorShell({
   // ── Draft recovery (plan §9) ────────────────────────────────────────────────
   // Mirror the working document to sessionStorage on every command push (any
   // document change while dirty). Failures degrade draft safety silently.
+  const dirtyDraftVariantRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!variant || !dirty) return;
+    if (!variant) return;
+    if (!dirty) {
+      if (dirtyDraftVariantRef.current === variant.variant_id) {
+        clearDraft();
+        dirtyDraftVariantRef.current = null;
+      }
+      return;
+    }
     try {
       window.sessionStorage.setItem(
         draftKey(variant.variant_id),
         serializeDraft(variant.variant_id, getCurrent()),
       );
+      dirtyDraftVariantRef.current = variant.variant_id;
     } catch {
       /* quota full / privacy mode — editing continues, draft safety only */
     }
@@ -2535,6 +2572,7 @@ export default function EditorShell({
     musicDirty,
     title,
     getCurrent,
+    clearDraft,
   ]);
 
   // On open, surface a matching unsaved draft as a quiet Resume/Discard notice
@@ -2952,6 +2990,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            masonryDurationS={previewDuration}
             zoomPct={100}
             tool="select"
             videoRef={videoRef}
@@ -3119,6 +3158,7 @@ export default function EditorShell({
             flashTextIds={flashTextIds}
             flashOverlayIds={flashOverlayIds}
             currentTime={currentTime}
+            masonryDurationS={previewDuration}
             zoomPct={zoomPct}
             tool={canvasTool}
             videoRef={videoRef}

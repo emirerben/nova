@@ -17,6 +17,7 @@ const MASONRY_PLACEMENT_MARGIN_PX = 42;
 const MASONRY_PLACEMENT_FRAME_MARGIN_PX = 36;
 const MASONRY_PLACEMENT_MIN_WIDTH_FRAC = 0.2;
 const MASONRY_PLACEMENT_MIN_HEIGHT_FRAC = 0.055;
+const SMART_PLACEMENT_MIN_SIZE_PX = 40;
 
 const MASONRY_LAYOUT: Array<[number, number, number, number]> = [
   [34, 46, 270, 480],
@@ -48,20 +49,45 @@ export function isMasonryVariant(variant: PlanItemVariant | null | undefined): b
   );
 }
 
+export function isCollageVariant(variant: PlanItemVariant | null | undefined): boolean {
+  const preset = variant?.montage_preset_rendered ?? variant?.montage_preset;
+  return preset === "masonry" || preset === "polaroid_wall";
+}
+
 function clampDuration(durationS: number): number {
   if (!Number.isFinite(durationS) || durationS <= 0) return MASONRY_MAX_DURATION_S;
   return Math.max(0.1, Math.min(MASONRY_MAX_DURATION_S, durationS));
 }
 
-function masonryMotion(durationS: number): Record<string, unknown> {
-  const boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34;
+export function masonryMotionForDuration(
+  durationS: number,
+  boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34,
+): Record<string, unknown> {
+  const resolvedBoardWidth =
+    Number.isFinite(boardWidth) && boardWidth >= CANVAS_W ? boardWidth : CANVAS_W;
   return {
     mode: "masonry_pan_x",
     duration_s: clampDuration(durationS),
-    pan_px: Math.max(0, boardWidth - CANVAS_W),
-    board_width_px: boardWidth,
+    pan_px: Math.max(0, resolvedBoardWidth - CANVAS_W),
+    board_width_px: resolvedBoardWidth,
     frame_width_px: CANVAS_W,
   };
+}
+
+export function collageMotionForVariant(
+  variant: PlanItemVariant | null | undefined,
+  durationS: number,
+): Record<string, unknown> | null {
+  if (isMasonryVariant(variant)) return masonryMotionForDuration(durationS);
+  const preset = variant?.montage_preset_rendered ?? variant?.montage_preset;
+  if (preset !== "polaroid_wall") return null;
+  for (const candidate of variant?.text_placement_candidates ?? []) {
+    const boardWidth = candidate?.masonry_motion?.board_width_px;
+    if (typeof boardWidth === "number" && Number.isFinite(boardWidth) && boardWidth >= CANVAS_W) {
+      return masonryMotionForDuration(durationS, boardWidth);
+    }
+  }
+  return null;
 }
 
 function candidateFromRect({
@@ -73,7 +99,7 @@ function candidateFromRect({
   rotationDeg = 0,
   maxWidthFrac,
   confidence,
-  source = "editor_fallback_masonry",
+  source = "masonry_whitespace",
 }: {
   left: number;
   top: number;
@@ -97,42 +123,17 @@ function candidateFromRect({
     max_width_frac: round4(Math.max(0.2, Math.min(0.9, resolvedMaxWidth))),
     rotation_deg: rotationDeg,
     confidence: round3(Math.max(0, Math.min(0.98, confidence))),
-    masonry_motion: masonryMotion(durationS),
+    masonry_motion: {
+      ...masonryMotionForDuration(durationS),
+      pocket_left_px: round3(left),
+      pocket_top_px: round3(top),
+      pocket_right_px: round3(left + width),
+      pocket_bottom_px: round3(top + height),
+    },
   };
 }
 
-function curatedMasonryCandidates(durationS: number, maxCandidates: number): TextPlacementCandidate[] {
-  return [
-    candidateFromRect({
-      left: 54,
-      top: 552,
-      width: 209,
-      height: 808,
-      durationS,
-      rotationDeg: 90,
-      confidence: 0.9,
-    }),
-    candidateFromRect({
-      left: 401,
-      top: 39,
-      width: 572,
-      height: 125,
-      durationS,
-      confidence: 0.86,
-    }),
-    candidateFromRect({
-      left: 802,
-      top: 1510,
-      width: 242,
-      height: 250,
-      durationS,
-      maxWidthFrac: 0.26,
-      confidence: 0.68,
-    }),
-  ].slice(0, Math.max(1, maxCandidates));
-}
-
-function masonryWhitespaceCandidates({
+export function masonryWhitespaceCandidates({
   durationS = MASONRY_MAX_DURATION_S,
   revealWindowS = 4,
   maxCandidates = 3,
@@ -142,9 +143,7 @@ function masonryWhitespaceCandidates({
   maxCandidates?: number;
 } = {}): TextPlacementCandidate[] {
   const duration = clampDuration(durationS);
-  const curated = curatedMasonryCandidates(duration, maxCandidates);
-  if (curated.length >= maxCandidates) return curated.slice(0, Math.max(1, maxCandidates));
-
+  const wanted = Math.max(1, Math.floor(maxCandidates));
   const boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34;
   const panPx = Math.max(0, boardWidth - CANVAS_W);
   const windowS = Math.max(0.1, Math.min(revealWindowS, duration));
@@ -152,70 +151,86 @@ function masonryWhitespaceCandidates({
     (windowS * idx) / (MASONRY_PLACEMENT_SAMPLE_COUNT - 1),
   );
 
-  const obstacles: Rect[] = [];
-  for (const t of samples) {
-    const progress = Math.max(0, Math.min(1, t / duration));
-    const scroll = panPx * progress;
-    for (const [x, y, w, h] of MASONRY_LAYOUT) {
-      const left = x - scroll - MASONRY_PLACEMENT_MARGIN_PX;
-      const top = y - MASONRY_PLACEMENT_MARGIN_PX;
-      const right = x - scroll + w + MASONRY_PLACEMENT_MARGIN_PX;
-      const bottom = y + h + MASONRY_PLACEMENT_MARGIN_PX;
-      if (right <= 0 || left >= CANVAS_W || bottom <= 0 || top >= CANVAS_H) continue;
-      obstacles.push([
-        Math.max(0, left),
-        Math.max(0, top),
-        Math.min(CANVAS_W, right),
-        Math.min(CANVAS_H, bottom),
-      ]);
-    }
-  }
+  const obstacles: Rect[] = MASONRY_LAYOUT.map(([x, y, w, h]) => [
+    x - MASONRY_PLACEMENT_MARGIN_PX,
+    y - MASONRY_PLACEMENT_MARGIN_PX,
+    x + w + MASONRY_PLACEMENT_MARGIN_PX,
+    y + h + MASONRY_PLACEMENT_MARGIN_PX,
+  ]);
 
-  const scanned = largestEmptyRects(obstacles, maxCandidates).map(([score, rect]) => {
+  const ranked = largestEmptyRects(obstacles).flatMap(
+    ([areaScore, rect]) => {
+      const [left, _top, right] = rect;
+      const width = Math.max(1, right - left);
+      const revealVisibility =
+        samples.reduce((total, t) => {
+          const progress = Math.max(0, Math.min(1, t / duration));
+          const scroll = panPx * progress;
+          const visibleWidth = Math.max(
+            0,
+            Math.min(right - scroll, CANVAS_W) - Math.max(left - scroll, 0),
+          );
+          return total + visibleWidth / width;
+        }, 0) / samples.length;
+      const anchorScroll = (panPx * (windowS / 2)) / duration;
+      const anchorVisibleWidth = Math.max(
+        0,
+        Math.min(right - anchorScroll, CANVAS_W - MASONRY_PLACEMENT_FRAME_MARGIN_PX) -
+          Math.max(left - anchorScroll, MASONRY_PLACEMENT_FRAME_MARGIN_PX),
+      );
+      if (anchorVisibleWidth / width < 0.98) return [];
+      const centerX = (left + right) / 2 / CANVAS_W;
+      return [{ revealVisibility, areaScore, spatialScore: Math.abs(centerX - 0.5), rect }];
+    },
+  );
+  ranked.sort(
+    (a, b) =>
+      b.revealVisibility - a.revealVisibility ||
+      b.areaScore - a.areaScore ||
+      b.spatialScore - a.spatialScore ||
+      a.rect[1] - b.rect[1] ||
+      a.rect[0] - b.rect[0],
+  );
+
+  const candidates: TextPlacementCandidate[] = [];
+  const selectedRects: Rect[] = [];
+  for (const { revealVisibility, rect } of ranked) {
+    if (selectedRects.some((selected) => rectsOverlap(rect, selected))) continue;
     const [left, top, right, bottom] = rect;
     const width = right - left;
     const height = bottom - top;
-    const yCenter = Math.min(
-      bottom - Math.min(height * 0.28, CANVAS_H * 0.035),
-      (top + bottom) / 2,
-    );
     const areaRatio = (width * height) / Math.max(1, CANVAS_W * CANVAS_H);
-    return candidateFromRect({
+    candidates.push(candidateFromRect({
       left,
-      top: Math.max(0, yCenter - height / 2),
+      top,
       width,
       height,
       durationS: duration,
-      maxWidthFrac: Math.max(
-        MASONRY_PLACEMENT_MIN_WIDTH_FRAC,
-        Math.min(0.9, (width / CANVAS_W) * 0.92),
+      rotationDeg: rotationForEmptyPocket(width, height),
+      confidence: Math.max(
+        0.35,
+        Math.min(0.98, 0.42 + revealVisibility * 0.38 + areaRatio * 2.2),
       ),
-      confidence:
-        Math.max(0.35, Math.min(0.98, 0.55 + areaRatio * 8 + score * 0.08)),
-    });
-  });
-  const merged = [...curated];
-  for (const candidate of scanned) {
-    if (
-      merged.some(
-        (existing) =>
-          Math.abs(existing.x_frac - candidate.x_frac) < 0.06 &&
-          Math.abs(existing.y_frac - candidate.y_frac) < 0.06,
-      )
-    ) {
-      continue;
-    }
-    merged.push(candidate);
-    if (merged.length >= maxCandidates) break;
+    }));
+    selectedRects.push(rect);
+    if (candidates.length >= wanted) break;
   }
-  return merged.slice(0, Math.max(1, maxCandidates));
+  return candidates;
 }
 
-function largestEmptyRects(obstacles: Rect[], maxRects: number): Array<[number, Rect]> {
-  const safeLeft = MASONRY_PLACEMENT_FRAME_MARGIN_PX;
+function rotationForEmptyPocket(width: number, height: number): number {
+  if (width <= 0 || height <= 0) return 0;
+  return height >= width * 1.75 && height >= CANVAS_H * 0.18 ? 90 : 0;
+}
+
+function largestEmptyRects(
+  obstacles: Rect[],
+  safeLeft = MASONRY_PLACEMENT_FRAME_MARGIN_PX,
+  safeRight = CANVAS_W - MASONRY_PLACEMENT_FRAME_MARGIN_PX,
+): Array<[number, Rect]> {
   const safeTop = MASONRY_PLACEMENT_FRAME_MARGIN_PX;
-  const safeRight = CANVAS_W - MASONRY_PLACEMENT_FRAME_MARGIN_PX;
   const safeBottom = CANVAS_H - MASONRY_PLACEMENT_FRAME_MARGIN_PX;
+  if (safeRight <= safeLeft || safeBottom <= safeTop) return [];
   const clipped = obstacles
     .map(([left, top, right, bottom]): Rect => [
       Math.max(safeLeft, Math.min(safeRight, left)),
@@ -284,33 +299,25 @@ function largestEmptyRects(obstacles: Rect[], maxRects: number): Array<[number, 
           const bottom = yEdges[yIdx + 1];
           const top = bottom - height;
           const rect: Rect = [xEdges[leftIdx], top, xEdges[rightIdx], bottom];
-          const centerX = (rect[0] + rect[2]) / 2 / CANVAS_W;
-          const sideBias = Math.abs(centerX - 0.5) * 0.18;
-          scored.push([(width * height) / (CANVAS_W * CANVAS_H) + sideBias, rect]);
+          scored.push([(width * height) / (CANVAS_W * CANVAS_H), rect]);
         }
       }
       stack.push(scanIdx);
     }
   }
 
-  scored.sort((a, b) => b[0] - a[0]);
-  const selected: Array<[number, Rect]> = [];
-  for (const candidate of scored) {
-    if (selected.some(([_score, rect]) => rectIou(candidate[1], rect) > 0.72)) continue;
-    selected.push(candidate);
-    if (selected.length >= maxRects) break;
-  }
-  return selected;
+  scored.sort((a, b) => b[0] - a[0] || a[1][1] - b[1][1] || a[1][0] - b[1][0]);
+  const unique = new Map<string, [number, Rect]>();
+  for (const candidate of scored) unique.set(candidate[1].join(":"), candidate);
+  return Array.from(unique.values()).sort(
+    (a, b) => b[0] - a[0] || a[1][1] - b[1][1] || a[1][0] - b[1][0],
+  );
 }
 
-function rectIou(a: Rect, b: Rect): number {
+function rectsOverlap(a: Rect, b: Rect): boolean {
   const interW = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
   const interH = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
-  const inter = interW * interH;
-  if (inter <= 0) return 0;
-  const areaA = Math.max(0, a[2] - a[0]) * Math.max(0, a[3] - a[1]);
-  const areaB = Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
-  return inter / Math.max(1, areaA + areaB - inter);
+  return interW > 0 && interH > 0;
 }
 
 function round4(value: number): number {
@@ -324,38 +331,98 @@ function round3(value: number): number {
 export function resolveSmartPlacementCandidate(
   variant: PlanItemVariant | null | undefined,
   selectedBar: TextElementBar | null | undefined,
+  durationS = MASONRY_MAX_DURATION_S,
 ): TextPlacementCandidate | null {
   if (!selectedBar) return null;
-  return resolveSmartPlacementCandidates(variant, [selectedBar])[0] ?? null;
+  return resolveSmartPlacementCandidates(variant, [selectedBar], durationS)[0] ?? null;
 }
 
 export function resolveSmartPlacementCandidates(
   variant: PlanItemVariant | null | undefined,
   bars: TextElementBar[],
+  durationS = MASONRY_MAX_DURATION_S,
 ): TextPlacementCandidate[] {
   if (bars.length === 0) return [];
   const serverCandidates = variant?.text_placement_candidates?.filter(Boolean) ?? [];
   const wanted = Math.max(3, bars.length);
-  if (serverCandidates.length > 0) {
-    if (!isMasonryVariant(variant) || serverCandidates.length >= wanted) return serverCandidates;
-    const merged = [...serverCandidates];
-    for (const candidate of masonryWhitespaceCandidates({ maxCandidates: wanted })) {
-      if (
-        merged.some(
-          (existing) =>
-            Math.abs(existing.x_frac - candidate.x_frac) < 0.06 &&
-            Math.abs(existing.y_frac - candidate.y_frac) < 0.06,
-        )
-      ) {
-        continue;
-      }
-      merged.push(candidate);
-      if (merged.length >= wanted) break;
-    }
-    return merged;
+  if (isMasonryVariant(variant)) {
+    // Locally discovered board pockets are authoritative. This deliberately
+    // replaces persisted candidates from variants created before geometry-driven
+    // placement, whose curated coordinates overlap the actual masonry tiles.
+    return masonryWhitespaceCandidates({ durationS, maxCandidates: wanted });
   }
-  if (isMasonryVariant(variant)) return masonryWhitespaceCandidates({ maxCandidates: wanted });
+  if (serverCandidates.length > 0) return serverCandidates;
   return [DEFAULT_SMART_PLACE];
+}
+
+export function allocateSmartPlacementCandidates(
+  bars: TextElementBar[],
+  candidates: TextPlacementCandidate[],
+): TextPlacementCandidate[] | null {
+  if (bars.length === 0) return [];
+  if (candidates.length === 0) return null;
+  const assignments = Array<TextPlacementCandidate | null>(bars.length).fill(null);
+  const assignedCandidateIndexes = Array<number | null>(bars.length).fill(null);
+  const order = bars
+    .map((bar, index) => ({ bar, index }))
+    .sort(
+      (a, b) =>
+        a.bar.start_s - b.bar.start_s ||
+        a.bar.end_s - b.bar.end_s ||
+        a.index - b.index,
+    );
+
+  for (const { bar, index } of order) {
+    const blocked = new Set<number>();
+    for (let previousIndex = 0; previousIndex < bars.length; previousIndex += 1) {
+      const candidateIndex = assignedCandidateIndexes[previousIndex];
+      if (candidateIndex == null) continue;
+      const previous = bars[previousIndex];
+      if (bar.start_s < previous.end_s && previous.start_s < bar.end_s) {
+        blocked.add(candidateIndex);
+      }
+    }
+    const candidateIndex = candidates.findIndex(
+      (candidate, idx) =>
+        !blocked.has(idx) && smartPlacementCandidateFitsBar(bar, candidate),
+    );
+    if (candidateIndex < 0) return null;
+    assignments[index] = candidates[candidateIndex];
+    assignedCandidateIndexes[index] = candidateIndex;
+  }
+
+  return assignments as TextPlacementCandidate[];
+}
+
+export function masonryMotionOffsetFrac(
+  motion: Record<string, unknown> | null | undefined,
+  currentTimeS: number,
+): number {
+  if (motion?.mode !== "masonry_pan_x") return 0;
+  const durationS = motion.duration_s;
+  const panPx = motion.pan_px;
+  const boardWidthPx = motion.board_width_px;
+  const frameWidthPx = motion.frame_width_px;
+  if (
+    typeof durationS !== "number" ||
+    !Number.isFinite(durationS) ||
+    durationS <= 0 ||
+    typeof panPx !== "number" ||
+    !Number.isFinite(panPx) ||
+    panPx < 0 ||
+    typeof boardWidthPx !== "number" ||
+    !Number.isFinite(boardWidthPx) ||
+    typeof frameWidthPx !== "number" ||
+    !Number.isFinite(frameWidthPx) ||
+    frameWidthPx <= 0 ||
+    boardWidthPx < frameWidthPx ||
+    panPx > boardWidthPx - frameWidthPx
+  ) {
+    return 0;
+  }
+  const timeS = Number.isFinite(currentTimeS) ? Math.max(0, currentTimeS) : 0;
+  const offset = (panPx * Math.min(timeS, durationS)) / durationS / frameWidthPx;
+  return Number.isFinite(offset) ? offset : 0;
 }
 
 export function smartPlacementPatchForBar(
@@ -365,8 +432,10 @@ export function smartPlacementPatchForBar(
   const smartText = reflowTextForSmartPlacement(bar.text, candidate);
   const sourceParams = { ...(bar.source_params ?? {}) };
   if (candidate.masonry_motion) sourceParams.masonry_motion = candidate.masonry_motion;
+  const fittedSizePx = fittedSmartPlacementSizePx(bar, smartText, candidate);
   return {
     ...(smartText !== bar.text ? { text: smartText } : {}),
+    ...(fittedSizePx !== bar.size_px ? { size_px: fittedSizePx } : {}),
     x_frac: candidate.x_frac,
     y_frac: candidate.y_frac,
     max_width_frac: candidate.max_width_frac,
@@ -374,6 +443,67 @@ export function smartPlacementPatchForBar(
     position: "custom",
     source_params: Object.keys(sourceParams).length > 0 ? sourceParams : undefined,
   };
+}
+
+export function smartPlacementCandidateFitsBar(
+  bar: TextElementBar,
+  candidate: TextPlacementCandidate,
+): boolean {
+  const smartText = reflowTextForSmartPlacement(bar.text, candidate);
+  const fit = smartPlacementFit(bar, smartText, candidate);
+  return fit === null || fit.maxSizePx >= SMART_PLACEMENT_MIN_SIZE_PX;
+}
+
+function fittedSmartPlacementSizePx(
+  bar: TextElementBar,
+  text: string,
+  candidate: TextPlacementCandidate,
+): number | undefined {
+  const currentSize = typeof bar.size_px === "number" && Number.isFinite(bar.size_px)
+    ? bar.size_px
+    : undefined;
+  const fit = smartPlacementFit(bar, text, candidate);
+  if (fit === null) return currentSize;
+  const safeSize = Math.max(SMART_PLACEMENT_MIN_SIZE_PX, fit.maxSizePx);
+  return currentSize === undefined ? Math.min(96, safeSize) : Math.min(currentSize, safeSize);
+}
+
+function smartPlacementFit(
+  bar: TextElementBar,
+  text: string,
+  candidate: TextPlacementCandidate,
+): { maxSizePx: number } | null {
+  const motion = candidate.masonry_motion;
+  if (!motion) return null;
+  const top = motion.pocket_top_px;
+  const bottom = motion.pocket_bottom_px;
+  const left = motion.pocket_left_px;
+  const right = motion.pocket_right_px;
+  if (
+    typeof top !== "number" || !Number.isFinite(top) ||
+    typeof bottom !== "number" || !Number.isFinite(bottom) || bottom <= top ||
+    typeof left !== "number" || !Number.isFinite(left) ||
+    typeof right !== "number" || !Number.isFinite(right) || right <= left
+  ) return null;
+
+  const lineSpacing =
+    typeof bar.line_spacing === "number" && Number.isFinite(bar.line_spacing)
+      ? Math.max(0.8, Math.min(2, bar.line_spacing))
+      : 1.15;
+  const lines = text.split("\n");
+  const lineCount = Math.max(1, lines.length);
+  const longestLine = Math.max(...lines.map((line) => line.length), 1);
+  const pocketWidth = right - left;
+  const pocketHeight = bottom - top;
+  const horizontalHeightLimit = (pocketHeight * 0.82) / (lineCount * lineSpacing);
+  const horizontalWidthLimit = (pocketWidth * 0.84) / (longestLine * 0.55);
+  const maxSizePx = candidate.rotation_deg
+    ? Math.min(
+        (pocketWidth * 0.82) / lineSpacing,
+        (pocketHeight * 0.84) / (longestLine * 0.55),
+      )
+    : Math.min(horizontalHeightLimit, horizontalWidthLimit);
+  return { maxSizePx: Math.max(0, Math.floor(maxSizePx)) };
 }
 
 export function splitTextForSmartPlacement(

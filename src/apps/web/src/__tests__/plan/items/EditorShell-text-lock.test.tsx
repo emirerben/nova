@@ -122,6 +122,24 @@ function makeVariant(capabilities: EditorCapabilities): PlanItemVariant {
   } as unknown as PlanItemVariant;
 }
 
+function makeMasonryVariant(textCount = 2): PlanItemVariant {
+  return {
+    ...makeVariant(EDITABLE_CAPABILITIES),
+    resolved_archetype: "montage",
+    montage_preset_rendered: "masonry",
+    text_mode: "agent_text",
+    text_elements: Array.from({ length: textCount }, (_unused, index) => ({
+      id: `title-${index + 1}`,
+      role: "generative_intro",
+      text: `Title ${index + 1}`,
+      start_s: 0,
+      end_s: 4,
+      x_frac: 0.5,
+      y_frac: 0.5 + index * 0.05,
+    })),
+  } as unknown as PlanItemVariant;
+}
+
 const EDITABLE_CAPABILITIES: EditorCapabilities = {
   text_elements: true,
   timeline: true,
@@ -251,6 +269,38 @@ describe("EditorShell — light-layout empty-state Add-text CTA", () => {
     wideViewport = false;
     await renderShell(makeVariant(EDITABLE_CAPABILITIES));
     expect(screen.getByRole("button", { name: "Add text" })).toBeInTheDocument();
+  });
+});
+
+describe("EditorShell — masonry smart placement history", () => {
+  it("Smart place all becomes clean after Cmd+Z while Redo remains available", async () => {
+    await renderShell(makeMasonryVariant());
+
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    fireEvent.click(screen.getByRole("button", { name: "Smart place all" }));
+    expect(save).toBeEnabled();
+    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).not.toBeNull();
+
+    fireEvent.keyDown(document, { key: "z", metaKey: true });
+    expect(save).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Redo" })).toBeEnabled();
+    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).toBeNull();
+  });
+
+  it("leaves the document unchanged when overlapping bars exceed pocket capacity", async () => {
+    await renderShell(makeMasonryVariant(4));
+
+    const save = screen.getByRole("button", { name: "Save" });
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    fireEvent.click(screen.getByRole("button", { name: "Smart place all" }));
+
+    expect(save).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Not enough empty masonry pockets for all overlapping text blocks.",
+    );
   });
 });
 
