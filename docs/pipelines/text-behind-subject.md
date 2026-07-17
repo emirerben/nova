@@ -120,9 +120,16 @@ and `.github/workflows/docker-build.yml` creates a real IMAGE-mode segmenter
 stats.max_coverage >= 0.01 and stats.mean_coverage <= 0.85
 ```
 
-Rejects only degenerate mattes: the segmenter never found anyone at all
-(`max_coverage < 1%`) or the mask swallowed essentially the whole frame
-(`mean_coverage > 85%` — the text would end up almost entirely hidden).
+Rejects degenerate and unstable mattes: the segmenter never found anyone at
+all (`max_coverage < 1%`), the mask swallowed essentially the whole frame
+(`mean_coverage > 85%` — the text would end up almost entirely hidden), or
+detection is unstable — the treated mask flips between present and absent
+more than 2 times AND faster than 0.75 flips/s (`presence_flips` /
+`presence_flips_per_s` on `MatteStats`, counted within windows). Instability
+means the segmenter can't reliably see the subject (small/distant people,
+low light); occlusion that blinks on/off is worse than plain text, so the
+effect falls back. Anchors: Argentina montage scene cut = 1 flip @ 0.29/s
+(kept); beach wide shot with dropouts = 5 flips @ 1.56/s (rejected).
 There is deliberately **no lower bound on mean coverage**: a small/distant
 subject (~0.8% of frame on a beach wide shot) is a legitimate occluder and
 must keep the effect. Coverage stats are computed on the post-treatment

@@ -62,6 +62,36 @@ class TestMatteIsSane:
     def test_mean_at_ceiling(self) -> None:
         assert matte_is_sane(_stats(0.85, max_=1.0)) is True
 
+    def test_unstable_presence_is_rejected(self) -> None:
+        # Beach-wide-shot anchor: segmenter dropouts flap the mask on/off
+        # (5 flips at 1.56/s measured) — occlusion would blink, reject.
+        stats = _stats(0.007, max_=0.3)
+        stats.presence_flips = 5
+        stats.presence_flips_per_s = 1.56
+        assert matte_is_sane(stats) is False
+
+    def test_legit_scene_cut_is_not_rejected(self) -> None:
+        # Argentina-montage anchor: one flip at a scene cut (0.29/s) is fine.
+        stats = _stats(0.14, max_=0.4)
+        stats.presence_flips = 1
+        stats.presence_flips_per_s = 0.29
+        assert matte_is_sane(stats) is True
+
+    def test_few_flips_at_high_rate_is_not_rejected(self) -> None:
+        # A very short window can have a high flip RATE with only 1-2 flips
+        # (e.g. subject steps out once) — both conditions must trip.
+        stats = _stats(0.05, max_=0.3)
+        stats.presence_flips = 2
+        stats.presence_flips_per_s = 2.0
+        assert matte_is_sane(stats) is True
+
+    def test_many_slow_flips_is_not_rejected(self) -> None:
+        # Long window, occasional legitimate exits/entries — rate stays low.
+        stats = _stats(0.05, max_=0.3)
+        stats.presence_flips = 5
+        stats.presence_flips_per_s = 0.2
+        assert matte_is_sane(stats) is True
+
 
 # ---------------------------------------------------------------------------
 # _postprocess_mask — pure numpy/cv2, no fixtures, no mediapipe.

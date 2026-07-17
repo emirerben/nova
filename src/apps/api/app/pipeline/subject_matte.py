@@ -95,21 +95,51 @@ class MatteStats:
     max_coverage: float
     frame_count: int
     windows: list[tuple[float, float]]
+    # Detection-stability signal: how many times the treated mask flipped
+    # between "something present" and "essentially nothing" across output
+    # frames (counted within windows, never across window boundaries), and
+    # that count normalized per second of matte. A real subject doesn't blink
+    # out of existence — flapping presence means the segmenter can't reliably
+    # see the subject (small/distant people, low light) and occlusion would
+    # glitch on/off.
+    presence_flips: int = 0
+    presence_flips_per_s: float = 0.0
 
 
 class _MatteAbort(RuntimeError):
     """Internal control-flow signal for a graceful (non-bug) best-effort abort."""
 
 
+# Presence below this treated-mask mean means "essentially nothing kept"
+# (a single min-area component feathered over the frame averages ~0.002).
+_PRESENCE_COVERAGE_FLOOR = 0.0015
+# Unstable-detection gate: more than this many presence flips AND a flip
+# rate above this threshold rejects the matte. Measured anchors: Argentina
+# montage (stable, legit scene cut) = 1 flip / 0.29 per s; beach wide shot
+# with segmenter dropouts (visible on/off glitch) = 5 flips / 1.56 per s.
+_MAX_PRESENCE_FLIPS = 2
+_MAX_PRESENCE_FLIPS_PER_S = 0.75
+
+
 def matte_is_sane(stats: MatteStats) -> bool:
-    """Reject only degenerate mattes.
+    """Reject degenerate or unstable mattes.
 
     Small/distant subjects are legitimate (a person at 0.8% of frame must
     keep the effect), so there is no meaningful lower bound on mean
     coverage — only "the segmenter never found anyone at all" (max) and
-    "the mask swallowed the whole frame" (mean) are degenerate.
+    "the mask swallowed the whole frame" (mean) are degenerate. A matte
+    whose presence flaps on/off (segmenter dropouts on hard footage) is
+    rejected too: occlusion that blinks is worse than plain text, and the
+    engine is best-effort by design.
     """
-    return stats.max_coverage >= 0.01 and stats.mean_coverage <= 0.85
+    if stats.max_coverage < 0.01 or stats.mean_coverage > 0.85:
+        return False
+    if (
+        stats.presence_flips > _MAX_PRESENCE_FLIPS
+        and stats.presence_flips_per_s > _MAX_PRESENCE_FLIPS_PER_S
+    ):
+        return False
+    return True
 
 
 def _resolve_model_path() -> str:
@@ -242,6 +272,8 @@ def _compute_subject_matte_inner(
     written_windows: list[tuple[float, float]] = []
     coverages: list[float] = []
     frame_count = 0
+    presence_flips = 0
+    total_produced = 0
 
     try:
         proc = _spawn_matte_writer(out_path)
@@ -273,6 +305,7 @@ def _compute_subject_matte_inner(
             last_mask_small: np.ndarray | None = None
             produced = 0
             source_exhausted = False
+            prev_present: bool | None = None
 
             for i in range(num_output_frames):
                 _budget_check(start_time)
@@ -314,12 +347,18 @@ def _compute_subject_matte_inner(
                 if last_mask_small is None:
                     break
 
+                present = float(np.mean(last_mask_small)) >= _PRESENCE_COVERAGE_FLOOR
+                if prev_present is not None and present != prev_present:
+                    presence_flips += 1
+                prev_present = present
+
                 frame_u8 = np.clip(last_mask_small * 255.0, 0, 255).astype(np.uint8)
                 proc.stdin.write(frame_u8.tobytes())
                 produced += 1
 
             if produced == 0:
                 continue
+            total_produced += produced
             effective_end_s = window.start_s + produced / MATTE_FPS
             written_windows.append((window.start_s, effective_end_s))
 
@@ -345,6 +384,10 @@ def _compute_subject_matte_inner(
         max_coverage=float(np.max(coverages)),
         frame_count=frame_count,
         windows=written_windows,
+        presence_flips=presence_flips,
+        presence_flips_per_s=presence_flips / (total_produced / MATTE_FPS)
+        if total_produced
+        else 0.0,
     )
 
     sidecar = {
