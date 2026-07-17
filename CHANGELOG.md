@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.31.3] — 2026-07-17
+
+### Fixed
+- **Masonry Smart place now uses real, pan-aware white pockets instead of invalid curated coordinates.** Frontend and backend scan the actual inflated tile layout, rank deterministic whitespace that remains visible through the reveal, keep simultaneous text blocks in separate pockets, reject unreadable or overflowing text, and move preview text with the same board pan used by the final render. Legacy masonry candidates are revalidated locally, Polaroid placement accounts for rotated cards, and short montages retain safe candidates.
+- **Undoing Smart place all back to the saved document disables Save while preserving Redo.** The editor now distinguishes a true baseline from an emptied, depth-truncated undo stack and clears only the unsaved draft created by the reverted edit session.
+
 ## [0.7.31.2] — 2026-07-17
 
 ### Fixed
