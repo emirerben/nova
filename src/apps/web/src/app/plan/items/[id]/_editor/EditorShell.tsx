@@ -49,6 +49,7 @@ import {
   commitEditorSession,
   EditorCommitConflictError,
   type AcceptedSuggestionRef,
+  type EditorCommitLyricsRequest,
 } from "@/lib/editor-commit";
 import { captionMetaFromVariant } from "@/lib/caption-meta";
 import {
@@ -79,7 +80,14 @@ import { useFocusTrap } from "@/components/ui/useFocusTrap";
 import UnifiedTimeline from "@/app/plan/_components/UnifiedTimeline";
 import { useClipTimeline } from "@/app/plan/_components/useClipTimeline";
 import type { DraftSlot } from "@/app/generative/timeline-math";
-import { barsToCaptionCues, barsToTextElements, seedBarsFromVariant } from "./editor-bars";
+import {
+  barsToCaptionCues,
+  barsToPreviewTextElements,
+  barsToTextElements,
+  buildLyricLineOverrides,
+  isLyricBar,
+  seedBarsFromVariant,
+} from "./editor-bars";
 import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
 import {
   CAPTIONS_TAB_REASON,
@@ -150,6 +158,7 @@ const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? ""
 const MEDIA_OVERLAYS_UI_ENABLED =
   MEDIA_OVERLAYS_RAW.toLowerCase() === "true" || MEDIA_OVERLAYS_RAW === "1";
 const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
 const POOL_MIME_TYPES = [
   "image/jpeg",
   "image/png",
@@ -158,6 +167,10 @@ const POOL_MIME_TYPES = [
   "video/mp4",
   "video/quicktime",
 ];
+
+type LyricsCapability = NonNullable<
+  NonNullable<PlanItemVariant["editor_capabilities"]>["lyrics"]
+>;
 
 function textTimingAtPlayhead({
   currentTime,
@@ -206,6 +219,37 @@ function newTextBar({
     shadow_enabled: false,
     effect: preset.fields.effect ?? undefined,
   };
+}
+
+function defaultLyricsCapability(variant: PlanItemVariant | null): LyricsCapability {
+  return {
+    editable: false,
+    enabled: variant?.text_mode === "lyrics",
+    can_toggle_on: false,
+    reason: "disabled",
+  };
+}
+
+function persistedLyricsEnabled(variant: PlanItemVariant | null): boolean {
+  return variant?.lyrics_enabled ?? (variant?.text_mode === "lyrics");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function lyricsToggleHint(reason: "disabled" | "no_track" | "no_renderable_lyrics" | null): string | null {
+  if (reason === "no_track") return "Add a song first — use Swap song";
+  if (reason === "no_renderable_lyrics") return "This song doesn't have synced lyrics";
+  if (reason === "disabled") return "Lyrics editing is turned off right now";
+  return null;
 }
 
 export function spaceShortcutAllowed(target: HTMLElement | null): boolean {
@@ -442,10 +486,15 @@ export default function EditorShell({
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
+  const [lyricsEnabled, setLyricsEnabled] = useState(false);
   const [titleDirty, setTitleDirty] = useState(false);
   const [captionMeta, setCaptionMeta] = useState<CopilotCaptionMetaSnapshot | null>(null);
   const [captionMetaDirty, setCaptionMetaDirty] = useState(false);
   const [captionMetaPatch, setCaptionMetaPatch] = useState<CaptionMetaPatch>({});
+  const lyricsCap = variant?.editor_capabilities?.lyrics ?? defaultLyricsCapability(variant);
+  const lyricsFeatureAvailable =
+    LYRICS_EDITOR_UI && (lyricsCap.editable || lyricsCap.enabled || lyricsCap.can_toggle_on);
+  const lyricBarsAvailable = LYRICS_EDITOR_UI && lyricsCap.editable;
 
   useEffect(() => {
     if (!variant) return;
@@ -462,7 +511,11 @@ export default function EditorShell({
       originalsRef.current = new Map(
         (variant.text_elements ?? []).map((el) => [el.id, el]),
       );
-      dispatch({ type: "RESET", bars: seedBarsFromVariant(variant) });
+      dispatch({
+        type: "RESET",
+        bars: seedBarsFromVariant(variant, { includeLyrics: lyricBarsAvailable }),
+      });
+      setLyricsEnabled(lyricsFeatureAvailable && persistedLyricsEnabled(variant));
       setTextDirty(false);
     }
     if (sections.sfx) {
@@ -501,7 +554,7 @@ export default function EditorShell({
     // Dirty flags are read as a snapshot when a (re)seed fires; they must not
     // retrigger it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant]);
+  }, [variant, lyricBarsAvailable, lyricsFeatureAvailable]);
 
   useEffect(() => {
     localOverlayPreviewUrlsRef.current = localOverlayPreviewUrls;
@@ -656,6 +709,7 @@ export default function EditorShell({
   const readOnly =
     !!capabilities &&
     capabilities.text_elements === false &&
+    !lyricsFeatureAvailable &&
     capabilities.timeline === false &&
     capabilities.split_clips === false &&
     capabilities.mix === false &&
@@ -665,15 +719,11 @@ export default function EditorShell({
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but on-video text still lives
   // in the Captions tab — every add-text path must stay blocked.
-  const textElementsLocked = !readOnly && capabilities?.text_elements === false;
-  // Lyrics-synced variants can't have per-element text edited (it's beat-
-  // synced to vocal onsets — see lyric_injector.py), but a whole-style-set
-  // swap is safe and already supported server-side: dispatch_change_style
-  // re-derives lyric timing deterministically from the track, only the
-  // visual style changes. computeToolDisabledReasons keeps Styles enabled
-  // for this case; restyleLyrics (below) is the branch that actually routes
-  // the commit through that safe path instead of the blocked bars/
-  // text_elements path restyleAll uses for every other variant type.
+  const textElementsLocked =
+    !readOnly && capabilities?.text_elements === false && !lyricsFeatureAvailable;
+  // Legacy lyrics variants still use the old whole-style-set route when the
+  // frontend lyrics editor is off. With the new gate on, projected lyric bars
+  // are edited locally and saved through editor-commit's `lyrics` section.
   const isLyrics = variant?.text_mode === "lyrics";
   // Caption archetypes edit captions in the item-page Captions tab, not this
   // shell. Keyed off the archetype (+ base video) via isCaptionArchetype, NOT
@@ -707,6 +757,7 @@ export default function EditorShell({
       mixDirty,
       musicTrackId: selectedMusicTrackId,
       musicDirty,
+      lyricsEnabled,
       title,
     }),
     [
@@ -723,6 +774,7 @@ export default function EditorShell({
       mixDirty,
       selectedMusicTrackId,
       musicDirty,
+      lyricsEnabled,
       title,
     ],
   );
@@ -740,6 +792,7 @@ export default function EditorShell({
       setMixDirty(doc.mixDirty ?? false);
       setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
       setMusicDirty(doc.musicDirty ?? false);
+      setLyricsEnabled(doc.lyricsEnabled ?? persistedLyricsEnabled(variant));
       setCaptionMeta(doc.captionMeta ?? null);
       setCaptionMetaDirty(doc.captionMetaDirty ?? false);
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
@@ -756,15 +809,36 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select, variant?.music_track_id],
+    [state.bars, select, variant],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
 
+  const visibleTextBars = useMemo(
+    () =>
+      lyricBarsAvailable && lyricsEnabled
+        ? state.bars
+        : state.bars.filter((bar) => !isLyricBar(bar)),
+    [lyricBarsAvailable, lyricsEnabled, state.bars],
+  );
+  const lyricLineOverrides = useMemo(
+    () =>
+      lyricBarsAvailable
+        ? buildLyricLineOverrides(state.bars, originalsRef.current)
+        : {},
+    [lyricBarsAvailable, state.bars],
+  );
+  const lyricOverridesDirty =
+    lyricBarsAvailable &&
+    stableJson(lyricLineOverrides) !== stableJson(variant?.lyric_line_overrides ?? {});
+  const lyricsDirty =
+    lyricsFeatureAvailable &&
+    (lyricsEnabled !== persistedLyricsEnabled(variant) || lyricOverridesDirty);
+
   // Every mutation (text, slots, mutes, title) records into the undo stack.
   // A redo-only stack is clean only when the original baseline is still
   // reachable; after the bounded stack evicts it, empty `past` remains dirty.
-  const dirty = !history.isAtBaseline || musicDirty || captionMetaDirty;
+  const dirty = !history.isAtBaseline || musicDirty || captionMetaDirty || lyricsDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -780,16 +854,16 @@ export default function EditorShell({
 
   // ── Derived ─────────────────────────────────────────────────────────────────
   const elements = useMemo(
-    () => barsToTextElements(state.bars, originalsRef.current),
-    [state.bars],
+    () => barsToPreviewTextElements(visibleTextBars, originalsRef.current),
+    [visibleTextBars],
   );
 
   const selectedBar = useMemo(
     () =>
       selection?.kind === "text"
-        ? (state.bars.find((b) => b.id === selection.id) ?? null)
+        ? (visibleTextBars.find((b) => b.id === selection.id) ?? null)
         : null,
-    [selection, state.bars],
+    [selection, visibleTextBars],
   );
   const clipSourceDurations = useMemo(() => {
     const out: Record<string, number | null> = {};
@@ -987,22 +1061,35 @@ export default function EditorShell({
   const pauseVirtualPreview = virtualPreview.pause;
   const seekVirtualPreview = virtualPreview.seekTo;
   const toggleVirtualPreview = virtualPreview.toggle;
+  // Rendered-video playback already has the lyrics burned into the pixels
+  // (base and final are both lyric-burned) — DOM-render a lyric bar there only
+  // when it's dirty, so unedited lines don't double-display. Virtual preview
+  // composes raw source clips (no burned text), so it needs every lyric bar.
+  const previewElements = useMemo(() => {
+    if (virtualPreviewActive) return elements;
+    return elements.filter((el) => {
+      if (el.role !== "lyric_line") return true;
+      const sourceKey = typeof el.source_params?.key === "string" ? el.source_params.key : null;
+      const key = sourceKey ?? el.id.match(/^lyric_(L\d+)$/)?.[1] ?? null;
+      return key != null && key in lyricLineOverrides;
+    });
+  }, [elements, virtualPreviewActive, lyricLineOverrides]);
   const previewDuration = virtualPreviewActive
     ? virtualPreview.timeline.totalDurationS
     : duration;
   const smartPlacementCandidates = useMemo(() => {
     const targetBars = isMasonryVariant(variant)
-      ? state.bars.filter((bar) => bar.role !== "narrated_caption")
+      ? visibleTextBars.filter((bar) => bar.role !== "narrated_caption")
       : selectedBar
         ? [selectedBar]
         : [];
     return resolveSmartPlacementCandidates(variant, targetBars, previewDuration);
-  }, [previewDuration, selectedBar, state.bars, variant]);
+  }, [previewDuration, selectedBar, visibleTextBars, variant]);
   const smartPlacementCandidate = selectedBar ? (smartPlacementCandidates[0] ?? null) : null;
   const smartPlaceAllAvailable =
     !readOnly &&
     isMasonryVariant(variant) &&
-    state.bars.some((bar) => bar.role !== "narrated_caption") &&
+    visibleTextBars.some((bar) => bar.role !== "narrated_caption") &&
     smartPlacementCandidates.length > 0;
 
   useEffect(() => {
@@ -1074,11 +1161,11 @@ export default function EditorShell({
 
   // Selection on a deleted/vanished bar clears itself.
   useEffect(() => {
-    if (selection?.kind === "text" && !state.bars.some((b) => b.id === selection.id)) {
+    if (selection?.kind === "text" && !visibleTextBars.some((b) => b.id === selection.id)) {
       clear();
       setLightSheetOpen(false);
     }
-  }, [selection, state.bars, clear]);
+  }, [selection, visibleTextBars, clear]);
 
   useEffect(() => {
     if (layoutMode === "light") {
@@ -1336,17 +1423,20 @@ export default function EditorShell({
   const patchBar = useCallback(
     (id: string, patch: Partial<Omit<TextElementBar, "id" | "role">>) => {
       if (readOnly) return;
+      const target = state.bars.find((bar) => bar.id === id);
       history.record();
-      setTextDirty(true);
+      if (!isLyricBar(target)) setTextDirty(true);
       dispatch({ type: "PATCH_BAR", id, patch });
     },
-    [readOnly, history],
+    [readOnly, state.bars, history],
   );
 
   const applySmartPlacement = useCallback(() => {
     if (readOnly) return;
     if (isMasonryVariant(variant)) {
-      const targetBars = state.bars.filter((bar) => bar.role !== "narrated_caption");
+      const targetBars = visibleTextBars.filter(
+        (bar) => bar.role !== "narrated_caption" && !isLyricBar(bar),
+      );
       if (targetBars.length === 0) return;
       const assignments = resolveSmartPlacementAssignments(
         variant,
@@ -1380,7 +1470,7 @@ export default function EditorShell({
     readOnly,
     selectedBar,
     smartPlacementCandidate,
-    state.bars,
+    visibleTextBars,
     variant,
   ]);
 
@@ -1420,6 +1510,7 @@ export default function EditorShell({
   const previewTextTiming = useCallback(
     (id: string, patch: Pick<TextElementBar, "start_s" | "end_s">) => {
       if (readOnly) return;
+      if (state.bars.find((bar) => bar.id === id)?.role === "lyric_line") return;
       setTextDirty(true);
       dispatch({
         type: "RESET",
@@ -1861,7 +1952,7 @@ export default function EditorShell({
   const restyleAll = useCallback(
     (styleSet: GenerativeStyleSet) => {
       if (readOnly) return;
-      if (state.bars.length === 0) {
+      if (visibleTextBars.length === 0) {
         setToast("Add text first, then apply a style.");
         return;
       }
@@ -1874,24 +1965,15 @@ export default function EditorShell({
         effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
       };
       history.record();
-      setTextDirty(true);
-      state.bars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
+      if (visibleTextBars.some((bar) => !isLyricBar(bar))) setTextDirty(true);
+      visibleTextBars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
       setAppliedStyleSetId(styleSet.id);
     },
-    [readOnly, state.bars, history],
+    [readOnly, visibleTextBars, history],
   );
 
-  // Lyrics-variant restyle: NOT a local bars patch — per-element text_elements
-  // edits are blocked server-side for lyrics (validate_text_elements_payload
-  // 422s), because the lyric captions aren't user-authored bars, they're
-  // injector-generated overlays timed to vocal onsets. dispatch_change_style
-  // is the safe equivalent: it re-renders the whole variant, re-deriving lyric
-  // timing deterministically from the track while only the visual style
-  // changes. Same client call the outer plan-item page already uses for its
-  // own style picker (page.tsx, "Applying style…"). Always a full re-render
-  // (lyrics variants never get a base_video_path, so there's no fast-reburn
-  // path) — hand off to the item page immediately so its existing
-  // rendering-in-progress UI takes over, same as a normal Save.
+  // Legacy lyrics-variant restyle for flag-off clients: route through the
+  // existing style endpoint instead of local lyric-bar edits.
   const restyleLyrics = useCallback(
     async (styleSet: GenerativeStyleSet) => {
       if (readOnly || !variant || saveState === "saving") return;
@@ -1912,7 +1994,7 @@ export default function EditorShell({
 
   // Single entry point both StylesDrawer instances bind to — branches per
   // variant type so callers don't need to know about the lyrics special case.
-  const onRestyleAll = isLyrics ? restyleLyrics : restyleAll;
+  const onRestyleAll = isLyrics && !lyricBarsAvailable ? restyleLyrics : restyleAll;
 
   const pickPreset = useCallback(
     (preset: TextPreset) => {
@@ -1955,7 +2037,7 @@ export default function EditorShell({
     const captionsPresent =
       variant?.resolved_archetype === "narrated" &&
       captionMeta != null &&
-      state.bars.some((bar) => bar.role === "narrated_caption");
+      visibleTextBars.some((bar) => bar.role === "narrated_caption");
     const musicSwappable = !!variant?.music_track_id && !readOnly;
     const mixAllowed = capabilities?.mix !== false && mixLevel !== undefined;
     const introText = variant?.intro_text?.trim() ?? "";
@@ -1996,7 +2078,7 @@ export default function EditorShell({
       openTools,
       readOnly,
     });
-    return buildCopilotSnapshot(state.bars, slots, clip.clips, capabilities, clip.state.grid, {
+    return buildCopilotSnapshot(visibleTextBars, slots, clip.clips, capabilities, clip.state.grid, {
       sfxEnabled: SOUND_EFFECTS_UI_ENABLED,
       overlaysEnabled: MEDIA_OVERLAYS_UI_ENABLED,
       captionsPresent,
@@ -2037,8 +2119,9 @@ export default function EditorShell({
     overlaySuggestions.rows,
     poolAssets,
     readOnly,
+    sfxGlossaryEffects,
     slots,
-    state.bars,
+    visibleTextBars,
     title,
     toolDisabledReasons,
     variant?.music_track_id,
@@ -2168,7 +2251,15 @@ export default function EditorShell({
       const beforeSfxIds = new Set(localSfx.map((sfx) => sfx.id));
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
-      if (result.textActions.length > 0) setTextDirty(true);
+      if (
+        result.textActions.some((action) => {
+          if (action.type === "ADD_TEXT") return true;
+          if (!("id" in action)) return false;
+          return !isLyricBar(state.bars.find((bar) => bar.id === action.id));
+        })
+      ) {
+        setTextDirty(true);
+      }
       if (result.nextSlots) {
         setLocalSlots(result.nextSlots);
         setTimelineDirty(true);
@@ -2317,8 +2408,12 @@ export default function EditorShell({
     if (selection.kind === "text") {
       // Guard before recording so an out-of-bounds split (reducer no-op) never
       // pushes a spurious undo step.
-      const bar = state.bars.find((b) => b.id === selection.id);
+      const bar = selectedBar;
       if (!bar) return;
+      if (isLyricBar(bar)) {
+        setToast("Lyric timing is locked to the vocal.");
+        return;
+      }
       const at = Math.round(currentTime * 10) / 10;
       const MIN = 0.2;
       if (at <= bar.start_s + MIN - 1e-9 || at >= bar.end_s - MIN + 1e-9) {
@@ -2357,7 +2452,7 @@ export default function EditorShell({
     clip.state.grid,
     splitClipsAllowed,
     readOnly,
-    state.bars,
+    selectedBar,
     history,
   ]);
 
@@ -2379,31 +2474,34 @@ export default function EditorShell({
   const nudgeSelectedText = useCallback(
     (deltaS: number) => {
       if (readOnly || selection?.kind !== "text") return;
-      const bar = state.bars.find((b) => b.id === selection.id);
+      const bar = selectedBar;
       if (!bar) return;
+      if (isLyricBar(bar)) return;
       const start_s = nudgeBarStart(bar, deltaS, previewDuration);
       if (start_s === bar.start_s) return;
       history.record();
       setTextDirty(true);
       dispatch({ type: "MOVE_BAR", id: bar.id, start_s });
     },
-    [history, previewDuration, readOnly, selection, state.bars],
+    [history, previewDuration, readOnly, selection, selectedBar],
   );
 
   // Transport enablement (plan §6).
   const canSplit =
-    selection?.kind === "text" ||
+    (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
     (selection?.kind === "clip" && splitClipsAllowed && !clipLockedToVoiceover);
   const splitReason =
     selection?.kind === "music"
       ? "Music fits the cut automatically"
+      : selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)
+        ? "Lyric timing is locked to the vocal."
       : selection?.kind === "clip" && clipLockedToVoiceover
         ? "locked to your voiceover"
       : selection?.kind === "clip" && !splitClipsAllowed
         ? "This variant's clips can't be split"
         : undefined;
   const canDelete =
-    selection?.kind === "text" ||
+    (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
     (selection?.kind === "clip" && !clipLockedToVoiceover && activeSlotCount(slots) > 1) ||
     selection?.kind === "sfx" ||
     selection?.kind === "overlay";
@@ -2504,6 +2602,10 @@ export default function EditorShell({
     setSaveMessage(null);
     try {
       const captionCues = barsToCaptionCues(state.bars);
+      const lyricsRequest: EditorCommitLyricsRequest = {
+        ...(lyricsEnabled !== persistedLyricsEnabled(variant) ? { enabled: lyricsEnabled } : {}),
+        ...(lyricOverridesDirty ? { line_overrides: lyricLineOverrides } : {}),
+      };
       const commitRequest = buildEditorCommitRequest({
         elements: barsToTextElements(state.bars, originalsRef.current),
         captionCues,
@@ -2526,6 +2628,8 @@ export default function EditorShell({
         acceptedSuggestions,
         titleDirty,
         title,
+        lyricsDirty,
+        lyrics: lyricsRequest,
         variant,
       });
       const res = await commitEditorSession(
@@ -2592,6 +2696,10 @@ export default function EditorShell({
     captionMetaDirty,
     captionMetaPatch,
     textDirty,
+    lyricsDirty,
+    lyricOverridesDirty,
+    lyricsEnabled,
+    lyricLineOverrides,
     sfxDirty,
     localSfx,
     overlaysDirty,
@@ -2786,6 +2894,22 @@ export default function EditorShell({
     />
   ) : null;
   const showCopilotSaveNotice = sessionHasCopilotEdits && !copilotSaveNoticeDismissed;
+  const lyricsToggle = {
+    visible: !!variant && lyricsFeatureAvailable,
+    enabled: lyricsEnabled,
+    disabled: !lyricsEnabled && !lyricsCap.can_toggle_on,
+    hint: lyricsToggleHint(lyricsCap.reason),
+    onToggle: (next: boolean) => {
+      if (readOnly) return;
+      if (next && !lyricsCap.can_toggle_on && !lyricsCap.enabled) {
+        setToast(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
+        return;
+      }
+      if (next === lyricsEnabled) return;
+      history.record("lyrics-toggle");
+      setLyricsEnabled(next);
+    },
+  };
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
@@ -2799,7 +2923,7 @@ export default function EditorShell({
       selectElement(kind, id);
     },
     onClear: clear,
-    textBars: state.bars,
+    textBars: visibleTextBars,
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
@@ -3022,6 +3146,11 @@ export default function EditorShell({
                 {saveMessage}
               </span>
             )}
+            {lyricsDirty && (
+              <span className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-[#3f3f46]">
+                Re-renders on Save
+              </span>
+            )}
             <InkButton
               variant="ghost"
               size="compact"
@@ -3048,8 +3177,8 @@ export default function EditorShell({
         <div className="relative min-h-0">
           <EditorCanvas
             variant={variant}
-            elements={elements}
-            bars={state.bars}
+            elements={previewElements}
+            bars={visibleTextBars}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
@@ -3080,7 +3209,7 @@ export default function EditorShell({
             allowManipulation={false}
             stageHeightCss="100dvh - 152px"
           />
-          {state.bars.length === 0 && !readOnly && !textElementsLocked && (
+          {visibleTextBars.length === 0 && !readOnly && !textElementsLocked && (
             <button
               type="button"
               onClick={() => addTextAtPlayhead()}
@@ -3111,6 +3240,7 @@ export default function EditorShell({
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
+              lyricsToggle={lyricsToggle}
               onSplitSmartPlaceText={splitAndSmartPlaceText}
               splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
               onSmartPlaceAll={applySmartPlacement}
@@ -3158,6 +3288,7 @@ export default function EditorShell({
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
+              lyricsToggle={lyricsToggle}
               onSplitSmartPlaceText={splitAndSmartPlaceText}
               splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
               onSmartPlaceAll={applySmartPlacement}
@@ -3188,6 +3319,7 @@ export default function EditorShell({
               sampleWord={sampleWord}
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
+              lyricsToggle={lyricsToggle}
               onPickPreset={pickPreset}
               layoutMode={layoutMode}
               copilot={{
@@ -3216,8 +3348,8 @@ export default function EditorShell({
         >
           <EditorCanvas
             variant={variant}
-            elements={elements}
-            bars={state.bars}
+            elements={previewElements}
+            bars={visibleTextBars}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
@@ -3264,10 +3396,10 @@ export default function EditorShell({
           }
           contentRef={contentRef}
           onEditText={(text) => {
-            if (selectedBar && !readOnly) {
+          if (selectedBar && !readOnly) {
               // Coalesce keystrokes on one bar into a single undo step.
               history.record(`text:${selectedBar.id}`);
-              setTextDirty(true);
+              if (!isLyricBar(selectedBar)) setTextDirty(true);
               dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
             }
           }}
@@ -3293,7 +3425,6 @@ export default function EditorShell({
           musicEditable={musicSwapEditable}
           onPickMusic={pickMusicTrack}
           onPatchMix={patchMixLevel}
-
           smartPlaceAvailable={
             !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
           }
@@ -3404,7 +3535,7 @@ export default function EditorShell({
         onEditText={(text) => {
           if (selectedBar && !readOnly) {
             history.record(`text:${selectedBar.id}`);
-            setTextDirty(true);
+            if (!isLyricBar(selectedBar)) setTextDirty(true);
             dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
           }
         }}
@@ -3418,6 +3549,7 @@ export default function EditorShell({
           sampleWord={sampleWord}
           appliedPresetId={appliedPresetId}
           onAddText={() => addTextAtPlayhead()}
+          lyricsToggle={lyricsToggle}
           onPickPreset={pickPreset}
           layoutMode={layoutMode}
           copilot={{

@@ -60,6 +60,23 @@ export interface EditorCommitCaptionMetaRequest {
   y_frac?: number;
 }
 
+export interface LyricLineOverride {
+  text?: string;
+  style?: {
+    color?: string;
+    highlight_color?: string;
+    font_family?: string;
+    size_px?: number;
+  };
+  orig_text: string;
+  orig_start_s: number;
+}
+
+export interface EditorCommitLyricsRequest {
+  enabled?: boolean;
+  line_overrides?: Record<string, LyricLineOverride> | null;
+}
+
 export interface EditorCommitRequest {
   /** Full replacement text-element list (same shape putTextElements sends). */
   text_elements?: TextElement[];
@@ -79,6 +96,8 @@ export interface EditorCommitRequest {
   media_overlays?: MediaOverlay[];
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
+  /** Lyrics editor state. Omit when untouched; any presence triggers full render. */
+  lyrics?: EditorCommitLyricsRequest;
   /**
    * AI-suggestion resolution metadata, NOT a section: envelope ids from
    * `variants[i].overlay_suggestions` the user ✓-accepted in the editor. Their
@@ -110,6 +129,7 @@ export interface EditorCommitResponse {
     sound_effects?: boolean;
     media_overlays?: boolean;
     title?: boolean;
+    lyrics?: boolean;
   };
 }
 
@@ -165,6 +185,8 @@ export function buildEditorCommitRequest({
   acceptedSuggestions = [],
   titleDirty = true,
   title,
+  lyricsDirty = false,
+  lyrics,
   variant,
 }: {
   elements: TextElement[];
@@ -186,6 +208,8 @@ export function buildEditorCommitRequest({
   acceptedSuggestions?: AcceptedSuggestionRef[];
   titleDirty?: boolean;
   title: string;
+  lyricsDirty?: boolean;
+  lyrics?: EditorCommitLyricsRequest;
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
   const mixEditable = variant.editor_capabilities?.mix !== false;
@@ -235,6 +259,7 @@ export function buildEditorCommitRequest({
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
+    lyrics: lyricsDirty ? lyrics : undefined,
     base_generation: editorCommitBaseGeneration(variant),
   };
 }

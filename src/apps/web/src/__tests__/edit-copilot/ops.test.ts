@@ -38,6 +38,31 @@ describe("edit-copilot op contract fixtures", () => {
 });
 
 describe("edit-copilot extended op validation", () => {
+  it("rejects timing and removal for lyric bars", () => {
+    const lyricSnapshot = {
+      ...validationSnapshot,
+      text_bars: [{ id: "lyric_L0", role: "lyric_line" }],
+    };
+    expect(
+      validateCopilotOp(
+        { op: "set_text_timing", bar_index: 0, start_s: 1 },
+        lyricSnapshot,
+      ),
+    ).toMatchObject({
+      ok: false,
+      rejection: { message: "Lyric timing is locked to the vocal." },
+    });
+    expect(
+      validateCopilotOp({ op: "remove_text", bar_index: 0 }, lyricSnapshot),
+    ).toMatchObject({
+      ok: false,
+      rejection: { message: "Lyric timing is locked to the vocal." },
+    });
+    expect(
+      validateCopilotOp({ op: "edit_text", bar_index: 0, text: "new" }, lyricSnapshot),
+    ).toMatchObject({ ok: true });
+  });
+
   it("normalizes valid sfx ops and rejects missing required fields", () => {
     expect(validateCopilotOp({ op: "add_sfx", effect_id: "whoosh", at_s: 99, gain: 3 }, validationSnapshot))
       .toMatchObject({ ok: true, op: { op: "add_sfx", at_s: 9.9, gain: 2 } });

@@ -267,6 +267,14 @@ function hasIndex(
   return !arr || index < arr.length;
 }
 
+function textBarRole(
+  snapshot: CopilotValidationSnapshot | undefined,
+  index: number,
+): string | null {
+  const bar = snapshot?.text_bars?.[index];
+  return isRecord(bar) && typeof bar.role === "string" ? bar.role : null;
+}
+
 function validFont(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(FONT_REGISTRY, name) || LEGACY_FONT_ALIASES.has(name);
 }
@@ -468,6 +476,9 @@ export function validateCopilotOp(
       if (!hasIndex(snapshot, "text", raw.bar_index)) {
         return reject("invalid_index", "bar_index must point into snapshot text bars", opName);
       }
+      if (textBarRole(snapshot, raw.bar_index) === "lyric_line") {
+        return reject("invalid_value", "Lyric timing is locked to the vocal.", opName);
+      }
       const hasStart = raw.start_s !== undefined;
       const hasEnd = raw.end_s !== undefined;
       if (!hasStart && !hasEnd) {
@@ -499,6 +510,9 @@ export function validateCopilotOp(
       if (!integerIndex(raw.bar_index)) return reject("missing_required", "remove_text requires bar_index", opName);
       if (!hasIndex(snapshot, "text", raw.bar_index)) {
         return reject("invalid_index", "bar_index must point into snapshot text bars", opName);
+      }
+      if (textBarRole(snapshot, raw.bar_index) === "lyric_line") {
+        return reject("invalid_value", "Lyric timing is locked to the vocal.", opName);
       }
       return { ok: true, op: { op: opName, bar_index: raw.bar_index } };
     }

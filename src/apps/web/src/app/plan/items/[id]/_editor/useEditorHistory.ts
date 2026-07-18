@@ -48,6 +48,7 @@ export interface EditorDocument {
   mixDirty?: boolean;
   musicTrackId?: string | null;
   musicDirty?: boolean;
+  lyricsEnabled?: boolean;
   title: string;
 }
 

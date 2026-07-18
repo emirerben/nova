@@ -815,7 +815,7 @@ export interface TextElement {
   text: string;
   start_s: number;
   end_s: number;
-  role: "generative_intro" | "generative_sequence";
+  role: "generative_intro" | "generative_sequence" | "lyric_line";
   position?: "top" | "middle" | "bottom" | "custom";
   x_frac?: number | null;
   y_frac?: number | null;
@@ -899,6 +899,12 @@ export interface EditorCapabilities {
   /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
    *  | inherited overlay reasons. */
   suggestions_reason?: string | null;
+  lyrics?: {
+    editable: boolean;
+    enabled: boolean;
+    can_toggle_on: boolean;
+    reason: "disabled" | "no_track" | "no_renderable_lyrics" | null;
+  };
 }
 
 export interface TextPlacementCandidate {
@@ -920,6 +926,8 @@ export interface PlanItemVariant {
   // Edit controls: swap-song is hidden when music_track_id is null (the
   // original-audio variant has no song), and the style picker reflects style_set_id.
   text_mode: "lyrics" | "agent_text" | "none";
+  lyrics_enabled?: boolean;
+  lyric_line_overrides?: Record<string, unknown> | null;
   music_track_id?: string | null;
   track_title?: string | null;
   /**

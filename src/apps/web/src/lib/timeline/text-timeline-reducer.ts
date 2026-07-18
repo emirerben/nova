@@ -26,7 +26,7 @@ export interface TextElementBar {
   text: string;
   start_s: number;
   end_s: number;
-  role: "generative_intro" | "generative_sequence" | "narrated_caption";
+  role: "generative_intro" | "generative_sequence" | "narrated_caption" | "lyric_line";
   font_family?: string;
   size_px?: number;
   size_class?: string;
@@ -65,6 +65,35 @@ export interface TextElementBar {
    * Render-only compositing flag — the canvas preview cannot segment the
    * subject, so this has no visual effect here beyond the inspector toggle. */
   behind_subject?: boolean;
+}
+
+const LYRIC_ALLOWED_PATCH_FIELDS = new Set([
+  "text",
+  "color",
+  "highlight_color",
+  "font_family",
+  "size_px",
+  "size_class",
+]);
+
+function isLyricLine(bar: TextElementBar | undefined): boolean {
+  return bar?.role === "lyric_line";
+}
+
+function targetIsLyric(state: TextEditorState, id: string): boolean {
+  return isLyricLine(state.bars.find((bar) => bar.id === id));
+}
+
+function lyricPatch(
+  patch: Partial<Omit<TextElementBar, "id" | "role">>,
+): Partial<Omit<TextElementBar, "id" | "role">> {
+  const next: Partial<Omit<TextElementBar, "id" | "role">> = {};
+  for (const [key, value] of Object.entries(patch)) {
+    if (LYRIC_ALLOWED_PATCH_FIELDS.has(key)) {
+      (next as Record<string, unknown>)[key] = value;
+    }
+  }
+  return next;
 }
 
 // ── Reducer state ─────────────────────────────────────────────────────────────
@@ -153,6 +182,7 @@ export function textReducer(
     }
 
     case "MOVE_BAR": {
+      if (targetIsLyric(state, action.id)) return state;
       const next = state.bars.map((b) => {
         if (b.id !== action.id) return b;
         const dur = b.end_s - b.start_s;
@@ -163,6 +193,7 @@ export function textReducer(
     }
 
     case "TRIM_START": {
+      if (targetIsLyric(state, action.id)) return state;
       const next = state.bars.map((b) => {
         if (b.id !== action.id) return b;
         const newStart = Math.max(0, Math.min(action.start_s, b.end_s - 0.1));
@@ -172,6 +203,7 @@ export function textReducer(
     }
 
     case "TRIM_END": {
+      if (targetIsLyric(state, action.id)) return state;
       const next = state.bars.map((b) => {
         if (b.id !== action.id) return b;
         const newEnd = Math.max(b.start_s + 0.1, action.end_s);
@@ -181,6 +213,7 @@ export function textReducer(
     }
 
     case "DELETE_BAR":
+      if (targetIsLyric(state, action.id)) return state;
       return withHistory(
         state,
         state.bars.filter((b) => b.id !== action.id),
@@ -189,6 +222,7 @@ export function textReducer(
     case "SPLIT_BAR": {
       const bar = state.bars.find((b) => b.id === action.id);
       if (!bar) return state;
+      if (isLyricLine(bar)) return state;
       const at = Math.round(action.at_s * 10) / 10;
       // Need at least MIN duration on BOTH halves, else the split is a no-op.
       const MIN = 0.2;
@@ -206,6 +240,7 @@ export function textReducer(
     case "REORDER": {
       const idx = state.bars.findIndex((b) => b.id === action.id);
       if (idx === -1) return state;
+      if (isLyricLine(state.bars[idx])) return state;
       const next = [...state.bars];
       if (action.direction === "up" && idx > 0) {
         [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
@@ -241,8 +276,11 @@ export function textReducer(
       return initTextEditorState(action.bars);
 
     case "PATCH_BAR": {
+      const target = state.bars.find((b) => b.id === action.id);
+      const patch = isLyricLine(target) ? lyricPatch(action.patch) : action.patch;
+      if (Object.keys(patch).length === 0) return state;
       const next = state.bars.map((b) =>
-        b.id === action.id ? { ...b, ...action.patch } : b,
+        b.id === action.id ? { ...b, ...patch } : b,
       );
       return withHistory(state, next);
     }

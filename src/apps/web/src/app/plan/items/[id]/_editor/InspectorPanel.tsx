@@ -853,6 +853,7 @@ function TextInspector({
 }) {
   // Stroke row starts expanded when the bar already carries a stroke.
   const [strokeOpen, setStrokeOpen] = useState((bar.stroke_width ?? 0) > 0);
+  const isLyric = bar.role === "lyric_line";
 
   const sizeValue = Math.round(bar.size_px ?? 64);
   const clampedSlider = Math.min(
@@ -889,7 +890,18 @@ function TextInspector({
     // selection, not per keystroke.
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-4 motion-safe:animate-fade-up motion-safe:[animation-duration:150ms]">
       <div className="flex items-center justify-between">
-        <h2 className="font-display text-[18px] text-[#0c0c0e]">Text</h2>
+        <h2 className="flex items-center gap-2 font-display text-[18px] text-[#0c0c0e]">
+          Text
+          {isLyric && (
+            <span
+              aria-label="Lyric timing locked"
+              title="Lyric timing is locked to the vocal"
+              className="rounded border border-zinc-200 px-1.5 py-0.5 text-[10px] font-semibold text-[#71717a]"
+            >
+              {"\u{1F512}"} Locked
+            </span>
+          )}
+        </h2>
         <CloseX onClose={onClose} />
       </div>
 
@@ -902,29 +914,33 @@ function TextInspector({
         aria-label="Text content"
         className="mt-3 w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
       />
-      <button
-        type="button"
-        disabled={!smartPlaceAvailable}
-        onClick={onSmartPlace}
-        className="mt-2 min-h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
-      >
-        Smart place
-      </button>
+      {!isLyric && (
+        <>
+          <button
+            type="button"
+            disabled={!smartPlaceAvailable}
+            onClick={onSmartPlace}
+            className="mt-2 min-h-9 w-full rounded-lg border border-zinc-200 bg-white px-3 text-[12px] font-semibold text-[#0c0c0e] hover:border-zinc-400 disabled:cursor-not-allowed disabled:bg-zinc-50 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"
+          >
+            Smart place
+          </button>
 
-      <TimingSection label="Timing">
-        <TimingNumberInput
-          label="Start"
-          value={bar.start_s}
-          min={0}
-          onChange={(value) => onPatchTiming({ start_s: value })}
-        />
-        <TimingNumberInput
-          label="End"
-          value={bar.end_s}
-          min={0}
-          onChange={(value) => onPatchTiming({ end_s: value })}
-        />
-      </TimingSection>
+          <TimingSection label="Timing">
+            <TimingNumberInput
+              label="Start"
+              value={bar.start_s}
+              min={0}
+              onChange={(value) => onPatchTiming({ start_s: value })}
+            />
+            <TimingNumberInput
+              label="End"
+              value={bar.end_s}
+              min={0}
+              onChange={(value) => onPatchTiming({ end_s: value })}
+            />
+          </TimingSection>
+        </>
+      )}
 
       {/* Font + size */}
       <div className="mt-3">
@@ -962,7 +978,7 @@ function TextInspector({
         />
       </div>
 
-      {canEditMaxWidth && (
+      {canEditMaxWidth && !isLyric && (
         <div className="mt-2 flex items-center gap-2">
           <span className="w-[44px] text-[12px] font-semibold text-[#3f3f46]">Width</span>
           <input
@@ -988,33 +1004,34 @@ function TextInspector({
         </div>
       )}
 
-      {/* Animation */}
-      <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
-        Animation
-        <select
-          aria-label="Animation"
-          value={bar.effect ?? "none"}
-          onChange={(e) => onPatch({ effect: e.target.value })}
-          className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
-        >
-          {/* Preserve an effect value outside the picker list (e.g. "static"). */}
-          {bar.effect && !INTRO_ANIMATIONS.some((a) => a.value === bar.effect) && (
-            <option value={bar.effect}>{bar.effect}</option>
-          )}
-          {INTRO_ANIMATIONS.map((a) => (
-            <option key={a.value} value={a.value}>
-              {a.label}
-            </option>
-          ))}
-        </select>
-      </label>
+      {!isLyric && (
+        <label className="mt-4 block text-[12px] font-semibold text-[#3f3f46]">
+          Animation
+          <select
+            aria-label="Animation"
+            value={bar.effect ?? "none"}
+            onChange={(e) => onPatch({ effect: e.target.value })}
+            className="mt-1 h-9 w-full rounded-lg border border-zinc-200 bg-white px-2 text-[13px] font-normal text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
+          >
+            {/* Preserve an effect value outside the picker list (e.g. "static"). */}
+            {bar.effect && !INTRO_ANIMATIONS.some((a) => a.value === bar.effect) && (
+              <option value={bar.effect}>{bar.effect}</option>
+            )}
+            {INTRO_ANIMATIONS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {/* Style */}
       <div className="mt-6 flex items-center justify-between border-b border-zinc-100 pb-2">
         <span className="text-[13px] font-bold text-[#0c0c0e]">Style</span>
       </div>
 
-      {canEditTextCase && (
+      {canEditTextCase && !isLyric && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Aa case</span>
           <select
@@ -1031,7 +1048,7 @@ function TextInspector({
         </label>
       )}
 
-      {(canEditLetterSpacing || canEditLineSpacing) && (
+      {(canEditLetterSpacing || canEditLineSpacing) && !isLyric && (
         <div className="flex min-h-11 items-center justify-between gap-3 border-b border-zinc-100 py-2">
           {canEditLetterSpacing && (
             <label className="min-w-0 flex-1 text-[12px] text-[#3f3f46]">
@@ -1084,17 +1101,36 @@ function TextInspector({
         </span>
       </div>
 
-      <label className="flex h-11 items-center justify-between border-b border-zinc-100">
-        <span className="text-[13px] text-[#3f3f46]">Shadow</span>
-        <input
-          type="checkbox"
-          checked={bar.shadow_enabled !== false}
-          onChange={(e) => onPatch({ shadow_enabled: e.target.checked })}
-          className="h-4 w-4 accent-[#0c0c0e]"
-        />
-      </label>
+      <div className="flex h-11 items-center justify-between border-b border-zinc-100">
+        <span className="text-[13px] text-[#3f3f46]">Highlight</span>
+        <span className="flex items-center gap-2">
+          <input
+            type="color"
+            aria-label="Highlight color"
+            value={normalizeEditableHex(bar.highlight_color) ?? "#A3E635"}
+            onChange={(e) => onPatch({ highlight_color: e.target.value.toUpperCase() })}
+            className="h-6 w-8 cursor-pointer rounded border border-zinc-300 bg-white p-0"
+          />
+          <HexInput
+            value={bar.highlight_color ?? "#A3E635"}
+            onChange={(hex) => onPatch({ highlight_color: hex })}
+          />
+        </span>
+      </div>
 
-      {TEXT_BEHIND_SUBJECT_UI_ENABLED && (
+      {!isLyric && (
+        <label className="flex h-11 items-center justify-between border-b border-zinc-100">
+          <span className="text-[13px] text-[#3f3f46]">Shadow</span>
+          <input
+            type="checkbox"
+            checked={bar.shadow_enabled !== false}
+            onChange={(e) => onPatch({ shadow_enabled: e.target.checked })}
+            className="h-4 w-4 accent-[#0c0c0e]"
+          />
+        </label>
+      )}
+
+      {TEXT_BEHIND_SUBJECT_UI_ENABLED && !isLyric && (
         <label className="flex h-11 items-center justify-between border-b border-zinc-100">
           <span className="text-[13px] text-[#3f3f46]">Behind subject</span>
           <input
@@ -1107,40 +1143,42 @@ function TextInspector({
       )}
 
       {/* Stroke — collapsed behind + */}
-      <div className="border-b border-zinc-100">
-        <div className="flex h-11 items-center justify-between">
-          <span className="text-[13px] text-[#3f3f46]">Stroke</span>
-          <button
-            type="button"
-            aria-label={strokeOpen ? "Collapse stroke" : "Add stroke"}
-            aria-expanded={strokeOpen}
-            onClick={() => setStrokeOpen((o) => !o)}
-            className="flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 text-[13px] leading-none text-[#3f3f46] hover:border-zinc-400"
-          >
-            {strokeOpen ? "–" : "+"}
-          </button>
-        </div>
-        {strokeOpen && (
-          <div className="flex items-center gap-2 pb-3">
-            <input
-              type="range"
-              aria-label="Stroke width"
-              min={0}
-              max={12}
-              step={1}
-              value={bar.stroke_width ?? 0}
-              onChange={(e) => onPatch({ stroke_width: Number(e.target.value) })}
-              className="min-w-0 flex-1 accent-[#0c0c0e]"
-            />
-            <span className="w-8 text-right text-[12px] tabular-nums text-[#71717a]">
-              {bar.stroke_width ?? 0}
-            </span>
+      {!isLyric && (
+        <div className="border-b border-zinc-100">
+          <div className="flex h-11 items-center justify-between">
+            <span className="text-[13px] text-[#3f3f46]">Stroke</span>
+            <button
+              type="button"
+              aria-label={strokeOpen ? "Collapse stroke" : "Add stroke"}
+              aria-expanded={strokeOpen}
+              onClick={() => setStrokeOpen((o) => !o)}
+              className="flex h-6 w-6 items-center justify-center rounded-md border border-zinc-200 text-[13px] leading-none text-[#3f3f46] hover:border-zinc-400"
+            >
+              {strokeOpen ? "–" : "+"}
+            </button>
           </div>
-        )}
-      </div>
+          {strokeOpen && (
+            <div className="flex items-center gap-2 pb-3">
+              <input
+                type="range"
+                aria-label="Stroke width"
+                min={0}
+                max={12}
+                step={1}
+                value={bar.stroke_width ?? 0}
+                onChange={(e) => onPatch({ stroke_width: Number(e.target.value) })}
+                className="min-w-0 flex-1 accent-[#0c0c0e]"
+              />
+              <span className="w-8 text-right text-[12px] tabular-nums text-[#71717a]">
+                {bar.stroke_width ?? 0}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Read-only fields the editor preserves but doesn't edit yet (D17). */}
-      {readOnlyRows.length > 0 && (
+      {!isLyric && readOnlyRows.length > 0 && (
         <div className="mt-4">
           {readOnlyRows.map((row) => (
             <div
