@@ -79,6 +79,7 @@ from app.routes.generative_jobs import (
     require_editable_variant,
     validate_media_overlays_for_user,
     validate_sound_effects_for_user,
+    visual_block_variant_duration,
 )
 from app.routes.waitlist import get_real_ip
 from app.schemas.montage_preset import (
@@ -2270,12 +2271,29 @@ async def editor_commit_item(
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
         ).scalar_one_or_none()
 
+    visual_assets: dict[str, dict] | None = None
+    if commit_body.visual_blocks is not None:
+        rows = (
+            (await db.execute(select(PlanItemAsset).where(PlanItemAsset.plan_item_id == item.id)))
+            .scalars()
+            .all()
+        )
+        visual_assets = {
+            str(row.id): {
+                "status": row.status,
+                "gcs_path": row.gcs_path,
+                "kind": row.kind,
+            }
+            for row in rows
+        }
+
     prep = prepare_editor_commit(
         locked_job,
         variant_id,
         commit_body,
         user_id=str(user.id),
         music_track=selected_music_track,
+        visual_assets=visual_assets,
     )
 
     if cleaned_title is not None:
@@ -2295,6 +2313,14 @@ async def editor_commit_item(
         variant_id=variant_id,
         generation=prep["generation"],
         sections={**prep["sections"], "title": cleaned_title is not None},
+        visual_block_count=(
+            len(commit_body.visual_blocks) if commit_body.visual_blocks is not None else None
+        ),
+        ai_visual_block_count=(
+            sum(1 for block in commit_body.visual_blocks if block.get("origin") == "ai")
+            if commit_body.visual_blocks is not None
+            else None
+        ),
     )
     return EditorCommitResponse(
         ok=True,
@@ -2308,9 +2334,141 @@ async def editor_commit_item(
             music=prep["sections"]["music"],
             sound_effects=prep["sections"]["sound_effects"],
             media_overlays=prep["sections"]["media_overlays"],
+            visual_blocks=prep["sections"]["visual_blocks"],
             title=cleaned_title is not None,
         ),
     )
+
+
+class RetimeVisualBlockBody(BaseModel):
+    visual_block: dict
+
+
+@router.post("/{item_id}/variants/{variant_id}/visual-blocks/retime")
+async def retime_visual_block(
+    item_id: str,
+    variant_id: str,
+    body: RetimeVisualBlockBody,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return a concretely timed montage without persisting editor state."""
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.visual_blocks_enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    item = await _load_owned_item(item_id, user.id, db)
+    if item.current_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No render to edit yet")
+    variant = _find_variant_dict(item.current_job, variant_id)
+    if variant.get("text_mode") == "lyrics" or not variant.get("base_video_path"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Visual blocks require a non-lyrics variant with a clean base.",
+        )
+
+    from app.agents._schemas.visual_block import (  # noqa: PLC0415
+        MontageBlock,
+        SyncAnchor,
+        iter_visual_shots,
+        retime_montage,
+        validate_visual_blocks,
+    )
+
+    raw = body.visual_block
+    if raw.get("kind") != "montage":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Only montage blocks have automatic shot pacing.",
+        )
+    try:
+        # Retime the raw shot list first so reordered drafts with stale offsets
+        # can become valid instead of failing MontageBlock's contiguity guard.
+        draft = dict(raw)
+        draft_shots = [dict(shot) for shot in draft.get("shots") or []]
+        if not draft_shots:
+            raise ValueError("A montage needs shots to retime")
+        duration_s = float(draft.get("end_s", 0.0)) - float(draft.get("start_s", 0.0))
+        per_shot = duration_s / len(draft_shots)
+        offset = 0.0
+        for index, shot in enumerate(draft_shots):
+            shot_duration = duration_s - offset if index == len(draft_shots) - 1 else per_shot
+            shot["start_offset_s"] = round(offset, 6)
+            shot["duration_s"] = round(shot_duration, 6)
+            offset += shot_duration
+        draft["shots"] = draft_shots
+        draft["timing_mode"] = "auto"
+        normalized = validate_visual_blocks(
+            [draft],
+            duration_s=visual_block_variant_duration(variant),
+        )[0]
+        anchors: list[SyncAnchor] = []
+        for shot in draft_shots:
+            if shot.get("sync_anchor"):
+                anchors.append(SyncAnchor.model_validate(shot["sync_anchor"]))
+        for cue in list(variant.get("caption_cues") or variant.get("transcript_segments") or []):
+            if not isinstance(cue, dict):
+                continue
+            boundary = cue.get("end_s", cue.get("end"))
+            if boundary is not None:
+                anchors.append(
+                    SyncAnchor(
+                        type="sentence",
+                        time_s=float(boundary),
+                        label=str(cue.get("text") or "")[:120] or None,
+                    )
+                )
+        for beat in list(variant.get("beat_grid") or variant.get("beat_timestamps_s") or []):
+            value = beat.get("time_s", beat.get("time")) if isinstance(beat, dict) else beat
+            if value is not None:
+                anchors.append(SyncAnchor(type="beat", time_s=float(value)))
+        for effect in list(variant.get("sound_effects") or []):
+            if isinstance(effect, dict) and effect.get("start_s") is not None:
+                anchors.append(
+                    SyncAnchor(
+                        type="manual",
+                        time_s=float(effect["start_s"]),
+                        label="Sound effect",
+                    )
+                )
+        validated = retime_montage(
+            MontageBlock.model_validate(normalized), anchors=anchors
+        ).model_dump(by_alias=True, exclude_none=True)
+        validated = validate_visual_blocks(
+            [validated], duration_s=visual_block_variant_duration(variant)
+        )[0]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    asset_ids = {str(shot["asset_id"]) for shot in iter_visual_shots([validated])}
+    assets = (
+        (
+            await db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == item.id,
+                    PlanItemAsset.id.in_(asset_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    asset_map = {str(asset.id): asset for asset in assets}
+    for shot in iter_visual_shots([validated]):
+        asset = asset_map.get(str(shot["asset_id"]))
+        if (
+            asset is None
+            or asset.status != "ready"
+            or asset.gcs_path != shot["src_gcs_path"]
+            or asset.kind != shot["kind"]
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Visual block assets must be ready assets owned by this plan item.",
+            )
+    return {"visual_block": validated}
 
 
 # ── Sound-effects routes ──────────────────────────────────────────────────────
@@ -2883,6 +3041,15 @@ def _require_autoplace() -> None:
         )
 
 
+def _require_asset_pool() -> None:
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not (_settings.overlay_autoplace_enabled or _settings.visual_blocks_enabled):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Visual asset pool not available."
+        )
+
+
 def _asset_kind_for_content_type(content_type: str) -> str:
     return "video" if content_type.startswith("video/") else "image"
 
@@ -2909,7 +3076,7 @@ async def create_pool_upload_urls(
     db: AsyncSession = Depends(get_db),
 ) -> PoolUploadUrlsResponse:
     """Signed PUT URLs for pool assets (same content-type set as overlay cards)."""
-    _require_autoplace()
+    _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
     if not body.files:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide files")
@@ -2980,6 +3147,9 @@ class PoolAssetOut(BaseModel):
     # a constructor that forgets it must fail response validation loudly, never
     # ship an empty path the promotion would 422 on.
     gcs_path: str
+    source_type: str | None = None
+    source_clip_index: int | None = None
+    source_timestamp_s: float | None = None
 
 
 def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
@@ -3009,6 +3179,9 @@ def _asset_out(asset: PlanItemAsset, *, deduped: bool = False) -> PoolAssetOut:
         display_url=display_url,
         deduped=deduped,
         gcs_path=asset.gcs_path,
+        source_type=str(analysis.get("source") or "") or None,
+        source_clip_index=analysis.get("source_clip_index"),
+        source_timestamp_s=analysis.get("source_timestamp_s"),
     )
 
 
@@ -3025,7 +3198,7 @@ async def register_pool_asset(
     as-is (`deduped=true`) — identical bytes are never re-analyzed (plan 005
     finding 9). Analysis dispatch lands in PR1a; PR0 rows stay status="uploaded".
     """
-    _require_autoplace()
+    _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
     _pool_prefix = f"users/{user.id}/plan/{item.id}/pool/"
     if not body.gcs_path.startswith(_pool_prefix):
@@ -3114,7 +3287,7 @@ async def upload_pool_asset(
     import os as _os  # noqa: PLC0415
     import tempfile  # noqa: PLC0415
 
-    _require_autoplace()
+    _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
 
     content_type = (file.content_type or "").split(";")[0].strip()
@@ -3217,7 +3390,7 @@ async def list_pool_assets(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> PoolAssetsResponse:
-    _require_autoplace()
+    _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
     assets = (
         (
@@ -3247,7 +3420,7 @@ async def delete_pool_asset(
     suggestions yet, so this is a plain row delete (GCS object left in place —
     the persistent prefix is cheap and other rows may share bytes).
     """
-    _require_autoplace()
+    _require_asset_pool()
     item = await _load_owned_item(item_id, user.id, db)
     try:
         aid = uuid.UUID(asset_id)
@@ -3264,12 +3437,29 @@ async def delete_pool_asset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     removed = 0
     if item.current_job is not None:
+        if _visual_blocks_reference_asset(item.current_job, str(asset.id)):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Replace or remove this asset from visual blocks before deleting it.",
+            )
         # Decision 11A: deleting an asset eagerly clears dependent PENDING
         # suggestion rows (staged/accepted cards are real placements — untouched).
         removed = _clear_suggestions_for_asset(item.current_job, str(asset.id))
     await db.delete(asset)
     await db.commit()
     return {"ok": True, "removed_suggestions": removed}
+
+
+def _visual_blocks_reference_asset(job: Job, asset_id: str) -> bool:
+    from app.agents._schemas.visual_block import iter_visual_shots  # noqa: PLC0415
+
+    for variant in (job.assembly_plan or {}).get("variants") or []:
+        if any(
+            str(shot.get("asset_id")) == asset_id
+            for shot in iter_visual_shots(variant.get("visual_blocks") or [])
+        ):
+            return True
+    return False
 
 
 def _clear_suggestions_for_asset(job: Job, asset_id: str) -> int:

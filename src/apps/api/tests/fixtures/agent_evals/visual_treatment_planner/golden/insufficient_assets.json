@@ -1,0 +1,14 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [{"word": "Three", "start_s": 0.0, "end_s": 0.3}, {"word": "examples", "start_s": 0.3, "end_s": 0.8}],
+    "assets": [{"asset_id": "a1", "kind": "image", "subject": "one example"}, {"asset_id": "a2", "kind": "image", "subject": "second example"}],
+    "duration_s": 20.0,
+    "beat_timestamps_s": [],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[]}",
+  "output": {"treatments": []},
+  "meta": {"source": "hand_authored_golden", "notes": "Fewer than three assets must not produce a montage."}
+}

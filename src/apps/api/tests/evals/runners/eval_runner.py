@@ -252,6 +252,10 @@ def _build_agent_class_for(agent_name: str) -> type[Agent]:
         from app.agents.intro_writer import IntroTextWriterAgent
 
         return IntroTextWriterAgent
+    if agent_name == "nova.compose.visual_treatment_planner":
+        from app.agents.visual_treatment_planner import VisualTreatmentPlannerAgent
+
+        return VisualTreatmentPlannerAgent
     if agent_name == "nova.compose.sequence_emphasis":
         from app.agents.sequence_emphasis import SequenceEmphasisAgent
 

@@ -99,6 +99,9 @@ def _arm(monkeypatch, *, object_exists=True):
     monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True)
     monkeypatch.setattr(settings, "sound_effects_enabled", True, raising=False)
     monkeypatch.setattr(settings, "media_overlays_enabled", True, raising=False)
+    monkeypatch.setattr(settings, "visual_blocks_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "overlay_autoplace_enabled", False, raising=False)
+    monkeypatch.setattr(settings, "subtitled_text_lane_enabled", False, raising=False)
     monkeypatch.setattr(gj.storage, "object_exists", lambda p: object_exists)
     # _variants_for_response re-signs base_video_path on read — keep it local.
     monkeypatch.setattr(gj, "signed_get_url", lambda p, ttl=None: f"https://signed/{p}")
@@ -114,6 +117,84 @@ def _slot_edits() -> list[gj.TimelineSlotEdit]:
 def _commit_req(**kw) -> gj.EditorCommitRequest:
     kw.setdefault("base_generation", "2026-07-01T00:00:00Z")
     return gj.EditorCommitRequest(**kw)
+
+
+def _montage_block(asset_ids=("a1", "a2", "a3")) -> dict:
+    return {
+        "version": 1,
+        "id": "montage-1",
+        "kind": "montage",
+        "start_s": 0.0,
+        "end_s": 3.0,
+        "timing_mode": "manual",
+        "origin": "user",
+        "transition_in": "cut",
+        "transition_out": "fade",
+        "audio_policy": {"base": "continue", "sfx": "mute"},
+        "shots": [
+            {
+                "id": f"shot-{index}",
+                "asset_id": asset_id,
+                "src_gcs_path": f"users/u/plan/i/pool/{asset_id}.jpg",
+                "kind": "image",
+                "start_offset_s": float(index),
+                "duration_s": 1.0,
+                "crop": {"x_frac": 0.5, "y_frac": 0.5, "scale": 1.0},
+                "motion": "zoom_in",
+            }
+            for index, asset_id in enumerate(asset_ids)
+        ],
+    }
+
+
+def _visual_assets(asset_ids=("a1", "a2", "a3")) -> dict[str, dict]:
+    return {
+        asset_id: {
+            "status": "ready",
+            "gcs_path": f"users/u/plan/i/pool/{asset_id}.jpg",
+            "kind": "image",
+        }
+        for asset_id in asset_ids
+    }
+
+
+def test_visual_block_commit_is_atomic_and_invalidates_composite(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job()
+    job.assembly_plan["variants"][0]["visual_blocks_base_path"] = "old-cache.mp4"
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(visual_blocks=[_montage_block()]),
+        visual_assets=_visual_assets(),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["visual_blocks"][0]["kind"] == "montage"
+    assert variant["visual_blocks_base_path"] == "old-cache.mp4"
+    assert variant["visual_blocks_cache_stale"] is True
+    assert prep["sections"]["visual_blocks"] is True
+    assert prep["generation"] == variant["render_generation_id"]
+
+
+def test_visual_block_commit_rejects_unowned_asset(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            _job(),
+            "song_text",
+            _commit_req(visual_blocks=[_montage_block()]),
+            visual_assets={"a1": _visual_assets()["a1"]},
+        )
+    assert exc.value.status_code == 422
+    assert "owned" in str(exc.value.detail)
 
 
 # ── happy path: all sections stage atomically + exactly one render kick ────────
@@ -150,6 +231,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "music": False,
         "sound_effects": False,
         "media_overlays": False,
+        "visual_blocks": False,
     }
 
     # Exactly ONE render kick, carrying the new token + the timeline override.
@@ -239,6 +321,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "music": False,
         "sound_effects": False,
         "media_overlays": False,
+        "visual_blocks": False,
     }
 
     calls: list[dict] = []
@@ -1326,6 +1409,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "music": False,
         "sound_effects": False,
         "media_overlays": False,
+        "visual_blocks": False,
         "title": True,
     }
     v = job.assembly_plan["variants"][0]
@@ -1501,11 +1585,13 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "mix": True,  # fixture carries mix=0.5
         "sfx": True,
         "overlays": True,
+        "visual_blocks": False,
         # _arm leaves overlay_autoplace_enabled at its default (False).
         "suggestions": False,
         "reason": None,
         "sfx_reason": None,
         "overlays_reason": None,
+        "visual_blocks_reason": "visual_blocks_disabled",
         "suggestions_reason": "autoplace_disabled",
     }
 

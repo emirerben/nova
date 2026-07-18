@@ -1,0 +1,25 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "First", "start_s": 12.0, "end_s": 12.3},
+      {"word": "compare", "start_s": 12.3, "end_s": 12.7},
+      {"word": "the", "start_s": 12.7, "end_s": 12.8},
+      {"word": "three", "start_s": 12.8, "end_s": 13.1},
+      {"word": "examples", "start_s": 13.1, "end_s": 13.6}
+    ],
+    "assets": [
+      {"asset_id": "a1", "kind": "image", "subject": "example one"},
+      {"asset_id": "a2", "kind": "image", "subject": "example two"},
+      {"asset_id": "a3", "kind": "image", "subject": "example three"}
+    ],
+    "duration_s": 36.0,
+    "beat_timestamps_s": [12.0, 12.5, 13.0, 13.5],
+    "visual_signals": {"repetition_signals": "same talking-head shot for eight seconds"},
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"montage\",\"purpose\":\"example\",\"start_s\":12.0,\"end_s\":13.6,\"asset_ids\":[\"a1\",\"a2\",\"a3\"],\"text\":null,\"rationale\":\"Three relevant examples interrupt repetitive footage at the spoken list.\",\"confidence\":\"high\"}]}",
+  "output": {"treatments": [{"kind": "montage", "purpose": "example", "start_s": 12.0, "end_s": 13.6, "asset_ids": ["a1", "a2", "a3"], "text": null, "rationale": "Three relevant examples interrupt repetitive footage at the spoken list.", "confidence": "high"}]},
+  "meta": {"source": "hand_authored_golden", "notes": "Editorially justified interruption over repetitive footage."}
+}

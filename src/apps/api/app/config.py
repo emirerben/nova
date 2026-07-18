@@ -493,6 +493,14 @@ class Settings(BaseSettings):
     # image cards still flatten through JPEG exactly as before.
     media_overlay_alpha_enabled: bool = False
 
+    # First-class visual replacement blocks (montage + interstitial text cards).
+    # Blocks render below authored text/captions and are additive: with the flag
+    # off, no existing render path or editor capability changes.
+    visual_blocks_enabled: bool = False
+    # Separate quality gate for zero-click visual-treatment planning. Manual
+    # authoring can launch first while planner evals are still running.
+    visual_block_autoplan_enabled: bool = False
+
     # Sound-effects glossary + user placement (PR-1 foundation). Admin-curated
     # SFX + user uploads placed at arbitrary timestamps in a plan-item variant.
     # Kill switch: SOUND_EFFECTS_ENABLED=false → sfx-upload-urls + sound-effects

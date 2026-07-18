@@ -47,6 +47,7 @@ def build_sound_effects_command(
     effects: list[SoundEffectPlacement],
     effect_local_paths: list[str],
     output_path: str,
+    mute_intervals: list[tuple[float, float]] | None = None,
 ) -> list[str]:
     """Build the ffmpeg command to mix sound effects into a video's audio track.
 
@@ -100,6 +101,8 @@ def build_sound_effects_command(
         chain_parts.append(f"adelay={ms}|{ms}")
         # Per-placement volume.
         chain_parts.append(f"volume={eff.gain:.4f}")
+        for start_s, end_s in mute_intervals or []:
+            chain_parts.append(f"volume=0:enable='between(t,{start_s:.6f},{end_s:.6f})'")
 
         # The output pad label attaches DIRECTLY to the last filter, with no
         # separating comma — "volume=1.0[fx0]", never "volume=1.0,[fx0]". A comma
@@ -146,6 +149,7 @@ def apply_sound_effects(
     effects: list[SoundEffectPlacement],
     output_gcs_path: str,
     job_id: str | None = None,
+    mute_intervals: list[tuple[float, float]] | None = None,
 ) -> str:
     """Download base variant, mix SFX into audio track, upload result.
 
@@ -206,7 +210,13 @@ def apply_sound_effects(
             raise SoundEffectsError("All SFX assets failed to load — skipping apply-pass")
 
         output_local = os.path.join(tmpdir, "output.mp4")
-        cmd = build_sound_effects_command(base_local, ready_effects, local_paths, output_local)
+        cmd = build_sound_effects_command(
+            base_local,
+            ready_effects,
+            local_paths,
+            output_local,
+            mute_intervals=mute_intervals,
+        )
         log.info(
             "sfx_applying",
             job_id=job_id,

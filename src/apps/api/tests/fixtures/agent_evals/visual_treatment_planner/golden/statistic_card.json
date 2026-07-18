@@ -1,0 +1,24 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "Retention", "start_s": 6.0, "end_s": 6.4},
+      {"word": "rose", "start_s": 6.4, "end_s": 6.7},
+      {"word": "by", "start_s": 6.7, "end_s": 6.8},
+      {"word": "thirty", "start_s": 6.8, "end_s": 7.1},
+      {"word": "percent", "start_s": 7.1, "end_s": 7.5}
+    ],
+    "assets": [],
+    "duration_s": 30.0,
+    "beat_timestamps_s": [],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"text_card\",\"purpose\":\"statistic\",\"start_s\":6.0,\"end_s\":8.0,\"asset_ids\":[],\"text\":\"Retention rose 30%\",\"rationale\":\"The spoken statistic benefits from an isolated, readable card.\",\"confidence\":\"high\"}]}",
+  "output": {
+    "treatments": [
+      {"kind": "text_card", "purpose": "statistic", "start_s": 6.0, "end_s": 8.0, "asset_ids": [], "text": "Retention rose 30%", "rationale": "The spoken statistic benefits from an isolated, readable card.", "confidence": "high"}
+    ]
+  },
+  "meta": {"source": "hand_authored_golden", "notes": "Transcript-grounded statistic, no invented number."}
+}

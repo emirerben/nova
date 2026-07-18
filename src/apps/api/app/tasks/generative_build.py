@@ -54,6 +54,18 @@ from app.services.generative_jobs import CONTENT_PLAN_PRIMARY_VARIANT_POLICY
 from app.services.job_phases import mark_failed_phase, mark_finished, mark_started, record_phase
 from app.worker import celery_app
 
+
+def _rendered_duration_s(path: str) -> float | None:
+    """Best-effort persisted duration for editor-side structural validation."""
+    try:
+        from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+        duration = float(probe_video(path).duration_s)
+        return round(duration, 3) if duration > 0 else None
+    except Exception:  # noqa: BLE001 - render success must not depend on metadata
+        return None
+
+
 log = structlog.get_logger()
 
 MAX_ERROR_DETAIL_LEN = 2000
@@ -763,6 +775,44 @@ def _run_generative_job(job_id: str) -> None:
         _maybe_autoplace_after_finalize(job_id)
     except Exception as exc:  # noqa: BLE001
         log.warning("autoplace_chain_dispatch_failed", job_id=job_id, error=str(exc)[:200])
+    try:
+        _maybe_visual_blocks_after_finalize(job_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("visual_blocks_chain_dispatch_failed", job_id=job_id, error=str(exc)[:200])
+
+
+def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
+    """Dispatch first-edit block planning once for compatible ready variants."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    from app.config import settings as _settings  # noqa: PLC0415
+    from app.tasks.autoplace import prepare_visual_block_assets  # noqa: PLC0415
+
+    if not (_settings.visual_blocks_enabled and _settings.visual_block_autoplan_enabled):
+        return
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None or job.content_plan_item_id is None:
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        eligible: list[str] = []
+        for variant in variants:
+            if (
+                variant.get("render_status") == "ready"
+                and variant.get("base_video_path")
+                and variant.get("text_mode") != "lyrics"
+                and not variant.get("visual_blocks_autoplan_attempted")
+            ):
+                variant["visual_blocks_autoplan_attempted"] = True
+                eligible.append(str(variant.get("variant_id")))
+        if not eligible:
+            return
+        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+        flag_modified(job, "assembly_plan")
+        db.commit()
+    prepare_visual_block_assets.apply_async(
+        args=[job_id, eligible], queue=_settings.autoplace_queue
+    )
 
 
 def _maybe_autoplace_after_finalize(job_id: str) -> None:
@@ -2331,11 +2381,23 @@ def _run_sfx_pass(
                 pre_clean = current_video_path
 
         try:
+            from app.agents._schemas.visual_block import coerce_visual_blocks  # noqa: PLC0415
+
+            muted_sfx_intervals = (
+                [
+                    (block.start_s, block.end_s)
+                    for block in coerce_visual_blocks(existing.get("visual_blocks") or [])
+                    if block.audio_policy.sfx == "mute"
+                ]
+                if settings.visual_blocks_enabled
+                else []
+            )
             new_url = apply_sound_effects(
                 base_gcs_path=pre_clean,
                 effects=placements,
                 output_gcs_path=current_video_path,
                 job_id=job_id,
+                mute_intervals=muted_sfx_intervals,
             )
         except Exception as exc:  # noqa: BLE001
             log.error(
@@ -2553,6 +2615,65 @@ def _resolve_subject_matte_for_burn(
     return provider, matte_gcs_path, overlays
 
 
+def _ensure_visual_blocks_base(
+    *,
+    job_id: str,
+    variant_id: str,
+    variant: dict,
+    base_gcs_path: str,
+) -> tuple[str, str | None]:
+    """Return the text-free picture base, composing persisted blocks once.
+
+    The original ``base_video_path`` stays immutable.  A successful block
+    composite is cached under ``visual_blocks_base_path`` and reused by later
+    text/caption reburns.  With the flag off or no blocks, this is a literal
+    no-op so existing renders remain byte-identical.
+    """
+    from app.agents._schemas.visual_block import coerce_visual_blocks  # noqa: PLC0415
+    from app.config import settings as _visual_settings  # noqa: PLC0415
+
+    if not _visual_settings.visual_blocks_enabled:
+        return base_gcs_path, None
+    blocks = coerce_visual_blocks(variant.get("visual_blocks") or [])
+    if not blocks:
+        return base_gcs_path, None
+    cached = variant.get("visual_blocks_base_path")
+    if cached and not variant.get("visual_blocks_cache_stale"):
+        log.info(
+            "visual_blocks_cache_hit",
+            job_id=job_id,
+            variant_id=variant_id,
+            cache_path=str(cached),
+        )
+        return str(cached), str(cached)
+
+    from app.pipeline.visual_blocks import apply_visual_blocks  # noqa: PLC0415
+
+    cache_path = f"generative-jobs/{job_id}/visual-blocks/{variant_id}_{uuid.uuid4().hex[:10]}.mp4"
+    log.info(
+        "visual_blocks_cache_miss",
+        job_id=job_id,
+        variant_id=variant_id,
+        block_count=len(blocks),
+    )
+    apply_visual_blocks(
+        base_gcs_path=base_gcs_path,
+        blocks=blocks,
+        output_gcs_path=cache_path,
+        job_id=job_id,
+    )
+    return cache_path, cache_path
+
+
+def _free_retired_visual_blocks_base(previous: dict, replacement: str | None) -> None:
+    """Delete an invalidated block cache only after its replacement wins."""
+    old_path = previous.get("visual_blocks_base_path")
+    if old_path and old_path != replacement:
+        from app.storage import delete_object_best_effort  # noqa: PLC0415
+
+        delete_object_best_effort(old_path)
+
+
 def _reburn_text_on_base(
     *,
     job_id: str,
@@ -2614,12 +2735,22 @@ def _reburn_text_on_base(
     from app.storage import download_to_file, upload_public_read  # noqa: PLC0415
 
     base_gcs_path = existing["base_video_path"]
+    render_base_gcs_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        variant=existing,
+        base_gcs_path=base_gcs_path,
+    )
+    visual_blocks_patch = {
+        "visual_blocks_base_path": visual_blocks_cache_path,
+        "visual_blocks_cache_stale": False,
+    }
 
     with tempfile.TemporaryDirectory(prefix="nova_reburn_") as tmpdir:
         local_base = os.path.join(tmpdir, "base.mp4")
 
         # Download the cached base
-        download_to_file(base_gcs_path, local_base)
+        download_to_file(render_base_gcs_path, local_base)
 
         def _burn_text_for_variant(
             input_path: str,
@@ -2679,6 +2810,7 @@ def _reburn_text_on_base(
                 _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
                 _old_video_path = _fresh_existing.get("video_path") or existing.get("video_path")
                 return {
+                    **visual_blocks_patch,
                     "render_status": "ready",
                     "ok": True,
                     "render_finished_at": datetime.utcnow().isoformat() + "Z",
@@ -2717,6 +2849,7 @@ def _reburn_text_on_base(
             _te_gcs_key = (existing.get("video_path") or "").lstrip("/")
             _te_output_url = upload_public_read(_te_final_path, _te_gcs_key)
             return {
+                **visual_blocks_patch,
                 "render_status": "ready",
                 "ok": True,
                 "render_finished_at": datetime.utcnow().isoformat() + "Z",
@@ -2930,6 +3063,7 @@ def _reburn_text_on_base(
         output_url = upload_public_read(final_path, variant_gcs_key)
 
         return {
+            **visual_blocks_patch,
             "intro_text": agent_text.text if agent_text else None,
             "intro_highlight_word": (
                 getattr(agent_text, "highlight_word", None) if agent_text else None
@@ -3345,7 +3479,13 @@ def _run_regenerate_variant(
             return
         _is_subtitled_text_reburn = (
             existing.get("resolved_archetype") == "subtitled"
-            and getattr(settings, "subtitled_text_lane_enabled", False)
+            and (
+                getattr(settings, "subtitled_text_lane_enabled", False)
+                or (
+                    getattr(settings, "visual_blocks_enabled", False)
+                    and bool(existing.get("visual_blocks"))
+                )
+            )
             and _TEXT_ELEMENTS_ENABLED
             and existing.get("text_elements_user_edited")
             and new_track_id is None
@@ -3694,6 +3834,7 @@ def _run_regenerate_variant(
                 outcome="reburn",
             ):
                 return
+            _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
             if _old_video_path_for_delete:
                 from app.storage import delete_object_best_effort  # noqa: PLC0415
 
@@ -3925,21 +4066,35 @@ def _run_regenerate_variant(
     # E1: the token check covers BOTH terminal branches (ready and failed) —
     # a superseded task's output/status must never clobber the newer commit's.
     if result.get("ok"):
+        latest_variant = _fresh_variant_snapshot(job_id, variant_id) or existing
+        has_visual_blocks = settings.visual_blocks_enabled and bool(
+            latest_variant.get("visual_blocks")
+        )
+        if settings.visual_blocks_enabled and not has_visual_blocks:
+            # Removing every block must publish the newly assembled clean base
+            # and retire any previous block composite rather than preserving it
+            # through the variant merge.
+            result["visual_blocks_base_path"] = None
+            result["visual_blocks_cache_stale"] = False
         if (
-            _TEXT_ELEMENTS_ENABLED
-            and existing.get("text_elements_user_edited")
-            and result.get("base_video_path")
-        ):
+            (_TEXT_ELEMENTS_ENABLED and latest_variant.get("text_elements_user_edited"))
+            or has_visual_blocks
+        ) and result.get("base_video_path"):
             result = {
                 **result,
                 **_reburn_text_on_base(
                     job_id=job_id,
                     variant_id=variant_id,
                     existing={
-                        **existing,
+                        **latest_variant,
                         **result,
-                        "text_elements": existing.get("text_elements") or [],
-                        "text_elements_user_edited": True,
+                        "text_elements": latest_variant.get("text_elements") or [],
+                        "text_elements_user_edited": bool(
+                            latest_variant.get("text_elements_user_edited")
+                        ),
+                        # A full assembly minted a new clean base; never reuse a
+                        # block composite whose audio/picture came from the old one.
+                        "visual_blocks_base_path": None,
                     },
                     agent_text=agent_text,
                     agent_form=agent_form,
@@ -4006,6 +4161,7 @@ def _run_regenerate_variant(
 
             delete_object_best_effort(old_matte_path)
             delete_object_best_effort(f"{old_matte_path}.json")
+        _free_retired_visual_blocks_base(existing, result.get("visual_blocks_base_path"))
         # A full re-render re-assembles video_path without user media layers.
         _reapply_user_media_layers(
             job_id=job_id,
@@ -6117,6 +6273,7 @@ def _render_generative_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
+            "duration_s": _rendered_duration_s(final_path),
         }
     except Exception as exc:
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
@@ -6340,6 +6497,7 @@ def _render_talking_head_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
+            "duration_s": _rendered_duration_s(final_path),
         }
     except SpineExtractionError:
         raise  # job-level degrade to montage (handled by the caller)
@@ -6618,6 +6776,7 @@ def _render_narrated_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
+            "duration_s": _rendered_duration_s(final_path),
             "base_video_path": base_gcs,
             "caption_cues": caption_cues or None,
             # Narrated renders no media-overlay cards (v1), but the finalize whitelist
@@ -7284,6 +7443,7 @@ def _render_subtitled_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
+            "duration_s": _rendered_duration_s(final_path),
             "base_video_path": base_gcs,
             "caption_cues": cues or None,
             # The language actually spoken/detected (not the plan language).
@@ -7556,6 +7716,12 @@ def _run_reburn_narrated_captions(
     rank = variant.get("rank")
     if not base_path:
         raise ValueError("variant has no caption-free base — cannot reburn captions")
+    render_base_path, visual_blocks_cache_path = _ensure_visual_blocks_base(
+        job_id=job_id,
+        variant_id=variant_id,
+        variant=variant,
+        base_gcs_path=base_path,
+    )
 
     if not _update_variant_entry(
         job_id,
@@ -7567,8 +7733,15 @@ def _run_reburn_narrated_captions(
         return
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
-        download_to_file(base_path, base_local)
-        if archetype == "subtitled" and getattr(settings, "subtitled_text_lane_enabled", False):
+        download_to_file(render_base_path, base_local)
+        if (
+            _TEXT_ELEMENTS_ENABLED
+            and variant.get("text_elements_user_edited")
+            and (
+                getattr(settings, "subtitled_text_lane_enabled", False)
+                or getattr(settings, "visual_blocks_enabled", False)
+            )
+        ):
             variant = _fresh_variant_snapshot(job_id, variant_id) or variant
             out_local = _compose_subtitled_final(base_local, variant, tmpdir)
         else:
@@ -7598,6 +7771,8 @@ def _run_reburn_narrated_captions(
         # the pre-reburn video (deleted below), so a stale key is a download-404.
         "pre_media_overlay_video_path": None,
         "pre_sfx_video_path": None,
+        "visual_blocks_base_path": visual_blocks_cache_path,
+        "visual_blocks_cache_stale": False,
     }
     if will_reapply:
         # OV-7: the reapply chain owns the final ready/failed — no effect-less
@@ -7621,6 +7796,7 @@ def _run_reburn_narrated_captions(
         return
     if terminal_state is not None:
         terminal_state["accepted"] = True  # F5: video swap landed
+    _free_retired_visual_blocks_base(variant, visual_blocks_cache_path)
     # OV-4: deletes run only after the accepted terminal write above — a
     # discarded stale task must never delete the winning task's live blobs.
     _free_retired_media_snapshots(variant, (patch.get("video_path"), patch.get("base_video_path")))
@@ -8789,6 +8965,13 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "intro_text": r.get("intro_text"),
                     "intro_highlight_word": r.get("intro_highlight_word"),
                     "base_video_path": r.get("base_video_path"),
+                    # Visual replacement blocks render below text/captions. The
+                    # original clean base remains immutable; the derived cache
+                    # is reused by text-only reburns.
+                    "visual_blocks": r.get("visual_blocks"),
+                    "visual_blocks_base_path": r.get("visual_blocks_base_path"),
+                    "visual_blocks_cache_stale": r.get("visual_blocks_cache_stale", False),
+                    "visual_blocks_autoplan_attempted": r.get("visual_blocks_autoplan_attempted"),
                     # media-overlay cards (slice 1) — MUST survive finalization
                     # or "clear all" loses the pre-overlay clean copy reference.
                     "media_overlays": r.get("media_overlays"),

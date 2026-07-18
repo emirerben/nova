@@ -1,0 +1,21 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "Watch", "start_s": 0.0, "end_s": 0.3},
+      {"word": "this", "start_s": 0.3, "end_s": 0.5},
+      {"word": "happen", "start_s": 0.5, "end_s": 0.9}
+    ],
+    "assets": [
+      {"asset_id": "a1", "kind": "image", "subject": "unrelated screenshot"}
+    ],
+    "duration_s": 12.0,
+    "beat_timestamps_s": [],
+    "visual_signals": {"shot_quality": "strong demonstrative footage shows the promised action"},
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[]}",
+  "output": {"treatments": []},
+  "meta": {"source": "hand_authored_golden", "notes": "Restraint: footage carries the demonstrative hook and assets are insufficient."}
+}

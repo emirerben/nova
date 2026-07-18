@@ -214,6 +214,11 @@ class TextElement(BaseModel):
         default="generative_intro",
         description="Maps to the existing burn-dict role (renderer dispatch).",
     )
+    visual_block_id: str | None = Field(
+        default=None,
+        max_length=80,
+        description="Optional visual block this text is grouped with in the editor.",
+    )
     position: Literal["top", "middle", "bottom", "custom"] = Field(
         default="middle",
         description=("Vertical position preset. 'custom' requires explicit x_frac / y_frac."),
