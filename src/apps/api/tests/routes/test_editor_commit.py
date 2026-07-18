@@ -148,6 +148,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "timeline": True,
         "mix": True,
         "music": False,
+        "lyrics": False,
         "sound_effects": False,
         "media_overlays": False,
     }
@@ -237,6 +238,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "timeline": False,
         "mix": False,
         "music": False,
+        "lyrics": False,
         "sound_effects": False,
         "media_overlays": False,
     }
@@ -1324,6 +1326,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "timeline": False,
         "mix": False,
         "music": False,
+        "lyrics": False,
         "sound_effects": False,
         "media_overlays": False,
         "title": True,
@@ -1507,6 +1510,12 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "sfx_reason": None,
         "overlays_reason": None,
         "suggestions_reason": "autoplace_disabled",
+        "lyrics": {
+            "editable": False,
+            "enabled": False,
+            "can_toggle_on": False,
+            "reason": "disabled",
+        },
     }
 
 

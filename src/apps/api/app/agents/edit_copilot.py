@@ -745,7 +745,8 @@ def _family_allowed(name: str, snapshot: dict) -> bool:
 
 
 def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
-    text_count = _snapshot_len(snapshot, _TEXT_INDEX_KEYS)
+    text_bars = _snapshot_list(snapshot, _TEXT_INDEX_KEYS)
+    text_count = len(text_bars)
     slot_count = _snapshot_len(snapshot, _SLOT_INDEX_KEYS)
     sfx_count = _section_len(snapshot, "sfx", "placements")
     overlay_count = _section_len(snapshot, "overlays", "cards")
@@ -754,6 +755,11 @@ def _indices_valid(name: str, payload: dict, snapshot: dict) -> bool:
         if key in payload and not _index_in_bounds(payload[key], text_count):
             log.warning("edit_copilot.drop_text_index_oob", op=name, index=payload.get(key))
             return False
+        if key in payload and name in {"set_text_timing", "remove_text"}:
+            bar = text_bars[int(payload[key])]
+            if isinstance(bar, dict) and str(bar.get("id") or "").startswith("lyric_"):
+                log.warning("edit_copilot.drop_locked_lyric_text_op", op=name, index=payload[key])
+                return False
     for key in ("slot_index", "from_index", "to_index"):
         if key in payload and not _index_in_bounds(payload[key], slot_count):
             log.warning(
