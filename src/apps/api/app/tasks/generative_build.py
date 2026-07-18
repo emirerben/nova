@@ -9210,6 +9210,17 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),
                     "text_elements_user_edited": r.get("text_elements_user_edited"),
+                    # Lyrics editor state — MUST survive finalization or the editor
+                    # sees no lyric projections and capabilities report
+                    # no_renderable_lyrics until the first re-render. Pinned by
+                    # test_finalize_job_preserves_lyric_fields.
+                    "lyrics_enabled": r.get("lyrics_enabled"),
+                    "lyrics_available": r.get("lyrics_available"),
+                    "lyric_line_overrides": r.get("lyric_line_overrides"),
+                    "lyric_overlay_snapshot": r.get("lyric_overlay_snapshot"),
+                    # Output orientation — initial renders are portrait today, but
+                    # keep the persisted value authoritative rather than implied.
+                    "orientation": r.get("orientation"),
                     # render fingerprint — the caption editor's remount key reads it, so
                     # stripping it here would silently degrade re-seeding after reburns.
                     "render_finished_at": r.get("render_finished_at"),

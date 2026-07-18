@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1.1] — 2026-07-18
+
+### Fixed
+- **Fresh lyrics renders now expose their editor state.** `_finalize_job` rebuilds each variant through an explicit key whitelist, and the new lyrics-editor fields (`lyrics_enabled`, `lyrics_available`, `lyric_line_overrides`, `lyric_overlay_snapshot`) plus `orientation` were being silently stripped on the initial render path — so a brand-new song_lyrics variant reported "no_renderable_lyrics" and projected no editable lyric lines until its first re-render. Caught in the pre-flag-flip local E2E. Pinned by `test_finalize_job_preserves_lyric_fields`.
+
 ## [0.8.1.0] — 2026-07-18
 
 ### Added

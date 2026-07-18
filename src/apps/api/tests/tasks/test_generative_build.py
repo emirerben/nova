@@ -4064,6 +4064,52 @@ def test_finalize_job_preserves_sound_effects(monkeypatch):
     assert job.status == "variants_ready"
 
 
+def test_finalize_job_preserves_lyric_fields(monkeypatch):
+    """REGRESSION: _finalize_job's key whitelist stripped the lyrics-editor state,
+    so a fresh song_lyrics render reported no_renderable_lyrics and projected no
+    lyric text elements until its first re-render (caught in the 2026-07-18 E2E)."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    snapshot = [
+        {
+            "line_key": "L14",
+            "text": "First lyric",
+            "start_s": 1.2,
+            "end_s": 3.4,
+            "font_family": "Playfair Display",
+            "size_px": 70,
+            "color": "#FFFFFF",
+            "highlight_color": "#FFD24A",
+            "y_frac": 0.72,
+            "effect": "karaoke-line",
+        }
+    ]
+    overrides = {"L14": {"text": "x", "orig_text": "First lyric", "orig_start_s": 1.2}}
+    result = {
+        "variant_id": "song_lyrics",
+        "rank": 1,
+        "text_mode": "lyrics",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/v.mp4",
+        "lyrics_enabled": True,
+        "lyrics_available": True,
+        "lyric_line_overrides": overrides,
+        "lyric_overlay_snapshot": snapshot,
+        "orientation": "portrait",
+    }
+    gb._finalize_job(str(uuid.uuid4()), [result])
+    v = job.assembly_plan["variants"][0]
+    assert v["lyrics_enabled"] is True
+    assert v["lyrics_available"] is True
+    assert v["lyric_line_overrides"] == overrides
+    assert v["lyric_overlay_snapshot"] == snapshot
+    assert v["orientation"] == "portrait"
+
+
 def test_reapply_persisted_sfx_reapplies_and_resets_pre_sfx(monkeypatch):
     """REGRESSION: a full re-render (song-swap / retext / style / clip edit) re-assembles
     video_path WITHOUT the SFX mix. The terminal hook (now wired into both full-re-render
