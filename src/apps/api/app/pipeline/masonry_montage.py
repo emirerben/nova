@@ -384,6 +384,7 @@ def _masonry_motion_metadata(
     duration_s: float,
     board_width: int | None = None,
     pocket: tuple[float, float, float, float] | None = None,
+    layer_origin_px: float = 0.0,
 ) -> dict:
     output_w = int(settings.output_width)
     resolved_board_width = int(board_width or _masonry_board_width())
@@ -393,6 +394,10 @@ def _masonry_motion_metadata(
         "pan_px": _masonry_pan_px(board_width=resolved_board_width),
         "board_width_px": resolved_board_width,
         "frame_width_px": output_w,
+        "layer_origin_px": round(
+            max(0.0, min(float(layer_origin_px), resolved_board_width - output_w)),
+            3,
+        ),
     }
     if pocket is not None:
         left, top, right, bottom = pocket
@@ -418,6 +423,16 @@ def _masonry_candidate_from_rect(
 ) -> dict:
     output_w = int(settings.output_width)
     output_h = int(settings.output_height)
+    resolved_board_width = int(board_width or _masonry_board_width())
+    board_center_x = left + width / 2.0
+    layer_origin_px = (
+        0.0
+        if left >= 0 and left + width <= output_w
+        else max(
+            0.0,
+            min(board_center_x - output_w / 2.0, resolved_board_width - output_w),
+        )
+    )
     if max_width_frac is None:
         if rotation_deg:
             max_width_frac = min(0.82, max(0.36, (height / output_w) * 0.86))
@@ -425,7 +440,7 @@ def _masonry_candidate_from_rect(
             max_width_frac = max(_PLACEMENT_MIN_WIDTH_FRAC, min(0.9, (width / output_w) * 0.92))
     return {
         "source": source,
-        "x_frac": round((left + width / 2.0) / output_w, 4),
+        "x_frac": round((board_center_x - layer_origin_px) / output_w, 4),
         "y_frac": round((top + height / 2.0) / output_h, 4),
         "max_width_frac": round(max(_PLACEMENT_MIN_WIDTH_FRAC, min(0.9, max_width_frac)), 4),
         "rotation_deg": round(float(rotation_deg), 3),
@@ -434,6 +449,7 @@ def _masonry_candidate_from_rect(
             duration_s=duration_s,
             board_width=board_width,
             pocket=(left, top, left + width, top + height),
+            layer_origin_px=layer_origin_px,
         ),
     }
 
@@ -444,6 +460,7 @@ def masonry_text_placement_candidates(
     reveal_window_s: float = 4.0,
     max_candidates: int = 3,
     preset: str | None = None,
+    anchor_time_s: float | None = None,
 ) -> list[dict]:
     """Find stable whitespace regions over the masonry reveal window.
 
@@ -462,7 +479,17 @@ def masonry_text_placement_candidates(
 
     window = max(0.1, min(float(reveal_window_s), duration))
     sample_count = max(2, _PLACEMENT_SAMPLE_COUNT)
-    sample_times = [window * i / (sample_count - 1) for i in range(sample_count)]
+    default_anchor = window / 2.0
+    requested_anchor = default_anchor if anchor_time_s is None else float(anchor_time_s)
+    if not math.isfinite(requested_anchor):
+        requested_anchor = default_anchor
+    anchor_time = min(
+        duration,
+        max(0.0, requested_anchor),
+    )
+    window_start = min(max(0.0, anchor_time - window / 2.0), duration - window)
+    sample_times = [window_start + window * i / (sample_count - 1) for i in range(sample_count)]
+    anchor_scroll = pan_px * anchor_time / duration
 
     stable_obstacles = []
     for index, (x, y, width, height) in enumerate(layout):
@@ -485,6 +512,8 @@ def masonry_text_placement_candidates(
         stable_obstacles,
         output_w=output_w,
         output_h=output_h,
+        safe_left=anchor_scroll + _PLACEMENT_FRAME_MARGIN_PX,
+        safe_right=anchor_scroll + output_w - _PLACEMENT_FRAME_MARGIN_PX,
     )
 
     ranked: list[tuple[float, float, float, tuple[float, float, float, float]]] = []
@@ -501,7 +530,6 @@ def masonry_text_placement_candidates(
             )
             visible_ratios.append(visible_width / width)
         reveal_visibility = sum(visible_ratios) / len(visible_ratios)
-        anchor_scroll = pan_px * (window / 2.0) / duration
         anchor_visible_width = max(
             0.0,
             min(right - anchor_scroll, output_w - _PLACEMENT_FRAME_MARGIN_PX)
@@ -509,7 +537,7 @@ def masonry_text_placement_candidates(
         )
         if anchor_visible_width / width < 0.98:
             continue
-        center_x = (left + right) / 2.0 / output_w
+        center_x = ((left + right) / 2.0 - anchor_scroll) / output_w
         spatial_score = abs(center_x - 0.5)
         ranked.append((reveal_visibility, area_score, spatial_score, rect))
 
@@ -982,7 +1010,7 @@ def build_masonry_text_burn_command(
 
     filters = ["[0:v]null[base]"]
     previous = "base"
-    x_expr = f"-min(t\\,{duration:.3f})/{duration:.3f}*{pan_px}"
+    pan_expr = f"min(t\\,{duration:.3f})/{duration:.3f}*{pan_px}"
     for idx, seq in enumerate(sequences):
         src = f"{idx + 1}:v"
         start = float(seq.get("start_s", 0.0))
@@ -993,6 +1021,20 @@ def build_masonry_text_burn_command(
         else:
             filters.append(f"[{src}]format=rgba[{layer}]")
         out = f"v{idx}"
+        raw_origin = seq.get("layer_origin_x_px", 0.0)
+        layer_origin = (
+            float(raw_origin)
+            if isinstance(raw_origin, (int, float))
+            and not isinstance(raw_origin, bool)
+            and math.isfinite(float(raw_origin))
+            else 0.0
+        )
+        resolved_board_width = int(board_width or _masonry_board_width())
+        layer_origin = max(
+            0.0,
+            min(layer_origin, max(0, resolved_board_width - int(settings.output_width))),
+        )
+        x_expr = f"{layer_origin:g}-{pan_expr}" if layer_origin > 0 else f"-{pan_expr}"
         filters.append(
             f"[{previous}][{layer}]overlay=x={x_expr}:y=0:eval=frame"
             f":enable='between(t,{start:.4f},{end:.4f})'"

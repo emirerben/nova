@@ -2528,6 +2528,57 @@ def test_single_sequence_overlay_keeps_per_overlay_path(tmp_workdir):
     )
 
 
+def test_masonry_sequence_origins_survive_render_and_bypass_composite(tmp_workdir):
+    blocks = [
+        _seq_block(
+            "static late",
+            0.0,
+            2.0,
+            masonry_layer_origin_x_px=600.0,
+        ),
+        _seq_block(
+            "animated later",
+            1.0,
+            3.0,
+            effect="fade-in",
+            masonry_layer_origin_x_px=760.0,
+            position_y_frac=0.58,
+        ),
+    ]
+
+    with mock.patch.object(tos, "_render_sequence_composite") as composite_mock:
+        sequences, _work_dir = tos.render_text_overlay_sequences(blocks, tmp_workdir)
+
+    composite_mock.assert_not_called()
+    assert [sequence["layer_origin_x_px"] for sequence in sequences] == [600.0, 760.0]
+    assert [sequence["is_animated"] for sequence in sequences] == [False, True]
+
+
+def test_masonry_origin_keeps_unshifted_sequence_blocks_composited(tmp_workdir):
+    blocks = [
+        _seq_block("first", 0.0, 2.0),
+        _seq_block("second", 0.5, 2.0, position_y_frac=0.58),
+        _seq_block(
+            "late pocket",
+            1.0,
+            3.0,
+            masonry_layer_origin_x_px=600.0,
+            position_y_frac=0.72,
+        ),
+    ]
+
+    sequences, _work_dir = tos.render_text_overlay_sequences(blocks, tmp_workdir)
+
+    assert len(sequences) == 2
+    composite, shifted = sequences
+    assert "sequence_group_000" in composite["pattern"]
+    assert "skia_seq_composite_" in composite["pattern"]
+    assert "layer_origin_x_px" not in composite
+    assert shifted["layer_origin_x_px"] == 600.0
+    assert "sequence_group_001" in shifted["pattern"]
+    assert "skia_overlay_" in shifted["pattern"]
+
+
 def test_sequence_composite_falls_back_when_fewer_than_two_valid_blocks(tmp_workdir):
     """Two sequence overlays where one fails validation (empty text) → the
     composite declines and the surviving block renders per-overlay."""

@@ -22,6 +22,7 @@ loading skia/PIL/fonts. If the renderer's vocab changes, update both.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import structlog
@@ -815,6 +816,21 @@ def build_sequence_overlays(
 # ── TextElement compiler ──────────────────────────────────────────────────────
 
 
+def _attach_masonry_layer_origin(overlay: dict, element: TextElement) -> None:
+    """Forward the board-local text layer origin without changing public fields."""
+    params = element.source_params
+    if not isinstance(params, dict):
+        return
+    motion = params.get("masonry_motion")
+    if not isinstance(motion, dict):
+        return
+    origin = motion.get("layer_origin_px")
+    if isinstance(origin, bool) or not isinstance(origin, (int, float)):
+        return
+    if math.isfinite(float(origin)) and float(origin) > 0:
+        overlay["masonry_layer_origin_x_px"] = float(origin)
+
+
 def build_overlays_from_text_elements(
     elements: list[TextElement],
     *,
@@ -823,7 +839,8 @@ def build_overlays_from_text_elements(
     """Compile a list of TextElement objects to burn-dict format.
 
     Byte-identical to the legacy generators for back-compat read-adapter output.
-    Reuses existing roles (generative_intro, generative_sequence) — renderer untouched.
+    Reuses existing roles (generative_intro, generative_sequence) and forwards private
+    masonry layer-origin metadata for the board-motion compositor.
 
     Position mapping:  TextElement → burn-dict
       "top"    → "top"
@@ -929,6 +946,7 @@ def build_overlays_from_text_elements(
                     reveal["fade_out_ms"] = elem.fade_out_ms
                 if elem.z is not None:
                     reveal["z"] = elem.z
+                _attach_masonry_layer_origin(reveal, elem)
                 overlays.append(reveal)
 
             # Settled color matches the animated reveal's final frame:
@@ -962,6 +980,7 @@ def build_overlays_from_text_elements(
                     hold["fade_out_ms"] = elem.fade_out_ms
                 if elem.z is not None:
                     hold["z"] = elem.z
+                _attach_masonry_layer_origin(hold, elem)
                 overlays.append(hold)
             continue
 
@@ -1006,6 +1025,7 @@ def build_overlays_from_text_elements(
         if elem.z is not None:
             overlay["z"] = elem.z
 
+        _attach_masonry_layer_origin(overlay, elem)
         overlays.append(overlay)
 
     return overlays

@@ -1,18 +1,25 @@
 import "@testing-library/jest-dom";
 import React from "react";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 
 import EditorCanvas from "@/app/plan/items/[id]/_editor/EditorCanvas";
 import type { PlanItemVariant, TextElement } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 class ResizeObserverMock {
-  observe() {}
+  constructor(private readonly callback: ResizeObserverCallback) {}
+  observe() {
+    this.callback(
+      [{ contentRect: { width: 540, height: 960 } } as ResizeObserverEntry],
+      this as unknown as ResizeObserver,
+    );
+  }
   unobserve() {}
   disconnect() {}
 }
 (global as unknown as { ResizeObserver: typeof ResizeObserverMock }).ResizeObserver =
   ResizeObserverMock;
+(global as unknown as { PointerEvent: typeof MouseEvent }).PointerEvent = MouseEvent;
 
 const bar: TextElementBar = {
   id: "title",
@@ -109,5 +116,60 @@ describe("EditorCanvas masonry board motion", () => {
       (0.8602 - 321.5 / 1080) * 100,
       6,
     );
+  });
+
+  it("persists a board-local layer origin when dragging into a late pocket", () => {
+    const onPatchBar = jest.fn();
+    const view = render(
+      <EditorCanvas
+        variant={variant}
+        elements={[element]}
+        bars={[bar]}
+        selectedTextId="title"
+        currentTime={6}
+        masonryDurationS={8}
+        zoomPct={100}
+        tool="select"
+        videoRef={React.createRef<HTMLVideoElement>()}
+        onSelectText={jest.fn()}
+        onClearSelection={jest.fn()}
+        onPatchBar={onPatchBar}
+        onFocusContent={jest.fn()}
+        onTimeUpdate={jest.fn()}
+        onDuration={jest.fn()}
+      />,
+    );
+    const overlay = view.container.querySelector<HTMLElement>("[data-text-id='title']");
+    expect(overlay).not.toBeNull();
+
+    fireEvent.pointerDown(overlay as HTMLElement, {
+      button: 0,
+      clientX: 0,
+      clientY: 0,
+      pointerId: 1,
+    });
+    fireEvent.pointerMove(overlay as HTMLElement, {
+      clientX: 400,
+      clientY: 0,
+      pointerId: 1,
+    });
+    fireEvent.pointerUp(overlay as HTMLElement, { pointerId: 1 });
+
+    expect(onPatchBar).toHaveBeenCalledWith(
+      "title",
+      expect.objectContaining({
+        x_frac: expect.any(Number),
+        source_params: {
+          masonry_motion: expect.objectContaining({ layer_origin_px: expect.any(Number) }),
+        },
+      }),
+    );
+    const patch = onPatchBar.mock.calls[0]?.[1] as TextElementBar;
+    const layerOriginPx = Number(
+      (patch.source_params?.masonry_motion as Record<string, unknown>)?.layer_origin_px,
+    );
+    const expectedBoardX = Number(bar.x_frac) * 1080 + (400 / 540) * 1080;
+    expect(layerOriginPx).toBeGreaterThan(0);
+    expect(layerOriginPx + Number(patch.x_frac) * 1080).toBeCloseTo(expectedBoardX, 6);
   });
 });
