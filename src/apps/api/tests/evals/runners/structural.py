@@ -56,6 +56,7 @@ from app.agents.retake_detector import (
 from app.agents.sequence_emphasis import SequenceEmphasisInput, SequenceEmphasisOutput
 from app.agents.sequence_quote_writer import SequenceQuoteOutput, quote_structural_failures
 from app.agents.shot_ranker import ShotRankerInput, ShotRankerOutput
+from app.agents.smart_edit_planner import SmartEditPlannerInput, SmartEditPlannerOutput
 from app.agents.song_classifier import SongClassifierOutput
 from app.agents.song_sections import (
     MAX_OVERLAP_S,
@@ -1910,6 +1911,66 @@ def check_overlay_placement(output, input) -> list[str]:  # noqa: A002
     return failures
 
 
+def check_smart_edit_planner(
+    output: SmartEditPlannerOutput,
+    input: SmartEditPlannerInput,  # noqa: A002
+) -> list[str]:
+    """Pin the planner's transcript and allowlist trust boundaries."""
+    failures: list[str] = []
+    known_words = {str(word.get("word_id")) for word in input.words}
+    known_assets = {asset.asset_id for asset in input.assets}
+    candidates = {
+        (
+            candidate.role,
+            candidate.start_word_id,
+            candidate.end_word_id,
+            candidate.anchor_word_id,
+        ): candidate
+        for candidate in input.candidates
+    }
+
+    if input.candidates and not output.proposals:
+        failures.append("planner dropped every transcript-grounded candidate")
+
+    for index, proposal in enumerate(output.proposals):
+        key = (
+            proposal.role,
+            proposal.start_word_id,
+            proposal.end_word_id,
+            proposal.anchor_word_id,
+        )
+        candidate = candidates.get(key)
+        if candidate is None:
+            failures.append(f"proposal {index}: span is not a deterministic candidate")
+            continue
+        if proposal.sequence_number != candidate.sequence_number:
+            failures.append(
+                f"proposal {index}: model changed the transcript-derived sequence number"
+            )
+
+        selected_assets = set(proposal.visual_asset_ids)
+        if not selected_assets.issubset(known_assets):
+            failures.append(f"proposal {index}: references an unknown visual asset")
+        if set(proposal.visual_anchor_word_ids) != selected_assets:
+            failures.append(f"proposal {index}: visual anchors do not match selected assets")
+        for asset_id, word_id in proposal.visual_anchor_word_ids.items():
+            if word_id not in known_words:
+                failures.append(f"proposal {index}: {asset_id} uses unknown anchor {word_id}")
+                continue
+            expected = candidate.suggested_asset_anchor_word_ids.get(
+                asset_id, candidate.anchor_word_id
+            )
+            if word_id != expected:
+                failures.append(
+                    f"proposal {index}: {asset_id} moved from grounded anchor "
+                    f"{expected} to {word_id}"
+                )
+        if len(proposal.sfx_roles) > 3:
+            failures.append(f"proposal {index}: more than three SFX roles")
+
+    return failures
+
+
 def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # noqa: A002
     """Dispatch by agent name. Used by eval_runner."""
     if agent_name == "nova.compose.overlay_format_matcher":
@@ -1957,6 +2018,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         if len(output.treatments) > 12:
             failures.append("more than 12 proposed treatments")
         return failures
+    if agent_name == "nova.compose.smart_edit_planner":
+        return check_smart_edit_planner(output, input)
     if agent_name == "nova.compose.sequence_emphasis":
         return check_sequence_emphasis(output, input)
     if agent_name == "nova.compose.sequence_quote":
