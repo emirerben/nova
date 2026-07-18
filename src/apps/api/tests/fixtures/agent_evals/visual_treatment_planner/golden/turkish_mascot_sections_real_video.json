@@ -1,0 +1,66 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.3",
+  "input": {
+    "words": [
+      {"word": "Selocanlar, Çelik Çelik, Naz, Pınar Beyaz, Bağırsak, Selpak Fil, Coca-Cola Ayıcık... Bunları hatırlıyor musunuz?", "start_s": 0.0, "end_s": 9.46},
+      {"word": "Markaların maskot marketing yaptığı o dönem, markete ya da bakkala girdiğimizde sadece bir ürün değil, arkadaş alıyor gibi hissederdik.", "start_s": 9.46, "end_s": 18.16},
+      {"word": "Peki o dönem markalar neden oyuncak kullanıyordu, yani maskot marketing yapıyordu?", "start_s": 18.16, "end_s": 23.4},
+      {"word": "Dört ana başlıkta anlatayım.", "start_s": 23.4, "end_s": 25.73},
+      {"word": "Birinci,", "start_s": 25.83, "end_s": 26.36},
+      {"word": "Somutlaştırma.", "start_s": 26.42, "end_s": 27.69},
+      {"word": "Markalar aslında soğuk, cansız ve soyut yapılardır.", "start_s": 28.08, "end_s": 31.74},
+      {"word": "İnsanlar bu yapıyla ya da sadece bir logo ile bağ kuramazlar.", "start_s": 31.74, "end_s": 35.54},
+      {"word": "Ama bir karakterle kurabilirler. Yani Selpak kâğıt havludur, Turkcell bir teknoloji şirketidir.", "start_s": 35.54, "end_s": 41.26},
+      {"word": "Ama onları bir fil veya Selocan yaptığınızda marka bir kişiliğe bürünür.", "start_s": 41.26, "end_s": 46.48},
+      {"word": "O karakter hata yaptığında güler, üzüldüğünde üzülebiliriz.", "start_s": 46.48, "end_s": 50.88},
+      {"word": "Böylece marka bizden biri ya da evimizin bir ferdi hâline gelir.", "start_s": 50.88, "end_s": 56.28},
+      {"word": "İki,", "start_s": 56.28, "end_s": 56.89},
+      {"word": "Pester", "start_s": 56.89, "end_s": 57.61},
+      {"word": "Power.", "start_s": 57.61, "end_s": 58.14},
+      {"word": "Yani çocukların ikna gücü.", "start_s": 58.32, "end_s": 61.32},
+      {"word": "Kararı anne baba verir ama kararı etkileyen çocuklardır.", "start_s": 61.32, "end_s": 65.0},
+      {"word": "Çocuk, süpermarkette Pınar Beyaz peynir olduğu için değil, o bağırsak karakterinin oyuncağını veya çıkartmasını istediği için ürünü sepete attırırdı.", "start_s": 65.0, "end_s": 73.64},
+      {"word": "Yani maskotlar, yetişkinlerin mantık duvarını çocukların duygularıyla aşmanın en kolay yoluydu.", "start_s": 73.64, "end_s": 79.88},
+      {"word": "Üç,", "start_s": 79.88, "end_s": 80.62},
+      {"word": "Hatırlanabilirlik.", "start_s": 80.78, "end_s": 82.92},
+      {"word": "Reklam kuşağında onlarca reklam dönerken deterjan, banka, dinimiz... Hepsini birbirine karıştırabilir ve şu an hepsini hatırlamayız.", "start_s": 82.92, "end_s": 90.76},
+      {"word": "Ama Ağır Çelik yerine Çelik Çelik Naz’ı gördüğümüzde, o metalik karakterler hafızamıza kazınır.", "start_s": 90.76, "end_s": 97.32},
+      {"word": "Yani marka isminden önce görüntüsüyle zihnimizde bir klasör açmış olur.", "start_s": 97.32, "end_s": 101.68},
+      {"word": "Dört,", "start_s": 101.68, "end_s": 102.28},
+      {"word": "Storytelling.", "start_s": 102.58, "end_s": 103.42},
+      {"word": "Yani hikâye anlatıcılığı.", "start_s": 103.7, "end_s": 105.32},
+      {"word": "Maskotlar, markanın uzun uzun anlatamayacağı şeyleri saniyeler içinde anlatır.", "start_s": 105.32, "end_s": 109.96},
+      {"word": "Yani Selpak der ki: Bak, bu fil kadar ağır şeyleri bile kaldıracak kadar dayanıklıyım.", "start_s": 109.96, "end_s": 115.04},
+      {"word": "Ya da Coca-Cola ayıcığı der ki: Kutuplarda olsam bile bu içecek sana ev sıcaklığı ve ferahlık verir.", "start_s": 115.04, "end_s": 121.64},
+      {"word": "Maskot marketing artık çok azalsa da günümüzde bunu çok güzel, hakkını vererek yapan bir marka var.", "start_s": 121.64, "end_s": 127.76},
+      {"word": "Sizce bu ne olabilir?", "start_s": 127.76, "end_s": 128.92},
+      {"word": "İpucu: Henüz hiç peluş dağıtmadı ama muhtemelen hepiniz karakterini biliyorsunuz.", "start_s": 128.92, "end_s": 134.32}
+    ],
+    "assets": [],
+    "duration_s": 134.442,
+    "beat_timestamps_s": [],
+    "clip_plan": [],
+    "visual_signals": {"resolved_archetype": "subtitled", "shot_quality": "continuous talking-head footage"},
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"text_card\",\"purpose\":\"section_item\",\"start_s\":25.83,\"end_s\":27.69,\"asset_ids\":[],\"text\":\"1. Somutlaştırma\",\"rationale\":\"First item title only; return to the speaker for the explanation.\",\"confidence\":\"high\"},{\"kind\":\"text_card\",\"purpose\":\"section_item\",\"start_s\":56.28,\"end_s\":58.14,\"asset_ids\":[],\"text\":\"2. Pester Power\",\"rationale\":\"Second item title only; the Turkish gloss stays on camera.\",\"confidence\":\"high\"},{\"kind\":\"text_card\",\"purpose\":\"section_item\",\"start_s\":79.88,\"end_s\":82.92,\"asset_ids\":[],\"text\":\"3. Hatırlanabilirlik\",\"rationale\":\"Third item title only; return before its supporting examples.\",\"confidence\":\"high\"},{\"kind\":\"text_card\",\"purpose\":\"section_item\",\"start_s\":101.68,\"end_s\":103.42,\"asset_ids\":[],\"text\":\"4. Storytelling\",\"rationale\":\"Fourth item title only; the Turkish gloss stays on camera.\",\"confidence\":\"high\"}]} ",
+  "output": {
+    "treatments": [
+      {"kind": "text_card", "purpose": "section_item", "start_s": 25.83, "end_s": 27.69, "asset_ids": [], "text": "1. Somutlaştırma", "rationale": "First item title only; return to the speaker for the explanation.", "confidence": "high"},
+      {"kind": "text_card", "purpose": "section_item", "start_s": 56.28, "end_s": 58.14, "asset_ids": [], "text": "2. Pester Power", "rationale": "Second item title only; the Turkish gloss stays on camera.", "confidence": "high"},
+      {"kind": "text_card", "purpose": "section_item", "start_s": 79.88, "end_s": 82.92, "asset_ids": [], "text": "3. Hatırlanabilirlik", "rationale": "Third item title only; return before its supporting examples.", "confidence": "high"},
+      {"kind": "text_card", "purpose": "section_item", "start_s": 101.68, "end_s": 103.42, "asset_ids": [], "text": "4. Storytelling", "rationale": "Fourth item title only; the Turkish gloss stays on camera.", "confidence": "high"}
+    ]
+  },
+  "meta": {
+    "source": "user_supplied_real_video",
+    "video_duration_s": 134.442,
+    "expected_section_items": [
+      {"text": "1. Somutlaştırma", "start_s": 25.83, "end_s": 27.69},
+      {"text": "2. Pester Power", "start_s": 56.28, "end_s": 58.14},
+      {"text": "3. Hatırlanabilirlik", "start_s": 79.88, "end_s": 82.92},
+      {"text": "4. Storytelling", "start_s": 101.68, "end_s": 103.42}
+    ]
+  }
+}

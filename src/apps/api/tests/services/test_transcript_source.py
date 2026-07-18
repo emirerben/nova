@@ -73,6 +73,16 @@ class TestWordsFromVariant:
         out = words_from_variant({"transcript": [{"word": "x", "start_s": "nope", "end_s": 1}]})
         assert out is None
 
+    def test_nonfinite_negative_and_inverted_timings_invalidate(self):
+        invalid = [
+            {"word": "x", "start_s": "nan", "end_s": 1},
+            {"word": "x", "start_s": 0, "end_s": "inf"},
+            {"word": "x", "start_s": -0.1, "end_s": 1},
+            {"word": "x", "start_s": 2, "end_s": 1},
+        ]
+        for word in invalid:
+            assert words_from_variant({"transcript": [word]}) is None
+
 
 class TestTranscriptSource:
     def test_allow_whisper_false_never_transcribes(self):

@@ -20,11 +20,16 @@ class VisualTreatmentAsset(BaseModel):
 
 
 class VisualTreatmentPlannerInput(BaseModel):
-    words: list[dict] = Field(default_factory=list, max_length=1200)
+    # Bounds scale with the five-minute source ceiling. Whisper can emit far
+    # more than one token per spoken word, and energetic music can exceed one
+    # beat per second, so the old short-form caps rejected valid long inputs.
+    words: list[dict] = Field(default_factory=list, max_length=6000)
     assets: list[VisualTreatmentAsset] = Field(default_factory=list, max_length=20)
-    duration_s: float = Field(gt=0.0, le=60.0)
-    beat_timestamps_s: list[float] = Field(default_factory=list, max_length=300)
-    clip_plan: list[dict] = Field(default_factory=list, max_length=60)
+    # Generative inputs may be the full creator recording, not only a sub-60s
+    # short. Five minutes matches Nova's documented source-video ceiling.
+    duration_s: float = Field(gt=0.0, le=300.0)
+    beat_timestamps_s: list[float] = Field(default_factory=list, max_length=3000)
+    clip_plan: list[dict] = Field(default_factory=list, max_length=600)
     visual_signals: dict = Field(default_factory=dict)
     recent_treatments: list[dict] = Field(default_factory=list, max_length=20)
 
@@ -39,6 +44,7 @@ class RawVisualTreatment(BaseModel):
         "quote",
         "statistic",
         "transition",
+        "section_item",
         "conclusion",
         "cta",
     ]
@@ -63,7 +69,7 @@ class VisualTreatmentPlannerAgent(Agent[VisualTreatmentPlannerInput, VisualTreat
     spec: ClassVar[AgentSpec] = AgentSpec(
         name="nova.compose.visual_treatment_planner",
         prompt_id="visual_treatment_planner",
-        prompt_version="2026-07-18.2",
+        prompt_version="2026-07-18.3",
         model="gemini-2.5-flash",
         cost_per_1k_input_usd=0.000075,
         cost_per_1k_output_usd=0.0003,

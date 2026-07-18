@@ -787,7 +787,10 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
     from app.config import settings as _settings  # noqa: PLC0415
-    from app.tasks.autoplace import prepare_visual_block_assets  # noqa: PLC0415
+    from app.tasks.autoplace import (  # noqa: PLC0415
+        _clear_visual_block_attempts,
+        prepare_visual_block_assets,
+    )
 
     if not (_settings.visual_blocks_enabled and _settings.visual_block_autoplan_enabled):
         return
@@ -811,9 +814,13 @@ def _maybe_visual_blocks_after_finalize(job_id: str) -> None:
         job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
         flag_modified(job, "assembly_plan")
         db.commit()
-    prepare_visual_block_assets.apply_async(
-        args=[job_id, eligible], queue=_settings.autoplace_queue
-    )
+    try:
+        prepare_visual_block_assets.apply_async(
+            args=[job_id, eligible], queue=_settings.autoplace_queue
+        )
+    except Exception:
+        _clear_visual_block_attempts(job_id, eligible)
+        raise
 
 
 def _maybe_autoplace_after_finalize(job_id: str) -> None:

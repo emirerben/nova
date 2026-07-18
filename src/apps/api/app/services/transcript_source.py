@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import tempfile
 
@@ -68,11 +69,20 @@ def words_from_variant(variant: dict) -> list[dict] | None:
         if not text:
             continue
         try:
+            start_s = float(w.get("start_s", 0.0))
+            end_s = float(w.get("end_s", 0.0))
+            if (
+                not math.isfinite(start_s)
+                or not math.isfinite(end_s)
+                or start_s < 0.0
+                or end_s < start_s
+            ):
+                return None
             words.append(
                 {
                     "word": text,
-                    "start_s": float(w.get("start_s", 0.0)),
-                    "end_s": float(w.get("end_s", 0.0)),
+                    "start_s": start_s,
+                    "end_s": end_s,
                 }
             )
         except (TypeError, ValueError):

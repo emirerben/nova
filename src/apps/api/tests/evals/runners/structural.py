@@ -1922,6 +1922,7 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         failures: list[str] = []
         asset_ids = {asset.asset_id for asset in input.assets}
         windows: list[tuple[float, float]] = []
+        section_item_count = 0
         for index, treatment in enumerate(output.treatments):
             if treatment.start_s >= treatment.end_s or treatment.end_s > input.duration_s:
                 failures.append(f"treatment {index}: invalid timeline window")
@@ -1935,6 +1936,8 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
                 if not unique_assets.issubset(asset_ids):
                     failures.append(f"treatment {index}: montage references an unknown asset")
             if treatment.kind == "text_card":
+                if treatment.purpose == "section_item":
+                    section_item_count += 1
                 if not input.words:
                     failures.append(f"treatment {index}: semantic card has no transcript evidence")
                 if not treatment.text:
@@ -1950,12 +1953,18 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
                         start_s=treatment.start_s,
                         end_s=treatment.end_s,
                     )
-                    if not _card_copy_is_transcript_grounded(treatment.text, transcript_text):
+                    if not _card_copy_is_transcript_grounded(
+                        treatment.text,
+                        transcript_text,
+                        section_item=treatment.purpose == "section_item",
+                    ):
                         failures.append(
                             f"treatment {index}: text card copy is not transcript-grounded"
                         )
         if len(output.treatments) > 12:
             failures.append("more than 12 proposed treatments")
+        if section_item_count > 8:
+            failures.append("more than 8 section-item cards")
         return failures
     if agent_name == "nova.compose.sequence_emphasis":
         return check_sequence_emphasis(output, input)

@@ -110,6 +110,7 @@ def test_run_eval_replay_pass_no_judge(tmp_path: Path):
     assert result.structural_failures == []
     assert result.judge is None
     assert result.error is None
+    assert result.output is not None
 
 
 def test_run_eval_structural_failure(tmp_path: Path):

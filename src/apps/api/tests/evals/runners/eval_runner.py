@@ -135,6 +135,10 @@ class EvalResult:
     structural_failures: list[str] = field(default_factory=list)
     judge: JudgeResult | None = None
     error: str | None = None
+    # Parsed primary output is retained so agent-specific evals can assert
+    # semantic acceptance criteria in both replay and live modes. Previously
+    # replay fixtures could only prove that their prewritten cassette parsed.
+    output: dict[str, Any] | None = None
     # Shadow-mode results — populated when --shadow-prompts-dir is active.
     # Shadow never gates the test; it only reports a delta. A shadow that
     # fails (raises, structural-fails, or judge-fails) is informational.
@@ -429,6 +433,7 @@ def run_eval(
         prompt_version=fixture.prompt_version,
         structural_failures=structural_failures,
         judge=judge_result,
+        output=output.model_dump(),
     )
 
     if shadow_prompts_dir is not None and model_client is not None:
