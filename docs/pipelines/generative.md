@@ -162,6 +162,20 @@ captions → media overlays → sound effects.
   transcript-backed cards or asset-backed montages under density guardrails.
   Extracted source frames become ordinary persistent `PlanItemAsset` rows with
   source clip/timestamp provenance before planning.
+- Announced sections, rankings, steps, and numbered lists use the internal
+  `section_item` purpose. The planner emits only the spoken ordinal and item
+  title, then returns to the talking head for its definition or explanation.
+  Card timing is deterministically aligned to the local contiguous transcript
+  occurrence (including Turkish/English cardinal and ordinal forms), lasts at
+  most four seconds, and requires at least 0.75 seconds of uncovered speaker
+  footage before the next structured card. Long lists keep the first eight
+  valid items. Generic card limits remain independent, and the 35% global
+  treatment ceiling still applies.
+- Planner input supports Nova's five-minute source ceiling. Whisper-derived
+  `overlay_transcript` words persist even when the correct answer is zero
+  cards. Source-revision checks prevent stale planning from overwriting newer
+  renders or transcript corrections; feature-flag, preparation, planner, and
+  queue failures release the run-once claim when retry is safe.
 
 Rollout is triple-gated. `VISUAL_BLOCKS_ENABLED` gates API/render behavior,
 `NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED` gates the editor surface, and
