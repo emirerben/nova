@@ -145,7 +145,19 @@ export type TextEditorAction =
       type: "PATCH_BAR";
       id: string;
       patch: Partial<Omit<TextElementBar, "id" | "role">>;
-    };
+    }
+  /**
+   * Insert seeded lyric_line bars in one undoable step (lyrics-optional
+   * elements model: Lyrics toggle ON). Individual lyric bars can't be added
+   * via ADD_TEXT-style one-at-a-time flows — the toggle inserts the whole set.
+   */
+  | { type: "ADD_LYRIC_BARS"; bars: TextElementBar[] }
+  /**
+   * Remove every lyric_line bar in one undoable step (Lyrics toggle OFF).
+   * DELETE_BAR no-ops on lyric_line bars (see isLyricLine guard below), so
+   * this is the only removal path for the elements lyrics model.
+   */
+  | { type: "REMOVE_LYRIC_BARS" };
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
@@ -275,6 +287,18 @@ export function textReducer(
 
     case "RESET":
       return initTextEditorState(action.bars);
+
+    case "ADD_LYRIC_BARS":
+      if (action.bars.length === 0) return state;
+      return withHistory(state, [...state.bars, ...action.bars]);
+
+    case "REMOVE_LYRIC_BARS": {
+      if (!state.bars.some(isLyricLine)) return state;
+      return withHistory(
+        state,
+        state.bars.filter((b) => !isLyricLine(b)),
+      );
+    }
 
     case "PATCH_BAR": {
       const target = state.bars.find((b) => b.id === action.id);

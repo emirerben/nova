@@ -19,10 +19,30 @@ export const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Ca
 export const TEXT_ELEMENTS_LOCKED_FALLBACK = "text editing isn't available for this edit";
 
 const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
+// Lyrics-optional "elements" model (instant toggle-insert/remove, no bake).
+// Independent of LYRICS_EDITOR_UI, which gates the legacy baked-lyrics bar
+// editor — a variant can only be one model or the other (lyrics.lyrics_model).
+const LYRICS_OPTIONAL_UI = process.env.NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED === "true";
 
-function lyricsFeatureAvailable(capabilities: EditorCapabilities | null | undefined): boolean {
+/** True when this variant's lyrics ride the lyrics-optional "elements" model
+ * (as opposed to legacy baked-in-render lyrics). Absent `lyrics_model` on a
+ * row minted before this field shipped ⇒ "baked". */
+export function isElementsLyricsModel(
+  capabilities: EditorCapabilities | null | undefined,
+): boolean {
+  return capabilities?.lyrics?.lyrics_model === "elements";
+}
+
+/**
+ * Whether the Lyrics toggle should be visible/actionable at all — dual-gated
+ * per model: legacy needs LYRICS_EDITOR_UI, elements needs
+ * NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED. Both models share the same underlying
+ * `editable | enabled | can_toggle_on` capability signal.
+ */
+export function lyricsFeatureAvailable(capabilities: EditorCapabilities | null | undefined): boolean {
   const lyrics = capabilities?.lyrics;
-  return LYRICS_EDITOR_UI && !!lyrics && (lyrics.editable || lyrics.enabled || lyrics.can_toggle_on);
+  if (!lyrics || !(lyrics.editable || lyrics.enabled || lyrics.can_toggle_on)) return false;
+  return isElementsLyricsModel(capabilities) ? LYRICS_OPTIONAL_UI : LYRICS_EDITOR_UI;
 }
 
 /** Server reason code → human tooltip copy. Unknown codes pass through raw. */

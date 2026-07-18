@@ -76,3 +76,62 @@ describe("textReducer lyric_line lock", () => {
     expect(patched.bars[0].effect).toBeUndefined();
   });
 });
+
+describe("textReducer ADD_LYRIC_BARS / REMOVE_LYRIC_BARS (lyrics-optional elements model)", () => {
+  const nonLyric: TextElementBar = {
+    id: "title-1",
+    text: "Title",
+    start_s: 0,
+    end_s: 2,
+    role: "generative_intro",
+  };
+
+  it("ADD_LYRIC_BARS inserts every seed bar in one undoable step", () => {
+    const state = initTextEditorState([nonLyric]);
+    const seeds = [lyric({ id: "lyr-L0" }), lyric({ id: "lyr-L1", text: "second line" })];
+    const next = textReducer(state, { type: "ADD_LYRIC_BARS", bars: seeds });
+
+    expect(next.bars.map((b) => b.id)).toEqual(["title-1", "lyr-L0", "lyr-L1"]);
+    // One history push for both inserted bars — a single undo removes both.
+    expect(next.past).toEqual([[nonLyric]]);
+
+    const undone = textReducer(next, { type: "UNDO" });
+    expect(undone.bars).toEqual([nonLyric]);
+    const redone = textReducer(undone, { type: "REDO" });
+    expect(redone.bars.map((b) => b.id)).toEqual(["title-1", "lyr-L0", "lyr-L1"]);
+  });
+
+  it("ADD_LYRIC_BARS with an empty list no-ops (no spurious history push)", () => {
+    const state = initTextEditorState([nonLyric]);
+    const next = textReducer(state, { type: "ADD_LYRIC_BARS", bars: [] });
+    expect(next).toBe(state);
+  });
+
+  it("REMOVE_LYRIC_BARS strips every lyric_line bar, keeps everything else, in one undoable step", () => {
+    const seeds = [lyric({ id: "lyr-L0" }), lyric({ id: "lyr-L1", text: "second line" })];
+    const state = initTextEditorState([nonLyric, ...seeds]);
+    const next = textReducer(state, { type: "REMOVE_LYRIC_BARS" });
+
+    expect(next.bars).toEqual([nonLyric]);
+    expect(next.past).toEqual([[nonLyric, ...seeds]]);
+
+    const undone = textReducer(next, { type: "UNDO" });
+    expect(undone.bars.map((b) => b.id)).toEqual(["title-1", "lyr-L0", "lyr-L1"]);
+  });
+
+  it("REMOVE_LYRIC_BARS no-ops when there are no lyric bars (no spurious history push)", () => {
+    const state = initTextEditorState([nonLyric]);
+    const next = textReducer(state, { type: "REMOVE_LYRIC_BARS" });
+    expect(next).toBe(state);
+  });
+
+  it("DELETE_BAR still can't remove a single lyric bar even after ADD_LYRIC_BARS — REMOVE_LYRIC_BARS is the only removal path", () => {
+    const state = initTextEditorState([nonLyric]);
+    const withLyrics = textReducer(state, {
+      type: "ADD_LYRIC_BARS",
+      bars: [lyric({ id: "lyr-L0" })],
+    });
+    const attempted = textReducer(withLyrics, { type: "DELETE_BAR", id: "lyr-L0" });
+    expect(attempted).toBe(withLyrics);
+  });
+});

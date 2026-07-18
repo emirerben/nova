@@ -29,6 +29,43 @@ def _variant(**extra) -> dict:
     }
 
 
+def test_timeline_lyrics_sync_absent_for_lyrics_baked_false(monkeypatch) -> None:
+    """lyrics-as-optional-elements: lyrics_baked=False frees the timeline lock —
+    lyric lines are timed to the continuous song audio, not the recipe's slot
+    layout, so re-cutting clips no longer breaks sync."""
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True, raising=False)
+
+    variant = _variant(
+        lyrics_baked=False,
+        lyrics_enabled=False,
+        ai_timeline={
+            "slots": [{"clip_index": 0, "source_gcs_path": "generative-jobs/j/sources/x"}]
+        },
+    )
+    job = _job()
+    job.id = "j"
+
+    reason = gj._timeline_ineligibility(job, variant)
+
+    assert reason is None
+    caps = gj._editor_capabilities(job, variant)
+    assert caps["timeline"] is True
+    assert caps["split_clips"] is True
+    assert caps["reason"] is None
+    assert caps["lyrics"]["lyrics_model"] == "elements"
+
+
+def test_timeline_lyrics_sync_present_for_legacy_baked_variant(monkeypatch) -> None:
+    """Legacy (lyrics_baked absent) variants keep the lock — no behavior change."""
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True, raising=False)
+    monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True, raising=False)
+
+    reason = gj._timeline_ineligibility(_job(), _variant())
+
+    assert reason == "lyrics_sync"
+
+
 def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> None:
     monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", False, raising=False)
     monkeypatch.setattr(settings, "GENERATIVE_TIMELINE_EDITOR_ENABLED", True, raising=False)
@@ -41,6 +78,7 @@ def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> N
     assert caps["reason"] == "lyrics_sync"
     assert caps["lyrics"]["editable"] is False
     assert caps["lyrics"]["reason"] == "disabled"
+    assert caps["lyrics"]["lyrics_model"] == "baked"
 
 
 @pytest.mark.parametrize(
@@ -48,11 +86,23 @@ def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> N
     [
         (
             _variant(),
-            {"editable": True, "enabled": True, "can_toggle_on": True, "reason": None},
+            {
+                "editable": True,
+                "enabled": True,
+                "can_toggle_on": True,
+                "reason": None,
+                "lyrics_model": "baked",
+            },
         ),
         (
             _variant(variant_id="song_text", text_mode="agent_text", lyrics_enabled=False),
-            {"editable": False, "enabled": False, "can_toggle_on": True, "reason": None},
+            {
+                "editable": False,
+                "enabled": False,
+                "can_toggle_on": True,
+                "reason": None,
+                "lyrics_model": "baked",
+            },
         ),
         (
             _variant(variant_id="original_text", text_mode="agent_text", music_track_id=None),
@@ -61,6 +111,7 @@ def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> N
                 "enabled": False,
                 "can_toggle_on": False,
                 "reason": "no_track",
+                "lyrics_model": "baked",
             },
         ),
         (
@@ -70,6 +121,7 @@ def test_lyrics_capabilities_flag_off_preserves_existing_locks(monkeypatch) -> N
                 "enabled": True,
                 "can_toggle_on": False,
                 "reason": "no_renderable_lyrics",
+                "lyrics_model": "baked",
             },
         ),
     ],

@@ -45,6 +45,7 @@ from app.routes.generative_jobs import (
     EditorCommitResponse,
     EditorCommitSections,
     EditVariantRequest,
+    LyricSeedsResponse,
     LyricsSectionRequest,
     OrientationRequest,
     PatchSceneTimingRequest,
@@ -59,6 +60,7 @@ from app.routes.generative_jobs import (
     dispatch_change_style,
     dispatch_edit_timeline,
     dispatch_edit_variant,
+    dispatch_get_lyric_seeds,
     dispatch_get_timeline,
     dispatch_patch_scene_timing,
     dispatch_reset_timeline,
@@ -1844,6 +1846,24 @@ async def get_item_timeline(
     """The effective clip timeline of one of this item's variants (+ clip pool)."""
     job = await _owned_item_render_job(item_id, user.id, db)
     return TimelineResponse(**dispatch_get_timeline(job, variant_id))
+
+
+@router.get("/{item_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)
+async def get_item_lyric_seeds(
+    item_id: str,
+    variant_id: str,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> LyricSeedsResponse:
+    """Instant-materialize seed elements for the editor's Lyrics toggle.
+
+    Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): read-only, never
+    persists anything. 404 when the flag is off; 422 when the variant has no
+    matched track / no renderable cached lyrics. Mirrors the generative-jobs
+    sibling route (`get_variant_lyric_seeds`) — only the job lookup differs.
+    """
+    job = await _owned_item_render_job(item_id, user.id, db)
+    return LyricSeedsResponse(**await dispatch_get_lyric_seeds(job, variant_id, db))
 
 
 @router.post("/{item_id}/variants/{variant_id}/timeline", response_model=PlanItemResponse)
