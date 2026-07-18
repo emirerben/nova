@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0.0] — 2026-07-18
+
+### Added
+- **Talking-head edits can now turn announced sections, rankings, steps, and numbered lists into precisely timed full-frame text cards.** Each card shows only the spoken ordinal and item title, then returns immediately to the speaker for the explanation. Turkish and English number forms align against the local transcript occurrence, long recordings are planned through Nova's five-minute source ceiling, and dense lists degrade to the first eight valid items without changing ordinary quote or statistic cards.
+
+### Changed
+- **Visual-block autoplan now preserves its transcript and retry state across zero-card results, concurrent renders, malformed timing data, feature-flag rollbacks, and queue failures.** Successful “no treatment” decisions remain true no-ops, stale plans cannot overwrite newer edits, and transient dispatch failures release their run-once claim for a later retry.
+
 ## [0.8.1.2] — 2026-07-18
 
 ### Fixed
