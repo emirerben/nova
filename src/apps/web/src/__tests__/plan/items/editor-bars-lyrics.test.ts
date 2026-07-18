@@ -2,6 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
   barsToTextElements,
   buildLyricLineOverrides,
+  seedBarsFromLyricSeeds,
   seedBarsFromVariant,
 } from "@/app/plan/items/[id]/_editor/editor-bars";
 import type { PlanItemVariant, TextElement } from "@/lib/plan-api";
@@ -80,5 +81,101 @@ describe("editor-bars lyric helpers", () => {
         orig_start_s: 2.4,
       },
     });
+  });
+});
+
+describe("barsToTextElements includeLyrics option (lyrics-optional elements model)", () => {
+  const normal: TextElement = {
+    id: "txt-1",
+    text: "Title",
+    start_s: 0,
+    end_s: 1,
+    role: "generative_intro",
+  };
+
+  it("defaults to excluding lyric bars (legacy, byte-identical to pre-feature)", () => {
+    const bars = seedBarsFromVariant(variant([normal, originalLyric]), { includeLyrics: true });
+    const originals = new Map([[normal.id, normal], [originalLyric.id, originalLyric]]);
+    expect(barsToTextElements(bars, originals)).toEqual([expect.objectContaining({ id: "txt-1" })]);
+    expect(barsToTextElements(bars, originals, {})).toEqual([
+      expect.objectContaining({ id: "txt-1" }),
+    ]);
+  });
+
+  it("includes lyric bars when includeLyrics is true (elements model commit path)", () => {
+    const bars = seedBarsFromVariant(variant([normal, originalLyric]), { includeLyrics: true });
+    const originals = new Map([[normal.id, normal], [originalLyric.id, originalLyric]]);
+    const elements = barsToTextElements(bars, originals, { includeLyrics: true });
+    expect(elements.map((el) => el.id).sort()).toEqual(["lyric_L0", "txt-1"]);
+    expect(elements.find((el) => el.id === "lyric_L0")).toMatchObject({ role: "lyric_line" });
+  });
+});
+
+describe("seedBarsFromLyricSeeds (GET .../lyric-seeds response → working bars)", () => {
+  it("converts TextElement-shaped seeds into bars, preserving role/timing/style", () => {
+    const seeds: TextElement[] = [
+      {
+        id: "lyr-L0",
+        text: "First line",
+        start_s: 4.2,
+        end_s: 6.8,
+        role: "lyric_line",
+        color: "#FFFFFF",
+        highlight_color: "#A3E635",
+      },
+    ];
+    expect(seedBarsFromLyricSeeds(seeds)).toEqual([
+      expect.objectContaining({
+        id: "lyr-L0",
+        text: "First line",
+        start_s: 4.2,
+        end_s: 6.8,
+        role: "lyric_line",
+        color: "#FFFFFF",
+        highlight_color: "#A3E635",
+      }),
+    ]);
+  });
+
+  it('normalizes a bare "karaoke" effect to "karaoke-line" (the literal every renderer/style path matches on)', () => {
+    const seeds: TextElement[] = [
+      {
+        id: "lyr-L0",
+        text: "Word timed",
+        start_s: 0,
+        end_s: 2,
+        role: "lyric_line",
+        effect: "karaoke" as unknown as TextElement["effect"],
+      },
+    ];
+    expect(seedBarsFromLyricSeeds(seeds)[0].effect).toBe("karaoke-line");
+  });
+
+  it("defaults word-timed lines with no explicit effect to karaoke-line", () => {
+    const seeds: TextElement[] = [
+      {
+        id: "lyr-L0",
+        text: "Word timed",
+        start_s: 0,
+        end_s: 2,
+        role: "lyric_line",
+        word_timings: [{ word: "Word", start_s: 0, end_s: 0.5 }],
+      },
+    ];
+    expect(seedBarsFromLyricSeeds(seeds)[0].effect).toBe("karaoke-line");
+  });
+
+  it("leaves a non-karaoke explicit effect untouched", () => {
+    const seeds: TextElement[] = [
+      {
+        id: "lyr-L0",
+        text: "Static line",
+        start_s: 0,
+        end_s: 2,
+        role: "lyric_line",
+        effect: "fade-in",
+      },
+    ];
+    expect(seedBarsFromLyricSeeds(seeds)[0].effect).toBe("fade-in");
   });
 });

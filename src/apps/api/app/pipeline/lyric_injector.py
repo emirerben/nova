@@ -591,6 +591,128 @@ def build_lyric_overlay_snapshot(recipe_dict: dict, snapped_durations: list[floa
     )
 
 
+def build_lyric_seed_elements(
+    lyrics_cached: dict | None,
+    best_start_s: float,
+    best_end_s: float,
+    lyrics_config: dict | None,
+) -> list[dict]:
+    """Instant-materialize seed builder for lyrics-as-optional-elements
+    (`LYRICS_OPTIONAL_ENABLED`, GET .../lyric-seeds).
+
+    Returns TextElement-shaped dicts (already `TextElement.model_validate`-ed
+    and `.model_dump()`-ed) with ABSOLUTE video-time `start_s`/`end_s`, one
+    per surviving lyric line, `role="lyric_line"`. `_select_section_lines`
+    already rebases each line to be relative to `best_start_s` (0 = the
+    section's start) — and that section-relative coordinate IS absolute video
+    time, because the recipe's slots (what `_inject_karaoke` actually burns
+    into) start at video t=0 == song t=best_start_s for a song_lyrics variant
+    (it has no separate cold-open before the beat-synced montage). So the
+    schedule's `start_s`/`end_s` are used as-is — do NOT add `best_start_s`
+    again, that would double-shift into song time.
+
+    Reuses the SAME gates, style resolution (incl. `style_set_id` +
+    `sync_offset_s`), and line selection (`_select_section_lines`) that
+    `inject_lyric_overlays` applies, plus the karaoke-style per-line
+    scheduling (`schedule_karaoke_lines`) `_inject_karaoke` uses to burn —
+    so a materialized element looks like what today's karaoke burn would
+    have produced for the same track/section/style. `effect` is
+    `"karaoke-line"` when the cached line carries per-word timing, else
+    `"static"` (TextElement's `effect` enum has no bare "karaoke" or "lyric
+    line" literal — "karaoke-line" is the established value everywhere else
+    a lyric line becomes a TextElement, e.g. `_element_from_lyric_snapshot`'s
+    fallback; "static" is the schema's plain-display default).
+
+    Never raises: returns `[]` when there's nothing renderable (no cache, no
+    lines fall inside the section, or the resolved style's `style_set_id` is
+    bogus) — the route turns an empty result into the 422.
+    """
+    from app.agents._schemas.text_element import (  # noqa: PLC0415
+        _ALLOWED_FONTS,
+        _ANCHOR_TO_ALIGNMENT,
+        _VALID_SIZE_CLASSES,
+        TextElement,
+        _burn_dict_position,
+    )
+
+    if not lyrics_cached:
+        return []
+
+    cfg = dict(lyrics_config or {})
+    if cfg.get("style_set_id"):
+        try:
+            cfg = _apply_style_set_defaults(cfg, cfg["style_set_id"])
+        except Exception:  # noqa: BLE001
+            log.warning("lyric_seed_style_set_resolution_failed", exc_info=True)
+
+    sync_offset_s = _lyrics_sync_offset_s(cfg)
+    if sync_offset_s:
+        lyrics_cached = _shift_lyrics_cached(lyrics_cached, sync_offset_s)
+
+    lines = lyrics_cached.get("lines") or []
+    if not lines:
+        return []
+
+    section_lines = _select_section_lines(lines, best_start_s, best_end_s)
+    if not section_lines:
+        return []
+
+    base_style = _common_overlay_fields(cfg)
+    highlight_color = cfg.get("highlight_color") or "#FFFF00"
+    position, x_frac, y_frac = _burn_dict_position(base_style)
+
+    raw_font = base_style.get("font_family")
+    font_family = raw_font if raw_font in _ALLOWED_FONTS else None
+
+    text_size_px = base_style.get("text_size_px")
+    size_px = float(text_size_px) if text_size_px is not None else None
+    raw_size_class = base_style.get("text_size")
+    size_class = raw_size_class if raw_size_class in _VALID_SIZE_CLASSES else None
+
+    color = base_style.get("text_color")
+    text_anchor = base_style.get("text_anchor")
+    alignment = _ANCHOR_TO_ALIGNMENT.get(str(text_anchor)) if text_anchor else None
+    outline_px = base_style.get("outline_px")
+    stroke_width = float(outline_px) if outline_px is not None else None
+
+    elements: list[dict] = []
+    for schedule in schedule_karaoke_lines(section_lines):
+        has_words = bool(schedule.word_timings)
+        try:
+            elem = TextElement(
+                id=f"lyr-{schedule.lyric_line_key}",
+                text=schedule.text,
+                start_s=schedule.start_s,
+                end_s=schedule.end_s,
+                role="lyric_line",
+                position=position,  # type: ignore[arg-type]
+                x_frac=x_frac,
+                y_frac=y_frac,
+                font_family=font_family,
+                size_px=size_px,
+                size_class=size_class,  # type: ignore[arg-type]
+                color=color,
+                highlight_color=highlight_color if has_words else None,
+                stroke_width=stroke_width,
+                alignment=alignment,  # type: ignore[arg-type]
+                effect="karaoke-line" if has_words else "static",
+                word_timings=schedule.word_timings or None,
+                source_params={
+                    "source": "lyric_seed",
+                    "key": schedule.lyric_line_key,
+                },
+            )
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "lyric_seed_element_build_failed",
+                lyric_line_key=schedule.lyric_line_key,
+                exc_info=True,
+            )
+            continue
+        elements.append(elem.model_dump())
+    return elements
+
+
 def _apply_style_set_defaults(cfg: dict, set_id: str) -> dict:
     """Layer a style set's lyric styling onto cfg as DEFAULTS.
 
@@ -837,36 +959,46 @@ def _common_overlay_fields(cfg: dict) -> dict[str, Any]:
     return out
 
 
-def _inject_karaoke(
-    section_lines: list[dict],
-    windows: list[_SlotWindow],
-    slots: list[dict],
-    cfg: dict,
-) -> int:
-    """One overlay per line. Effect='karaoke-line' + word_timings tag."""
-    base = _common_overlay_fields(cfg)
-    highlight = cfg.get("highlight_color") or "#FFFF00"
-    injected = 0
+@dataclass(frozen=True, slots=True)
+class LyricLineSchedule:
+    """Pure per-line karaoke schedule: which lines survive + their
+    SECTION-RELATIVE window + per-word timings, with no slot-boundary
+    clipping applied.
 
+    Extracted from `_inject_karaoke` so the same scheduling logic is
+    reusable by (a) the injector's burn path, which still intersects each
+    entry with its `_SlotWindow` afterward, and (b) `build_lyric_seed_elements`
+    (the lyrics-as-optional-elements "instant materialize" endpoint), which
+    has no slots — just a continuous absolute video timeline — and uses this
+    window as-is. The `_MIN_OVERLAY_DURATION_S` floor is applied here exactly
+    as `_inject_karaoke` always applied it (independent of slot clipping), so
+    both callers see identical minimum-duration behavior.
+    """
+
+    lyric_line_key: str
+    text: str
+    start_s: float
+    end_s: float
+    word_timings: list[dict]
+    original_text: str
+    original_start_s_song: float
+    original_end_s_song: float
+    original_words: list[dict]
+
+
+def schedule_karaoke_lines(section_lines: list[dict]) -> list[LyricLineSchedule]:
+    """Pure karaoke-style line scheduling shared by `_inject_karaoke` and
+    `build_lyric_seed_elements`. See `LyricLineSchedule` for the contract.
+    """
+    out: list[LyricLineSchedule] = []
     for line in section_lines:
-        slot_win = _slot_for_time(line["start_s"], windows)
-        if slot_win is None:
-            continue
-
-        # Overlay times must be slot-relative for the existing pipeline to
-        # treat them as a normal text overlay.
-        rel_start = max(0.0, line["start_s"] - slot_win.start_s)
-        slot_dur = slot_win.end_s - slot_win.start_s
-        rel_end = min(slot_dur, line["end_s"] - slot_win.start_s)
-        rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
-        rel_end = min(rel_end, slot_dur)
-        if rel_end <= rel_start:
-            continue
+        start_s = float(line["start_s"])
+        end_s = max(start_s + _MIN_OVERLAY_DURATION_S, float(line["end_s"]))
 
         # Word timings stay relative to the overlay's own start; durations
         # encoded in centiseconds so the ASS writer can drop them straight
         # into a `\kf<cs>` tag.
-        word_timings = []
+        word_timings: list[dict] = []
         prev_end_rel = 0.0
         for w in line["words"]:
             text = (w.get("text") or "").strip()
@@ -888,16 +1020,58 @@ def _inject_karaoke(
                 }
             )
 
+        out.append(
+            LyricLineSchedule(
+                lyric_line_key=f"L{line['_abs_index']}",
+                text=line["text"],
+                start_s=round(start_s, 3),
+                end_s=round(end_s, 3),
+                word_timings=word_timings,
+                original_text=line.get("original_text", line["text"]),
+                original_start_s_song=float(line.get("original_start_s_song", start_s)),
+                original_end_s_song=float(line.get("original_end_s_song", end_s)),
+                original_words=list(line.get("original_words") or []),
+            )
+        )
+    return out
+
+
+def _inject_karaoke(
+    section_lines: list[dict],
+    windows: list[_SlotWindow],
+    slots: list[dict],
+    cfg: dict,
+) -> int:
+    """One overlay per line. Effect='karaoke-line' + word_timings tag."""
+    base = _common_overlay_fields(cfg)
+    highlight = cfg.get("highlight_color") or "#FFFF00"
+    injected = 0
+
+    for schedule in schedule_karaoke_lines(section_lines):
+        slot_win = _slot_for_time(schedule.start_s, windows)
+        if slot_win is None:
+            continue
+
+        # Overlay times must be slot-relative for the existing pipeline to
+        # treat them as a normal text overlay.
+        rel_start = max(0.0, schedule.start_s - slot_win.start_s)
+        slot_dur = slot_win.end_s - slot_win.start_s
+        rel_end = min(slot_dur, schedule.end_s - slot_win.start_s)
+        rel_end = max(rel_start + _MIN_OVERLAY_DURATION_S, rel_end)
+        rel_end = min(rel_end, slot_dur)
+        if rel_end <= rel_start:
+            continue
+
         overlay = dict(base)
         overlay.update(
             {
-                "text": line["text"],
+                "text": schedule.text,
                 "effect": "karaoke-line",
                 "start_s": round(rel_start, 3),
                 "end_s": round(rel_end, 3),
                 "highlight_color": highlight,
-                "word_timings": word_timings,
-                "lyric_line_key": f"L{line['_abs_index']}",
+                "word_timings": schedule.word_timings,
+                "lyric_line_key": schedule.lyric_line_key,
                 # Section-relative anchors capture the line's intended audio
                 # position INDEPENDENT of slot windowing. The post-snap
                 # re-anchor pass in `_collect_absolute_overlays` reads these
@@ -905,18 +1079,18 @@ def _inject_karaoke(
                 # beat-snap shifts the slot's cumulative offset. Line-style
                 # overlays do NOT carry these fields, so the re-anchor pass
                 # is a no-op for them — Line's behavior is byte-identical.
-                "section_anchor_s": round(line["start_s"], 3),
-                "section_end_anchor_s": round(line["end_s"], 3),
+                "section_anchor_s": round(schedule.start_s, 3),
+                "section_end_anchor_s": round(schedule.end_s, 3),
             }
         )
-        for key in (
-            "original_text",
-            "original_start_s_song",
-            "original_end_s_song",
-            "original_words",
+        for key, val in (
+            ("original_text", schedule.original_text),
+            ("original_start_s_song", schedule.original_start_s_song),
+            ("original_end_s_song", schedule.original_end_s_song),
+            ("original_words", schedule.original_words),
         ):
-            if line.get(key) is not None:
-                overlay[key] = copy.deepcopy(line[key])
+            if val is not None:
+                overlay[key] = copy.deepcopy(val) if isinstance(val, list) else val
         _ensure_overlay_list(slots[slot_win.index]).append(overlay)
         injected += 1
 

@@ -1714,6 +1714,7 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
             "enabled": False,
             "can_toggle_on": False,
             "reason": "disabled",
+            "lyrics_model": "baked",
         },
         "orientation": {
             "editable": False,

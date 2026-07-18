@@ -411,6 +411,23 @@ class Settings(BaseSettings):
         "dedicated vCPU count so each concurrent FFmpeg encode gets a real core.",
     )
 
+    lyrics_optional_enabled: bool = Field(
+        default=False,
+        description="Lyrics stop being baked into song_lyrics renders: the variant "
+        "renders lyrics-free (clean base, like song_text) and stamps "
+        "lyrics_baked=False + lyrics_enabled=False. The editor's Lyrics toggle "
+        "(default OFF) then instantly materializes beat-synced lyric lines as "
+        "ordinary editable `role=lyric_line` TextElements via GET "
+        ".../lyric-seeds; saving burns them through the normal fast text "
+        "reburn. Read at render time inside _render_generative_variant, so "
+        "flipping it affects queued jobs and re-renders after a worker "
+        "restart. Off = byte-identical current (bake-in) behavior; legacy "
+        "variants (lyrics_baked absent) always keep baked behavior regardless "
+        "of this flag. Kill switch: `fly secrets set "
+        "LYRICS_OPTIONAL_ENABLED=false --app nova-video` + "
+        "`fly machine restart <id>` — no deploy needed.",
+    )
+
     # agent_run retention (days). Rows with job_id IS NOT NULL and
     # created_at older than this are deleted by the daily
     # `tasks.cleanup_agent_runs` Beat task. Template- and track-scoped rows

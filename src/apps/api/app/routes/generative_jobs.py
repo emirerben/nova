@@ -10,6 +10,8 @@ POST /generative-jobs/{id}/variants/{vid}/edit         — combined text+style+s
 GET  /generative-jobs/{id}/variants/{vid}/timeline     — effective clip timeline + clip pool
 POST /generative-jobs/{id}/variants/{vid}/timeline     — persist user timeline + re-render
 DELETE /generative-jobs/{id}/variants/{vid}/timeline   — reset to the AI timeline + re-render
+GET  /generative-jobs/{id}/variants/{vid}/lyric-seeds  — instant-materialize lyric TextElements
+                                                          (LYRICS_OPTIONAL_ENABLED editor toggle)
 
 A generative job needs no pre-selected song or template — the orchestrator auto-matches
 a track, writes its own intro text, and renders three variants. Per-variant state lives
@@ -66,6 +68,10 @@ _LYRIC_LINE_KEY_RE = re.compile(r"^L\d+$")
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _LYRIC_OVERRIDE_STYLE_KEYS = frozenset({"color", "highlight_color", "font_family", "size_px"})
 _LYRIC_OVERRIDE_KEYS = frozenset({"text", "style", "orig_text", "orig_start_s"})
+# Lyrics-as-optional-elements: float-rounding slack when comparing a resubmitted
+# `role=lyric_line` element's start_s/end_s against its own previously-persisted
+# value (see the `lyrics_baked=False` branch of `validate_text_elements_payload`).
+_LYRIC_ELEMENT_TIMING_TOLERANCE_S = 0.02
 _LYRIC_TIMING_KEYS = frozenset(
     {"start_s", "end_s", "time_s", "duration_s", "line_start_s", "line_end_s"}
 )
@@ -428,6 +434,17 @@ class TextElementsRequest(BaseModel):
 class LyricsSectionRequest(BaseModel):
     enabled: bool | None = None
     line_overrides: dict | None = None
+
+
+class LyricSeedsResponse(BaseModel):
+    """GET .../lyric-seeds (lyrics-as-optional-elements instant materialize).
+
+    `elements` are TextElement-shaped dicts (`role="lyric_line"`) the FE can
+    merge straight into its local editor state when the Lyrics toggle flips
+    on — nothing is persisted until the user Saves (the normal text-elements
+    write path, `dispatch_set_text_elements` / editor-commit)."""
+
+    elements: list[dict]
 
 
 # ── Timeline editor schemas ────────────────────────────────────────────────────
@@ -1250,6 +1267,12 @@ def _lyrics_capabilities(variant: dict) -> dict:
             and reason is None
         ),
         "reason": reason,
+        # "elements" = lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED render;
+        # lines are ordinary editable role=lyric_line TextElements, materialized
+        # via GET .../lyric-seeds). "baked" = every other variant (legacy renders,
+        # and any render made while the flag was off) — lyrics are permanently
+        # burned into pixels and the lyric_line projection stays read-only.
+        "lyrics_model": "elements" if variant.get("lyrics_baked") is False else "baked",
     }
 
 
@@ -1972,11 +1995,57 @@ def validate_text_elements_payload(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Text elements cannot be edited on a lyrics variant.",
         )
-    if any(isinstance(raw, dict) and raw.get("role") == "lyric_line" for raw in elements):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "lyric_timing_locked", "message": "Lyric timing is locked."},
-        )
+    if variant.get("lyrics_baked") is not False:
+        # Legacy/baked variant: lyric_line is only ever a read-only projection
+        # (see text_element.py's text_elements_for_variant) — a submission
+        # containing one means a stale client re-sent a projected bar. Reject
+        # outright, same as before this feature existed.
+        if any(isinstance(raw, dict) and raw.get("role") == "lyric_line" for raw in elements):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "lyric_timing_locked", "message": "Lyric timing is locked."},
+            )
+    else:
+        # Lyrics-as-optional-elements: role=lyric_line elements are ordinary
+        # editable elements on a lyrics_baked=False variant — text/style may
+        # change freely, but timing must not drift once anchored. GET
+        # .../lyric-seeds is the sole source of a lyric line's initial timing,
+        # so the FIRST save for a given lyric-line id accepts whatever
+        # start_s/end_s the client sent as the new ground truth (it can only
+        # have come from our own seeds endpoint — a bogus first-time value
+        # merely mistimes the user's own edit, not a security concern). Every
+        # SUBSEQUENT save is compared against the variant's own
+        # previously-persisted value for that id and rejected on drift beyond
+        # float-rounding slack. This is the simpler of the two options the
+        # spec offered (recompute-and-compare vs. refuse deltas) — it needs no
+        # DB/track lookup inside this synchronous validator, unlike
+        # recomputing the live seed schedule would.
+        existing_lyric_by_id = {
+            e.get("id"): e
+            for e in (variant.get("text_elements") or [])
+            if isinstance(e, dict) and e.get("role") == "lyric_line"
+        }
+        for raw in elements:
+            if not isinstance(raw, dict) or raw.get("role") != "lyric_line":
+                continue
+            prior = existing_lyric_by_id.get(raw.get("id"))
+            if prior is None:
+                continue
+            try:
+                prior_start = float(prior.get("start_s"))
+                prior_end = float(prior.get("end_s"))
+                new_start = float(raw.get("start_s"))
+                new_end = float(raw.get("end_s"))
+            except (TypeError, ValueError):
+                continue
+            if (
+                abs(new_start - prior_start) > _LYRIC_ELEMENT_TIMING_TOLERANCE_S
+                or abs(new_end - prior_end) > _LYRIC_ELEMENT_TIMING_TOLERANCE_S
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail={"code": "lyric_timing_locked", "message": "Lyric timing is locked."},
+                )
 
     if variant.get("resolved_archetype") == "subtitled":
         from app.config import settings as _settings  # noqa: PLC0415
@@ -2849,8 +2918,15 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
     if not settings.GENERATIVE_TIMELINE_EDITOR_ENABLED:
         return "disabled"
     vid = str(variant.get("variant_id") or "")
-    if vid == "song_lyrics" or variant.get("text_mode") == "lyrics":
-        return "lyrics_sync"  # lyric lines are beat-synced; re-cutting breaks sync
+    if (vid == "song_lyrics" or variant.get("text_mode") == "lyrics") and variant.get(
+        "lyrics_baked"
+    ) is not False:
+        # Legacy (baked) lyric lines are timed to the RECIPE's slot layout, so
+        # re-cutting clips breaks sync. A `lyrics_baked=False` variant's lyric
+        # lines are ordinary TextElements timed to the continuous song audio —
+        # clip re-cuts don't move the song, so they stay in sync and the
+        # timeline is editable like any other variant.
+        return "lyrics_sync"
     if variant.get("resolved_archetype") == "narrated":
         return "locked_to_voiceover"  # clip timing is driven by the narrated VO bed
     if vid.startswith("voiceover"):
@@ -2859,7 +2935,13 @@ def _timeline_ineligibility(job: Job, variant: dict) -> str | None:
         return "no_slot_timeline"  # talking_head renders have no slot layout
     if is_collage_montage_preset(variant.get("montage_preset_rendered")):
         return "masonry_preset"  # collage tiles do not map to a linear slot timeline
-    if vid not in _TIMELINE_EDITABLE_VARIANTS:
+    if vid not in _TIMELINE_EDITABLE_VARIANTS and not (
+        vid == "song_lyrics" and variant.get("lyrics_baked") is False
+    ):
+        # `_TIMELINE_EDITABLE_VARIANTS` excludes song_lyrics for the SAME
+        # underlying reason the lyrics_sync check above did — once that no
+        # longer applies (lyrics_baked=False), song_lyrics is an ordinary
+        # montage timeline like song_text/original_text.
         return "unsupported_variant"
     ai_slots, _, _ = _timeline_parts(variant)
     if not ai_slots:
@@ -3024,6 +3106,116 @@ def dispatch_get_timeline(job: Job, variant_id: str) -> dict:
         "slots": [dict(s) for s in effective],
         "clips": clips,
     }
+
+
+def _lyric_seed_elements_from_snapshot(snapshot: list) -> list[dict]:
+    """Build seed elements from an already-anchored `lyric_overlay_snapshot`.
+
+    Preferred over recomputing from the lyrics cache whenever a snapshot
+    exists (a prior baked render, or a `lyrics_baked=False` variant that once
+    had lyrics injected before the flag flipped) — its `start_s`/`end_s` are
+    already absolute video time. Reuses the same burn-dict-shaped → TextElement
+    conversion the read-only projection uses (`_element_from_lyric_snapshot`),
+    just re-keyed to the `lyr-L<n>` id format this endpoint's contract uses.
+    """
+    from app.agents._schemas.text_element import _element_from_lyric_snapshot  # noqa: PLC0415
+
+    elements: list[dict] = []
+    for entry in snapshot:
+        if not isinstance(entry, dict):
+            continue
+        elem = _element_from_lyric_snapshot(entry)
+        if elem is None:
+            continue
+        line_key = str(entry.get("line_key") or "").strip()
+        dumped = elem.model_dump()
+        if line_key:
+            dumped["id"] = f"lyr-{line_key}"
+        elements.append(dumped)
+    return elements
+
+
+async def dispatch_get_lyric_seeds(job: Job, variant_id: str, db: AsyncSession) -> dict:
+    """Instant-materialize seed elements (lyrics-as-optional-elements editor
+    toggle). Read-only, side-effect free — nothing is persisted here.
+
+    404 when the flag is off (mirrors every other feature-flagged route in
+    this file). 422 with a machine-readable `code` when the variant has no
+    matched track, or the track has no renderable cached lyrics for the
+    variant's section — there is nothing to seed.
+    """
+    from app.config import settings as _settings  # noqa: PLC0415
+
+    if not _settings.lyrics_optional_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lyrics elements are not available.",
+        )
+    variant = _find_variant(job, variant_id)
+    if variant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Variant not found")
+
+    track_id = variant.get("music_track_id")
+    if not track_id:
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "no_matched_track",
+            "This variant has no matched song to seed lyrics from.",
+        )
+    track = await db.get(MusicTrack, track_id)
+    if track is None:
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "no_matched_track",
+            "This variant has no matched song to seed lyrics from.",
+        )
+
+    snapshot = variant.get("lyric_overlay_snapshot")
+    if snapshot:
+        elements = _lyric_seed_elements_from_snapshot(snapshot)
+    else:
+        from app.pipeline.lyric_injector import build_lyric_seed_elements  # noqa: PLC0415
+        from app.pipeline.lyric_support import lyrics_variant_renderable  # noqa: PLC0415
+        from app.services.lyrics_config_effective import (  # noqa: PLC0415
+            effective_lyrics_config,
+        )
+        from app.services.music_sections import track_config_with_rank_one  # noqa: PLC0415
+
+        if not lyrics_variant_renderable(track.lyrics_cached):
+            raise _lyrics_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "no_renderable_lyrics",
+                "This track has no renderable cached lyrics.",
+            )
+        cfg = track_config_with_rank_one(track)
+        best_start_s = float(cfg.get("best_start_s", 0.0) or 0.0)
+        best_end_s = float(cfg.get("best_end_s", 0.0) or 0.0)
+        # Cheap safety clamp against this variant's own known output length —
+        # avoids re-probing footage (which `_fit_section_to_footage` at render
+        # time needs but a GET route shouldn't pay for) while still keeping
+        # seeds from running past a short render. Best-effort only: falls
+        # back to the raw rank-1 section window when the duration isn't known
+        # yet (e.g. `visual_blocks_enabled` off).
+        output_duration_s = visual_block_variant_duration(variant)
+        if output_duration_s > 0:
+            best_end_s = min(best_end_s, best_start_s + output_duration_s)
+        style_set_id = variant.get("style_set_id")
+        lyrics_config = (
+            {"enabled": True, "style_set_id": style_set_id}
+            if style_set_id
+            else effective_lyrics_config(track.track_config, {"enabled": True, "style": "karaoke"})
+        )
+        elements = build_lyric_seed_elements(
+            track.lyrics_cached, best_start_s, best_end_s, lyrics_config
+        )
+
+    if not elements:
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "no_renderable_lyrics",
+            "This track has no renderable cached lyrics for this section.",
+        )
+    return {"elements": elements}
 
 
 async def persist_user_timeline(
@@ -4440,6 +4632,23 @@ async def get_variant_timeline(
     """
     job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
     return TimelineResponse(**dispatch_get_timeline(job, variant_id))
+
+
+@router.get("/{job_id}/variants/{variant_id}/lyric-seeds", response_model=LyricSeedsResponse)
+async def get_variant_lyric_seeds(
+    job_id: str,
+    variant_id: str,
+    current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
+) -> LyricSeedsResponse:
+    """Instant-materialize seed elements for the editor's Lyrics toggle.
+
+    Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): read-only, never
+    persists anything. 404 when the flag is off; 422 when the variant has no
+    matched track / no renderable cached lyrics.
+    """
+    job = await _load_generative_job(job_id, db, current_user, allowed_modes=_READABLE_MODES)
+    return LyricSeedsResponse(**await dispatch_get_lyric_seeds(job, variant_id, db))
 
 
 @router.post("/{job_id}/variants/{variant_id}/timeline", response_model=GenerativeJobResponse)

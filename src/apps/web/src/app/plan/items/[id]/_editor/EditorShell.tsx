@@ -26,6 +26,8 @@ import {
   getPlanItemJobStatus,
   deletePoolAsset,
   editPlanItemVariant,
+  getLyricSeeds,
+  LyricSeedsError,
   NotAuthenticatedError,
   confirmOverlayUploads,
   listPoolAssets,
@@ -89,6 +91,7 @@ import {
   barsToTextElements,
   buildLyricLineOverrides,
   isLyricBar,
+  seedBarsFromLyricSeeds,
   seedBarsFromVariant,
 } from "./editor-bars";
 import { isCaptionArchetype } from "@/lib/variant-editor/eligibility";
@@ -96,6 +99,8 @@ import {
   CAPTIONS_TAB_REASON,
   computeToolDisabledReasons,
   editorReasonCopy,
+  isElementsLyricsModel,
+  lyricsFeatureAvailable as computeLyricsFeatureAvailable,
   textElementsLockedCopy,
 } from "./editor-capabilities";
 import {
@@ -164,6 +169,11 @@ const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED =
 const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
+// Lyrics-optional "elements" model: instant toggle-insert/remove of
+// beat-synced lyric bars, no render round-trip. Independent of
+// LYRICS_EDITOR_UI (the legacy baked-lyrics bar editor) — see
+// lyricsFeatureAvailable/isElementsLyricsModel in editor-capabilities.ts.
+const LYRICS_OPTIONAL_UI = process.env.NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED === "true";
 const LANDSCAPE_UI = process.env.NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED === "true";
 
 type EditorOrientation = "portrait" | "landscape";
@@ -605,9 +615,33 @@ export default function EditorShell({
   const [captionMetaDirty, setCaptionMetaDirty] = useState(false);
   const [captionMetaPatch, setCaptionMetaPatch] = useState<CaptionMetaPatch>({});
   const lyricsCap = variant?.editor_capabilities?.lyrics ?? defaultLyricsCapability(variant);
-  const lyricsFeatureAvailable =
-    LYRICS_EDITOR_UI && (lyricsCap.editable || lyricsCap.enabled || lyricsCap.can_toggle_on);
-  const lyricBarsAvailable = LYRICS_EDITOR_UI && lyricsCap.editable;
+  // Lyrics-optional "elements" model: dual-gated by the FE flag AND the
+  // variant's lyrics_model — flag-off or legacy (baked) variants take every
+  // existing code path below untouched.
+  const isNewLyricsModel = isElementsLyricsModel(variant?.editor_capabilities);
+  const lyricsOptionalActive = LYRICS_OPTIONAL_UI && isNewLyricsModel;
+  // Toggle visibility, unified across both models (see editor-capabilities.ts).
+  const lyricsFeatureAvailable = computeLyricsFeatureAvailable(variant?.editor_capabilities);
+  // Legacy-only: whether lyric_line elements are projected into text_elements
+  // for local bar editing via the OLD lyricOverrides route. Always false on
+  // elements-model variants — those bars are inserted/removed by the toggle,
+  // not projected from the read adapter.
+  const lyricBarsAvailable = LYRICS_EDITOR_UI && !isNewLyricsModel && lyricsCap.editable;
+  // Elements-model: cache fetched lyric-seed bars per variant (once per
+  // session) + track the in-flight/error state that drives the toggle's
+  // loading/disabled copy.
+  // Cached as raw TextElement[] (not bars) — inserting re-derives bars AND
+  // re-merges into originalsRef so word_timings/reveal_s/fade_out_ms/z (fields
+  // the bar type doesn't model) survive the barsToTextElements merge-over-
+  // original on Save, exactly like server-seeded bars from a variant read.
+  const lyricSeedsCacheRef = useRef<Map<string, TextElement[]>>(new Map());
+  const [lyricSeedsLoading, setLyricSeedsLoading] = useState(false);
+  const [lyricSeedsError, setLyricSeedsError] = useState<"not_found" | "no_lyrics" | null>(null);
+  useEffect(() => {
+    setLyricSeedsError(null);
+    setLyricSeedsLoading(false);
+  }, [variant?.variant_id]);
+  const hasLyricBars = useMemo(() => state.bars.some(isLyricBar), [state.bars]);
   const previewOrientation = LANDSCAPE_UI ? orientation : "portrait";
   const activeCanvas = useMemo(
     () => canvasForOrientation(previewOrientation),
@@ -636,7 +670,14 @@ export default function EditorShell({
       );
       dispatch({
         type: "RESET",
-        bars: seedBarsFromVariant(variant, { includeLyrics: lyricBarsAvailable }),
+        // Elements-model bars are ordinary persisted text_elements once
+        // saved — always include them so a reload reflects a prior toggle-on
+        // save without re-fetching seeds. Legacy still gates on
+        // lyricBarsAvailable (projection-for-editing only when the old
+        // editor UI is on).
+        bars: seedBarsFromVariant(variant, {
+          includeLyrics: lyricBarsAvailable || lyricsOptionalActive,
+        }),
       });
       setLyricsEnabled(lyricsFeatureAvailable && persistedLyricsEnabled(variant));
       setTextDirty(false);
@@ -684,7 +725,7 @@ export default function EditorShell({
     // Dirty flags are read as a snapshot when a (re)seed fires; they must not
     // retrigger it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant, lyricBarsAvailable, lyricsFeatureAvailable, orientation]);
+  }, [variant, lyricBarsAvailable, lyricsFeatureAvailable, lyricsOptionalActive, orientation]);
 
   useEffect(() => {
     localOverlayPreviewUrlsRef.current = localOverlayPreviewUrls;
@@ -958,13 +999,14 @@ export default function EditorShell({
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
 
-  const visibleTextBars = useMemo(
-    () =>
-      lyricBarsAvailable && lyricsEnabled
-        ? state.bars
-        : state.bars.filter((bar) => !isLyricBar(bar)),
-    [lyricBarsAvailable, lyricsEnabled, state.bars],
-  );
+  const visibleTextBars = useMemo(() => {
+    // Elements model: state.bars already IS the source of truth (the toggle
+    // inserts/removes lyric bars directly) — nothing to filter.
+    if (lyricsOptionalActive) return state.bars;
+    return lyricBarsAvailable && lyricsEnabled
+      ? state.bars
+      : state.bars.filter((bar) => !isLyricBar(bar));
+  }, [lyricBarsAvailable, lyricsEnabled, lyricsOptionalActive, state.bars]);
   const lyricLineOverrides = useMemo(
     () =>
       lyricBarsAvailable
@@ -975,7 +1017,11 @@ export default function EditorShell({
   const lyricOverridesDirty =
     lyricBarsAvailable &&
     stableJson(lyricLineOverrides) !== stableJson(variant?.lyric_line_overrides ?? {});
+  // Elements model never sends the legacy `lyrics` commit section — toggling
+  // on/off mutates state.bars via ADD_LYRIC_BARS/REMOVE_LYRIC_BARS, which
+  // already drives `dirty` through the normal undo-history + textDirty path.
   const lyricsDirty =
+    !lyricsOptionalActive &&
     lyricsFeatureAvailable &&
     (lyricsEnabled !== persistedLyricsEnabled(variant) || lyricOverridesDirty);
   const orientationDirty = LANDSCAPE_UI && orientation !== persistedOrientation(variant);
@@ -1211,15 +1257,18 @@ export default function EditorShell({
   // (base and final are both lyric-burned) — DOM-render a lyric bar there only
   // when it's dirty, so unedited lines don't double-display. Virtual preview
   // composes raw source clips (no burned text), so it needs every lyric bar.
+  // Elements-model variants are NEVER lyric-burned (product decision: lyrics
+  // are not in the render) — every lyric_line element must show in BOTH
+  // preview paths, same as any other text element.
   const previewElements = useMemo(() => {
-    if (virtualPreviewActive) return elements;
+    if (virtualPreviewActive || lyricsOptionalActive) return elements;
     return elements.filter((el) => {
       if (el.role !== "lyric_line") return true;
       const sourceKey = typeof el.source_params?.key === "string" ? el.source_params.key : null;
       const key = sourceKey ?? el.id.match(/^lyric_(L\d+)$/)?.[1] ?? null;
       return key != null && key in lyricLineOverrides;
     });
-  }, [elements, virtualPreviewActive, lyricLineOverrides]);
+  }, [elements, virtualPreviewActive, lyricsOptionalActive, lyricLineOverrides]);
   const previewDuration = virtualPreviewActive
     ? virtualPreview.timeline.totalDurationS
     : duration;
@@ -1574,10 +1623,64 @@ export default function EditorShell({
       if (readOnly) return;
       const target = state.bars.find((bar) => bar.id === id);
       history.record();
-      if (!isLyricBar(target)) setTextDirty(true);
+      if (lyricsOptionalActive || !isLyricBar(target)) setTextDirty(true);
       dispatch({ type: "PATCH_BAR", id, patch });
     },
-    [readOnly, state.bars, history],
+    [readOnly, state.bars, lyricsOptionalActive, history],
+  );
+
+  // Elements-model Lyrics toggle: ON fetches (or reuses the cached) seed bars
+  // and inserts them as one undoable ADD_LYRIC_BARS action — no render
+  // round-trip, same as adding any other text bar. OFF removes every
+  // lyric_line bar in one undoable REMOVE_LYRIC_BARS action. Both flip
+  // textDirty so Save ships them through the normal text_elements commit.
+  const toggleLyricsOptional = useCallback(
+    async (next: boolean) => {
+      if (readOnly || !variant) return;
+      if (next === hasLyricBars) return;
+      if (!next) {
+        history.record("lyrics-toggle-off");
+        setTextDirty(true);
+        dispatch({ type: "REMOVE_LYRIC_BARS" });
+        return;
+      }
+      if (!lyricsCap.can_toggle_on && !lyricsCap.enabled) {
+        setToast(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
+        return;
+      }
+      const variantId = variant.variant_id;
+      const cached = lyricSeedsCacheRef.current.get(variantId);
+      if (cached) {
+        cached.forEach((el) => originalsRef.current.set(el.id, el));
+        history.record("lyrics-toggle-on");
+        setTextDirty(true);
+        dispatch({ type: "ADD_LYRIC_BARS", bars: seedBarsFromLyricSeeds(cached) });
+        return;
+      }
+      setLyricSeedsLoading(true);
+      setLyricSeedsError(null);
+      try {
+        const res = await getLyricSeeds(itemId, variantId);
+        lyricSeedsCacheRef.current.set(variantId, res.elements);
+        // The active variant changed while this request was in flight —
+        // don't insert seeds for a variant no longer on screen.
+        if (seededVariantIdRef.current !== variantId) return;
+        res.elements.forEach((el) => originalsRef.current.set(el.id, el));
+        history.record("lyrics-toggle-on");
+        setTextDirty(true);
+        dispatch({ type: "ADD_LYRIC_BARS", bars: seedBarsFromLyricSeeds(res.elements) });
+      } catch (err) {
+        if (err instanceof LyricSeedsError) {
+          setLyricSeedsError(err.reason);
+          setToast(err.message);
+        } else {
+          setToast(err instanceof Error ? err.message : "Couldn't load lyrics.");
+        }
+      } finally {
+        setLyricSeedsLoading(false);
+      }
+    },
+    [readOnly, variant, hasLyricBars, lyricsCap, itemId, history],
   );
 
   const applySmartPlacement = useCallback(() => {
@@ -2150,11 +2253,13 @@ export default function EditorShell({
         effect: styleSet.effect ?? styleSet.intro?.effect ?? undefined,
       };
       history.record();
-      if (visibleTextBars.some((bar) => !isLyricBar(bar))) setTextDirty(true);
+      if (lyricsOptionalActive || visibleTextBars.some((bar) => !isLyricBar(bar))) {
+        setTextDirty(true);
+      }
       visibleTextBars.forEach((b) => dispatch({ type: "PATCH_BAR", id: b.id, patch }));
       setAppliedStyleSetId(styleSet.id);
     },
-    [readOnly, visibleTextBars, history],
+    [readOnly, visibleTextBars, lyricsOptionalActive, history],
   );
 
   // Legacy lyrics-variant restyle for flag-off clients: route through the
@@ -2179,7 +2284,11 @@ export default function EditorShell({
 
   // Single entry point both StylesDrawer instances bind to — branches per
   // variant type so callers don't need to know about the lyrics special case.
-  const onRestyleAll = isLyrics && !lyricBarsAvailable ? restyleLyrics : restyleAll;
+  // Elements-model variants always take the normal bar-patch route, even if
+  // text_mode happens to read "lyrics" — their lyric_line bars are ordinary
+  // text_elements, never the legacy whole-style-set route.
+  const onRestyleAll =
+    isLyrics && !lyricBarsAvailable && !lyricsOptionalActive ? restyleLyrics : restyleAll;
 
   const pickPreset = useCallback(
     (preset: TextPreset) => {
@@ -2755,6 +2864,7 @@ export default function EditorShell({
       const beforeOverlayById = new Map(localOverlays.map((overlay) => [overlay.id, overlay]));
       result.textActions.forEach((action) => dispatch(action));
       if (
+        lyricsOptionalActive ||
         result.textActions.some((action) => {
           if (action.type === "ADD_TEXT") return true;
           if (!("id" in action)) return false;
@@ -2862,6 +2972,7 @@ export default function EditorShell({
       state.bars,
       itemId,
       variant,
+      lyricsOptionalActive,
     ],
   );
 
@@ -3124,7 +3235,13 @@ export default function EditorShell({
         ...(lyricOverridesDirty ? { line_overrides: lyricLineOverrides } : {}),
       };
       const commitRequest = buildEditorCommitRequest({
-        elements: barsToTextElements(state.bars, originalsRef.current),
+        // Elements-model lyric_line bars ride the normal text_elements
+        // section (they're ordinary persisted elements on that model);
+        // legacy leaves them out — they persist via the `lyrics` section
+        // below instead (lyricsRequest / lyricsDirty, forced off above).
+        elements: barsToTextElements(state.bars, originalsRef.current, {
+          includeLyrics: lyricsOptionalActive,
+        }),
         captionCues,
         captionMeta: captionMetaPatch,
         textDirty: textDirty && captionCues.length === 0,
@@ -3224,6 +3341,7 @@ export default function EditorShell({
     lyricOverridesDirty,
     lyricsEnabled,
     lyricLineOverrides,
+    lyricsOptionalActive,
     sfxDirty,
     localSfx,
     overlaysDirty,
@@ -3424,19 +3542,31 @@ export default function EditorShell({
   const showCopilotSaveNotice = sessionHasCopilotEdits && !copilotSaveNoticeDismissed;
   const lyricsToggle = {
     visible: !!variant && lyricsFeatureAvailable,
-    enabled: lyricsEnabled,
-    disabled: !lyricsEnabled && !lyricsCap.can_toggle_on,
-    hint: lyricsToggleHint(lyricsCap.reason),
-    onToggle: (next: boolean) => {
-      if (readOnly) return;
-      if (next && !lyricsCap.can_toggle_on && !lyricsCap.enabled) {
-        setToast(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
-        return;
-      }
-      if (next === lyricsEnabled) return;
-      history.record("lyrics-toggle");
-      setLyricsEnabled(next);
-    },
+    enabled: lyricsOptionalActive ? hasLyricBars : lyricsEnabled,
+    disabled: lyricsOptionalActive
+      ? lyricSeedsLoading || lyricSeedsError != null || (!hasLyricBars && !lyricsCap.can_toggle_on)
+      : !lyricsEnabled && !lyricsCap.can_toggle_on,
+    hint: lyricsOptionalActive
+      ? lyricSeedsLoading
+        ? "Loading lyrics…"
+        : lyricSeedsError === "no_lyrics"
+          ? "This song doesn't have synced lyrics"
+          : lyricSeedsError === "not_found"
+            ? "Lyrics aren't available for this edit"
+            : lyricsToggleHint(lyricsCap.reason)
+      : lyricsToggleHint(lyricsCap.reason),
+    onToggle: lyricsOptionalActive
+      ? (next: boolean) => void toggleLyricsOptional(next)
+      : (next: boolean) => {
+          if (readOnly) return;
+          if (next && !lyricsCap.can_toggle_on && !lyricsCap.enabled) {
+            setToast(lyricsToggleHint(lyricsCap.reason) ?? "Lyrics can't be enabled for this edit.");
+            return;
+          }
+          if (next === lyricsEnabled) return;
+          history.record("lyrics-toggle");
+          setLyricsEnabled(next);
+        },
   };
   const orientationCap = capabilities?.orientation;
   const orientationToggleVisible = LANDSCAPE_UI && orientationCap != null;
@@ -3990,7 +4120,7 @@ export default function EditorShell({
           if (selectedBar && !readOnly) {
               // Coalesce keystrokes on one bar into a single undo step.
               history.record(`text:${selectedBar.id}`);
-              if (!isLyricBar(selectedBar)) setTextDirty(true);
+              if (lyricsOptionalActive || !isLyricBar(selectedBar)) setTextDirty(true);
               dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
             }
           }}
@@ -4126,7 +4256,7 @@ export default function EditorShell({
         onEditText={(text) => {
           if (selectedBar && !readOnly) {
             history.record(`text:${selectedBar.id}`);
-            if (!isLyricBar(selectedBar)) setTextDirty(true);
+            if (lyricsOptionalActive || !isLyricBar(selectedBar)) setTextDirty(true);
             dispatch({ type: "EDIT_TEXT", id: selectedBar.id, text });
           }
         }}

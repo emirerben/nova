@@ -59,11 +59,16 @@ _LYRIC_INJECTOR_PATH = (
 # helpers grew above `_inject_line` without changing Line code →
 # 1657..2186 after lyric-line override helpers grew above `_inject_line`, and
 # `_inject_line` gained only the additive `lyric_line_key` metadata stamp.
-# Verified with `test_lyric_injector_no_stacking.py` (76 tests) on 2026-07-18.
+# Verified with `test_lyric_injector_no_stacking.py` (76 tests) on 2026-07-18 →
+# 1831..2360 after the lyrics-as-optional-elements helpers grew above
+# `_inject_line` (`LyricLineSchedule` + `schedule_karaoke_lines` extracted from
+# `_inject_karaoke`, and `build_lyric_seed_elements`); the frozen Line content
+# is byte-identical (same SHA). Verified with
+# `test_lyric_injector_no_stacking.py` (68 tests) on 2026-07-18.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 1657
-_LINE_FROZEN_RANGE_END: int = 2186
+_LINE_FROZEN_RANGE_START: int = 1831
+_LINE_FROZEN_RANGE_END: int = 2360
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.

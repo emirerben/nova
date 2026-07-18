@@ -1154,6 +1154,119 @@ def test_lyric_line_role_rejected_on_text_elements_write(monkeypatch):
     assert exc.value.detail["code"] == "lyric_timing_locked"
 
 
+def test_lyric_line_role_accepted_on_lyrics_baked_false_variant(monkeypatch):
+    """Lyrics-as-optional-elements: on a lyrics_baked=False variant, a
+    role=lyric_line submission is NOT rejected — it's an ordinary editable
+    element (text/style may change; a first-time timing is accepted as the
+    new ground truth since it can only have come from GET .../lyric-seeds)."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True, raising=False)
+    variant = {**_lyric_snapshot_variant(), "lyrics_baked": False}
+
+    validated, _ = gj.validate_text_elements_payload(
+        variant,
+        [
+            {
+                "id": "lyr-L0",
+                "role": "lyric_line",
+                "text": "Materialized line",
+                "start_s": 2.0,
+                "end_s": 4.0,
+            }
+        ],
+        require_base=False,
+        strict_drop=True,
+    )
+
+    assert len(validated) == 1
+    assert validated[0]["role"] == "lyric_line"
+    assert validated[0]["text"] == "Materialized line"
+
+
+def test_lyric_line_timing_tamper_rejected_on_resave(monkeypatch):
+    """After a lyric_line element is first persisted, a resubmission that
+    drifts its start_s/end_s beyond float-rounding slack is rejected —
+    timing locks in on the first save; only text/style stay editable."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True, raising=False)
+    variant = {
+        "variant_id": "song_lyrics",
+        "text_mode": "lyrics",
+        "lyrics_baked": False,
+        "text_elements": [
+            {
+                "id": "lyr-L0",
+                "role": "lyric_line",
+                "text": "Original",
+                "start_s": 2.0,
+                "end_s": 4.0,
+                "position": "bottom",
+            }
+        ],
+    }
+
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            variant,
+            [
+                {
+                    "id": "lyr-L0",
+                    "role": "lyric_line",
+                    "text": "Retexted, still locked",
+                    "start_s": 2.5,  # drifted beyond tolerance
+                    "end_s": 4.0,
+                }
+            ],
+            require_base=False,
+            strict_drop=True,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "lyric_timing_locked"
+
+
+def test_lyric_line_text_only_edit_accepted_on_resave(monkeypatch):
+    """A resubmission with the SAME timing (within tolerance) but new text
+    is accepted — text/style are freely editable."""
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True, raising=False)
+    variant = {
+        "variant_id": "song_lyrics",
+        "text_mode": "lyrics",
+        "lyrics_baked": False,
+        "text_elements": [
+            {
+                "id": "lyr-L0",
+                "role": "lyric_line",
+                "text": "Original",
+                "start_s": 2.0,
+                "end_s": 4.0,
+                "position": "bottom",
+            }
+        ],
+    }
+
+    validated, _ = gj.validate_text_elements_payload(
+        variant,
+        [
+            {
+                "id": "lyr-L0",
+                "role": "lyric_line",
+                "text": "Retexted",
+                "start_s": 2.001,  # within float-rounding tolerance
+                "end_s": 4.0,
+            }
+        ],
+        require_base=False,
+        strict_drop=True,
+    )
+
+    assert validated[0]["text"] == "Retexted"
+
+
 def test_append_ai_text_tombstones_skips_lyric_projections():
     assert (
         append_ai_text_tombstones(_lyric_snapshot_variant(), [], include_lyric_projection=True)

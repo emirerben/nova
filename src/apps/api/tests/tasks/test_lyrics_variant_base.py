@@ -151,6 +151,62 @@ def test_lyrics_disabled_skips_injection_but_keeps_base_for_user_text(
     assert res["lyrics_enabled"] is False
     assert res["lyric_overlay_snapshot"] is None
     assert res["base_video_path"] == "generative-jobs/j/base_1_song_lyrics.mp4"
+    # Flag-off (default): lyrics_baked is never stamped — legacy dict shape.
+    assert "lyrics_baked" not in res
+
+
+def test_lyrics_optional_flag_on_skips_injection_and_bakes_false(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """LYRICS_OPTIONAL_ENABLED on: a song_lyrics render skips baking lyrics
+    entirely (no injection, clean base), REGARDLESS of the `lyrics_enabled`
+    kwarg a caller passed (here left at its default, which would normally
+    resolve to True via `_lyrics_active` for a text_mode="lyrics" spec)."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "lyrics_optional_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb,
+        "_inject_lyrics",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("_inject_lyrics called")),
+    )
+
+    res = _render_lyrics_variant(monkeypatch, tmp_path)  # lyrics_enabled kwarg left None
+
+    assert res["ok"] is True
+    assert res["lyrics_enabled"] is False
+    assert res["lyrics_baked"] is False
+    assert res["lyric_overlay_snapshot"] is None
+    # Same clean-base upload mechanism song_text uses — text-free, ready for
+    # fast reburn once the user saves materialized lyric elements.
+    assert res["base_video_path"] == "generative-jobs/j/base_1_song_lyrics.mp4"
+
+
+def test_lyrics_optional_flag_off_ignores_flag_stays_legacy(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """Byte-identical guard: with the flag at its default (off), a render
+    behaves exactly like before this feature — injection runs, no
+    lyrics_baked key appears."""
+    from app.config import settings
+
+    assert settings.lyrics_optional_enabled is False  # documents the default
+    injected: list[bool] = []
+    real_inject = gb._inject_lyrics
+
+    def _spy_inject(*a, **k):
+        injected.append(True)
+        return real_inject(*a, **k)
+
+    monkeypatch.setattr(gb, "_inject_lyrics", _spy_inject)
+
+    res = _render_lyrics_variant(monkeypatch, tmp_path)
+
+    assert injected == [True]
+    assert res["lyrics_enabled"] is True
+    assert "lyrics_baked" not in res
 
 
 def test_reburn_lyrics_variant_only_burns_text_elements(monkeypatch, tmp_path) -> None:
@@ -219,6 +275,88 @@ def test_reburn_lyrics_variant_only_burns_text_elements(monkeypatch, tmp_path) -
     assert res["ok"] is True
     assert len(burned) == 1
     assert [overlay["text"] for overlay in burned[0]] == ["USER"]
+
+
+def test_reburn_lyrics_baked_false_variant_burns_lyric_line_elements(monkeypatch, tmp_path) -> None:
+    """Lyrics-as-optional-elements: on a lyrics_baked=False variant, a saved
+    role=lyric_line element is an ordinary burnable element — unlike the
+    legacy test above, it must NOT be stripped."""
+    base_file = tmp_path / "base.mp4"
+    base_file.write_bytes(b"base")
+    burned: list[list[dict]] = []
+
+    monkeypatch.setattr(
+        "app.storage.download_to_file",
+        lambda gcs, local: open(local, "wb").write(base_file.read_bytes()),
+    )
+    monkeypatch.setattr(
+        "app.storage.upload_public_read",
+        lambda local, gcs: f"https://signed/{gcs}",
+    )
+    monkeypatch.setattr(
+        "app.pipeline.generative_overlays.build_persistent_intro_overlays",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("intro synthesized")),
+    )
+
+    def _burn(input_path, overlays, output_path, tmpdir, *, matte=None):
+        burned.append(overlays)
+        with open(output_path, "wb") as f:
+            f.write(b"final")
+
+    monkeypatch.setattr("app.pipeline.text_overlay_skia.burn_text_overlays_skia", _burn)
+    existing = {
+        "rank": 1,
+        "text_mode": "lyrics",
+        "lyrics_baked": False,
+        "base_video_path": "generative-jobs/j/base_1_song_lyrics.mp4",
+        "video_path": "generative-jobs/j/variant_1_song_lyrics.mp4",
+        "text_elements_user_edited": True,
+        "duration_s": 3.0,
+        "text_elements": [
+            {
+                "id": "user",
+                "text": "USER",
+                "role": "generative_intro",
+                "start_s": 0.0,
+                "end_s": 1.0,
+                "position": "middle",
+            },
+            {
+                "id": "lyr-L0",
+                "text": "LYRIC",
+                "role": "lyric_line",
+                "start_s": 1.0,
+                "end_s": 2.0,
+                "position": "bottom",
+                "effect": "static",
+            },
+        ],
+    }
+
+    res = gb._reburn_text_on_base(
+        job_id="j",
+        variant_id="song_lyrics",
+        existing=existing,
+        agent_text=types.SimpleNamespace(text="DO NOT BURN", highlight_word=None),
+        agent_form={"effect": "karaoke-line"},
+        text_mode="lyrics",
+        resolved_style_set_id="default",
+        size_override_px=None,
+        settings=types.SimpleNamespace(),
+    )
+
+    assert res["ok"] is True
+    assert len(burned) == 1
+    assert sorted(overlay["text"] for overlay in burned[0]) == ["LYRIC", "USER"]
+
+
+def test_is_fast_reburn_eligible_allows_lyrics_baked_false() -> None:
+    settings = types.SimpleNamespace(GENERATIVE_FAST_REBURN_ENABLED=True)
+    legacy = {"text_mode": "lyrics", "base_video_path": "b"}
+    new_model = {"text_mode": "lyrics", "base_video_path": "b", "lyrics_baked": False}
+
+    assert gb._is_fast_reburn_eligible(legacy, None, None, settings) is False
+    assert gb._is_fast_reburn_eligible(new_model, None, None, settings) is True
 
 
 def _patch_regen_session(monkeypatch: pytest.MonkeyPatch, job: FakeJob, track=None) -> None:

@@ -248,9 +248,7 @@ def _run_generative_job(job_id: str) -> None:
             smart_captions = {
                 "preset_id": str(_raw_smart["preset_id"]),
                 "preset_version": str(_raw_smart["preset_version"]),
-                "sound_design": (
-                    "off" if _raw_smart.get("sound_design") == "off" else "auto"
-                ),
+                "sound_design": ("off" if _raw_smart.get("sound_design") == "off" else "auto"),
             }
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
@@ -1508,7 +1506,15 @@ def _is_fast_reburn_eligible(
         return False  # no cached base (legacy or lyrics variant)
     text_mode = existing.get("text_mode")
     if text_mode not in ("agent_text", "none"):
-        return False  # lyrics variants: full path in v1
+        # Lyrics-as-optional-elements: a `lyrics_baked=False` song_lyrics
+        # variant's base is genuinely lyrics-free (same upload-before-burn
+        # shape as agent_text's base), and `_reburn_text_on_base`'s
+        # `text_mode == "lyrics"` branch already burns ONLY `text_elements`
+        # (now including `role=lyric_line` ones) onto it — so it's eligible
+        # for the real fast path too. Legacy lyrics variants (lyrics_baked
+        # True/absent) keep the full-render-only v1 behavior.
+        if not (text_mode == "lyrics" and existing.get("lyrics_baked") is False):
+            return False
     return True
 
 
@@ -5747,6 +5753,19 @@ def _render_generative_variant(
     lyrics_available = (
         lyrics_variant_renderable(track.lyrics_cached) if track is not None else False
     )
+    # Lyrics-as-optional-elements (LYRICS_OPTIONAL_ENABLED): every render pass
+    # for a song_lyrics variant made while the flag is on skips baking lyrics
+    # into pixels entirely, regardless of the `lyrics_enabled` kwarg — the
+    # variant always renders lyrics-free (clean base, like song_text) and the
+    # editor's Lyrics toggle instead materializes beat-synced lyric lines as
+    # ordinary `role=lyric_line` TextElements (GET .../lyric-seeds) that burn
+    # through the normal fast-text-reburn path on save. This is intentionally
+    # unconditional on `lyrics_enabled` — a variant becomes "new model" the
+    # moment it's (re-)rendered under the flag; flag-off (or a non-lyrics
+    # variant) leaves `effective_lyrics_enabled` untouched, byte-identical.
+    lyrics_optional_active = bool(settings.lyrics_optional_enabled) and text_mode == "lyrics"
+    if lyrics_optional_active:
+        effective_lyrics_enabled = False
 
     base = {
         "variant_id": variant_id,
@@ -5838,6 +5857,14 @@ def _render_generative_variant(
                 "montage_preset_fallback": None,
             }
         )
+    if lyrics_optional_active:
+        # Only stamped when the flag actually skipped baking — absent (None
+        # via .get()) for every flag-off render and every non-lyrics variant,
+        # which is what keeps "flag off = byte-identical" true at the dict-
+        # shape level too (same pattern as montage_preset above). Every
+        # reader treats `variant.get("lyrics_baked") is False` as "new model"
+        # and anything else (True/None/absent) as "legacy baked".
+        base["lyrics_baked"] = False
     try:
         beats: list[float] = []
         voiceover_local: str | None = None
@@ -7652,8 +7679,7 @@ def _render_subtitled_variant(
                         rows = (
                             db.execute(
                                 _select(PlanItemAsset).where(
-                                    PlanItemAsset.plan_item_id
-                                    == smart_job.content_plan_item_id,
+                                    PlanItemAsset.plan_item_id == smart_job.content_plan_item_id,
                                     PlanItemAsset.status == "ready",
                                 )
                             )
@@ -7806,8 +7832,7 @@ def _render_subtitled_variant(
         pre_sfx_gcs: str | None = None
         pre_media_gcs: str | None = None
         sound_design_auto = bool(
-            smart_captions is not None
-            and smart_captions.get("sound_design", "auto") == "auto"
+            smart_captions is not None and smart_captions.get("sound_design", "auto") == "auto"
         )
         if smart_compiled is not None and settings.sound_effects_enabled and sound_design_auto:
             try:
@@ -7850,14 +7875,8 @@ def _render_subtitled_variant(
                     "requested": len(smart_compiled.sfx_intents),
                     "resolved": len(sound_effects),
                     "unresolved_roles": sorted(
-                        {
-                            str(intent.get("role"))
-                            for intent in smart_compiled.sfx_intents
-                        }
-                        - {
-                            str(placement.get("smart_role"))
-                            for placement in sound_effects
-                        }
+                        {str(intent.get("role")) for intent in smart_compiled.sfx_intents}
+                        - {str(placement.get("smart_role")) for placement in sound_effects}
                     ),
                 }
             except Exception as exc:  # noqa: BLE001 — visuals/captions still ship
@@ -8179,12 +8198,21 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
 
     elements = coerce_text_elements(variant.get("text_elements") or []) or []
-    elements = [elem for elem in elements if getattr(elem, "role", None) != "lyric_line"]
+    # Lyrics-as-optional-elements: on a `lyrics_baked=False` variant, saved
+    # `role=lyric_line` elements are ordinary burnable elements (they were
+    # accepted at write time by `validate_text_elements_payload`), so burn
+    # them like any other element. Legacy (lyrics_baked True/absent) variants
+    # keep the historical exclusion — lyric_line there is only ever a
+    # read-only projection, never a real persisted element.
+    include_lyric_line = variant.get("lyrics_baked") is False
+    if not include_lyric_line:
+        elements = [elem for elem in elements if getattr(elem, "role", None) != "lyric_line"]
     if not elements:
         return []
     return build_overlays_from_text_elements(
         elements,
         video_duration_s=float(variant.get("duration_s") or 10.0),
+        include_lyric_line=include_lyric_line,
     )
 
 
@@ -9632,6 +9660,12 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     "lyrics_available": r.get("lyrics_available"),
                     "lyric_line_overrides": r.get("lyric_line_overrides"),
                     "lyric_overlay_snapshot": r.get("lyric_overlay_snapshot"),
+                    # Lyrics-as-optional-elements: False iff this render skipped
+                    # baking lyrics under LYRICS_OPTIONAL_ENABLED. MUST survive
+                    # finalization or the "new model" carve-outs (timeline
+                    # editability, text-element write acceptance, fast reburn)
+                    # silently revert to legacy-baked behavior after every job.
+                    "lyrics_baked": r.get("lyrics_baked"),
                     # Output orientation — initial renders are portrait today, but
                     # keep the persisted value authoritative rather than implied.
                     "orientation": r.get("orientation"),

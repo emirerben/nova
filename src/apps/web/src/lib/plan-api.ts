@@ -977,6 +977,15 @@ export interface EditorCapabilities {
     enabled: boolean;
     can_toggle_on: boolean;
     reason: "disabled" | "no_track" | "no_renderable_lyrics" | null;
+    /**
+     * "elements" = lyrics-optional model: lyrics are NOT baked into the
+     * render; the Lyrics toggle inserts/removes ordinary `role: "lyric_line"`
+     * text_elements client-side (instant, no render round-trip). "baked" (or
+     * absent, on rows minted before this field shipped) = legacy model: lyrics
+     * are burned into the base video; the toggle only affects local bar
+     * visibility and edits persist via `lyrics.line_overrides`.
+     */
+    lyrics_model?: "elements" | "baked";
   };
   orientation?: {
     editable: boolean;
@@ -1186,6 +1195,69 @@ export function retimeVisualBlock(
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
   const res = await request<{ variants: PlanItemVariant[] }>(`/generative-jobs/${jobId}/status`);
   return res.variants ?? [];
+}
+
+// ── Lyrics-optional "elements" model ────────────────────────────────────────
+
+export interface LyricSeedsResponse {
+  elements: TextElement[];
+}
+
+export type LyricSeedsErrorReason = "not_found" | "no_lyrics";
+
+/**
+ * Thrown by getLyricSeeds on the two documented non-2xx outcomes: 404 (flag
+ * off / not an elements-model variant — treat as feature-unavailable) and 422
+ * (the variant's matched track has no renderable lyrics). Any other failure
+ * throws a plain Error, same as `request()`.
+ */
+export class LyricSeedsError extends Error {
+  reason: LyricSeedsErrorReason;
+  constructor(reason: LyricSeedsErrorReason, detail?: string) {
+    super(
+      detail ??
+        (reason === "no_lyrics"
+          ? "This song doesn't have synced lyrics"
+          : "Lyrics aren't available for this edit"),
+    );
+    this.name = "LyricSeedsError";
+    this.reason = reason;
+  }
+}
+
+/**
+ * Beat-synced lyric lines for an "elements"-model variant, projected as
+ * TextElement-shaped dicts (id "lyr-L<n>", role "lyric_line", server-locked
+ * start_s/end_s). Fetched once (callers should cache per variant) when the
+ * Lyrics toggle is switched on — inserting the result is a normal client-side
+ * bar mutation, not a render round-trip.
+ */
+export async function getLyricSeeds(
+  itemId: string,
+  variantId: string,
+): Promise<LyricSeedsResponse> {
+  const res = await fetch(`${PLAN_BASE}/plan-items/${itemId}/variants/${variantId}/lyric-seeds`);
+  if (res.status === 401) throw new NotAuthenticatedError();
+  if (res.status === 404 || res.status === 422) {
+    let detail: string | undefined;
+    try {
+      detail = ((await res.json()) as { detail?: string })?.detail;
+    } catch {
+      /* non-JSON body — LyricSeedsError falls back to its default copy */
+    }
+    throw new LyricSeedsError(res.status === 404 ? "not_found" : "no_lyrics", detail);
+  }
+  if (!res.ok) {
+    let detail = `Request failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { detail?: string };
+      if (body?.detail) detail = body.detail;
+    } catch {
+      // non-JSON error body; keep the generic message
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as LyricSeedsResponse;
 }
 
 // ── Per-variant editing (swap song / edit text / change style) ────────────────

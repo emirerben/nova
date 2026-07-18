@@ -846,6 +846,7 @@ def build_overlays_from_text_elements(
     elements: list[TextElement],
     *,
     video_duration_s: float,
+    include_lyric_line: bool = False,
 ) -> list[dict]:
     """Compile a list of TextElement objects to burn-dict format.
 
@@ -873,6 +874,15 @@ def build_overlays_from_text_elements(
     transformed text, so the Skia renderer, the Pillow fallback, and the CSS
     preview (which applies the same transform in ``resolveTextElementsLayout``)
     all agree by construction. The stored element keeps the user's casing.
+
+    ``include_lyric_line`` (lyrics-as-optional-elements, off by default so every
+    existing caller stays byte-identical): ``role="lyric_line"`` elements are
+    normally never burnable through this path — on a legacy (lyrics_baked)
+    variant they're a read-only projection, never real persisted elements. On
+    a ``lyrics_baked=False`` variant they ARE ordinary persisted elements, and
+    the caller (``_text_element_burn_dicts``) passes ``True`` so they burn
+    like any other element (the karaoke-line/word_timings handling below is
+    already role-agnostic).
     """
     from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
 
@@ -880,7 +890,7 @@ def build_overlays_from_text_elements(
     for elem in elements:
         if getattr(elem, "removed", False):
             continue
-        if getattr(elem, "role", None) == "lyric_line":
+        if getattr(elem, "role", None) == "lyric_line" and not include_lyric_line:
             continue
         # ── position → burn-dict position + optional explicit fracs ──────────
         if elem.position == "custom":

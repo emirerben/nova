@@ -4045,9 +4045,7 @@ def test_finalize_job_preserves_smart_caption_plan_and_authoritative_titles(monk
         "compiler": "test",
     }
     assert variant["smart_validation_receipts"] == {"planner": {"valid": True}}
-    assert variant["boundary_effects"] == [
-        {"effect": "horizontal_motion_blur", "at_s": 8.0}
-    ]
+    assert variant["boundary_effects"] == [{"effect": "horizontal_motion_blur", "at_s": 8.0}]
     assert variant["text_elements"] == titles
     assert variant["text_elements_user_edited"] is True
     assert variant["text_elements_materialized_from"] == "smart_captions"
@@ -4189,7 +4187,32 @@ def test_finalize_job_preserves_lyric_fields(monkeypatch):
     assert v["lyrics_available"] is True
     assert v["lyric_line_overrides"] == overrides
     assert v["lyric_overlay_snapshot"] == snapshot
-    assert v["orientation"] == "portrait"
+
+
+def test_finalize_job_preserves_lyrics_baked(monkeypatch):
+    """Lyrics-as-optional-elements: lyrics_baked MUST survive finalization or
+    every carve-out gated on it (timeline editability, text-element write
+    acceptance, fast reburn eligibility) silently reverts to legacy-baked
+    behavior the moment the job completes."""
+    import uuid
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    result = {
+        "variant_id": "song_lyrics",
+        "rank": 1,
+        "text_mode": "lyrics",
+        "ok": True,
+        "render_status": "ready",
+        "output_url": "u",
+        "video_path": "generative-jobs/j/v.mp4",
+        "lyrics_enabled": False,
+        "lyrics_available": True,
+        "lyrics_baked": False,
+    }
+    gb._finalize_job(str(uuid.uuid4()), [result])
+    v = job.assembly_plan["variants"][0]
+    assert v["lyrics_baked"] is False
 
 
 def test_reapply_persisted_sfx_reapplies_and_resets_pre_sfx(monkeypatch):

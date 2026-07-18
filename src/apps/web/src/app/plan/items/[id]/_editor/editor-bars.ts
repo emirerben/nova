@@ -179,6 +179,31 @@ export function seedBarsFromVariant(
   return filterLyrics(convertApiTextElements(variant.text_elements));
 }
 
+/**
+ * Lyrics-optional "elements" model: convert the `GET .../lyric-seeds`
+ * response (TextElement-shaped dicts, role "lyric_line") into working bars
+ * for a single ADD_LYRIC_BARS dispatch. Reuses convertApiTextElements — the
+ * seed shape is a plain TextElement[], so no bespoke mapping is needed.
+ *
+ * Normalizes a bare "karaoke" effect (the contract's word-timed shorthand) to
+ * "karaoke-line" — the literal every renderer/style path in this codebase
+ * (overlay-animation.ts, overlay-layout.ts, TextLane.tsx) actually matches on
+ * for the per-word highlight sweep. Word-timed bars without an explicit
+ * effect also default to it, since `word_timings` alone means nothing to the
+ * renderer without the effect flag.
+ */
+export function seedBarsFromLyricSeeds(elements: TextElement[]): TextElementBar[] {
+  const normalized = elements.map((el) => {
+    const raw = el.effect as string | null | undefined;
+    if (raw === "karaoke") return { ...el, effect: "karaoke-line" as TextElement["effect"] };
+    if (!raw && el.word_timings?.length) {
+      return { ...el, effect: "karaoke-line" as TextElement["effect"] };
+    }
+    return el;
+  });
+  return convertApiTextElements(normalized);
+}
+
 function lyricKeyForBar(bar: TextElementBar): string | null {
   const sourceKey = bar.source_params?.key;
   if (typeof sourceKey === "string" && /^L\d+$/.test(sourceKey)) return sourceKey;
@@ -246,12 +271,20 @@ export function buildLyricLineOverrides(
  * the editor doesn't model (reveal_s, fade_out_ms, z, word_timings) pass
  * through untouched. narrated_caption bars are excluded — captions persist
  * via their own endpoint, not text_elements (same rule as the item page).
+ *
+ * `includeLyrics` defaults to false (legacy behaviour: baked-model lyric_line
+ * bars persist through the separate `lyrics.line_overrides` commit section,
+ * not text_elements). The lyrics-optional "elements" model passes `true` —
+ * on those variants lyric_line bars are ordinary persisted text elements.
  */
 export function barsToTextElements(
   bars: TextElementBar[],
   originalById: ReadonlyMap<string, TextElement>,
+  opts: { includeLyrics?: boolean } = {},
 ): TextElement[] {
-  return barsToTextElementsInternal(bars, originalById, { includeLyrics: false });
+  return barsToTextElementsInternal(bars, originalById, {
+    includeLyrics: opts.includeLyrics ?? false,
+  });
 }
 
 export function barsToPreviewTextElements(

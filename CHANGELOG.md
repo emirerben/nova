@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1.0] — 2026-07-18
+
+### Added
+- **Lyrics are now optional, instant editor elements (dark behind `LYRICS_OPTIONAL_ENABLED` + `NEXT_PUBLIC_LYRICS_OPTIONAL_ENABLED`).** New lyrics-variant renders skip lyric burn-in entirely — clean base, `lyrics_baked: false`, lyrics off by default. In the editor, the Lyrics toggle (default OFF) fetches beat-synced line seeds (`GET …/variants/{vid}/lyric-seeds`, snapshot-first with a pure scheduling fallback factored from the lyric injector) and inserts them instantly as ordinary editable text bars — karaoke word-timings preserved (`karaoke-line`), styled like today's burned lyrics, one undo step on, one undo step off, visible immediately in the virtual preview like any added text. Saving rides the normal text-elements commit and the FAST reburn path (seconds, not a full re-render). Timing is server-locked (`lyric_timing_locked` on drift > 0.02s) so lyric sync can't be broken by edits, and because lyric lines are timed to the continuous song audio, the `lyrics_sync` clip-timeline lock is removed for these variants — re-cutting clips no longer blocks. Legacy lyric-burned variants keep every existing behavior (override engine, full re-render edits, timeline lock). Flag off = byte-identical, pinned by tests.
+
 ## [0.9.0.0] — 2026-07-18
 
 ### Added
