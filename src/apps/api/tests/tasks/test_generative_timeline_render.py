@@ -969,7 +969,7 @@ def test_hook_regrounding_uses_timeline_slot0_clip(monkeypatch):
     monkeypatch.setattr(
         gb,
         "_inject_lyrics",
-        lambda recipe_dict, track, style_set_id=None: recipe_dict,
+        lambda recipe_dict, track, style_set_id=None, line_overrides=None: (recipe_dict, []),
         raising=False,
     )
 
