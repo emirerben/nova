@@ -35,6 +35,24 @@ const SUBTITLED_EFFECTS_LIVE: EditorCapabilities = {
   reason: CAPTIONS_TAB_REASON,
 };
 
+/**
+ * A lyrics-synced song variant: per-element text is genuinely locked
+ * (beat-synced to vocal onsets, lyric_injector.py), but sfx/overlays are
+ * already additive-safe, and a whole-style-set swap (dispatch_change_style)
+ * is also safe — it re-renders from the track, only visual style changes.
+ * The real prod shape observed for job 2a00c97d-...: {sfx: true,
+ * overlays: true, suggestions: false, reason: "lyrics_sync"}.
+ */
+const LYRICS_SYNC_EFFECTS_LIVE: EditorCapabilities = {
+  text_elements: false,
+  timeline: false,
+  split_clips: false,
+  mix: false,
+  sfx: true,
+  overlays: true,
+  reason: "lyrics_sync",
+};
+
 describe("editorReasonCopy", () => {
   it("maps sound_effects_disabled to human copy", () => {
     expect(editorReasonCopy("sound_effects_disabled")).toBe(
@@ -174,6 +192,47 @@ describe("computeToolDisabledReasons", () => {
     });
   });
 
+  it("keeps Styles enabled (but Text locked) for a lyrics variant when isLyrics is true", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: LYRICS_SYNC_EFFECTS_LIVE,
+        readOnly: false,
+        readOnlyReason: "lyrics are synced to the song",
+        isLyrics: true,
+      }),
+    ).toEqual({
+      text: "lyrics are synced to the song",
+      // styles intentionally absent — not in the disabled map.
+    });
+  });
+
+  it("disables Styles too when the same lyrics capability shape is passed WITHOUT isLyrics (regression guard — the flag, not the capability shape, drives the exception)", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: LYRICS_SYNC_EFFECTS_LIVE,
+        readOnly: false,
+        readOnlyReason: "lyrics are synced to the song",
+      }),
+    ).toEqual({
+      text: "lyrics are synced to the song",
+      styles: "lyrics are synced to the song",
+    });
+  });
+
+  it("does not let isLyrics leak into non-lyrics text_elements-false cases (captions stay fully text-locked)", () => {
+    expect(
+      computeToolDisabledReasons({
+        capabilities: SUBTITLED_EFFECTS_LIVE,
+        readOnly: false,
+        readOnlyReason: CAPTIONS_TAB_REASON,
+        isLyrics: false,
+      }),
+    ).toEqual({
+      text: CAPTIONS_TAB_REASON,
+      styles: CAPTIONS_TAB_REASON,
+    });
+  });
+
   it("disables nothing on a fully-capable variant", () => {
     expect(
       computeToolDisabledReasons({
@@ -189,6 +248,34 @@ describe("computeToolDisabledReasons", () => {
         readOnlyReason: "This version can't be edited.",
       }),
     ).toEqual({});
+  });
+});
+
+describe("ToolRail with the lyrics-sync effects-live disable map", () => {
+  it("marks Text focusable-disabled while Styles/Sounds/Overlays stay enabled", () => {
+    render(
+      <ToolRail
+        activeTool={null}
+        disabledTools={computeToolDisabledReasons({
+          capabilities: LYRICS_SYNC_EFFECTS_LIVE,
+          readOnly: false,
+          readOnlyReason: "lyrics are synced to the song",
+          isLyrics: true,
+        })}
+        onToggleTool={() => {}}
+      />,
+    );
+
+    const text = screen.getByRole("button", { name: "Text tool" });
+    expect(text).not.toBeDisabled();
+    expect(text).toHaveAttribute("aria-disabled", "true");
+    expect(text).toHaveAttribute("title", "Text — lyrics are synced to the song");
+
+    for (const name of ["Styles tool", "Sounds tool", "Overlays tool"]) {
+      const tool = screen.getByRole("button", { name });
+      expect(tool).toBeEnabled();
+      expect(tool).not.toHaveAttribute("aria-disabled");
+    }
   });
 });
 

@@ -21,6 +21,7 @@ import {
   updatePlanItem,
   type ClipAssignment,
   type ConformanceVerdict,
+  type EditorCapabilities,
   type IdeaExpandProposal,
   type PlanItem,
   type PlanItemJobStatus,
@@ -97,7 +98,7 @@ import { useClipTimeline } from "../../_components/useClipTimeline";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import { barsToTextElements, seedBarsFromVariant } from "./_editor/editor-bars";
-import { editorReasonCopy } from "./_editor/editor-capabilities";
+import { planItemEditorDisabledReason } from "./_editor/editor-capabilities";
 import FeedbackButtons from "../../../library/_components/FeedbackButtons";
 import {
   useVariantEditSession,
@@ -161,33 +162,6 @@ const SUBTITLED_ENABLED = _subtitledRaw.toLowerCase() === "true" || _subtitledRa
 // and the server's editor_capabilities are unconditionally present; this flag
 // only controls whether the entry point is shown.
 const TIKTOK_EDITOR_ENABLED = process.env.NEXT_PUBLIC_TIKTOK_EDITOR_ENABLED === "true";
-// Server-derived per-variant capability map (routes/generative_jobs.py
-// `_editor_capabilities`). Not yet in the shared PlanItemVariant type — declared
-// locally here since only the Edit-entry gate reads it.
-type EditorCapabilities = {
-  text_elements: boolean;
-  timeline: boolean;
-  split_clips: boolean;
-  mix: boolean;
-  reason: string | null;
-};
-
-function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
-  const capabilities = (
-    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
-  )?.editor_capabilities;
-  if (
-    capabilities &&
-    !capabilities.text_elements &&
-    !capabilities.timeline &&
-    !capabilities.split_clips &&
-    !capabilities.mix
-  ) {
-    return editorReasonCopy(capabilities.reason);
-  }
-  return null;
-}
-
 function canOpenPlanItemEditor(variant: PlanItemVariant | null): boolean {
   return Boolean(
     TIKTOK_EDITOR_ENABLED &&
@@ -2532,17 +2506,7 @@ function FocusedResults({
     !!variant &&
     !!variant.output_url &&
     variant.render_status !== "rendering";
-  const editorCapabilities = (
-    variant as (PlanItemVariant & { editor_capabilities?: EditorCapabilities }) | null
-  )?.editor_capabilities;
-  const editorEntryDisabledReason =
-    editorCapabilities &&
-    !editorCapabilities.text_elements &&
-    !editorCapabilities.timeline &&
-    !editorCapabilities.split_clips &&
-    !editorCapabilities.mix
-      ? editorReasonCopy(editorCapabilities.reason)
-      : null;
+  const editorEntryDisabledReason = planItemEditorDisabledReason(variant);
 
   // The editor panel reveals PlanVariantEditor filtered to the active tab.
   // We keep one PlanVariantEditor instance and use the tab to scroll/focus.

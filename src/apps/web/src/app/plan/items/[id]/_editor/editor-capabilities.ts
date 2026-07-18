@@ -5,7 +5,7 @@
  * editor-reseed.ts).
  */
 
-import type { EditorCapabilities } from "@/lib/plan-api";
+import type { EditorCapabilities, PlanItemVariant } from "@/lib/plan-api";
 import type { EditorTool } from "./ToolRail";
 
 export const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Captions tab";
@@ -61,15 +61,26 @@ export function textElementsLockedCopy(
  * so the tools stay disabled with the honest Captions-tab tooltip instead of
  * silently no-op saving. Sounds/Overlays follow their own capability +
  * server-provided reason.
+ *
+ * `isLyrics` is the one exception: a lyrics-synced variant's per-element text
+ * genuinely can't be edited (re-cutting/retiming would break vocal-onset
+ * sync), but a *whole-style-set* restyle is safe and already supported
+ * server-side (dispatch_change_style re-derives lyric timing deterministically
+ * from the track — only the visual style changes). So for lyrics, Styles
+ * stays enabled while Text stays locked; EditorShell branches the Styles
+ * commit path accordingly instead of going through the blocked per-element
+ * text_elements field.
  */
 export function computeToolDisabledReasons({
   capabilities,
   readOnly,
   readOnlyReason,
+  isLyrics = false,
 }: {
   capabilities: EditorCapabilities | null | undefined;
   readOnly: boolean;
   readOnlyReason: string;
+  isLyrics?: boolean;
 }): Partial<Record<EditorTool, string>> {
   const out: Partial<Record<EditorTool, string>> = {};
   if (readOnly) {
@@ -79,7 +90,7 @@ export function computeToolDisabledReasons({
   } else if (capabilities?.text_elements === false) {
     const reason = textElementsLockedCopy(capabilities);
     out.text = reason;
-    out.styles = reason;
+    if (!isLyrics) out.styles = reason;
   }
   if (capabilities?.sfx === false) {
     out.sounds = editorReasonCopy(
@@ -92,4 +103,29 @@ export function computeToolDisabledReasons({
     );
   }
   return out;
+}
+
+/**
+ * Edit-entry gate for the plan-item detail page (page.tsx): mirrors
+ * EditorShell's own `readOnly` definition above (all six capabilities false
+ * ⇒ nothing editable). Lives here rather than in page.tsx itself — Next.js's
+ * App Router only allows a fixed whitelist of named exports from a `page.tsx`
+ * file (default, generateMetadata, ...); anything else fails `next build`
+ * with "is not a valid Page export field". Same rationale as the rest of this
+ * module: pure gating logic, unit-testable without mounting a component.
+ */
+export function planItemEditorDisabledReason(variant: PlanItemVariant | null): string | null {
+  const capabilities = variant?.editor_capabilities;
+  if (
+    capabilities &&
+    !capabilities.text_elements &&
+    !capabilities.timeline &&
+    !capabilities.split_clips &&
+    !capabilities.mix &&
+    !capabilities.sfx &&
+    !capabilities.overlays
+  ) {
+    return editorReasonCopy(capabilities.reason);
+  }
+  return null;
 }
