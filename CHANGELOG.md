@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1.0] — 2026-07-18
+
+### Added
+- **Landscape (16:9) output for generative variants (behind `LANDSCAPE_OUTPUT_ENABLED` + `NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED`).** A per-variant orientation (9:16 default / 16:9) threads end-to-end: a new `Canvas` type parameterizes reframe/encode dims, the single-pass assembler, Skia text burns, intro/cluster sizing, media overlays, interstitials, and output validation — every signature defaults to portrait, so existing renders are byte-identical (full suite + verify-overlays pass unchanged). The editor gains a 9:16/16:9 segmented toggle; the preview stage, text layout port, and font scaling follow the active canvas; orientation persists via the editor-commit `orientation` section (full re-render on save). Unsupported in v1 (422 `orientation_unsupported`): caption archetypes, talking-head, collage presets, and visual-block variants. Orientation changes are never fast-reburn eligible.
+
 ## [0.8.0.0] — 2026-07-18
 
 ### Added

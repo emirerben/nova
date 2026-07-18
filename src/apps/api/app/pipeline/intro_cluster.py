@@ -49,6 +49,8 @@ from functools import lru_cache
 
 import structlog
 
+from app.pipeline.canvas import PORTRAIT, Canvas
+
 log = structlog.get_logger()
 
 ROLE_HERO = "hero"
@@ -764,6 +766,7 @@ def _compute_styled_blocks(
     reveal_window_s: float,
     style: dict,
     accent_parity: int = 0,
+    canvas: Canvas = PORTRAIT,
 ) -> list[dict] | None:
     """Editorial-cascade layout (`style=EDITORIAL_STYLE`). See EDITORIAL_STYLE
     for the knobs; `compute_cluster_blocks` documents the output contract
@@ -899,8 +902,8 @@ def _compute_styled_blocks(
         return {
             "family": block["family"],
             "px": px,
-            "w_frac": font.measureText(block["text"]) / _CANVAS_W,
-            "h_frac": (metrics.fDescent - metrics.fAscent) / _CANVAS_H,
+            "w_frac": font.measureText(block["text"]) / canvas.width,
+            "h_frac": (metrics.fDescent - metrics.fAscent) / canvas.height,
         }
 
     usable_w = 1.0 - 2 * _EDGE_MARGIN_FRAC
@@ -1002,6 +1005,7 @@ def compute_cluster_blocks(
     style: dict | None = None,
     accent_parity: int = 0,
     language: str = "en",
+    canvas: Canvas = PORTRAIT,
 ) -> list[dict] | None:
     """Compute the word-cluster layout for an intro hook.
 
@@ -1036,6 +1040,7 @@ def compute_cluster_blocks(
             reveal_window_s=reveal_window_s,
             style=style,
             accent_parity=accent_parity,
+            canvas=canvas,
         )
     words = (text or "").split()
     if not (MIN_WORDS <= len(words) <= MAX_WORDS):
@@ -1118,8 +1123,8 @@ def compute_cluster_blocks(
         return {
             "family": family,
             "px": px,
-            "w_frac": font.measureText(block["text"]) / _CANVAS_W,
-            "h_frac": (metrics.fDescent - metrics.fAscent) / _CANVAS_H,
+            "w_frac": font.measureText(block["text"]) / canvas.width,
+            "h_frac": (metrics.fDescent - metrics.fAscent) / canvas.height,
         }
 
     usable_w = 1.0 - 2 * _EDGE_MARGIN_FRAC

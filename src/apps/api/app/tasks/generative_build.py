@@ -44,6 +44,7 @@ from app.agents._schemas.edit_format import NARRATED_EDIT_FORMATS, coerce_edit_f
 from app.config import settings
 from app.database import sync_session as _sync_session
 from app.models import Job, MusicTrack
+from app.pipeline.canvas import PORTRAIT, Canvas, canvas_for_orientation
 from app.schemas.montage_preset import (
     DEFAULT_MONTAGE_PRESET,
     MASONRY_MONTAGE_PRESET,
@@ -1257,6 +1258,7 @@ def regenerate_generative_variant(
     intro_start_s_override: float | None = None,
     intro_end_s_override: float | None = None,
     text_behind_subject: bool | None = None,
+    orientation_override: str | None = None,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1316,6 +1318,7 @@ def regenerate_generative_variant(
                 intro_start_s_override=intro_start_s_override,
                 intro_end_s_override=intro_end_s_override,
                 text_behind_subject=text_behind_subject,
+                orientation_override=orientation_override,
             )
         except OperationalError:
             raise
@@ -1438,18 +1441,37 @@ def _is_fast_reburn_eligible(
     new_track_id: str | None,
     mix_override,
     settings,
+    orientation_override: str | None = None,
 ) -> bool:
     """True iff this edit can use the cached-base fast-reburn path."""
     if not getattr(settings, "GENERATIVE_FAST_REBURN_ENABLED", True):
         return False
     if new_track_id is not None or mix_override is not None:
         return False  # audio changes → must full re-render
+    if orientation_override is not None and orientation_override != _resolve_variant_orientation(
+        existing
+    ):
+        return False
     if not existing.get("base_video_path"):
         return False  # no cached base (legacy or lyrics variant)
     text_mode = existing.get("text_mode")
     if text_mode not in ("agent_text", "none"):
         return False  # lyrics variants: full path in v1
     return True
+
+
+def _resolve_variant_orientation(
+    existing: dict | None,
+    orientation_override: str | None = None,
+) -> str:
+    candidate = orientation_override
+    if candidate is None and existing is not None:
+        candidate = existing.get("orientation")
+    return "landscape" if candidate == "landscape" else "portrait"
+
+
+def _canvas_kwargs(canvas: Canvas) -> dict[str, Canvas]:
+    return {"canvas": canvas} if canvas != PORTRAIT else {}
 
 
 def _lyrics_active(text_mode: str | None, lyrics_enabled) -> bool:
@@ -1768,12 +1790,14 @@ def _run_media_overlay_pass(
                 pre_clean = current_video_path
 
         try:
+            overlay_canvas = canvas_for_orientation(existing.get("orientation"))
             new_url = apply_media_overlays(
                 base_gcs_path=pre_clean,
                 cards=cards,
                 output_gcs_path=current_video_path,
                 job_id=job_id,
                 deadline_monotonic=deadline_monotonic,
+                **_canvas_kwargs(overlay_canvas),
             )
         except Exception as exc:  # noqa: BLE001
             log.error(
@@ -2751,6 +2775,8 @@ def _reburn_text_on_base(
         "visual_blocks_base_path": visual_blocks_cache_path,
         "visual_blocks_cache_stale": False,
     }
+    orientation = _resolve_variant_orientation(existing)
+    canvas = canvas_for_orientation(orientation)
 
     with tempfile.TemporaryDirectory(prefix="nova_reburn_") as tmpdir:
         local_base = os.path.join(tmpdir, "base.mp4")
@@ -2793,7 +2819,14 @@ def _reburn_text_on_base(
                     ),
                 )
                 return
-            burn_text_overlays_skia(input_path, overlay_dicts, output_path, tmpdir, matte=matte)
+            burn_text_overlays_skia(
+                input_path,
+                overlay_dicts,
+                output_path,
+                tmpdir,
+                matte=matte,
+                **_canvas_kwargs(canvas),
+            )
 
         if text_mode == "lyrics":
             _lyrics_burn_dicts = _text_element_burn_dicts(existing)
@@ -2831,6 +2864,7 @@ def _reburn_text_on_base(
                 "output_url": output_url,
                 "text_mode": text_mode,
                 "style_set_id": resolved_style_set_id,
+                "orientation": orientation,
                 "text_elements_user_edited": bool(existing.get("text_elements_user_edited")),
                 "subject_matte_path": _lyrics_matte_path,
             }
@@ -2864,6 +2898,7 @@ def _reburn_text_on_base(
                     "output_url": _te_output_url,
                     "text_mode": text_mode,
                     "style_set_id": resolved_style_set_id,
+                    "orientation": orientation,
                     "intro_text_size_px": existing.get("intro_text_size_px"),
                     "intro_size_source": existing.get("intro_size_source"),
                     "text_elements": _fresh_existing.get("text_elements") or [],
@@ -2903,6 +2938,7 @@ def _reburn_text_on_base(
                 "output_url": _te_output_url,
                 "text_mode": text_mode,
                 "style_set_id": resolved_style_set_id,
+                "orientation": orientation,
                 "intro_text_size_px": existing.get("intro_text_size_px"),
                 "intro_size_source": existing.get("intro_size_source"),
                 "text_elements_user_edited": True,
@@ -2966,6 +3002,7 @@ def _reburn_text_on_base(
                     if text_behind_subject is not None
                     else existing.get("intro_behind_subject")
                 ),
+                canvas=canvas,
             )
             # Preserve the original source label — size_override_px always wins
             # inside the resolver, which would label it "user"; restore the real
@@ -2989,6 +3026,7 @@ def _reburn_text_on_base(
                     persisted_scenes,
                     base_size_px=seq_px,
                     text_color=str(params.get("text_color") or "#FFFFFF"),
+                    **_canvas_kwargs(canvas),
                 )
                 if overlays:
                     reburn_mode = "sequence"
@@ -3052,6 +3090,7 @@ def _reburn_text_on_base(
                     start_s=intro_start_s_override,
                     end_s=intro_end_s_override,
                     **params,
+                    **_canvas_kwargs(canvas),
                 )
                 # EFFECTIVE layout (cluster = 2 overlays per block; linear = one
                 # pair). Legacy inference (D19) — sets intro_mode for this render.
@@ -3125,6 +3164,7 @@ def _reburn_text_on_base(
             "intro_behind_subject": (reburn_behind_subject if agent_text else False),
             "subject_matte_path": reburn_matte_path,
             "style_set_id": resolved_style_set_id,
+            "orientation": orientation,
             "text_mode": text_mode,
             "render_status": "ready",
             "ok": True,
@@ -3397,6 +3437,7 @@ def _run_regenerate_variant(
     intro_start_s_override: float | None = None,
     intro_end_s_override: float | None = None,
     text_behind_subject: bool | None = None,
+    orientation_override: str | None = None,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -3429,6 +3470,7 @@ def _run_regenerate_variant(
         and cluster_body_size_px_override is None
         and cluster_accent_size_px_override is None
         and text_behind_subject is None
+        and orientation_override is None
     )
     if _is_overlay_only and settings.media_overlays_enabled:
         _run_media_overlay_pass(
@@ -3469,6 +3511,7 @@ def _run_regenerate_variant(
         and cluster_body_size_px_override is None
         and cluster_accent_size_px_override is None
         and text_behind_subject is None
+        and orientation_override is None
     )
     if _is_sfx_only and _settings_sfx.sound_effects_enabled:
         _run_sfx_pass(
@@ -3523,6 +3566,7 @@ def _run_regenerate_variant(
         if existing is None:
             log.error("generative_regenerate_variant_unknown", job_id=job_id, variant_id=variant_id)
             return
+        effective_orientation = _resolve_variant_orientation(existing, orientation_override)
         _is_subtitled_text_reburn = (
             existing.get("resolved_archetype") == "subtitled"
             and (
@@ -3699,6 +3743,7 @@ def _run_regenerate_variant(
         and intro_start_s_override is None
         and intro_end_s_override is None
         and text_behind_subject is None
+        and orientation_override is None
     )
     if audio_only_song_swap and new_track_id is not None:
         with _sync_session() as db:
@@ -3791,7 +3836,7 @@ def _run_regenerate_variant(
     # was rendered from the previous slot layout. (A merely-persisted user_timeline
     # is fine: the base was re-cached by the override render that persisted it.)
     if timeline_override is None and _is_fast_reburn_eligible(
-        existing, new_track_id, mix_override, settings
+        existing, new_track_id, mix_override, settings, orientation_override=orientation_override
     ):
         # Resolve text WITHOUT ingest (no LLM needed: persisted text or override).
         # The run_text_agents_fn is never called on the fast path because eligibility
@@ -4113,6 +4158,7 @@ def _run_regenerate_variant(
             behind_subject_override=text_behind_subject,
             lyrics_enabled=inherited_lyrics_enabled,
             lyric_line_overrides=inherited_lyric_line_overrides,
+            orientation=effective_orientation,
         )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -5251,6 +5297,7 @@ def _attempt_sequence_overlays(
     base_size_px: int,
     text_color: str,
     scene_timing_overrides: list[dict] | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> tuple[list[dict], dict[str, Any]] | None:
     """Build the transcript-synced sequence for one eligible variant.
 
@@ -5306,7 +5353,12 @@ def _attempt_sequence_overlays(
 
     from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
 
-    overlays = build_sequence_overlays(scenes, base_size_px=base_size_px, text_color=text_color)
+    overlays = build_sequence_overlays(
+        scenes,
+        base_size_px=base_size_px,
+        text_color=text_color,
+        **_canvas_kwargs(canvas),
+    )
     if not overlays:
         return _fallback("no_renderable_scenes")
 
@@ -5335,6 +5387,7 @@ def _attempt_rhythm_overlays(
     author_quote_fn: Any | None = None,
     persisted_quote: str | None = None,
     scene_timing_overrides: list[dict] | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> tuple[list[dict], dict[str, Any]] | None:
     """Build the rhythm-mode sequence (authored quote, synthesized timings).
 
@@ -5400,7 +5453,12 @@ def _attempt_rhythm_overlays(
 
     from app.pipeline.generative_overlays import build_sequence_overlays  # noqa: PLC0415
 
-    overlays = build_sequence_overlays(scenes, base_size_px=base_size_px, text_color=text_color)
+    overlays = build_sequence_overlays(
+        scenes,
+        base_size_px=base_size_px,
+        text_color=text_color,
+        **_canvas_kwargs(canvas),
+    )
     if not overlays:
         return _fallback("no_renderable_scenes")
 
@@ -5547,6 +5605,7 @@ def _render_generative_variant(
     behind_subject_override: bool | None = None,
     lyrics_enabled: bool | None = None,
     lyric_line_overrides: dict | None = None,
+    orientation: str | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -5616,6 +5675,8 @@ def _render_generative_variant(
     track_id = track.id if track else None
     track_title = track.title if track else None
     resolved_montage_preset = coerce_montage_preset(montage_preset)
+    resolved_orientation = _resolve_variant_orientation(None, orientation)
+    canvas = canvas_for_orientation(resolved_orientation)
     # Voiceover variants: the user's audio is the narration bed, footage tiles as
     # visuals. `mix` is the voice-prominence slider (persisted so the UI slider and
     # re-renders can read it back). Absent on song/original/talking_head specs.
@@ -5679,6 +5740,7 @@ def _render_generative_variant(
         # Post-assembly clip timeline (clip timeline editor). Rewritten on EVERY
         # full montage assembly; None for voiceover/spine variants.
         "ai_timeline": None,
+        "orientation": resolved_orientation,
         # Media-overlay cards (slice 1): list of MediaOverlay dicts set by the
         # apply-media-overlays variant-edit action; None when no cards have been
         # applied. The render path branches on truthiness (if media_overlays:)
@@ -5735,6 +5797,16 @@ def _render_generative_variant(
         masonry_requested = (
             is_collage_montage_preset(resolved_montage_preset) and not voiceover_gcs_path
         )
+        if masonry_requested and resolved_orientation == "landscape":
+            log.warning(
+                "landscape_orientation_unsupported_masonry_fallback_portrait",
+                job_id=job_id,
+                variant_id=variant_id,
+                montage_preset=resolved_montage_preset,
+            )
+            resolved_orientation = "portrait"
+            canvas = PORTRAIT
+            base["orientation"] = resolved_orientation
         effective_available_footage_s = available_footage_s
         if masonry_requested:
             from app.pipeline.masonry_montage import clamp_masonry_duration  # noqa: PLC0415
@@ -5840,6 +5912,7 @@ def _render_generative_variant(
                     text_color_override=text_color_override,
                     placement_candidates=text_placement_candidates,
                     behind_subject_override=behind_subject_override,
+                    canvas=canvas,
                 )
             )
             # Sticky (pre-gate) decision — must be popped before `_at_params` is
@@ -5957,6 +6030,7 @@ def _render_generative_variant(
                 # ground truth for what each slot actually rendered.
                 resolved_plans_out=resolved_plans,
                 landscape_fit=landscape_fit,
+                canvas=canvas,
             )
             classic_assembly_done = True
 
@@ -6162,7 +6236,12 @@ def _render_generative_variant(
                     )
                     return
                 burn_text_overlays_skia(
-                    audio_mixed_path, overlay_dicts, output_path, variant_dir, matte=matte
+                    audio_mixed_path,
+                    overlay_dicts,
+                    output_path,
+                    variant_dir,
+                    matte=matte,
+                    **_canvas_kwargs(canvas),
                 )
 
             def _burn_agent_text_overlays_with_matte(
@@ -6224,6 +6303,7 @@ def _render_generative_variant(
                         base_size_px=int(_agent_text_intro_px or 60),
                         text_color=str(_at_params.get("text_color") or "#FFFFFF"),
                         scene_timing_overrides=scene_timing_overrides or None,
+                        **_canvas_kwargs(canvas),
                     )
                 if sequence_result is None and gate_reason != "layout_not_cluster":
                     sequence_result = _attempt_rhythm_overlays(
@@ -6235,6 +6315,7 @@ def _render_generative_variant(
                         author_quote_fn=author_quote_fn,
                         persisted_quote=existing_sequence_quote,
                         scene_timing_overrides=scene_timing_overrides or None,
+                        **_canvas_kwargs(canvas),
                     )
 
             def _static_intro_overlays() -> list[dict]:
@@ -6275,6 +6356,7 @@ def _render_generative_variant(
                     beats=beats,
                     cluster_style=_sio_cs,
                     **_at_params,
+                    **_canvas_kwargs(canvas),
                 )
 
             def _apply_static_layout(static_overlays: list[dict]) -> None:
@@ -6346,6 +6428,14 @@ def _render_generative_variant(
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
             raise RuntimeError(f"variant {variant_id} produced empty output")
+        if resolved_orientation == "landscape":
+            from app.pipeline.validator import validate_output  # noqa: PLC0415
+
+            validation = validate_output(
+                final_path, expected_resolution=(canvas.width, canvas.height)
+            )
+            if not validation.passed:
+                raise RuntimeError("; ".join(validation.errors))
 
         output_gcs = f"generative-jobs/{job_id}/variant_{rank}_{variant_id}.mp4"
         output_url = upload_public_read(final_path, output_gcs)
@@ -8696,6 +8786,7 @@ def _resolve_intro_overlay_params(
     text_color_override: str | None = None,
     placement_candidates: list[dict] | None = None,
     behind_subject_override: bool | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> tuple[dict, int | None, str | None]:
     """Resolve the hero-intro look + size into kwargs for the overlay builders.
 
@@ -8774,6 +8865,7 @@ def _resolve_intro_overlay_params(
             font_family=font_family,
             safe_zone=hero_safe_zone,
             visual_density=hero_density,
+            **_canvas_kwargs(canvas),
         )
         intro_source = "computed"
 

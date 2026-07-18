@@ -61,6 +61,7 @@ import structlog
 
 from app.config import settings
 from app.pipeline.audio_layout import SILENT_AUDIO_INPUT_ARGS
+from app.pipeline.canvas import Canvas
 from app.pipeline.reframe import _build_video_filter, _encoding_args
 from app.pipeline.transitions import (
     DEFAULT_TRANSITION_DURATION_S,
@@ -160,6 +161,7 @@ class SinglePassSpec:
     # faster-transitions knob). None → DEFAULT_TRANSITION_DURATION_S. Still
     # clamped to 30% of the shorter adjacent group in _build_xfade_chain.
     transition_duration_s: float | None = None
+    canvas: Canvas | None = None
 
     def __post_init__(self) -> None:
         if len(self.inputs) < 1:
@@ -171,22 +173,25 @@ class SinglePassSpec:
             )
 
 
-def _color_lavfi_arg(inp: SinglePassInput) -> str:
+def _color_lavfi_arg(inp: SinglePassInput, canvas: Canvas | None = None) -> str:
     """Build the `-i color=...` filter source string for a color hold.
 
     No decoder — the source synthesizes solid-color frames inline. Mirrors
     `render_color_hold` in interstitials.py:113-117 (same width/height/fps/dur
     contract) but emitted as a lavfi `-i` input rather than a pre-rendered mp4.
     """
-    return (
-        f"color=c={inp.hold_color}"
-        f":s={settings.output_width}x{settings.output_height}"
-        f":d={inp.hold_s}"
-        f":r={settings.output_fps}"
-    )
+    width = canvas.width if canvas is not None else settings.output_width
+    height = canvas.height if canvas is not None else settings.output_height
+    return f"color=c={inp.hold_color}:s={width}x{height}:d={inp.hold_s}:r={settings.output_fps}"
 
 
-def _per_clip_filter_chain(inp: SinglePassInput, input_idx: int, output_label: str) -> str:
+def _per_clip_filter_chain(
+    inp: SinglePassInput,
+    input_idx: int,
+    output_label: str,
+    *,
+    canvas: Canvas | None = None,
+) -> str:
     """Build the filter graph fragment for one clip input.
 
     Reuses `_build_video_filter` (reframe.py:477) verbatim so the per-slot
@@ -208,6 +213,7 @@ def _per_clip_filter_chain(inp: SinglePassInput, input_idx: int, output_label: s
         color_trc=inp.color_trc or "bt709",
         output_fit=inp.output_fit,
         has_grid=inp.has_grid,
+        canvas=canvas,
         **(inp.grid_params or {}),
     )
     # Force yuv420p at the end of every per-slot chain. _build_video_filter
@@ -258,10 +264,7 @@ def _per_hold_filter_chain(input_idx: int, output_label: str) -> str:
     does — concat and xfade downstream require matching timebases across
     every input stream.
     """
-    return (
-        f"[{input_idx}:v]format=yuv420p,setpts=PTS-STARTPTS,settb=AVTB"
-        f"[{output_label}]"
-    )
+    return f"[{input_idx}:v]format=yuv420p,setpts=PTS-STARTPTS,settb=AVTB[{output_label}]"
 
 
 def _compute_output_durations(spec: SinglePassSpec) -> list[float]:
@@ -342,9 +345,7 @@ def _build_xfade_chain(
         else:
             inputs_str = "".join(f"[{slot_labels[idx]}]" for idx in group)
             out_lbl = f"g{gi}"
-            fragments.append(
-                f"{inputs_str}concat=n={len(group)}:v=1:a=0[{out_lbl}]"
-            )
+            fragments.append(f"{inputs_str}concat=n={len(group)}:v=1:a=0[{out_lbl}]")
             group_labels.append(out_lbl)
             group_durations.append(sum(durations[idx] for idx in group))
 
@@ -358,8 +359,7 @@ def _build_xfade_chain(
         # should not have been called. Raise rather than silently emit a
         # degenerate filter that callers can't map.
         raise ValueError(
-            "_build_xfade_chain called with all-'none' transitions; "
-            "use the M2 concat path instead"
+            "_build_xfade_chain called with all-'none' transitions; use the M2 concat path instead"
         )
 
     base_dur = transition_duration_s if transition_duration_s else DEFAULT_TRANSITION_DURATION_S
@@ -501,26 +501,23 @@ def build_single_pass_command(
         slot_labels.append(label)
         if inp.kind == "clip":
             if inp.clip_path is None or inp.start_s is None or inp.end_s is None:
-                raise ValueError(
-                    f"clip input {idx} missing required clip_path/start_s/end_s"
-                )
+                raise ValueError(f"clip input {idx} missing required clip_path/start_s/end_s")
             duration = inp.end_s - inp.start_s
             if duration <= 0:
-                raise ValueError(
-                    f"clip input {idx} has non-positive duration: {duration}s"
-                )
+                raise ValueError(f"clip input {idx} has non-positive duration: {duration}s")
             input_args += [
-                "-ss", str(inp.start_s),
-                "-t", str(duration),
-                "-i", inp.clip_path,
+                "-ss",
+                str(inp.start_s),
+                "-t",
+                str(duration),
+                "-i",
+                inp.clip_path,
             ]
-            filter_chains.append(_per_clip_filter_chain(inp, idx, label))
+            filter_chains.append(_per_clip_filter_chain(inp, idx, label, canvas=spec.canvas))
         elif inp.kind == "color_hold":
             if inp.hold_s <= 0:
-                raise ValueError(
-                    f"color_hold input {idx} has non-positive duration: {inp.hold_s}s"
-                )
-            input_args += ["-f", "lavfi", "-i", _color_lavfi_arg(inp)]
+                raise ValueError(f"color_hold input {idx} has non-positive duration: {inp.hold_s}s")
+            input_args += ["-f", "lavfi", "-i", _color_lavfi_arg(inp, spec.canvas)]
             filter_chains.append(_per_hold_filter_chain(idx, label))
         else:
             raise ValueError(f"unknown SinglePassInput kind: {inp.kind!r}")
@@ -623,17 +620,21 @@ def build_single_pass_command(
     # callers fall back to a post-process file copy.
     if base_output_path and has_overlays:
         cmd += [
-            "-map", "[base]",
-            "-map", f"{silent_audio_idx}:a:0",
+            "-map",
+            "[base]",
+            "-map",
+            f"{silent_audio_idx}:a:0",
             "-shortest",
         ]
-        cmd += _encoding_args(base_output_path, preset="fast", crf="18")
+        cmd += _encoding_args(base_output_path, preset="fast", crf="18", canvas=spec.canvas)
     cmd += [
-        "-map", "[vout]",
-        "-map", f"{silent_audio_idx}:a:0",
+        "-map",
+        "[vout]",
+        "-map",
+        f"{silent_audio_idx}:a:0",
         "-shortest",
     ]
-    cmd += _encoding_args(output_path, preset="fast", crf="18")
+    cmd += _encoding_args(output_path, preset="fast", crf="18", canvas=spec.canvas)
     return cmd
 
 
@@ -676,8 +677,7 @@ def run_single_pass(
         )
     except subprocess.TimeoutExpired as exc:
         raise SinglePassError(
-            f"single-pass ffmpeg timed out after {_SUBPROCESS_TIMEOUT_S}s "
-            f"(output={output_path})"
+            f"single-pass ffmpeg timed out after {_SUBPROCESS_TIMEOUT_S}s (output={output_path})"
         ) from exc
 
     if result.returncode != 0:
@@ -687,20 +687,19 @@ def run_single_pass(
         # extraction logic from reframe_and_export to surface the meaningful
         # part even under buffer truncation.
         meaningful = [
-            ln for ln in full_stderr.splitlines()
+            ln
+            for ln in full_stderr.splitlines()
             if ln.strip()
             and not ln.startswith(("ffmpeg version", "  built with", "  configuration:", "  lib"))
         ]
         tail = "\n".join(meaningful[-20:]) if meaningful else full_stderr[-4000:]
         raise SinglePassError(
-            f"single-pass ffmpeg failed (rc={result.returncode}, "
-            f"output={output_path}):\n{tail}"
+            f"single-pass ffmpeg failed (rc={result.returncode}, output={output_path}):\n{tail}"
         )
 
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise SinglePassError(
-            f"single-pass ffmpeg returned success but output missing/empty: "
-            f"{output_path}"
+            f"single-pass ffmpeg returned success but output missing/empty: {output_path}"
         )
 
     log.info(

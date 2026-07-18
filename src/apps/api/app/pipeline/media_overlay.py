@@ -52,6 +52,7 @@ from app.agents._schemas.media_overlay import (
     validate_overlay_gcs_path,
 )
 from app.config import settings
+from app.pipeline.canvas import PORTRAIT, Canvas
 from app.pipeline.image_clip import (
     image_has_alpha,
     is_image_file,
@@ -128,6 +129,7 @@ def build_media_overlay_command(
     output_path: str,
     card_has_alpha: list[bool] | None = None,
     force_veryfast: bool = False,
+    canvas: Canvas = PORTRAIT,
 ) -> list[str]:
     """Build the ffmpeg command to composite media-overlay cards on top of a video.
 
@@ -220,8 +222,8 @@ def build_media_overlay_command(
             # crop center-cuts the overflow; setsar=1 guards odd input SARs.
             # Static dims — no runtime overlay_h expression needed.
             card_filter_parts.append(
-                f"scale={_CANVAS_W}:{_CANVAS_H}:force_original_aspect_ratio=increase"
-                f",crop={_CANVAS_W}:{_CANVAS_H},setsar=1,format=yuv420p"
+                f"scale={canvas.width}:{canvas.height}:force_original_aspect_ratio=increase"
+                f",crop={canvas.width}:{canvas.height},setsar=1,format=yuv420p"
             )
         else:
             # Scale to card width; -2 rounds height to nearest even number so
@@ -276,11 +278,13 @@ def build_media_overlay_command(
     # on purpose — the encoder-policy AST gate reads constant presets only.
     if _has_fullscreen(cards) and not force_veryfast:
         # Full-frame user footage: final-output quality tier.
-        encoding = _encoding_args(output_path, preset="fast", include_audio=False)
+        encoding = _encoding_args(output_path, preset="fast", include_audio=False, canvas=canvas)
     else:
         # Pip-only (or fullscreen timeout-retry): re-encoding already-CRF18
         # content; mb-tree+psy-rd still active at veryfast.
-        encoding = _encoding_args(output_path, preset="veryfast", include_audio=False)
+        encoding = _encoding_args(
+            output_path, preset="veryfast", include_audio=False, canvas=canvas
+        )
 
     cmd = [
         "ffmpeg",
@@ -307,6 +311,7 @@ def apply_media_overlays(
     output_gcs_path: str,
     job_id: str | None = None,
     deadline_monotonic: float | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> str:
     """Download base variant, composite cards on top, upload result.
 
@@ -435,6 +440,7 @@ def apply_media_overlays(
             list(final_widths),
             output_local,
             card_has_alpha=list(final_alpha_flags),
+            canvas=canvas,
         )
         log.info(
             "media_overlay_applying",
@@ -470,6 +476,7 @@ def apply_media_overlays(
                 output_local,
                 card_has_alpha=list(final_alpha_flags),
                 force_veryfast=True,
+                canvas=canvas,
             )
             result = subprocess.run(cmd, capture_output=True, timeout=retry_timeout, check=False)
         if result.returncode != 0:

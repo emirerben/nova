@@ -30,6 +30,8 @@ import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import type { DraftSlot } from "@/app/generative/timeline-math";
 
+export type EditorOrientation = "portrait" | "landscape";
+
 /** Command-stack depth (plan §7). Oldest snapshot drops past this. */
 export const EDITOR_HISTORY_DEPTH = 50;
 
@@ -50,6 +52,7 @@ export interface EditorDocument {
   musicTrackId?: string | null;
   musicDirty?: boolean;
   lyricsEnabled?: boolean;
+  orientation?: EditorOrientation;
   title: string;
 }
 
@@ -188,6 +191,9 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         musicTrackId:
           typeof doc.musicTrackId === "string" ? doc.musicTrackId : doc.musicTrackId === null ? null : undefined,
         musicDirty: Boolean(doc.musicDirty),
+        lyricsEnabled:
+          typeof doc.lyricsEnabled === "boolean" ? doc.lyricsEnabled : undefined,
+        orientation: doc.orientation === "landscape" ? "landscape" : "portrait",
         title: typeof doc.title === "string" ? doc.title : "",
       },
     };

@@ -46,6 +46,7 @@ import {
 } from "@/lib/plan-api";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
+import { canvasForOrientation } from "@/lib/overlay-constants";
 import {
   buildEditorCommitRequest,
   commitEditorSession,
@@ -163,6 +164,9 @@ const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED =
 const VISUAL_BLOCKS_UI_ENABLED =
   process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
 const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
+const LANDSCAPE_UI = process.env.NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED === "true";
+
+type EditorOrientation = "portrait" | "landscape";
 
 function patchVisualBlockConcreteTiming(
   block: VisualBlock,
@@ -284,6 +288,10 @@ function persistedLyricsEnabled(variant: PlanItemVariant | null): boolean {
   return variant?.lyrics_enabled ?? (variant?.text_mode === "lyrics");
 }
 
+function persistedOrientation(variant: PlanItemVariant | null): EditorOrientation {
+  return variant?.orientation === "landscape" ? "landscape" : "portrait";
+}
+
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -299,6 +307,14 @@ function lyricsToggleHint(reason: "disabled" | "no_track" | "no_renderable_lyric
   if (reason === "no_track") return "Add a song first — use Swap song";
   if (reason === "no_renderable_lyrics") return "This song doesn't have synced lyrics";
   if (reason === "disabled") return "Lyrics editing is turned off right now";
+  return null;
+}
+
+function orientationDisabledHint(reason: string | null | undefined): string | null {
+  if (reason === "orientation_unsupported") {
+    return "This edit style doesn't support landscape yet";
+  }
+  if (reason === "disabled") return "Landscape output is turned off right now";
   return null;
 }
 
@@ -437,6 +453,50 @@ function SaveSpinner() {
   );
 }
 
+function OrientationToggle({
+  value,
+  disabled,
+  disabledHint,
+  onChange,
+}: {
+  value: EditorOrientation;
+  disabled: boolean;
+  disabledHint: string | null;
+  onChange: (orientation: EditorOrientation) => void;
+}) {
+  const title = disabled ? (disabledHint ?? "Landscape isn't available for this edit.") : "Output format";
+  return (
+    <div
+      role="group"
+      aria-label="Output format"
+      title={title}
+      className="flex min-h-11 items-center rounded-lg border border-zinc-200 bg-white p-0.5"
+    >
+      {(["portrait", "landscape"] as const).map((option) => {
+        const selected = value === option;
+        return (
+          <button
+            key={option}
+            type="button"
+            aria-label={option === "portrait" ? "Use 9:16 output" : "Use 16:9 output"}
+            aria-pressed={selected}
+            disabled={disabled}
+            onClick={() => onChange(option)}
+            className={[
+              "min-h-10 min-w-[54px] rounded-md px-2 text-[12px] font-semibold",
+              "focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500",
+              selected ? "bg-[#0c0c0e] text-white" : "text-[#3f3f46] hover:bg-zinc-100",
+              disabled ? "cursor-not-allowed opacity-45 hover:bg-transparent" : "",
+            ].join(" ")}
+          >
+            {option === "portrait" ? "9:16" : "16:9"}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** The Captions-tab deep link — shared by the read-only banner and the
  * text-locked notice so both surfaces point at the same target identically. */
 function CaptionsTabLink({ itemId }: { itemId: string }) {
@@ -539,6 +599,7 @@ export default function EditorShell({
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
   const [lyricsEnabled, setLyricsEnabled] = useState(false);
+  const [orientation, setOrientation] = useState<EditorOrientation>("portrait");
   const [titleDirty, setTitleDirty] = useState(false);
   const [captionMeta, setCaptionMeta] = useState<CopilotCaptionMetaSnapshot | null>(null);
   const [captionMetaDirty, setCaptionMetaDirty] = useState(false);
@@ -547,6 +608,11 @@ export default function EditorShell({
   const lyricsFeatureAvailable =
     LYRICS_EDITOR_UI && (lyricsCap.editable || lyricsCap.enabled || lyricsCap.can_toggle_on);
   const lyricBarsAvailable = LYRICS_EDITOR_UI && lyricsCap.editable;
+  const previewOrientation = LANDSCAPE_UI ? orientation : "portrait";
+  const activeCanvas = useMemo(
+    () => canvasForOrientation(previewOrientation),
+    [previewOrientation],
+  );
 
   useEffect(() => {
     if (!variant) return;
@@ -595,6 +661,9 @@ export default function EditorShell({
       setVisualBlocksDirty(false);
     }
     if (sections.titleAndStyle) setTitleDirty(false);
+    const keepLocalOrientation =
+      conflictReseed && orientation !== persistedOrientation(variant);
+    if (!keepLocalOrientation) setOrientation(persistedOrientation(variant));
     if (sections.mix) {
       const seededMix =
         typeof variant.mix === "number"
@@ -615,7 +684,7 @@ export default function EditorShell({
     // Dirty flags are read as a snapshot when a (re)seed fires; they must not
     // retrigger it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant, lyricBarsAvailable, lyricsFeatureAvailable]);
+  }, [variant, lyricBarsAvailable, lyricsFeatureAvailable, orientation]);
 
   useEffect(() => {
     localOverlayPreviewUrlsRef.current = localOverlayPreviewUrls;
@@ -776,7 +845,8 @@ export default function EditorShell({
     capabilities.mix === false &&
     capabilities.sfx === false &&
     capabilities.overlays === false &&
-    capabilities.visual_blocks !== true;
+    capabilities.visual_blocks !== true &&
+    capabilities.orientation?.editable !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but on-video text still lives
@@ -821,6 +891,7 @@ export default function EditorShell({
       musicTrackId: selectedMusicTrackId,
       musicDirty,
       lyricsEnabled,
+      orientation,
       title,
     }),
     [
@@ -839,6 +910,7 @@ export default function EditorShell({
       selectedMusicTrackId,
       musicDirty,
       lyricsEnabled,
+      orientation,
       title,
     ],
   );
@@ -858,6 +930,7 @@ export default function EditorShell({
       setSelectedMusicTrackId(doc.musicTrackId ?? variant?.music_track_id ?? null);
       setMusicDirty(doc.musicDirty ?? false);
       setLyricsEnabled(doc.lyricsEnabled ?? persistedLyricsEnabled(variant));
+      setOrientation(doc.orientation ?? persistedOrientation(variant));
       setCaptionMeta(doc.captionMeta ?? null);
       setCaptionMetaDirty(doc.captionMetaDirty ?? false);
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
@@ -900,11 +973,13 @@ export default function EditorShell({
   const lyricsDirty =
     lyricsFeatureAvailable &&
     (lyricsEnabled !== persistedLyricsEnabled(variant) || lyricOverridesDirty);
+  const orientationDirty = LANDSCAPE_UI && orientation !== persistedOrientation(variant);
 
   // Every mutation (text, slots, mutes, title) records into the undo stack.
   // A redo-only stack is clean only when the original baseline is still
   // reachable; after the bounded stack evicts it, empty `past` remains dirty.
-  const dirty = !history.isAtBaseline || musicDirty || captionMetaDirty || lyricsDirty;
+  const dirty =
+    !history.isAtBaseline || musicDirty || captionMetaDirty || lyricsDirty || orientationDirty;
 
   // ── Save / cancel state ─────────────────────────────────────────────────────
   // saveState: idle → saving → {conflict | error | partial} (all preserve
@@ -3069,6 +3144,8 @@ export default function EditorShell({
         title,
         lyricsDirty,
         lyrics: lyricsRequest,
+        orientationDirty,
+        orientation,
         variant,
       });
       const res = await commitEditorSession(
@@ -3137,6 +3214,8 @@ export default function EditorShell({
     captionMetaPatch,
     textDirty,
     lyricsDirty,
+    orientationDirty,
+    orientation,
     lyricOverridesDirty,
     lyricsEnabled,
     lyricLineOverrides,
@@ -3192,6 +3271,7 @@ export default function EditorShell({
     selectedMusicTrackId,
     musicDirty,
     title,
+    orientation,
     getCurrent,
     clearDraft,
   ]);
@@ -3353,6 +3433,26 @@ export default function EditorShell({
       setLyricsEnabled(next);
     },
   };
+  const orientationCap = capabilities?.orientation;
+  const orientationToggleVisible = LANDSCAPE_UI && orientationCap != null;
+  const orientationToggleDisabled = readOnly || orientationCap?.editable !== true;
+  const orientationToggleHint = orientationDisabledHint(orientationCap?.reason);
+  const orientationToggle = orientationToggleVisible ? (
+    <OrientationToggle
+      value={orientation}
+      disabled={orientationToggleDisabled}
+      disabledHint={orientationToggleHint}
+      onChange={(next) => {
+        if (orientationToggleDisabled) {
+          setToast(orientationToggleHint ?? "Landscape isn't available for this edit.");
+          return;
+        }
+        if (next === orientation) return;
+        history.record("orientation");
+        setOrientation(next);
+      }}
+    />
+  ) : null;
 
   const editorModeProps: EditorTimelineBodyProps = {
     durationS: timelineDuration,
@@ -3475,6 +3575,7 @@ export default function EditorShell({
             }
           }}
           onSave={() => void handleSave()}
+          orientationToggle={orientationToggle}
         />
       ) : (
         <header className="flex items-center border-b border-zinc-200 bg-white px-4">
@@ -3568,6 +3669,7 @@ export default function EditorShell({
                 </option>
               ))}
             </select>
+            {orientationToggle}
           </div>
 
           <div className="flex flex-1 items-center justify-end gap-2">
@@ -3598,7 +3700,7 @@ export default function EditorShell({
                 {saveMessage}
               </span>
             )}
-            {lyricsDirty && (
+            {(lyricsDirty || orientationDirty) && (
               <span className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-[12px] font-semibold text-[#3f3f46]">
                 Re-renders on Save
               </span>
@@ -3662,6 +3764,7 @@ export default function EditorShell({
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
             allowManipulation={false}
             stageHeightCss="100dvh - 152px"
+            canvas={activeCanvas}
           />
           {visibleTextBars.length === 0 && !readOnly && !textElementsLocked && (
             <button
@@ -3857,6 +3960,7 @@ export default function EditorShell({
             onPlayingChange={setPlaying}
             onReloadSource={() => setLoadNonce((n) => n + 1)}
             virtualPreview={virtualPreviewActive ? virtualPreview : null}
+            canvas={activeCanvas}
           />
         </div>
         <InspectorPanel
@@ -4198,6 +4302,7 @@ function LightTopBar({
   onOpenNova,
   onDismissCopilotNotice,
   onSave,
+  orientationToggle,
 }: {
   dirty: boolean;
   saving: boolean;
@@ -4208,6 +4313,7 @@ function LightTopBar({
   onOpenNova: () => void;
   onDismissCopilotNotice: () => void;
   onSave: () => void;
+  orientationToggle?: React.ReactNode;
 }) {
   const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
   return (
@@ -4235,6 +4341,8 @@ function LightTopBar({
               ✕
             </button>
           </div>
+        ) : orientationToggle ? (
+          <div className="flex justify-center">{orientationToggle}</div>
         ) : (
           <span className="text-[13px] font-semibold text-[#3f3f46]">Edit video</span>
         )}

@@ -101,6 +101,8 @@ export interface EditorCommitRequest {
   title?: string | null;
   /** Lyrics editor state. Omit when untouched; any presence triggers full render. */
   lyrics?: EditorCommitLyricsRequest;
+  /** Output canvas orientation. Omit when untouched; any presence triggers full render. */
+  orientation?: "portrait" | "landscape";
   /**
    * AI-suggestion resolution metadata, NOT a section: envelope ids from
    * `variants[i].overlay_suggestions` the user ✓-accepted in the editor. Their
@@ -134,6 +136,7 @@ export interface EditorCommitResponse {
     visual_blocks?: boolean;
     title?: boolean;
     lyrics?: boolean;
+    orientation?: boolean;
   };
 }
 
@@ -193,6 +196,8 @@ export function buildEditorCommitRequest({
   title,
   lyricsDirty = false,
   lyrics,
+  orientationDirty = false,
+  orientation,
   variant,
 }: {
   elements: TextElement[];
@@ -218,6 +223,8 @@ export function buildEditorCommitRequest({
   title: string;
   lyricsDirty?: boolean;
   lyrics?: EditorCommitLyricsRequest;
+  orientationDirty?: boolean;
+  orientation?: "portrait" | "landscape";
   variant: EditorCommitVariantBaseline;
 }): EditorCommitRequest {
   const mixEditable = variant.editor_capabilities?.mix !== false;
@@ -269,6 +276,7 @@ export function buildEditorCommitRequest({
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     lyrics: lyricsDirty ? lyrics : undefined,
+    orientation: orientationDirty ? orientation : undefined,
     base_generation: editorCommitBaseGeneration(variant),
   };
 }

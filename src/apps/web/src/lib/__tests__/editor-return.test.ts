@@ -58,6 +58,7 @@ describe("editor return signal", () => {
     expect(editorCommitStartedRender({ text_elements: true, title: true })).toBe(true);
     expect(editorCommitStartedRender({ caption_cues: true })).toBe(true);
     expect(editorCommitStartedRender({ media_overlays: true })).toBe(true);
+    expect(editorCommitStartedRender({ orientation: true })).toBe(true);
   });
 
   it("ignores incomplete or absent signals", () => {

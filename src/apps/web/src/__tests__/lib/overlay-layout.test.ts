@@ -16,6 +16,7 @@ import {
   layoutIntroHold,
   resolveAnchorFrac,
   resolveFontSizePx,
+  resolveTextElementsLayout,
   settledColor,
   shrinkToFit,
   verticalBlockTop,
@@ -26,7 +27,8 @@ import {
   type MeasureAtSize,
   type MeasureText,
 } from "@/lib/overlay-layout";
-import { CANVAS_W } from "@/lib/overlay-constants";
+import { CANVAS_H, CANVAS_W } from "@/lib/overlay-constants";
+import type { TextElement } from "@/lib/plan-api";
 
 // Fake monospace: every char is (size × 0.5) px wide — same shape as the
 // Python tests' stub measure, so wrap decisions match exactly.
@@ -176,6 +178,43 @@ describe("layoutIntroHold", () => {
     expect(layout!.yFrac).toBe(0.45);
     // maxWidth constant sanity: 0.9 × 1080 = 972
     expect(CANVAS_W * MAX_LINE_W_FRAC).toBe(972);
+  });
+});
+
+describe("resolveTextElementsLayout canvas dimensions", () => {
+  const element: TextElement = {
+    id: "txt-landscape",
+    text: "Landscape title",
+    role: "generative_intro",
+    start_s: 0,
+    end_s: 3,
+    x_frac: 0.25,
+    y_frac: 0.75,
+    max_width_frac: 0.5,
+    size_px: 72,
+  };
+
+  it("keeps default callers on portrait canvas math", () => {
+    const [defaultLayout] = resolveTextElementsLayout([element]);
+    const [portraitLayout] = resolveTextElementsLayout(
+      [element],
+      { w: CANVAS_W, h: CANVAS_H },
+    );
+
+    expect(defaultLayout).toEqual(portraitLayout);
+    expect(defaultLayout.xPx).toBe(270);
+    expect(defaultLayout.yPx).toBe(1440);
+    expect(defaultLayout.maxWidthPx).toBe(540);
+  });
+
+  it("scales fraction-to-pixel layout against a landscape canvas", () => {
+    const [layout] = resolveTextElementsLayout([element], { w: 1920, h: 1080 });
+
+    expect(layout.xFrac).toBe(0.25);
+    expect(layout.yFrac).toBe(0.75);
+    expect(layout.xPx).toBe(480);
+    expect(layout.yPx).toBe(810);
+    expect(layout.maxWidthPx).toBe(960);
   });
 });
 

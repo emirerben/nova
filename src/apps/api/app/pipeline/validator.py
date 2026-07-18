@@ -17,19 +17,24 @@ class ValidationResult:
     errors: list[str]
 
 
-def validate_output(file_path: str) -> ValidationResult:
+def validate_output(
+    file_path: str,
+    expected_resolution: tuple[int, int] | None = None,
+) -> ValidationResult:
     """Run FFprobe on an exported clip and assert it meets the output spec.
 
     Checks:
-    - resolution == 1080×1920
+    - resolution == 1080×1920 unless expected_resolution is provided
     - codec == h264
     - 45s ≤ duration ≤ 59s
     - audio stream present
     """
     cmd = [
         "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_streams",
         "-show_format",
         file_path,
@@ -63,9 +68,13 @@ def validate_output(file_path: str) -> ValidationResult:
     codec = video_stream.get("codec_name", "")
     duration_s = float(fmt.get("duration") or video_stream.get("duration", 0))
 
-    if width != settings.output_width or height != settings.output_height:
+    expected_width, expected_height = expected_resolution or (
+        settings.output_width,
+        settings.output_height,
+    )
+    if width != expected_width or height != expected_height:
         errors.append(
-            f"Resolution mismatch: expected {settings.output_width}×{settings.output_height}, "
+            f"Resolution mismatch: expected {expected_width}×{expected_height}, "
             f"got {width}×{height}"
         )
 
