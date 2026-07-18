@@ -56,16 +56,18 @@ _LYRIC_INJECTOR_PATH = (
 # 1204..1707 after Ruff collapsed two pop-up helper expressions above the
 # frozen window; SHA stayed identical, so the frozen content is unchanged →
 # 1452..1955 after guarded canonical/Whisper repair and terminal popup-rescue
-# helpers grew above `_inject_line` without changing Line code.
-# Verified with `test_lyric_injector_no_stacking.py` (66 tests) on 2026-06-05.
+# helpers grew above `_inject_line` without changing Line code →
+# 1657..2186 after lyric-line override helpers grew above `_inject_line`, and
+# `_inject_line` gained only the additive `lyric_line_key` metadata stamp.
+# Verified with `test_lyric_injector_no_stacking.py` (76 tests) on 2026-07-18.
 # If the file structure changes such that this range no longer captures the
 # right scope, update BOTH endpoints below AND the SHA.
-_LINE_FROZEN_RANGE_START: int = 1452
-_LINE_FROZEN_RANGE_END: int = 1955
+_LINE_FROZEN_RANGE_START: int = 1657
+_LINE_FROZEN_RANGE_END: int = 2186
 
 # Locked SHA256 of the frozen range. DO NOT update this constant casually.
 # Read the module docstring above for the legitimate update procedure.
-_LINE_FROZEN_RANGE_SHA256: str = "5e0a15e10d11e4624ba416381b897ba3edfab45b9e2d1096c0f2e8a65153444a"
+_LINE_FROZEN_RANGE_SHA256: str = "52e4c4c83df158fd14e40f7cf7b18d5d6b11a29238bb2ff6ef2d3a547d4c4e37"
 
 
 def _compute_range_sha256() -> str:

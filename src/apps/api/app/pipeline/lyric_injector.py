@@ -193,6 +193,7 @@ def _resolve_fade_ms(cfg: dict, *, s_key: str, ms_key: str, default_ms: int) -> 
 @dataclass(slots=True)
 class _LineOverlayWindow:
     lyric_line_id: str
+    lyric_line_key: str | None
     text: str
     line_start_s: float
     line_end_s: float
@@ -387,6 +388,209 @@ def _shift_timing_pair(item: dict, offset_s: float) -> None:
         item[key] = round(max(0.0, shifted), 6)
 
 
+def _normalize_override_fingerprint_text(value: object) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold().strip()
+    return re.sub(r"\s+", " ", text)
+
+
+def _parse_line_key(value: object) -> int | None:
+    if not isinstance(value, str) or not re.fullmatch(r"L\d+", value):
+        return None
+    try:
+        return int(value[1:])
+    except ValueError:
+        return None
+
+
+def _valid_override_text(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > 200:
+        return None
+    return text
+
+
+def _redistribute_override_words(
+    text: str,
+    *,
+    start_s: float,
+    end_s: float,
+    old_words: list,
+) -> list[dict]:
+    parts = text.split()
+    if not parts:
+        return []
+
+    if len(parts) == len(old_words):
+        out: list[dict] = []
+        for word_text, old in zip(parts, old_words, strict=True):
+            if isinstance(old, dict):
+                copied = dict(old)
+                copied["text"] = word_text
+                out.append(copied)
+        return out
+
+    duration_s = max(0.0, end_s - start_s)
+    weights = [max(1, len(part)) for part in parts]
+    total_weight = float(sum(weights)) or float(len(parts))
+    cursor = 0.0
+    redistributed: list[dict] = []
+    for idx, part in enumerate(parts):
+        word_start = start_s + (cursor / total_weight) * duration_s
+        cursor += weights[idx]
+        word_end = start_s + (cursor / total_weight) * duration_s
+        if idx + 1 == len(parts):
+            word_end = end_s
+        word_start = max(start_s, min(end_s, word_start))
+        word_end = max(word_start, min(end_s, word_end))
+        redistributed.append(
+            {
+                "text": part,
+                "start_s": round(word_start, 6),
+                "end_s": round(word_end, 6),
+            }
+        )
+    return redistributed
+
+
+def apply_lyric_line_overrides(lyrics_cached: dict, overrides: dict | None) -> dict:
+    """Return lyrics_cached with safe text overrides applied; never mutates input."""
+    out = copy.deepcopy(lyrics_cached)
+    if not isinstance(out, dict) or not isinstance(overrides, dict):
+        return out
+    lines = out.get("lines")
+    if not isinstance(lines, list):
+        return out
+
+    for line_key, override in overrides.items():
+        try:
+            idx = _parse_line_key(line_key)
+            if idx is None or idx < 0 or idx >= len(lines) or not isinstance(override, dict):
+                continue
+            line = lines[idx]
+            if not isinstance(line, dict):
+                continue
+
+            current_text_norm = _normalize_override_fingerprint_text(line.get("text"))
+            orig_text_norm = _normalize_override_fingerprint_text(override.get("orig_text"))
+            text_matches = bool(orig_text_norm) and orig_text_norm == current_text_norm
+            timing_matches = False
+            try:
+                timing_matches = (
+                    abs(float(line.get("start_s")) - float(override.get("orig_start_s"))) <= 0.25
+                )
+            except (TypeError, ValueError):
+                timing_matches = False
+            if not text_matches and not timing_matches:
+                log.info("lyric_override_dropped_drift", line_key=line_key)
+                continue
+
+            new_text = _valid_override_text(override.get("text"))
+            if new_text is None:
+                continue
+            start_s = float(line.get("start_s"))
+            end_s = float(line.get("end_s"))
+            old_words = line.get("words") if isinstance(line.get("words"), list) else []
+            line["text"] = new_text
+            line["words"] = _redistribute_override_words(
+                new_text,
+                start_s=start_s,
+                end_s=end_s,
+                old_words=old_words,
+            )
+        except Exception:  # noqa: BLE001
+            log.warning("lyric_override_entry_skipped", line_key=line_key, exc_info=True)
+            continue
+    return out
+
+
+def _apply_lyric_style_overrides(recipe_dict: dict, overrides: dict | None) -> None:
+    """Patch lyric overlay style fields in place. Timing keys are intentionally unreachable."""
+    if not isinstance(recipe_dict, dict) or not isinstance(overrides, dict):
+        return
+    style_map = {
+        "color": "text_color",
+        "highlight_color": "highlight_color",
+        "font_family": "font_family",
+        "size_px": "text_size_px",
+    }
+    for slot in recipe_dict.get("slots") or []:
+        if not isinstance(slot, dict):
+            continue
+        for overlay in slot.get("text_overlays") or []:
+            if not isinstance(overlay, dict):
+                continue
+            line_key = overlay.get("lyric_line_key")
+            override = overrides.get(line_key) if isinstance(line_key, str) else None
+            style = override.get("style") if isinstance(override, dict) else None
+            if not isinstance(style, dict):
+                continue
+            for src_key, dst_key in style_map.items():
+                if src_key in style:
+                    overlay[dst_key] = style[src_key]
+
+
+def build_lyric_overlay_snapshot(recipe_dict: dict, snapped_durations: list[float]) -> list[dict]:
+    slot_starts: list[float] = []
+    cursor = 0.0
+    for dur in snapped_durations:
+        slot_starts.append(cursor)
+        try:
+            cursor += float(dur)
+        except (TypeError, ValueError):
+            cursor += 0.0
+
+    grouped: dict[str, dict] = {}
+    for slot_idx, slot in enumerate(recipe_dict.get("slots") or []):
+        if not isinstance(slot, dict):
+            continue
+        slot_start = slot_starts[slot_idx] if slot_idx < len(slot_starts) else cursor
+        for overlay in slot.get("text_overlays") or []:
+            if not isinstance(overlay, dict):
+                continue
+            line_key = overlay.get("lyric_line_key")
+            if not isinstance(line_key, str):
+                continue
+            try:
+                abs_start_s = slot_start + float(overlay.get("start_s", 0.0))
+                abs_end_s = slot_start + float(overlay.get("end_s", 0.0))
+            except (TypeError, ValueError):
+                continue
+            entry = grouped.get(line_key)
+            if entry is None:
+                entry = {
+                    "line_key": line_key,
+                    "text": str(overlay.get("text", "")),
+                    "start_s": abs_start_s,
+                    "end_s": abs_end_s,
+                    "font_family": overlay.get("font_family"),
+                    "size_px": overlay.get("text_size_px", overlay.get("size_px")),
+                    "color": overlay.get("text_color", overlay.get("color")),
+                    "highlight_color": overlay.get("highlight_color"),
+                    "y_frac": overlay.get("position_y_frac"),
+                    "effect": overlay.get("effect"),
+                }
+                grouped[line_key] = entry
+            else:
+                entry["start_s"] = min(float(entry["start_s"]), abs_start_s)
+                entry["end_s"] = max(float(entry["end_s"]), abs_end_s)
+                if len(str(overlay.get("text", ""))) >= len(str(entry.get("text", ""))):
+                    entry["text"] = str(overlay.get("text", ""))
+
+    return sorted(
+        (
+            {
+                **entry,
+                "start_s": round(float(entry["start_s"]), 3),
+                "end_s": round(float(entry["end_s"]), 3),
+            }
+            for entry in grouped.values()
+        ),
+        key=lambda entry: (entry["start_s"], entry["line_key"]),
+    )
+
+
 def _apply_style_set_defaults(cfg: dict, set_id: str) -> dict:
     """Layer a style set's lyric styling onto cfg as DEFAULTS.
 
@@ -459,7 +663,7 @@ def _select_section_lines(
     that straddle a clamp edge are clamped to the line bounds.
     """
     out: list[dict] = []
-    for line in lines:
+    for abs_index, line in enumerate(lines):
         try:
             ls = float(line.get("start_s", 0.0))
             le = float(line.get("end_s", 0.0))
@@ -544,6 +748,7 @@ def _select_section_lines(
                 "original_start_s_song": ls,
                 "original_end_s_song": le,
                 "original_words": original_words,
+                "_abs_index": abs_index,
                 "clamped_from_start": ls < best_start_s,
                 "clamped_from_end": le > best_end_s,
             }
@@ -692,6 +897,7 @@ def _inject_karaoke(
                 "end_s": round(rel_end, 3),
                 "highlight_color": highlight,
                 "word_timings": word_timings,
+                "lyric_line_key": f"L{line['_abs_index']}",
                 # Section-relative anchors capture the line's intended audio
                 # position INDEPENDENT of slot windowing. The post-snap
                 # re-anchor pass in `_collect_absolute_overlays` reads these
@@ -868,6 +1074,7 @@ def _inject_per_word_pop(
                     # static so the viewer doesn't see the whole line re-pop
                     # on every new word.
                     "pop_animated_suffix": stage.pop_animated_suffix,
+                    "lyric_line_key": f"L{line['_abs_index']}",
                     # Section-relative anchors — see karaoke injector for the
                     # full rationale. The post-snap re-anchor pass in
                     # `_collect_absolute_overlays` glues each per-word stage
@@ -1583,6 +1790,7 @@ def _inject_line(
         line_windows.append(
             _LineOverlayWindow(
                 lyric_line_id=f"line:{i}:{line_start:.3f}:{line_end:.3f}",
+                lyric_line_key=f"L{line['_abs_index']}",
                 text=line["text"],
                 line_start_s=line_start,
                 line_end_s=line_end,
@@ -1884,6 +2092,7 @@ def _inject_line(
                     "fade_in_ms": line.fade_in_ms if segment_idx == 0 else 0,
                     "fade_out_ms": line.fade_out_ms if segment_idx == len(segments) - 1 else 0,
                     "lyric_line_id": line.lyric_line_id,
+                    "lyric_line_key": line.lyric_line_key,
                     "lyric_segment_index": segment_idx,
                     "lyric_segment_count": len(segments),
                     # Song-time originals required by the line-style

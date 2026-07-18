@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.32.0] — 2026-07-18
+
+### Added
+- **Lyric override render engine (groundwork, no user-facing surface yet).** The generative render path can now apply per-line lyric text and style overrides, toggle lyric rendering per variant (`lyrics_enabled`), and persist a per-render `lyric_overlay_snapshot` (each burned lyric line with absolute timing and style) plus `lyrics_available` on the variant. Text overrides mutate only line text/words before injection — line timing windows are untouched by construction, and a new geometry-frozen test gates that the lyric schedule is byte-identical with and without overrides. Lyrics variants now also cache their lyric-burned, user-text-free output as `base_video_path`, so user-authored TextElements can be reburned on top (with subject-matte support). Inert until the lyrics editor API ships: with no persisted override fields, renders are unchanged.
+
 ## [0.7.31.3] — 2026-07-17
 
 ### Fixed
