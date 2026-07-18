@@ -202,21 +202,70 @@ def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> Non
         _record("visual_blocks_frames_extracted", count=len(created))
 
 
+def _clear_visual_block_attempts(job_id: str, variant_ids: list[str]) -> None:
+    """Release run-once claims that never reached a terminal planner result."""
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    wanted = set(variant_ids)
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+        if job is None:
+            return
+        variants = list((job.assembly_plan or {}).get("variants") or [])
+        changed = False
+        for variant in variants:
+            if (
+                variant.get("variant_id") in wanted
+                and not variant.get("visual_blocks")
+                and variant.get("visual_blocks_autoplan_attempted")
+            ):
+                variant["visual_blocks_autoplan_attempted"] = False
+                changed = True
+        if changed:
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            flag_modified(job, "assembly_plan")
+            db.commit()
+
+
+def _planner_revision_matches(target: dict, revision: dict) -> bool:
+    from app.services.transcript_source import words_from_variant  # noqa: PLC0415
+
+    fresh_words = words_from_variant(target)
+    if fresh_words is None and (target.get("transcript") or target.get("overlay_transcript")):
+        return False
+    return (
+        target.get("base_video_path") == revision["base_video_path"]
+        and target.get("duration_s") == revision["duration_s"]
+        and target.get("output_duration_s") == revision["output_duration_s"]
+        and target.get("render_generation_id") == revision["render_generation_id"]
+        and (fresh_words or []) == revision["words"]
+    )
+
+
 @celery_app.task(name="app.tasks.autoplace.prepare_visual_block_assets", **_AUTOPLACE_TASK_LIMITS)
 def prepare_visual_block_assets(job_id: str, variant_ids: list[str]) -> None:
     """Extract missing source frames once, then fan out variant planners."""
     from app.config import settings  # noqa: PLC0415
 
     if not (settings.visual_blocks_enabled and settings.visual_block_autoplan_enabled):
+        _clear_visual_block_attempts(job_id, variant_ids)
         return
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     with pipeline_trace_for(job_id):
-        _materialize_extracted_frames(job_id)
-        for variant_id in variant_ids:
-            plan_visual_blocks.apply_async(
-                args=[job_id, variant_id], queue=settings.autoplace_queue
-            )
+        try:
+            _materialize_extracted_frames(job_id)
+        except Exception:
+            _clear_visual_block_attempts(job_id, variant_ids)
+            raise
+        for index, variant_id in enumerate(variant_ids):
+            try:
+                plan_visual_blocks.apply_async(
+                    args=[job_id, variant_id], queue=settings.autoplace_queue
+                )
+            except Exception:
+                _clear_visual_block_attempts(job_id, variant_ids[index:])
+                raise
 
 
 @celery_app.task(name="app.tasks.autoplace.plan_visual_blocks", **_AUTOPLACE_TASK_LIMITS)
@@ -225,6 +274,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
     from app.config import settings  # noqa: PLC0415
 
     if not (settings.visual_blocks_enabled and settings.visual_block_autoplan_enabled):
+        _clear_visual_block_attempts(job_id, [variant_id])
         return
 
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
@@ -232,7 +282,10 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
     with pipeline_trace_for(job_id):
         from sqlalchemy import select  # noqa: PLC0415
 
-        from app.services.overlay_autoplace import transcript_source  # noqa: PLC0415
+        from app.services.transcript_source import (  # noqa: PLC0415
+            transcript_source,
+            words_from_variant,
+        )
 
         with _sync_session() as db:
             job = db.get(Job, uuid.UUID(job_id))
@@ -270,8 +323,22 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                 .all()
             ]
             duration_s = float(variant.get("duration_s") or variant.get("output_duration_s") or 0)
-            if duration_s <= 0:
-                duration_s = 60.0
+            persisted_words = words_from_variant(variant)
+            if persisted_words is None and (
+                variant.get("transcript") or variant.get("overlay_transcript")
+            ):
+                # An authoritative but malformed transcript must not fall
+                # through to Whisper forever. Fail closed and keep the run-once
+                # marker terminal until the source data is corrected.
+                _record("visual_blocks_transcript_invalid", variant_id=variant_id)
+                return
+            had_persisted_words = persisted_words is not None
+            source_revision = {
+                "base_video_path": variant.get("base_video_path"),
+                "duration_s": variant.get("duration_s"),
+                "output_duration_s": variant.get("output_duration_s"),
+                "render_generation_id": variant.get("render_generation_id"),
+            }
             transcript = transcript_source(variant, allow_whisper=True)
             words = transcript[0] if transcript else []
             beats = list(variant.get("beat_grid") or variant.get("beat_timestamps_s") or [])
@@ -294,6 +361,50 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
         )
 
         proposals: list[RawVisualTreatment] = []
+        planner_outcome = "skipped"
+        if words:
+            # Reconcile the transcript under the row lock before calling the
+            # model. Never overwrite a correction or a transcript produced by
+            # a concurrent task after this planner's unlocked Whisper read.
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                variants = list((job.assembly_plan or {}).get("variants") or []) if job else []
+                fresh = next((row for row in variants if row.get("variant_id") == variant_id), None)
+                source_changed = fresh is None or any(
+                    fresh.get(key) != value for key, value in source_revision.items()
+                )
+                if source_changed:
+                    if fresh is not None:
+                        fresh["visual_blocks_autoplan_attempted"] = False
+                        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+                        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                        flag_modified(job, "assembly_plan")
+                        db.commit()
+                    _record("visual_blocks_plan_stale", variant_id=variant_id)
+                    return
+                fresh_words = words_from_variant(fresh)
+                if fresh_words is not None:
+                    words = fresh_words
+                elif had_persisted_words:
+                    fresh["visual_blocks_autoplan_attempted"] = False
+                    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+                    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                    flag_modified(job, "assembly_plan")
+                    db.commit()
+                    _record("visual_blocks_plan_stale", variant_id=variant_id)
+                    return
+                else:
+                    fresh["overlay_transcript"] = words
+                    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+                    job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                    flag_modified(job, "assembly_plan")
+                    db.commit()
+        if duration_s <= 0:
+            duration_s = float(words[-1].get("end_s", 0.0)) + 1.0 if words else 60.0
+        planning_revision = {**source_revision, "words": words}
         if settings.gemini_api_key and (words or beats):
             try:
                 from app.agents._model_client import default_client  # noqa: PLC0415
@@ -312,7 +423,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                             )
                             for asset in assets
                         ],
-                        duration_s=min(duration_s, 60.0),
+                        duration_s=duration_s,
                         beat_timestamps_s=beats,
                         clip_plan=clip_plan,
                         visual_signals=visual_signals,
@@ -321,18 +432,30 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                     ctx=RunContext(job_id=job_id),
                 )
                 proposals = output.treatments
+                planner_outcome = "succeeded"
             except Exception as exc:  # noqa: BLE001 - deterministic fallback below
+                planner_outcome = "failed"
                 log.warning(
                     "visual_blocks.planner_failed",
                     job_id=job_id,
                     variant_id=variant_id,
                     error=str(exc)[:240],
                 )
+                _record(
+                    "visual_blocks_planner_failed",
+                    variant_id=variant_id,
+                    error=str(exc)[:160],
+                )
 
         # Keyless/agent-failure fallback is deliberately conservative: a short
         # opening montage is grounded by real assets; semantic cards require the
         # transcript-aware agent and are never hallucinated heuristically.
-        if not proposals and len(assets) >= 3 and duration_s >= 1.2:
+        if (
+            planner_outcome != "succeeded"
+            and not proposals
+            and len(assets) >= 3
+            and duration_s >= 1.2
+        ):
             proposals = [
                 RawVisualTreatment(
                     kind="montage",
@@ -365,8 +488,29 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
             ),
             transcript_words=words,
         )
+        # Zero and failure outcomes are still tied to the source revision the
+        # model saw. Validate before consuming the newer render's run-once
+        # claim as a terminal no-op.
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            variants = list((job.assembly_plan or {}).get("variants") or []) if job else []
+            target = next((row for row in variants if row.get("variant_id") == variant_id), None)
+            if target is None:
+                return
+            if not _planner_revision_matches(target, planning_revision):
+                target["visual_blocks_autoplan_attempted"] = False
+                from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+                job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                flag_modified(job, "assembly_plan")
+                db.commit()
+                _record("visual_blocks_plan_stale", variant_id=variant_id)
+                return
         if not blocks:
-            _record("visual_blocks_plan_zero", variant_id=variant_id)
+            if planner_outcome == "failed":
+                _clear_visual_block_attempts(job_id, [variant_id])
+            else:
+                _record("visual_blocks_plan_zero", variant_id=variant_id)
             return
         blocks = validate_visual_blocks(blocks, duration_s=duration_s)
 
@@ -378,6 +522,22 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
             target = next((row for row in variants if row.get("variant_id") == variant_id), None)
             if target is None or target.get("visual_blocks"):
                 return
+            if not _planner_revision_matches(target, planning_revision):
+                target["visual_blocks_autoplan_attempted"] = False
+                from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+                job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                flag_modified(job, "assembly_plan")
+                db.commit()
+                _record("visual_blocks_plan_stale", variant_id=variant_id)
+                return
+            previous_render_status = target.get("render_status")
+            previous_render_generation_id = target.get("render_generation_id")
+            previous_render_generation_present = "render_generation_id" in target
+            previous_text_elements = list(target.get("text_elements") or [])
+            previous_text_elements_present = "text_elements" in target
+            previous_text_edited = target.get("text_elements_user_edited")
+            previous_text_edited_present = "text_elements_user_edited" in target
             elements = list(target.get("text_elements") or []) + new_text
             validate_visual_block_text_links(blocks, elements)
             render_gen_id = uuid.uuid4().hex
@@ -396,11 +556,53 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
 
         from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
-        regenerate_generative_variant.apply_async(
-            args=[job_id, variant_id],
-            kwargs={"render_gen_id": render_gen_id},
-            queue="overlay-jobs",
-        )
+        try:
+            regenerate_generative_variant.apply_async(
+                args=[job_id, variant_id],
+                kwargs={"render_gen_id": render_gen_id},
+                queue="overlay-jobs",
+            )
+        except Exception as exc:
+            # The DB commit must precede enqueue so the worker can see it. If
+            # the broker rejects that enqueue, roll back only this generation's
+            # authored state so the last good video stays ready and autoplan can
+            # retry instead of stranding the variant in `rendering` forever.
+            with _sync_session() as db:
+                job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+                if job is not None:
+                    variants = list((job.assembly_plan or {}).get("variants") or [])
+                    target = next(
+                        (row for row in variants if row.get("variant_id") == variant_id),
+                        None,
+                    )
+                    if target is not None and target.get("render_generation_id") == render_gen_id:
+                        target.pop("visual_blocks", None)
+                        target.pop("visual_blocks_base_path", None)
+                        target["visual_blocks_autoplan_attempted"] = False
+                        if previous_text_elements_present:
+                            target["text_elements"] = previous_text_elements
+                        else:
+                            target.pop("text_elements", None)
+                        if previous_text_edited_present:
+                            target["text_elements_user_edited"] = previous_text_edited
+                        else:
+                            target.pop("text_elements_user_edited", None)
+                        if previous_render_generation_present:
+                            target["render_generation_id"] = previous_render_generation_id
+                        else:
+                            target.pop("render_generation_id", None)
+                        target["render_status"] = previous_render_status or "ready"
+                        from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+                        job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+                        flag_modified(job, "assembly_plan")
+                        db.commit()
+            _record(
+                "visual_blocks_render_dispatch_failed",
+                variant_id=variant_id,
+                error=str(exc)[:160],
+            )
+            raise
         _record(
             "visual_blocks_planned",
             variant_id=variant_id,

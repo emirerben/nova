@@ -14,7 +14,7 @@ VISUAL QUALITY, REPETITION, AND EDIT SIGNALS: {{signals_json}}
 EXISTING/RECENT TREATMENTS: {{recent_json}}
 
 Return JSON only: {"treatments": [{"kind":"montage|text_card|footage",
-"purpose":"hook|context|key_argument|example|quote|statistic|transition|conclusion|cta",
+"purpose":"hook|context|key_argument|example|quote|statistic|transition|section_item|conclusion|cta",
 "start_s":number,"end_s":number,"asset_ids":[string],"text":string|null,
 "rationale":string,"confidence":"high|medium|low"}]}
 
@@ -23,6 +23,18 @@ Editorial policy:
   relevant assets. Prefer 3-10 assets and a 1.2-6.0 second window.
 - A text card isolates a transcript-backed statistic, quote, key argument, or true
   section transition. Copy or tightly condense the spoken claim; never invent facts.
+- Use purpose "section_item" for an explicit item in an announced structure: numbered
+  subtopics, rankings, steps, lessons, reasons, or named list items. When the speaker
+  announces a finite structure (for example "four headings" or "top five"), emit one
+  section_item card for every clearly spoken item, up to eight items.
+- A section_item card contains ONLY the spoken ordinal/number and item title. Do not
+  include its translation, definition, evidence, or explanatory sentence. Preserve the
+  spoken ordering even when the card normalizes "birinci"/"first" to "1".
+- Time a section_item from the ordinal through the title and end it before the speaker
+  starts the definition or explanation. The underlying talking-head footage must return
+  for that explanation. Do not turn the structure-preview sentence itself into a card.
+- A bare opening list used as a hook is not automatically a structured sequence. It needs
+  an announced order plus individually introduced items later in the transcript.
 - "footage" records that an important passage should deliberately remain untreated.
 - Cut on sentence/keyword/beat boundaries. Do not change visuals on a fixed timer.
 - Use weak/repetitive footage and time since the last meaningful treatment only as

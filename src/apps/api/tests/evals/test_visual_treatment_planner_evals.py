@@ -37,3 +37,19 @@ def test_visual_treatment_planner_eval(
         f"\n{result.fixture_id}: {result.summary()}\n"
         f"  failures: {result.structural_failures}\n  error: {result.error}"
     )
+    expected = fixture.meta.get("expected_section_items") or []
+    if expected:
+        assert result.output is not None
+        cards = [
+            treatment
+            for treatment in result.output.get("treatments", [])
+            if treatment.get("kind") == "text_card"
+        ]
+        assert len(cards) == len(expected), (
+            f"expected exactly {len(expected)} structured cards, got {len(cards)}: {cards}"
+        )
+        for card, target in zip(cards, expected, strict=True):
+            assert card["purpose"] == "section_item"
+            assert card["text"] == target["text"]
+            assert float(card["start_s"]) == pytest.approx(float(target["start_s"]), abs=0.01)
+            assert float(card["end_s"]) == pytest.approx(float(target["end_s"]), abs=0.01)
