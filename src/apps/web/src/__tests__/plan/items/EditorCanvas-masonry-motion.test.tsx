@@ -173,3 +173,63 @@ describe("EditorCanvas masonry board motion", () => {
     expect(layerOriginPx + Number(patch.x_frac) * 1080).toBeCloseTo(expectedBoardX, 6);
   });
 });
+
+describe("EditorCanvas subtitled preview", () => {
+  it("keeps the caption-free base editable while showing the active persisted cue", () => {
+    const subtitled = {
+      ...variant,
+      resolved_archetype: "subtitled",
+      base_video_url: "https://example.com/caption-free-base.mp4",
+      captions_enabled: true,
+      caption_cues: [
+        { text: "Bağırsak karakterinin oyuncağını", start_s: 1, end_s: 2.5 },
+      ],
+    } as unknown as PlanItemVariant;
+
+    const view = render(canvas(1.5, subtitled));
+
+    expect(
+      view.getByText("Bağırsak karakterinin oyuncağını").closest("[data-caption-preview]"),
+    ).toHaveAttribute("data-caption-preview", "true");
+    expect(view.container.querySelector("video")).toHaveAttribute(
+      "src",
+      "https://example.com/caption-free-base.mp4",
+    );
+
+    view.rerender(canvas(3, subtitled));
+    expect(view.queryByText("Bağırsak karakterinin oyuncağını")).not.toBeInTheDocument();
+  });
+
+  it("does not show cues when captions are disabled", () => {
+    const subtitled = {
+      ...variant,
+      resolved_archetype: "subtitled",
+      base_video_url: "https://example.com/caption-free-base.mp4",
+      captions_enabled: false,
+      caption_cues: [{ text: "Hidden caption", start_s: 1, end_s: 2.5 }],
+    } as unknown as PlanItemVariant;
+
+    const view = render(canvas(1.5, subtitled));
+
+    expect(view.queryByText("Hidden caption")).not.toBeInTheDocument();
+  });
+
+  it("does not double-preview captions over an output-only burned video", () => {
+    const subtitled = {
+      ...variant,
+      resolved_archetype: "subtitled",
+      base_video_url: null,
+      output_url: "https://example.com/already-captioned.mp4",
+      captions_enabled: true,
+      caption_cues: [{ text: "Already burned", start_s: 1, end_s: 2.5 }],
+    } as unknown as PlanItemVariant;
+
+    const view = render(canvas(1.5, subtitled));
+
+    expect(view.queryByText("Already burned")).not.toBeInTheDocument();
+    expect(view.container.querySelector("video")).toHaveAttribute(
+      "src",
+      "https://example.com/already-captioned.mp4",
+    );
+  });
+});

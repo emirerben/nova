@@ -36,7 +36,7 @@ import {
   MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
 import { animationStateAt } from "@/lib/overlay-animation";
-import { MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
+import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
@@ -239,6 +239,33 @@ export default function EditorCanvas({
     () => visibleMediaOverlaysAtTime(mediaOverlays, currentTime, overlayPreviewUrls),
     [currentTime, mediaOverlays, overlayPreviewUrls],
   );
+  const captionPreviewUsesCleanBase = Boolean(variant.base_video_url || virtualPreview);
+  const visibleCaption = useMemo(() => {
+    if (
+      !captionPreviewUsesCleanBase ||
+      variant.resolved_archetype !== "subtitled" ||
+      variant.captions_enabled === false ||
+      !variant.caption_cues?.length
+    ) {
+      return null;
+    }
+    const cue = variant.caption_cues.find(
+      (candidate) => currentTime >= candidate.start_s && currentTime < candidate.end_s,
+    );
+    if (!cue) return null;
+    if (variant.voiceover_caption_style === "word" && cue.words?.length) {
+      return (
+        cue.words.find(
+          (word) => currentTime >= word.start_s && currentTime < word.end_s,
+        )?.text ?? null
+      );
+    }
+    return cue.text;
+  }, [captionPreviewUsesCleanBase, currentTime, variant]);
+  const captionFontFamily = useMemo(() => {
+    const selected = INTRO_FONTS.find((font) => font.name === variant.voiceover_caption_font);
+    return selected?.cssFamily ?? "'TikTok Sans', 'Inter', system-ui, sans-serif";
+  }, [variant.voiceover_caption_font]);
 
   const src = variant.base_video_url ?? variant.output_url ?? null;
   const hasPreview = Boolean(src || virtualPreview);
@@ -769,6 +796,36 @@ export default function EditorCanvas({
                 onPointerMove={onPointerMove}
                 onPointerUp={onPointerUp}
               >
+                {visibleCaption && (
+                  <div
+                    data-caption-preview="true"
+                    className="pointer-events-none absolute inset-x-[7.5%] flex justify-center text-center"
+                    style={{
+                      bottom: `${
+                        ((variant.caption_margin_v ?? 384) / canvas.h) * 100
+                      }%`,
+                      // The final subtitled compositor burns captions after
+                      // authored text but before media overlays.
+                      zIndex: EDITOR_STAGE_Z.textOverlay + 10,
+                    }}
+                  >
+                    <span
+                      style={{
+                        color: "#fff",
+                        fontFamily: captionFontFamily,
+                        fontSize: `${stageSize.h > 0 ? (78 / canvas.h) * stageSize.h : 0}px`,
+                        fontWeight: 700,
+                        lineHeight: 1.18,
+                        maxWidth: "100%",
+                        textShadow:
+                          "0 2px 2px #000, 2px 0 2px #000, 0 -2px 2px #000, -2px 0 2px #000",
+                        whiteSpace: "pre-wrap",
+                      }}
+                    >
+                      {visibleCaption}
+                    </span>
+                  </div>
+                )}
                 {visibleMediaOverlays.map((overlay) => (
                   <MediaOverlayCard
                     key={overlay.card.id}
