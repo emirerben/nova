@@ -13,7 +13,6 @@ const CANVAS_W = 1080;
 const CANVAS_H = 1920;
 const MASONRY_MAX_DURATION_S = 15;
 const MASONRY_PLACEMENT_SAMPLE_COUNT = 7;
-const MASONRY_PLACEMENT_MARGIN_PX = 42;
 const MASONRY_PLACEMENT_FRAME_MARGIN_PX = 36;
 const MASONRY_PLACEMENT_MIN_WIDTH_FRAC = 0.2;
 const MASONRY_PLACEMENT_MIN_HEIGHT_FRAC = 0.055;
@@ -39,19 +38,65 @@ const MASONRY_LAYOUT: Array<[number, number, number, number]> = [
   [488, 1412, 284, 474],
   [804, 1414, 424, 254],
 ];
+const MASONRY_BOARD_RIGHT_PADDING_PX = 34;
+const POLAROID_LAYOUT: Array<[number, number, number, number]> = [
+  [27, 77, 248, 442],
+  [885, 450, 454, 270],
+  [922, 754, 274, 480],
+  [1000, 24, 616, 370],
+  [1644, 60, 292, 519],
+  [632, 1391, 395, 229],
+  [389, 162, 462, 822],
+  [1236, 1163, 439, 268],
+  [1395, 658, 266, 473],
+  [1689, 658, 482, 278],
+  [44, 562, 238, 422],
+  [285, 1012, 580, 351],
+  [1073, 1514, 284, 504],
+  [1416, 1570, 399, 238],
+  [1740, 984, 308, 546],
+  [24, 1391, 580, 343],
+  [2076, 1103, 256, 427],
+  [1843, 1570, 475, 284],
+];
+const POLAROID_ROTATIONS = [
+  -2.6, 1.7, -1.4, 2.1, -3, 1.2, -2.4, 2.8, -1.8, 1.5, 3.2, -1.9, 2.4, -2.2,
+  1.1, 2.6, -1.6, 2,
+];
 
 type Rect = [number, number, number, number];
+type CollagePreset = "masonry" | "polaroid_wall";
+type CollagePlacementConfig = {
+  layout: Array<[number, number, number, number]>;
+  rotations: number[];
+  placementMarginPx: number;
+  source: string;
+  boardWidth: number;
+};
 
-export function isMasonryVariant(variant: PlanItemVariant | null | undefined): boolean {
-  return (
-    variant?.montage_preset === "masonry" ||
-    variant?.montage_preset_rendered === "masonry"
-  );
+function collagePresetForVariant(
+  variant: PlanItemVariant | null | undefined,
+): CollagePreset | null {
+  const preset = variant?.montage_preset_rendered ?? variant?.montage_preset;
+  return preset === "masonry" || preset === "polaroid_wall" ? preset : null;
 }
 
-export function isCollageVariant(variant: PlanItemVariant | null | undefined): boolean {
-  const preset = variant?.montage_preset_rendered ?? variant?.montage_preset;
-  return preset === "masonry" || preset === "polaroid_wall";
+function collagePlacementConfig(preset: CollagePreset): CollagePlacementConfig {
+  const layout = preset === "polaroid_wall" ? POLAROID_LAYOUT : MASONRY_LAYOUT;
+  return {
+    layout,
+    rotations: preset === "polaroid_wall" ? POLAROID_ROTATIONS : [],
+    placementMarginPx: preset === "polaroid_wall" ? 72 : 42,
+    source: preset === "polaroid_wall" ? "polaroid_wall_whitespace" : "masonry_whitespace",
+    boardWidth:
+      Math.max(...layout.map(([x, _y, width]) => x + width)) +
+      MASONRY_BOARD_RIGHT_PADDING_PX,
+  };
+}
+
+export function isMasonryVariant(variant: PlanItemVariant | null | undefined): boolean {
+  // Both presets use the masonry moving-board render pipeline.
+  return collagePresetForVariant(variant) !== null;
 }
 
 function clampDuration(durationS: number): number {
@@ -61,7 +106,7 @@ function clampDuration(durationS: number): number {
 
 export function masonryMotionForDuration(
   durationS: number,
-  boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34,
+  boardWidth = collagePlacementConfig("masonry").boardWidth,
 ): Record<string, unknown> {
   const resolvedBoardWidth =
     Number.isFinite(boardWidth) && boardWidth >= CANVAS_W ? boardWidth : CANVAS_W;
@@ -78,16 +123,10 @@ export function collageMotionForVariant(
   variant: PlanItemVariant | null | undefined,
   durationS: number,
 ): Record<string, unknown> | null {
-  if (isMasonryVariant(variant)) return masonryMotionForDuration(durationS);
-  const preset = variant?.montage_preset_rendered ?? variant?.montage_preset;
-  if (preset !== "polaroid_wall") return null;
-  for (const candidate of variant?.text_placement_candidates ?? []) {
-    const boardWidth = candidate?.masonry_motion?.board_width_px;
-    if (typeof boardWidth === "number" && Number.isFinite(boardWidth) && boardWidth >= CANVAS_W) {
-      return masonryMotionForDuration(durationS, boardWidth);
-    }
-  }
-  return null;
+  const preset = collagePresetForVariant(variant);
+  return preset
+    ? masonryMotionForDuration(durationS, collagePlacementConfig(preset).boardWidth)
+    : null;
 }
 
 function candidateFromRect({
@@ -100,6 +139,7 @@ function candidateFromRect({
   maxWidthFrac,
   confidence,
   source = "masonry_whitespace",
+  boardWidth = collagePlacementConfig("masonry").boardWidth,
 }: {
   left: number;
   top: number;
@@ -110,7 +150,13 @@ function candidateFromRect({
   maxWidthFrac?: number;
   confidence: number;
   source?: string;
+  boardWidth?: number;
 }): TextPlacementCandidate {
+  const centerX = left + width / 2;
+  const layerOriginPx =
+    left >= 0 && left + width <= CANVAS_W
+      ? 0
+      : Math.max(0, Math.min(centerX - CANVAS_W / 2, boardWidth - CANVAS_W));
   const resolvedMaxWidth =
     maxWidthFrac ??
     (rotationDeg
@@ -118,13 +164,14 @@ function candidateFromRect({
       : Math.max(MASONRY_PLACEMENT_MIN_WIDTH_FRAC, Math.min(0.9, (width / CANVAS_W) * 0.92)));
   return {
     source,
-    x_frac: round4((left + width / 2) / CANVAS_W),
+    x_frac: round4((centerX - layerOriginPx) / CANVAS_W),
     y_frac: round4((top + height / 2) / CANVAS_H),
     max_width_frac: round4(Math.max(0.2, Math.min(0.9, resolvedMaxWidth))),
     rotation_deg: rotationDeg,
     confidence: round3(Math.max(0, Math.min(0.98, confidence))),
     masonry_motion: {
-      ...masonryMotionForDuration(durationS),
+      ...masonryMotionForDuration(durationS, boardWidth),
+      layer_origin_px: round3(layerOriginPx),
       pocket_left_px: round3(left),
       pocket_top_px: round3(top),
       pocket_right_px: round3(left + width),
@@ -137,28 +184,62 @@ export function masonryWhitespaceCandidates({
   durationS = MASONRY_MAX_DURATION_S,
   revealWindowS = 4,
   maxCandidates = 3,
+  anchorTimeS,
+  preset = "masonry",
 }: {
   durationS?: number;
   revealWindowS?: number;
   maxCandidates?: number;
+  anchorTimeS?: number;
+  preset?: CollagePreset;
 } = {}): TextPlacementCandidate[] {
   const duration = clampDuration(durationS);
   const wanted = Math.max(1, Math.floor(maxCandidates));
-  const boardWidth = Math.max(...MASONRY_LAYOUT.map(([x, _y, w]) => x + w)) + 34;
+  const config = collagePlacementConfig(preset);
+  const boardWidth = config.boardWidth;
   const panPx = Math.max(0, boardWidth - CANVAS_W);
   const windowS = Math.max(0.1, Math.min(revealWindowS, duration));
-  const samples = Array.from({ length: MASONRY_PLACEMENT_SAMPLE_COUNT }, (_unused, idx) =>
-    (windowS * idx) / (MASONRY_PLACEMENT_SAMPLE_COUNT - 1),
+  const defaultAnchorS = windowS / 2;
+  const anchorS = Math.max(
+    0,
+    Math.min(
+      duration,
+      Number.isFinite(anchorTimeS) ? (anchorTimeS as number) : defaultAnchorS,
+    ),
   );
+  const windowStartS = Math.min(
+    Math.max(0, anchorS - windowS / 2),
+    duration - windowS,
+  );
+  const samples = Array.from({ length: MASONRY_PLACEMENT_SAMPLE_COUNT }, (_unused, idx) =>
+    windowStartS + (windowS * idx) / (MASONRY_PLACEMENT_SAMPLE_COUNT - 1),
+  );
+  const anchorScroll = (panPx * anchorS) / duration;
 
-  const obstacles: Rect[] = MASONRY_LAYOUT.map(([x, y, w, h]) => [
-    x - MASONRY_PLACEMENT_MARGIN_PX,
-    y - MASONRY_PLACEMENT_MARGIN_PX,
-    x + w + MASONRY_PLACEMENT_MARGIN_PX,
-    y + h + MASONRY_PLACEMENT_MARGIN_PX,
-  ]);
+  const obstacles: Rect[] = config.layout.map(([x, y, w, h], index) => {
+    const rotationDeg = config.rotations[index] ?? 0;
+    const radians = Math.abs(rotationDeg) * Math.PI / 180;
+    const rotatedWidth = Math.abs(rotationDeg) < 0.001
+      ? w
+      : Math.ceil(w * Math.cos(radians) + h * Math.sin(radians));
+    const rotatedHeight = Math.abs(rotationDeg) < 0.001
+      ? h
+      : Math.ceil(w * Math.sin(radians) + h * Math.cos(radians));
+    const visualLeft = x - (rotatedWidth - w) / 2;
+    const visualTop = y - (rotatedHeight - h) / 2;
+    return [
+      visualLeft - config.placementMarginPx,
+      visualTop - config.placementMarginPx,
+      visualLeft + rotatedWidth + config.placementMarginPx,
+      visualTop + rotatedHeight + config.placementMarginPx,
+    ];
+  });
 
-  const ranked = largestEmptyRects(obstacles).flatMap(
+  const ranked = largestEmptyRects(
+    obstacles,
+    anchorScroll + MASONRY_PLACEMENT_FRAME_MARGIN_PX,
+    anchorScroll + CANVAS_W - MASONRY_PLACEMENT_FRAME_MARGIN_PX,
+  ).flatMap(
     ([areaScore, rect]) => {
       const [left, _top, right] = rect;
       const width = Math.max(1, right - left);
@@ -172,14 +253,13 @@ export function masonryWhitespaceCandidates({
           );
           return total + visibleWidth / width;
         }, 0) / samples.length;
-      const anchorScroll = (panPx * (windowS / 2)) / duration;
       const anchorVisibleWidth = Math.max(
         0,
         Math.min(right - anchorScroll, CANVAS_W - MASONRY_PLACEMENT_FRAME_MARGIN_PX) -
           Math.max(left - anchorScroll, MASONRY_PLACEMENT_FRAME_MARGIN_PX),
       );
       if (anchorVisibleWidth / width < 0.98) return [];
-      const centerX = (left + right) / 2 / CANVAS_W;
+      const centerX = ((left + right) / 2 - anchorScroll) / CANVAS_W;
       return [{ revealVisibility, areaScore, spatialScore: Math.abs(centerX - 0.5), rect }];
     },
   );
@@ -211,6 +291,8 @@ export function masonryWhitespaceCandidates({
         0.35,
         Math.min(0.98, 0.42 + revealVisibility * 0.38 + areaRatio * 2.2),
       ),
+      source: config.source,
+      boardWidth,
     }));
     selectedRects.push(rect);
     if (candidates.length >= wanted) break;
@@ -332,15 +414,21 @@ export function resolveSmartPlacementCandidate(
   variant: PlanItemVariant | null | undefined,
   selectedBar: TextElementBar | null | undefined,
   durationS = MASONRY_MAX_DURATION_S,
+  anchorTimeS?: number,
 ): TextPlacementCandidate | null {
   if (!selectedBar) return null;
-  return resolveSmartPlacementCandidates(variant, [selectedBar], durationS)[0] ?? null;
+  return (
+    resolveSmartPlacementCandidates(variant, [selectedBar], durationS, anchorTimeS).find(
+      (candidate) => smartPlacementCandidateFitsBar(selectedBar, candidate),
+    ) ?? null
+  );
 }
 
 export function resolveSmartPlacementCandidates(
   variant: PlanItemVariant | null | undefined,
   bars: TextElementBar[],
   durationS = MASONRY_MAX_DURATION_S,
+  anchorTimeS?: number,
 ): TextPlacementCandidate[] {
   if (bars.length === 0) return [];
   const serverCandidates = variant?.text_placement_candidates?.filter(Boolean) ?? [];
@@ -349,7 +437,22 @@ export function resolveSmartPlacementCandidates(
     // Locally discovered board pockets are authoritative. This deliberately
     // replaces persisted candidates from variants created before geometry-driven
     // placement, whose curated coordinates overlap the actual masonry tiles.
-    return masonryWhitespaceCandidates({ durationS, maxCandidates: wanted });
+    const defaultAnchorS = Math.min(2, clampDuration(durationS));
+    const firstStartS = Math.min(...bars.map((bar) => bar.start_s));
+    const lastEndS = Math.max(...bars.map((bar) => bar.end_s));
+    const barsMidpointS = (firstStartS + lastEndS) / 2;
+    const anchorIsActive =
+      Number.isFinite(anchorTimeS) &&
+      bars.every((bar) => (anchorTimeS as number) >= bar.start_s && (anchorTimeS as number) < bar.end_s);
+    const requestedAnchorS = anchorIsActive
+      ? (anchorTimeS as number)
+      : Math.max(defaultAnchorS, barsMidpointS);
+    return masonryWhitespaceCandidates({
+      durationS,
+      maxCandidates: wanted,
+      anchorTimeS: requestedAnchorS,
+      preset: collagePresetForVariant(variant) ?? "masonry",
+    });
   }
   if (serverCandidates.length > 0) return serverCandidates;
   return [DEFAULT_SMART_PLACE];
@@ -357,52 +460,144 @@ export function resolveSmartPlacementCandidates(
 
 export function allocateSmartPlacementCandidates(
   bars: TextElementBar[],
-  candidates: TextPlacementCandidate[],
+  candidates: TextPlacementCandidate[] | TextPlacementCandidate[][],
 ): TextPlacementCandidate[] | null {
   if (bars.length === 0) return [];
   if (candidates.length === 0) return null;
   const assignments = Array<TextPlacementCandidate | null>(bars.length).fill(null);
-  const assignedCandidateIndexes = Array<number | null>(bars.length).fill(null);
+  const candidatesByBar = Array.isArray(candidates[0])
+    ? (candidates as TextPlacementCandidate[][])
+    : bars.map(() => candidates as TextPlacementCandidate[]);
   const order = bars
-    .map((bar, index) => ({ bar, index }))
+    .map((bar, index) => ({
+      bar,
+      index,
+      candidates: (candidatesByBar[index] ?? []).filter((candidate) =>
+        smartPlacementCandidateFitsBar(bar, candidate),
+      ),
+    }))
     .sort(
       (a, b) =>
+        a.candidates.length - b.candidates.length ||
         a.bar.start_s - b.bar.start_s ||
         a.bar.end_s - b.bar.end_s ||
         a.index - b.index,
     );
 
-  for (const { bar, index } of order) {
-    const blocked = new Set<number>();
-    for (let previousIndex = 0; previousIndex < bars.length; previousIndex += 1) {
-      const candidateIndex = assignedCandidateIndexes[previousIndex];
-      if (candidateIndex == null) continue;
-      const previous = bars[previousIndex];
-      if (bar.start_s < previous.end_s && previous.start_s < bar.end_s) {
-        blocked.add(candidateIndex);
-      }
+  const assign = (orderIndex: number): boolean => {
+    if (orderIndex >= order.length) return true;
+    const { bar, index, candidates: availableCandidates } = order[orderIndex];
+    for (const candidate of availableCandidates) {
+      const isAvailable = bars.every((previous, previousIndex) => {
+          const previousCandidate = assignments[previousIndex];
+          if (!previousCandidate) return true;
+          const overlapsInTime =
+            bar.start_s < previous.end_s && previous.start_s < bar.end_s;
+          return !overlapsInTime || !smartPlacementCandidatesOverlap(candidate, previousCandidate);
+        });
+      if (!isAvailable) continue;
+      assignments[index] = candidate;
+      if (assign(orderIndex + 1)) return true;
+      assignments[index] = null;
     }
-    const candidateIndex = candidates.findIndex(
-      (candidate, idx) =>
-        !blocked.has(idx) && smartPlacementCandidateFitsBar(bar, candidate),
-    );
-    if (candidateIndex < 0) return null;
-    assignments[index] = candidates[candidateIndex];
-    assignedCandidateIndexes[index] = candidateIndex;
-  }
+    return false;
+  };
 
-  return assignments as TextPlacementCandidate[];
+  return assign(0) ? (assignments as TextPlacementCandidate[]) : null;
 }
 
-export function masonryMotionOffsetFrac(
+export function resolveSmartPlacementAssignments(
+  variant: PlanItemVariant | null | undefined,
+  bars: TextElementBar[],
+  durationS = MASONRY_MAX_DURATION_S,
+  anchorTimeS?: number,
+): TextPlacementCandidate[] | null {
+  if (!isMasonryVariant(variant)) {
+    return allocateSmartPlacementCandidates(
+      bars,
+      resolveSmartPlacementCandidates(variant, bars, durationS, anchorTimeS),
+    );
+  }
+  const wanted = Math.max(3, bars.length);
+  const candidatesByBar = bars.map((bar) => {
+    const anchorIsActive =
+      Number.isFinite(anchorTimeS) &&
+      (anchorTimeS as number) >= bar.start_s &&
+      (anchorTimeS as number) < bar.end_s;
+    const barAnchorS = anchorIsActive
+      ? (anchorTimeS as number)
+      : (bar.start_s + bar.end_s) / 2;
+    return masonryWhitespaceCandidates({
+      durationS,
+      maxCandidates: wanted,
+      anchorTimeS: barAnchorS,
+      preset: collagePresetForVariant(variant) ?? "masonry",
+    });
+  });
+  return allocateSmartPlacementCandidates(bars, candidatesByBar);
+}
+
+function smartPlacementCandidatesOverlap(
+  first: TextPlacementCandidate,
+  second: TextPlacementCandidate,
+): boolean {
+  const firstPocket = smartPlacementPocket(first);
+  const secondPocket = smartPlacementPocket(second);
+  if (firstPocket && secondPocket) {
+    return (
+      firstPocket.left < secondPocket.right &&
+      secondPocket.left < firstPocket.right &&
+      firstPocket.top < secondPocket.bottom &&
+      secondPocket.top < firstPocket.bottom
+    );
+  }
+  return (
+    Math.abs(first.x_frac - second.x_frac) < 0.001 &&
+    Math.abs(first.y_frac - second.y_frac) < 0.001 &&
+    Math.abs((first.rotation_deg ?? 0) - (second.rotation_deg ?? 0)) < 0.001
+  );
+}
+
+function smartPlacementPocket(candidate: TextPlacementCandidate): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} | null {
+  const motion = candidate.masonry_motion;
+  const left = motion?.pocket_left_px;
+  const top = motion?.pocket_top_px;
+  const right = motion?.pocket_right_px;
+  const bottom = motion?.pocket_bottom_px;
+  if (
+    typeof left !== "number" ||
+    typeof top !== "number" ||
+    typeof right !== "number" ||
+    typeof bottom !== "number" ||
+    ![left, top, right, bottom].every(Number.isFinite)
+  ) {
+    return null;
+  }
+  return { left, top, right, bottom };
+}
+
+type ParsedMasonryMotion = {
+  durationS: number;
+  panPx: number;
+  boardWidthPx: number;
+  frameWidthPx: number;
+  layerOriginPx: number;
+};
+
+function parseMasonryMotion(
   motion: Record<string, unknown> | null | undefined,
-  currentTimeS: number,
-): number {
-  if (motion?.mode !== "masonry_pan_x") return 0;
+): ParsedMasonryMotion | null {
+  if (motion?.mode !== "masonry_pan_x") return null;
   const durationS = motion.duration_s;
   const panPx = motion.pan_px;
   const boardWidthPx = motion.board_width_px;
   const frameWidthPx = motion.frame_width_px;
+  const layerOriginPx = motion.layer_origin_px ?? 0;
   if (
     typeof durationS !== "number" ||
     !Number.isFinite(durationS) ||
@@ -416,13 +611,78 @@ export function masonryMotionOffsetFrac(
     !Number.isFinite(frameWidthPx) ||
     frameWidthPx <= 0 ||
     boardWidthPx < frameWidthPx ||
-    panPx > boardWidthPx - frameWidthPx
+    panPx > boardWidthPx - frameWidthPx ||
+    typeof layerOriginPx !== "number" ||
+    !Number.isFinite(layerOriginPx) ||
+    layerOriginPx < 0 ||
+    layerOriginPx > boardWidthPx - frameWidthPx
   ) {
-    return 0;
+    return null;
   }
+  return { durationS, panPx, boardWidthPx, frameWidthPx, layerOriginPx };
+}
+
+export function masonryMotionOffsetFrac(
+  motion: Record<string, unknown> | null | undefined,
+  currentTimeS: number,
+): number {
+  const parsed = parseMasonryMotion(motion);
+  if (!parsed) return 0;
+  const { durationS, panPx, frameWidthPx } = parsed;
   const timeS = Number.isFinite(currentTimeS) ? Math.max(0, currentTimeS) : 0;
   const offset = (panPx * Math.min(timeS, durationS)) / durationS / frameWidthPx;
   return Number.isFinite(offset) ? offset : 0;
+}
+
+export function masonryBoardXFrac(
+  motion: Record<string, unknown> | null | undefined,
+  localXFrac: number,
+): number {
+  const parsed = parseMasonryMotion(motion);
+  if (!parsed || !Number.isFinite(localXFrac)) return localXFrac;
+  return localXFrac + parsed.layerOriginPx / parsed.frameWidthPx;
+}
+
+export function masonryLayerPositionForBoardX(
+  motion: Record<string, unknown> | null | undefined,
+  boardXFrac: number,
+): { xFrac: number; layerOriginPx: number } {
+  const parsed = parseMasonryMotion(motion);
+  if (!parsed || !Number.isFinite(boardXFrac)) {
+    return { xFrac: Math.max(0.02, Math.min(0.98, boardXFrac || 0.5)), layerOriginPx: 0 };
+  }
+  const boardXpx = Math.max(
+    parsed.frameWidthPx * 0.02,
+    Math.min(
+      boardXFrac * parsed.frameWidthPx,
+      parsed.boardWidthPx - parsed.frameWidthPx * 0.02,
+    ),
+  );
+  const layerOriginPx = Math.max(
+    0,
+    Math.min(
+      boardXpx - parsed.frameWidthPx / 2,
+      parsed.boardWidthPx - parsed.frameWidthPx,
+    ),
+  );
+  return {
+    xFrac: (boardXpx - layerOriginPx) / parsed.frameWidthPx,
+    layerOriginPx,
+  };
+}
+
+export function collageMotionForTextBar(
+  variant: PlanItemVariant | null | undefined,
+  durationS: number,
+  bar: TextElementBar | null | undefined,
+): Record<string, unknown> | null {
+  const base = collageMotionForVariant(variant, durationS);
+  if (!base) return null;
+  const storedMotion = bar?.source_params?.masonry_motion;
+  if (!storedMotion || typeof storedMotion !== "object") return base;
+  const layerOriginPx = (storedMotion as Record<string, unknown>).layer_origin_px;
+  const candidate = { ...base, layer_origin_px: layerOriginPx };
+  return parseMasonryMotion(candidate) ? candidate : base;
 }
 
 export function smartPlacementPatchForBar(
@@ -553,7 +813,7 @@ function normalizeSmartText(text: string): string {
 
 function smartChunkCountForWords(wordCount: number, maxChunks: number): number {
   if (wordCount <= 3) return 1;
-  if (wordCount <= 4) return Math.min(2, maxChunks);
+  if (wordCount <= 6) return Math.min(2, maxChunks);
   if (wordCount <= 12) return Math.min(3, maxChunks);
   return Math.min(4, maxChunks);
 }

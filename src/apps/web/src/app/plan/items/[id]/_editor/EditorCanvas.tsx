@@ -54,8 +54,9 @@ import {
 import { cycleHit } from "./useEditorSelection";
 import type { VirtualPreviewController } from "./useVirtualPreview";
 import {
-  collageMotionForVariant,
-  isCollageVariant,
+  collageMotionForTextBar,
+  masonryBoardXFrac,
+  masonryLayerPositionForBoardX,
   masonryMotionOffsetFrac,
 } from "./editor-smart-placement";
 import VisualBlocksLayer from "./VisualBlocksLayer";
@@ -102,6 +103,7 @@ type DragOverride =
       y_frac?: number;
       size_px?: number;
       max_width_frac?: number;
+      layer_origin_px?: number;
     }
   | {
       target: "overlay";
@@ -289,13 +291,15 @@ export default function EditorCanvas({
     const bar = barById.get(id);
     const layout = layouts.find((l) => l.id === id);
     if (!layout) return;
+    const localXFrac = bar?.x_frac ?? layout.xFrac;
+    const motion = collageMotionForTextBar(variant, masonryDurationS, bar);
     dragRef.current = {
       target: "text",
       mode: "move",
       id,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startXFrac: bar?.x_frac ?? layout.xFrac,
+      startXFrac: motion ? masonryBoardXFrac(motion, localXFrac) : localXFrac,
       startYFrac: bar?.y_frac ?? layout.yFrac,
       startSizePx: layout.sizePx,
       startScale: 0,
@@ -480,9 +484,25 @@ export default function EditorCanvas({
         });
         setDragOverride({ target: "overlay", id: drag.id, ...next });
       } else {
-        const xFrac = Math.min(0.98, Math.max(0.02, drag.startXFrac + dx / stageSize.w));
         const yFrac = Math.min(0.98, Math.max(0.02, drag.startYFrac + dy / stageSize.h));
-        setDragOverride({ target: "text", id: drag.id, x_frac: xFrac, y_frac: yFrac });
+        const bar = barById.get(drag.id);
+        const motion = collageMotionForTextBar(variant, masonryDurationS, bar);
+        if (motion) {
+          const position = masonryLayerPositionForBoardX(
+            motion,
+            drag.startXFrac + dx / stageSize.w,
+          );
+          setDragOverride({
+            target: "text",
+            id: drag.id,
+            x_frac: position.xFrac,
+            y_frac: yFrac,
+            layer_origin_px: position.layerOriginPx,
+          });
+        } else {
+          const xFrac = Math.min(0.98, Math.max(0.02, drag.startXFrac + dx / stageSize.w));
+          setDragOverride({ target: "text", id: drag.id, x_frac: xFrac, y_frac: yFrac });
+        }
       }
     } else if (drag.mode === "scale") {
       const dist = Math.hypot(e.clientX - drag.centerClientX, e.clientY - drag.centerClientY);
@@ -525,11 +545,26 @@ export default function EditorCanvas({
         dragOverride.x_frac != null &&
         dragOverride.y_frac != null
       ) {
-        onPatchBar(drag.id, {
+        const bar = barById.get(drag.id);
+        const patch: Partial<Omit<TextElementBar, "id" | "role">> = {
           x_frac: dragOverride.x_frac,
           y_frac: dragOverride.y_frac,
           position: "custom",
-        });
+        };
+        if (dragOverride.layer_origin_px != null) {
+          const sourceParams = { ...(bar?.source_params ?? {}) };
+          const motion = {
+            ...(collageMotionForTextBar(variant, masonryDurationS, bar) ?? {}),
+            layer_origin_px: dragOverride.layer_origin_px,
+          } as Record<string, unknown>;
+          delete motion.pocket_left_px;
+          delete motion.pocket_top_px;
+          delete motion.pocket_right_px;
+          delete motion.pocket_bottom_px;
+          sourceParams.masonry_motion = motion;
+          patch.source_params = sourceParams;
+        }
+        onPatchBar(drag.id, patch);
       } else if (
         drag.target === "text" &&
         drag.mode === "scale" &&
@@ -764,15 +799,15 @@ export default function EditorCanvas({
                     dragOverride?.target === "text" && dragOverride.id === layout.id
                       ? dragOverride
                       : null;
-                  const boardXFrac = override?.x_frac ?? layout.xFrac;
+                  const localXFrac = override?.x_frac ?? layout.xFrac;
+                  const baseMotion = collageMotionForTextBar(variant, masonryDurationS, bar);
+                  const motion =
+                    baseMotion && override?.layer_origin_px != null
+                      ? { ...baseMotion, layer_origin_px: override.layer_origin_px }
+                      : baseMotion;
                   const xFrac =
-                    boardXFrac -
-                    (isCollageVariant(variant)
-                      ? masonryMotionOffsetFrac(
-                          collageMotionForVariant(variant, masonryDurationS),
-                          currentTime,
-                        )
-                      : 0);
+                    masonryBoardXFrac(motion, localXFrac) -
+                    masonryMotionOffsetFrac(motion, currentTime);
                   const yFrac = override?.y_frac ?? layout.yFrac;
                   const sizePx = override?.size_px ?? layout.sizePx;
                   const maxWidthFrac = override?.max_width_frac ?? layout.maxWidthFrac;

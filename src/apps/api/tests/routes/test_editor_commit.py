@@ -181,6 +181,30 @@ def test_visual_block_commit_is_atomic_and_invalidates_composite(monkeypatch):
     assert prep["generation"] == variant["render_generation_id"]
 
 
+def test_visual_block_commit_uses_full_render_queue(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    prep = gj.prepare_editor_commit(
+        _job(),
+        "song_text",
+        _commit_req(visual_blocks=[_montage_block()]),
+        visual_assets=_visual_assets(),
+    )
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant",
+        types.SimpleNamespace(apply_async=lambda **kwargs: calls.append(kwargs)),
+        raising=False,
+    )
+
+    gj.enqueue_editor_commit_render("job-1", "song_text", prep)
+
+    assert len(calls) == 1
+    assert "queue" not in calls[0]
+
+
 def test_visual_block_commit_rejects_unowned_asset(monkeypatch):
     _arm(monkeypatch)
     from app.config import settings
@@ -229,6 +253,7 @@ def test_happy_path_persists_all_sections_and_kicks_once(monkeypatch):
         "timeline": True,
         "mix": True,
         "music": False,
+        "lyrics": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
@@ -319,6 +344,7 @@ def test_narrated_caption_commit_persists_cues_and_reburns_caption_task(monkeypa
         "timeline": False,
         "mix": False,
         "music": False,
+        "lyrics": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
@@ -1407,6 +1433,7 @@ def test_endpoint_happy_path_title_and_text(client: TestClient, monkeypatch) -> 
         "timeline": False,
         "mix": False,
         "music": False,
+        "lyrics": False,
         "sound_effects": False,
         "media_overlays": False,
         "visual_blocks": False,
@@ -1593,6 +1620,12 @@ def test_capabilities_montage_song_text_all_on(monkeypatch):
         "overlays_reason": None,
         "visual_blocks_reason": "visual_blocks_disabled",
         "suggestions_reason": "autoplace_disabled",
+        "lyrics": {
+            "editable": False,
+            "enabled": False,
+            "can_toggle_on": False,
+            "reason": "disabled",
+        },
     }
 
 

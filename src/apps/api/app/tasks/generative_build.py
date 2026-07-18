@@ -1452,6 +1452,12 @@ def _is_fast_reburn_eligible(
     return True
 
 
+def _lyrics_active(text_mode: str | None, lyrics_enabled) -> bool:
+    if isinstance(lyrics_enabled, bool):
+        return lyrics_enabled
+    return text_mode == "lyrics"
+
+
 def _is_collage_audio_only_swap_eligible(existing: dict, new_track_id: str | None) -> bool:
     """True when a song swap can preserve rendered collage visuals exactly."""
     if new_track_id is None:
@@ -2789,6 +2795,46 @@ def _reburn_text_on_base(
                 return
             burn_text_overlays_skia(input_path, overlay_dicts, output_path, tmpdir, matte=matte)
 
+        if text_mode == "lyrics":
+            _lyrics_burn_dicts = _text_element_burn_dicts(existing)
+            final_path = os.path.join(tmpdir, "final.mp4")
+            _lyrics_matte_path = existing.get("subject_matte_path")
+            if _lyrics_burn_dicts:
+                try:
+                    _lyrics_dur = float(probe_video(local_base).duration_s)
+                except Exception:  # noqa: BLE001
+                    _lyrics_dur = MAX_INTRO_S
+                _lyrics_matte, _lyrics_matte_path, _lyrics_burn_dicts = (
+                    _resolve_subject_matte_for_burn(
+                        video_path=local_base,
+                        overlays=_lyrics_burn_dicts,
+                        tmpdir=tmpdir,
+                        cached_matte_path=existing.get("subject_matte_path"),
+                        upload_key_base=base_gcs_path,
+                        duration_s=_lyrics_dur,
+                        job_id=job_id,
+                        variant_id=variant_id,
+                    )
+                )
+                _burn_text_for_variant(
+                    local_base, _lyrics_burn_dicts, final_path, matte=_lyrics_matte
+                )
+            else:
+                shutil.copy2(local_base, final_path)
+            variant_gcs_key = (existing.get("video_path") or "").lstrip("/")
+            output_url = upload_public_read(final_path, variant_gcs_key)
+            return {
+                "render_status": "ready",
+                "ok": True,
+                "render_finished_at": datetime.utcnow().isoformat() + "Z",
+                "video_path": variant_gcs_key,
+                "output_url": output_url,
+                "text_mode": text_mode,
+                "style_set_id": resolved_style_set_id,
+                "text_elements_user_edited": bool(existing.get("text_elements_user_edited")),
+                "subject_matte_path": _lyrics_matte_path,
+            }
+
         # ── TextElement early branch (T3 — plan-item-timeline) ──────────────
         # When the user has edited text via the TextElement API (T4),
         # their explicitly-authored elements own the overlay completely.
@@ -3536,6 +3582,10 @@ def _run_regenerate_variant(
         rank = int(existing.get("rank", 1))
         existing_track_id = existing.get("music_track_id")
         existing_text_mode = existing.get("text_mode", "agent_text")
+        inherited_lyrics_enabled = existing.get("lyrics_enabled")
+        inherited_lyric_line_overrides = (
+            None if new_track_id is not None else existing.get("lyric_line_overrides")
+        )
         existing_mix = existing.get("mix")
         existing_size_source = existing.get("intro_size_source")
         existing_size_px = existing.get("intro_text_size_px")
@@ -4061,6 +4111,8 @@ def _run_regenerate_variant(
             landscape_fit=landscape_fit_regen,
             montage_preset=montage_preset_regen,
             behind_subject_override=text_behind_subject,
+            lyrics_enabled=inherited_lyrics_enabled,
+            lyric_line_overrides=inherited_lyric_line_overrides,
         )
 
     # E1: the token check covers BOTH terminal branches (ready and failed) —
@@ -5493,6 +5545,8 @@ def _render_generative_variant(
     landscape_fit: str = "fill",
     montage_preset: str = "classic",
     behind_subject_override: bool | None = None,
+    lyrics_enabled: bool | None = None,
+    lyric_line_overrides: dict | None = None,
 ) -> dict[str, Any]:
     """Render one variant. Never raises — failures become a failure record.
 
@@ -5540,6 +5594,7 @@ def _render_generative_variant(
     — off means no matte is ever computed here regardless of this value.
     """
     from app.pipeline.agents.gemini_analyzer import build_recipe  # noqa: PLC0415
+    from app.pipeline.lyric_support import lyrics_variant_renderable  # noqa: PLC0415
     from app.pipeline.music_recipe import generate_music_recipe  # noqa: PLC0415
     from app.pipeline.template_matcher import (  # noqa: PLC0415
         TemplateMismatchError,
@@ -5566,6 +5621,10 @@ def _render_generative_variant(
     # re-renders can read it back). Absent on song/original/talking_head specs.
     voiceover_gcs_path: str | None = spec.get("voiceover_gcs_path")
     mix: float = float(spec.get("mix", _VOICEOVER_ONLY_DEFAULT_MIX))
+    effective_lyrics_enabled = _lyrics_active(text_mode, lyrics_enabled)
+    lyrics_available = (
+        lyrics_variant_renderable(track.lyrics_cached) if track is not None else False
+    )
 
     base = {
         "variant_id": variant_id,
@@ -5641,6 +5700,10 @@ def _render_generative_variant(
         "intro_cluster_hero_size_px": cluster_hero_size_px_override,
         "intro_cluster_body_size_px": cluster_body_size_px_override,
         "intro_cluster_accent_size_px": cluster_accent_size_px_override,
+        "lyrics_enabled": effective_lyrics_enabled,
+        "lyrics_available": lyrics_available,
+        "lyric_line_overrides": lyric_line_overrides or None,
+        "lyric_overlay_snapshot": None,
     }
     if resolved_montage_preset != DEFAULT_MONTAGE_PRESET:
         # User-selected preset + actual renderer outcome. Only present when the
@@ -5733,8 +5796,19 @@ def _render_generative_variant(
         # For agent_text variants we do NOT inject into the recipe here —
         # instead we assemble text-free, cache the base, then burn text in a
         # separate step so fast-reburn can skip re-assembly on future edits.
-        if text_mode == "lyrics" and track is not None:
-            recipe_dict = _inject_lyrics(recipe_dict, track, style_set_id=style_set_id)
+        lyrics_rendered = effective_lyrics_enabled and track is not None
+        if lyrics_rendered:
+            lyric_result = _inject_lyrics(
+                recipe_dict,
+                track,
+                style_set_id=style_set_id,
+                line_overrides=lyric_line_overrides,
+            )
+            if isinstance(lyric_result, tuple):
+                recipe_dict, lyric_snapshot = lyric_result
+            else:
+                recipe_dict, lyric_snapshot = lyric_result, []
+            base["lyric_overlay_snapshot"] = lyric_snapshot
 
         # Resolve agent_text overlay params early (before assembly) so we have
         # intro_px / intro_source for base dict even if the burn fails below.
@@ -6034,8 +6108,8 @@ def _render_generative_variant(
             raise RuntimeError(f"variant {variant_id} produced empty audio-mixed output")
 
         # For agent_text variants: upload the text-free base for fast-reburn, then
-        # burn text on top to produce the final output. For all other modes the
-        # audio-mixed video IS the final (no separate burn step).
+        # burn text on top to produce the final output. Lyrics variants cache the
+        # lyric-burned, user-text-free base so user TextElements can layer above it.
         if text_mode == "agent_text" and agent_text is not None:
             from app.pipeline.generative_overlays import (  # noqa: PLC0415
                 build_persistent_intro_overlays,
@@ -6258,7 +6332,16 @@ def _render_generative_variant(
                         "textless video"
                     )
         else:
-            # lyrics / none / voiceover: no text burn; base caching not supported in v1.
+            if text_mode == "lyrics" or lyrics_rendered:
+                base_gcs = f"generative-jobs/{job_id}/base_{rank}_{variant_id}.mp4"
+                base_url_unused = upload_public_read(audio_mixed_path, base_gcs)  # noqa: F841
+                base["base_video_path"] = base_gcs
+                log.info(
+                    "generative_base_uploaded",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    base_gcs=base_gcs,
+                )
             final_path = audio_mixed_path
 
         if not os.path.exists(final_path) or os.path.getsize(final_path) == 0:
@@ -7586,6 +7669,7 @@ def _text_element_burn_dicts(variant: dict) -> list[dict]:
     from app.pipeline.generative_overlays import build_overlays_from_text_elements  # noqa: PLC0415
 
     elements = coerce_text_elements(variant.get("text_elements") or []) or []
+    elements = [elem for elem in elements if getattr(elem, "role", None) != "lyric_line"]
     if not elements:
         return []
     return build_overlays_from_text_elements(
@@ -8379,8 +8463,18 @@ def _run_retranscribe_subtitled(
     )
 
 
-def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | None = None) -> dict:
-    from app.pipeline.lyric_injector import inject_lyric_overlays  # noqa: PLC0415
+def _inject_lyrics(
+    recipe_dict: dict,
+    track: MusicTrack,
+    style_set_id: str | None = None,
+    line_overrides: dict | None = None,
+) -> tuple[dict, list[dict]]:
+    from app.pipeline.lyric_injector import (  # noqa: PLC0415
+        _apply_lyric_style_overrides,
+        apply_lyric_line_overrides,
+        build_lyric_overlay_snapshot,
+        inject_lyric_overlays,
+    )
     from app.services.lyrics_cache_refresh import (  # noqa: PLC0415
         ensure_fresh_lyrics_cached_for_render,
     )
@@ -8429,13 +8523,16 @@ def _inject_lyrics(recipe_dict: dict, track: MusicTrack, style_set_id: str | Non
         reason="generative_lyrics_variant",
     )
     track.lyrics_cached = lyrics_cached
-    return inject_lyric_overlays(
+    lyrics_cached_for_render = apply_lyric_line_overrides(lyrics_cached, line_overrides)
+    recipe_dict = inject_lyric_overlays(
         recipe_dict,
-        lyrics_cached,
+        lyrics_cached_for_render,
         best_start_s=float(cfg.get("best_start_s", 0.0)),
         best_end_s=float(cfg.get("best_end_s", 0.0)),
         lyrics_config=lyrics_config,
     )
+    _apply_lyric_style_overrides(recipe_dict, line_overrides)
+    return recipe_dict, build_lyric_overlay_snapshot(recipe_dict, list(_snapped))
 
 
 def _safe_density(m) -> float:

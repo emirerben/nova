@@ -45,6 +45,7 @@ from app.routes.generative_jobs import (
     EditorCommitResponse,
     EditorCommitSections,
     EditVariantRequest,
+    LyricsSectionRequest,
     PatchSceneTimingRequest,
     RetextRequest,
     SetIntroSizeRequest,
@@ -65,6 +66,7 @@ from app.routes.generative_jobs import (
     dispatch_set_caption_position,
     dispatch_set_intro_size,
     dispatch_set_intro_timing,
+    dispatch_set_lyrics,
     dispatch_set_media_overlays,
     dispatch_set_narrated_bed_level,
     dispatch_set_sound_effects,
@@ -2209,6 +2211,40 @@ async def set_item_text_elements(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+@router.put(
+    "/{item_id}/variants/{variant_id}/lyrics",
+    response_model=PlanItemResponse,
+)
+async def set_item_lyrics(
+    item_id: str,
+    variant_id: str,
+    body: LyricsSectionRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Toggle lyrics or replace lyric line overrides for one of this item's variants."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    from app.routes.generative_jobs import _UNSET  # noqa: PLC0415
+
+    enabled = body.enabled if "enabled" in body.model_fields_set else _UNSET
+    line_overrides = body.line_overrides if "line_overrides" in body.model_fields_set else _UNSET
+    await dispatch_set_lyrics(
+        db,
+        job,
+        variant_id,
+        enabled=enabled,
+        line_overrides=line_overrides,
+    )
+    log.info(
+        "plan_item_set_lyrics",
+        item_id=item_id,
+        variant_id=variant_id,
+        enabled=body.enabled,
+        has_line_overrides="line_overrides" in body.model_fields_set,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/editor-commit",
     response_model=EditorCommitResponse,
@@ -2270,6 +2306,21 @@ async def editor_commit_item(
         selected_music_track = (
             await db.execute(select(MusicTrack).where(MusicTrack.id == commit_body.music_track_id))
         ).scalar_one_or_none()
+    elif commit_body.lyrics is not None:
+        locked_variant = next(
+            (
+                v
+                for v in (locked_job.assembly_plan or {}).get("variants") or []
+                if v.get("variant_id") == variant_id
+            ),
+            None,
+        )
+        if locked_variant is not None and locked_variant.get("music_track_id"):
+            selected_music_track = (
+                await db.execute(
+                    select(MusicTrack).where(MusicTrack.id == locked_variant.get("music_track_id"))
+                )
+            ).scalar_one_or_none()
 
     visual_assets: dict[str, dict] | None = None
     if commit_body.visual_blocks is not None:
@@ -2332,6 +2383,7 @@ async def editor_commit_item(
             timeline=prep["sections"]["timeline"],
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],
+            lyrics=prep["sections"]["lyrics"],
             sound_effects=prep["sections"]["sound_effects"],
             media_overlays=prep["sections"]["media_overlays"],
             visual_blocks=prep["sections"]["visual_blocks"],

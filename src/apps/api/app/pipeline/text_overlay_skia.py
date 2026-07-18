@@ -38,6 +38,7 @@ Design notes:
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -1921,15 +1922,18 @@ def _generate_overlay_sequence(
         out_path = os.path.join(work_dir, f"{pattern_prefix}0000.png")
         img = _draw_frame(overlay, 0.0, duration_s)
         _write_png_pillow(img, out_path)
-        return {
-            "pattern": os.path.join(work_dir, f"{pattern_prefix}%04d.png"),
-            "first_frame": out_path,
-            "n_frames": 1,
-            "fps": FPS,
-            "start_s": start_s,
-            "end_s": end_s,
-            "is_animated": False,
-        }
+        return _with_masonry_layer_origin(
+            {
+                "pattern": os.path.join(work_dir, f"{pattern_prefix}%04d.png"),
+                "first_frame": out_path,
+                "n_frames": 1,
+                "fps": FPS,
+                "start_s": start_s,
+                "end_s": end_s,
+                "is_animated": False,
+            },
+            overlay,
+        )
 
     # MAX_OVERLAY_FRAMES protects effects whose animation can be visually
     # unique on every frame (font-cycle, plain pop-in) from runaway PNG counts.
@@ -2072,15 +2076,38 @@ def _generate_overlay_sequence(
             linked=len(hold_indices),
         )
 
-    return {
-        "pattern": os.path.join(work_dir, f"{pattern_prefix}%04d.png"),
-        "first_frame": os.path.join(work_dir, f"{pattern_prefix}0000.png"),
-        "n_frames": n_render,
-        "fps": FPS,
-        "start_s": start_s,
-        "end_s": end_s,
-        "is_animated": True,
-    }
+    return _with_masonry_layer_origin(
+        {
+            "pattern": os.path.join(work_dir, f"{pattern_prefix}%04d.png"),
+            "first_frame": os.path.join(work_dir, f"{pattern_prefix}0000.png"),
+            "n_frames": n_render,
+            "fps": FPS,
+            "start_s": start_s,
+            "end_s": end_s,
+            "is_animated": True,
+        },
+        overlay,
+    )
+
+
+def _masonry_layer_origin(overlay: dict) -> float | None:
+    origin = overlay.get("masonry_layer_origin_x_px")
+    if isinstance(origin, bool) or not isinstance(origin, (int, float)):
+        return None
+    if math.isfinite(float(origin)) and float(origin) > 0:
+        return float(origin)
+    return None
+
+
+def _with_masonry_layer_origin(
+    sequence: dict[str, Any],
+    overlay: dict,
+) -> dict[str, Any]:
+    """Carry compositor-only board origin metadata alongside the PNG sequence."""
+    origin = _masonry_layer_origin(overlay)
+    if origin is not None:
+        sequence["layer_origin_x_px"] = origin
+    return sequence
 
 
 def _validate_and_clamp(overlay: dict, slot_duration_s: float) -> dict | None:
@@ -2438,19 +2465,45 @@ def render_text_overlay_sequences(
     # cost scales with input count, and a sequence edit can carry 80+ blocks.
     # Everything else (lyric, intro, legacy) keeps the per-overlay path
     # untouched. 0/1 sequence overlays also stay per-overlay (no regression
-    # for the trivial cases).
+    # for the trivial cases). Masonry blocks with board-local layer origins
+    # are composited only with blocks sharing the same origin because differently
+    # originated full-frame layers cannot share one pre-composited stream.
     sequence_overlays = [o for o in overlays if o.get("role") == SEQUENCE_OVERLAY_ROLE]
-    composite: dict[str, Any] | None = None
-    if len(sequence_overlays) >= 2:
-        composite = _render_sequence_composite(sequence_overlays, slot_duration_s, work_dir)
-    if composite is None:
-        sequences = _render_overlay_sequences(overlays, slot_duration_s, work_dir, matte=matte)
-    else:
-        non_sequence = [o for o in overlays if o.get("role") != SEQUENCE_OVERLAY_ROLE]
-        sequences = _render_overlay_sequences(non_sequence, slot_duration_s, work_dir, matte=matte)
-        # Appended last → the composite draws on top of non-sequence overlays
-        # in the filtergraph chain (sequence text wins any window overlap).
-        sequences.append(composite)
+    sequence_groups: list[tuple[float | None, list[dict]]] = []
+    for overlay in sequence_overlays:
+        origin = _masonry_layer_origin(overlay)
+        if sequence_groups and sequence_groups[-1][0] == origin:
+            sequence_groups[-1][1].append(overlay)
+        else:
+            sequence_groups.append((origin, [overlay]))
+
+    sequence_layers: list[dict[str, Any]] = []
+    composited_sequence_blocks = 0
+    for group_index, (origin, group) in enumerate(sequence_groups):
+        group_work_dir = work_dir
+        if len(sequence_groups) > 1:
+            group_work_dir = os.path.join(work_dir, f"sequence_group_{group_index:03d}")
+            os.makedirs(group_work_dir, exist_ok=True)
+        composite = (
+            _render_sequence_composite(group, slot_duration_s, group_work_dir)
+            if len(group) >= 2
+            else None
+        )
+        if composite is None:
+            sequence_layers.extend(
+                _render_overlay_sequences(group, slot_duration_s, group_work_dir, matte=matte)
+            )
+            continue
+        if origin is not None:
+            composite["layer_origin_x_px"] = origin
+        sequence_layers.append(composite)
+        composited_sequence_blocks += len(group)
+
+    non_sequence = [o for o in overlays if o.get("role") != SEQUENCE_OVERLAY_ROLE]
+    sequences = _render_overlay_sequences(non_sequence, slot_duration_s, work_dir, matte=matte)
+    # Appended last → sequence text draws on top of non-sequence overlays. Contiguous
+    # origin runs stay in authored order, preserving sequence z-order across layers.
+    sequences.extend(sequence_layers)
     render_ms = int((time.monotonic() - render_t0) * 1000)
 
     if not sequences:
@@ -2460,7 +2513,7 @@ def render_text_overlay_sequences(
         "skia_burn_text_overlays",
         overlay_count=len(overlays),
         sequence_count=len(sequences),
-        composited_sequence_blocks=len(sequence_overlays) if composite is not None else 0,
+        composited_sequence_blocks=composited_sequence_blocks,
         total_frames=sum(s["n_frames"] for s in sequences),
         render_ms=render_ms,
     )

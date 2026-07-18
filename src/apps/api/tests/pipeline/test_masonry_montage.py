@@ -4,6 +4,8 @@ import math
 import types
 from pathlib import Path
 
+import pytest
+
 from app.pipeline.masonry_montage import (
     MASONRY_MAX_DURATION_S,
     _layout_for_config,
@@ -72,10 +74,14 @@ def test_masonry_text_placement_candidates_choose_stable_board_whitespace() -> N
         for item in candidates
     ] == [
         (0.5861, 0.6625, 0.2266, 0.0),
-        (0.8602, 0.9359, 0.2, 0.0),
+        (0.5, 0.9359, 0.3944, 0.0),
     ]
     assert all(candidate["source"] == "masonry_whitespace" for candidate in candidates)
     assert candidates[0]["masonry_motion"]["mode"] == "masonry_pan_x"
+    assert [candidate["masonry_motion"]["layer_origin_px"] for candidate in candidates] == [
+        0.0,
+        505.5,
+    ]
     midpoint_scroll = candidates[0]["masonry_motion"]["pan_px"] * 2 / 8
     for candidate in candidates:
         left, _top, right, _bottom = _candidate_envelope(candidate)
@@ -108,6 +114,52 @@ def test_masonry_candidate_envelopes_never_overlap_visible_tiles_during_reveal()
             assert all(_overlap_area(envelope, tile) == 0 for tile in tile_rects)
 
 
+@pytest.mark.parametrize(
+    ("preset", "anchor_time"),
+    [("masonry", 6.0), ("polaroid_wall", 4.0)],
+)
+def test_anchored_candidate_envelopes_never_overlap_rotated_tiles_during_reveal(
+    preset: str,
+    anchor_time: float,
+) -> None:
+    duration = 8.0
+    candidates = masonry_text_placement_candidates(
+        duration_s=duration,
+        anchor_time_s=anchor_time,
+        max_candidates=8,
+        preset=preset,
+    )
+    assert candidates
+    config = _preset_config(preset)
+    layout = _layout_for_config(config)
+    pan_px = candidates[0]["masonry_motion"]["pan_px"]
+
+    for sample in range(7):
+        time_s = 4.0 + 4.0 * sample / 6
+        scroll = pan_px * min(time_s, duration) / duration
+        tile_rects = []
+        for index, (x, y, width, height) in enumerate(layout):
+            rotated_width, rotated_height = _rotated_bounds(
+                width,
+                height,
+                _rotation_for_config(config, index),
+            )
+            left = x - (rotated_width - width) / 2 - config.placement_margin_px
+            top = y - (rotated_height - height) / 2 - config.placement_margin_px
+            tile_rects.append(
+                (
+                    left - scroll,
+                    top,
+                    left + rotated_width + config.placement_margin_px * 2 - scroll,
+                    top + rotated_height + config.placement_margin_px * 2,
+                )
+            )
+        for candidate in candidates:
+            left, top, right, bottom = _candidate_envelope(candidate)
+            envelope = (left - scroll, top, right - scroll, bottom)
+            assert all(_overlap_area(envelope, tile) == 0 for tile in tile_rects)
+
+
 def test_masonry_leading_candidate_envelopes_are_pairwise_non_overlapping() -> None:
     candidates = masonry_text_placement_candidates(duration_s=8.0)
     envelopes = [_candidate_envelope(candidate) for candidate in candidates]
@@ -123,6 +175,46 @@ def test_masonry_candidate_count_and_short_duration_are_deterministic() -> None:
     assert one == again
     assert len(one) == 1
     assert one[0]["masonry_motion"]["duration_s"] == 0.25
+
+
+def test_masonry_candidates_include_pockets_revealed_later_by_board_pan() -> None:
+    candidates = masonry_text_placement_candidates(
+        duration_s=8.0,
+        anchor_time_s=6.0,
+        max_candidates=8,
+    )
+
+    late = [
+        candidate
+        for candidate in candidates
+        if candidate["masonry_motion"].get("layer_origin_px", 0) > 0
+    ]
+    assert late
+    assert [
+        (
+            candidate["x_frac"],
+            candidate["y_frac"],
+            candidate["max_width_frac"],
+            candidate["rotation_deg"],
+            candidate["masonry_motion"]["layer_origin_px"],
+        )
+        for candidate in late
+    ] == [
+        (0.5, 0.8021, 0.5479, 90.0, 854.0),
+        (0.6505, 0.8641, 0.36, 90.0, 932.0),
+    ]
+    assert all(0.0 < candidate["x_frac"] < 1.0 for candidate in late)
+    assert any(
+        candidate["masonry_motion"]["layer_origin_px"]
+        + candidate["x_frac"] * candidate["masonry_motion"]["frame_width_px"]
+        > candidate["masonry_motion"]["frame_width_px"]
+        for candidate in late
+    )
+    anchor_scroll = late[0]["masonry_motion"]["pan_px"] * 6 / 8
+    for candidate in late:
+        left, _top, right, _bottom = _candidate_envelope(candidate)
+        assert left - anchor_scroll >= 36
+        assert right - anchor_scroll <= 1044
 
 
 def test_masonry_returns_no_candidate_when_layout_has_no_safe_pocket(monkeypatch) -> None:
@@ -375,3 +467,27 @@ def test_build_masonry_text_burn_command_pans_text_with_board() -> None:
     assert "setpts=PTS+0.0000/TB" in graph
     assert "-preset" in cmd
     assert cmd[cmd.index("-preset") + 1] == "fast"
+
+
+def test_build_masonry_text_burn_command_offsets_late_text_layer_on_board() -> None:
+    cmd = build_masonry_text_burn_command(
+        input_path="/tmp/base.mp4",
+        sequences=[
+            {
+                "pattern": "/tmp/text%04d.png",
+                "first_frame": "/tmp/text0000.png",
+                "n_frames": 1,
+                "fps": 30,
+                "start_s": 2.0,
+                "end_s": 5.0,
+                "is_animated": False,
+                "layer_origin_x_px": 600,
+            }
+        ],
+        output_path="/tmp/out.mp4",
+        duration_s=8.0,
+        board_width=2012,
+    )
+    graph = cmd[cmd.index("-filter_complex") + 1]
+
+    assert "overlay=x=600-min(t\\,8.000)/8.000*932:y=0:eval=frame" in graph

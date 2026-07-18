@@ -159,6 +159,24 @@ def test_unknown_text_case_coerces_to_none() -> None:
     assert overlay["text"] == "AbC"
 
 
+def test_masonry_layer_origin_reaches_the_burn_dict() -> None:
+    elem = TextElement.model_validate(
+        {
+            "id": "late-pocket",
+            "text": "later",
+            "start_s": 4,
+            "end_s": 7,
+            "position": "custom",
+            "x_frac": 0.5,
+            "y_frac": 0.5,
+            "source_params": {"masonry_motion": {"layer_origin_px": 600}},
+        }
+    )
+    overlay = build_overlays_from_text_elements([elem], video_duration_s=8.0)[0]
+
+    assert overlay["masonry_layer_origin_x_px"] == 600.0
+
+
 # ── letter_spacing ────────────────────────────────────────────────────────────
 
 
@@ -256,9 +274,7 @@ def test_line_spacing_schema_clamp_matches_fixture(case: dict) -> None:
     elem = TextElement.model_validate(case["element"])
     expected = case["expected"]
     if expected["burn_dict_has_field"]:
-        assert elem.line_spacing == pytest.approx(
-            expected["line_spacing"], abs=NUMERIC_TOLERANCE
-        )
+        assert elem.line_spacing == pytest.approx(expected["line_spacing"], abs=NUMERIC_TOLERANCE)
     else:
         assert elem.line_spacing is None
 

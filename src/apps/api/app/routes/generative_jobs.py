@@ -19,6 +19,7 @@ in `Job.assembly_plan["variants"]`, which the status endpoint surfaces directly.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from collections.abc import Callable
 from datetime import datetime
@@ -55,9 +56,19 @@ _MAX_CLIPS = 20
 # TextElement feature flag (kill switch).  Apply:
 #   fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
 _TEXT_ELEMENTS_ENABLED = os.getenv("TEXT_ELEMENTS_ENABLED", "true").lower() != "false"
+_LYRICS_EDITOR_ENABLED = os.getenv("LYRICS_EDITOR_ENABLED", "false").lower() == "true"
 
 # Maximum number of TextElement entries accepted per PUT (A—).
 _TEXT_ELEMENTS_MAX = 50
+_LYRIC_LINE_OVERRIDES_MAX = 100
+_LYRIC_LINE_KEY_RE = re.compile(r"^L\d+$")
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_LYRIC_OVERRIDE_STYLE_KEYS = frozenset({"color", "highlight_color", "font_family", "size_px"})
+_LYRIC_OVERRIDE_KEYS = frozenset({"text", "style", "orig_text", "orig_start_s"})
+_LYRIC_TIMING_KEYS = frozenset(
+    {"start_s", "end_s", "time_s", "duration_s", "line_start_s", "line_end_s"}
+)
+_UNSET = object()
 
 _TEXT_ELEMENT_LOG_SAFE_FIELDS = frozenset(
     {
@@ -413,6 +424,11 @@ class TextElementsRequest(BaseModel):
     render: bool = True
 
 
+class LyricsSectionRequest(BaseModel):
+    enabled: bool | None = None
+    line_overrides: dict | None = None
+
+
 # ── Timeline editor schemas ────────────────────────────────────────────────────
 
 _TIMELINE_MAX_SLOTS = 50
@@ -550,6 +566,7 @@ class EditorCommitRequest(BaseModel):
     timeline_slots: list[TimelineSlotEdit] | None = None
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
+    lyrics: LyricsSectionRequest | None = None
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
     visual_blocks: list[dict] | None = None
@@ -580,6 +597,7 @@ class EditorCommitSections(BaseModel):
     timeline: bool
     mix: bool
     music: bool
+    lyrics: bool
     sound_effects: bool
     media_overlays: bool
     visual_blocks: bool
@@ -933,11 +951,15 @@ def _variants_for_response(job: Job) -> list[dict]:
         if _TEXT_ELEMENTS_ENABLED:
             v = {
                 **v,
-                "text_elements": merge_projected_text_elements_for_variant(v),
+                "text_elements": merge_projected_text_elements_for_variant(
+                    v, include_lyric_projection=_LYRICS_EDITOR_ENABLED
+                ),
                 "text_elements_user_edited": v.get("text_elements_user_edited", False),
                 "geometry_materialized_at_version": v.get("geometry_materialized_at_version"),
                 "text_elements_materialized_from": v.get("text_elements_materialized_from"),
             }
+        if _LYRICS_EDITOR_ENABLED:
+            v = {**v, "lyrics_enabled": _variant_lyrics_enabled(v)}
         # E4: per-variant editor capabilities — one server-side truth source for
         # which editor surfaces the FE may enable (no endpoint probing).
         v = {**v, "editor_capabilities": _editor_capabilities(job, v)}
@@ -1183,6 +1205,41 @@ def _text_elements_allowed(variant: dict) -> bool:
     from app.config import settings  # noqa: PLC0415
 
     return settings.subtitled_text_lane_enabled
+
+
+def _variant_lyrics_enabled(variant: dict) -> bool:
+    persisted = variant.get("lyrics_enabled")
+    return persisted if isinstance(persisted, bool) else variant.get("text_mode") == "lyrics"
+
+
+def _variant_lyrics_capable(variant: dict) -> bool:
+    return (
+        variant.get("text_mode") == "lyrics"
+        or variant.get("lyrics_available") is True
+        or bool(variant.get("lyric_overlay_snapshot"))
+    )
+
+
+def _lyrics_capabilities(variant: dict) -> dict:
+    enabled = _variant_lyrics_enabled(variant)
+    if not _LYRICS_EDITOR_ENABLED:
+        reason = "disabled"
+    elif not variant.get("music_track_id"):
+        reason = "no_track"
+    elif variant.get("lyrics_available") is not True:
+        reason = "no_renderable_lyrics"
+    else:
+        reason = None
+    return {
+        "editable": bool(_LYRICS_EDITOR_ENABLED and enabled and reason is None),
+        "enabled": enabled,
+        "can_toggle_on": bool(
+            _LYRICS_EDITOR_ENABLED
+            and (variant.get("text_mode") == "lyrics" or variant.get("lyrics_available") is True)
+            and reason is None
+        ),
+        "reason": reason,
+    }
 
 
 def _is_editable_caption_variant(variant: dict) -> bool:
@@ -1896,11 +1953,18 @@ def validate_text_elements_payload(
             detail="Text element editing is not available.",
         )
 
-    # A16: lyrics variant is beat-synced; re-cutting the text would break sync.
-    if variant.get("text_mode") == "lyrics":
+    # A16: lyrics variant is beat-synced; ordinary user-authored text is only
+    # reopened by the lyrics editor flag. The lyric_line projections themselves
+    # remain timing-locked and are edited through the lyrics section.
+    if variant.get("text_mode") == "lyrics" and not _LYRICS_EDITOR_ENABLED:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Text elements cannot be edited on a lyrics variant.",
+        )
+    if any(isinstance(raw, dict) and raw.get("role") == "lyric_line" for raw in elements):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "lyric_timing_locked", "message": "Lyric timing is locked."},
         )
 
     if variant.get("resolved_archetype") == "subtitled":
@@ -2083,6 +2147,253 @@ def dispatch_set_text_elements(
             kwargs={"render_gen_id": render_gen_id},
             queue="overlay-jobs",
         )
+
+
+def _lyrics_error(status_code: int, code: str, message: str | None = None) -> HTTPException:
+    detail = {"code": code}
+    if message:
+        detail["message"] = message
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _validate_lyric_override_style(style: object, *, line_key: str) -> dict:
+    if not isinstance(style, dict):
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_line_override",
+            f"{line_key}.style must be an object.",
+        )
+    unknown = set(style) - _LYRIC_OVERRIDE_STYLE_KEYS
+    if unknown:
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_line_override",
+            f"{line_key}.style has unsupported keys: {sorted(unknown)}.",
+        )
+    from app.agents._schemas.text_element import _ALLOWED_FONTS  # noqa: PLC0415
+
+    out: dict = {}
+    for key, value in style.items():
+        if key in {"color", "highlight_color"}:
+            if not isinstance(value, str) or not _HEX_COLOR_RE.match(value.strip()):
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    f"{line_key}.style.{key} must be a #RRGGBB hex color.",
+                )
+            out[key] = value.strip()
+        elif key == "font_family":
+            if not isinstance(value, str) or value.strip() not in _ALLOWED_FONTS:
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    f"{line_key}.style.font_family is not an allowed font.",
+                )
+            out[key] = value.strip()
+        elif key == "size_px":
+            if isinstance(value, bool):
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    f"{line_key}.style.size_px must be an integer.",
+                )
+            try:
+                size_px = int(value)
+            except (TypeError, ValueError) as exc:
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    f"{line_key}.style.size_px must be an integer.",
+                ) from exc
+            if size_px < 8 or size_px > 300:
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    f"{line_key}.style.size_px must be between 8 and 300.",
+                )
+            out[key] = size_px
+    return out
+
+
+def validate_lyrics_section(
+    variant: dict, payload: dict, *, music_track: MusicTrack | None
+) -> dict:
+    if not _LYRICS_EDITOR_ENABLED:
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "lyrics_editor_disabled",
+            "Lyrics editing is not available.",
+        )
+    if not isinstance(payload, dict):
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_lyrics_section",
+            "Lyrics section must be an object.",
+        )
+    if "enabled" not in payload and "line_overrides" not in payload:
+        raise _lyrics_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_lyrics_section",
+            "Provide enabled or line_overrides.",
+        )
+    enabled_raw = payload.get("enabled")
+    enabled = None
+    if "enabled" in payload:
+        if not isinstance(enabled_raw, bool):
+            raise _lyrics_error(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                "invalid_lyrics_section",
+                "enabled must be a boolean.",
+            )
+        enabled = enabled_raw
+        if enabled:
+            if not variant.get("music_track_id"):
+                raise _lyrics_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "no_track")
+            from app.pipeline.lyric_support import lyrics_variant_renderable  # noqa: PLC0415
+
+            if music_track is None or not lyrics_variant_renderable(music_track.lyrics_cached):
+                raise _lyrics_error(status.HTTP_422_UNPROCESSABLE_ENTITY, "no_renderable_lyrics")
+
+    line_overrides = None
+    if "line_overrides" in payload:
+        raw_overrides = payload.get("line_overrides")
+        if raw_overrides is None:
+            line_overrides = None
+        else:
+            if not isinstance(raw_overrides, dict):
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    "line_overrides must be an object or null.",
+                )
+            if len(raw_overrides) > _LYRIC_LINE_OVERRIDES_MAX:
+                raise _lyrics_error(
+                    status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    "invalid_line_override",
+                    f"Too many lyric line overrides (max {_LYRIC_LINE_OVERRIDES_MAX}).",
+                )
+            line_overrides = {}
+            for line_key, raw_override in raw_overrides.items():
+                line_key = str(line_key)
+                if not _LYRIC_LINE_KEY_RE.match(line_key):
+                    raise _lyrics_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "invalid_line_override",
+                        f"Invalid lyric line key {line_key!r}.",
+                    )
+                if not isinstance(raw_override, dict):
+                    raise _lyrics_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "invalid_line_override",
+                        f"{line_key} override must be an object.",
+                    )
+                unknown = set(raw_override) - _LYRIC_OVERRIDE_KEYS
+                timing_unknown = unknown & _LYRIC_TIMING_KEYS
+                if unknown:
+                    suffix = " Timing fields are locked." if timing_unknown else ""
+                    raise _lyrics_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "invalid_line_override",
+                        f"{line_key} has unsupported keys: {sorted(unknown)}.{suffix}",
+                    )
+                if not isinstance(raw_override.get("orig_text"), str):
+                    raise _lyrics_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "invalid_line_override",
+                        f"{line_key}.orig_text is required.",
+                    )
+                orig_start_s = raw_override.get("orig_start_s")
+                if isinstance(orig_start_s, bool):
+                    raise _lyrics_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "invalid_line_override",
+                        f"{line_key}.orig_start_s is required.",
+                    )
+                try:
+                    orig_start = float(orig_start_s)
+                except (TypeError, ValueError) as exc:
+                    raise _lyrics_error(
+                        status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        "invalid_line_override",
+                        f"{line_key}.orig_start_s is required.",
+                    ) from exc
+                clean_override = {
+                    "orig_text": raw_override["orig_text"],
+                    "orig_start_s": orig_start,
+                }
+                if "text" in raw_override:
+                    text = str(raw_override.get("text") or "").strip()
+                    if not text or len(text) > 200:
+                        raise _lyrics_error(
+                            status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "invalid_line_override",
+                            f"{line_key}.text must be 1-200 characters.",
+                        )
+                    clean_override["text"] = text
+                if "style" in raw_override:
+                    clean_override["style"] = _validate_lyric_override_style(
+                        raw_override.get("style"), line_key=line_key
+                    )
+                line_overrides[line_key] = clean_override
+    return {"enabled": enabled, "line_overrides": line_overrides}
+
+
+async def dispatch_set_lyrics(
+    db: AsyncSession,
+    job: Job,
+    variant_id: str,
+    *,
+    enabled: object = _UNSET,
+    line_overrides: object = _UNSET,
+) -> None:
+    if not _LYRICS_EDITOR_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Lyrics editing is not available.",
+        )
+
+    result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
+    locked_job = result.scalar_one_or_none()
+    if locked_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    variant = require_editable_variant(locked_job, variant_id)
+    track = None
+    if variant.get("music_track_id"):
+        track = await db.get(MusicTrack, variant.get("music_track_id"))
+    payload: dict = {}
+    if enabled is not _UNSET:
+        payload["enabled"] = enabled
+    if line_overrides is not _UNSET:
+        payload["line_overrides"] = line_overrides
+    validated = validate_lyrics_section(
+        variant,
+        payload,
+        music_track=track,
+    )
+
+    render_gen_id = uuid.uuid4().hex
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((locked_job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            if enabled is not _UNSET:
+                v["lyrics_enabled"] = bool(validated["enabled"])
+            if line_overrides is not _UNSET:
+                v["lyric_line_overrides"] = validated["line_overrides"]
+            v["render_generation_id"] = render_gen_id
+            v["render_status"] = "rendering"
+            break
+    locked_job.assembly_plan = {**(locked_job.assembly_plan or {}), "variants": variants}
+    flag_modified(locked_job, "assembly_plan")
+    await db.commit()
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.apply_async(
+        args=[str(locked_job.id), variant_id],
+        kwargs={"render_gen_id": render_gen_id},
+    )
 
 
 def dispatch_edit_variant(
@@ -2522,7 +2833,10 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
             _TEXT_ELEMENTS_ENABLED
-            and variant.get("text_mode") != "lyrics"
+            and (
+                variant.get("text_mode") != "lyrics"
+                or (_LYRICS_EDITOR_ENABLED and _variant_lyrics_capable(variant))
+            )
             and _text_elements_allowed(variant)
         ),
         "timeline": timeline_ok,
@@ -2549,6 +2863,7 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "overlays_reason": overlays_reason,
         "visual_blocks_reason": visual_blocks_reason,
         "suggestions_reason": suggestions_reason,
+        "lyrics": _lyrics_capabilities(variant),
     }
 
 
@@ -3019,6 +3334,7 @@ def prepare_editor_commit(
         and payload.timeline_slots is None
         and payload.mix is None
         and payload.music_track_id is None
+        and payload.lyrics is None
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
@@ -3061,8 +3377,9 @@ def prepare_editor_commit(
             )
         # The fast-reburn base is only required when this commit will take the
         # reburn path (no timeline change → no full re-assembly).
-        text_requires_full_render = payload.timeline_slots is None and not bool(
-            variant.get("base_video_path")
+        text_requires_full_render = payload.timeline_slots is None and (
+            not bool(variant.get("base_video_path"))
+            or (_LYRICS_EDITOR_ENABLED and _variant_lyrics_enabled(variant))
         )
         validated_elements, materialized_from_sequence = validate_text_elements_payload(
             variant,
@@ -3132,6 +3449,15 @@ def prepare_editor_commit(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Requested song is not available for rendering.",
             )
+
+    validated_lyrics: dict | None = None
+    if payload.lyrics is not None:
+        lyric_payload: dict = {}
+        if "enabled" in payload.lyrics.model_fields_set:
+            lyric_payload["enabled"] = payload.lyrics.enabled
+        if "line_overrides" in payload.lyrics.model_fields_set:
+            lyric_payload["line_overrides"] = payload.lyrics.line_overrides
+        validated_lyrics = validate_lyrics_section(variant, lyric_payload, music_track=music_track)
 
     mix_override: float | None = None
     if payload.mix is not None:
@@ -3264,6 +3590,7 @@ def prepare_editor_commit(
         or resolved_slots is not None
         or payload.mix is not None
         or payload.music_track_id is not None
+        or validated_lyrics is not None
         or validated_sfx is not None
         or validated_overlays is not None
         or validated_visual_blocks is not None
@@ -3295,6 +3622,11 @@ def prepare_editor_commit(
                 updated["original_audio_level"] = float(payload.mix.original_level)
         if payload.music_track_id is not None:
             updated["music_track_id"] = payload.music_track_id
+        if validated_lyrics is not None:
+            if "enabled" in payload.lyrics.model_fields_set:
+                updated["lyrics_enabled"] = bool(validated_lyrics["enabled"])
+            if "line_overrides" in payload.lyrics.model_fields_set:
+                updated["lyric_line_overrides"] = validated_lyrics["line_overrides"]
         if validated_sfx is not None:
             updated["sound_effects"] = validated_sfx or None
         if validated_overlays is not None:
@@ -3355,6 +3687,7 @@ def prepare_editor_commit(
             "timeline": payload.timeline_slots is not None,
             "mix": payload.mix is not None,
             "music": payload.music_track_id is not None,
+            "lyrics": payload.lyrics is not None,
             "sound_effects": payload.sound_effects is not None,
             "media_overlays": payload.media_overlays is not None,
             "visual_blocks": payload.visual_blocks is not None,
@@ -3446,6 +3779,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or prep.get("new_track_id") is not None
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
+        or sections.get("lyrics") is True
     )
     if full_render or has_text_section:
         # Text/timeline/mix full re-renders read the just-persisted variant state.
@@ -3462,6 +3796,8 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         and prep["mix_override"] is None
         and prep.get("new_track_id") is None
         and prep.get("text_requires_full_render") is not True
+        and sections.get("lyrics") is not True
+        and sections.get("visual_blocks") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
     if is_reburn_only:
@@ -3685,6 +4021,35 @@ async def retext(
     dispatch_retext(job, variant_id, text=req.text, remove=req.remove)
     await db.commit()
     log.info("generative_retext", job_id=str(job.id), variant_id=variant_id, remove=req.remove)
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.put("/{job_id}/variants/{variant_id}/lyrics", response_model=GenerativeJobResponse)
+async def set_variant_lyrics(
+    job_id: str,
+    variant_id: str,
+    req: LyricsSectionRequest,
+    current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Toggle lyrics or replace lyric line overrides, then full re-render."""
+    job = await _load_generative_job(job_id, db, current_user)
+    enabled = req.enabled if "enabled" in req.model_fields_set else _UNSET
+    line_overrides = req.line_overrides if "line_overrides" in req.model_fields_set else _UNSET
+    await dispatch_set_lyrics(
+        db,
+        job,
+        variant_id,
+        enabled=enabled,
+        line_overrides=line_overrides,
+    )
+    log.info(
+        "generative_set_lyrics",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        enabled=req.enabled,
+        has_line_overrides="line_overrides" in req.model_fields_set,
+    )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 
 

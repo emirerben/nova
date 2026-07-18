@@ -4177,6 +4177,8 @@ def _collect_absolute_overlays(
             # stitch those continuations back into one absolute ASS event.
             if ov.get("lyric_line_id"):
                 entry["lyric_line_id"] = ov["lyric_line_id"]
+            if ov.get("lyric_line_key"):
+                entry["lyric_line_key"] = ov["lyric_line_key"]
             if ov.get("lyric_segment_index") is not None:
                 entry["lyric_segment_index"] = ov["lyric_segment_index"]
             if ov.get("lyric_segment_count") is not None:
@@ -4641,6 +4643,7 @@ def _collect_absolute_overlays(
                     "position_y_frac": o.get("position_y_frac"),
                     "effect": o.get("effect"),
                     "lyric_line_id": o.get("lyric_line_id"),
+                    "lyric_line_key": o.get("lyric_line_key"),
                     "text_size": o.get("text_size"),
                     "text_color": o.get("text_color"),
                     "font_cycle_accel_at_s": o.get("font_cycle_accel_at_s"),

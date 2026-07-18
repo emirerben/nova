@@ -210,7 +210,7 @@ class TextElement(BaseModel):
     text: str = Field(default="", max_length=500, description="Overlay text content.")
     start_s: float = Field(default=0.0, ge=0, description="Start time in seconds.")
     end_s: float = Field(default=3.0, gt=0, description="End time in seconds; must be > start_s.")
-    role: Literal["generative_intro", "generative_sequence"] = Field(
+    role: Literal["generative_intro", "generative_sequence", "lyric_line"] = Field(
         default="generative_intro",
         description="Maps to the existing burn-dict role (renderer dispatch).",
     )
@@ -763,9 +763,13 @@ def _tombstone_for(projected: TextElement) -> dict:
     }
 
 
-def append_ai_text_tombstones(variant: dict, elements: list[dict]) -> list[dict]:
+def append_ai_text_tombstones(
+    variant: dict, elements: list[dict], *, include_lyric_projection: bool = False
+) -> list[dict]:
     """Append removed=true tombstones for generated bars omitted by a save payload."""
-    projected = text_elements_for_variant(variant)
+    projected = text_elements_for_variant(
+        variant, include_lyric_projection=include_lyric_projection
+    )
     if not projected:
         return elements
     incoming_ids = {
@@ -773,6 +777,8 @@ def append_ai_text_tombstones(variant: dict, elements: list[dict]) -> list[dict]
     }
     out = list(elements)
     for projected_elem in projected:
+        if projected_elem.role == "lyric_line":
+            continue
         ident = text_element_source_identity(projected_elem)
         if ident and ident not in incoming_ids:
             out.append(_tombstone_for(projected_elem))
@@ -780,14 +786,18 @@ def append_ai_text_tombstones(variant: dict, elements: list[dict]) -> list[dict]
     return out
 
 
-def merge_projected_text_elements_for_variant(variant: dict) -> list[dict] | None:
+def merge_projected_text_elements_for_variant(
+    variant: dict, *, include_lyric_projection: bool = False
+) -> list[dict] | None:
     """GET adapter: saved user elements win, missing generated bars are appended.
 
     This is the read-side single source of truth. It fixes legacy user-edited rows
     that only stored hand-created bars by appending any generated AI bar whose
     source identity has no saved counterpart. Saved tombstones suppress projection.
     """
-    projected = text_elements_for_variant(variant)
+    projected = text_elements_for_variant(
+        variant, include_lyric_projection=include_lyric_projection
+    )
     saved = coerce_text_elements(variant.get("text_elements") or []) or []
     if not variant.get("text_elements_user_edited"):
         visible_projected = [e.model_dump() for e in projected if not e.removed]
@@ -863,19 +873,95 @@ def _element_from_burn_group(
     return elem
 
 
+def _element_from_lyric_snapshot(entry: dict) -> TextElement | None:
+    if not isinstance(entry, dict):
+        return None
+    line_key = str(entry.get("line_key") or "").strip()
+    text = str(entry.get("text") or "").strip()
+    if not line_key or not text:
+        return None
+    try:
+        start_s = float(entry.get("start_s"))
+        end_s = float(entry.get("end_s"))
+    except (TypeError, ValueError):
+        return None
+    if end_s <= start_s:
+        return None
+
+    raw_font = entry.get("font_family")
+    font_family = raw_font if raw_font in _ALLOWED_FONTS else None
+    raw_color = entry.get("color")
+    color = raw_color if isinstance(raw_color, str) and _HEX_COLOR_RE.match(raw_color) else None
+    raw_highlight = entry.get("highlight_color")
+    highlight_color = (
+        raw_highlight
+        if isinstance(raw_highlight, str) and _HEX_COLOR_RE.match(raw_highlight)
+        else None
+    )
+    raw_effect = str(entry.get("effect") or "karaoke-line")
+    effect = raw_effect if raw_effect in _ALLOWED_EFFECTS else "karaoke-line"
+
+    try:
+        return TextElement(
+            id=f"lyric_{line_key}",
+            text=text,
+            start_s=start_s,
+            end_s=end_s,
+            role="lyric_line",
+            position="custom",
+            x_frac=0.5,
+            y_frac=entry.get("y_frac"),
+            font_family=font_family,
+            size_px=entry.get("size_px"),
+            color=color,
+            highlight_color=highlight_color,
+            effect=effect,  # type: ignore[arg-type]
+            word_timings=None,
+            source_params={
+                "source": "lyric",
+                "key": line_key,
+                "identity": _identity_for_source("lyric", line_key),
+                "source_text": text,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("text_elements_adapter_lyric_failed", line_key=line_key, error=str(exc))
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Read adapter: legacy variant dict → list[TextElement]
 # ---------------------------------------------------------------------------
 
 
-def text_elements_for_variant(v: dict) -> list[TextElement]:
+def text_elements_for_variant(
+    v: dict, *, include_lyric_projection: bool = False
+) -> list[TextElement]:
+    """Read-adapter entry point; appends lyric_line projections when asked.
+
+    Lyric projections come from ``lyric_overlay_snapshot`` (written by every
+    lyrics-rendering pass) and surface for ANY text_mode — a song_text/none
+    variant with lyrics toggled on must expose its lines as editable blocks
+    alongside its normal projected elements.
+    """
+    lyric_elems: list[TextElement] = []
+    if include_lyric_projection:
+        snapshot = v.get("lyric_overlay_snapshot")
+        if isinstance(snapshot, list) and snapshot:
+            lyric_elems = [
+                elem for entry in snapshot if (elem := _element_from_lyric_snapshot(entry))
+            ]
+    return _base_text_elements_for_variant(v) + lyric_elems
+
+
+def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
     """Lazily synthesize a TextElement list from whichever legacy shape a variant has.
 
     This is the back-compat READ adapter.  It does not mutate ``v``.
 
     Returns ``[]`` when:
       - ``text_mode == "none"`` (text removed from this variant)
-      - ``text_mode == "lyrics"`` (lyric injector owns the overlays)
+      - ``text_mode == "lyrics"`` (lyric projections are appended by the wrapper)
       - no AI text source is present (footage-only render)
 
     Shape dispatch:
@@ -895,7 +981,7 @@ def text_elements_for_variant(v: dict) -> list[TextElement]:
     if text_mode == "none":
         return []
     if text_mode == "lyrics":
-        # lyrics variants are handled by the lyric injector; not text_elements.
+        # lyric overlays are projected by the wrapper from lyric_overlay_snapshot.
         return []
 
     intro_mode: str | None = v.get("intro_mode")
