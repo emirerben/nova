@@ -158,6 +158,31 @@ describe("applyCopilotOps", () => {
       .toEqual([{ type: "DELETE_BAR", id: "bar-2" }]);
   });
 
+  it("allows lyric text edits but rejects lyric timing and removal", () => {
+    const lyric = bar({ id: "lyric_L0", role: "lyric_line", text: "old lyric" });
+    const base = ctx({ bars: [lyric] });
+
+    expect(
+      applyCopilotOps([{ op: "edit_text", bar_index: 0, text: "new lyric" }], base)
+        .textActions,
+    ).toEqual([{ type: "EDIT_TEXT", id: "lyric_L0", text: "new lyric" }]);
+
+    const timing = applyCopilotOps(
+      [{ op: "set_text_timing", bar_index: 0, start_s: 1.2 }],
+      base,
+    );
+    expect(timing.textActions).toEqual([]);
+    expect(timing.rejected).toEqual([
+      expect.objectContaining({ detail: "Lyric timing is locked to the vocal." }),
+    ]);
+
+    const remove = applyCopilotOps([{ op: "remove_text", bar_index: 0 }], base);
+    expect(remove.textActions).toEqual([]);
+    expect(remove.rejected).toEqual([
+      expect.objectContaining({ detail: "Lyric timing is locked to the vocal." }),
+    ]);
+  });
+
   it("maps clip timing, reorder, remove, and split ops to slot transforms", () => {
     const duration = applyCopilotOps([{ op: "set_clip_duration", slot_index: 1, duration_s: 3 }], ctx());
     expect(duration.nextSlots?.find((s) => s.key === "b")).toMatchObject({

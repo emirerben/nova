@@ -371,6 +371,29 @@ function applyStylePatch(
   return { patch, stripped };
 }
 
+const LYRIC_STYLE_PATCH_KEYS = new Set<TextStylePatchKey>([
+  "color",
+  "highlight_color",
+  "font_family",
+  "size_px",
+]);
+
+function clampLyricStylePatch(input: {
+  patch: TextStylePatch;
+  stripped: string[];
+}): { patch: TextStylePatch; stripped: string[] } {
+  const patch: TextStylePatch = {};
+  const stripped = [...input.stripped];
+  for (const [key, value] of Object.entries(input.patch)) {
+    if (LYRIC_STYLE_PATCH_KEYS.has(key as TextStylePatchKey)) {
+      (patch as Record<string, unknown>)[key] = value;
+    } else if (key !== "size_class") {
+      stripped.push(key);
+    }
+  }
+  return { patch, stripped };
+}
+
 function slotOrderMatches(slots: DraftSlot[], snapshot: CopilotSnapshot): boolean {
   return snapshot.slots.every((snapSlot, index) => slots[index]?.key === snapSlot.key);
 }
@@ -464,10 +487,21 @@ export function applyCopilotOps(
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "text bar no longer exists"));
         continue;
       }
-      const { patch, stripped } = applyStylePatch(op.patch);
+      const stylePatch = applyStylePatch(op.patch);
+      const { patch, stripped } =
+        bar.role === "lyric_line" ? clampLyricStylePatch(stylePatch) : stylePatch;
       const patchKeys = Object.keys(patch) as TextStylePatchKey[];
       if (patchKeys.length === 0) {
-        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", `style fields are not parity verified: ${stripped.join(", ")}`));
+        rejected.push(
+          reject(
+            op.op,
+            labelForOp(op),
+            "unsupported_field",
+            bar.role === "lyric_line"
+              ? "Lyric style supports color, highlight color, font, and size."
+              : `style fields are not parity verified: ${stripped.join(", ")}`,
+          ),
+        );
         continue;
       }
       if (!textFingerprintMatches(bar, snap, patchKeys)) {
@@ -487,6 +521,10 @@ export function applyCopilotOps(
       const bar = snap ? textBarForSnap(ctx.bars, snap) : null;
       if (!snap || !bar) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "text bar no longer exists"));
+        continue;
+      }
+      if (bar.role === "lyric_line") {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "Lyric timing is locked to the vocal."));
         continue;
       }
       const fields: Array<"start_s" | "end_s"> = [
@@ -534,6 +572,10 @@ export function applyCopilotOps(
       const bar = snap ? textBarForSnap(ctx.bars, snap) : null;
       if (!snap || !bar) {
         rejected.push(reject(op.op, labelForOp(op), "target_missing", "text bar no longer exists"));
+        continue;
+      }
+      if (bar.role === "lyric_line") {
+        rejected.push(reject(op.op, labelForOp(op), "unsupported_field", "Lyric timing is locked to the vocal."));
         continue;
       }
       if (!textFingerprintMatches(bar, snap, ["text"])) {

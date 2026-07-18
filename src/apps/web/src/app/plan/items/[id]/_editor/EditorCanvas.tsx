@@ -282,6 +282,7 @@ export default function EditorCanvas({
   function beginMove(e: React.PointerEvent, id: string, hits: string[]) {
     if (!allowManipulation) return;
     const bar = barById.get(id);
+    if (bar?.role === "lyric_line") return;
     const layout = layouts.find((l) => l.id === id);
     if (!layout) return;
     const localXFrac = bar?.x_frac ?? layout.xFrac;
@@ -333,6 +334,7 @@ export default function EditorCanvas({
 
   function onHandlePointerDown(e: React.PointerEvent, id: string) {
     if (!allowManipulation || tool !== "select" || e.button !== 0) return;
+    if (barById.get(id)?.role === "lyric_line") return;
     e.stopPropagation();
     const el = overlayRefs.current.get(id);
     const layout = layouts.find((l) => l.id === id);
@@ -370,6 +372,7 @@ export default function EditorCanvas({
     side: "left" | "right",
   ) {
     if (!allowManipulation || tool !== "select" || e.button !== 0) return;
+    if (barById.get(id)?.role === "lyric_line") return;
     e.stopPropagation();
     const layout = layouts.find((l) => l.id === id);
     if (!layout) return;
@@ -805,6 +808,7 @@ export default function EditorCanvas({
                       ? (strokeCanvasPx / CANVAS_H) * stageSize.h
                       : 0;
                   const isSelected = selectedTextId === layout.id;
+                  const isLyric = bar?.role === "lyric_line";
                   const isHovered = hoveredId === layout.id && !isSelected;
                   const isFlashing = flashTextIds?.has(layout.id) ?? false;
                   const zIndex =
@@ -884,7 +888,7 @@ export default function EditorCanvas({
                       )}
 
                       {/* Selection box: lime stroke; handles white-core + 1px ink halo (D10) */}
-                      {isSelected && allowManipulation && (
+                      {isSelected && allowManipulation && !isLyric && (
                         <div
                           aria-hidden={false}
                           role="group"
