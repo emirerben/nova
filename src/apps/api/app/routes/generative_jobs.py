@@ -57,6 +57,7 @@ _MAX_CLIPS = 20
 #   fly secrets set TEXT_ELEMENTS_ENABLED=false --app nova-video + worker restart.
 _TEXT_ELEMENTS_ENABLED = os.getenv("TEXT_ELEMENTS_ENABLED", "true").lower() != "false"
 _LYRICS_EDITOR_ENABLED = os.getenv("LYRICS_EDITOR_ENABLED", "false").lower() == "true"
+_LANDSCAPE_OUTPUT_ENABLED = os.getenv("LANDSCAPE_OUTPUT_ENABLED", "false").lower() == "true"
 
 # Maximum number of TextElement entries accepted per PUT (A—).
 _TEXT_ELEMENTS_MAX = 50
@@ -567,6 +568,7 @@ class EditorCommitRequest(BaseModel):
     mix: EditorCommitMix | None = None
     music_track_id: str | None = None
     lyrics: LyricsSectionRequest | None = None
+    orientation: str | None = None
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
     visual_blocks: list[dict] | None = None
@@ -598,6 +600,7 @@ class EditorCommitSections(BaseModel):
     mix: bool
     music: bool
     lyrics: bool
+    orientation: bool = False
     sound_effects: bool
     media_overlays: bool
     visual_blocks: bool
@@ -608,6 +611,10 @@ class EditorCommitResponse(BaseModel):
     ok: bool
     generation: str
     sections: EditorCommitSections
+
+
+class OrientationRequest(BaseModel):
+    orientation: str
 
 
 class StyleSetIntroPreview(BaseModel):
@@ -960,6 +967,7 @@ def _variants_for_response(job: Job) -> list[dict]:
             }
         if _LYRICS_EDITOR_ENABLED:
             v = {**v, "lyrics_enabled": _variant_lyrics_enabled(v)}
+        v = {**v, "orientation": _variant_orientation(v)}
         # E4: per-variant editor capabilities — one server-side truth source for
         # which editor surfaces the FE may enable (no endpoint probing).
         v = {**v, "editor_capabilities": _editor_capabilities(job, v)}
@@ -2338,6 +2346,84 @@ def validate_lyrics_section(
     return {"enabled": enabled, "line_overrides": line_overrides}
 
 
+def _orientation_error(status_code: int, code: str, message: str | None = None) -> HTTPException:
+    detail: dict[str, str] = {"code": code}
+    if message:
+        detail["message"] = message
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _variant_orientation(variant: dict) -> str:
+    return variant.get("orientation") or "portrait"
+
+
+def _orientation_unsupported_reason(variant: dict) -> str | None:
+    archetype = variant.get("resolved_archetype")
+    if archetype in {"subtitled", "narrated", "talking_head"}:
+        return "orientation_unsupported"
+    if is_collage_montage_preset(
+        variant.get("montage_preset_rendered") or variant.get("montage_preset")
+    ):
+        return "orientation_unsupported"
+    return None
+
+
+def validate_orientation_section(variant: dict, orientation: object) -> str:
+    if orientation not in {"portrait", "landscape"}:
+        raise _orientation_error(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "invalid_orientation",
+            "`orientation` must be 'portrait' or 'landscape'.",
+        )
+    if orientation == "landscape":
+        reason = _orientation_unsupported_reason(variant)
+        if reason is not None:
+            raise _orientation_error(status.HTTP_422_UNPROCESSABLE_ENTITY, reason)
+    return str(orientation)
+
+
+async def dispatch_set_orientation(
+    db: AsyncSession,
+    job: Job,
+    variant_id: str,
+    *,
+    orientation: str,
+) -> None:
+    if not _LANDSCAPE_OUTPUT_ENABLED:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Landscape output is not available.",
+        )
+
+    result = await db.execute(select(Job).where(Job.id == job.id).with_for_update())
+    locked_job = result.scalar_one_or_none()
+    if locked_job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+    variant = require_editable_variant(locked_job, variant_id)
+    validated = validate_orientation_section(variant, orientation)
+
+    render_gen_id = uuid.uuid4().hex
+    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+    variants = list((locked_job.assembly_plan or {}).get("variants") or [])
+    for v in variants:
+        if v.get("variant_id") == variant_id:
+            v["orientation"] = validated
+            v["render_generation_id"] = render_gen_id
+            v["render_status"] = "rendering"
+            break
+    locked_job.assembly_plan = {**(locked_job.assembly_plan or {}), "variants": variants}
+    flag_modified(locked_job, "assembly_plan")
+    await db.commit()
+
+    from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+    regenerate_generative_variant.apply_async(
+        args=[str(locked_job.id), variant_id],
+        kwargs={"render_gen_id": render_gen_id, "orientation_override": validated},
+    )
+
+
 async def dispatch_set_lyrics(
     db: AsyncSession,
     job: Job,
@@ -2829,6 +2915,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         suggestions_reason = "song_or_lyric_variant"
     else:
         suggestions_reason = overlays_reason
+    orientation_reason = None
+    if not _LANDSCAPE_OUTPUT_ENABLED:
+        orientation_reason = "disabled"
+    else:
+        orientation_reason = _orientation_unsupported_reason(variant)
     return {
         # Lyrics variants are beat-synced — same rule as dispatch_set_text_elements.
         "text_elements": (
@@ -2864,6 +2955,11 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         "visual_blocks_reason": visual_blocks_reason,
         "suggestions_reason": suggestions_reason,
         "lyrics": _lyrics_capabilities(variant),
+        "orientation": {
+            "editable": orientation_reason is None,
+            "value": _variant_orientation(variant),
+            "reason": orientation_reason,
+        },
     }
 
 
@@ -3335,6 +3431,7 @@ def prepare_editor_commit(
         and payload.mix is None
         and payload.music_track_id is None
         and payload.lyrics is None
+        and payload.orientation is None
         and payload.sound_effects is None
         and payload.media_overlays is None
         and payload.visual_blocks is None
@@ -3458,6 +3555,15 @@ def prepare_editor_commit(
         if "line_overrides" in payload.lyrics.model_fields_set:
             lyric_payload["line_overrides"] = payload.lyrics.line_overrides
         validated_lyrics = validate_lyrics_section(variant, lyric_payload, music_track=music_track)
+
+    validated_orientation: str | None = None
+    if payload.orientation is not None:
+        if not _LANDSCAPE_OUTPUT_ENABLED:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Landscape output is not available.",
+            )
+        validated_orientation = validate_orientation_section(variant, payload.orientation)
 
     mix_override: float | None = None
     if payload.mix is not None:
@@ -3591,6 +3697,7 @@ def prepare_editor_commit(
         or payload.mix is not None
         or payload.music_track_id is not None
         or validated_lyrics is not None
+        or validated_orientation is not None
         or validated_sfx is not None
         or validated_overlays is not None
         or validated_visual_blocks is not None
@@ -3627,6 +3734,8 @@ def prepare_editor_commit(
                 updated["lyrics_enabled"] = bool(validated_lyrics["enabled"])
             if "line_overrides" in payload.lyrics.model_fields_set:
                 updated["lyric_line_overrides"] = validated_lyrics["line_overrides"]
+        if validated_orientation is not None:
+            updated["orientation"] = validated_orientation
         if validated_sfx is not None:
             updated["sound_effects"] = validated_sfx or None
         if validated_overlays is not None:
@@ -3673,6 +3782,7 @@ def prepare_editor_commit(
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
         "visual_blocks_override": validated_visual_blocks,
+        "orientation_override": validated_orientation,
         "new_track_id": payload.music_track_id,
         "caption_cues_override": validated_caption_cues,
         "text_requires_full_render": text_requires_full_render,
@@ -3688,6 +3798,7 @@ def prepare_editor_commit(
             "mix": payload.mix is not None,
             "music": payload.music_track_id is not None,
             "lyrics": payload.lyrics is not None,
+            "orientation": payload.orientation is not None,
             "sound_effects": payload.sound_effects is not None,
             "media_overlays": payload.media_overlays is not None,
             "visual_blocks": payload.visual_blocks is not None,
@@ -3749,6 +3860,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or sections.get("caption_meta") is True
         or sections.get("timeline") is True
         or sections.get("mix") is True
+        or sections.get("orientation") is True
     )
     if (
         lane_only_commit
@@ -3772,11 +3884,14 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         kwargs["mix_override"] = float(prep["mix_override"])
     if prep.get("new_track_id") is not None:
         kwargs["new_track_id"] = prep["new_track_id"]
+    if prep.get("orientation_override") is not None:
+        kwargs["orientation_override"] = prep["orientation_override"]
     has_text_section = prep["sections"].get("text_elements") is True
     full_render = (
         prep["timeline_override"] is not None
         or prep["mix_override"] is not None
         or prep.get("new_track_id") is not None
+        or prep.get("orientation_override") is not None
         or prep.get("text_requires_full_render") is True
         or prep["sections"].get("visual_blocks") is True
         or sections.get("lyrics") is True
@@ -3795,6 +3910,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         prep["timeline_override"] is None
         and prep["mix_override"] is None
         and prep.get("new_track_id") is None
+        and prep.get("orientation_override") is None
         and prep.get("text_requires_full_render") is not True
         and sections.get("lyrics") is not True
         and sections.get("visual_blocks") is not True
@@ -4049,6 +4165,31 @@ async def set_variant_lyrics(
         variant_id=variant_id,
         enabled=req.enabled,
         has_line_overrides="line_overrides" in req.model_fields_set,
+    )
+    return GenerativeJobResponse(job_id=str(job.id), status="rendering")
+
+
+@router.put("/{job_id}/variants/{variant_id}/orientation", response_model=GenerativeJobResponse)
+async def set_variant_orientation(
+    job_id: str,
+    variant_id: str,
+    req: OrientationRequest,
+    current_user: CurrentUserOrSynthetic,
+    db: AsyncSession = Depends(get_db),
+) -> GenerativeJobResponse:
+    """Set portrait/landscape output for one variant, then full re-render."""
+    job = await _load_generative_job(job_id, db, current_user)
+    await dispatch_set_orientation(
+        db,
+        job,
+        variant_id,
+        orientation=req.orientation,
+    )
+    log.info(
+        "generative_set_orientation",
+        job_id=str(job.id),
+        variant_id=variant_id,
+        orientation=req.orientation,
     )
     return GenerativeJobResponse(job_id=str(job.id), status="rendering")
 

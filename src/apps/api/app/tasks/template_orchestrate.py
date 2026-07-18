@@ -57,6 +57,7 @@ from app.pipeline.agents.gemini_analyzer import (
     build_recipe,
     gemini_upload_and_wait,
 )
+from app.pipeline.canvas import Canvas
 from app.pipeline.image_clip import is_image_file
 from app.pipeline.orientation import OrientationError, normalize_orientation
 from app.pipeline.reframe import ReframeError, resolve_output_fit
@@ -2416,6 +2417,7 @@ class SlotPlan:
     grid_highlight_intersection: str | None = None
     grid_highlight_color: str = "#E63946"
     grid_highlight_windows: list[tuple[float, float]] | None = None
+    canvas: Canvas | None = None
 
 
 _GRID_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -2541,6 +2543,7 @@ def _plan_slots(
     is_agentic: bool = False,
     allow_slowdown_fill: bool = True,
     landscape_fit: str = "fill",
+    canvas: Canvas | None = None,
 ) -> tuple[list[SlotPlan], dict[str, float], float]:
     """Phase 1: sequential arithmetic to plan all slot renders.
 
@@ -2856,6 +2859,7 @@ def _plan_slots(
                 color_trc=color_trc,
                 has_audio=has_audio,
                 output_fit=slot_output_fit,
+                canvas=canvas,
                 **grid_params,
             )
         )
@@ -2887,6 +2891,7 @@ def _render_planned_slot(plan: SlotPlan) -> str:
         grid_highlight_windows=plan.grid_highlight_windows,
         color_trc=plan.color_trc,
         has_audio=plan.has_audio,
+        canvas=plan.canvas,
     )
     log.info(
         "slot_render_done",
@@ -3031,6 +3036,7 @@ def _build_single_pass_spec(
     abs_ass_paths: list[str] | None = None,
     fonts_dir: str = "",
     transition_duration_s: float | None = None,
+    canvas: Canvas | None = None,
 ) -> SinglePassSpec:
     """Convert orchestrator plans + interstitials → SinglePassSpec.
 
@@ -3167,6 +3173,7 @@ def _build_single_pass_spec(
         fonts_dir=fonts_dir,
         output_duration_s=total_dur,
         transition_duration_s=transition_duration_s,
+        canvas=canvas,
     )
 
 
@@ -3201,6 +3208,7 @@ def _assemble_clips(
     # exact_window steps. Existing callers pass nothing → behavior unchanged.
     resolved_plans_out: list | None = None,
     landscape_fit: str = "fill",
+    canvas: Canvas | None = None,
 ) -> None:
     """Assemble clips in slot order: plan, parallel-render, then join with transitions.
 
@@ -3256,6 +3264,7 @@ def _assemble_clips(
         is_agentic=is_agentic,
         allow_slowdown_fill=allow_slowdown_fill,
         landscape_fit=landscape_fit,
+        canvas=canvas,
     )
     _phase_done("plan", _phase_t0, job_id=job_id, slots=len(plans))
 
@@ -3312,6 +3321,7 @@ def _assemble_clips(
                 abs_ass_paths=abs_ass_paths,
                 fonts_dir=fonts_dir,
                 transition_duration_s=transition_duration_s,
+                canvas=canvas,
             )
             # Single ffmpeg invocation — when overlays exist AND
             # base_output_path is set, run_single_pass emits a 2-output
@@ -3488,6 +3498,8 @@ def _assemble_clips(
                     reframed,
                     tail_output,
                     animate_s=curtain_anim,
+                    width=canvas.width if canvas is not None else 1080,
+                    height=canvas.height if canvas is not None else 1920,
                 )
                 reframed = tail_output
             except Exception as exc:
@@ -3533,6 +3545,7 @@ def _assemble_clips(
                     slot_durations,
                     transition_types,
                     tmpdir,
+                    canvas=canvas,
                 )
             else:
                 log.info("interstitial_skip_zero_hold", type=inter["type"], slot=i)
@@ -3629,6 +3642,8 @@ def _insert_interstitial(
     slot_durations: list[float],
     transition_types: list[str],
     tmpdir: str,
+    *,
+    canvas: Canvas | None = None,
 ) -> None:
     """Render an interstitial clip and insert it into the assembly lists.
 
@@ -3660,7 +3675,13 @@ def _insert_interstitial(
             "fade-black-hold",
             "flash-white",
         ):
-            render_color_hold(inter_path, hold_s=hold_s, color=ffmpeg_color)
+            render_color_hold(
+                inter_path,
+                hold_s=hold_s,
+                color=ffmpeg_color,
+                width=canvas.width if canvas is not None else 1080,
+                height=canvas.height if canvas is not None else 1920,
+            )
         else:
             log.warning("unknown_interstitial_type", type=inter_type)
             return

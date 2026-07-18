@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from app.pipeline.canvas import PORTRAIT, Canvas
 from app.pipeline.word_timing import synthesize_word_timings
 
 if TYPE_CHECKING:
@@ -350,6 +351,7 @@ def _build_cluster_intro_overlays(
     language: str = "en",
     hook_window_s: float = _HOLD_TO_END_S,
     behind_subject: bool = False,
+    canvas: Canvas = PORTRAIT,
     **style_kwargs,
 ) -> list[dict] | None:
     """Build the editorial word-cluster intro: one [reveal, hold] pair PER block.
@@ -372,15 +374,17 @@ def _build_cluster_intro_overlays(
     from app.pipeline.intro_cluster import compute_cluster_blocks  # noqa: PLC0415
 
     base_px = style_kwargs.get("text_size_px")
-    blocks = compute_cluster_blocks(
-        text,
-        word_roles=word_roles,
-        base_size_px=int(base_px) if base_px else 60,
-        font_family=style_kwargs.get("font_family"),
-        reveal_window_s=reveal_window_s,
-        style=cluster_style,
-        language=language,
-    )
+    block_kwargs = {
+        "word_roles": word_roles,
+        "base_size_px": int(base_px) if base_px else 60,
+        "font_family": style_kwargs.get("font_family"),
+        "reveal_window_s": reveal_window_s,
+        "style": cluster_style,
+        "language": language,
+    }
+    if canvas != PORTRAIT:
+        block_kwargs["canvas"] = canvas
+    blocks = compute_cluster_blocks(text, **block_kwargs)
     if not blocks:
         return None
 
@@ -449,6 +453,7 @@ def build_persistent_intro_overlays(
     start_s: float | None = None,
     end_s: float | None = None,
     behind_subject: bool = False,
+    canvas: Canvas = PORTRAIT,
     **style_kwargs,
 ) -> list[dict]:
     """Build the persistent hero-intro as a [reveal, hold] overlay list (absolute,
@@ -515,6 +520,7 @@ def build_persistent_intro_overlays(
                 language=language,
                 hook_window_s=effective_hook_s,
                 behind_subject=behind_subject,
+                canvas=canvas,
                 **style_kwargs,
             )
         except Exception as exc:
@@ -604,6 +610,7 @@ def inject_persistent_intro(
     cluster_style: dict | None = None,
     language: str = "en",
     hook_window_s: float = _HOLD_TO_END_S,
+    canvas: Canvas = PORTRAIT,
     **style_kwargs,
 ) -> dict:
     """Inject the persistent hero intro (reveal + static hold) into the hero slot.
@@ -643,6 +650,7 @@ def inject_persistent_intro(
         cluster_style=cluster_style,
         language=language,
         hook_window_s=hook_window_s,
+        canvas=canvas,
         **style_kwargs,
     )
     for overlay in overlays:
@@ -690,6 +698,7 @@ def build_sequence_overlays(
     *,
     base_size_px: int,
     text_color: str = _DEFAULT_TEXT_COLOR,
+    canvas: Canvas = PORTRAIT,
 ) -> list[dict] | None:
     """Turn phrase scenes (`phrase_sequence.split_phrases`, `word_roles` already
     filled by the caller) into renderable sequence overlays.
@@ -743,14 +752,16 @@ def build_sequence_overlays(
         end_s = float(scene.get("end_s") or 0.0)
         scene_len = end_s - start_s
 
-        blocks = compute_cluster_blocks(
-            text,
-            word_roles=list(roles) if roles else None,
-            base_size_px=int(base_size_px),
-            reveal_window_s=scene_len,
-            style=EDITORIAL_STYLE,
-            accent_parity=i,
-        )
+        block_kwargs = {
+            "word_roles": list(roles) if roles else None,
+            "base_size_px": int(base_size_px),
+            "reveal_window_s": scene_len,
+            "style": EDITORIAL_STYLE,
+            "accent_parity": i,
+        }
+        if canvas != PORTRAIT:
+            block_kwargs["canvas"] = canvas
+        blocks = compute_cluster_blocks(text, **block_kwargs)
         if not blocks:
             log.info(
                 "generative_sequence_scene_skipped",

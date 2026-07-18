@@ -46,6 +46,7 @@ from app.routes.generative_jobs import (
     EditorCommitSections,
     EditVariantRequest,
     LyricsSectionRequest,
+    OrientationRequest,
     PatchSceneTimingRequest,
     RetextRequest,
     SetIntroSizeRequest,
@@ -69,6 +70,7 @@ from app.routes.generative_jobs import (
     dispatch_set_lyrics,
     dispatch_set_media_overlays,
     dispatch_set_narrated_bed_level,
+    dispatch_set_orientation,
     dispatch_set_sound_effects,
     dispatch_set_text_elements,
     dispatch_swap_song,
@@ -2245,6 +2247,34 @@ async def set_item_lyrics(
     return plan_item_response(await _load_owned_item(item_id, user.id, db))
 
 
+@router.put(
+    "/{item_id}/variants/{variant_id}/orientation",
+    response_model=PlanItemResponse,
+)
+async def set_item_orientation(
+    item_id: str,
+    variant_id: str,
+    body: OrientationRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> PlanItemResponse:
+    """Set portrait/landscape output for one of this item's variants."""
+    job = await _owned_item_render_job(item_id, user.id, db)
+    await dispatch_set_orientation(
+        db,
+        job,
+        variant_id,
+        orientation=body.orientation,
+    )
+    log.info(
+        "plan_item_set_orientation",
+        item_id=item_id,
+        variant_id=variant_id,
+        orientation=body.orientation,
+    )
+    return plan_item_response(await _load_owned_item(item_id, user.id, db))
+
+
 @router.post(
     "/{item_id}/variants/{variant_id}/editor-commit",
     response_model=EditorCommitResponse,
@@ -2384,6 +2414,7 @@ async def editor_commit_item(
             mix=prep["sections"]["mix"],
             music=prep["sections"]["music"],
             lyrics=prep["sections"]["lyrics"],
+            orientation=prep["sections"]["orientation"],
             sound_effects=prep["sections"]["sound_effects"],
             media_overlays=prep["sections"]["media_overlays"],
             visual_blocks=prep["sections"]["visual_blocks"],

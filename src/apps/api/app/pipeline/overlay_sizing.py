@@ -26,6 +26,8 @@ agent and the user agree on bounds.
 
 from __future__ import annotations
 
+from app.pipeline.canvas import PORTRAIT, Canvas
+
 # Output canvas (mirrors text_overlay_skia.CANVAS_W/H — duplicated to keep this
 # module skia-free at import time).
 _CANVAS_W = 1080
@@ -74,6 +76,7 @@ def compute_overlay_size(
     visual_density: float = 5.0,
     min_px: int = MIN_INTRO_PX,
     max_px: int = MAX_INTRO_PX,
+    canvas: Canvas = PORTRAIT,
 ) -> int:
     """Largest font px at which `text` fits the composition's text-safe box,
     biased smaller as `visual_density` rises. Always returns a value in
@@ -94,8 +97,8 @@ def compute_overlay_size(
     else:
         w_frac, h_frac = box[0] * _BOX_W_MARGIN, box[1]
 
-    box_w_px = w_frac * _CANVAS_W
-    box_h_px = h_frac * _CANVAS_H
+    box_w_px = w_frac * canvas.width
+    box_h_px = h_frac * canvas.height
 
     density = max(0.0, min(10.0, float(visual_density)))
     effective_max = max(min_px, int(max_px * (1.0 - _DENSITY_MAX_REDUCTION * density / 10.0)))

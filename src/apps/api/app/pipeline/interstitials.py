@@ -113,22 +113,35 @@ def render_color_hold(
     # interstitials. Audio layout constants live in audio_layout.py.
     cmd = [
         "ffmpeg",
-        "-f", "lavfi",
-        "-i", f"color=c={color}:s={width}x{height}:d={hold_s}:r={fps}",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={color}:s={width}x{height}:d={hold_s}:r={fps}",
         *SILENT_AUDIO_INPUT_ARGS,
         "-shortest",
-        "-c:v", "libx264",
-        "-profile:v", "high",
-        "-preset", "ultrafast",
-        "-crf", "18",
-        "-pix_fmt", "yuv420p",
-        "-color_primaries", "bt709",
-        "-color_trc", "bt709",
-        "-colorspace", "bt709",
-        "-r", str(fps),
-        "-t", f"{hold_s:.3f}",
+        "-c:v",
+        "libx264",
+        "-profile:v",
+        "high",
+        "-preset",
+        "ultrafast",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-color_primaries",
+        "bt709",
+        "-color_trc",
+        "bt709",
+        "-colorspace",
+        "bt709",
+        "-r",
+        str(fps),
+        "-t",
+        f"{hold_s:.3f}",
         *BODY_SLOT_AUDIO_OUT_ARGS,
-        "-movflags", "+faststart",
+        "-movflags",
+        "+faststart",
         "-y",
         output_path,
     ]
@@ -146,6 +159,8 @@ def apply_curtain_close_tail(
     slot_video_path: str,
     output_path: str,
     animate_s: float = 1.0,
+    width: int = _WIDTH,
+    height: int = _HEIGHT,
 ) -> None:
     """Apply curtain-close animation to the tail of a rendered slot clip.
 
@@ -165,9 +180,13 @@ def apply_curtain_close_tail(
     """
     # Get video duration via ffprobe
     probe_cmd = [
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
         slot_video_path,
     ]
     probe_result = subprocess.run(probe_cmd, capture_output=True, timeout=10, check=False)
@@ -178,8 +197,7 @@ def apply_curtain_close_tail(
         duration = float(probe_result.stdout.decode().strip())
     except (ValueError, TypeError) as exc:
         raise InterstitialError(
-            f"ffprobe returned non-numeric duration: "
-            f"{probe_result.stdout.decode()[:100]}"
+            f"ffprobe returned non-numeric duration: {probe_result.stdout.decode()[:100]}"
         ) from exc
 
     # Ensure visible footage before curtain starts — 60% max ratio leaves
@@ -193,9 +211,7 @@ def apply_curtain_close_tail(
         )
         animate_s = duration * _CURTAIN_MAX_RATIO
         if animate_s < 0.05:
-            raise InterstitialError(
-                f"clip too short for curtain-close ({duration:.2f}s)"
-            )
+            raise InterstitialError(f"clip too short for curtain-close ({duration:.2f}s)")
 
     anim_start = max(0.0, duration - animate_s)
 
@@ -242,7 +258,10 @@ def apply_curtain_close_tail(
 
     try:
         bars_pattern, n_bar_frames = _generate_curtain_bars_png_sequence(
-            output_dir=work_dir, animate_s=animate_s,
+            output_dir=work_dir,
+            animate_s=animate_s,
+            width=width,
+            height=height,
         )
 
         # The PNG sequence plays at _FPS starting at t=anim_start.
@@ -258,21 +277,41 @@ def apply_curtain_close_tail(
 
         overlay_cmd = [
             "ffmpeg",
-            "-i", slot_video_path,
-            "-framerate", str(_FPS),
-            "-i", bars_pattern,
-            "-filter_complex", filter_complex,
-            "-map", "[v]",
-            "-map", "0:a?",
-            "-c:v", "libx264", "-profile:v", "high",
-            "-preset", CURTAIN_CLOSE_X264_PRESET,
-            "-tune", CURTAIN_CLOSE_X264_TUNE,
-            "-crf", CURTAIN_CLOSE_X264_CRF,
-            "-pix_fmt", "yuv420p",
-            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            "-i",
+            slot_video_path,
+            "-framerate",
+            str(_FPS),
+            "-i",
+            bars_pattern,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-profile:v",
+            "high",
+            "-preset",
+            CURTAIN_CLOSE_X264_PRESET,
+            "-tune",
+            CURTAIN_CLOSE_X264_TUNE,
+            "-crf",
+            CURTAIN_CLOSE_X264_CRF,
+            "-pix_fmt",
+            "yuv420p",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
             *BODY_SLOT_AUDIO_OUT_ARGS,
-            "-movflags", "+faststart",
-            "-y", output_path,
+            "-movflags",
+            "+faststart",
+            "-y",
+            output_path,
         ]
         r = subprocess.run(
             overlay_cmd,
@@ -282,8 +321,7 @@ def apply_curtain_close_tail(
         )
         if r.returncode != 0:
             raise InterstitialError(
-                f"curtain-close overlay failed: "
-                f"{r.stderr.decode(errors='replace')[:500]}"
+                f"curtain-close overlay failed: {r.stderr.decode(errors='replace')[:500]}"
             )
 
     finally:
@@ -383,9 +421,13 @@ def apply_barn_door_open_head(
         InterstitialError: If FFmpeg fails.
     """
     probe_cmd = [
-        "ffprobe", "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
         slot_video_path,
     ]
     probe_result = subprocess.run(probe_cmd, capture_output=True, timeout=10, check=False)
@@ -396,8 +438,7 @@ def apply_barn_door_open_head(
         duration = float(probe_result.stdout.decode().strip())
     except (ValueError, TypeError) as exc:
         raise InterstitialError(
-            f"ffprobe returned non-numeric duration: "
-            f"{probe_result.stdout.decode()[:100]}"
+            f"ffprobe returned non-numeric duration: {probe_result.stdout.decode()[:100]}"
         ) from exc
 
     # Same 60% cap as curtain-close — leave at least 40% of the slot as
@@ -411,9 +452,7 @@ def apply_barn_door_open_head(
         )
         animate_s = duration * _BARN_DOOR_MAX_RATIO
         if animate_s < 0.05:
-            raise InterstitialError(
-                f"clip too short for barn-door-open ({duration:.2f}s)"
-            )
+            raise InterstitialError(f"clip too short for barn-door-open ({duration:.2f}s)")
 
     log.info(
         "barn_door_open_head_start",
@@ -425,35 +464,53 @@ def apply_barn_door_open_head(
 
     try:
         bars_pattern, n_bar_frames = _generate_barn_door_bars_png_sequence(
-            output_dir=work_dir, animate_s=animate_s,
+            output_dir=work_dir,
+            animate_s=animate_s,
         )
 
         # PNG sequence starts at t=0 and ends at t=animate_s, then holds the
         # final (fully-open / transparent) frame for the rest of the slot via
         # eof_action=repeat. Underlying footage shows through outside the bars.
         # No setpts offset — the animation starts at the slot's first frame.
-        filter_complex = (
-            f"[0:v][1:v]overlay=enable='lte(t,{animate_s:.3f})':"
-            f"eof_action=repeat[v]"
-        )
+        filter_complex = f"[0:v][1:v]overlay=enable='lte(t,{animate_s:.3f})':eof_action=repeat[v]"
 
         overlay_cmd = [
             "ffmpeg",
-            "-i", slot_video_path,
-            "-framerate", str(_FPS),
-            "-i", bars_pattern,
-            "-filter_complex", filter_complex,
-            "-map", "[v]",
-            "-map", "0:a?",
-            "-c:v", "libx264", "-profile:v", "high",
-            "-preset", CURTAIN_CLOSE_X264_PRESET,
-            "-tune", CURTAIN_CLOSE_X264_TUNE,
-            "-crf", CURTAIN_CLOSE_X264_CRF,
-            "-pix_fmt", "yuv420p",
-            "-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709",
+            "-i",
+            slot_video_path,
+            "-framerate",
+            str(_FPS),
+            "-i",
+            bars_pattern,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-profile:v",
+            "high",
+            "-preset",
+            CURTAIN_CLOSE_X264_PRESET,
+            "-tune",
+            CURTAIN_CLOSE_X264_TUNE,
+            "-crf",
+            CURTAIN_CLOSE_X264_CRF,
+            "-pix_fmt",
+            "yuv420p",
+            "-color_primaries",
+            "bt709",
+            "-color_trc",
+            "bt709",
+            "-colorspace",
+            "bt709",
             *BODY_SLOT_AUDIO_OUT_ARGS,
-            "-movflags", "+faststart",
-            "-y", output_path,
+            "-movflags",
+            "+faststart",
+            "-y",
+            output_path,
         ]
         r = subprocess.run(
             overlay_cmd,
@@ -463,8 +520,7 @@ def apply_barn_door_open_head(
         )
         if r.returncode != 0:
             raise InterstitialError(
-                f"barn-door-open overlay failed: "
-                f"{r.stderr.decode(errors='replace')[:500]}"
+                f"barn-door-open overlay failed: {r.stderr.decode(errors='replace')[:500]}"
             )
 
     finally:
@@ -539,14 +595,15 @@ def detect_black_segments(
         Returns [] on any error (non-fatal).
     """
     cmd = [
-        "ffmpeg", "-i", video_path,
-        "-vf", (
-            f"blackdetect=d={black_min_duration}"
-            f":pix_th={pixel_threshold}"
-            f":pic_th={picture_threshold}"
-        ),
+        "ffmpeg",
+        "-i",
+        video_path,
+        "-vf",
+        (f"blackdetect=d={black_min_duration}:pix_th={pixel_threshold}:pic_th={picture_threshold}"),
         "-an",
-        "-f", "null", "-",
+        "-f",
+        "null",
+        "-",
     ]
 
     try:
@@ -559,11 +616,13 @@ def detect_black_segments(
             r"black_start:\s*([\d.]+)\s*black_end:\s*([\d.]+)\s*black_duration:\s*([\d.]+)",
             stderr_text,
         ):
-            segments.append({
-                "start_s": float(m.group(1)),
-                "end_s": float(m.group(2)),
-                "duration_s": float(m.group(3)),
-            })
+            segments.append(
+                {
+                    "start_s": float(m.group(1)),
+                    "end_s": float(m.group(2)),
+                    "duration_s": float(m.group(3)),
+                }
+            )
 
         segments.sort(key=lambda s: s["start_s"])
         log.info("blackdetect_done", segments=len(segments), video=video_path)
@@ -598,11 +657,17 @@ def _sample_band_luminance(
 
     cmd = [
         "ffmpeg",
-        "-ss", f"{timestamp:.3f}",
-        "-i", video_path,
-        "-vf", f"crop=iw:ih/3:0:{y_offset},signalstats",
-        "-frames:v", "1",
-        "-f", "null", "-",
+        "-ss",
+        f"{timestamp:.3f}",
+        "-i",
+        video_path,
+        "-vf",
+        f"crop=iw:ih/3:0:{y_offset},signalstats",
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
     ]
 
     try:
@@ -640,12 +705,23 @@ def _sample_frame_bands(
     )
     cmd = [
         "ffmpeg",
-        "-ss", f"{timestamp:.3f}",
-        "-i", video_path,
-        "-filter_complex", filter_complex,
-        "-map", "[top]", "-map", "[mid]", "-map", "[bot]",
-        "-frames:v", "1",
-        "-f", "null", "-",
+        "-ss",
+        f"{timestamp:.3f}",
+        "-i",
+        video_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[top]",
+        "-map",
+        "[mid]",
+        "-map",
+        "[bot]",
+        "-frames:v",
+        "1",
+        "-f",
+        "null",
+        "-",
     ]
 
     try:
@@ -753,7 +829,7 @@ def _classify_single_segment(
 
     # Analyze the pattern: count frames where edges are darker than middle
     # Focus on the LATER frames (closer to black_start) where the effect is strongest
-    later_frames = frame_bands[len(frame_bands) // 2:]
+    later_frames = frame_bands[len(frame_bands) // 2 :]
     bar_pattern_count = 0
 
     for bands in later_frames:

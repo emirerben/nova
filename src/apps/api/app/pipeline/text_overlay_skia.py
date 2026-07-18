@@ -52,6 +52,7 @@ import skia
 import structlog
 from PIL import Image
 
+from app.pipeline.canvas import PORTRAIT, Canvas
 from app.pipeline.generative_overlays import (
     resolve_letter_spacing_em,
     resolve_letter_spacing_px,
@@ -62,8 +63,6 @@ from app.pipeline.text_overlay import (
     _FONT_REGISTRY,
     _FONT_SIZE_MAP,
     _POSITION_Y,
-    CANVAS_H,
-    CANVAS_W,
     FONT_CYCLE_FAST_INTERVAL_S,
     FONT_CYCLE_INTERVAL_S,
     FONT_CYCLE_SETTLE_RATIO,
@@ -88,6 +87,8 @@ log = structlog.get_logger()
 # MAX_FONT_CYCLE_FRAMES does. Lyric-timed text has a separate sanity ceiling
 # because the settled text must remain visible through its full audio window.
 FPS = 30
+CANVAS_W = PORTRAIT.width
+CANVAS_H = PORTRAIT.height
 MAX_OVERLAY_FRAMES = max(120, MAX_FONT_CYCLE_FRAMES)
 LONG_RUNNING_TEXT_FRAME_CEILING = int(FPS * 30)
 
@@ -133,9 +134,17 @@ _POP_IN_MAX_SCALE = max(_POP_IN_SCALES)
 _POP_SUFFIX_MAX_LINES = 2
 
 
-def _overlay_max_width_px(overlay: dict) -> float:
+def _overlay_max_width_px(overlay: dict, canvas: Canvas = PORTRAIT) -> float:
     """Per-overlay wrap budget. Missing field preserves the legacy 0.9 width."""
-    return CANVAS_W * resolve_max_width_frac(overlay.get("max_width_frac"))
+    return canvas.width * resolve_max_width_frac(overlay.get("max_width_frac"))
+
+
+def _render_canvas_kwargs(canvas: Canvas) -> dict[str, Canvas]:
+    return {"render_canvas": canvas} if canvas != PORTRAIT else {}
+
+
+def _canvas_kwargs(canvas: Canvas) -> dict[str, Canvas]:
+    return {"canvas": canvas} if canvas != PORTRAIT else {}
 
 
 # -- Typeface cache (load once at import) -------------------------------------
@@ -583,7 +592,7 @@ def _resolve_font_size_px(overlay: dict) -> int:
     return max(_MIN_FONT_SIZE, _FONT_SIZE_MAP.get(size_class, 72))
 
 
-def _resolve_anchor(overlay: dict) -> tuple[float, float]:
+def _resolve_anchor(overlay: dict, canvas: Canvas = PORTRAIT) -> tuple[float, float]:
     """Return (anchor_x_px, baseline_y_px) for the overlay's position.
 
     For center-anchored overlays the x is the line CENTER; for left-anchored
@@ -596,7 +605,7 @@ def _resolve_anchor(overlay: dict) -> tuple[float, float]:
         y_frac = _POSITION_Y.get(overlay.get("position", "center"), 0.5)
     if x_frac is None:
         x_frac = 0.5
-    return float(x_frac) * CANVAS_W, float(y_frac) * CANVAS_H
+    return float(x_frac) * canvas.width, float(y_frac) * canvas.height
 
 
 def _resolve_text_anchor(overlay: dict) -> str:
@@ -872,6 +881,7 @@ def _draw_centered_text(
     text: str,
     overlay: dict,
     *,
+    render_canvas: Canvas = PORTRAIT,
     font_override: skia.Font | None = None,
     color_override: int | None = None,
     alpha: float = 1.0,
@@ -890,7 +900,7 @@ def _draw_centered_text(
 
     typeface = _typeface_for_overlay(overlay)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    max_width = _overlay_max_width_px(overlay)
+    max_width = _overlay_max_width_px(overlay, render_canvas)
     if font_override is not None:
         font = font_override
         size = int(font.getSize())
@@ -916,7 +926,7 @@ def _draw_centered_text(
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=letter_spacing_px,
     )
-    cx, cy = _resolve_anchor(overlay)
+    cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
 
     block_top = _vertical_block_top(anchor, cy, block["block_h"])
@@ -924,7 +934,7 @@ def _draw_centered_text(
 
     # Emoji prefix: composite to the left of line 0
     first_w = block["widths"][0] if block["widths"] else 0
-    emoji_metrics = _resolve_emoji_metrics(overlay, first_w, font)
+    emoji_metrics = _resolve_emoji_metrics(overlay, first_w, font, render_canvas=render_canvas)
 
     base_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"), int(255 * alpha))
     fill_color = color_override if color_override is not None else base_color
@@ -935,7 +945,7 @@ def _draw_centered_text(
     # color_override (karaoke highlight keeps solid colour).
     gradient_shader: Any = None
     if overlay.get("text_gradient") and color_override is None:
-        block_w = max(block["widths"]) if block["widths"] else float(CANVAS_W)
+        block_w = max(block["widths"]) if block["widths"] else float(render_canvas.width)
         block_x = _anchored_left_x(anchor, cx, block_w)
         gradient_shader = _skia_gradient_shader(
             overlay["text_gradient"],
@@ -993,7 +1003,12 @@ def _draw_centered_text(
     canvas.restore()
 
 
-def _overlay_for_left_reveal_box(overlay: dict, full_text: str) -> dict:
+def _overlay_for_left_reveal_box(
+    overlay: dict,
+    full_text: str,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> dict:
     """Pin reveal effects to the full text box's left/top origin.
 
     Typewriter/stream-in draw only the visible substring each frame. If that
@@ -1006,7 +1021,7 @@ def _overlay_for_left_reveal_box(overlay: dict, full_text: str) -> dict:
 
     typeface = _typeface_for_overlay(overlay)
     letter_spacing_em = resolve_letter_spacing_em(overlay.get("letter_spacing"))
-    max_width = _overlay_max_width_px(overlay)
+    max_width = _overlay_max_width_px(overlay, render_canvas)
     initial_size = _resolve_font_size_px(overlay)
     if overlay.get("preserve_font_size"):
         font, size, lines = _wrap_at_fixed_size(
@@ -1033,14 +1048,14 @@ def _overlay_for_left_reveal_box(overlay: dict, full_text: str) -> dict:
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=letter_spacing_em * size,
     )
-    cx, cy = _resolve_anchor(overlay)
+    cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
     box_left = _anchored_left_x(anchor, cx, max_width)
     box_top = _vertical_block_top(anchor, cy, block["block_h"])
     reveal_overlay = dict(overlay)
     reveal_overlay["text_anchor"] = "left"
-    reveal_overlay["position_x_frac"] = max(0.0, min(1.0, box_left / CANVAS_W))
-    reveal_overlay["position_y_frac"] = max(0.0, min(1.0, box_top / CANVAS_H))
+    reveal_overlay["position_x_frac"] = max(0.0, min(1.0, box_left / render_canvas.width))
+    reveal_overlay["position_y_frac"] = max(0.0, min(1.0, box_top / render_canvas.height))
     return reveal_overlay
 
 
@@ -1117,7 +1132,11 @@ def _draw_line_with_layers(
 
 
 def _resolve_emoji_metrics(
-    overlay: dict, first_line_width: float, font: skia.Font
+    overlay: dict,
+    first_line_width: float,
+    font: skia.Font,
+    *,
+    render_canvas: Canvas = PORTRAIT,
 ) -> dict[str, Any] | None:
     """Resolve emoji prefix as a Skia Image + sizing metrics. Mirrors Pillow's
     sizing: 95% of first line height, max combined width 95% of canvas."""
@@ -1138,7 +1157,7 @@ def _resolve_emoji_metrics(
     emoji_size = max(24, int(first_line_h * 0.95))
     gap = max(8, emoji_size // 6)
     combined = emoji_size + gap + first_line_width
-    max_combined = int(CANVAS_W * 0.95)
+    max_combined = int(render_canvas.width * 0.95)
     if combined > max_combined:
         overshoot = combined - max_combined
         new_size = max(20, emoji_size - int(overshoot))
@@ -1225,7 +1244,12 @@ def _pop_in_scale_at(t_local: float, duration_s: float) -> float:
 
 
 def _draw_pop_in_with_suffix(
-    canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
+    canvas: skia.Canvas,
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
 ) -> None:
     """pop-in with `pop_animated_suffix`: prefix renders static at 100% scale,
     suffix appears immediately at 100% scale.
@@ -1243,13 +1267,20 @@ def _draw_pop_in_with_suffix(
     # If the suffix doesn't actually trail the text, fall back to a regular
     # pop-in (animate the whole line). Mirrors production's null-suffix path.
     if not suffix or not text.endswith(suffix):
-        _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
+        _draw_with_animation(
+            canvas,
+            overlay,
+            t_local,
+            duration_s,
+            effect="pop-in",
+            render_canvas=render_canvas,
+        )
         return
 
     typeface = _typeface_for_overlay(overlay)
     assert_lyric_glyphs(typeface, text)
     initial_size = _resolve_font_size_px(overlay)
-    cx, cy = _resolve_anchor(overlay)
+    cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
     # Lay out the FULL text so prefix + suffix stay in their final positions.
     # Lyric pop-up stages can opt into fixed typography: cumulative lines wrap
@@ -1260,21 +1291,21 @@ def _draw_pop_in_with_suffix(
             text,
             typeface,
             initial_size,
-            _overlay_max_width_px(overlay),
+            _overlay_max_width_px(overlay, render_canvas),
         )
     elif anchor == "left":
         full_font, _full_size, full_lines = _shrink_to_fit(
             text,
             typeface,
             initial_size,
-            _overlay_max_width_px(overlay),
+            _overlay_max_width_px(overlay, render_canvas),
         )
     else:
         full_font, _full_size, full_lines = _shrink_to_fit_max_lines(
             text,
             typeface,
             initial_size,
-            _overlay_max_width_px(overlay),
+            _overlay_max_width_px(overlay, render_canvas),
             _POP_SUFFIX_MAX_LINES,
         )
     if not full_lines:
@@ -1282,7 +1313,14 @@ def _draw_pop_in_with_suffix(
 
     suffix_line_idx = len(full_lines) - 1
     if not full_lines[suffix_line_idx].rstrip().endswith(suffix):
-        _draw_with_animation(canvas, overlay, t_local, duration_s, effect="pop-in")
+        _draw_with_animation(
+            canvas,
+            overlay,
+            t_local,
+            duration_s,
+            effect="pop-in",
+            render_canvas=render_canvas,
+        )
         return
 
     block = _measure_block(full_font, full_lines)
@@ -1348,7 +1386,12 @@ def _draw_pop_in_with_suffix(
 
 
 def _draw_karaoke_line(
-    canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
+    canvas: skia.Canvas,
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
 ) -> None:
     """karaoke-line: each word switches from primary color to highlight color
     when t_local crosses its start timestamp. word_timings is a list of
@@ -1361,7 +1404,7 @@ def _draw_karaoke_line(
     text = overlay.get("text", "") or ""
     word_timings = overlay.get("word_timings") or []
     if not word_timings:
-        _draw_centered_text(canvas, text, overlay)
+        _draw_centered_text(canvas, text, overlay, render_canvas=render_canvas)
         return
 
     words: list[str] = []
@@ -1380,7 +1423,7 @@ def _draw_karaoke_line(
         starts.append(clamped_start)
         acc = max(acc, clamped_start + dur_s)
     if not words:
-        _draw_centered_text(canvas, text, overlay)
+        _draw_centered_text(canvas, text, overlay, render_canvas=render_canvas)
         return
 
     typeface = _typeface_for_overlay(overlay)
@@ -1388,7 +1431,7 @@ def _draw_karaoke_line(
     initial_size = _resolve_font_size_px(overlay)
     font = skia.Font(typeface, initial_size)
     font.setSubpixel(True)
-    max_width = _overlay_max_width_px(overlay)
+    max_width = _overlay_max_width_px(overlay, render_canvas)
     spacing_px = _overlay_letter_spacing_px(overlay, initial_size)
     line_word_indices = _wrap_word_indices(words, font, max_width, spacing_px)
     if not line_word_indices:
@@ -1401,7 +1444,7 @@ def _draw_karaoke_line(
     word_widths = [_measure_line(font, w, spacing_px) for w in words]
     line_texts = [" ".join(words[i] for i in line) for line in line_word_indices]
 
-    cx, cy = _resolve_anchor(overlay)
+    cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
     block = _measure_block(
         font,
@@ -1502,6 +1545,7 @@ def _draw_with_animation(
     duration_s: float,
     *,
     effect: str | None = None,
+    render_canvas: Canvas = PORTRAIT,
 ) -> None:
     """Apply animation transforms (scale, alpha, position, reveal length) for
     `effect` at time `t_local`, then draw the (possibly transformed) text.
@@ -1576,7 +1620,7 @@ def _draw_with_animation(
         alpha *= _sequence_fade_out_alpha(overlay, t_local, duration_s)
 
     draw_overlay = (
-        _overlay_for_left_reveal_box(overlay, text)
+        _overlay_for_left_reveal_box(overlay, text, render_canvas=render_canvas)
         if effect in ("typewriter", "stream-in")
         else overlay
     )
@@ -1585,6 +1629,7 @@ def _draw_with_animation(
         canvas,
         visible_text,
         draw_overlay,
+        render_canvas=render_canvas,
         alpha=alpha,
         scale=scale,
         y_translate=y_translate,
@@ -1630,7 +1675,12 @@ def _is_animated(overlay: dict) -> bool:
 
 
 def _draw_overlay_on_canvas(
-    canvas: skia.Canvas, overlay: dict, t_local: float, duration_s: float
+    canvas: skia.Canvas,
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
 ) -> None:
     """Draw one overlay's frame-at-time-t onto an existing canvas.
 
@@ -1653,29 +1703,41 @@ def _draw_overlay_on_canvas(
         font = skia.Font(_typeface_for_overlay(overlay, font_name_override=font_name))
         font.setSize(_resolve_font_size_px(overlay))
         font.setSubpixel(True)
-        _draw_centered_text(canvas, _overlay_text(overlay), overlay, font_override=font)
+        _draw_centered_text(
+            canvas,
+            _overlay_text(overlay),
+            overlay,
+            render_canvas=render_canvas,
+            font_override=font,
+        )
     elif effect == "karaoke-line":
-        _draw_karaoke_line(canvas, overlay, t_local, duration_s)
+        _draw_karaoke_line(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
     elif effect == "pop-in" and overlay.get("pop_animated_suffix"):
-        _draw_pop_in_with_suffix(canvas, overlay, t_local, duration_s)
+        _draw_pop_in_with_suffix(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
     elif _is_animated(overlay):
         # `lyric-line` is in this branch because its fade_in_ms / fade_out_ms
         # are honored per-frame in `_draw_with_animation`. `_overlay_text`
         # still resolves `display_text` (the Layer 2 finalizer's truncated
         # partial line) when present — the alpha multiplies on top of that.
-        _draw_with_animation(canvas, overlay, t_local, duration_s)
+        _draw_with_animation(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
     else:
         # Static effects render at full opacity throughout [start_s, end_s].
-        _draw_centered_text(canvas, _overlay_text(overlay), overlay)
+        _draw_centered_text(canvas, _overlay_text(overlay), overlay, render_canvas=render_canvas)
 
 
-def _draw_frame(overlay: dict, t_local: float, duration_s: float) -> skia.Image:
+def _draw_frame(
+    overlay: dict,
+    t_local: float,
+    duration_s: float,
+    *,
+    render_canvas: Canvas = PORTRAIT,
+) -> skia.Image:
     """Render one frame of `overlay` at time `t_local`. Returns a Skia Image
     that the caller writes to disk via Pillow."""
-    surface = skia.Surfaces.MakeRasterN32Premul(CANVAS_W, CANVAS_H)
+    surface = skia.Surfaces.MakeRasterN32Premul(render_canvas.width, render_canvas.height)
     canvas = surface.getCanvas()
     canvas.clear(skia.ColorTRANSPARENT)
-    _draw_overlay_on_canvas(canvas, overlay, t_local, duration_s)
+    _draw_overlay_on_canvas(canvas, overlay, t_local, duration_s, render_canvas=render_canvas)
     return surface.makeImageSnapshot()
 
 
@@ -1897,6 +1959,7 @@ def _generate_overlay_sequence(
     idx: int,
     *,
     matte: SubjectMatteProvider | None = None,
+    render_canvas: Canvas = PORTRAIT,
 ) -> dict[str, Any] | None:
     """Render every frame for one overlay, return a single config describing
     the sequence (or single PNG for static effects)."""
@@ -1920,7 +1983,7 @@ def _generate_overlay_sequence(
 
     if not _is_animated(overlay) and not behind:
         out_path = os.path.join(work_dir, f"{pattern_prefix}0000.png")
-        img = _draw_frame(overlay, 0.0, duration_s)
+        img = _draw_frame(overlay, 0.0, duration_s, render_canvas=render_canvas)
         _write_png_pillow(img, out_path)
         return _with_masonry_layer_origin(
             {
@@ -1988,7 +2051,9 @@ def _generate_overlay_sequence(
     # frame; animated overlays still redraw the glyphs per frame and get
     # masked on top, same as the static case.
     static_behind_arr = (
-        _skia_image_to_rgba_array(_draw_frame(overlay, 0.0, duration_s))
+        _skia_image_to_rgba_array(
+            _draw_frame(overlay, 0.0, duration_s, render_canvas=render_canvas)
+        )
         if behind and not _is_animated(overlay)
         else None
     )
@@ -2002,7 +2067,9 @@ def _generate_overlay_sequence(
         settled_arr = (
             static_behind_arr
             if static_behind_arr is not None
-            else _skia_image_to_rgba_array(_draw_frame(overlay, duration_s, duration_s))
+            else _skia_image_to_rgba_array(
+                _draw_frame(overlay, duration_s, duration_s, render_canvas=render_canvas)
+            )
         )
         vis_scales = _behind_visibility_scales(
             matte,
@@ -2026,7 +2093,9 @@ def _generate_overlay_sequence(
             arr = (
                 static_behind_arr
                 if static_behind_arr is not None
-                else _skia_image_to_rgba_array(_draw_frame(overlay, t_local, duration_s))
+                else _skia_image_to_rgba_array(
+                    _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
+                )
             )
             scale = 1.0 if vis_scales is None else float(vis_scales[i])
             if scale <= 0.0:
@@ -2044,7 +2113,7 @@ def _generate_overlay_sequence(
                 arr[..., 3] = (arr[..., 3].astype(np.float32) * scale).astype(np.uint8)
             _write_rgba_array_png(arr, out_path)
         else:
-            img = _draw_frame(overlay, t_local, duration_s)
+            img = _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
             _write_png_pillow(img, out_path)
 
     # Sequence overlays render only their fade-in head + fade-out tail; the
@@ -2137,6 +2206,7 @@ def _render_overlay_sequences(
     work_dir: str,
     *,
     matte: SubjectMatteProvider | None = None,
+    render_canvas: Canvas = PORTRAIT,
 ) -> list[dict[str, Any]]:
     """Validate every overlay against slot_duration_s, then render PNG
     sequences. Returns list of overlay-sequence configs ready for FFmpeg."""
@@ -2145,7 +2215,9 @@ def _render_overlay_sequences(
         clamped = _validate_and_clamp(overlay, slot_duration_s)
         if clamped is None:
             continue
-        seq = _generate_overlay_sequence(clamped, work_dir, i, matte=matte)
+        seq = _generate_overlay_sequence(
+            clamped, work_dir, i, matte=matte, render_canvas=render_canvas
+        )
         if seq is not None:
             out.append(seq)
     return out
@@ -2200,7 +2272,11 @@ def _sequence_block_changing_at(overlay: dict, t_local: float, duration_s: float
 
 
 def _render_sequence_composite(
-    overlays: list[dict], slot_duration_s: float, work_dir: str
+    overlays: list[dict],
+    slot_duration_s: float,
+    work_dir: str,
+    *,
+    render_canvas: Canvas = PORTRAIT,
 ) -> dict[str, Any] | None:
     """Render every sequence overlay into ONE full-canvas PNG sequence.
 
@@ -2283,11 +2359,11 @@ def _render_sequence_composite(
 
     def _render_one(job: tuple[int, list[tuple[dict, float, float]]]) -> None:
         i, draw_list = job
-        surface = skia.Surfaces.MakeRasterN32Premul(CANVAS_W, CANVAS_H)
+        surface = skia.Surfaces.MakeRasterN32Premul(render_canvas.width, render_canvas.height)
         canvas = surface.getCanvas()
         canvas.clear(skia.ColorTRANSPARENT)
         for block, t_local, block_dur in draw_list:
-            _draw_overlay_on_canvas(canvas, block, t_local, block_dur)
+            _draw_overlay_on_canvas(canvas, block, t_local, block_dur, render_canvas=render_canvas)
         _write_png_pillow(
             surface.makeImageSnapshot(),
             os.path.join(work_dir, f"{pattern_prefix}{i:05d}.png"),
@@ -2328,6 +2404,8 @@ def _ffmpeg_burn_pngs(
     input_video: str,
     sequences: list[dict[str, Any]],
     output_path: str,
+    *,
+    canvas: Canvas = PORTRAIT,
 ) -> None:
     """Build and run the FFmpeg command that overlays PNG sequences onto
     `input_video`. Uses image2 demuxer for animated sequences (one input per
@@ -2383,7 +2461,7 @@ def _ffmpeg_burn_pngs(
             f"[{prev}]",
             "-map",
             "0:a?",
-            *_encoding_args(output_path, preset="fast"),
+            *_encoding_args(output_path, preset="fast", canvas=canvas),
         ]
     )
 
@@ -2435,6 +2513,7 @@ def render_text_overlay_sequences(
     *,
     work_dir_name: str = "skia_text_burn",
     matte: SubjectMatteProvider | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Render overlay dicts into transparent full-frame PNG streams.
 
@@ -2485,13 +2564,24 @@ def render_text_overlay_sequences(
             group_work_dir = os.path.join(work_dir, f"sequence_group_{group_index:03d}")
             os.makedirs(group_work_dir, exist_ok=True)
         composite = (
-            _render_sequence_composite(group, slot_duration_s, group_work_dir)
+            _render_sequence_composite(
+                group,
+                slot_duration_s,
+                group_work_dir,
+                **_render_canvas_kwargs(canvas),
+            )
             if len(group) >= 2
             else None
         )
         if composite is None:
             sequence_layers.extend(
-                _render_overlay_sequences(group, slot_duration_s, group_work_dir, matte=matte)
+                _render_overlay_sequences(
+                    group,
+                    slot_duration_s,
+                    group_work_dir,
+                    matte=matte,
+                    **_render_canvas_kwargs(canvas),
+                )
             )
             continue
         if origin is not None:
@@ -2500,7 +2590,13 @@ def render_text_overlay_sequences(
         composited_sequence_blocks += len(group)
 
     non_sequence = [o for o in overlays if o.get("role") != SEQUENCE_OVERLAY_ROLE]
-    sequences = _render_overlay_sequences(non_sequence, slot_duration_s, work_dir, matte=matte)
+    sequences = _render_overlay_sequences(
+        non_sequence,
+        slot_duration_s,
+        work_dir,
+        matte=matte,
+        **_render_canvas_kwargs(canvas),
+    )
     # Appended last → sequence text draws on top of non-sequence overlays. Contiguous
     # origin runs stay in authored order, preserving sequence z-order across layers.
     sequences.extend(sequence_layers)
@@ -2530,6 +2626,7 @@ def burn_text_overlays_skia(
     tmpdir: str,
     *,
     matte: SubjectMatteProvider | None = None,
+    canvas: Canvas = PORTRAIT,
 ) -> None:
     """Drop-in replacement for `text_overlay._burn_text_overlays` when the
     job is agentic or music.
@@ -2548,12 +2645,17 @@ def burn_text_overlays_skia(
         shutil.copy2(input_path, output_path)
         return
 
-    sequences, work_dir = render_text_overlay_sequences(overlays, tmpdir, matte=matte)
+    sequences, work_dir = render_text_overlay_sequences(
+        overlays,
+        tmpdir,
+        matte=matte,
+        **_canvas_kwargs(canvas),
+    )
     try:
         if not sequences:
             shutil.copy2(input_path, output_path)
             return
-        _ffmpeg_burn_pngs(input_path, sequences, output_path)
+        _ffmpeg_burn_pngs(input_path, sequences, output_path, **_canvas_kwargs(canvas))
     finally:
         # The full-frame 1080x1920 PNG sequences are only needed for the single
         # encode above. Free them the instant it returns so they don't pile up on

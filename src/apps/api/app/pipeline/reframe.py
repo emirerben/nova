@@ -28,6 +28,7 @@ from app.pipeline.audio_layout import (
     BODY_SLOT_AUDIO_OUT_ARGS,
     SILENT_AUDIO_INPUT_ARGS,
 )
+from app.pipeline.canvas import Canvas
 from app.pipeline.probe import probe_video
 from app.pipeline.text_overlay import FONTS_DIR
 
@@ -66,6 +67,7 @@ def _encoding_args(
     preset: str = "fast",
     crf: str = "18",
     include_audio: bool = True,
+    canvas: Canvas | None = None,
 ) -> list[str]:
     """Shared FFmpeg output encoding arguments (DRY).
 
@@ -203,9 +205,11 @@ def _encoding_args(
         # Video-only encodes (e.g. join_with_transitions, which mixes template
         # audio separately and passes -an) set include_audio=False to skip these.
         args += [*BODY_SLOT_AUDIO_OUT_ARGS]
+    output_width = canvas.width if canvas is not None else settings.output_width
+    output_height = canvas.height if canvas is not None else settings.output_height
     args += [
         "-s",
-        f"{settings.output_width}x{settings.output_height}",
+        f"{output_width}x{output_height}",
         "-movflags",
         "+faststart",
         "-y",
@@ -239,6 +243,7 @@ def reframe_and_export(
     has_audio: bool | None = None,
     keep_segments: list[tuple[float, float]] | None = None,
     keep_segments_punch_in: float | None = None,
+    canvas: Canvas | None = None,
 ) -> None:
     """Render a single clip to the output spec. Raises ReframeError on failure.
 
@@ -297,6 +302,7 @@ def reframe_and_export(
         grid_highlight_intersection=grid_highlight_intersection,
         grid_highlight_color=grid_highlight_color,
         grid_highlight_windows=grid_highlight_windows,
+        canvas=canvas,
     )
 
     # Debug: log final filter chain to diagnose darkness/color issues.
@@ -333,6 +339,7 @@ def reframe_and_export(
             ass_overlay_paths or [],
             output_path,
             has_audio=has_audio,
+            canvas=canvas,
         )
     elif keep_segments is not None:
         log.info(
@@ -349,7 +356,9 @@ def reframe_and_export(
         # swapped-dims branch here produced 1920x1080 odd segments against
         # 1080x1920 even ones on landscape sources → concat abort at render
         # (caught in review, 2026-07-11).
-        punch_dims = (settings.output_width, settings.output_height)
+        output_width = canvas.width if canvas is not None else settings.output_width
+        output_height = canvas.height if canvas is not None else settings.output_height
+        punch_dims = (output_width, output_height)
         cmd = _build_keep_segments_cmd(
             input_path,
             start_s,
@@ -365,7 +374,7 @@ def reframe_and_export(
         # uncut reframe. The call stays in THIS function (not the builder) so
         # the encoder-policy audit (tests/test_encoder_policy.py) keeps seeing
         # only allowlisted call sites.
-        cmd += _encoding_args(output_path, preset="ultrafast", crf="14")
+        cmd += _encoding_args(output_path, preset="ultrafast", crf="14", canvas=canvas)
     else:
         vf_string = ",".join(vf_parts)
         cmd = ["ffmpeg", "-ss", str(start_s), "-t", str(duration), "-i", input_path]
@@ -384,7 +393,7 @@ def reframe_and_export(
             # more bits here so the temp file stays clean for the final encode —
             # ~38% less dark-region distortion in local A/B (job 792f2d52). Temp-only;
             # shipped bytes still come from the final fast pass.
-            *_encoding_args(output_path, preset="ultrafast", crf="14"),
+            *_encoding_args(output_path, preset="ultrafast", crf="14", canvas=canvas),
         ]
 
     log.info(
@@ -439,6 +448,7 @@ def reframe_and_export(
             grid_highlight_windows=grid_highlight_windows,
             color_trc=color_trc,
             has_audio=has_audio,
+            canvas=canvas,
             # keep_segments is provably None here — the mutual-exclusion
             # check above raises before any subprocess run.
         )
@@ -484,6 +494,7 @@ def _build_overlay_cmd(
     ass_overlay_paths: list[str],
     output_path: str,
     has_audio: bool = True,
+    canvas: Canvas | None = None,
 ) -> list[str]:
     """Build FFmpeg command with -filter_complex for PNG + ASS overlay compositing.
 
@@ -556,7 +567,7 @@ def _build_overlay_cmd(
     # Intermediate (re-encoded downstream). crf=14 keeps this overlay-on-base temp
     # file clean so the final pass isn't fed pre-baked dark-gradient blocking. See
     # the matching note in reframe_and_export.
-    cmd.extend(_encoding_args(output_path, preset="ultrafast", crf="14"))
+    cmd.extend(_encoding_args(output_path, preset="ultrafast", crf="14", canvas=canvas))
 
     return cmd
 
@@ -843,6 +854,7 @@ def _build_video_filter(
     grid_highlight_intersection: str | None = None,
     grid_highlight_color: str = "#E63946",
     grid_highlight_windows: list[tuple[float, float]] | None = None,
+    canvas: Canvas | None = None,
 ) -> list[str]:
     """Return list of filter segments to join with commas.
 
@@ -909,8 +921,8 @@ def _build_video_filter(
     # the sides — fine for talking heads / single-subject shots). "letterbox"
     # variants preserve the entire source frame: scale-to-fit, then pad with
     # either a blurred zoom of the same source or flat black bars.
-    ow = settings.output_width
-    oh = settings.output_height
+    ow = canvas.width if canvas is not None else settings.output_width
+    oh = canvas.height if canvas is not None else settings.output_height
     if output_fit == "letterbox" or output_fit == "letterbox_blur":
         # Foreground = original frame fit-into-canvas;
         # Background = same source upscaled + blurred + cropped to fill 9:16.
@@ -927,8 +939,8 @@ def _build_video_filter(
         filters.append(f"scale={ow}:{oh}:force_original_aspect_ratio=decrease")
         filters.append(f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2:color=black")
     elif aspect_ratio == "16:9":
-        filters.append(f"scale=-2:{settings.output_height}")
-        filters.append(f"crop={settings.output_width}:{settings.output_height}")
+        filters.append(f"scale=-2:{oh}")
+        filters.append(f"crop={ow}:{oh}")
     else:
         # Default crop mode: scale-fill the canvas (no bars), trim overflow.
         # `force_original_aspect_ratio=increase` grows BOTH source dims until
@@ -939,11 +951,8 @@ def _build_video_filter(
         # black bars (e.g. locked 16:9 templates with baked-in hook text on
         # the sides) MUST pass `output_fit="letterbox_black"` to hit the
         # branch above; do not rely on this branch padding.
-        filters.append(
-            f"scale={settings.output_width}:{settings.output_height}"
-            f":force_original_aspect_ratio=increase"
-        )
-        filters.append(f"crop={settings.output_width}:{settings.output_height}")
+        filters.append(f"scale={ow}:{oh}:force_original_aspect_ratio=increase")
+        filters.append(f"crop={ow}:{oh}")
 
     # 2. Color grading (applied before darkening so darkened areas have the grade)
     for f in _color_hint_filters(color_hint):
