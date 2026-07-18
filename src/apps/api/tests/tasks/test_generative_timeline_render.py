@@ -951,12 +951,17 @@ def test_failure_patch_preserves_last_good_render(monkeypatch):
 
 def test_hook_regrounding_uses_timeline_slot0_clip(monkeypatch):
     """When a timeline is active but the variant still takes the full leg
-    (song_lyrics), intro_writer grounds in the timeline's slot-0 clip — the clip
-    that actually OPENS the edit — not the max-hook_score hero."""
+    (no cached base), intro_writer grounds in the timeline's slot-0 clip — the
+    clip that actually OPENS the edit — not the max-hook_score hero.
+
+    Uses an agent_text variant whose timeline assembly falls back (corrupt/
+    unresolvable slots → fresh-match leg): lyrics variants no longer run text
+    agents at all (intro fabrication corrupted text_mode — 2026-07-18 E2E; see
+    test_hook_regrounding_skips_lyrics_variants)."""
     variant = _existing_variant(
-        variant_id="song_lyrics",
+        variant_id="song_text",
         rank=1,
-        text_mode="lyrics",
+        text_mode="agent_text",
         music_track_id="t1",
         user_timeline={"slots": [_tl_slot(1)]},
     )
@@ -965,13 +970,10 @@ def test_hook_regrounding_uses_timeline_slot0_clip(monkeypatch):
         monkeypatch, variants=[variant], track=_track("t1"), mix_calls=mix_calls
     )
     _patch_music_recipe(monkeypatch, [0.0, 1.0])
-    # _inject_lyrics reaches the DB (lyrics-cache refresh) — stub it whole.
-    monkeypatch.setattr(
-        gb,
-        "_inject_lyrics",
-        lambda recipe_dict, track, style_set_id=None, line_overrides=None: (recipe_dict, []),
-        raising=False,
-    )
+    # Force the timeline-assembly fallback: agent_text variants normally take the
+    # download+probe-only leg (which never runs intro_writer); the regrounding
+    # under test lives on the full ingest leg.
+    monkeypatch.setattr(gb, "_prepare_timeline_assembly", lambda *a, **k: None, raising=False)
 
     metas = [_Meta("g_a", 9.0), _Meta("g_b", 1.0)]  # g_a is the max-hook hero
     ingest = {
@@ -991,11 +993,60 @@ def test_hook_regrounding_uses_timeline_slot0_clip(monkeypatch):
 
     monkeypatch.setattr(gb, "_run_text_agents", _capture_text_agents, raising=False)
 
-    gb._run_regenerate_variant(JOB_ID, "song_lyrics", None, None, False)
+    gb._run_regenerate_variant(JOB_ID, "song_text", None, None, False)
 
     # Timeline slot-0 points at clip_index 1 → CLIP_PATHS[1] → clip_id "g_b".
     assert seen["hero"].clip_id == "g_b"
     assert updates[-1]["ok"] is True
+
+
+def test_hook_regrounding_skips_lyrics_variants(monkeypatch):
+    """REGRESSION (2026-07-18 E2E): a lyrics-variant full re-render must NOT run
+    the intro/text agents — doing so fabricated an AI intro and flipped
+    text_mode to agent_text, unlocking the fast-reburn path for later lyric
+    edits (which then silently skipped lyric re-injection)."""
+    variant = _existing_variant(
+        variant_id="song_lyrics",
+        rank=1,
+        text_mode="lyrics",
+        music_track_id="t1",
+        user_timeline={"slots": [_tl_slot(1)]},
+    )
+    mix_calls: list = []
+    _job, updates, _dl = _regen_setup(
+        monkeypatch, variants=[variant], track=_track("t1"), mix_calls=mix_calls
+    )
+    _patch_music_recipe(monkeypatch, [0.0, 1.0])
+    monkeypatch.setattr(
+        gb,
+        "_inject_lyrics",
+        lambda recipe_dict, track, style_set_id=None, line_overrides=None: (recipe_dict, []),
+        raising=False,
+    )
+
+    metas = [_Meta("g_a", 9.0), _Meta("g_b", 1.0)]
+    ingest = {
+        "clip_metas": metas,
+        "clip_id_to_gcs": {"g_a": CLIP_PATHS[0], "g_b": CLIP_PATHS[1]},
+        "clip_id_to_local": {"g_a": "/a.mp4", "g_b": "/b.mp4"},
+        "probe_map": {"/a.mp4": _Probe(6.0), "/b.mp4": _Probe(6.0)},
+        "hero": metas[0],
+    }
+    monkeypatch.setattr(gb, "_ingest_clips", lambda *a, **k: ingest, raising=False)
+
+    called = {"text_agents": False}
+
+    def _capture_text_agents(clip_metas, hero, **kw):
+        called["text_agents"] = True
+        return None, None
+
+    monkeypatch.setattr(gb, "_run_text_agents", _capture_text_agents, raising=False)
+
+    gb._run_regenerate_variant(JOB_ID, "song_lyrics", None, None, False)
+
+    assert called["text_agents"] is False
+    assert updates[-1]["ok"] is True
+    assert updates[-1].get("text_mode") == "lyrics"
 
 
 # ── Task signature pass-through ──────────────────────────────────────────────────
