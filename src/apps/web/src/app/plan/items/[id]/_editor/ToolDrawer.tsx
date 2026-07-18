@@ -45,6 +45,7 @@ export default function ToolDrawer({
   sampleWord,
   appliedPresetId,
   onAddText,
+  lyricsToggle,
   onSplitSmartPlaceText,
   splitSmartPlaceAvailable = false,
   onSmartPlaceAll,
@@ -84,6 +85,13 @@ export default function ToolDrawer({
   sampleWord: string | null;
   appliedPresetId: string | null;
   onAddText: () => void;
+  lyricsToggle?: {
+    visible: boolean;
+    enabled: boolean;
+    disabled: boolean;
+    hint: string | null;
+    onToggle: (enabled: boolean) => void;
+  };
   onSplitSmartPlaceText?: (text: string) => boolean;
   splitSmartPlaceAvailable?: boolean;
   onSmartPlaceAll?: () => void;
@@ -205,9 +213,37 @@ export default function ToolDrawer({
       className="flex h-full w-[360px] flex-col border-r border-zinc-200 bg-white motion-safe:animate-fade-up"
     >
       <div className="flex flex-none items-center justify-between px-5 pb-3 pt-4">
-        <h2 className="font-display text-[18px] text-[#0c0c0e]">
-          {title}
-        </h2>
+        <div className="flex min-w-0 items-center gap-3">
+          <h2 className="font-display text-[18px] text-[#0c0c0e]">
+            {title}
+          </h2>
+          {tool === "text" && lyricsToggle?.visible && (
+            <div
+              className="flex min-h-11 items-center gap-2 rounded-lg px-1"
+              title={lyricsToggle.disabled ? lyricsToggle.hint ?? undefined : undefined}
+            >
+              <span className="text-[12px] font-semibold text-[#3f3f46]">Lyrics</span>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={lyricsToggle.enabled}
+                aria-label="Lyrics"
+                disabled={lyricsToggle.disabled}
+                onClick={() => lyricsToggle.onToggle(!lyricsToggle.enabled)}
+                className={`relative h-6 w-11 rounded-full transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+                  lyricsToggle.enabled ? "bg-[#0c0c0e]" : "bg-zinc-200"
+                }`}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${
+                    lyricsToggle.enabled ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           aria-label="Close drawer"

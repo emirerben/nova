@@ -18,6 +18,13 @@ export const CAPTIONS_TAB_REASON = "Captions for this edit are managed in the Ca
  */
 export const TEXT_ELEMENTS_LOCKED_FALLBACK = "text editing isn't available for this edit";
 
+const LYRICS_EDITOR_UI = process.env.NEXT_PUBLIC_LYRICS_EDITOR_ENABLED === "true";
+
+function lyricsFeatureAvailable(capabilities: EditorCapabilities | null | undefined): boolean {
+  const lyrics = capabilities?.lyrics;
+  return LYRICS_EDITOR_UI && !!lyrics && (lyrics.editable || lyrics.enabled || lyrics.can_toggle_on);
+}
+
 /** Server reason code → human tooltip copy. Unknown codes pass through raw. */
 export function editorReasonCopy(reason: string | null | undefined): string {
   if (!reason) return "This version can't be edited.";
@@ -91,7 +98,10 @@ export function computeToolDisabledReasons({
     out.nova = readOnlyReason;
     out.text = readOnlyReason;
     out.styles = readOnlyReason;
-  } else if (capabilities?.text_elements === false) {
+  } else if (
+    capabilities?.text_elements === false &&
+    !lyricsFeatureAvailable(capabilities)
+  ) {
     const reason = textElementsLockedCopy(capabilities);
     out.text = reason;
     if (!isLyrics) out.styles = reason;
@@ -128,6 +138,7 @@ export function planItemEditorDisabledReason(variant: PlanItemVariant | null): s
   if (
     capabilities &&
     !capabilities.text_elements &&
+    !lyricsFeatureAvailable(capabilities) &&
     !capabilities.timeline &&
     !capabilities.split_clips &&
     !capabilities.mix &&

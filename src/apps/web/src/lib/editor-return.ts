@@ -34,6 +34,7 @@ export interface EditorCommitSectionsLike {
   sound_effects?: boolean;
   media_overlays?: boolean;
   title?: boolean;
+  lyrics?: boolean;
 }
 
 export function editorCommitStartedRender(sections: EditorCommitSectionsLike): boolean {
@@ -45,7 +46,8 @@ export function editorCommitStartedRender(sections: EditorCommitSectionsLike): b
       sections.mix ||
       sections.music ||
       sections.sound_effects ||
-      sections.media_overlays,
+      sections.media_overlays ||
+      sections.lyrics,
   );
 }
 

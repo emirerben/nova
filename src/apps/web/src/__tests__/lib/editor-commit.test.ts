@@ -128,6 +128,68 @@ describe("buildEditorCommitRequest", () => {
     });
   });
 
+  it("omits lyrics unless dirty and emits toggle-off when requested", () => {
+    const clean = buildEditorCommitRequest({
+      elements: [],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      lyricsDirty: false,
+      lyrics: { enabled: false },
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(clean.lyrics).toBeUndefined();
+
+    const dirty = buildEditorCommitRequest({
+      elements: [],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      lyricsDirty: true,
+      lyrics: { enabled: false },
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(dirty.lyrics).toEqual({ enabled: false });
+  });
+
+  it("builds combined text_elements and lyrics sections", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: true,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      lyricsDirty: true,
+      lyrics: {
+        enabled: true,
+        line_overrides: {
+          L0: {
+            text: "New lyric",
+            orig_text: "Old lyric",
+            orig_start_s: 1.2,
+          },
+        },
+      },
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(body.text_elements).toEqual([element]);
+    expect(body.lyrics).toEqual({
+      enabled: true,
+      line_overrides: {
+        L0: {
+          text: "New lyric",
+          orig_text: "Old lyric",
+          orig_start_s: 1.2,
+        },
+      },
+    });
+  });
+
   it("omits untouched optional sections and falls back to an empty baseline", () => {
     const body = buildEditorCommitRequest({
       elements: [element],

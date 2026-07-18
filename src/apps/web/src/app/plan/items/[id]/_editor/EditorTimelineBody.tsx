@@ -595,6 +595,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     bar: TextElementBar,
   ) {
     if (readOnly) return;
+    if (bar.role === "lyric_line") return;
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -893,6 +894,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                         );
                         const selected = isSel("text", b.id);
                         const flashing = flashIds?.has(b.id) ?? false;
+                        const locked = b.role === "lyric_line";
                         return (
                           <BarButton
                             key={b.id}
@@ -907,20 +909,29 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                             dataKind="text"
                             dataId={b.id}
                             dataRowIndex={rowIndex}
-                            onPointerDown={(e) => startTextDrag(e, b)}
+                            onPointerDown={locked ? undefined : (e) => startTextDrag(e, b)}
                             onPointerMove={(e) => updateDrag(e.clientX)}
                             onPointerUp={(e) => finishDrag(e, "text", b.id)}
                             onPointerCancel={cancelDrag}
                             suppressClickRef={suppressClickRef}
-                            showTrimHandles
+                            showTrimHandles={!locked}
                             flashing={flashing}
                             className="bg-[#0c0c0e] text-white"
                           >
                             <span className="pointer-events-none flex items-center gap-1 truncate px-2 text-[10px]">
-                              <span className="font-semibold">T</span>
+                              <span className="font-semibold">{locked ? "L" : "T"}</span>
                               <span className="truncate">
                                 {b.text || "Text"}
                               </span>
+                              {locked && (
+                                <span
+                                  aria-label="Lyric timing locked"
+                                  title="Lyric timing is locked to the vocal"
+                                  className="shrink-0 rounded border border-white/30 px-1 text-[9px] opacity-90"
+                                >
+                                  {"\u{1F512}"}
+                                </span>
+                              )}
                               {TEXT_BEHIND_SUBJECT_UI_ENABLED && b.behind_subject && (
                                 <span
                                   aria-label="Behind subject"

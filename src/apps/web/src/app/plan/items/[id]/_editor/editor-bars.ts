@@ -17,6 +17,7 @@
  */
 
 import type { CaptionCue, PlanItemVariant, TextElement } from "@/lib/plan-api";
+import type { LyricLineOverride } from "@/lib/editor-commit";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 export const TEXT_LANE_BASE_HEIGHT_PX = 48;
@@ -40,6 +41,12 @@ export interface LaneRows<T> {
 export type TextLaneRow = LaneRow<TextElementBar> & { bar: TextElementBar };
 export interface TextLaneRows extends Omit<LaneRows<TextElementBar>, "rows"> {
   rows: TextLaneRow[];
+}
+
+const LYRIC_KEY_RE = /^lyric_(L\d+)$/;
+
+export function isLyricBar(bar: TextElementBar | TextElement | null | undefined): boolean {
+  return bar?.role === "lyric_line";
 }
 
 /** UI-only row assignment: current ordered bars map to compacted rows. */
@@ -155,17 +162,81 @@ export function convertSceneTimings(
  */
 export function seedBarsFromVariant(
   variant: PlanItemVariant,
+  opts: { includeLyrics?: boolean } = {},
 ): TextElementBar[] {
+  const includeLyrics = opts.includeLyrics ?? true;
+  const filterLyrics = (bars: TextElementBar[]) =>
+    includeLyrics ? bars : bars.filter((bar) => !isLyricBar(bar));
   if (variant.text_elements_user_edited) {
-    return convertApiTextElements(variant.text_elements);
+    return filterLyrics(convertApiTextElements(variant.text_elements));
   }
   if (variant.resolved_archetype !== "subtitled" && variant.caption_cues?.length)
     return convertCaptionCues(variant.caption_cues);
   if (variant.text_elements?.length)
-    return convertApiTextElements(variant.text_elements);
+    return filterLyrics(convertApiTextElements(variant.text_elements));
   if (variant.scene_timings?.length)
     return convertSceneTimings(variant.scene_timings);
-  return convertApiTextElements(variant.text_elements);
+  return filterLyrics(convertApiTextElements(variant.text_elements));
+}
+
+function lyricKeyForBar(bar: TextElementBar): string | null {
+  const sourceKey = bar.source_params?.key;
+  if (typeof sourceKey === "string" && /^L\d+$/.test(sourceKey)) return sourceKey;
+  const match = bar.id.match(LYRIC_KEY_RE);
+  return match?.[1] ?? null;
+}
+
+function sourceTextFor(original: TextElement): string {
+  const sourceText = original.source_params?.source_text;
+  return typeof sourceText === "string" ? sourceText : original.text;
+}
+
+function sameOptional<T>(a: T | null | undefined, b: T | null | undefined): boolean {
+  return (a ?? null) === (b ?? null);
+}
+
+export function buildLyricLineOverrides(
+  bars: TextElementBar[],
+  originalsById: ReadonlyMap<string, TextElement>,
+): Record<string, LyricLineOverride> {
+  const overrides: Record<string, LyricLineOverride> = {};
+  originalsById.forEach((original, id) => {
+    if (!isLyricBar(original)) return;
+    const bar = bars.find((candidate) => candidate.id === id);
+    if (!bar) {
+      throw new Error(`Missing locked lyric bar ${id}`);
+    }
+    const key = lyricKeyForBar(bar);
+    if (!key) return;
+    // Server style validation accepts concrete values only (no nulls) — a
+    // cleared field simply omits its key and falls back to the burned style.
+    const style: NonNullable<LyricLineOverride["style"]> = {};
+    if (bar.color != null && !sameOptional(bar.color, original.color)) style.color = bar.color;
+    if (
+      bar.highlight_color != null &&
+      !sameOptional(bar.highlight_color, original.highlight_color)
+    ) {
+      style.highlight_color = bar.highlight_color;
+    }
+    if (bar.font_family != null && !sameOptional(bar.font_family, original.font_family)) {
+      style.font_family = bar.font_family;
+    }
+    if (bar.size_px != null && !sameOptional(bar.size_px, original.size_px)) {
+      style.size_px = bar.size_px;
+    }
+    const textChanged = bar.text !== original.text;
+    const styleChanged = Object.keys(style).length > 0;
+    if (!textChanged && !styleChanged) return;
+    overrides[key] = {
+      ...(textChanged ? { text: bar.text } : {}),
+      ...(styleChanged ? { style } : {}),
+      orig_text: sourceTextFor(original),
+      // Projected element timing is video time, while the server fingerprint
+      // compares track time; orig_text is the authoritative drift check.
+      orig_start_s: original.start_s,
+    };
+  });
+  return overrides;
 }
 
 /**
@@ -180,8 +251,27 @@ export function barsToTextElements(
   bars: TextElementBar[],
   originalById: ReadonlyMap<string, TextElement>,
 ): TextElement[] {
+  return barsToTextElementsInternal(bars, originalById, { includeLyrics: false });
+}
+
+export function barsToPreviewTextElements(
+  bars: TextElementBar[],
+  originalById: ReadonlyMap<string, TextElement>,
+): TextElement[] {
+  return barsToTextElementsInternal(bars, originalById, { includeLyrics: true });
+}
+
+function barsToTextElementsInternal(
+  bars: TextElementBar[],
+  originalById: ReadonlyMap<string, TextElement>,
+  opts: { includeLyrics: boolean },
+): TextElement[] {
   return bars
-    .filter((bar) => bar.role !== "narrated_caption")
+    .filter(
+      (bar) =>
+        bar.role !== "narrated_caption" &&
+        (opts.includeLyrics || !isLyricBar(bar)),
+    )
     .map((bar) => {
       const original = originalById.get(bar.id);
       return {
