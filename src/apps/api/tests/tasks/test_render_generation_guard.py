@@ -669,7 +669,29 @@ def test_full_render_success_reburns_persisted_text_elements_after_new_base(monk
     assert ready[-1]["output_url"] == "https://signed/reburned"
 
 
-def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(monkeypatch):
+@pytest.mark.parametrize(
+    ("public_text_lane_enabled", "visual_blocks"),
+    [
+        (True, []),
+        (
+            False,
+            [
+                {
+                    "id": "section-card",
+                    "kind": "text_card",
+                    "start_s": 0.0,
+                    "end_s": 2.0,
+                    "purpose": "section_item",
+                }
+            ],
+        ),
+    ],
+)
+def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(
+    monkeypatch,
+    public_text_lane_enabled,
+    visual_blocks,
+):
     elements = [
         {
             "id": "title",
@@ -691,6 +713,7 @@ def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(monkey
         intro_text=None,
         text_elements=elements,
         text_elements_user_edited=True,
+        visual_blocks=visual_blocks,
         caption_cues=[{"text": "old caption", "start_s": 0.0, "end_s": 1.0}],
     )
     job = _FakeJob([original])
@@ -699,7 +722,13 @@ def test_subtitled_text_fast_reburn_mints_new_key_deletes_old_and_rereads(monkey
     deleted: list[str] = []
     compose_variants: list[dict] = []
 
-    monkeypatch.setattr(gb.settings, "subtitled_text_lane_enabled", True, raising=False)
+    monkeypatch.setattr(
+        gb.settings,
+        "subtitled_text_lane_enabled",
+        public_text_lane_enabled,
+        raising=False,
+    )
+    monkeypatch.setattr(gb.settings, "visual_blocks_enabled", True, raising=False)
     monkeypatch.setattr(gb, "_reapply_persisted_media_overlays_if_any", lambda **kw: False)
     monkeypatch.setattr(gb, "_reapply_persisted_sfx_if_any", lambda **kw: None)
 

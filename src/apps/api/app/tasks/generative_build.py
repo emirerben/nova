@@ -2933,9 +2933,7 @@ def _reburn_text_on_base(
         # Skip the legacy size / style / intro-writer resolution path and
         # compile the elements directly to burn dicts.
         if _TEXT_ELEMENTS_ENABLED and existing.get("text_elements_user_edited"):
-            if existing.get("resolved_archetype") == "subtitled" and getattr(
-                settings, "subtitled_text_lane_enabled", False
-            ):
+            if _should_compose_subtitled_final(existing):
                 _fresh_existing = _fresh_variant_snapshot(job_id, variant_id) or existing
                 _te_final_path = _compose_subtitled_final(local_base, _fresh_existing, tmpdir)
                 # Subtitled text edits must not overwrite the current key. Signed URLs and
@@ -8232,6 +8230,24 @@ def _compose_subtitled_final(base_local: str, variant: dict, tmpdir: str) -> str
     return final_path
 
 
+def _should_compose_subtitled_final(variant: dict) -> bool:
+    """Keep captions when authored text is added by visual-block autoplan.
+
+    The public subtitled text lane has its own rollout flag. AI text cards are
+    authored internally while visual blocks are enabled, so they must still use
+    the text-then-caption compositor or regeneration silently drops captions.
+    """
+    return variant.get("resolved_archetype") == "subtitled" and (
+        getattr(settings, "subtitled_text_lane_enabled", False)
+        or (
+            getattr(settings, "visual_blocks_enabled", False)
+            and _TEXT_ELEMENTS_ENABLED
+            and bool(variant.get("visual_blocks"))
+            and bool(variant.get("text_elements_user_edited"))
+        )
+    )
+
+
 def _burn_persisted_captions_onto_base(
     base_local: str, out_local: str, variant: dict, tmpdir: str
 ) -> None:
@@ -8356,14 +8372,7 @@ def _run_reburn_narrated_captions(
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(render_base_path, base_local)
-        if archetype == "subtitled" and (
-            getattr(settings, "subtitled_text_lane_enabled", False)
-            or (
-                getattr(settings, "visual_blocks_enabled", False)
-                and _TEXT_ELEMENTS_ENABLED
-                and variant.get("text_elements_user_edited")
-            )
-        ):
+        if _should_compose_subtitled_final(variant):
             variant = _fresh_variant_snapshot(job_id, variant_id) or variant
             out_local = _compose_subtitled_final(base_local, variant, tmpdir)
         else:

@@ -6,6 +6,7 @@ import math
 import re
 import unicodedata
 import uuid
+from dataclasses import dataclass
 
 from app.agents.visual_treatment_planner import RawVisualTreatment
 
@@ -13,8 +14,10 @@ _CARD_MAX_COVERAGE = 0.18
 _SECTION_CARD_MAX_COVERAGE = 0.25
 _ALL_MAX_COVERAGE = 0.35
 _MAX_SECTION_CARDS = 8
+_MAX_ANNOUNCED_SECTION_ITEMS = 50
 _MIN_SECTION_FOOTAGE_GAP_S = 0.75
 _MAX_SECTION_CARD_DURATION_S = 4.0
+_MAX_SECTION_TITLE_TOKENS = 6
 
 
 def _overlaps(intervals: list[tuple[float, float]], start: float, end: float) -> bool:
@@ -91,6 +94,99 @@ _NUMBER_WORDS = {
     "onuncu": "10",
 }
 
+_SECTION_ANNOUNCEMENT_WORDS = {
+    # English.
+    "item",
+    "items",
+    "list",
+    "main",
+    "point",
+    "points",
+    "ranking",
+    "rankings",
+    "reason",
+    "reasons",
+    "section",
+    "sections",
+    "step",
+    "steps",
+    "topic",
+    "topics",
+    # Turkish. Keep real spellings because Turkish diacritics are meaningful.
+    "adım",
+    "adımda",
+    "adımlar",
+    "ana",
+    "başlık",
+    "başlıkta",
+    "başlıklar",
+    "liste",
+    "madde",
+    "maddede",
+    "maddeler",
+    "neden",
+    "nedenler",
+    "sıralama",
+    "sıralamada",
+    "konu",
+    "konular",
+}
+_SECTION_EXPLANATION_BOUNDARIES = {
+    "is",
+    "mean",
+    "means",
+    "meaning",
+    "that",
+    "which",
+    "demek",
+    "ise",
+    "şudur",
+    "yani",
+}
+_SECTION_MARKER_PREFIXES = {"no", "number", "numara"}
+_SECTION_ORDINAL_WORDS = {
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "seventh",
+    "eighth",
+    "birinci",
+    "ikinci",
+    "üçüncü",
+    "dördüncü",
+    "beşinci",
+    "altıncı",
+    "yedinci",
+    "sekizinci",
+    "ilk",
+}
+_TERMINAL_PUNCTUATION_RE = re.compile(r"[.!?;:]\s*$")
+_TIMED_TOKEN_RE = re.compile(
+    r"\d+[.),:;!?]?|[^\W_]+(?:[-’'][^\W_]+)*[.,:;!?]?",
+    flags=re.UNICODE,
+)
+
+
+@dataclass(frozen=True)
+class _TimedTranscriptToken:
+    raw: str
+    normalized: str
+    start_s: float
+    end_s: float
+    sentence_start: bool
+    terminal: bool
+
+
+@dataclass(frozen=True)
+class _SectionCandidate:
+    ordinal: int
+    start_s: float
+    end_s: float
+    title: str
+
 
 def _legacy_normalized_tokens(value: str) -> list[str]:
     folded = unicodedata.normalize("NFKC", value).casefold().replace("%", " percent ")
@@ -142,6 +238,211 @@ def _section_normalized_tokens(value: str) -> list[str]:
     ]
 
 
+def _timed_transcript_tokens(words: list[dict] | None) -> list[_TimedTranscriptToken]:
+    """Flatten Whisper words or sentence chunks without inventing copy.
+
+    Some persisted transcripts contain one word per row while eval fixtures and
+    legacy jobs contain sentence-sized rows. Sentence rows receive evenly split
+    local timings so a short heading does not inherit the whole paragraph span.
+    """
+    tokens: list[_TimedTranscriptToken] = []
+    next_is_sentence_start = True
+    for row in words or []:
+        if not isinstance(row, dict):
+            continue
+        value = str(row.get("word") or row.get("text") or "").strip()
+        raw_tokens = _TIMED_TOKEN_RE.findall(value)
+        if not raw_tokens:
+            continue
+        try:
+            row_start = float(row.get("start_s", 0.0))
+            row_end = float(row.get("end_s", row_start))
+        except (TypeError, ValueError):
+            continue
+        row_end = max(row_start, row_end)
+        token_duration = (row_end - row_start) / len(raw_tokens) if raw_tokens else 0.0
+        for index, raw in enumerate(raw_tokens):
+            normalized = _section_normalized_tokens(raw)
+            if not normalized:
+                continue
+            start_s = row_start + token_duration * index
+            end_s = row_end if index == len(raw_tokens) - 1 else start_s + token_duration
+            terminal = bool(_TERMINAL_PUNCTUATION_RE.search(raw))
+            sentence_start = next_is_sentence_start or (
+                bool(tokens) and start_s - tokens[-1].end_s >= 0.6
+            )
+            tokens.append(
+                _TimedTranscriptToken(
+                    raw=raw,
+                    normalized=normalized[0],
+                    start_s=start_s,
+                    end_s=end_s,
+                    sentence_start=sentence_start,
+                    terminal=terminal,
+                )
+            )
+            next_is_sentence_start = terminal
+    return tokens
+
+
+def _display_title(tokens: list[_TimedTranscriptToken]) -> str:
+    turkish = any(re.search(r"[çğıöşüÇĞİÖŞÜ]", token.raw) for token in tokens)
+    words: list[str] = []
+    for token in tokens:
+        clean = re.sub(r"(^[^\w]+|[^\w’'-]+$)", "", token.raw, flags=re.UNICODE)
+        if not clean:
+            continue
+        if clean.isupper():
+            words.append(clean)
+        else:
+            first = "İ" if turkish and clean[:1] == "i" else clean[:1].upper()
+            words.append(first + clean[1:])
+    return " ".join(words)
+
+
+def _raw_word(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold().replace("\u0307", "")
+    return "".join(re.findall(r"\w+", normalized, flags=re.UNICODE))
+
+
+def _section_candidates(tokens: list[_TimedTranscriptToken]) -> list[_SectionCandidate]:
+    candidates: list[_SectionCandidate] = []
+    index = 0
+    while index < len(tokens):
+        marker_index = index
+        ordinal_index = index
+        token = tokens[index]
+        if token.normalized in _SECTION_MARKER_PREFIXES and index + 1 < len(tokens):
+            ordinal_index = index + 1
+        ordinal_token = tokens[ordinal_index]
+        try:
+            ordinal = int(ordinal_token.normalized)
+        except ValueError:
+            index += 1
+            continue
+        if not (1 <= ordinal <= _MAX_ANNOUNCED_SECTION_ITEMS):
+            index += 1
+            continue
+        marker_word = _raw_word(ordinal_token.raw)
+        next_token = tokens[ordinal_index + 1] if ordinal_index + 1 < len(tokens) else None
+        pause_after_marker = (
+            next_token.start_s - ordinal_token.end_s if next_token is not None else 0.0
+        )
+        explicit_ordinal = marker_word in _SECTION_ORDINAL_WORDS
+        numeric_marker = bool(re.fullmatch(r"\d+[.)]?", ordinal_token.raw.strip()))
+        if not (
+            explicit_ordinal or numeric_marker or token.sentence_start or pause_after_marker >= 0.35
+        ):
+            index += 1
+            continue
+
+        title_tokens: list[_TimedTranscriptToken] = []
+        cursor = ordinal_index + 1
+        while cursor < len(tokens) and len(title_tokens) < _MAX_SECTION_TITLE_TOKENS:
+            title_token = tokens[cursor]
+            if title_token.start_s - ordinal_token.start_s > _MAX_SECTION_CARD_DURATION_S:
+                break
+            if title_tokens and title_token.normalized in _SECTION_EXPLANATION_BOUNDARIES:
+                break
+            if title_token.sentence_start and title_tokens:
+                break
+            if title_tokens:
+                previous_title = title_tokens[-1]
+                gap = title_token.start_s - previous_title.end_s
+                previous_duration = previous_title.end_s - previous_title.start_s
+                if gap >= 0.12 and previous_duration >= 0.6 and title_token.raw[:1].isupper():
+                    break
+            title_tokens.append(title_token)
+            cursor += 1
+            if title_token.terminal:
+                break
+
+        if (
+            title_tokens
+            and title_tokens[0].normalized not in _SECTION_ANNOUNCEMENT_WORDS
+            and title_tokens[-1].end_s - tokens[marker_index].start_s
+            <= _MAX_SECTION_CARD_DURATION_S
+        ):
+            title = _display_title(title_tokens)
+            if title:
+                candidates.append(
+                    _SectionCandidate(
+                        ordinal=ordinal,
+                        start_s=tokens[marker_index].start_s,
+                        end_s=title_tokens[-1].end_s,
+                        title=title,
+                    )
+                )
+        index = max(index + 1, cursor)
+    return candidates
+
+
+def _announced_item_count(tokens: list[_TimedTranscriptToken], *, before_s: float) -> int | None:
+    for index in range(len(tokens) - 1, -1, -1):
+        token = tokens[index]
+        if token.start_s >= before_s or before_s - token.start_s > 20.0:
+            continue
+        try:
+            count = int(token.normalized)
+        except ValueError:
+            continue
+        if not (2 <= count <= _MAX_ANNOUNCED_SECTION_ITEMS):
+            continue
+        nearby = tokens[index + 1 : index + 5]
+        if any(candidate.normalized in _SECTION_ANNOUNCEMENT_WORDS for candidate in nearby):
+            return count
+    return None
+
+
+def infer_structured_section_treatments(
+    words: list[dict] | None,
+) -> list[RawVisualTreatment]:
+    """Recover explicit numbered headings when the model misses the structure.
+
+    This detector authors no semantic copy. It only converts a locally timed,
+    sequential transcript heading into ``N. Title``. The ordinary materializer
+    still enforces transcript grounding, complete-title alignment, spacing,
+    overlap, duration, card-count, and global coverage limits.
+    """
+    tokens = _timed_transcript_tokens(words)
+    candidates = _section_candidates(tokens)
+    best: list[_SectionCandidate] = []
+    for start_index, first in enumerate(candidates):
+        for direction in (1, -1):
+            run = [first]
+            expected = first.ordinal + direction
+            for candidate in candidates[start_index + 1 :]:
+                if candidate.ordinal != expected:
+                    break
+                run.append(candidate)
+                expected += direction
+            announced = _announced_item_count(tokens, before_s=first.start_s)
+            required = min(announced or 0, _MAX_SECTION_CARDS)
+            announced_match = bool(
+                announced
+                and len(run) >= required
+                and (
+                    (direction == 1 and first.ordinal == 1)
+                    or (direction == -1 and first.ordinal == announced)
+                )
+            )
+            if announced_match and len(run) > len(best):
+                best = run
+
+    return [
+        RawVisualTreatment(
+            kind="text_card",
+            purpose="section_item",
+            start_s=candidate.start_s,
+            end_s=candidate.end_s,
+            text=f"{candidate.ordinal}. {candidate.title}",
+            rationale="Explicit numbered section heading recovered from timed transcript.",
+            confidence="high",
+        )
+        for candidate in best[:_MAX_SECTION_CARDS]
+    ]
+
+
 def _normalized_copy(value: str, *, section_item: bool = False) -> str:
     tokens = _section_normalized_tokens(value) if section_item else _legacy_normalized_tokens(value)
     return " ".join(tokens)
@@ -186,19 +487,10 @@ def _card_copy_span_in_window(
     if not copy_tokens or not words:
         return None
     timed_tokens: list[tuple[str, float, float]] = []
-    for word in words:
-        if not isinstance(word, dict):
+    for token in _timed_transcript_tokens(words):
+        if token.start_s > end_s + tolerance_s or token.end_s < start_s - tolerance_s:
             continue
-        try:
-            word_start = float(word.get("start_s", 0.0))
-            word_end = float(word.get("end_s", word_start))
-        except (TypeError, ValueError):
-            continue
-        if word_start > end_s + tolerance_s or word_end < start_s - tolerance_s:
-            continue
-        value = str(word.get("word") or word.get("text") or "").strip()
-        for token in _section_normalized_tokens(value):
-            timed_tokens.append((token, word_start, word_end))
+        timed_tokens.append((token.normalized, token.start_s, token.end_s))
     matches: list[tuple[float, float]] = []
     width = len(copy_tokens)
     for index in range(0, len(timed_tokens) - width + 1):
@@ -245,6 +537,38 @@ def build_visual_treatments(
     transcript_words: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return validated-shape blocks + linked TextElements after AI caps."""
+    # An explicit spoken structure is a deterministic contract, not a creative
+    # model preference. Replace empty, partial, or mistimed model section items
+    # with transcript-derived headings before applying the ordinary caps below.
+    structured_sections = infer_structured_section_treatments(transcript_words)
+    model_sections = sorted(
+        (row for row in raw if row.purpose == "section_item"),
+        key=lambda row: (row.start_s, row.end_s),
+    )
+    model_sections_complete = len(model_sections) == len(structured_sections) and all(
+        model.confidence != "low"
+        and _section_normalized_tokens(model.text or "")[:1]
+        == _section_normalized_tokens(inferred.text or "")[:1]
+        and _card_copy_span_in_window(
+            model.text or "",
+            transcript_words,
+            start_s=model.start_s,
+            end_s=model.end_s,
+        )
+        is not None
+        for model, inferred in zip(model_sections, structured_sections, strict=True)
+    )
+    if structured_sections and not model_sections_complete:
+        section_windows = [(row.start_s, row.end_s) for row in structured_sections]
+        raw = [
+            row
+            for row in raw
+            if row.purpose != "section_item"
+            and not any(
+                row.start_s < section_end and row.end_s > section_start
+                for section_start, section_end in section_windows
+            )
+        ] + structured_sections
     blocks: list[dict] = []
     text_elements: list[dict] = []
     occupied: list[tuple[float, float]] = []
