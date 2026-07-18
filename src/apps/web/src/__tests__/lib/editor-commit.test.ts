@@ -3,7 +3,7 @@ import {
   editorCommitBaseGeneration,
   formatEditorCommitError,
 } from "@/lib/editor-commit";
-import type { TextElement } from "@/lib/plan-api";
+import type { TextElement, VisualBlock } from "@/lib/plan-api";
 
 const element: TextElement = {
   id: "txt-1",
@@ -209,6 +209,36 @@ describe("buildEditorCommitRequest", () => {
     expect(body.media_overlays).toBeUndefined();
     expect(body.title).toBeUndefined();
     expect(body.base_generation).toBe("");
+  });
+
+  it("sends visual blocks only as an explicitly dirty atomic section", () => {
+    const block: VisualBlock = {
+      version: 1,
+      id: "card-1",
+      kind: "text_card",
+      start_s: 1,
+      end_s: 3,
+      timing_mode: "manual",
+      origin: "user",
+      transition_in: "cut",
+      transition_out: "fade",
+      audio_policy: { base: "continue", sfx: "mute" },
+      background: { type: "solid", color: "#26382F" },
+    };
+    const body = buildEditorCommitRequest({
+      elements: [{ ...element, visual_block_id: "card-1", start_s: 1, end_s: 3 }],
+      textDirty: true,
+      visualBlocksDirty: true,
+      visualBlocks: [block],
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      variant: { render_generation_id: "gen-current" },
+    });
+
+    expect(body.visual_blocks).toEqual([block]);
+    expect(body.text_elements?.[0].visual_block_id).toBe("card-1");
   });
 
   it("does not send mix for non-mixable variants even when mix changed", () => {

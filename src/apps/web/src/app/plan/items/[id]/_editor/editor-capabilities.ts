@@ -38,6 +38,10 @@ export function editorReasonCopy(reason: string | null | undefined): string {
   if (reason === "caption_archetype") return CAPTIONS_TAB_REASON;
   if (reason === "sound_effects_disabled") return "sound effects are turned off right now";
   if (reason === "media_overlays_disabled") return "overlays are turned off right now";
+  if (reason === "visual_blocks_disabled") return "visual blocks are turned off right now";
+  if (reason === "lyrics_variant") return "lyrics-synced edits do not support visual blocks";
+  if (reason === "no_clean_base") return "this edit has no reusable clean video base";
+  if (reason === "duration_unknown") return "re-render this legacy edit before adding visual blocks";
   if (reason === "no_video") return "waiting for this edit to finish rendering";
   return reason;
 }
@@ -112,6 +116,11 @@ export function computeToolDisabledReasons({
       capabilities.overlays_reason ?? "media overlays aren't available for this edit",
     );
   }
+  if (capabilities?.visual_blocks === false) {
+    out.visuals = editorReasonCopy(
+      capabilities.visual_blocks_reason ?? "visual blocks aren't available for this edit",
+    );
+  }
   return out;
 }
 
@@ -135,6 +144,7 @@ export function planItemEditorDisabledReason(variant: PlanItemVariant | null): s
     !capabilities.mix &&
     !capabilities.sfx &&
     !capabilities.overlays
+    && !capabilities.visual_blocks
   ) {
     return editorReasonCopy(capabilities.reason);
   }

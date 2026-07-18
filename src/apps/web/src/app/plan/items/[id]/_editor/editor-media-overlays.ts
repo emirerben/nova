@@ -6,14 +6,17 @@ export const MEDIA_OVERLAY_MIN_DURATION_S = 0.3;
 
 export const EDITOR_STAGE_Z = {
   video: 0,
-  mediaOverlay: 20,
-  textOverlay: 40,
+  textOverlay: 20,
+  // Render parity: persisted media overlays are composited after authored
+  // text/captions on the backend, so their normal preview stack sits above it.
+  mediaOverlay: 40,
   selectionHandle: 60,
   chrome: 80,
   error: 90,
 } as const;
 
-const MEDIA_OVERLAY_Z_MAX_OFFSET = EDITOR_STAGE_Z.textOverlay - EDITOR_STAGE_Z.mediaOverlay - 1;
+const MEDIA_OVERLAY_Z_MAX_OFFSET =
+  EDITOR_STAGE_Z.selectionHandle - EDITOR_STAGE_Z.mediaOverlay - 1;
 
 export interface VisibleMediaOverlay {
   card: MediaOverlay;

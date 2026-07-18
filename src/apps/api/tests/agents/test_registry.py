@@ -24,6 +24,7 @@ _EXPECTED = {
     "nova.compose.sequence_quote",
     "nova.compose.platform_copy",
     "nova.compose.creative_direction",
+    "nova.compose.visual_treatment_planner",
     "nova.layout.text_designer",
     "nova.video.shot_ranker",
     "nova.layout.transition_picker",

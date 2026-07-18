@@ -1,0 +1,27 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "Three", "start_s": 0.0, "end_s": 0.3},
+      {"word": "moments", "start_s": 0.3, "end_s": 0.7},
+      {"word": "changed", "start_s": 0.7, "end_s": 1.1},
+      {"word": "everything", "start_s": 1.1, "end_s": 1.6}
+    ],
+    "assets": [
+      {"asset_id": "a1", "kind": "image", "subject": "first archival photo"},
+      {"asset_id": "a2", "kind": "image", "subject": "second archival photo"},
+      {"asset_id": "a3", "kind": "video", "subject": "third archival clip"}
+    ],
+    "duration_s": 24.0,
+    "beat_timestamps_s": [0.0, 0.48, 0.96, 1.44],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"montage\",\"purpose\":\"hook\",\"start_s\":0.0,\"end_s\":1.6,\"asset_ids\":[\"a1\",\"a2\",\"a3\"],\"text\":null,\"rationale\":\"Three source-backed images compress the spoken hook on beat accents.\",\"confidence\":\"high\"}]}",
+  "output": {
+    "treatments": [
+      {"kind": "montage", "purpose": "hook", "start_s": 0.0, "end_s": 1.6, "asset_ids": ["a1", "a2", "a3"], "text": null, "rationale": "Three source-backed images compress the spoken hook on beat accents.", "confidence": "high"}
+    ]
+  },
+  "meta": {"source": "hand_authored_golden", "notes": "Hook montage with three real assets."}
+}

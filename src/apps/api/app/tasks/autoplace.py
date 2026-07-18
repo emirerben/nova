@@ -24,9 +24,12 @@ queue so sibling worktree workers on the shared redis never grab unregistered ta
 
 from __future__ import annotations
 
+import hashlib
 import os
+import subprocess
 import tempfile
 import uuid
+from pathlib import Path
 
 import structlog
 
@@ -50,6 +53,360 @@ def _record(event: str, **fields) -> None:
         record_pipeline_event("autoplace", event, fields)
     except Exception:  # noqa: BLE001 — tracing must never break the task
         pass
+
+
+def _materialize_extracted_frames(job_id: str, *, minimum_ready: int = 3) -> None:
+    """Persist source-footage frames in the normal replaceable asset pool."""
+    from sqlalchemy import func, select  # noqa: PLC0415
+
+    from app import storage  # noqa: PLC0415
+
+    with _sync_session() as db:
+        job = db.get(Job, uuid.UUID(job_id))
+        if job is None or job.content_plan_item_id is None:
+            return
+        ready = (
+            db.execute(
+                select(PlanItemAsset).where(
+                    PlanItemAsset.plan_item_id == job.content_plan_item_id,
+                    PlanItemAsset.status == "ready",
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(ready) >= minimum_ready:
+            return
+        total = int(
+            db.execute(
+                select(func.count())
+                .select_from(PlanItemAsset)
+                .where(PlanItemAsset.plan_item_id == job.content_plan_item_id)
+            ).scalar_one()
+        )
+        needed = min(minimum_ready - len(ready), max(0, 20 - total))
+        if needed <= 0:
+            return
+        existing_sources = {
+            (
+                str((asset.analysis or {}).get("source_clip_gcs_path") or ""),
+                round(float((asset.analysis or {}).get("source_timestamp_s") or 0.0), 2),
+            )
+            for asset in ready
+            if (asset.analysis or {}).get("source") == "extracted_frame"
+        }
+        source_paths = list((job.all_candidates or {}).get("clip_paths") or [])
+        user_id = job.user_id
+        item_id = job.content_plan_item_id
+
+    if not source_paths:
+        return
+    created: list[PlanItemAsset] = []
+    with tempfile.TemporaryDirectory(prefix="nova_extracted_frames_") as tmpdir:
+        for clip_index, source_gcs_path in enumerate(source_paths):
+            if len(created) >= needed:
+                break
+            local_video = os.path.join(tmpdir, f"source_{clip_index}.mp4")
+            try:
+                storage.download_to_file(source_gcs_path, local_video)
+                from app.pipeline.probe import probe_video  # noqa: PLC0415
+
+                duration_s = max(0.1, float(probe_video(local_video).duration_s))
+            except Exception as exc:  # noqa: BLE001 - source extraction is best effort
+                log.warning(
+                    "visual_blocks.frame_source_failed",
+                    job_id=job_id,
+                    source=source_gcs_path,
+                    error=str(exc)[:180],
+                )
+                continue
+            for fraction in (0.18, 0.5, 0.82):
+                if len(created) >= needed:
+                    break
+                timestamp_s = round(min(max(0.0, duration_s - 0.05), duration_s * fraction), 3)
+                provenance = (source_gcs_path, round(timestamp_s, 2))
+                if provenance in existing_sources:
+                    continue
+                frame_path = os.path.join(tmpdir, f"frame_{clip_index}_{fraction}.jpg")
+                result = subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-ss",
+                        f"{timestamp_s:.3f}",
+                        "-i",
+                        local_video,
+                        "-frames:v",
+                        "1",
+                        "-q:v",
+                        "2",
+                        "-y",
+                        frame_path,
+                    ],
+                    capture_output=True,
+                    timeout=90,
+                    check=False,
+                )
+                if result.returncode != 0 or not os.path.exists(frame_path):
+                    continue
+                frame_bytes = Path(frame_path).read_bytes()
+                digest = hashlib.sha256(frame_bytes).hexdigest()
+                object_path = (
+                    f"users/{user_id}/plan/{item_id}/pool/"
+                    f"extracted_{clip_index}_{int(timestamp_s * 1000)}_{digest[:10]}.jpg"
+                )
+                try:
+                    storage.upload_public_read(frame_path, object_path, content_type="image/jpeg")
+                    from PIL import Image  # noqa: PLC0415
+
+                    with Image.open(frame_path) as image:
+                        width, height = image.size
+                    created.append(
+                        PlanItemAsset(
+                            plan_item_id=item_id,
+                            user_id=user_id,
+                            gcs_path=object_path,
+                            kind="image",
+                            content_hash=digest,
+                            source_filename=f"Extracted frame · clip {clip_index + 1}",
+                            aspect=round(width / height, 4) if height else None,
+                            analysis={
+                                "subject": "Extracted frame",
+                                "description": (
+                                    f"Frame from source clip {clip_index + 1} at {timestamp_s:.2f}s"
+                                ),
+                                "on_screen_text": "",
+                                "brands": [],
+                                "source": "extracted_frame",
+                                "analysis_version": ANALYSIS_VERSION,
+                                "source_clip_gcs_path": source_gcs_path,
+                                "source_clip_index": clip_index,
+                                "source_timestamp_s": timestamp_s,
+                                "width": width,
+                                "height": height,
+                                "has_alpha": False,
+                            },
+                            status="ready",
+                        )
+                    )
+                    existing_sources.add(provenance)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "visual_blocks.frame_materialize_failed",
+                        job_id=job_id,
+                        error=str(exc)[:180],
+                    )
+    if created:
+        with _sync_session() as db:
+            db.add_all(created)
+            db.commit()
+        _record("visual_blocks_frames_extracted", count=len(created))
+
+
+@celery_app.task(name="app.tasks.autoplace.prepare_visual_block_assets", **_AUTOPLACE_TASK_LIMITS)
+def prepare_visual_block_assets(job_id: str, variant_ids: list[str]) -> None:
+    """Extract missing source frames once, then fan out variant planners."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not (settings.visual_blocks_enabled and settings.visual_block_autoplan_enabled):
+        return
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        _materialize_extracted_frames(job_id)
+        for variant_id in variant_ids:
+            plan_visual_blocks.apply_async(
+                args=[job_id, variant_id], queue=settings.autoplace_queue
+            )
+
+
+@celery_app.task(name="app.tasks.autoplace.plan_visual_blocks", **_AUTOPLACE_TASK_LIMITS)
+def plan_visual_blocks(job_id: str, variant_id: str) -> None:
+    """Plan, persist, and render first-edit visual blocks for one variant."""
+    from app.config import settings  # noqa: PLC0415
+
+    if not (settings.visual_blocks_enabled and settings.visual_block_autoplan_enabled):
+        return
+
+    from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
+
+    with pipeline_trace_for(job_id):
+        from sqlalchemy import select  # noqa: PLC0415
+
+        from app.services.overlay_autoplace import transcript_source  # noqa: PLC0415
+
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id))
+            if job is None or job.content_plan_item_id is None:
+                return
+            variant = next(
+                (
+                    row
+                    for row in (job.assembly_plan or {}).get("variants") or []
+                    if row.get("variant_id") == variant_id
+                ),
+                None,
+            )
+            if (
+                variant is None
+                or variant.get("text_mode") == "lyrics"
+                or not variant.get("base_video_path")
+                or variant.get("visual_blocks")
+            ):
+                return
+            assets = [
+                {
+                    "id": str(asset.id),
+                    "gcs_path": asset.gcs_path,
+                    "kind": asset.kind,
+                    "analysis": asset.analysis or {},
+                }
+                for asset in db.execute(
+                    select(PlanItemAsset).where(
+                        PlanItemAsset.plan_item_id == job.content_plan_item_id,
+                        PlanItemAsset.status == "ready",
+                    )
+                )
+                .scalars()
+                .all()
+            ]
+            duration_s = float(variant.get("duration_s") or variant.get("output_duration_s") or 0)
+            if duration_s <= 0:
+                duration_s = 60.0
+            transcript = transcript_source(variant, allow_whisper=True)
+            words = transcript[0] if transcript else []
+            beats = list(variant.get("beat_grid") or variant.get("beat_timestamps_s") or [])
+            timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
+            clip_plan = list(timeline.get("slots") or variant.get("assembly_steps") or [])
+            visual_signals = {
+                "resolved_archetype": variant.get("resolved_archetype"),
+                "montage_preset": variant.get("montage_preset_rendered"),
+                "shot_quality": variant.get("shot_quality"),
+                "repetition_signals": variant.get("repetition_signals"),
+                "speech_pace": variant.get("speech_pace"),
+                "music_energy": variant.get("music_energy"),
+            }
+
+        from app.agents.visual_treatment_planner import (  # noqa: PLC0415
+            RawVisualTreatment,
+            VisualTreatmentAsset,
+            VisualTreatmentPlannerAgent,
+            VisualTreatmentPlannerInput,
+        )
+
+        proposals: list[RawVisualTreatment] = []
+        if settings.gemini_api_key and (words or beats):
+            try:
+                from app.agents._model_client import default_client  # noqa: PLC0415
+                from app.agents._runtime import RunContext  # noqa: PLC0415
+
+                output = VisualTreatmentPlannerAgent(default_client()).run(
+                    VisualTreatmentPlannerInput(
+                        words=words,
+                        assets=[
+                            VisualTreatmentAsset(
+                                asset_id=asset["id"],
+                                kind=asset["kind"],
+                                subject=str(asset["analysis"].get("subject", "")),
+                                description=str(asset["analysis"].get("description", "")),
+                                on_screen_text=str(asset["analysis"].get("on_screen_text", "")),
+                            )
+                            for asset in assets
+                        ],
+                        duration_s=min(duration_s, 60.0),
+                        beat_timestamps_s=beats,
+                        clip_plan=clip_plan,
+                        visual_signals=visual_signals,
+                        recent_treatments=list(variant.get("visual_treatment_history") or []),
+                    ),
+                    ctx=RunContext(job_id=job_id),
+                )
+                proposals = output.treatments
+            except Exception as exc:  # noqa: BLE001 - deterministic fallback below
+                log.warning(
+                    "visual_blocks.planner_failed",
+                    job_id=job_id,
+                    variant_id=variant_id,
+                    error=str(exc)[:240],
+                )
+
+        # Keyless/agent-failure fallback is deliberately conservative: a short
+        # opening montage is grounded by real assets; semantic cards require the
+        # transcript-aware agent and are never hallucinated heuristically.
+        if not proposals and len(assets) >= 3 and duration_s >= 1.2:
+            proposals = [
+                RawVisualTreatment(
+                    kind="montage",
+                    purpose="hook",
+                    start_s=0.0,
+                    end_s=min(3.0, duration_s),
+                    asset_ids=[asset["id"] for asset in assets[:5]],
+                    rationale="Rapid opening context montage from the creator's asset pool.",
+                    confidence="medium",
+                )
+            ]
+
+        from app.agents._schemas.visual_block import (  # noqa: PLC0415
+            validate_visual_block_text_links,
+            validate_visual_blocks,
+        )
+        from app.services.visual_treatment_planner import (  # noqa: PLC0415
+            build_visual_treatments,
+        )
+
+        blocks, new_text = build_visual_treatments(
+            proposals,
+            assets_by_id={asset["id"]: asset for asset in assets},
+            duration_s=duration_s,
+            transcript_text=" ".join(
+                str(word.get("word") or word.get("text") or "")
+                if isinstance(word, dict)
+                else str(word)
+                for word in words
+            ),
+            transcript_words=words,
+        )
+        if not blocks:
+            _record("visual_blocks_plan_zero", variant_id=variant_id)
+            return
+        blocks = validate_visual_blocks(blocks, duration_s=duration_s)
+
+        with _sync_session() as db:
+            job = db.get(Job, uuid.UUID(job_id), with_for_update=True)
+            if job is None:
+                return
+            variants = list((job.assembly_plan or {}).get("variants") or [])
+            target = next((row for row in variants if row.get("variant_id") == variant_id), None)
+            if target is None or target.get("visual_blocks"):
+                return
+            elements = list(target.get("text_elements") or []) + new_text
+            validate_visual_block_text_links(blocks, elements)
+            render_gen_id = uuid.uuid4().hex
+            target["visual_blocks"] = blocks
+            target["visual_blocks_base_path"] = None
+            if new_text:
+                target["text_elements"] = elements
+                target["text_elements_user_edited"] = True
+            target["render_generation_id"] = render_gen_id
+            target["render_status"] = "rendering"
+            from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
+
+            job.assembly_plan = {**(job.assembly_plan or {}), "variants": variants}
+            flag_modified(job, "assembly_plan")
+            db.commit()
+
+        from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
+
+        regenerate_generative_variant.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": render_gen_id},
+            queue="overlay-jobs",
+        )
+        _record(
+            "visual_blocks_planned",
+            variant_id=variant_id,
+            blocks=len(blocks),
+            linked_text=len(new_text),
+        )
 
 
 # ── asset analysis ────────────────────────────────────────────────────────────

@@ -1,0 +1,19 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "Now", "start_s": 9.0, "end_s": 9.2},
+      {"word": "the", "start_s": 9.2, "end_s": 9.3},
+      {"word": "second", "start_s": 9.3, "end_s": 9.7},
+      {"word": "lesson", "start_s": 9.7, "end_s": 10.1}
+    ],
+    "assets": [],
+    "duration_s": 30.0,
+    "beat_timestamps_s": [],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"text_card\",\"purpose\":\"transition\",\"start_s\":9.0,\"end_s\":10.5,\"asset_ids\":[],\"text\":\"The second lesson\",\"rationale\":\"A clear spoken section change supports a brief transition card.\",\"confidence\":\"high\"}]}",
+  "output": {"treatments": [{"kind": "text_card", "purpose": "transition", "start_s": 9.0, "end_s": 10.5, "asset_ids": [], "text": "The second lesson", "rationale": "A clear spoken section change supports a brief transition card.", "confidence": "high"}]},
+  "meta": {"source": "hand_authored_golden", "notes": "Explicit spoken section transition."}
+}

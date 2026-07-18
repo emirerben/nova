@@ -1918,6 +1918,45 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
         return check_overlay_placement(output, input)
     if agent_name == "nova.compose.intro_writer":
         return check_intro_writer(output, input)
+    if agent_name == "nova.compose.visual_treatment_planner":
+        failures: list[str] = []
+        asset_ids = {asset.asset_id for asset in input.assets}
+        windows: list[tuple[float, float]] = []
+        for index, treatment in enumerate(output.treatments):
+            if treatment.start_s >= treatment.end_s or treatment.end_s > input.duration_s:
+                failures.append(f"treatment {index}: invalid timeline window")
+            if any(treatment.start_s < end and treatment.end_s > start for start, end in windows):
+                failures.append(f"treatment {index}: overlaps another treatment")
+            windows.append((treatment.start_s, treatment.end_s))
+            if treatment.kind == "montage":
+                unique_assets = set(treatment.asset_ids)
+                if len(unique_assets) < 3:
+                    failures.append(f"treatment {index}: montage has fewer than 3 assets")
+                if not unique_assets.issubset(asset_ids):
+                    failures.append(f"treatment {index}: montage references an unknown asset")
+            if treatment.kind == "text_card":
+                if not input.words:
+                    failures.append(f"treatment {index}: semantic card has no transcript evidence")
+                if not treatment.text:
+                    failures.append(f"treatment {index}: text card has no copy")
+                elif input.words:
+                    from app.services.visual_treatment_planner import (  # noqa: PLC0415
+                        _card_copy_is_transcript_grounded,
+                        _transcript_text_in_window,
+                    )
+
+                    transcript_text = _transcript_text_in_window(
+                        input.words,
+                        start_s=treatment.start_s,
+                        end_s=treatment.end_s,
+                    )
+                    if not _card_copy_is_transcript_grounded(treatment.text, transcript_text):
+                        failures.append(
+                            f"treatment {index}: text card copy is not transcript-grounded"
+                        )
+        if len(output.treatments) > 12:
+            failures.append("more than 12 proposed treatments")
+        return failures
     if agent_name == "nova.compose.sequence_emphasis":
         return check_sequence_emphasis(output, input)
     if agent_name == "nova.compose.sequence_quote":

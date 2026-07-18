@@ -1,0 +1,22 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "The", "start_s": 5.0, "end_s": 5.1},
+      {"word": "lesson", "start_s": 5.1, "end_s": 5.4},
+      {"word": "is", "start_s": 5.4, "end_s": 5.5},
+      {"word": "simple", "start_s": 5.5, "end_s": 5.8},
+      {"word": "show", "start_s": 5.8, "end_s": 6.0},
+      {"word": "the", "start_s": 6.0, "end_s": 6.1},
+      {"word": "work", "start_s": 6.1, "end_s": 6.4}
+    ],
+    "assets": [],
+    "duration_s": 25.0,
+    "beat_timestamps_s": [],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"text_card\",\"purpose\":\"key_argument\",\"start_s\":5.0,\"end_s\":7.0,\"asset_ids\":[],\"text\":\"Show the work\",\"rationale\":\"Use the shortest faithful transcript phrase rather than a dense card.\",\"confidence\":\"high\"}]}",
+  "output": {"treatments": [{"kind": "text_card", "purpose": "key_argument", "start_s": 5.0, "end_s": 7.0, "asset_ids": [], "text": "Show the work", "rationale": "Use the shortest faithful transcript phrase rather than a dense card.", "confidence": "high"}]},
+  "meta": {"source": "hand_authored_golden", "notes": "Long spoken argument yields concise grounded copy."}
+}

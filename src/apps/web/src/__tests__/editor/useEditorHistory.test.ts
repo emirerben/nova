@@ -11,7 +11,7 @@ import {
   useEditorHistory,
   type EditorDocument,
 } from "@/app/plan/items/[id]/_editor/useEditorHistory";
-import type { MediaOverlay } from "@/lib/plan-api";
+import type { MediaOverlay, VisualBlock } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 function bar(id: string, text = "hi"): TextElementBar {
@@ -123,9 +123,23 @@ describe("undoSnapshot / redoSnapshot", () => {
 
 describe("serializeDraft / deserializeDraft", () => {
   it("round-trips a full document", () => {
+    const visualBlock: VisualBlock = {
+      version: 1,
+      id: "card-1",
+      kind: "text_card",
+      start_s: 1,
+      end_s: 2.5,
+      timing_mode: "manual",
+      origin: "user",
+      transition_in: "cut",
+      transition_out: "fade",
+      audio_policy: { base: "continue", sfx: "continue" },
+      background: { type: "gradient", from: "#111111", to: "#26382F", angle_deg: 90 },
+    };
     const d = doc([bar("a"), bar("b")], {
       slots: [{ key: "s0", inS: 0, durationS: 3, removed: false } as never],
       overlays: [overlay({ x_frac: 0.8, y_frac: 0.2, scale: 0.55 })],
+      visualBlocks: [visualBlock],
       videoMuted: true,
       soundMuted: true,
       mixLevel: 0.25,

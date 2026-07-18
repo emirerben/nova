@@ -2,14 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.32.1] — 2026-07-18
+## [0.8.0.0] — 2026-07-18
 
-### Fixed
-- **Masonry and Polaroid text can now use white pockets that appear later as the collage pans.** Smart place all evaluates each text block at the time it is visible, keeps overlapping blocks in distinct revealed pockets, and stores a board-local layer origin so late text stays unclipped in both the editor and final render. Manual dragging now reaches the full moving board instead of stopping at the initial viewport, while preview and FFmpeg use the same pan math.
+### Added
+- **Editable visual blocks for rapid montages and interstitial text cards.** Non-lyrics variants can now represent base-layer visual replacements as ordinary timeline elements, with asset-backed montage shots, solid/gradient/blur/image card backgrounds, crop and motion controls, deterministic auto-pacing, linked authored text, audio/SFX continuation policies, undo/redo, atomic saves, and matching live-canvas preview. The renderer preserves the clean base, caches the text-free block composite, and reapplies authored text, captions, overlays, and sound effects in a stable layer order.
+- **Transcript-aware first-edit planning and reusable asset sourcing.** A dedicated visual-treatment agent can classify transcript moments, propose hooks, context montages, statistics, quotes, and section interrupts, and materialize extracted source frames into the persistent asset pool. Deterministic guardrails enforce asset ownership, timeline density, transcript-window grounding, card readability, and montage coverage. Manual visual blocks, editor UI, and AI planning ship behind separate default-off backend/frontend/autoplan flags.
+
+### Changed
+- **Editor commits and capabilities now include `visual_blocks`.** Block and linked-text changes share one stale-generation baseline and render transaction, while a non-persisting retime endpoint returns concrete shot timing for preview before save.
+
 ## [0.7.34.0] — 2026-07-18
 
 ### Added
 - **Lyrics editing in the editor (behind `NEXT_PUBLIC_LYRICS_EDITOR_ENABLED`).** Lyric lines now appear as text blocks in the full-screen editor: their words and style (color, highlight, font, size) are editable, while timing stays locked to the vocal (no drag/trim/split/delete — enforced in the reducer so undo, drag, smart-place, and the Nova copilot all inherit the lock). A Lyrics on/off switch lives in the Text drawer (disabled with a hint when the variant has no track or the song has no synced lyrics); turning lyrics off keeps unsaved lyric edits recoverable in-session. Add-text now works on lyrics variants. Saves ride the editor-commit `lyrics` section (batched into one full re-render, with a "Re-renders on Save" chip); lyric bars are excluded from the text-elements payload. In rendered-video preview only dirty lyric lines overlay the burned video (no double display); virtual preview shows all lyric bars over raw clips.
+
+## [0.7.32.1] — 2026-07-18
+
+### Fixed
+- **Masonry and Polaroid text can now use white pockets that appear later as the collage pans.** Smart place all evaluates each text block at the time it is visible, keeps overlapping blocks in distinct revealed pockets, and stores a board-local layer origin so late text stays unclipped in both the editor and final render. Manual dragging now reaches the full moving board instead of stopping at the initial viewport, while preview and FFmpeg use the same pan math.
 
 ## [0.7.33.0] — 2026-07-18
 

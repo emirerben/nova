@@ -23,6 +23,7 @@ import {
   type CaptionCue,
   type SoundEffectPlacement,
   type TextElement,
+  type VisualBlock,
 } from "@/lib/plan-api";
 
 const PLAN_BASE = "/api/plan";
@@ -94,6 +95,8 @@ export interface EditorCommitRequest {
   sound_effects?: SoundEffectPlacement[];
   /** Full replacement media-overlay card list. Omit when untouched. */
   media_overlays?: MediaOverlay[];
+  /** Full replacement visual-block list. Omit when untouched. */
+  visual_blocks?: VisualBlock[];
   /** Working-state title. Omit when untouched; null clears. */
   title?: string | null;
   /** Lyrics editor state. Omit when untouched; any presence triggers full render. */
@@ -128,6 +131,7 @@ export interface EditorCommitResponse {
     music?: boolean;
     sound_effects?: boolean;
     media_overlays?: boolean;
+    visual_blocks?: boolean;
     title?: boolean;
     lyrics?: boolean;
   };
@@ -182,6 +186,8 @@ export function buildEditorCommitRequest({
   soundEffects = [],
   overlaysDirty = false,
   mediaOverlays = [],
+  visualBlocksDirty = false,
+  visualBlocks = [],
   acceptedSuggestions = [],
   titleDirty = true,
   title,
@@ -205,6 +211,8 @@ export function buildEditorCommitRequest({
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
   mediaOverlays?: MediaOverlay[];
+  visualBlocksDirty?: boolean;
+  visualBlocks?: VisualBlock[];
   acceptedSuggestions?: AcceptedSuggestionRef[];
   titleDirty?: boolean;
   title: string;
@@ -257,6 +265,7 @@ export function buildEditorCommitRequest({
     music_track_id: musicDirty ? musicTrackId ?? null : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
+    visual_blocks: visualBlocksDirty ? visualBlocks : undefined,
     accepted_suggestion_ids: acceptedIds.length > 0 ? acceptedIds : undefined,
     title: titleDirty ? (title.trim() !== "" ? title.trim() : null) : undefined,
     lyrics: lyricsDirty ? lyrics : undefined,

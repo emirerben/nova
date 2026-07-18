@@ -445,6 +445,24 @@ TIMELINE_MAX_TOTAL_S = 60.0
 _TIMELINE_EDITABLE_VARIANTS = ("song_text", "original_text")
 
 
+def visual_block_variant_duration(variant: dict) -> float:
+    """Resolve output duration for visual-block bounds, including old variants."""
+    explicit = float(variant.get("duration_s") or variant.get("output_duration_s") or 0.0)
+    if explicit > 0:
+        return explicit
+    timeline = variant.get("user_timeline") or variant.get("ai_timeline") or {}
+    slots = [slot for slot in timeline.get("slots") or [] if not slot.get("removed")]
+    slot_total = sum(float(slot.get("duration_s") or 0.0) for slot in slots)
+    if slot_total > 0:
+        return slot_total
+    timed_rows = (
+        list(variant.get("caption_cues") or [])
+        + list(variant.get("narrated_timings") or [])
+        + list(variant.get("text_elements") or [])
+    )
+    return max((float(row.get("end_s") or 0.0) for row in timed_rows), default=0.0)
+
+
 class TimelineSlotEdit(BaseModel):
     """One slot as posted by the timeline editor.
 
@@ -551,6 +569,7 @@ class EditorCommitRequest(BaseModel):
     lyrics: LyricsSectionRequest | None = None
     sound_effects: list[dict] | None = None
     media_overlays: list[dict] | None = None
+    visual_blocks: list[dict] | None = None
     title: str | None = Field(None, max_length=300)
     base_generation: str = ""
     # AI-suggestion resolution metadata, NOT a section: envelope ids from
@@ -581,6 +600,7 @@ class EditorCommitSections(BaseModel):
     lyrics: bool
     sound_effects: bool
     media_overlays: bool
+    visual_blocks: bool
     title: bool
 
 
@@ -2785,6 +2805,16 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
     overlays_reason = (
         "media_overlays_disabled" if not settings.media_overlays_enabled else effects_reason
     )
+    if not settings.visual_blocks_enabled:
+        visual_blocks_reason = "visual_blocks_disabled"
+    elif variant.get("text_mode") == "lyrics":
+        visual_blocks_reason = "lyrics_variant"
+    elif not variant.get("base_video_path"):
+        visual_blocks_reason = "no_clean_base"
+    elif visual_block_variant_duration(variant) <= 0:
+        visual_blocks_reason = "duration_unknown"
+    else:
+        visual_blocks_reason = effects_reason
     # AI overlay suggestions (plans 005-009): mirrors the suggest-overlays route's
     # eligibility EXCEPT the ready-asset count — that's a DB query and this map is
     # cheap-by-design; the editor's pool strip owns the empty-pool state locally.
@@ -2826,10 +2856,12 @@ def _editor_capabilities(job: Job, variant: dict) -> dict:
         ),
         "sfx": sfx_reason is None,
         "overlays": overlays_reason is None,
+        "visual_blocks": visual_blocks_reason is None,
         "suggestions": suggestions_reason is None,
         "reason": caption_reason or timeline_reason,
         "sfx_reason": sfx_reason,
         "overlays_reason": overlays_reason,
+        "visual_blocks_reason": visual_blocks_reason,
         "suggestions_reason": suggestions_reason,
         "lyrics": _lyrics_capabilities(variant),
     }
@@ -3271,6 +3303,7 @@ def prepare_editor_commit(
     *,
     user_id: str | None = None,
     music_track: MusicTrack | None = None,
+    visual_assets: dict[str, dict] | None = None,
 ) -> dict:
     """Validate ALL sections, compare the baseline, then stage ONE atomic write.
 
@@ -3304,6 +3337,7 @@ def prepare_editor_commit(
         and payload.lyrics is None
         and payload.sound_effects is None
         and payload.media_overlays is None
+        and payload.visual_blocks is None
         and payload.title is None
     ):
         raise HTTPException(
@@ -3325,11 +3359,18 @@ def prepare_editor_commit(
     materialized_from_sequence = False
     text_requires_full_render = False
     if payload.text_elements is not None:
+        from app.config import settings as _settings_text  # noqa: PLC0415
+
         # OV-1 (plan 010): the API half of the dual text-elements gate —
         # `_text_elements_allowed` is the same predicate `_editor_capabilities`
         # derives `text_elements` from (lyrics/flag-off are 422/404 in
         # validate_text_elements_payload).
-        if not _text_elements_allowed(variant):
+        visual_card_text_only = (
+            _settings_text.visual_blocks_enabled
+            and payload.visual_blocks is not None
+            and all(element.get("visual_block_id") for element in payload.text_elements)
+        )
+        if not _text_elements_allowed(variant) and not visual_card_text_only:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"{CAPTION_TAB_COPY}.",
@@ -3477,6 +3518,66 @@ def prepare_editor_commit(
             variant_context=variant,
         )
 
+    validated_visual_blocks: list[dict] | None = None
+    if payload.visual_blocks is not None:
+        from app.agents._schemas.visual_block import (  # noqa: PLC0415
+            iter_visual_shots,
+            validate_visual_blocks,
+        )
+        from app.config import settings as _settings_visual  # noqa: PLC0415
+
+        if not _settings_visual.visual_blocks_enabled:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        if variant.get("text_mode") == "lyrics" or not variant.get("base_video_path"):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Visual blocks require a non-lyrics variant with a clean base.",
+            )
+        try:
+            validated_visual_blocks = validate_visual_blocks(
+                payload.visual_blocks,
+                duration_s=visual_block_variant_duration(variant),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+        assets = visual_assets or {}
+        for shot in iter_visual_shots(validated_visual_blocks):
+            asset = assets.get(str(shot.get("asset_id")))
+            if (
+                asset is None
+                or asset.get("status") != "ready"
+                or asset.get("gcs_path") != shot.get("src_gcs_path")
+                or asset.get("kind") != shot.get("kind")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Visual block assets must be ready assets owned by this plan item.",
+                )
+
+    if payload.visual_blocks is not None or payload.text_elements is not None:
+        from app.agents._schemas.visual_block import (  # noqa: PLC0415
+            validate_visual_block_text_links,
+        )
+
+        effective_blocks = (
+            validated_visual_blocks
+            if validated_visual_blocks is not None
+            else list(variant.get("visual_blocks") or [])
+        )
+        effective_elements = (
+            validated_elements
+            if validated_elements is not None
+            else list(variant.get("text_elements") or [])
+        )
+        try:
+            validate_visual_block_text_links(effective_blocks, effective_elements)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
+
     # ── Stale-baseline compare-and-fail (multi-tab / superseded-render safety) ─
     if payload.base_generation != variant_render_baseline(variant):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="baseline_conflict")
@@ -3492,6 +3593,7 @@ def prepare_editor_commit(
         or validated_lyrics is not None
         or validated_sfx is not None
         or validated_overlays is not None
+        or validated_visual_blocks is not None
     )
     new_gen = uuid.uuid4().hex if has_render_section else None
 
@@ -3529,6 +3631,12 @@ def prepare_editor_commit(
             updated["sound_effects"] = validated_sfx or None
         if validated_overlays is not None:
             updated["media_overlays"] = validated_overlays or None
+        if validated_visual_blocks is not None:
+            updated["visual_blocks"] = validated_visual_blocks or None
+            # Keep the old key reachable until the token-gated worker publishes
+            # the replacement. The stale bit prevents reuse; retaining the key
+            # lets the winning render free it without a pre-render delete race.
+            updated["visual_blocks_cache_stale"] = True
         if payload.accepted_suggestion_ids:
             # Accepted AI suggestions became cards in the media_overlays section;
             # drop their envelopes in the SAME atomic write. Unknown ids no-op
@@ -3564,6 +3672,7 @@ def prepare_editor_commit(
         "mix_override": mix_override,
         "sfx_override": validated_sfx,
         "media_overlays_override": validated_overlays,
+        "visual_blocks_override": validated_visual_blocks,
         "new_track_id": payload.music_track_id,
         "caption_cues_override": validated_caption_cues,
         "text_requires_full_render": text_requires_full_render,
@@ -3581,6 +3690,7 @@ def prepare_editor_commit(
             "lyrics": payload.lyrics is not None,
             "sound_effects": payload.sound_effects is not None,
             "media_overlays": payload.media_overlays is not None,
+            "visual_blocks": payload.visual_blocks is not None,
         },
     }
 
@@ -3617,8 +3727,23 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     # the base and _reapply_user_media_layers composites the persisted lanes on
     # top. Legacy variants without a cached base fall through to the fast pass.
     sections = prep["sections"]
+    if (
+        sections.get("visual_blocks") is True
+        and prep.get("resolved_archetype") in CAPTION_EDIT_ARCHETYPES
+        and prep.get("has_caption_base")
+    ):
+        from app.tasks.generative_build import reburn_narrated_captions  # noqa: PLC0415
+
+        reburn_narrated_captions.apply_async(
+            args=[job_id, variant_id],
+            kwargs={"render_gen_id": prep["generation"]},
+            queue="overlay-jobs",
+        )
+        return
     lane_only_commit = (
-        sections.get("sound_effects") is True or sections.get("media_overlays") is True
+        sections.get("sound_effects") is True
+        or sections.get("media_overlays") is True
+        or sections.get("visual_blocks") is True
     ) and not (
         sections.get("text_elements") is True
         or sections.get("caption_meta") is True
@@ -3653,6 +3778,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         or prep["mix_override"] is not None
         or prep.get("new_track_id") is not None
         or prep.get("text_requires_full_render") is True
+        or prep["sections"].get("visual_blocks") is True
         or sections.get("lyrics") is True
     )
     if full_render or has_text_section:
@@ -3671,6 +3797,7 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
         and prep.get("new_track_id") is None
         and prep.get("text_requires_full_render") is not True
         and sections.get("lyrics") is not True
+        and sections.get("visual_blocks") is not True
     )
     apply_kwargs: dict = {"args": [job_id, variant_id], "kwargs": kwargs}
     if is_reburn_only:

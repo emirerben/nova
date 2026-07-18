@@ -96,7 +96,7 @@ export interface ApplyCopilotOpsResult {
   renderRequest?: { kind: "set_intro_layout"; layout: "linear" | "cluster" };
   nextTitle?: string;
   captionMetaPatch?: CaptionMetaPatch;
-  openTool?: "text" | "sounds" | "overlays" | "styles";
+  openTool?: "text" | "visuals" | "sounds" | "overlays" | "styles";
   applied: ChangeChip[];
   rejected: RejectedOp[];
 }

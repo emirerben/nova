@@ -52,6 +52,11 @@ _REGISTRATIONS: tuple[tuple[str, str, str], ...] = (
         "OverlayFormatMatcherAgent",
     ),
     ("nova.compose.intro_writer", "app.agents.intro_writer", "IntroTextWriterAgent"),
+    (
+        "nova.compose.visual_treatment_planner",
+        "app.agents.visual_treatment_planner",
+        "VisualTreatmentPlannerAgent",
+    ),
     ("nova.compose.sequence_emphasis", "app.agents.sequence_emphasis", "SequenceEmphasisAgent"),
     (
         "nova.compose.sequence_quote",

@@ -1,0 +1,24 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "Start", "start_s": 0.0, "end_s": 0.3},
+      {"word": "Here", "start_s": 0.3, "end_s": 0.6},
+      {"word": "The", "start_s": 14.0, "end_s": 14.1},
+      {"word": "result", "start_s": 14.1, "end_s": 14.5},
+      {"word": "doubled", "start_s": 14.5, "end_s": 15.0}
+    ],
+    "assets": [
+      {"asset_id": "a1", "kind": "image", "subject": "context one"},
+      {"asset_id": "a2", "kind": "image", "subject": "context two"},
+      {"asset_id": "a3", "kind": "image", "subject": "context three"}
+    ],
+    "duration_s": 30.0,
+    "beat_timestamps_s": [0.0, 0.5, 1.0],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"montage\",\"purpose\":\"hook\",\"start_s\":0.0,\"end_s\":1.5,\"asset_ids\":[\"a1\",\"a2\",\"a3\"],\"text\":null,\"rationale\":\"Compact opening context.\",\"confidence\":\"high\"},{\"kind\":\"text_card\",\"purpose\":\"key_argument\",\"start_s\":14.0,\"end_s\":16.0,\"asset_ids\":[],\"text\":\"The result doubled\",\"rationale\":\"Isolate the transcript-backed result without over-treating the edit.\",\"confidence\":\"high\"}]}",
+  "output": {"treatments": [{"kind": "montage", "purpose": "hook", "start_s": 0.0, "end_s": 1.5, "asset_ids": ["a1", "a2", "a3"], "text": null, "rationale": "Compact opening context.", "confidence": "high"}, {"kind": "text_card", "purpose": "key_argument", "start_s": 14.0, "end_s": 16.0, "asset_ids": [], "text": "The result doubled", "rationale": "Isolate the transcript-backed result without over-treating the edit.", "confidence": "high"}]},
+  "meta": {"source": "hand_authored_golden", "notes": "Treatments remain sparse and under total coverage caps."}
+}

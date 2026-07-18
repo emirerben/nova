@@ -16,7 +16,13 @@
 
 import { useCallback, useState } from "react";
 
-export type EditorSelectionKind = "text" | "clip" | "sfx" | "overlay" | "music";
+export type EditorSelectionKind =
+  | "text"
+  | "visual"
+  | "clip"
+  | "sfx"
+  | "overlay"
+  | "music";
 
 export interface EditorSelection {
   kind: EditorSelectionKind;

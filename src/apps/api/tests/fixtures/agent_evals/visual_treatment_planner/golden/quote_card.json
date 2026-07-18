@@ -1,0 +1,21 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word": "She", "start_s": 4.0, "end_s": 4.2},
+      {"word": "said", "start_s": 4.2, "end_s": 4.5},
+      {"word": "make", "start_s": 4.5, "end_s": 4.8},
+      {"word": "the", "start_s": 4.8, "end_s": 4.9},
+      {"word": "work", "start_s": 4.9, "end_s": 5.2},
+      {"word": "visible", "start_s": 5.2, "end_s": 5.7}
+    ],
+    "assets": [],
+    "duration_s": 24.0,
+    "beat_timestamps_s": [],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"text_card\",\"purpose\":\"quote\",\"start_s\":4.0,\"end_s\":6.0,\"asset_ids\":[],\"text\":\"Make the work visible\",\"rationale\":\"The spoken quote is concise and directly supported by the transcript.\",\"confidence\":\"high\"}]}",
+  "output": {"treatments": [{"kind": "text_card", "purpose": "quote", "start_s": 4.0, "end_s": 6.0, "asset_ids": [], "text": "Make the work visible", "rationale": "The spoken quote is concise and directly supported by the transcript.", "confidence": "high"}]},
+  "meta": {"source": "hand_authored_golden", "notes": "Verbatim transcript-backed quote card."}
+}

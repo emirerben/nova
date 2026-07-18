@@ -1,0 +1,18 @@
+{
+  "agent": "nova.compose.visual_treatment_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [],
+    "assets": [
+      {"asset_id": "a1", "kind": "image", "subject": "travel still one"},
+      {"asset_id": "a2", "kind": "image", "subject": "travel still two"},
+      {"asset_id": "a3", "kind": "video", "subject": "travel clip"}
+    ],
+    "duration_s": 18.0,
+    "beat_timestamps_s": [0.0, 0.5, 1.0, 1.5],
+    "recent_treatments": []
+  },
+  "raw_text": "{\"treatments\":[{\"kind\":\"montage\",\"purpose\":\"hook\",\"start_s\":0.0,\"end_s\":1.5,\"asset_ids\":[\"a1\",\"a2\",\"a3\"],\"text\":null,\"rationale\":\"Beat accents support a non-semantic opening montage.\",\"confidence\":\"medium\"}]}",
+  "output": {"treatments": [{"kind": "montage", "purpose": "hook", "start_s": 0.0, "end_s": 1.5, "asset_ids": ["a1", "a2", "a3"], "text": null, "rationale": "Beat accents support a non-semantic opening montage.", "confidence": "medium"}]},
+  "meta": {"source": "hand_authored_golden", "notes": "Beat-only input can montage but cannot create a semantic card."}
+}
