@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1.1] — 2026-07-18
+
+### Fixed
+- **Talking-head edits now reliably show both intelligent section cards and captions.** When the creative model misses an announced list, Nova recovers the locally timed headings from the transcript, rejects unannounced hook lists, handles Turkish and English casing, keeps correct model-authored titles, limits dense lists to eight cards, and returns to the speaker before each explanation. Subtitled renders preserve captions above the caption-free base, and the editor previews those cues without doubling already-burned output.
+
 ## [0.9.1.0] — 2026-07-18
 
 ### Added
