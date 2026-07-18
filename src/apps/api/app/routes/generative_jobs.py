@@ -3594,39 +3594,64 @@ def prepare_editor_commit(
         from app.config import settings as _settings  # noqa: PLC0415
 
         if not _settings.sound_effects_enabled:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Sound effects are not available for this editor commit.",
+            if not payload.sound_effects:
+                # Untouched echo (e.g. undo/redo blanket-dirtied every section
+                # regardless of capability) riding a commit where sfx is
+                # flag-gated off for this deploy. An empty list carries no
+                # information — treat it as not-sent instead of 422ing the
+                # WHOLE commit over a section the user never touched.
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="sound_effects",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Sound effects are not available for this editor commit.",
+                )
+        else:
+            if user_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Sound effects require a user-scoped asset namespace.",
+                )
+            validated_sfx = validate_sound_effects_for_user(
+                sfx_raw=payload.sound_effects,
+                user_id=user_id,
             )
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Sound effects require a user-scoped asset namespace.",
-            )
-        validated_sfx = validate_sound_effects_for_user(
-            sfx_raw=payload.sound_effects,
-            user_id=user_id,
-        )
 
     validated_overlays: list[dict] | None = None
     if payload.media_overlays is not None:
         from app.config import settings as _settings  # noqa: PLC0415
 
         if not _settings.media_overlays_enabled:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Media overlays are not available for this editor commit.",
+            if not payload.media_overlays:
+                # See sound_effects above — untouched empty-list echo, not a
+                # real request to write this flag-gated-off section.
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="media_overlays",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Media overlays are not available for this editor commit.",
+                )
+        else:
+            if user_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Media overlays require a user-scoped asset namespace.",
+                )
+            validated_overlays = validate_media_overlays_for_user(
+                overlays_raw=payload.media_overlays,
+                user_id=user_id,
+                variant_context=variant,
             )
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Media overlays require a user-scoped asset namespace.",
-            )
-        validated_overlays = validate_media_overlays_for_user(
-            overlays_raw=payload.media_overlays,
-            user_id=user_id,
-            variant_context=variant,
-        )
 
     validated_visual_blocks: list[dict] | None = None
     if payload.visual_blocks is not None:
@@ -3639,32 +3664,47 @@ def prepare_editor_commit(
         if not _settings_visual.visual_blocks_enabled:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
         if variant.get("text_mode") == "lyrics" or not variant.get("base_video_path"):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Visual blocks require a non-lyrics variant with a clean base.",
-            )
-        try:
-            validated_visual_blocks = validate_visual_blocks(
-                payload.visual_blocks,
-                duration_s=visual_block_variant_duration(variant),
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-            ) from exc
-        assets = visual_assets or {}
-        for shot in iter_visual_shots(validated_visual_blocks):
-            asset = assets.get(str(shot.get("asset_id")))
-            if (
-                asset is None
-                or asset.get("status") != "ready"
-                or asset.get("gcs_path") != shot.get("src_gcs_path")
-                or asset.get("kind") != shot.get("kind")
-            ):
+            if not payload.visual_blocks:
+                # Untouched empty-list echo on a variant that can never accept
+                # blocks (lyrics variant, or no clean base yet) — undo/redo
+                # (or any stale client) blanket-dirtied this section without
+                # the user ever touching it. Skip rather than 422ing the
+                # whole commit; a NON-empty list here is a real invalid
+                # request and still fails loudly below.
+                log.debug(
+                    "editor_commit_ignored_empty_section",
+                    section="visual_blocks",
+                    job_id=str(job.id),
+                    variant_id=variant_id,
+                )
+            else:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="Visual block assets must be ready assets owned by this plan item.",
+                    detail="Visual blocks require a non-lyrics variant with a clean base.",
                 )
+        else:
+            try:
+                validated_visual_blocks = validate_visual_blocks(
+                    payload.visual_blocks,
+                    duration_s=visual_block_variant_duration(variant),
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+                ) from exc
+            assets = visual_assets or {}
+            for shot in iter_visual_shots(validated_visual_blocks):
+                asset = assets.get(str(shot.get("asset_id")))
+                if (
+                    asset is None
+                    or asset.get("status") != "ready"
+                    or asset.get("gcs_path") != shot.get("src_gcs_path")
+                    or asset.get("kind") != shot.get("kind")
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Visual block assets must be ready assets owned by this plan item.",
+                    )
 
     if payload.visual_blocks is not None or payload.text_elements is not None:
         from app.agents._schemas.visual_block import (  # noqa: PLC0415
@@ -3803,9 +3843,13 @@ def prepare_editor_commit(
             "music": payload.music_track_id is not None,
             "lyrics": payload.lyrics is not None,
             "orientation": payload.orientation is not None,
-            "sound_effects": payload.sound_effects is not None,
-            "media_overlays": payload.media_overlays is not None,
-            "visual_blocks": payload.visual_blocks is not None,
+            # validated_* (not raw payload presence) so an ignored empty-list
+            # echo (see editor_commit_ignored_empty_section above) correctly
+            # reports as NOT written — downstream render-lane routing below
+            # keys off this dict to decide fast-reburn vs full-render queues.
+            "sound_effects": validated_sfx is not None,
+            "media_overlays": validated_overlays is not None,
+            "visual_blocks": validated_visual_blocks is not None,
         },
     }
 

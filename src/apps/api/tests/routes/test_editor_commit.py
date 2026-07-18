@@ -1597,6 +1597,92 @@ def test_media_overlays_flag_off_rejects_editor_section(monkeypatch):
     assert job.assembly_plan == before
 
 
+# ── undo/redo blanket-dirty defense: ignore untouched empty-list echoes ────────
+# (see EditorShell.tsx applyDocument — undo/redo restores a document snapshot
+# and, pre-fix, marked every section dirty regardless of capability; a stale
+# client hitting this route still ships an empty-list echo for a section the
+# variant can't accept. These sections should be treated as not-sent instead
+# of 422ing the whole commit.)
+
+
+def test_sound_effects_flag_off_empty_list_is_ignored_not_422(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "sound_effects_enabled", False, raising=False)
+    job = _job()
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(sound_effects=[], text_elements=[dict(_VALID_ELEMENT)]),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert "sound_effects" not in v
+    assert prep["sections"]["sound_effects"] is False
+
+
+def test_media_overlays_flag_off_empty_list_is_ignored_not_422(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "media_overlays_enabled", False, raising=False)
+    job = _job()
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(media_overlays=[], text_elements=[dict(_VALID_ELEMENT)]),
+        user_id="u123",
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert "media_overlays" not in v
+    assert prep["sections"]["media_overlays"] is False
+
+
+def test_visual_blocks_empty_list_on_lyrics_variant_is_ignored_not_422(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job(variant_id="song_lyrics", text_mode="lyrics", mix=None)
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_lyrics",
+        _commit_req(visual_blocks=[]),
+    )
+
+    v = job.assembly_plan["variants"][0]
+    assert "visual_blocks" not in v
+    assert "visual_blocks_cache_stale" not in v
+    assert prep["sections"]["visual_blocks"] is False
+
+
+def test_visual_blocks_nonempty_list_on_lyrics_variant_still_422(monkeypatch):
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    job = _job(variant_id="song_lyrics", text_mode="lyrics", mix=None)
+    before = copy.deepcopy(job.assembly_plan)
+
+    with pytest.raises(HTTPException) as exc:
+        gj.prepare_editor_commit(
+            job,
+            "song_lyrics",
+            _commit_req(visual_blocks=[_montage_block()]),
+            visual_assets=_visual_assets(),
+        )
+
+    assert exc.value.status_code == 422
+    assert "Visual blocks require a non-lyrics variant with a clean base." in str(exc.value.detail)
+    assert job.assembly_plan == before
+
+
 # ── E4: editor_capabilities per archetype ──────────────────────────────────────
 
 
