@@ -120,3 +120,55 @@ def test_accepts_concise_numeric_formatting_of_spoken_statistic() -> None:
         transcript_text="Retention rose by thirty percent.",
     )
     assert len(blocks) == 1
+
+
+def test_drops_card_copy_assembled_from_distant_transcript_windows() -> None:
+    proposal = RawVisualTreatment(
+        kind="text_card",
+        purpose="quote",
+        start_s=8,
+        end_s=10,
+        text="Talent changed everything",
+        confidence="high",
+    )
+    words = [
+        {"word": "Talent", "start_s": 1.0, "end_s": 1.3},
+        {"word": "takes", "start_s": 8.0, "end_s": 8.3},
+        {"word": "practice", "start_s": 8.3, "end_s": 8.8},
+        {"word": "changed", "start_s": 17.0, "end_s": 17.3},
+        {"word": "everything", "start_s": 17.3, "end_s": 17.8},
+    ]
+    blocks, elements = build_visual_treatments(
+        [proposal],
+        assets_by_id={},
+        duration_s=20,
+        transcript_text="Talent takes practice changed everything",
+        transcript_words=words,
+    )
+    assert blocks == []
+    assert elements == []
+
+
+def test_accepts_condensed_card_copy_within_timed_window() -> None:
+    proposal = RawVisualTreatment(
+        kind="text_card",
+        purpose="statistic",
+        start_s=8,
+        end_s=10,
+        text="Retention rose 30%",
+        confidence="high",
+    )
+    words = [
+        {"word": "Retention", "start_s": 8.0, "end_s": 8.3},
+        {"word": "rose", "start_s": 8.3, "end_s": 8.6},
+        {"word": "by", "start_s": 8.6, "end_s": 8.7},
+        {"word": "thirty", "start_s": 8.7, "end_s": 9.0},
+        {"word": "percent", "start_s": 9.0, "end_s": 9.3},
+    ]
+    blocks, _elements = build_visual_treatments(
+        [proposal],
+        assets_by_id={},
+        duration_s=20,
+        transcript_words=words,
+    )
+    assert len(blocks) == 1

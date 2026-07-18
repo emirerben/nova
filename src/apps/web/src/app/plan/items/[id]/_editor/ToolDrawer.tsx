@@ -564,17 +564,17 @@ function VisualsDrawer({
               return (
                 <div className="mb-3 space-y-1">
                   {excessiveCopy && (
-                    <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+                    <p className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] text-[#3f3f46]">
                       This card has a dense reading load for its duration.
                     </p>
                   )}
                   {lowContrast && (
-                    <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+                    <p className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] text-[#3f3f46]">
                       Text contrast may be too low for comfortable reading.
                     </p>
                   )}
                   {repetitive && (
-                    <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+                    <p className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] text-[#3f3f46]">
                       Adjacent blocks repeat the same visual treatment.
                     </p>
                   )}
@@ -907,7 +907,7 @@ function VisualsDrawer({
                   const asset = assets.find((candidate) => candidate.id === shot.asset_id);
                   return asset?.width && asset?.height && Math.min(asset.width, asset.height) < 720;
                 }) && (
-                  <p className="rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+                  <p className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] text-[#3f3f46]">
                     One or more shots may look soft at 1080×1920.
                   </p>
                 )}
@@ -1073,7 +1073,7 @@ function VisualsDrawer({
               </div>
             )}
             {block.kind === "text_card" && block.end_s - block.start_s < 1 && (
-              <p className="mt-2 rounded-lg bg-amber-50 px-2 py-1.5 text-[10px] text-amber-900">
+              <p className="mt-2 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-[10px] text-[#3f3f46]">
                 This card may be too brief to read comfortably.
               </p>
             )}

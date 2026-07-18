@@ -363,6 +363,7 @@ def plan_visual_blocks(job_id: str, variant_id: str) -> None:
                 else str(word)
                 for word in words
             ),
+            transcript_words=words,
         )
         if not blocks:
             _record("visual_blocks_plan_zero", variant_id=variant_id)

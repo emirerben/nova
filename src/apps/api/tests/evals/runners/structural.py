@@ -1942,10 +1942,13 @@ def run_structural(agent_name: str, output: Any, input: Any) -> list[str]:  # no
                 elif input.words:
                     from app.services.visual_treatment_planner import (  # noqa: PLC0415
                         _card_copy_is_transcript_grounded,
+                        _transcript_text_in_window,
                     )
 
-                    transcript_text = " ".join(
-                        str(word.get("word") or word.get("text") or "") for word in input.words
+                    transcript_text = _transcript_text_in_window(
+                        input.words,
+                        start_s=treatment.start_s,
+                        end_s=treatment.end_s,
                     )
                     if not _card_copy_is_transcript_grounded(treatment.text, transcript_text):
                         failures.append(

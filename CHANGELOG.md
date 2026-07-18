@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0.0] — 2026-07-18
+
+### Added
+- **Editable visual blocks for rapid montages and interstitial text cards.** Non-lyrics variants can now represent base-layer visual replacements as ordinary timeline elements, with asset-backed montage shots, solid/gradient/blur/image card backgrounds, crop and motion controls, deterministic auto-pacing, linked authored text, audio/SFX continuation policies, undo/redo, atomic saves, and matching live-canvas preview. The renderer preserves the clean base, caches the text-free block composite, and reapplies authored text, captions, overlays, and sound effects in a stable layer order.
+- **Transcript-aware first-edit planning and reusable asset sourcing.** A dedicated visual-treatment agent can classify transcript moments, propose hooks, context montages, statistics, quotes, and section interrupts, and materialize extracted source frames into the persistent asset pool. Deterministic guardrails enforce asset ownership, timeline density, transcript-window grounding, card readability, and montage coverage. Manual visual blocks, editor UI, and AI planning ship behind separate default-off backend/frontend/autoplan flags.
+
+### Changed
+- **Editor commits and capabilities now include `visual_blocks`.** Block and linked-text changes share one stale-generation baseline and render transaction, while a non-persisting retime endpoint returns concrete shot timing for preview before save.
+
 ## [0.7.32.1] — 2026-07-18
 
 ### Fixed

@@ -47,7 +47,7 @@ def _normalized_copy(value: str) -> str:
 
 
 def _card_copy_is_transcript_grounded(copy: str, transcript_text: str | None) -> bool:
-    """Fail closed: semantic cards may only quote a contiguous transcript span."""
+    """Fail closed: semantic-card tokens must appear in transcript order."""
     if not transcript_text:
         return False
     copy_tokens = _normalized_copy(copy).split()
@@ -63,12 +63,39 @@ def _card_copy_is_transcript_grounded(copy: str, transcript_text: str | None) ->
     return True
 
 
+def _transcript_text_in_window(
+    words: list[dict] | None,
+    *,
+    start_s: float,
+    end_s: float,
+    tolerance_s: float = 0.35,
+) -> str | None:
+    """Return only timed transcript words overlapping a treatment window."""
+    if not words:
+        return None
+    selected: list[str] = []
+    for word in words:
+        if not isinstance(word, dict):
+            continue
+        try:
+            word_start = float(word.get("start_s", 0.0))
+            word_end = float(word.get("end_s", word_start))
+        except (TypeError, ValueError):
+            continue
+        if word_start <= end_s + tolerance_s and word_end >= start_s - tolerance_s:
+            value = str(word.get("word") or word.get("text") or "").strip()
+            if value:
+                selected.append(value)
+    return " ".join(selected) or None
+
+
 def build_visual_treatments(
     raw: list[RawVisualTreatment],
     *,
     assets_by_id: dict[str, dict],
     duration_s: float,
     transcript_text: str | None = None,
+    transcript_words: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """Return validated-shape blocks + linked TextElements after AI caps."""
     blocks: list[dict] = []
@@ -135,10 +162,15 @@ def build_visual_treatments(
             )
             montage_count += 1
         elif proposal.kind == "text_card":
+            grounded_transcript = (
+                _transcript_text_in_window(transcript_words, start_s=start, end_s=end)
+                if transcript_words is not None
+                else transcript_text
+            )
             if (
                 len(card_windows) >= card_limit
                 or not proposal.text
-                or not _card_copy_is_transcript_grounded(proposal.text, transcript_text)
+                or not _card_copy_is_transcript_grounded(proposal.text, grounded_transcript)
             ):
                 continue
             end = min(end, start + 4.0)

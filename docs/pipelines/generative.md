@@ -138,6 +138,37 @@ The variant sits "rendering" until the 60-min reaper (`tasks/reaper.py`)
 converts it to a failed badge; the user recovers by re-tapping Apply. See
 agents/DECISIONS.md (2026-07-11) for the reusable rule.
 
+## Visual blocks
+
+`visual_blocks` are first-class, per-variant base-layer replacements for rapid
+montages and interstitial text cards. They are not media overlays: blocks are
+composited onto the clean assembled base before authored text and captions.
+The complete render order is clean base → visual blocks → authored text →
+captions → media overlays → sound effects.
+
+- Schemas and structural validation live in
+  `app/agents/_schemas/visual_block.py`; blocks never overlap, montage shots
+  persist concrete contiguous offsets, and card text links through
+  `TextElement.visual_block_id`.
+- `app/pipeline/visual_blocks.py` renders image/video shots, crop and Ken Burns
+  motion, solid/gradient/blur/asset card backgrounds, transitions, and base
+  audio mute windows. The text-free result is cached as
+  `visual_blocks_base_path`, while `base_video_path` remains the durable clean
+  source for block edits and removal.
+- Editor saves include blocks and linked text in one `editor-commit` baseline.
+  Auto pacing uses the non-persisting `retime-visual-block` endpoint and returns
+  normalized shot boundaries; any direct timing edit switches to manual.
+- `visual_treatment_planner` classifies transcript purpose and proposes
+  transcript-backed cards or asset-backed montages under density guardrails.
+  Extracted source frames become ordinary persistent `PlanItemAsset` rows with
+  source clip/timestamp provenance before planning.
+
+Rollout is triple-gated. `VISUAL_BLOCKS_ENABLED` gates API/render behavior,
+`NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED` gates the editor surface, and
+`VISUAL_BLOCK_AUTOPLAN_ENABLED` separately gates first-edit AI planning. All
+default false. Lyrics variants remain excluded until they have the same durable
+clean-base contract.
+
 ## Local smoke test
 
 ```bash

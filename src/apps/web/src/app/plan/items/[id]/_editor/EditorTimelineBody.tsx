@@ -983,7 +983,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                           onPointerCancel={cancelDrag}
                           suppressClickRef={suppressClickRef}
                           showTrimHandles
-                          className="border border-violet-300 bg-violet-100 text-violet-950"
+                          className="border border-lime-200 bg-lime-50 text-lime-800"
                         >
                           <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">
                             {block.kind === "montage" ? "Montage" : "Text card"}
