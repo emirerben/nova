@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.33.0] — 2026-07-18
+
+### Added
+- **Lyrics editor API contract (behind `LYRICS_EDITOR_ENABLED`, default off).** Lyric lines now project as timing-locked `lyric_line` TextElements from the per-render snapshot — for lyrics variants and for any variant with lyrics toggled on. New `PUT …/variants/{id}/lyrics` (generative + plan-item) toggles lyrics on/off and replaces per-line text/style overrides with strict validation (fingerprints required, timing keys rejected, style allowlist). Editor-commit gains an atomic `lyrics` section that routes to a full re-render; editor capabilities expose a `lyrics` block (`editable`/`enabled`/`can_toggle_on`/`reason`) and unlock text-element editing on lyrics variants. Copilot server-side validation drops timing/remove ops aimed at lyric bars. Flag off: pre-existing API behavior unchanged (capabilities gain only the additive `lyrics` block, reason `disabled`).
+
 ## [0.7.32.0] — 2026-07-18
 
 ### Added

@@ -23,7 +23,10 @@ from app.agents._schemas.text_element import (
     _ADAPTER_REVEAL_WINDOW_S,
     TextElement,
     _burn_dict_to_text_element,
+    append_ai_text_tombstones,
     coerce_text_elements,
+    merge_projected_text_elements_for_variant,
+    text_element_source_identity,
     text_elements_for_variant,
 )
 from app.pipeline.generative_overlays import (
@@ -1053,3 +1056,126 @@ def test_shadow_enabled_false_survives_validation_and_compile():
     overlays = build_overlays_from_text_elements([element], video_duration_s=4.0)
     assert overlays
     assert overlays[0]["shadow_enabled"] is False
+
+
+def _lyric_snapshot_variant() -> dict:
+    return {
+        "variant_id": "song_lyrics",
+        "text_mode": "lyrics",
+        "lyric_overlay_snapshot": [
+            {
+                "line_key": "L14",
+                "text": "First lyric",
+                "start_s": 1.2,
+                "end_s": 3.4,
+                "font_family": "Inter-Regular",
+                "size_px": 70,
+                "color": "#FFFFFF",
+                "highlight_color": "#FFD24A",
+                "y_frac": 0.72,
+                "effect": "karaoke-line",
+            }
+        ],
+    }
+
+
+def test_lyric_snapshot_projects_read_only_text_elements_when_enabled():
+    [element] = text_elements_for_variant(_lyric_snapshot_variant(), include_lyric_projection=True)
+
+    assert element.id == "lyric_L14"
+    assert element.role == "lyric_line"
+    assert element.text == "First lyric"
+    assert element.start_s == pytest.approx(1.2)
+    assert element.end_s == pytest.approx(3.4)
+    assert element.font_family == "Inter-Regular"
+    assert element.size_px == pytest.approx(70)
+    assert element.color == "#FFFFFF"
+    assert element.highlight_color == "#FFD24A"
+    assert element.position == "custom"
+    assert element.y_frac == pytest.approx(0.72)
+    assert element.word_timings is None
+    assert element.source_params["identity"] == "lyric:L14"
+    assert text_element_source_identity(element) == "lyric_line:lyric:L14"
+
+
+def test_lyric_projection_flag_off_returns_no_elements():
+    assert text_elements_for_variant(_lyric_snapshot_variant()) == []
+
+
+def test_lyric_snapshot_projects_on_agent_text_variant_alongside_intro():
+    # Feature contract: a song_text (agent_text) variant with lyrics toggled ON
+    # carries a lyric_overlay_snapshot and must expose its lines as editable
+    # blocks ALONGSIDE its normal projected intro elements.
+    v = {
+        **_lyric_snapshot_variant(),
+        "variant_id": "song_text",
+        "text_mode": "agent_text",
+        "lyrics_enabled": True,
+        "intro_text": "hello there",
+        "intro_mode": "hero",
+        "duration_s": 10.0,
+    }
+    elements = text_elements_for_variant(v, include_lyric_projection=True)
+    roles = {e.role for e in elements}
+    assert "lyric_line" in roles
+    assert any(r != "lyric_line" for r in roles), "intro projection must survive"
+    lyric = next(e for e in elements if e.role == "lyric_line")
+    assert lyric.id == "lyric_L14"
+
+    # Without the flag the same variant projects only its intro elements.
+    flag_off = text_elements_for_variant(v)
+    assert all(e.role != "lyric_line" for e in flag_off)
+    assert flag_off, "intro projection must be unchanged with the flag off"
+
+
+def test_lyric_line_role_rejected_on_text_elements_write(monkeypatch):
+    import app.routes.generative_jobs as gj
+
+    monkeypatch.setattr(gj, "_LYRICS_EDITOR_ENABLED", True, raising=False)
+    variant = _lyric_snapshot_variant()
+
+    with pytest.raises(Exception) as exc:
+        gj.validate_text_elements_payload(
+            variant,
+            [
+                {
+                    "id": "lyric_L14",
+                    "role": "lyric_line",
+                    "text": "Moved",
+                    "start_s": 2.0,
+                    "end_s": 4.0,
+                }
+            ],
+            require_base=False,
+            strict_drop=True,
+        )
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "lyric_timing_locked"
+
+
+def test_append_ai_text_tombstones_skips_lyric_projections():
+    assert (
+        append_ai_text_tombstones(_lyric_snapshot_variant(), [], include_lyric_projection=True)
+        == []
+    )
+
+
+def test_lyric_projection_merge_dedupes_by_source_identity():
+    variant = _lyric_snapshot_variant()
+    variant["text_elements_user_edited"] = True
+    variant["text_elements"] = [
+        {
+            "id": "saved-lyric",
+            "role": "lyric_line",
+            "text": "Saved lyric",
+            "start_s": 1.2,
+            "end_s": 3.4,
+            "source_params": {"identity": "lyric:L14"},
+        }
+    ]
+
+    merged = merge_projected_text_elements_for_variant(variant, include_lyric_projection=True)
+
+    assert merged is not None
+    assert [e["id"] for e in merged] == ["saved-lyric"]
