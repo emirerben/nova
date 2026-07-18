@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from app.config import settings
-from app.pipeline.lyric_injector import inject_lyric_overlays
+from app.pipeline.lyric_injector import apply_lyric_line_overrides, inject_lyric_overlays
 from app.pipeline.text_overlay_skia import _lyric_line_alpha
 
 DOUBLE_BRIGHT_ALPHA = 0.85  # Level 1
@@ -523,10 +523,11 @@ def test_kill_switch_disabled_reproduces_pre_fix_output(
         assert "fade_out_curve" not in got_o, (
             f"kill-switch leaked fade_out_curve into overlay [{i}]: {got_o.get('fade_out_curve')!r}"
         )
-        assert set(got_o.keys()) == set(want_o.keys()), (
+        assert set(got_o.keys()) - {"lyric_line_key"} == set(want_o.keys()), (
             f"kill-switch added/removed keys on overlay [{i}]: "
             f"{set(got_o.keys()) ^ set(want_o.keys())}"
         )
+        assert got_o.get("lyric_line_key") == f"L{i}"
         for field in (
             "start_s",
             "end_s",
@@ -540,6 +541,72 @@ def test_kill_switch_disabled_reproduces_pre_fix_output(
                 f"kill-switch drift on overlay [{i}].{field}: "
                 f"got {got_o.get(field)!r} want {want_o.get(field)!r}"
             )
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_text_override_does_not_change_line_schedule_geometry(
+    enabled: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "lyric_dynamic_crossfade_enabled", enabled)
+    lines = [
+        ("this year we've had to lose", 12.4, 13.0),
+        ("our space we've lost", 13.1, 14.3),
+        ("but we still move", 14.5, 15.2),
+    ]
+    cfg = {"enabled": True, "style": "line"}
+    span_start = min(s for _, s, _ in lines) - 1.0
+    span_end = max(e for _, _, e in lines) + 1.0
+    baseline = inject_lyric_overlays(_recipe(), _cache(lines), span_start, span_end, cfg)
+    overridden_cache = apply_lyric_line_overrides(
+        _cache(lines),
+        {
+            "L0": {
+                "text": "that year they had to choose",
+                "orig_text": "this year we've had to lose",
+                "orig_start_s": 12.4,
+            }
+        },
+    )
+    edited = inject_lyric_overlays(_recipe(), overridden_cache, span_start, span_end, cfg)
+
+    baseline_geometry = [
+        {
+            key: overlay.get(key)
+            for key in (
+                "start_s",
+                "end_s",
+                "fade_in_ms",
+                "fade_out_ms",
+                "fade_out_curve",
+                "lyric_line_id",
+                "lyric_line_key",
+                "lyric_segment_index",
+                "lyric_segment_count",
+            )
+        }
+        for slot in baseline["slots"]
+        for overlay in slot.get("text_overlays", [])
+    ]
+    edited_geometry = [
+        {
+            key: overlay.get(key)
+            for key in (
+                "start_s",
+                "end_s",
+                "fade_in_ms",
+                "fade_out_ms",
+                "fade_out_curve",
+                "lyric_line_id",
+                "lyric_line_key",
+                "lyric_segment_index",
+                "lyric_segment_count",
+            )
+        }
+        for slot in edited["slots"]
+        for overlay in slot.get("text_overlays", [])
+    ]
+    assert edited_geometry == baseline_geometry
 
 
 # ──────────────────────────────────────────────────────────────────────────

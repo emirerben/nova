@@ -852,6 +852,8 @@ def build_overlays_from_text_elements(
     for elem in elements:
         if getattr(elem, "removed", False):
             continue
+        if getattr(elem, "role", None) == "lyric_line":
+            continue
         # ── position → burn-dict position + optional explicit fracs ──────────
         if elem.position == "custom":
             pos = _DEFAULT_POSITION
