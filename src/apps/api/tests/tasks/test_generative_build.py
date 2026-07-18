@@ -2246,6 +2246,31 @@ def test_regenerate_reuses_persisted_intro_text():
     assert text_mode == "agent_text"
 
 
+def test_regenerate_lyrics_mode_never_runs_intro_writer():
+    """REGRESSION (2026-07-18 E2E): a lyrics-variant full re-render with no text
+    override fell through to intro_writer, fabricating an intro AND flipping
+    text_mode to agent_text — which made the variant fast-reburn eligible so
+    later lyric-override dispatches silently skipped lyric re-injection."""
+    llm_called = {"called": False}
+
+    def _run_text_agents_fn():
+        llm_called["called"] = True
+        return types.SimpleNamespace(text="LLM text", highlight_word=None), {}
+
+    agent_text, agent_form, text_mode = gb._resolve_regen_text(
+        override_text=None,
+        remove_text=False,
+        existing_text_mode="lyrics",
+        persisted_text=None,
+        persisted_highlight=None,
+        run_text_agents_fn=_run_text_agents_fn,
+    )
+
+    assert llm_called["called"] is False
+    assert agent_text is None
+    assert text_mode == "lyrics"
+
+
 def test_regenerate_runs_intro_writer_when_no_persisted_text():
     """No persisted text → intro_writer LLM IS called."""
     llm_called = {"called": False}
