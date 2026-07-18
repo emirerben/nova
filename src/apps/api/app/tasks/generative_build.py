@@ -6356,7 +6356,11 @@ def _render_generative_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
-            "duration_s": _rendered_duration_s(final_path),
+            **(
+                {"duration_s": _rendered_duration_s(final_path)}
+                if settings.visual_blocks_enabled
+                else {}
+            ),
         }
     except Exception as exc:
         err = str(exc)[:MAX_ERROR_DETAIL_LEN]
@@ -6580,7 +6584,11 @@ def _render_talking_head_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
-            "duration_s": _rendered_duration_s(final_path),
+            **(
+                {"duration_s": _rendered_duration_s(final_path)}
+                if settings.visual_blocks_enabled
+                else {}
+            ),
         }
     except SpineExtractionError:
         raise  # job-level degrade to montage (handled by the caller)
@@ -6859,7 +6867,11 @@ def _render_narrated_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
-            "duration_s": _rendered_duration_s(final_path),
+            **(
+                {"duration_s": _rendered_duration_s(final_path)}
+                if settings.visual_blocks_enabled
+                else {}
+            ),
             "base_video_path": base_gcs,
             "caption_cues": caption_cues or None,
             # Narrated renders no media-overlay cards (v1), but the finalize whitelist
@@ -7526,7 +7538,11 @@ def _render_subtitled_variant(
             "render_status": "ready",
             "video_path": output_gcs,
             "output_url": output_url,
-            "duration_s": _rendered_duration_s(final_path),
+            **(
+                {"duration_s": _rendered_duration_s(final_path)}
+                if settings.visual_blocks_enabled
+                else {}
+            ),
             "base_video_path": base_gcs,
             "caption_cues": cues or None,
             # The language actually spoken/detected (not the plan language).
@@ -7818,12 +7834,12 @@ def _run_reburn_narrated_captions(
     with tempfile.TemporaryDirectory(prefix="nova_caption_reburn_") as tmpdir:
         base_local = os.path.join(tmpdir, "base.mp4")
         download_to_file(render_base_path, base_local)
-        if (
-            _TEXT_ELEMENTS_ENABLED
-            and variant.get("text_elements_user_edited")
-            and (
-                getattr(settings, "subtitled_text_lane_enabled", False)
-                or getattr(settings, "visual_blocks_enabled", False)
+        if archetype == "subtitled" and (
+            getattr(settings, "subtitled_text_lane_enabled", False)
+            or (
+                getattr(settings, "visual_blocks_enabled", False)
+                and _TEXT_ELEMENTS_ENABLED
+                and variant.get("text_elements_user_edited")
             )
         ):
             variant = _fresh_variant_snapshot(job_id, variant_id) or variant

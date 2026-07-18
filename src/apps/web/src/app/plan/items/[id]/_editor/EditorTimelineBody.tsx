@@ -858,7 +858,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               style={{ width: trackW, minWidth: trackW, height: lanesHeight }}
             >
               {/* ── Text lane ── */}
-              {showVisualBlocks && <LaneTrack
+              <LaneTrack
                 trackW={trackW}
                 heightPx={textLane.totalHeightPx}
                 testId="editor-text-lane"
@@ -937,10 +937,10 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     )}
                   </>
                 )}
-              </LaneTrack>}
+              </LaneTrack>
 
               {/* ── Visual replacement blocks, below authored text ── */}
-              <LaneTrack
+              {showVisualBlocks && <LaneTrack
                 trackW={trackW}
                 heightPx={visualLane.totalHeightPx}
                 testId="editor-visuals-lane"
@@ -993,7 +993,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                     },
                   )
                 )}
-              </LaneTrack>
+              </LaneTrack>}
 
               {/* ── Video lane (Clips + filmstrip) ── */}
               <LaneTrack trackW={trackW} heightPx={TEXT_LANE_BASE_HEIGHT_PX}>
