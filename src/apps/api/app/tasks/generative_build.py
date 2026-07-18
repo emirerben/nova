@@ -248,9 +248,7 @@ def _run_generative_job(job_id: str) -> None:
             smart_captions = {
                 "preset_id": str(_raw_smart["preset_id"]),
                 "preset_version": str(_raw_smart["preset_version"]),
-                "sound_design": (
-                    "off" if _raw_smart.get("sound_design") == "off" else "auto"
-                ),
+                "sound_design": ("off" if _raw_smart.get("sound_design") == "off" else "auto"),
             }
         # Plan-declared edit format (Lane A). Coerced defensively — a drifted token
         # falls back to montage rather than failing the job. Resolved against the
@@ -7681,8 +7679,7 @@ def _render_subtitled_variant(
                         rows = (
                             db.execute(
                                 _select(PlanItemAsset).where(
-                                    PlanItemAsset.plan_item_id
-                                    == smart_job.content_plan_item_id,
+                                    PlanItemAsset.plan_item_id == smart_job.content_plan_item_id,
                                     PlanItemAsset.status == "ready",
                                 )
                             )
@@ -7835,8 +7832,7 @@ def _render_subtitled_variant(
         pre_sfx_gcs: str | None = None
         pre_media_gcs: str | None = None
         sound_design_auto = bool(
-            smart_captions is not None
-            and smart_captions.get("sound_design", "auto") == "auto"
+            smart_captions is not None and smart_captions.get("sound_design", "auto") == "auto"
         )
         if smart_compiled is not None and settings.sound_effects_enabled and sound_design_auto:
             try:
@@ -7879,14 +7875,8 @@ def _render_subtitled_variant(
                     "requested": len(smart_compiled.sfx_intents),
                     "resolved": len(sound_effects),
                     "unresolved_roles": sorted(
-                        {
-                            str(intent.get("role"))
-                            for intent in smart_compiled.sfx_intents
-                        }
-                        - {
-                            str(placement.get("smart_role"))
-                            for placement in sound_effects
-                        }
+                        {str(intent.get("role")) for intent in smart_compiled.sfx_intents}
+                        - {str(placement.get("smart_role")) for placement in sound_effects}
                     ),
                 }
             except Exception as exc:  # noqa: BLE001 — visuals/captions still ship

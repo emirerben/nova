@@ -4045,9 +4045,7 @@ def test_finalize_job_preserves_smart_caption_plan_and_authoritative_titles(monk
         "compiler": "test",
     }
     assert variant["smart_validation_receipts"] == {"planner": {"valid": True}}
-    assert variant["boundary_effects"] == [
-        {"effect": "horizontal_motion_blur", "at_s": 8.0}
-    ]
+    assert variant["boundary_effects"] == [{"effect": "horizontal_motion_blur", "at_s": 8.0}]
     assert variant["text_elements"] == titles
     assert variant["text_elements_user_edited"] is True
     assert variant["text_elements_materialized_from"] == "smart_captions"

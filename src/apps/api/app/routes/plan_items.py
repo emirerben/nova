@@ -340,9 +340,7 @@ def plan_item_response(
         else "create_new",
         edit_format=item.edit_format,
         smart_captions_enabled=getattr(item, "smart_captions_enabled", False) is True,
-        smart_sound_design_enabled=(
-            getattr(item, "smart_sound_design_enabled", None) is not False
-        ),
+        smart_sound_design_enabled=(getattr(item, "smart_sound_design_enabled", None) is not False),
         smart_captions_available=smart_captions_available,
         smart_captions_unavailable_reason=smart_captions_unavailable_reason,
         montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
