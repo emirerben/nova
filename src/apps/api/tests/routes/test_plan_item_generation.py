@@ -619,6 +619,27 @@ def test_patch_smart_captions_uses_server_assignment(client: TestClient, monkeyp
     assert resp.json()["smart_captions_unavailable_reason"] is None
 
 
+def test_patch_smart_sound_design_keeps_smart_captions_enabled(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    item.smart_captions_enabled = True
+    item.smart_sound_design_enabled = True
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"smart_sound_design_enabled": False},
+    )
+
+    assert resp.status_code == 200
+    assert item.smart_captions_enabled is True
+    assert item.smart_sound_design_enabled is False
+    assert resp.json()["smart_sound_design_enabled"] is False
+
+
 def test_changing_away_from_subtitled_disables_smart_captions(client: TestClient) -> None:
     user = _user()
     item, plan = _owned_item(user.id)

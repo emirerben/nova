@@ -13,13 +13,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SMART_EDIT_SCHEMA_VERSION = "2026-07-17"
+SMART_EDIT_SCHEMA_VERSION = "2026-07-18"
 MAX_BASELINE_CAPTION_CUES = 300
 MAX_SMART_EDIT_EVENTS = 120
 MAX_SMART_WORDS = 600
 _WORD_ID_RE = re.compile(r"^w\d{6}$")
 _TOKEN_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_ASSET_ID_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_ASSET_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
 _EVENT_ID_RE = re.compile(r"^[a-f0-9]{24}$")
 
 
@@ -87,6 +87,7 @@ class SemanticEventIntent(StrictModel):
     confidence_tier: Literal["high", "medium", "low"]
     lane_tokens: list[str] = Field(default_factory=list, max_length=5)
     asset_intent_tags: list[str] = Field(default_factory=list, max_length=8)
+    visual_asset_ids: list[str] = Field(default_factory=list, max_length=5)
     rationale: str = Field(default="", max_length=500)
 
     @field_validator("start_word_id", "end_word_id", "anchor_word_id")
@@ -101,6 +102,13 @@ class SemanticEventIntent(StrictModel):
     def validate_tokens(cls, values: list[str]) -> list[str]:
         if any(not _TOKEN_RE.fullmatch(value) for value in values):
             raise ValueError("tokens must use the closed lowercase token syntax")
+        return values
+
+    @field_validator("visual_asset_ids")
+    @classmethod
+    def validate_asset_ids(cls, values: list[str]) -> list[str]:
+        if any(not _ASSET_ID_RE.fullmatch(value) for value in values):
+            raise ValueError("visual asset ids must be registry ids")
         return values
 
     @model_validator(mode="after")
@@ -147,6 +155,9 @@ class TextLane(StrictModel):
     token: str
     transcript_word_ids: list[str] = Field(min_length=1, max_length=24)
     transform: Literal["verbatim", "list_number_from_sequence", "fixed_preset_token"]
+    sequence_number: int | None = Field(default=None, ge=1, le=20)
+    claimed_word_ids: list[str] = Field(default_factory=list, max_length=24)
+    caption_visibility: Literal["keep", "suppress_claimed_span"] = "keep"
 
     @field_validator("token")
     @classmethod
@@ -155,7 +166,7 @@ class TextLane(StrictModel):
             raise ValueError("text token must use the closed token syntax")
         return value
 
-    @field_validator("transcript_word_ids")
+    @field_validator("transcript_word_ids", "claimed_word_ids")
     @classmethod
     def validate_word_ids(cls, values: list[str]) -> list[str]:
         if any(not _WORD_ID_RE.fullmatch(value) for value in values):
@@ -168,6 +179,9 @@ class VisualLane(StrictModel):
     asset_id: str
     zone: str
     entrance_token: str
+    exit_policy: Literal["event_end", "group_end", "video_end"] = "event_end"
+    composition_group_id: str | None = Field(default=None, max_length=64)
+    group_order: int = Field(default=0, ge=0, le=20)
     alternatives: list[str] = Field(default_factory=list, max_length=8)
 
     @field_validator("asset_id")
@@ -184,9 +198,11 @@ class VisualLane(StrictModel):
             raise ValueError("visual alternatives must be registry ids")
         return values
 
-    @field_validator("zone", "entrance_token")
+    @field_validator("zone", "entrance_token", "composition_group_id")
     @classmethod
-    def validate_tokens(cls, value: str) -> str:
+    def validate_tokens(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
         if not _TOKEN_RE.fullmatch(value):
             raise ValueError("visual fields must use closed tokens")
         return value
@@ -194,25 +210,10 @@ class VisualLane(StrictModel):
 
 class SfxLane(StrictModel):
     kind: Literal["sfx"]
-    asset_id: str
+    role_tokens: list[str] = Field(min_length=1, max_length=3)
     sync_to_event_id: str
     offset_ms: int = Field(ge=-1000, le=1000)
     gain_token: str
-    alternatives: list[str] = Field(default_factory=list, max_length=8)
-
-    @field_validator("asset_id")
-    @classmethod
-    def validate_asset_id(cls, value: str) -> str:
-        if not _ASSET_ID_RE.fullmatch(value):
-            raise ValueError("asset_id must be a registry id, not a path")
-        return value
-
-    @field_validator("alternatives")
-    @classmethod
-    def validate_alternatives(cls, values: list[str]) -> list[str]:
-        if any(not _ASSET_ID_RE.fullmatch(value) for value in values):
-            raise ValueError("sound alternatives must be registry ids")
-        return values
 
     @field_validator("sync_to_event_id")
     @classmethod
@@ -227,6 +228,15 @@ class SfxLane(StrictModel):
         if not _TOKEN_RE.fullmatch(value):
             raise ValueError("gain_token must use the closed token syntax")
         return value
+
+    @field_validator("role_tokens")
+    @classmethod
+    def validate_role_tokens(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("SFX role tokens must be unique")
+        if any(not _TOKEN_RE.fullmatch(value) for value in values):
+            raise ValueError("SFX role tokens must use the closed token syntax")
+        return values
 
 
 class BoundaryEffectLane(StrictModel):
@@ -289,6 +299,8 @@ class SmartEditEvent(StrictModel):
 
 class SmartEditPlanDocument(StrictModel):
     schema_version: Literal[SMART_EDIT_SCHEMA_VERSION] = SMART_EDIT_SCHEMA_VERSION
+    preset_id: str = Field(default="cigdem", min_length=1, max_length=64)
+    preset_version: str = Field(default="v1", min_length=1, max_length=64)
     baseline_captions: list[BaselineCaptionCue] = Field(
         min_length=1, max_length=MAX_BASELINE_CAPTION_CUES
     )
@@ -329,67 +341,6 @@ class SmartEditPlanDocument(StrictModel):
             if not referenced_words <= caption_words:
                 raise ValueError("event references words outside baseline captions")
         return self
-
-
-class SetEnabledOperation(StrictModel):
-    kind: Literal["set_enabled"]
-    value: bool
-
-
-class SetZoneOperation(StrictModel):
-    kind: Literal["set_zone"]
-    value: str
-
-    @field_validator("value")
-    @classmethod
-    def validate_value(cls, value: str) -> str:
-        if not _TOKEN_RE.fullmatch(value):
-            raise ValueError("zone must use the closed token syntax")
-        return value
-
-
-class SwapVisualOperation(StrictModel):
-    kind: Literal["swap_visual"]
-    asset_id: str
-
-    @field_validator("asset_id")
-    @classmethod
-    def validate_asset_id(cls, value: str) -> str:
-        if not _ASSET_ID_RE.fullmatch(value):
-            raise ValueError("asset_id must be a registry id, not a path")
-        return value
-
-
-class SwapSoundOperation(StrictModel):
-    kind: Literal["swap_sound"]
-    asset_id: str
-
-    @field_validator("asset_id")
-    @classmethod
-    def validate_asset_id(cls, value: str) -> str:
-        if not _ASSET_ID_RE.fullmatch(value):
-            raise ValueError("asset_id must be a registry id, not a path")
-        return value
-
-
-CorrectionOperation = Annotated[
-    SetEnabledOperation | SetZoneOperation | SwapVisualOperation | SwapSoundOperation,
-    Field(discriminator="kind"),
-]
-
-
-class SmartEditCorrectionCommand(StrictModel):
-    expected_revision: int = Field(ge=0)
-    idempotency_key: str = Field(min_length=8, max_length=128)
-    event_id: str
-    operation: CorrectionOperation
-
-    @field_validator("event_id")
-    @classmethod
-    def validate_event_id(cls, value: str) -> str:
-        if not _EVENT_ID_RE.fullmatch(value):
-            raise ValueError("event_id must be a 24-character lowercase hex digest")
-        return value
 
 
 def build_event_id(

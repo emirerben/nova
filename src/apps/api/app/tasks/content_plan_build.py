@@ -463,6 +463,9 @@ def _dispatch_item_render(
         user_id=plan.user_id,
         edit_format=str(item.edit_format or "montage"),
         requested=getattr(item, "smart_captions_enabled", False) is True,
+        sound_design_enabled=(
+            getattr(item, "smart_sound_design_enabled", None) is not False
+        ),
         db=session,
     )
     try:

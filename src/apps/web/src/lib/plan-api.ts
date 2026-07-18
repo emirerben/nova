@@ -326,6 +326,8 @@ export interface PlanItem {
   edit_format?: string | null;
   /** Per-video Smart Captions choice. A stored true never bypasses backend rollout gates. */
   smart_captions_enabled?: boolean;
+  /** Keep Smart visual/caption intelligence but disable automatic SFX. */
+  smart_sound_design_enabled?: boolean;
   /** Server-computed from format, feature gate, and creator-style assignment. */
   /** Null/absent on aggregate responses that do not enrich creator capability. */
   smart_captions_available?: boolean | null;
@@ -466,6 +468,7 @@ export function updatePlanItem(
     scheduled_date?: string | null;
     edit_format?: string | null;
     smart_captions_enabled?: boolean;
+    smart_sound_design_enabled?: boolean;
     montage_preset?: MontagePreset;
     filming_guide?: FilmingShot[];
     landscape_fit?: "fit" | "fill";

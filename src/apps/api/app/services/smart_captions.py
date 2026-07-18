@@ -77,6 +77,7 @@ def resolve_smart_captions_context_sync(
     user_id: uuid.UUID,
     edit_format: str | None,
     requested: bool,
+    sound_design_enabled: bool = True,
     db: Session,
 ) -> dict[str, str] | None:
     """Pin a reviewed creator preset into a render job at dispatch time.
@@ -98,4 +99,5 @@ def resolve_smart_captions_context_sync(
     return {
         "preset_id": capability.preset_id,
         "preset_version": capability.preset_version,
+        "sound_design": "auto" if sound_design_enabled else "off",
     }

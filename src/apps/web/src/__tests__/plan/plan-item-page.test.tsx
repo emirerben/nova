@@ -161,6 +161,7 @@ function makeItem(overrides = {}) {
     instruction_level: "full" as const,
     conformance: null,
     smart_captions_enabled: false,
+    smart_sound_design_enabled: true,
     smart_captions_available: false,
     smart_captions_unavailable_reason: "feature_disabled",
     ...overrides,
@@ -220,6 +221,38 @@ describe("PlanItemPage — Smart captions availability", () => {
     });
 
     expect(screen.queryByRole("switch", { name: "Smart captions" })).toBeNull();
+  });
+
+  it("lets the creator disable automatic SFX without disabling Smart captions", async () => {
+    const item = makeItem({
+      edit_format: "subtitled",
+      smart_captions_enabled: true,
+      smart_sound_design_enabled: true,
+      smart_captions_available: true,
+      smart_captions_unavailable_reason: null,
+    });
+    mockUpdatePlanItem.mockResolvedValue({
+      ...item,
+      smart_sound_design_enabled: false,
+    });
+    mockUsePolledJobStatus.mockReturnValue({
+      data: { item, job: null },
+      error: null,
+      refetch: mockRefetch,
+    });
+
+    await act(async () => {
+      render(<PlanItemPage />);
+    });
+
+    expect(screen.getByText("Sound design")).toBeInTheDocument();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Off" }));
+    });
+
+    expect(mockUpdatePlanItem).toHaveBeenCalledWith("test-item-id", {
+      smart_sound_design_enabled: false,
+    });
   });
 
   it("keeps the choice unchanged and shows an error when persistence fails", async () => {

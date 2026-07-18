@@ -163,7 +163,14 @@ def _build_smart_captions_context(raw: dict | None) -> dict[str, str] | None:
         and _SMART_PRESET_TOKEN_RE.fullmatch(preset_version)
     ):
         return None
-    return {"preset_id": preset_id, "preset_version": preset_version}
+    sound_design = str(raw.get("sound_design") or "auto")
+    if sound_design not in {"auto", "off"}:
+        sound_design = "auto"
+    return {
+        "preset_id": preset_id,
+        "preset_version": preset_version,
+        "sound_design": sound_design,
+    }
 
 
 def build_generative_job(

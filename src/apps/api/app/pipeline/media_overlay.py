@@ -232,7 +232,16 @@ def build_media_overlay_command(
             # rgba and let overlay perform its internal conversion, matching the
             # legacy JPEG path's colorimetry.
             pix_fmt = "rgba" if alpha_pip else "yuv420p"
-            card_filter_parts.append(f"scale={cw}:-2,format={pix_fmt}")
+            if card.entrance_token == "pop_in":
+                # 180ms scale-up authored in the overlay's local timeline. The
+                # overlay x expression below uses overlay_w so the card remains
+                # centered while its width changes.
+                card_filter_parts.append(
+                    f"scale=w='{cw}*(0.82+0.18*min(t/0.18,1))':h=-2:eval=frame,"
+                    f"format={pix_fmt}"
+                )
+            else:
+                card_filter_parts.append(f"scale={cw}:-2,format={pix_fmt}")
 
         # For video cards: freeze last frame to fill any gap between trim duration
         # and the overlay window. Use a bounded `stop_duration` instead of `stop=-1`
@@ -263,7 +272,12 @@ def build_media_overlay_command(
 
         # Overlay with time-gate. Fullscreen composites at the origin (static
         # dims); pip centers via the runtime overlay_h expression.
-        overlay_xy = "0:0" if is_fullscreen else f"{ox}:{oy_expr}"
+        if is_fullscreen:
+            overlay_xy = "0:0"
+        elif card.entrance_token == "pop_in":
+            overlay_xy = f"({round(cx)}-overlay_w/2):{oy_expr}"
+        else:
+            overlay_xy = f"{ox}:{oy_expr}"
         filter_parts.append(
             f"{prev}[{shifted}]overlay={overlay_xy}:"
             f"enable='between(t,{card.start_s:.3f},{card.end_s:.3f})':eof_action=pass[{out_label}]"

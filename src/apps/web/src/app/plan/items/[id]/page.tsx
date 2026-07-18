@@ -1349,6 +1349,46 @@ export default function PlanItemPage() {
                           {smartCaptionsError}
                         </p>
                       )}
+                      {item.smart_captions_enabled && (
+                        <div className="mt-3 flex items-center gap-2" aria-label="Sound design">
+                          <span className="mr-1 text-xs font-medium text-lime-900">
+                            Sound design
+                          </span>
+                          {([true, false] as const).map((enabled) => {
+                            const active = (item.smart_sound_design_enabled ?? true) === enabled;
+                            return (
+                              <button
+                                key={String(enabled)}
+                                type="button"
+                                aria-pressed={active}
+                                disabled={smartCaptionsSaving}
+                                onClick={async () => {
+                                  if (active) return;
+                                  setSmartCaptionsSaving(true);
+                                  setSmartCaptionsError(null);
+                                  try {
+                                    await updatePlanItem(item.id, {
+                                      smart_sound_design_enabled: enabled,
+                                    });
+                                    await refetch();
+                                  } catch {
+                                    setSmartCaptionsError("Couldn't update sound design — try again.");
+                                  } finally {
+                                    setSmartCaptionsSaving(false);
+                                  }
+                                }}
+                                className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-wait disabled:opacity-60 ${
+                                  active
+                                    ? "border-lime-500 bg-lime-600 text-white"
+                                    : "border-lime-200 bg-white text-lime-900 hover:border-lime-400"
+                                }`}
+                              >
+                                {enabled ? "Auto" : "Off"}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                     <button
                       type="button"

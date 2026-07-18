@@ -131,11 +131,11 @@ def test_autoapply_flag_off_dispatches_suggest_only() -> None:
     assert dispatched[0]["kwargs"] == {"auto_apply": False, "smart_mode": False}
 
 
-def test_smart_mode_forces_match_and_autoapply_while_generic_rollout_is_off() -> None:
+def test_smart_mode_does_not_launch_a_second_autoplace_pass() -> None:
     job = _job([_variant("subtitled")], item_id=uuid.uuid4(), smart=True)
-    dispatched, _ = _run(job, autoplace=False, autoapply=False)
-    assert len(dispatched) == 1
-    assert dispatched[0]["kwargs"] == {"auto_apply": True, "smart_mode": True}
+    dispatched, db = _run(job, autoplace=False, autoapply=False)
+    assert dispatched == []
+    db.commit.assert_not_called()
 
 
 def test_smart_master_kill_switch_stops_persisted_smart_context() -> None:

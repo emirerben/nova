@@ -85,9 +85,6 @@ def test_new_tables_registered() -> None:
     assert "content_plans" in tables
     assert "plan_items" in tables
     assert "creator_style_assignments" in tables
-    assert "smart_edit_plans" in tables
-    assert "smart_edit_plan_revisions" in tables
-    assert "smart_edit_dispatches" in tables
 
     persona_cols = set(tables["personas"].columns.keys())
     assert {
@@ -116,6 +113,7 @@ def test_new_tables_registered() -> None:
 
     item_cols = set(tables["plan_items"].columns.keys())
     assert "smart_captions_enabled" in item_cols
+    assert "smart_sound_design_enabled" in item_cols
     assert {
         "content_plan_id",
         "day_index",
@@ -139,49 +137,11 @@ def test_new_tables_registered() -> None:
     assert "ck_plan_items_smart_captions_format" in item_constraints
 
 
-def test_smart_edit_tables_register_revision_and_outbox_guards() -> None:
+def test_quality_core_defers_unused_revision_and_outbox_tables() -> None:
     tables = models.Base.metadata.tables
-    plans = tables["smart_edit_plans"]
-    revisions = tables["smart_edit_plan_revisions"]
-    dispatches = tables["smart_edit_dispatches"]
-
-    plan_constraints = {constraint.name for constraint in plans.constraints}
-    assert {
-        "ck_smart_edit_plans_requested_revision",
-        "ck_smart_edit_plans_normalized_words",
-        "ck_smart_edit_plans_ready_revision",
-        "ck_smart_edit_plans_accepted_revision",
-        "ck_smart_edit_plans_state",
-    } <= plan_constraints
-
-    revision_constraints = {constraint.name for constraint in revisions.constraints}
-    assert {
-        "uq_smart_edit_revision_number",
-        "ck_smart_edit_revision_lineage",
-        "ck_smart_edit_revision_status",
-        "ck_smart_edit_revision_document",
-        "ck_smart_edit_revision_correction",
-    } <= revision_constraints
-    assert revisions.c.document.server_default is None
-
-    dispatch_constraints = {constraint.name for constraint in dispatches.constraints}
-    assert {
-        "fk_smart_edit_dispatch_revision",
-        "uq_smart_edit_dispatch_generation",
-        "ck_smart_edit_dispatch_state",
-    } <= dispatch_constraints
-    dispatch_fk = next(
-        constraint
-        for constraint in dispatches.foreign_key_constraints
-        if constraint.name == "fk_smart_edit_dispatch_revision"
-    )
-    assert dispatch_fk.referred_table is revisions
-
-    active_plan_index = next(
-        index for index in plans.indexes if index.name == "uq_smart_edit_plans_active_job_variant"
-    )
-    assert active_plan_index.unique is True
-    assert str(active_plan_index.dialect_options["postgresql"]["where"]) == "retired_at IS NULL"
+    assert "smart_edit_plans" not in tables
+    assert "smart_edit_plan_revisions" not in tables
+    assert "smart_edit_dispatches" not in tables
 
 
 def test_0065_places_constraints_on_their_actual_tables(monkeypatch) -> None:
@@ -208,22 +168,7 @@ def test_0065_places_constraints_on_their_actual_tables(monkeypatch) -> None:
     }
     assert not any(name.startswith("ck_smart_edit_plans_") for name in creator_constraints)
 
-    plan_constraints = {
-        element.name for element in created["smart_edit_plans"] if getattr(element, "name", None)
-    }
-    assert {
-        "ck_smart_edit_plans_requested_revision",
-        "ck_smart_edit_plans_ready_revision",
-        "ck_smart_edit_plans_accepted_revision",
-        "ck_smart_edit_plans_state",
-    } <= plan_constraints
-
-    dispatch_constraints = {
-        element.name
-        for element in created["smart_edit_dispatches"]
-        if getattr(element, "name", None)
-    }
-    assert "fk_smart_edit_dispatch_revision" in dispatch_constraints
+    assert set(created) == {"creator_style_assignments"}
 
 
 def test_plan_item_assets_registered() -> None:

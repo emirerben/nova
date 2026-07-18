@@ -138,7 +138,10 @@ def test_smart_captions_context_is_pinned_only_for_subtitled_jobs() -> None:
         edit_format="subtitled",
         smart_captions=context,
     )
-    assert smart.all_candidates["smart_captions"] == context
+    assert smart.all_candidates["smart_captions"] == {
+        **context,
+        "sound_design": "auto",
+    }
 
     montage = build_generative_job(
         user_id=uuid.uuid4(),

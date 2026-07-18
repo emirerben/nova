@@ -102,7 +102,11 @@ def test_sync_dispatch_context_rechecks_assignment_and_pins_preset(monkeypatch) 
         db=db,
     )
 
-    assert context == {"preset_id": "cigdem", "preset_version": "v1"}
+    assert context == {
+        "preset_id": "cigdem",
+        "preset_version": "v1",
+        "sound_design": "auto",
+    }
     db.get.assert_called_once_with(CreatorStyleAssignment, user_id)
 
 

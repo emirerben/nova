@@ -79,6 +79,9 @@ class MediaOverlay(BaseModel):
     # Fullscreen IGNORES position/x_frac/y_frac/scale at render time but keeps
     # them in the dict so toggling back to pip restores the prior layout.
     display_mode: Literal["pip", "fullscreen"] = "pip"
+    # Smart Captions may author a closed entrance motion token. Manual cards
+    # default to none and retain their existing byte path.
+    entrance_token: Literal["none", "pop_in"] = "none"
 
     # Position: preset OR custom frac pair. On parse, presets resolve to their
     # canonical y_frac / x_frac defaults; custom uses the literal values.

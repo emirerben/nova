@@ -1,0 +1,150 @@
+{
+  "preset_id": "cigdem",
+  "version": "v1",
+  "caption": {
+    "min_words": 3,
+    "max_words": 7,
+    "max_lines": 2,
+    "max_chars": 44,
+    "font_family": "Montserrat Bold",
+    "font_size_px": 64,
+    "y_frac": 0.705,
+    "width_frac": 0.88,
+    "color": "#FFFFFF",
+    "stroke_color": "#111111",
+    "stroke_width": 4
+  },
+  "text_styles": {
+    "context_title": {
+      "font_family": "Montserrat",
+      "size_px": 58,
+      "x_frac": 0.2,
+      "y_frac": 0.145,
+      "max_width_frac": 0.74,
+      "color": "#8FD400",
+      "highlight_color": "#FFFFFF",
+      "stroke_width": 4,
+      "alignment": "left",
+      "effect": "typewriter",
+      "duration_s": 2.5
+    },
+    "section_number": {
+      "font_family": "Montserrat",
+      "size_px": 104,
+      "x_frac": 0.5,
+      "y_frac": 0.085,
+      "max_width_frac": 0.2,
+      "color": "#FFFFFF",
+      "highlight_color": "#8FD400",
+      "stroke_width": 4,
+      "alignment": "center",
+      "effect": "pop-in",
+      "duration_s": 1.15
+    },
+    "section_keyword": {
+      "font_family": "Montserrat Bold",
+      "size_px": 68,
+      "x_frac": 0.5,
+      "y_frac": 0.62,
+      "max_width_frac": 0.84,
+      "color": "#FFF04A",
+      "highlight_color": "#FFFFFF",
+      "stroke_width": 3,
+      "alignment": "center",
+      "effect": "fade-in",
+      "duration_s": 0.9
+    }
+  },
+  "visual_zones": {
+    "top_left": {"x_frac": 0.2, "y_frac": 0.12, "scale": 0.34, "z": 10},
+    "lower_center": {"x_frac": 0.5, "y_frac": 0.76, "scale": 0.34, "z": 20},
+    "lower_left": {"x_frac": 0.23, "y_frac": 0.81, "scale": 0.35, "z": 30},
+    "top_right": {"x_frac": 0.8, "y_frac": 0.12, "scale": 0.36, "z": 40},
+    "lower_right": {"x_frac": 0.81, "y_frac": 0.81, "scale": 0.29, "z": 50},
+    "single_top": {"x_frac": 0.77, "y_frac": 0.2, "scale": 0.32, "z": 30},
+    "single_left": {"x_frac": 0.23, "y_frac": 0.24, "scale": 0.32, "z": 30},
+    "badge_top_left": {"x_frac": 0.085, "y_frac": 0.075, "scale": 0.12, "z": 90},
+    "fullscreen": {"x_frac": 0.5, "y_frac": 0.5, "scale": 1.0, "z": 60, "display_mode": "fullscreen"}
+  },
+  "hook_zone_sequence": ["top_left", "lower_right", "top_right", "lower_left", "lower_center"],
+  "visual_aliases": [
+    {
+      "asset_terms": ["robots_wedding", "robot wedding", "robot couple"],
+      "transcript_terms": ["Çelik", "Çeliknaz", "Çelik Naz"]
+    }
+  ],
+  "sfx_roles": {
+    "visual_enter_soft": {
+      "asset_ids": [],
+      "role_tags": ["visual_enter_soft"],
+      "name_fallback_tokens": ["soft pop", "bubble pop"],
+      "gain": 0.38,
+      "min_spacing_ms": 160,
+      "max_vocal_probability": 0.05
+    },
+    "visual_enter_accent": {
+      "asset_ids": [],
+      "role_tags": ["visual_enter_accent"],
+      "name_fallback_tokens": ["pop whoosh", "explainer pop"],
+      "gain": 0.62,
+      "min_spacing_ms": 160,
+      "max_vocal_probability": 0.05
+    },
+    "chapter_number_pop": {
+      "asset_ids": [],
+      "role_tags": ["chapter_number_pop"],
+      "name_fallback_tokens": ["number pop", "clean pop"],
+      "gain": 0.48,
+      "min_spacing_ms": 120,
+      "max_vocal_probability": 0.05
+    },
+    "keyword_typewriter_tick": {
+      "asset_ids": [],
+      "role_tags": ["keyword_typewriter_tick"],
+      "name_fallback_tokens": ["typewriter", "keyboard tick"],
+      "gain": 0.16,
+      "min_spacing_ms": 45,
+      "max_vocal_probability": 0.02
+    },
+    "transition_whip": {
+      "asset_ids": [],
+      "role_tags": ["transition_whip"],
+      "name_fallback_tokens": ["clean whoosh", "transition whoosh"],
+      "gain": 0.58,
+      "min_spacing_ms": 500,
+      "max_vocal_probability": 0.03
+    },
+    "badge_enter": {
+      "asset_ids": [],
+      "role_tags": ["badge_enter"],
+      "name_fallback_tokens": ["small click", "ui click"],
+      "gain": 0.28,
+      "min_spacing_ms": 180,
+      "max_vocal_probability": 0.02
+    },
+    "cta_click": {
+      "asset_ids": [],
+      "role_tags": ["cta_click"],
+      "name_fallback_tokens": ["cta click", "ui click"],
+      "gain": 0.34,
+      "min_spacing_ms": 300,
+      "max_vocal_probability": 0.02
+    }
+  },
+  "boundary_effects": {
+    "horizontal_motion_blur": {
+      "effect": "horizontal_motion_blur",
+      "duration_ms": 420,
+      "blur_sigma": 44.0,
+      "intensity": 1.0
+    }
+  },
+  "density": {
+    "hook_window_s": 6.0,
+    "hook_max_visuals": 5,
+    "hook_group_hold_s": 2.0,
+    "normal_visual_duration_s": 3.0,
+    "min_normal_gap_s": 2.0,
+    "max_events": 48
+  }
+}

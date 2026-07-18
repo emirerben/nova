@@ -131,6 +131,7 @@ def test_smart_captions_context_is_resolved_and_pinned_at_dispatch() -> None:
     item.idea = "explain four examples"
     item.edit_format = "subtitled"
     item.smart_captions_enabled = True
+    item.smart_sound_design_enabled = True
     item.voiceover_gcs_path = None
     item.landscape_fit = "fit"
     item.montage_preset = "classic"
@@ -164,6 +165,7 @@ def test_smart_captions_context_is_resolved_and_pinned_at_dispatch() -> None:
         user_id=plan.user_id,
         edit_format="subtitled",
         requested=True,
+        sound_design_enabled=True,
         db=ctx.__enter__.return_value,
     )
     assert mock_build.call_args.kwargs["smart_captions"] == smart_context

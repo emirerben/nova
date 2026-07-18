@@ -249,6 +249,7 @@ class PlanItemResponse(BaseModel):
     # Some legacy aggregate/mutation responses do not enrich capability yet and
     # return null rather than asserting a false reason.
     smart_captions_enabled: bool = False
+    smart_sound_design_enabled: bool = True
     smart_captions_available: bool | None = None
     smart_captions_unavailable_reason: str | None = None
     # Montage visual preset. "classic" preserves today's sequential montage;
@@ -337,6 +338,9 @@ def plan_item_response(
         else "create_new",
         edit_format=item.edit_format,
         smart_captions_enabled=getattr(item, "smart_captions_enabled", False) is True,
+        smart_sound_design_enabled=(
+            getattr(item, "smart_sound_design_enabled", None) is not False
+        ),
         smart_captions_available=smart_captions_available,
         smart_captions_unavailable_reason=smart_captions_unavailable_reason,
         montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
@@ -461,6 +465,7 @@ class PlanItemEdit(BaseModel):
     # item hasn't started generating (no active job) to avoid mid-flight changes.
     edit_format: str | None = None
     smart_captions_enabled: bool | None = None
+    smart_sound_design_enabled: bool | None = None
     # Accept an expand proposal's filming_guide directly.
     filming_guide: list[dict] | None = None
     # Landscape-clip render preference: "fit" (letterbox) | "fill" (crop-to-fill).
@@ -528,6 +533,8 @@ async def edit_plan_item(
             item.smart_captions_enabled = False
     if "smart_captions_enabled" in updates:
         item.smart_captions_enabled = updates["smart_captions_enabled"] is True
+    if "smart_sound_design_enabled" in updates:
+        item.smart_sound_design_enabled = updates["smart_sound_design_enabled"] is True
     if "filming_guide" in updates:
         from sqlalchemy.orm.attributes import flag_modified as _flag  # noqa: PLC0415
 

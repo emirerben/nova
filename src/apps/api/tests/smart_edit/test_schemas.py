@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from app.smart_edit.schemas import (
     SMART_EDIT_SCHEMA_VERSION,
     SemanticEventIntent,
-    SmartEditCorrectionCommand,
     SmartEditEvent,
     SmartEditPlanDocument,
     SmartWord,
@@ -153,7 +152,7 @@ def test_plan_document_rejects_dangling_word_and_event_references() -> None:
         "lanes": [
             {
                 "kind": "sfx",
-                "asset_id": "list.pop.clean",
+                "role_tokens": ["chapter_number_pop"],
                 "sync_to_event_id": "0" * 24,
                 "offset_ms": 0,
                 "gain_token": "foreground_soft",
@@ -230,7 +229,7 @@ def test_events_require_ordered_spans_and_their_own_sfx_anchor() -> None:
             "lanes": [
                 {
                     "kind": "sfx",
-                    "asset_id": "list.pop.clean",
+                    "role_tokens": ["chapter_number_pop"],
                     "sync_to_event_id": other_event_id,
                     "offset_ms": 0,
                     "gain_token": "foreground_soft",
@@ -257,38 +256,6 @@ def test_events_require_ordered_spans_and_their_own_sfx_anchor() -> None:
                         "lanes": [],
                     },
                 ],
-            }
-        )
-
-
-def test_correction_contract_exposes_only_four_operations() -> None:
-    command = SmartEditCorrectionCommand.model_validate(
-        {
-            "expected_revision": 0,
-            "idempotency_key": "request-123",
-            "event_id": _event_id(),
-            "operation": {"kind": "set_zone", "value": "top_right"},
-        }
-    )
-    assert command.operation.kind == "set_zone"
-
-    with pytest.raises(ValidationError):
-        SmartEditCorrectionCommand.model_validate(
-            {
-                "expected_revision": 0,
-                "idempotency_key": "request-124",
-                "event_id": _event_id(),
-                "operation": {"kind": "set_timing", "start_ms": 5},
-            }
-        )
-
-    with pytest.raises(ValidationError, match="closed token"):
-        SmartEditCorrectionCommand.model_validate(
-            {
-                "expected_revision": 0,
-                "idempotency_key": "request-125",
-                "event_id": _event_id(),
-                "operation": {"kind": "set_zone", "value": "x=10:y=20"},
             }
         )
 

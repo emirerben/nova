@@ -69,15 +69,36 @@ def build_sound_effects_command(
     assert len(effects) == len(effect_local_paths), "effects and paths must be same length"
     assert effects, "build_sound_effects_command requires at least one effect"
 
+    # One decoder input per unique asset. Repeated role hits reuse it through
+    # asplit, avoiding N downloads/decoders for the same clean pop or whoosh.
+    unique_paths = list(dict.fromkeys(effect_local_paths))
     inputs: list[str] = ["-i", base_video]
-    for lp in effect_local_paths:
+    for lp in unique_paths:
         inputs += ["-i", lp]
 
     filter_parts: list[str] = []
     fx_labels: list[str] = []
+    path_to_input = {path: index + 1 for index, path in enumerate(unique_paths)}
+    uses_by_path = {
+        path: [index for index, candidate in enumerate(effect_local_paths) if candidate == path]
+        for path in unique_paths
+    }
+    source_by_effect: dict[int, str] = {}
+    for path_index, path in enumerate(unique_paths):
+        input_index = path_to_input[path]
+        uses = uses_by_path[path]
+        if len(uses) == 1:
+            source_by_effect[uses[0]] = f"[{input_index}:a]"
+            continue
+        labels = [f"sfxsrc{path_index}_{branch}" for branch in range(len(uses))]
+        filter_parts.append(
+            f"[{input_index}:a]asplit={len(uses)}" + "".join(f"[{label}]" for label in labels)
+        )
+        for effect_index, label in zip(uses, labels):
+            source_by_effect[effect_index] = f"[{label}]"
 
     for i, (eff, _lp) in enumerate(zip(effects, effect_local_paths)):
-        in_idx = i + 1  # input 0 = base video
+        source = source_by_effect[i]
         ms = round(eff.at_s * 1000)
         label = f"fx{i}"
 
@@ -88,13 +109,13 @@ def build_sound_effects_command(
             ts = eff.trim_start_s or 0.0
             if eff.trim_end_s is not None:
                 chain_parts.append(
-                    f"[{in_idx}:a]atrim=start={ts:.3f}:end={eff.trim_end_s:.3f}"
+                    f"{source}atrim=start={ts:.3f}:end={eff.trim_end_s:.3f}"
                     f",asetpts=PTS-STARTPTS"
                 )
             else:
-                chain_parts.append(f"[{in_idx}:a]atrim=start={ts:.3f},asetpts=PTS-STARTPTS")
+                chain_parts.append(f"{source}atrim=start={ts:.3f},asetpts=PTS-STARTPTS")
         else:
-            chain_parts.append(f"[{in_idx}:a]anull")
+            chain_parts.append(f"{source}anull")
 
         # Place at timestamp via adelay (stereo: two identical values in ms).
         # Pad with silence so the clip doesn't cut short if it precedes at_s.
@@ -176,6 +197,7 @@ def apply_sound_effects(
         ready_effects: list[SoundEffectPlacement] = []
         local_paths: list[str] = []
 
+        downloaded_by_path: dict[str, str] = {}
         for i, eff in enumerate(effects):
             try:
                 validate_sfx_gcs_path(eff.src_gcs_path)
@@ -188,19 +210,22 @@ def apply_sound_effects(
                 )
                 continue
 
-            ext = os.path.splitext(eff.src_gcs_path)[-1].lower() or ".mp3"
-            local = os.path.join(tmpdir, f"sfx_{i}{ext}")
-            try:
-                storage.download_to_file(eff.src_gcs_path, local)
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "sfx_download_failed",
-                    job_id=job_id,
-                    effect_id=eff.id,
-                    src=eff.src_gcs_path,
-                    error=str(exc),
-                )
-                continue
+            local = downloaded_by_path.get(eff.src_gcs_path)
+            if local is None:
+                ext = os.path.splitext(eff.src_gcs_path)[-1].lower() or ".mp3"
+                local = os.path.join(tmpdir, f"sfx_{len(downloaded_by_path)}{ext}")
+                try:
+                    storage.download_to_file(eff.src_gcs_path, local)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning(
+                        "sfx_download_failed",
+                        job_id=job_id,
+                        effect_id=eff.id,
+                        src=eff.src_gcs_path,
+                        error=str(exc),
+                    )
+                    continue
+                downloaded_by_path[eff.src_gcs_path] = local
 
             ready_effects.append(eff)
             local_paths.append(local)
