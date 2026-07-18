@@ -444,6 +444,9 @@ def _dispatch_item_render(
         build_generative_job,
     )
     from app.services.job_dispatch import enqueue_orchestrator_sync  # noqa: PLC0415
+    from app.services.smart_captions import (  # noqa: PLC0415
+        resolve_smart_captions_context_sync,
+    )
     from app.tasks.generative_build import orchestrate_generative_job  # noqa: PLC0415
 
     clip_paths = list(item.clip_gcs_paths or [])
@@ -456,6 +459,15 @@ def _dispatch_item_render(
     # order), pool clips after. narrative_shot_count tells the render path how
     # many of the leading paths form the narrative spine.
     clip_paths, narrative_shot_count = _narrative_clip_order(item, clip_paths)
+    smart_context = resolve_smart_captions_context_sync(
+        user_id=plan.user_id,
+        edit_format=str(item.edit_format or "montage"),
+        requested=getattr(item, "smart_captions_enabled", False) is True,
+        sound_design_enabled=(
+            getattr(item, "smart_sound_design_enabled", None) is not False
+        ),
+        db=session,
+    )
     try:
         job = build_generative_job(
             user_id=plan.user_id,
@@ -508,6 +520,7 @@ def _dispatch_item_render(
                 if isinstance(a, dict) and a.get("gcs_path") and a.get("user_note")
             },
             variant_policy=CONTENT_PLAN_PRIMARY_VARIANT_POLICY,
+            smart_captions=smart_context,
         )
     except ValueError as exc:
         log.warning("plan_item_render.invalid_clips", plan_item_id=str(item.id), error=str(exc))

@@ -15,6 +15,8 @@ that silently break a deploy:
 End-to-end up/down was verified manually against Postgres 16 (plan task T6).
 """
 
+import importlib
+
 import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
@@ -52,6 +54,7 @@ _EXPECTED_CHAIN = {
     "0062": "0061",
     "0063": "0062",
     "0064": "0063",
+    "0065": "0064",
 }
 
 
@@ -63,7 +66,7 @@ def script_dir() -> ScriptDirectory:
 
 def test_single_alembic_head(script_dir: ScriptDirectory) -> None:
     heads = script_dir.get_heads()
-    assert heads == ["0064"], f"expected a single head 0064, got {heads}"
+    assert heads == ["0065"], f"expected a single head 0065, got {heads}"
 
 
 def test_migration_chain_is_linear(script_dir: ScriptDirectory) -> None:
@@ -81,6 +84,7 @@ def test_new_tables_registered() -> None:
     assert "personas" in tables
     assert "content_plans" in tables
     assert "plan_items" in tables
+    assert "creator_style_assignments" in tables
 
     persona_cols = set(tables["personas"].columns.keys())
     assert {
@@ -108,6 +112,8 @@ def test_new_tables_registered() -> None:
     } <= plan_cols
 
     item_cols = set(tables["plan_items"].columns.keys())
+    assert "smart_captions_enabled" in item_cols
+    assert "smart_sound_design_enabled" in item_cols
     assert {
         "content_plan_id",
         "day_index",
@@ -127,6 +133,42 @@ def test_new_tables_registered() -> None:
         "scenes",
         "content_mode",
     } <= item_cols
+    item_constraints = {constraint.name for constraint in tables["plan_items"].constraints}
+    assert "ck_plan_items_smart_captions_format" in item_constraints
+
+
+def test_quality_core_defers_unused_revision_and_outbox_tables() -> None:
+    tables = models.Base.metadata.tables
+    assert "smart_edit_plans" not in tables
+    assert "smart_edit_plan_revisions" not in tables
+    assert "smart_edit_dispatches" not in tables
+
+
+def test_0065_places_constraints_on_their_actual_tables(monkeypatch) -> None:
+    """Regression guard for DDL that compiles but references another table's columns."""
+
+    migration = importlib.import_module("app.migrations.versions.0065_smart_captions_foundation")
+    created: dict[str, tuple] = {}
+
+    monkeypatch.setattr(migration.op, "add_column", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(migration.op, "create_check_constraint", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(migration.op, "create_index", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        migration.op,
+        "create_table",
+        lambda name, *elements, **_kwargs: created.__setitem__(name, elements),
+    )
+
+    migration.upgrade()
+
+    creator_constraints = {
+        element.name
+        for element in created["creator_style_assignments"]
+        if getattr(element, "name", None)
+    }
+    assert not any(name.startswith("ck_smart_edit_plans_") for name in creator_constraints)
+
+    assert set(created) == {"creator_style_assignments"}
 
 
 def test_plan_item_assets_registered() -> None:

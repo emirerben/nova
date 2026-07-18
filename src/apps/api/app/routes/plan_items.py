@@ -244,6 +244,14 @@ class PlanItemResponse(BaseModel):
     # Render archetype assigned at plan-generation time (e.g. "montage",
     # "talking_head"). Null for items generated before this field shipped.
     edit_format: str | None = None
+    # Per-video choice plus server-authoritative capability.  Availability is
+    # never derived from a NEXT_PUBLIC flag and does not expose preset identity.
+    # Some legacy aggregate/mutation responses do not enrich capability yet and
+    # return null rather than asserting a false reason.
+    smart_captions_enabled: bool = False
+    smart_sound_design_enabled: bool = True
+    smart_captions_available: bool | None = None
+    smart_captions_unavailable_reason: str | None = None
     # Montage visual preset. "classic" preserves today's sequential montage;
     # collage presets opt into the collage-wall assembler.
     montage_preset: MontagePreset = "classic"
@@ -272,6 +280,8 @@ def plan_item_response(
     instruction_level: str = "full",
     content_mode: str = "create_new",
     seed_text_by_id: dict[str, str] | None = None,
+    smart_captions_available: bool | None = None,
+    smart_captions_unavailable_reason: str | None = None,
 ) -> PlanItemResponse:
     # Tolerate missing keys in individual JSONB shots — each shot is constructed
     # via .get() so a hand-corrupted row or a migration-era partial row never raises.
@@ -327,6 +337,12 @@ def plan_item_response(
         if content_mode in ("existing_footage", "create_new", "mixed")
         else "create_new",
         edit_format=item.edit_format,
+        smart_captions_enabled=getattr(item, "smart_captions_enabled", False) is True,
+        smart_sound_design_enabled=(
+            getattr(item, "smart_sound_design_enabled", None) is not False
+        ),
+        smart_captions_available=smart_captions_available,
+        smart_captions_unavailable_reason=smart_captions_unavailable_reason,
         montage_preset=coerce_montage_preset(getattr(item, "montage_preset", None)),
         voiceover_gcs_path=item.voiceover_gcs_path,
         landscape_fit=(
@@ -421,11 +437,20 @@ async def get_plan_item(
     instruction_level = await _get_instruction_level(item, db)
     content_mode = await _get_content_mode(item, db)
     seed_text_by_id = await _get_seed_text_by_id(item, db)
+    from app.services.smart_captions import resolve_smart_captions_capability  # noqa: PLC0415
+
+    smart_capability = await resolve_smart_captions_capability(
+        user_id=user.id,
+        edit_format=item.edit_format,
+        db=db,
+    )
     return plan_item_response(
         item,
         instruction_level=instruction_level,
         content_mode=content_mode,
         seed_text_by_id=seed_text_by_id,
+        smart_captions_available=smart_capability.available,
+        smart_captions_unavailable_reason=smart_capability.reason,
     )
 
 
@@ -439,6 +464,8 @@ class PlanItemEdit(BaseModel):
     # User-chosen format (e.g. "montage", "narrated"). Only allowed when the
     # item hasn't started generating (no active job) to avoid mid-flight changes.
     edit_format: str | None = None
+    smart_captions_enabled: bool | None = None
+    smart_sound_design_enabled: bool | None = None
     # Accept an expand proposal's filming_guide directly.
     filming_guide: list[dict] | None = None
     # Landscape-clip render preference: "fit" (letterbox) | "fill" (crop-to-fill).
@@ -467,9 +494,25 @@ async def edit_plan_item(
 
     from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
 
-    item = await _load_owned_item(item_id, user.id, db)
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
 
     updates = edit.model_dump(exclude_none=True)
+    smart_capability = None
+    if updates.get("smart_captions_enabled") is True:
+        from app.services.smart_captions import (  # noqa: PLC0415
+            resolve_smart_captions_capability,
+        )
+
+        smart_capability = await resolve_smart_captions_capability(
+            user_id=user.id,
+            edit_format=updates.get("edit_format", item.edit_format),
+            db=db,
+        )
+        if not smart_capability.available:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"smart_captions_unavailable:{smart_capability.reason}",
+            )
     if "theme" in updates:
         item.theme = _sanitize_text(updates["theme"]) or item.theme
     if "idea" in updates:
@@ -486,6 +529,12 @@ async def edit_plan_item(
         item.scheduled_date = date_type.fromisoformat(raw) if raw else None
     if "edit_format" in updates:
         item.edit_format = updates["edit_format"] or None
+        if item.edit_format != "subtitled":
+            item.smart_captions_enabled = False
+    if "smart_captions_enabled" in updates:
+        item.smart_captions_enabled = updates["smart_captions_enabled"] is True
+    if "smart_sound_design_enabled" in updates:
+        item.smart_sound_design_enabled = updates["smart_sound_design_enabled"] is True
     if "filming_guide" in updates:
         from sqlalchemy.orm.attributes import flag_modified as _flag  # noqa: PLC0415
 
@@ -504,8 +553,22 @@ async def edit_plan_item(
     reloaded = await _load_owned_item(item_id, user.id, db)
     instruction_level = await _get_instruction_level(reloaded, db)
     content_mode = await _get_content_mode(reloaded, db)
+    if smart_capability is None:
+        from app.services.smart_captions import (  # noqa: PLC0415
+            resolve_smart_captions_capability,
+        )
+
+        smart_capability = await resolve_smart_captions_capability(
+            user_id=user.id,
+            edit_format=reloaded.edit_format,
+            db=db,
+        )
     return plan_item_response(
-        reloaded, instruction_level=instruction_level, content_mode=content_mode
+        reloaded,
+        instruction_level=instruction_level,
+        content_mode=content_mode,
+        smart_captions_available=smart_capability.available,
+        smart_captions_unavailable_reason=smart_capability.reason,
     )
 
 
@@ -628,7 +691,13 @@ async def delete_idea(
 # ── Themed uploads + per-item generation ──────────────────────────────────────
 
 
-async def _load_owned_item(item_id: str, user_id: uuid.UUID, db: AsyncSession) -> PlanItem:
+async def _load_owned_item(
+    item_id: str,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    for_update: bool = False,
+) -> PlanItem:
     try:
         iid = uuid.UUID(item_id)
     except ValueError as exc:
@@ -637,11 +706,10 @@ async def _load_owned_item(item_id: str, user_id: uuid.UUID, db: AsyncSession) -
     # relationship, and a bare db.get() leaves it lazy → MissingGreenlet 500 on
     # the async session once an item has a linked job (mirrors the list endpoint's
     # selectinload in content_plans.py).
-    item = (
-        await db.execute(
-            select(PlanItem).where(PlanItem.id == iid).options(selectinload(PlanItem.current_job))
-        )
-    ).scalar_one_or_none()
+    stmt = select(PlanItem).where(PlanItem.id == iid).options(selectinload(PlanItem.current_job))
+    if for_update:
+        stmt = stmt.with_for_update()
+    item = (await db.execute(stmt)).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
     plan = await db.get(ContentPlan, item.content_plan_id)

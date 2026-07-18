@@ -157,6 +157,12 @@ class Settings(BaseSettings):
     # are wired and verified end-to-end; the frontend picker card gates on this too.
     subtitled_archetype_enabled: bool = False
 
+    # Creator-style Smart Captions master gate.  This controls availability only;
+    # per-video intent is persisted separately and creator preset assignment is
+    # resolved server-side.  Availability also requires the subtitled base
+    # renderer gate. Default OFF for controlled creator rollout.
+    smart_captions_enabled: bool = False
+
     # Kill switch for authored TextElements on subtitled variants. When False,
     # subtitled remains captions-only and the text-element routes/capabilities
     # reject it. When True, user-authored text is burned onto the caption-free

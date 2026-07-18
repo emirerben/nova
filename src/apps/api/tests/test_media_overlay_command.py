@@ -117,6 +117,13 @@ class TestImageCard:
         cmd = _build([card])
         assert f"overlay={ox}:" in _fc(cmd)
 
+    def test_pop_in_uses_dynamic_scale_and_stays_centered(self):
+        card = _card_img(scale=0.4)
+        card.entrance_token = "pop_in"
+        fc = _fc(_build([card]))
+        assert "0.82+0.18*min(t/0.18,1)" in fc
+        assert "overlay_w/2" in fc
+
     def test_no_tpad_for_image(self):
         card = _card_img()
         cmd = _build([card])

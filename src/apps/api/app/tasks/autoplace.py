@@ -750,7 +750,11 @@ def _persist_variant_fields(db, job_id: str, variant_id: str, fields: dict) -> d
 
 @celery_app.task(name="app.tasks.autoplace.match_overlay_suggestions", **_AUTOPLACE_TASK_LIMITS)
 def match_overlay_suggestions(
-    job_id: str, variant_id: str, user_id: str, auto_apply: bool = False
+    job_id: str,
+    variant_id: str,
+    user_id: str,
+    auto_apply: bool = False,
+    smart_mode: bool = False,
 ) -> None:
     """Match pool assets to this variant's speech.
 
@@ -907,6 +911,11 @@ def match_overlay_suggestions(
                             ],
                             occupied=[list(t) for t in _occupied_intervals(variant)],
                             duration_s=duration_s,
+                            archetype=(
+                                "smart_captions"
+                                if smart_mode
+                                else str(variant.get("resolved_archetype") or "talking_head")
+                            ),
                         ),
                         ctx=RunContext(job_id=job_id),
                     )
@@ -957,7 +966,7 @@ def match_overlay_suggestions(
                     trace=lambda event, **f: deferred_trace.append(
                         (event, {"variant_id": variant_id, **f})
                     ),
-                    fullscreen_enabled=settings.fullscreen_cutaways_enabled,
+                    fullscreen_enabled=(settings.fullscreen_cutaways_enabled or smart_mode),
                     intro_windows=intro_windows,
                     caption_cues=list(target.get("caption_cues") or []),
                     stats=fs_stats,

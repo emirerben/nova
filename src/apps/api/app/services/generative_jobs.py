@@ -10,6 +10,7 @@ add/commit and dispatch.
 
 from __future__ import annotations
 
+import re
 import uuid
 
 from app.agents._schemas.edit_format import DEFAULT_EDIT_FORMAT, coerce_edit_format
@@ -22,6 +23,7 @@ from app.schemas.montage_preset import (
 
 DEFAULT_PLATFORMS = ["tiktok", "instagram", "youtube"]
 CONTENT_PLAN_PRIMARY_VARIANT_POLICY = "content_plan_primary"
+_SMART_PRESET_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
 # Upper bounds on the persona context stashed onto the job. Keeps a runaway
@@ -149,6 +151,28 @@ def _build_user_style_context(style: dict | None) -> dict | None:
         return None
 
 
+def _build_smart_captions_context(raw: dict | None) -> dict[str, str] | None:
+    """Validate the server-pinned Smart preset before it enters Job JSONB."""
+
+    if not isinstance(raw, dict):
+        return None
+    preset_id = str(raw.get("preset_id") or "").strip()
+    preset_version = str(raw.get("preset_version") or "").strip()
+    if not (
+        _SMART_PRESET_TOKEN_RE.fullmatch(preset_id)
+        and _SMART_PRESET_TOKEN_RE.fullmatch(preset_version)
+    ):
+        return None
+    sound_design = str(raw.get("sound_design") or "auto")
+    if sound_design not in {"auto", "off"}:
+        sound_design = "auto"
+    return {
+        "preset_id": preset_id,
+        "preset_version": preset_version,
+        "sound_design": sound_design,
+    }
+
+
 def build_generative_job(
     *,
     user_id: uuid.UUID,
@@ -174,6 +198,7 @@ def build_generative_job(
     landscape_fit: str = "fill",
     montage_preset: str = DEFAULT_MONTAGE_PRESET,
     variant_policy: str | None = None,
+    smart_captions: dict | None = None,
 ) -> Job:
     """Construct (not persist) a generative Job after validating clip prefixes.
 
@@ -202,6 +227,9 @@ def build_generative_job(
     }
     if variant_policy == CONTENT_PLAN_PRIMARY_VARIANT_POLICY:
         all_candidates["variant_policy"] = CONTENT_PLAN_PRIMARY_VARIANT_POLICY
+    smart_context = _build_smart_captions_context(smart_captions)
+    if smart_context is not None and all_candidates["edit_format"] == "subtitled":
+        all_candidates["smart_captions"] = smart_context
     # Optional voiceover bed (audio-only). Validated against its own prefix so it can
     # never be mistaken for a footage clip. Omitted entirely when absent → public/song
     # jobs keep their exact pre-voiceover all_candidates shape.

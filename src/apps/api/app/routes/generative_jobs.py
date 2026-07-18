@@ -1113,6 +1113,9 @@ class CaptionCue(BaseModel):
     # construction (build_plain_cues), so a generous cap keeps the debounced PATCH from
     # becoming an unbounded JSONB write surface.
     words: list[CaptionWord] | None = None
+    # Server-authored semantic role. Closed tokens compile to fixed ASS styles;
+    # round-trip it through the editor so an unchanged cue keeps its Smart look.
+    smart_style: Literal["hook", "context", "list_item", "example", "payoff", "cta"] | None = None
 
     @field_validator("words")
     @classmethod

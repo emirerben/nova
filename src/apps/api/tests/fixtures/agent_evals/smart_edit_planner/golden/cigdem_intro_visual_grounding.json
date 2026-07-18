@@ -1,0 +1,89 @@
+{
+  "agent": "nova.compose.smart_edit_planner",
+  "prompt_version": "2026-07-18.2",
+  "input": {
+    "words": [
+      {"word_id": "w000001", "text": "Selocanlar", "start_s": 1.24, "end_s": 1.82},
+      {"word_id": "w000002", "text": "Çelik", "start_s": 1.82, "end_s": 2.1},
+      {"word_id": "w000003", "text": "Çeliknaz", "start_s": 2.1, "end_s": 2.7},
+      {"word_id": "w000004", "text": "Pınar", "start_s": 3.57, "end_s": 3.9},
+      {"word_id": "w000005", "text": "Beyaz", "start_s": 3.9, "end_s": 4.3},
+      {"word_id": "w000006", "text": "Selpak", "start_s": 5.32, "end_s": 5.7},
+      {"word_id": "w000007", "text": "fil", "start_s": 5.7, "end_s": 6.0},
+      {"word_id": "w000008", "text": "Coca", "start_s": 6.48, "end_s": 6.75},
+      {"word_id": "w000009", "text": "Cola", "start_s": 6.75, "end_s": 7.0},
+      {"word_id": "w000010", "text": "ayıcık", "start_s": 7.0, "end_s": 7.45}
+    ],
+    "candidates": [
+      {
+        "candidate_id": "candidate-hook-1",
+        "role": "hook",
+        "start_word_id": "w000001",
+        "end_word_id": "w000010",
+        "anchor_word_id": "w000001",
+        "sequence_number": null,
+        "evidence": "Rapid spoken list of familiar mascot characters.",
+        "suggested_asset_ids": [
+          "asset_selocan",
+          "asset_robots",
+          "asset_pinar_sheep",
+          "asset_selpak_elephant",
+          "asset_cocacola_bear"
+        ],
+        "suggested_asset_anchor_word_ids": {
+          "asset_selocan": "w000001",
+          "asset_robots": "w000002",
+          "asset_pinar_sheep": "w000004",
+          "asset_selpak_elephant": "w000006",
+          "asset_cocacola_bear": "w000008"
+        }
+      }
+    ],
+    "assets": [
+      {"asset_id": "asset_selocan", "kind": "image", "subject": "Selocan mascot family", "filename": "selocan.png"},
+      {"asset_id": "asset_robots", "kind": "image", "subject": "Çelik and Çeliknaz robot couple", "filename": "robots_wedding.png"},
+      {"asset_id": "asset_pinar_sheep", "kind": "image", "subject": "Pınar Beyaz sheep mascot", "filename": "pinar_beyaz_sheep.png"},
+      {"asset_id": "asset_selpak_elephant", "kind": "image", "subject": "Selpak elephant mascot", "filename": "selpak_elephant.png"},
+      {"asset_id": "asset_cocacola_bear", "kind": "image", "subject": "Coca Cola polar bear", "filename": "cocacola_bear.png"}
+    ],
+    "preset_id": "cigdem",
+    "preset_version": "v1",
+    "language": "tr"
+  },
+  "raw_text": "{\"proposals\":[{\"role\":\"hook\",\"start_word_id\":\"w000001\",\"end_word_id\":\"w000010\",\"anchor_word_id\":\"w000001\",\"confidence_tier\":\"high\",\"sequence_number\":9,\"text_token\":\"context_title\",\"scene_token\":\"hook_accumulation\",\"visual_asset_ids\":[\"asset_selocan\",\"asset_robots\",\"asset_pinar_sheep\",\"asset_selpak_elephant\",\"asset_cocacola_bear\",\"asset_voice\"],\"visual_anchor_word_ids\":{\"asset_selocan\":\"w000010\",\"asset_voice\":\"w999999\"},\"sfx_roles\":[\"visual_enter_soft\",\"badge_enter\",\"woman_voice\"],\"boundary_token\":null,\"rationale\":\"Accumulate each named mascot on its spoken mention; use clean non-vocal entrances only.\"}]}",
+  "output": {
+    "proposals": [
+      {
+        "role": "hook",
+        "start_word_id": "w000001",
+        "end_word_id": "w000010",
+        "anchor_word_id": "w000001",
+        "confidence_tier": "high",
+        "sequence_number": null,
+        "text_token": "context_title",
+        "scene_token": "hook_accumulation",
+        "visual_asset_ids": [
+          "asset_selocan",
+          "asset_robots",
+          "asset_pinar_sheep",
+          "asset_selpak_elephant",
+          "asset_cocacola_bear"
+        ],
+        "visual_anchor_word_ids": {
+          "asset_selocan": "w000001",
+          "asset_robots": "w000002",
+          "asset_pinar_sheep": "w000004",
+          "asset_selpak_elephant": "w000006",
+          "asset_cocacola_bear": "w000008"
+        },
+        "sfx_roles": ["visual_enter_soft", "badge_enter"],
+        "boundary_token": null,
+        "rationale": "Accumulate each named mascot on its spoken mention; use clean non-vocal entrances only."
+      }
+    ]
+  },
+  "meta": {
+    "source": "hand_authored_golden",
+    "notes": "Pins the Çiğdem intro contract: word-level asset anchors, candidate-derived sequence number, unknown asset rejection, and non-vocal SFX allowlist."
+  }
+}

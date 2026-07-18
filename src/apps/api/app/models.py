@@ -330,6 +330,25 @@ class SoundEffect(Base):
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Original filename for admin display (set at upload time).
     source_filename: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Smart sound-design metadata. Presets resolve closed role tags; filenames
+    # are only a compatibility bridge for pre-metadata library rows.
+    sha256: Mapped[str | None] = mapped_column(Text, nullable=True)
+    analysis_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role_tags: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
+    integrated_lufs: Mapped[float | None] = mapped_column(Float, nullable=True)
+    true_peak_dbtp: Mapped[float | None] = mapped_column(Float, nullable=True)
+    attack_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decay_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    energy: Mapped[float | None] = mapped_column(Float, nullable=True)
+    brightness: Mapped[float | None] = mapped_column(Float, nullable=True)
+    contains_voice: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    vocal_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provenance: Mapped[str | None] = mapped_column(Text, nullable=True)
+    license: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_tier: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_audit_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="pending"
+    )
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(TIMESTAMPTZ, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
@@ -432,6 +451,30 @@ class Job(Base):
         Index("idx_jobs_failure_reason", "failure_reason"),
         Index("idx_jobs_created_at", "created_at"),
         Index("idx_jobs_content_plan_item_id", "content_plan_item_id"),
+    )
+
+
+class CreatorStyleAssignment(Base):
+    """Server-owned assignment of a reviewed creator-style preset.
+
+    The browser never selects ``preset_id`` directly.  Smart Captions resolves
+    this row from the authenticated user and pins the version into each plan.
+    """
+
+    __tablename__ = "creator_style_assignments"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    preset_id: Mapped[str] = mapped_column(Text, nullable=False)
+    preset_version: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    assigned_by: Mapped[str] = mapped_column(Text, nullable=False, server_default="system")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ, server_default=func.now(), onupdate=func.now()
     )
 
 
@@ -713,6 +756,16 @@ class PlanItem(Base):
     # upload UI; the render archetype (montage/narrated/…) is driven solely by
     # edit_format + voiceover_gcs_path + filming_guide.
     content_mode: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Per-video Smart Captions choice.  Availability remains server-computed
+    # from feature flags + creator assignment + edit format; a stored True does
+    # not bypass a later kill switch.
+    smart_captions_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false")
+    )
+    # False preserves Smart captions/visuals/transitions but emits no auto SFX.
+    smart_sound_design_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("true")
+    )
     # Themed uploads land here (users/{user_id}/plan/{plan_item_id}/...).
     clip_gcs_paths: Mapped[list] = mapped_column(JSONB, nullable=False, server_default="[]")
     # Structured shot list generated at plan time: 2–4 shots, each {what, how, duration_s}.
@@ -784,6 +837,10 @@ class PlanItem(Base):
     current_job: Mapped["Job | None"] = relationship(foreign_keys=[current_job_id])
 
     __table_args__ = (
+        CheckConstraint(
+            "NOT smart_captions_enabled OR COALESCE(edit_format, '') = 'subtitled'",
+            name="ck_plan_items_smart_captions_format",
+        ),
         Index("idx_plan_items_content_plan_id_day", "content_plan_id", "day_index"),
         Index("idx_plan_items_content_plan_id_position", "content_plan_id", "position"),
     )

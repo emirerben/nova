@@ -138,3 +138,18 @@ def test_base_video_is_first_input():
     cmd = build_sound_effects_command("/base.mp4", [eff], ["/sfx.mp3"], "/out.mp4")
     assert cmd[1] == "-i"
     assert cmd[2] == "/base.mp4"
+
+
+def test_repeated_asset_uses_one_decoder_input_and_asplit():
+    effects = [_make_placement(1.0), _make_placement(2.0), _make_placement(3.0)]
+    cmd = build_sound_effects_command(
+        "/base.mp4",
+        effects,
+        ["/same-pop.wav", "/same-pop.wav", "/same-pop.wav"],
+        "/out.mp4",
+    )
+    assert cmd.count("/same-pop.wav") == 1
+    fc = " ".join(cmd)
+    assert "[1:a]asplit=3" in fc
+    assert "[sfxsrc0_0]" in fc
+    assert "[sfxsrc0_2]" in fc

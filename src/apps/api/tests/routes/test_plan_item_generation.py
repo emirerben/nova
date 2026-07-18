@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -61,6 +62,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     item.source_idea_seed_id = None
     item.source_idea_seed_text = None
     item.edit_format = None
+    item.smart_captions_enabled = False
     item.montage_preset = "classic"
     item.voiceover_gcs_path = None
     item.voiceover_bed_level = None
@@ -70,7 +72,7 @@ def _owned_item(user_id: uuid.UUID, *, clips=None, filming_guide=None):
     return item, plan
 
 
-def _db_for(item, plan) -> AsyncMock:
+def _db_for(item, plan, *, assignment=None) -> AsyncMock:
     """DB mock matching _load_owned_item: the item is loaded via
     execute().scalar_one_or_none() (eager-loads current_job), the plan
     ownership check via get().
@@ -88,11 +90,18 @@ def _db_for(item, plan) -> AsyncMock:
 
     # get() is called with different classes: ContentPlan (returns plan),
     # Persona (returns persona_mock). Use side_effect to differentiate.
-    from app.models import Persona as PersonaRow  # noqa: PLC0415
+    from app.models import (  # noqa: PLC0415
+        CreatorStyleAssignment,
+    )
+    from app.models import (
+        Persona as PersonaRow,
+    )
 
     async def _get_side_effect(cls, pk):
         if cls is PersonaRow:
             return persona_mock
+        if cls is CreatorStyleAssignment:
+            return assignment
         return plan
 
     db.get = AsyncMock(side_effect=_get_side_effect)
@@ -547,6 +556,103 @@ def test_get_plan_item_filming_guide_empty_for_legacy_items(client: TestClient) 
     resp = client.get(f"/plan-items/{item.id}")
     assert resp.status_code == 200
     assert resp.json()["filming_guide"] == []
+
+
+def test_get_plan_item_smart_captions_fails_closed_by_default(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.get(f"/plan-items/{item.id}")
+
+    assert resp.status_code == 200
+    assert resp.json()["smart_captions_enabled"] is False
+    assert resp.json()["smart_captions_available"] is False
+    assert resp.json()["smart_captions_unavailable_reason"] == "feature_disabled"
+
+
+def test_patch_smart_captions_rejects_unavailable_enable(client: TestClient, monkeypatch) -> None:
+    from app.config import settings  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "smart_captions_enabled", False)
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"smart_captions_enabled": True},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "smart_captions_unavailable:feature_disabled"
+    assert item.smart_captions_enabled is False
+
+
+def test_patch_smart_captions_uses_server_assignment(client: TestClient, monkeypatch) -> None:
+    from app.config import settings  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "smart_captions_enabled", True)
+    monkeypatch.setattr(settings, "subtitled_archetype_enabled", True)
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    assignment = SimpleNamespace(enabled=True, preset_id="cigdem", preset_version="v1")
+    db = _db_for(item, plan, assignment=assignment)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"smart_captions_enabled": True},
+    )
+
+    assert resp.status_code == 200
+    assert item.smart_captions_enabled is True
+    assert resp.json()["smart_captions_available"] is True
+    assert resp.json()["smart_captions_unavailable_reason"] is None
+
+
+def test_patch_smart_sound_design_keeps_smart_captions_enabled(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    item.smart_captions_enabled = True
+    item.smart_sound_design_enabled = True
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/plan-items/{item.id}",
+        json={"smart_sound_design_enabled": False},
+    )
+
+    assert resp.status_code == 200
+    assert item.smart_captions_enabled is True
+    assert item.smart_sound_design_enabled is False
+    assert resp.json()["smart_sound_design_enabled"] is False
+
+
+def test_changing_away_from_subtitled_disables_smart_captions(client: TestClient) -> None:
+    user = _user()
+    item, plan = _owned_item(user.id)
+    item.edit_format = "subtitled"
+    item.smart_captions_enabled = True
+    db = _db_for(item, plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(f"/plan-items/{item.id}", json={"edit_format": "montage"})
+
+    assert resp.status_code == 200
+    assert item.smart_captions_enabled is False
 
 
 def test_plan_item_response_tolerates_malformed_guide() -> None:

@@ -114,6 +114,21 @@ class SoundEffectResponse(BaseModel):
     status: str
     error_detail: str | None
     source_filename: str | None
+    sha256: str | None
+    analysis_version: str | None
+    role_tags: list[str]
+    integrated_lufs: float | None
+    true_peak_dbtp: float | None
+    attack_ms: float | None
+    decay_ms: float | None
+    energy: float | None
+    brightness: float | None
+    contains_voice: bool | None
+    vocal_probability: float | None
+    provenance: str | None
+    license: str | None
+    quality_tier: str | None
+    manual_audit_status: str
     published_at: datetime.datetime | None
     archived_at: datetime.datetime | None
     created_at: datetime.datetime
@@ -133,6 +148,21 @@ def _to_response(effect: SoundEffect) -> SoundEffectResponse:
         status=effect.status,
         error_detail=effect.error_detail,
         source_filename=effect.source_filename,
+        sha256=effect.sha256,
+        analysis_version=effect.analysis_version,
+        role_tags=[str(value) for value in (effect.role_tags or [])],
+        integrated_lufs=effect.integrated_lufs,
+        true_peak_dbtp=effect.true_peak_dbtp,
+        attack_ms=effect.attack_ms,
+        decay_ms=effect.decay_ms,
+        energy=effect.energy,
+        brightness=effect.brightness,
+        contains_voice=effect.contains_voice,
+        vocal_probability=effect.vocal_probability,
+        provenance=effect.provenance,
+        license=effect.license,
+        quality_tier=effect.quality_tier,
+        manual_audit_status=effect.manual_audit_status or "pending",
         published_at=effect.published_at,
         archived_at=effect.archived_at,
         created_at=effect.created_at,
@@ -200,6 +230,40 @@ class UpdateSoundEffectRequest(BaseModel):
     name: str | None = None
     publish: bool | None = None
     archive: bool | None = None
+    role_tags: list[str] | None = None
+    contains_voice: bool | None = None
+    vocal_probability: float | None = None
+    provenance: str | None = None
+    license: str | None = None
+    quality_tier: str | None = None
+    manual_audit_status: str | None = None
+
+    @field_validator("role_tags")
+    @classmethod
+    def validate_role_tags(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        from app.smart_edit.presets import load_preset  # noqa: PLC0415
+
+        allowed = set(load_preset("cigdem", "v1").sfx_roles)
+        normalized = list(dict.fromkeys(str(token).strip() for token in value))
+        if any(token not in allowed for token in normalized):
+            raise ValueError("role_tags contains an unknown Smart sound role")
+        return normalized[:16]
+
+    @field_validator("vocal_probability")
+    @classmethod
+    def validate_vocal_probability(cls, value: float | None) -> float | None:
+        if value is not None and not 0.0 <= value <= 1.0:
+            raise ValueError("vocal_probability must be between 0 and 1")
+        return value
+
+    @field_validator("manual_audit_status")
+    @classmethod
+    def validate_audit_status(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"pending", "approved", "rejected"}:
+            raise ValueError("manual_audit_status must be pending, approved, or rejected")
+        return value
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -325,9 +389,14 @@ async def upload_confirm(
                 detail="Uploaded blob is not decodable audio (no audio stream found by ffprobe).",
             )
         duration_s = await asyncio.to_thread(_probe_dur, tmp.name)
+        from app.services.sfx_analysis import analyze_sound_effect  # noqa: PLC0415
+
+        analysis = await asyncio.to_thread(analyze_sound_effect, tmp.name)
 
     effect.audio_gcs_path = expected_path
     effect.duration_s = duration_s
+    for field, value in analysis.items():
+        setattr(effect, field, value)
     effect.status = "ready"
     await db.commit()
     await db.refresh(effect)
@@ -392,6 +461,19 @@ async def update_sound_effect(
 
     if req.name is not None:
         effect.name = req.name.strip() or effect.name
+
+    for field in (
+        "role_tags",
+        "contains_voice",
+        "vocal_probability",
+        "provenance",
+        "license",
+        "quality_tier",
+        "manual_audit_status",
+    ):
+        value = getattr(req, field)
+        if value is not None:
+            setattr(effect, field, value)
 
     now = datetime.datetime.now(UTC)
     if req.publish is True and effect.published_at is None:

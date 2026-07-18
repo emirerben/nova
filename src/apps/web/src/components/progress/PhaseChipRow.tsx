@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useRef } from "react";
 
 interface PhaseChipRowProps {
   /** Ordered list of all phase names. */
@@ -44,7 +44,7 @@ export function PhaseChipRow({ phases, phaseLabels, currentPhase, tone = "dark" 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!activeRef.current) return;
+    if (!activeRef.current || typeof activeRef.current.scrollIntoView !== "function") return;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     activeRef.current.scrollIntoView({
       inline: "center",
@@ -98,10 +98,12 @@ interface ChipProps {
   label: string;
   state: ChipState;
   tone: "dark" | "light";
-  ref?: React.Ref<HTMLDivElement>;
 }
 
-function Chip({ phase: _phase, label, state, tone, ref }: ChipProps) {
+const Chip = forwardRef<HTMLDivElement, ChipProps>(function Chip(
+  { phase: _phase, label, state, tone },
+  ref,
+) {
   if (state === "done") {
     const doneClass = tone === "light"
       ? "border-zinc-200 text-[#71717a]"
@@ -168,4 +170,4 @@ function Chip({ phase: _phase, label, state, tone, ref }: ChipProps) {
       {label}
     </div>
   );
-}
+});

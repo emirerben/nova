@@ -1,0 +1,525 @@
+"""Compile a validated Smart event plan into Nova renderer lanes."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+import unicodedata
+from dataclasses import dataclass
+from typing import Any
+
+from app.agents._schemas.sound_effect import SoundEffectPlacement
+from app.agents._schemas.text_element import TextElement
+from app.smart_edit.presets import TextStylePolicy, load_preset
+from app.smart_edit.schemas import (
+    BoundaryEffectLane,
+    CaptionEmphasisLane,
+    SfxLane,
+    SmartEditPlanDocument,
+    TextLane,
+    VisualLane,
+)
+
+COMPILER_VERSION = "nova-smart-lanes-2026-07-18.2"
+_STYLE_BY_TOKEN = {
+    "hook_lime": "hook",
+    "context_lime": "context",
+    "list_keyword": "list_item",
+    "example_soft": "example",
+    "payoff_lime": "payoff",
+    "cta_lime": "cta",
+}
+_STYLE_PRIORITY = {
+    "hook": 1,
+    "example": 2,
+    "context": 3,
+    "payoff": 4,
+    "cta": 5,
+    "list_item": 6,
+}
+_KEYWORD_STOP = {
+    "bir",
+    "iki",
+    "uc",
+    "dort",
+    "bes",
+    "ilk",
+    "olarak",
+    "birinci",
+    "birincisi",
+    "ikinci",
+    "ikincisi",
+    "ucuncu",
+    "ucuncusu",
+    "dorduncu",
+    "dorduncusu",
+    "ve",
+    "de",
+    "da",
+    "bu",
+    "su",
+}
+_ROLE_OFFSETS_MS = {
+    "chapter_number_pop": -50,
+    "keyword_typewriter_tick": 250,
+    "transition_whip": 200,
+    "visual_enter_soft": 0,
+    "visual_enter_accent": 0,
+    "badge_enter": 0,
+    "cta_click": 0,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledSmartEdit:
+    caption_cues: list[dict[str, Any]]
+    text_elements: list[dict[str, Any]]
+    media_overlays: list[dict[str, Any]]
+    sfx_intents: list[dict[str, Any]]
+    boundary_effects: list[dict[str, Any]]
+    compiled_patch: dict[str, Any]
+    validation_receipt: dict[str, Any]
+
+
+def _fold(value: str) -> str:
+    value = value.casefold().translate(str.maketrans("çğıöşü", "cgiosu"))
+    value = "".join(
+        ch for ch in unicodedata.normalize("NFKD", value) if not unicodedata.combining(ch)
+    )
+    return " ".join(re.findall(r"[a-z0-9]+", value))
+
+
+def _stable_id(*parts: object, length: int = 32) -> str:
+    material = "|".join(str(part) for part in parts)
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:length]
+
+
+def _word_maps(
+    document: SmartEditPlanDocument,
+    cues: list[dict[str, Any]],
+) -> tuple[dict[str, int], dict[str, str], dict[str, dict[str, Any]]]:
+    cue_index_by_word: dict[str, int] = {}
+    display_by_word: dict[str, str] = {}
+    raw_by_word: dict[str, dict[str, Any]] = {}
+    for index, baseline in enumerate(document.baseline_captions):
+        if index >= len(cues):
+            break
+        raw_words = cues[index].get("words")
+        for word_index, word_id in enumerate(baseline.word_ids):
+            cue_index_by_word[word_id] = index
+            if isinstance(raw_words, list) and word_index < len(raw_words):
+                raw = raw_words[word_index]
+                if isinstance(raw, dict):
+                    display_by_word[word_id] = str(raw.get("text") or "")
+                    raw_by_word[word_id] = dict(raw)
+                    continue
+            tokens = str(baseline.display_text).split()
+            display_by_word[word_id] = tokens[word_index] if word_index < len(tokens) else ""
+    return cue_index_by_word, display_by_word, raw_by_word
+
+
+def _text_element(
+    *,
+    element_id: str,
+    text: str,
+    start_s: float,
+    end_s: float,
+    style: TextStylePolicy,
+    event_id: str,
+    role: str,
+    z: int,
+) -> TextElement:
+    return TextElement(
+        id=element_id,
+        text=text,
+        start_s=start_s,
+        end_s=max(start_s + 0.2, end_s),
+        role="generative_sequence",
+        position="custom",
+        x_frac=style.x_frac,
+        y_frac=style.y_frac,
+        font_family=style.font_family,
+        size_px=style.size_px,
+        color=style.color,
+        highlight_color=style.highlight_color,
+        stroke_width=style.stroke_width,
+        shadow_enabled=True,
+        alignment=style.alignment,
+        effect=style.effect,
+        reveal_s=(min(end_s, start_s + 0.68) if style.effect == "typewriter" else None),
+        max_width_frac=style.max_width_frac,
+        line_spacing=1.02,
+        z=z,
+        source_params={
+            "source": "smart_captions",
+            "event_id": event_id,
+            "role": role,
+        },
+    )
+
+
+def _section_keyword(word_ids: list[str], display_by_word: dict[str, str]) -> str:
+    for word_id in word_ids:
+        value = display_by_word.get(word_id, "").strip(".,!?;:()[]{}\"'“”")
+        if value and _fold(value) not in _KEYWORD_STOP and not value.isdigit():
+            return value
+    return ""
+
+
+def _suppress_claimed_words(
+    cues: list[dict[str, Any]],
+    document: SmartEditPlanDocument,
+    claimed: set[str],
+) -> list[dict[str, Any]]:
+    if not claimed:
+        return cues
+    result: list[dict[str, Any]] = []
+    for index, baseline in enumerate(document.baseline_captions):
+        if index >= len(cues):
+            break
+        cue = dict(cues[index])
+        raw_words = cue.get("words")
+        if not isinstance(raw_words, list) or len(raw_words) != len(baseline.word_ids):
+            if set(baseline.word_ids) <= claimed:
+                continue
+            result.append(cue)
+            continue
+        kept = [
+            dict(raw)
+            for word_id, raw in zip(baseline.word_ids, raw_words)
+            if word_id not in claimed and isinstance(raw, dict)
+        ]
+        if not kept:
+            continue
+        cue["words"] = kept
+        cue["text"] = " ".join(str(word.get("text") or "").strip() for word in kept).strip()
+        cue["start_s"] = float(kept[0].get("start_s", cue.get("start_s", 0.0)))
+        cue["end_s"] = float(kept[-1].get("end_s", cue.get("end_s", cue["start_s"])))
+        if cue["text"]:
+            result.append(cue)
+    # Defensive passthrough for any extra cue not represented by the document.
+    result.extend(dict(cue) for cue in cues[len(document.baseline_captions) :])
+    return result
+
+
+def compile_smart_plan(
+    document: SmartEditPlanDocument,
+    cues: list[dict[str, Any]],
+    *,
+    assets_by_id: dict[str, dict[str, Any]] | None = None,
+) -> CompiledSmartEdit:
+    """Resolve Smart tokens to caption, text, visual, boundary, and SFX lanes."""
+
+    preset = load_preset(document.preset_id, document.preset_version)
+    compiled_cues = [dict(cue) for cue in cues]
+    cue_index_by_word, display_by_word, _ = _word_maps(document, compiled_cues)
+    assets_by_id = assets_by_id or {}
+    text_elements: list[dict[str, Any]] = []
+    media_overlays: list[dict[str, Any]] = []
+    sfx_intents: list[dict[str, Any]] = []
+    boundary_effects: list[dict[str, Any]] = []
+    claimed_word_ids: set[str] = set()
+    omissions: list[dict[str, str]] = []
+    event_receipts: list[dict[str, Any]] = []
+
+    for event in document.events:
+        if not event.enabled:
+            continue
+        cue_index = cue_index_by_word.get(event.anchor.word_id)
+        if cue_index is None or cue_index >= len(compiled_cues):
+            omissions.append({"event_id": event.event_id, "reason": "anchor_not_in_captions"})
+            continue
+        cue = compiled_cues[cue_index]
+        before = (
+            len(text_elements),
+            len(media_overlays),
+            len(sfx_intents),
+            len(boundary_effects),
+        )
+        styled_before = bool(cue.get("smart_style"))
+        for lane in event.lanes:
+            if isinstance(lane, CaptionEmphasisLane):
+                style = _STYLE_BY_TOKEN.get(lane.token)
+                if style and _STYLE_PRIORITY[style] >= _STYLE_PRIORITY.get(
+                    str(cue.get("smart_style") or ""), 0
+                ):
+                    cue["smart_style"] = style
+            elif isinstance(lane, TextLane):
+                start_s = event.active_start_ms / 1000
+                if lane.token == "section_heading" and lane.sequence_number:
+                    number_style = preset.text_styles["section_number"]
+                    keyword_style = preset.text_styles["section_keyword"]
+                    number_end = start_s + number_style.duration_s
+                    text_elements.append(
+                        _text_element(
+                            element_id=f"smart-{event.event_id}-number",
+                            text=str(lane.sequence_number),
+                            start_s=start_s,
+                            end_s=number_end,
+                            style=number_style,
+                            event_id=event.event_id,
+                            role=event.role,
+                            z=80,
+                        ).model_dump(exclude_none=True)
+                    )
+                    keyword = _section_keyword(lane.transcript_word_ids, display_by_word)
+                    if keyword:
+                        keyword_start = start_s + 0.30
+                        text_elements.append(
+                            _text_element(
+                                element_id=f"smart-{event.event_id}-keyword",
+                                text=keyword,
+                                start_s=keyword_start,
+                                end_s=keyword_start + keyword_style.duration_s,
+                                style=keyword_style,
+                                event_id=event.event_id,
+                                role=event.role,
+                                z=81,
+                            ).model_dump(exclude_none=True)
+                        )
+                elif lane.token == "context_title":
+                    title = " ".join(
+                        display_by_word.get(word_id, "") for word_id in lane.transcript_word_ids
+                    ).strip()
+                    if title:
+                        style = preset.text_styles["context_title"]
+                        text_elements.append(
+                            _text_element(
+                                element_id=f"smart-{event.event_id}-title",
+                                text=title,
+                                start_s=start_s,
+                                end_s=min(event.active_end_ms / 1000, start_s + style.duration_s),
+                                style=style,
+                                event_id=event.event_id,
+                                role=event.role,
+                                z=72,
+                            ).model_dump(exclude_none=True)
+                        )
+                if lane.caption_visibility == "suppress_claimed_span":
+                    claimed_word_ids.update(lane.claimed_word_ids)
+            elif isinstance(lane, VisualLane):
+                asset = assets_by_id.get(lane.asset_id)
+                zone = preset.visual_zones.get(lane.zone)
+                if asset is None or zone is None:
+                    omissions.append(
+                        {
+                            "event_id": event.event_id,
+                            "reason": "visual_asset_or_zone_missing",
+                        }
+                    )
+                    continue
+                gcs_path = str(asset.get("gcs_path") or asset.get("src_gcs_path") or "")
+                if not gcs_path.startswith("users/"):
+                    omissions.append(
+                        {"event_id": event.event_id, "reason": "visual_asset_path_rejected"}
+                    )
+                    continue
+                media_overlays.append(
+                    {
+                        "id": _stable_id("smart-visual", event.event_id, lane.asset_id),
+                        "kind": "video" if asset.get("kind") == "video" else "image",
+                        "src_gcs_path": gcs_path,
+                        "preview_gcs_path": asset.get("preview_gcs_path"),
+                        "display_mode": zone.display_mode,
+                        "position": "custom",
+                        "x_frac": zone.x_frac,
+                        "y_frac": zone.y_frac,
+                        "scale": zone.scale,
+                        "start_s": event.active_start_ms / 1000,
+                        "end_s": event.active_end_ms / 1000,
+                        "clip_duration_s": asset.get("duration_s"),
+                        "z": zone.z + lane.group_order,
+                        "source": "smart_captions",
+                        "event_id": event.event_id,
+                        "composition_group_id": lane.composition_group_id,
+                        "entrance_token": lane.entrance_token,
+                    }
+                )
+            elif isinstance(lane, SfxLane):
+                for role in lane.role_tokens:
+                    if role not in preset.sfx_roles:
+                        omissions.append({"event_id": event.event_id, "reason": "sfx_role_unknown"})
+                        continue
+                    at_ms = event.active_start_ms + lane.offset_ms + _ROLE_OFFSETS_MS.get(role, 0)
+                    sfx_intents.append(
+                        {
+                            "event_id": event.event_id,
+                            "role": role,
+                            "at_s": max(0.0, at_ms / 1000),
+                        }
+                    )
+            elif isinstance(lane, BoundaryEffectLane):
+                policy = preset.boundary_effects.get(lane.effect_token)
+                if policy is None:
+                    omissions.append(
+                        {"event_id": event.event_id, "reason": "boundary_token_unknown"}
+                    )
+                    continue
+                boundary_effects.append(
+                    {
+                        "event_id": event.event_id,
+                        "effect": policy.effect,
+                        "at_s": event.active_start_ms / 1000,
+                        "duration_s": policy.duration_ms / 1000,
+                        "blur_sigma": policy.blur_sigma,
+                        "intensity": policy.intensity,
+                    }
+                )
+        event_receipts.append(
+            {
+                "event_id": event.event_id,
+                "role": event.role,
+                "caption_style_applied": (not styled_before and bool(cue.get("smart_style"))),
+                "text_elements": len(text_elements) - before[0],
+                "visuals": len(media_overlays) - before[1],
+                "sfx_intents": len(sfx_intents) - before[2],
+                "boundary_effects": len(boundary_effects) - before[3],
+            }
+        )
+
+    compiled_cues = _suppress_claimed_words(compiled_cues, document, claimed_word_ids)
+    text_elements.sort(key=lambda item: (float(item["start_s"]), str(item["id"])))
+    media_overlays.sort(key=lambda item: (float(item["start_s"]), int(item["z"])))
+    sfx_intents.sort(key=lambda item: (float(item["at_s"]), str(item["role"])))
+    boundary_effects.sort(key=lambda item: (float(item["at_s"]), str(item["event_id"])))
+    patch = {
+        "caption_cues": compiled_cues,
+        "caption_policy": preset.caption.model_dump(mode="json"),
+        "text_elements": text_elements,
+        "media_overlays": media_overlays,
+        "sfx_intents": sfx_intents,
+        "boundary_effects": boundary_effects,
+        "compiler_version": COMPILER_VERSION,
+        "omissions": omissions,
+    }
+    return CompiledSmartEdit(
+        caption_cues=compiled_cues,
+        text_elements=text_elements,
+        media_overlays=media_overlays,
+        sfx_intents=sfx_intents,
+        boundary_effects=boundary_effects,
+        compiled_patch=patch,
+        validation_receipt={
+            "valid": True,
+            "caption_count": len(compiled_cues),
+            "styled_caption_count": sum(bool(cue.get("smart_style")) for cue in compiled_cues),
+            "text_element_count": len(text_elements),
+            "media_overlay_count": len(media_overlays),
+            "sfx_intent_count": len(sfx_intents),
+            "boundary_effect_count": len(boundary_effects),
+            "event_receipts": event_receipts,
+            "omissions": omissions,
+        },
+    )
+
+
+def _clean_sfx_rows(glossary: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rejected_name_tokens = {
+        "female",
+        "male",
+        "girl",
+        "boy",
+        "woman",
+        "man voice",
+        "kadın",
+        "kadin",
+        "erkek",
+        "konuşma",
+        "konusma",
+        "voice",
+        "vocal",
+        "speech",
+        "narration",
+        "says",
+    }
+    result: list[dict[str, Any]] = []
+    for effect in glossary:
+        name = str(effect.get("name") or "").casefold()
+        if any(token in name for token in rejected_name_tokens):
+            continue
+        if effect.get("contains_voice") is True:
+            continue
+        result.append(effect)
+    return result
+
+
+def _pick_sfx(
+    role: str,
+    policy: Any,
+    glossary: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    by_id = {str(effect.get("id")): effect for effect in glossary}
+    for asset_id in policy.asset_ids:
+        effect = by_id.get(asset_id)
+        if effect and effect.get("audio_gcs_path"):
+            return effect
+    for effect in glossary:
+        tags = {str(value) for value in (effect.get("role_tags") or [])}
+        vocal_probability = effect.get("vocal_probability")
+        if vocal_probability is not None:
+            try:
+                if float(vocal_probability) > policy.max_vocal_probability:
+                    continue
+            except (TypeError, ValueError):
+                continue
+        audit = effect.get("manual_audit_status")
+        if audit not in (None, "approved"):
+            continue
+        if tags.intersection(policy.role_tags) and effect.get("audio_gcs_path"):
+            return effect
+    # Compatibility bridge for existing curated rows. It is role-specific and
+    # still subject to voice-name rejection; list order is never a fallback.
+    for token in policy.name_fallback_tokens:
+        matches = [
+            effect
+            for effect in glossary
+            if token.casefold() in str(effect.get("name") or "").casefold()
+            and effect.get("audio_gcs_path")
+        ]
+        if matches:
+            return sorted(matches, key=lambda effect: str(effect.get("id")))[0]
+    return None
+
+
+def resolve_sfx_placements(
+    intents: list[dict[str, Any]],
+    glossary: list[dict[str, Any]],
+    *,
+    preset_id: str = "cigdem",
+    preset_version: str = "v1",
+) -> list[dict[str, Any]]:
+    """Resolve role intents to audited library assets with role-specific spacing."""
+
+    preset = load_preset(preset_id, preset_version)
+    glossary = _clean_sfx_rows(glossary)
+    placements: list[dict[str, Any]] = []
+    last_by_role: dict[str, float] = {}
+    for intent in sorted(intents, key=lambda item: float(item.get("at_s", 0.0))):
+        role = str(intent.get("role") or "")
+        policy = preset.sfx_roles.get(role)
+        if policy is None:
+            continue
+        at_s = max(0.0, float(intent.get("at_s", 0.0)))
+        if (at_s - last_by_role.get(role, -999.0)) * 1000 < policy.min_spacing_ms:
+            continue
+        effect = _pick_sfx(role, policy, glossary)
+        if effect is None:
+            continue
+        effect_id = str(effect.get("id"))
+        placement = SoundEffectPlacement(
+            id=_stable_id(intent.get("event_id"), role, effect_id, f"{at_s:.3f}"),
+            at_s=at_s,
+            gain=policy.gain,
+            sound_effect_id=effect_id,
+            src_gcs_path=str(effect.get("audio_gcs_path")),
+            duration_s=effect.get("duration_s"),
+            label=str(effect.get("name") or role)[:40],
+        )
+        payload = placement.model_dump(exclude_none=True)
+        payload["smart_role"] = role
+        payload["smart_event_id"] = str(intent.get("event_id") or "")
+        placements.append(payload)
+        last_by_role[role] = at_s
+        if len(placements) >= 48:
+            break
+    return placements
