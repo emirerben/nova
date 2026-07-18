@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1.2] — 2026-07-18
+
+### Fixed
+- **Editor undo/redo no longer breaks saving on lyrics variants ("Visual blocks require a non-lyrics variant with a clean base" on save).** Undo/redo restored a snapshot and blanket-marked every section dirty, so the next commit shipped an untouched `visual_blocks: []` section that the server rejected outright on lyrics variants — failing the whole save including the text edits the user actually made. The restore path now only marks sections dirty when the variant's server-derived capabilities allow them (same gate for sound-effects and media-overlay sections, which had the identical latent failure when their flags are off). Defense in depth server-side: `prepare_editor_commit` now ignores (and logs) EMPTY rider sections that the variant or flags can't accept instead of 422ing the commit — stale clients keep working; non-empty invalid sections still 422. The `sections` echo now reflects what was actually written so render-lane routing can't follow an ignored section.
 ## [0.8.1.1] — 2026-07-18
 
 ### Fixed

@@ -936,9 +936,14 @@ export default function EditorShell({
       setCaptionMetaPatch(doc.captionMetaPatch ?? {});
       setTitle(doc.title);
       setTextDirty(true);
-      setSfxDirty(true);
-      setOverlaysDirty(true);
-      setVisualBlocksDirty(true);
+      // Sections the active variant can't accept (e.g. visual_blocks on a
+      // lyrics variant, sfx/overlays gated off) ride along in the undo
+      // snapshot as an untouched echo — don't blanket-dirty them, or the next
+      // save ships a section the backend editor-commit guard 422s the WHOLE
+      // commit for (see agents/DECISIONS.md undo/redo dirty-flag bug).
+      if (capabilities?.sfx !== false) setSfxDirty(true);
+      if (capabilities?.overlays !== false) setOverlaysDirty(true);
+      if (capabilities?.visual_blocks !== false) setVisualBlocksDirty(true);
       setTitleDirty(true);
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
@@ -948,7 +953,7 @@ export default function EditorShell({
         setInspectorTab("basic");
       }
     },
-    [state.bars, select, variant],
+    [state.bars, select, variant, capabilities],
   );
 
   const history = useEditorHistory({ getCurrent, apply: applyDocument });
