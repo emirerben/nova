@@ -66,7 +66,8 @@ describe("editor media overlays", () => {
 
   it("keeps media card z-indexes between the video and text tiers", () => {
     expect(mediaOverlayStackZIndex(0, false)).toBe(EDITOR_STAGE_Z.mediaOverlay);
-    expect(mediaOverlayStackZIndex(999, false)).toBeLessThan(EDITOR_STAGE_Z.textOverlay);
+    expect(mediaOverlayStackZIndex(999, false)).toBeLessThan(EDITOR_STAGE_Z.selectionHandle);
+    expect(mediaOverlayStackZIndex(0, false)).toBeGreaterThan(EDITOR_STAGE_Z.textOverlay);
     expect(mediaOverlayStackZIndex(Number.NaN, false)).toBe(EDITOR_STAGE_Z.mediaOverlay);
     expect(mediaOverlayStackZIndex(0, true)).toBe(EDITOR_STAGE_Z.selectionHandle);
   });

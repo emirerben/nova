@@ -21,8 +21,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   MediaOverlay,
   PlanItemVariant,
+  PoolAsset,
   SoundEffectPlacement,
   TextElement,
+  VisualBlock,
 } from "@/lib/plan-api";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 import {
@@ -56,6 +58,7 @@ import {
   isCollageVariant,
   masonryMotionOffsetFrac,
 } from "./editor-smart-placement";
+import VisualBlocksLayer from "./VisualBlocksLayer";
 
 /** Min/max font size (1080×1920 canvas px) reachable via corner-drag scale.
  * Wider than the inspector's INTRO_SIZE envelope on purpose — the canvas can
@@ -113,6 +116,8 @@ export default function EditorCanvas({
   elements,
   bars,
   mediaOverlays = [],
+  visualBlocks = [],
+  visualAssets = [],
   overlayPreviewUrls = {},
   suggestedOverlayIds,
   sfxPlacements = [],
@@ -146,6 +151,8 @@ export default function EditorCanvas({
   /** The raw working bars, for style fields the layout doesn't carry. */
   bars: TextElementBar[];
   mediaOverlays?: MediaOverlay[];
+  visualBlocks?: VisualBlock[];
+  visualAssets?: PoolAsset[];
   overlayPreviewUrls?: Record<string, string>;
   /** Overlay ids that came from ✓-accepted AI suggestions — dashed ✦
    *  provenance outline until Save (never stored on MediaOverlay itself). */
@@ -701,6 +708,12 @@ export default function EditorCanvas({
                 No preview for this variant yet
               </div>
             )}
+
+            <VisualBlocksLayer
+              blocks={visualBlocks}
+              assets={visualAssets}
+              currentTime={currentTime}
+            />
 
             {/* Deselect layer over the video (the <video> is pointer-events-none,
                 so clicks on footage land here). */}

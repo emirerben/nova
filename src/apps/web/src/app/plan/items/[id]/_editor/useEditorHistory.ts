@@ -24,7 +24,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import type { MediaOverlay, SoundEffectPlacement } from "@/lib/plan-api";
+import type { MediaOverlay, SoundEffectPlacement, VisualBlock } from "@/lib/plan-api";
 import type { CaptionMetaPatch } from "@/lib/edit-copilot/ops";
 import type { CopilotCaptionMetaSnapshot } from "@/lib/edit-copilot/snapshot";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
@@ -39,6 +39,7 @@ export interface EditorDocument {
   slots: DraftSlot[] | null;
   sfx?: SoundEffectPlacement[];
   overlays?: MediaOverlay[];
+  visualBlocks?: VisualBlock[];
   captionMeta?: CopilotCaptionMetaSnapshot | null;
   captionMetaDirty?: boolean;
   captionMetaPatch?: CaptionMetaPatch;
@@ -166,6 +167,9 @@ export function deserializeDraft(raw: string | null | undefined): SerializedDraf
         slots: Array.isArray(doc.slots) ? (doc.slots as DraftSlot[]) : null,
         ...(Array.isArray(doc.sfx) ? { sfx: doc.sfx as SoundEffectPlacement[] } : {}),
         ...(Array.isArray(doc.overlays) ? { overlays: doc.overlays as MediaOverlay[] } : {}),
+        ...(Array.isArray(doc.visualBlocks)
+          ? { visualBlocks: doc.visualBlocks as VisualBlock[] }
+          : {}),
         captionMeta:
           doc.captionMeta && typeof doc.captionMeta === "object"
             ? (doc.captionMeta as CopilotCaptionMetaSnapshot)

@@ -30,6 +30,7 @@ import {
   confirmOverlayUploads,
   listPoolAssets,
   registerPoolAsset,
+  retimeVisualBlock,
   requestOverlayUploadUrls,
   requestPoolAssetUploadUrls,
   sha256HexOfFile,
@@ -41,6 +42,7 @@ import {
   type PoolAsset,
   type SoundEffectPlacement,
   type TextElement,
+  type VisualBlock,
 } from "@/lib/plan-api";
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
@@ -149,6 +151,54 @@ const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? ""
 const MEDIA_OVERLAYS_UI_ENABLED =
   MEDIA_OVERLAYS_RAW.toLowerCase() === "true" || MEDIA_OVERLAYS_RAW === "1";
 const SOUND_EFFECTS_UI_ENABLED = process.env.NEXT_PUBLIC_SOUND_EFFECTS_ENABLED === "true";
+const VISUAL_BLOCKS_UI_ENABLED =
+  process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
+
+function patchVisualBlockConcreteTiming(
+  block: VisualBlock,
+  patch: Partial<VisualBlock>,
+): VisualBlock {
+  const next = { ...block, ...patch } as VisualBlock;
+  if (
+    next.kind !== "montage" ||
+    (typeof patch.start_s !== "number" && typeof patch.end_s !== "number")
+  ) {
+    return next;
+  }
+  const oldDuration = Math.max(0.001, block.end_s - block.start_s);
+  const newDuration = Math.max(0.001, next.end_s - next.start_s);
+  let offset = 0;
+  next.shots = next.shots.map((shot, index) => {
+    const duration_s =
+      index === next.shots.length - 1
+        ? newDuration - offset
+        : (shot.duration_s / oldDuration) * newDuration;
+    const resized = { ...shot, start_offset_s: offset, duration_s };
+    offset += duration_s;
+    return resized;
+  });
+  return next;
+}
+
+function retimeLinkedTextBar(
+  bar: TextElementBar,
+  block: VisualBlock,
+  start_s: number,
+  end_s: number,
+): Pick<TextElementBar, "start_s" | "end_s"> {
+  const oldDuration = Math.max(0.001, block.end_s - block.start_s);
+  const newDuration = Math.max(0.001, end_s - start_s);
+  return {
+    start_s:
+      start_s +
+      Math.max(0, Math.min(1, (bar.start_s - block.start_s) / oldDuration)) *
+        newDuration,
+    end_s:
+      start_s +
+      Math.max(0, Math.min(1, (bar.end_s - block.start_s) / oldDuration)) *
+        newDuration,
+  };
+}
 const POOL_MIME_TYPES = [
   "image/jpeg",
   "image/png",
@@ -425,6 +475,7 @@ export default function EditorShell({
   const [localSfx, setLocalSfx] = useState<SoundEffectPlacement[]>([]);
   const [localSfxAudioUrls, setLocalSfxAudioUrls] = useState<Record<string, string>>({});
   const [localOverlays, setLocalOverlays] = useState<MediaOverlay[]>([]);
+  const [localVisualBlocks, setLocalVisualBlocks] = useState<VisualBlock[]>([]);
   // AI-suggestion provenance (Overlays drawer): accepted envelope id + the
   // overlay card id it staged. Kept OFF the MediaOverlay objects — the save
   // filters these against the staged overlay ids, so an undone accept is
@@ -438,6 +489,7 @@ export default function EditorShell({
   const localOverlayPreviewUrlsRef = useRef<Record<string, string>>({});
   const [sfxDirty, setSfxDirty] = useState(false);
   const [overlaysDirty, setOverlaysDirty] = useState(false);
+  const [visualBlocksDirty, setVisualBlocksDirty] = useState(false);
   const [mixLevel, setMixLevel] = useState<number | null>(null);
   const [mixDirty, setMixDirty] = useState(false);
   const [textDirty, setTextDirty] = useState(false);
@@ -457,7 +509,12 @@ export default function EditorShell({
       { textDirty, sfxDirty, overlaysDirty, mixDirty },
       conflictReseed,
     );
-    if (sections.text) {
+    // Visual blocks and their linked TextElements are one atomic document. On
+    // a baseline conflict, preserve or reload them together so neither half can
+    // point at state from the other tab.
+    const keepCoupledVisualDocument =
+      conflictReseed && (visualBlocksDirty || textDirty);
+    if (sections.text && !keepCoupledVisualDocument) {
       originalsRef.current = new Map(
         (variant.text_elements ?? []).map((el) => [el.id, el]),
       );
@@ -478,6 +535,10 @@ export default function EditorShell({
       // Re-seeded from the server ⇒ any accepted-but-unsaved cards are gone.
       setAcceptedSuggestions([]);
       setOverlaysDirty(false);
+    }
+    if (!keepCoupledVisualDocument) {
+      setLocalVisualBlocks((variant.visual_blocks ?? []).map((block) => ({ ...block })));
+      setVisualBlocksDirty(false);
     }
     if (sections.titleAndStyle) setTitleDirty(false);
     if (sections.mix) {
@@ -659,7 +720,8 @@ export default function EditorShell({
     capabilities.split_clips === false &&
     capabilities.mix === false &&
     capabilities.sfx === false &&
-    capabilities.overlays === false;
+    capabilities.overlays === false &&
+    capabilities.visual_blocks !== true;
   const readOnlyReason = editorReasonCopy(capabilities?.reason);
   // Text-elements gate (plan 010 OV-1): once sfx/overlays flip true on
   // subtitled variants the shell is editable, but on-video text still lives
@@ -697,6 +759,7 @@ export default function EditorShell({
       slots: localSlots,
       sfx: localSfx,
       overlays: localOverlays,
+      visualBlocks: localVisualBlocks,
       captionMeta,
       captionMetaDirty,
       captionMetaPatch,
@@ -713,6 +776,7 @@ export default function EditorShell({
       localSlots,
       localSfx,
       localOverlays,
+      localVisualBlocks,
       captionMeta,
       captionMetaDirty,
       captionMetaPatch,
@@ -733,6 +797,7 @@ export default function EditorShell({
       setLocalSlots(doc.slots);
       setLocalSfx(doc.sfx ?? []);
       setLocalOverlays(doc.overlays ?? []);
+      setLocalVisualBlocks(doc.visualBlocks ?? []);
       setVideoMuted(doc.videoMuted);
       setSoundMuted(doc.soundMuted);
       setMixLevel(doc.mixLevel ?? null);
@@ -746,6 +811,7 @@ export default function EditorShell({
       setTextDirty(true);
       setSfxDirty(true);
       setOverlaysDirty(true);
+      setVisualBlocksDirty(true);
       setTitleDirty(true);
       // Undo of a delete (or redo of an add) resurrects a bar → re-select it
       // (plan §5 — the one selection rule that reaches into undo).
@@ -1162,9 +1228,12 @@ export default function EditorShell({
   }, [localSfx, sfxGlossaryEffects]);
 
   const overlayPoolShouldLoad =
-    MEDIA_OVERLAYS_UI_ENABLED &&
-    capabilities?.overlays !== false &&
-    (activeTool === "nova" || activeTool === "overlays");
+    (MEDIA_OVERLAYS_UI_ENABLED &&
+      capabilities?.overlays !== false &&
+      (activeTool === "nova" || activeTool === "overlays")) ||
+    (VISUAL_BLOCKS_UI_ENABLED &&
+      capabilities?.visual_blocks !== false &&
+      activeTool === "visuals");
   useEffect(() => {
     if (!overlayPoolShouldLoad) return;
     let cancelled = false;
@@ -1570,6 +1639,42 @@ export default function EditorShell({
     [readOnly],
   );
 
+  const previewVisualTiming = useCallback(
+    (id: string, patch: Pick<VisualBlock, "start_s" | "end_s">) => {
+      if (readOnly) return;
+      setLocalVisualBlocks((blocks) =>
+        blocks.map((block) =>
+          block.id === id
+            ? patchVisualBlockConcreteTiming(block, {
+                ...patch,
+                timing_mode: "manual",
+              } as Partial<VisualBlock>)
+            : block,
+        ),
+      );
+      setVisualBlocksDirty(true);
+      const current = localVisualBlocks.find((block) => block.id === id);
+      if (current?.kind === "text_card") {
+        state.bars
+          .filter((bar) => bar.visual_block_id === id)
+          .forEach((bar) =>
+            dispatch({
+              type: "PATCH_BAR",
+              id: bar.id,
+              patch: retimeLinkedTextBar(
+                bar,
+                current,
+                patch.start_s,
+                patch.end_s,
+              ),
+            }),
+          );
+        setTextDirty(true);
+      }
+    },
+    [localVisualBlocks, readOnly, state.bars],
+  );
+
   const previewOverlayPatch = useCallback(
     (id: string, patch: Partial<MediaOverlay>) => {
       if (readOnly) return;
@@ -1907,6 +2012,323 @@ export default function EditorShell({
     [selectedBar, patchBar, addTextAtPlayhead],
   );
 
+  const nextVisualBlockWindow = useCallback(
+    (requestedDuration: number) => {
+      const maxDuration = Math.max(0.75, previewDuration || duration || 60);
+      let start = Math.max(0, Math.min(currentTime, Math.max(0, maxDuration - 0.75)));
+      const ordered = [...localVisualBlocks].sort((a, b) => a.start_s - b.start_s);
+      for (const block of ordered) {
+        if (start + requestedDuration <= block.start_s) break;
+        if (start < block.end_s && start + requestedDuration > block.start_s) {
+          start = block.end_s;
+        }
+      }
+      const end = Math.min(maxDuration, start + requestedDuration);
+      return { start, end };
+    },
+    [currentTime, duration, localVisualBlocks, previewDuration],
+  );
+
+  const addTextCard = useCallback(
+    (preset: "card" | "quote" | "statistic" | "transition") => {
+      if (readOnly || capabilities?.visual_blocks === false) return;
+      const { start, end } = nextVisualBlockWindow(2.5);
+      if (end - start < 0.75) {
+        setToast("There isn't enough open timeline space for a text card.");
+        return;
+      }
+      const id = crypto.randomUUID();
+      const labels = {
+        card: "Add a key idea",
+        quote: "“Add a quote”",
+        statistic: "Add a statistic",
+        transition: "New section",
+      } as const;
+      const block: VisualBlock = {
+        version: 1,
+        id,
+        kind: "text_card",
+        start_s: start,
+        end_s: end,
+        timing_mode: "manual",
+        origin: "user",
+        transition_in: "cut",
+        transition_out: "cut",
+        audio_policy: { base: "continue", sfx: "continue" },
+        style_preset_id: `nova-${preset}`,
+        background: { type: "solid", color: preset === "statistic" ? "#172035" : "#26382F" },
+      };
+      const bar = {
+        ...newTextBar({
+          id: crypto.randomUUID(),
+          text: labels[preset],
+          timing: { start_s: start, end_s: end },
+          preset: DEFAULT_TEXT_PRESET,
+        }),
+        visual_block_id: id,
+        font_family: "PlayfairDisplay-Bold",
+        color: "#FFFFFF",
+        size_px: 72,
+        y_frac: 0.5,
+        max_width_frac: 0.82,
+        effect: "fade-in",
+      } satisfies TextElementBar;
+      history.record();
+      setLocalVisualBlocks((current) => [...current, block]);
+      setVisualBlocksDirty(true);
+      setTextDirty(true);
+      dispatch({ type: "ADD_TEXT", bar });
+      selectText(bar.id);
+      setActiveTool("visuals");
+      seekPlaybackTo(start);
+    },
+    [
+      capabilities?.visual_blocks,
+      history,
+      nextVisualBlockWindow,
+      readOnly,
+      seekPlaybackTo,
+      selectText,
+    ],
+  );
+
+  const addMontageBlock = useCallback(
+    (assetIds: string[]) => {
+      if (readOnly || capabilities?.visual_blocks === false) return;
+      const selectedAssets = assetIds
+        .map((id) => poolAssets.find((asset) => asset.id === id))
+        .filter((asset): asset is PoolAsset => !!asset && asset.status === "ready")
+        .slice(0, 12);
+      if (selectedAssets.length < 3) {
+        setToast("Choose at least three ready visuals for a montage.");
+        return;
+      }
+      const { start, end } = nextVisualBlockWindow(3.0);
+      if (end - start < 1.2) {
+        setToast("There isn't enough open timeline space for a montage.");
+        return;
+      }
+      const perShot = (end - start) / selectedAssets.length;
+      let offset = 0;
+      const motions = ["zoom_in", "pan_right", "zoom_out", "pan_left"] as const;
+      const block: VisualBlock = {
+        version: 1,
+        id: crypto.randomUUID(),
+        kind: "montage",
+        start_s: start,
+        end_s: end,
+        timing_mode: "auto",
+        origin: "user",
+        transition_in: "cut",
+        transition_out: "cut",
+        audio_policy: { base: "continue", sfx: "continue" },
+        shots: selectedAssets.map((asset, index) => {
+          const shotDuration =
+            index === selectedAssets.length - 1 ? end - start - offset : perShot;
+          const shot = {
+            id: crypto.randomUUID(),
+            asset_id: asset.id,
+            src_gcs_path: asset.gcs_path,
+            kind: asset.kind,
+            start_offset_s: Number(offset.toFixed(6)),
+            duration_s: Number(shotDuration.toFixed(6)),
+            crop: { x_frac: 0.5, y_frac: 0.5, scale: 1 },
+            motion: motions[index % motions.length],
+          };
+          offset += shotDuration;
+          return shot;
+        }),
+      };
+      history.record();
+      setLocalVisualBlocks((current) => [...current, block]);
+      setVisualBlocksDirty(true);
+      seekPlaybackTo(start);
+    },
+    [
+      capabilities?.visual_blocks,
+      history,
+      nextVisualBlockWindow,
+      poolAssets,
+      readOnly,
+      seekPlaybackTo,
+    ],
+  );
+
+  const addVisualBlockText = useCallback(
+    (blockId: string) => {
+      if (readOnly || textElementsLocked) return;
+      const block = localVisualBlocks.find(
+        (candidate) => candidate.id === blockId && candidate.kind === "text_card",
+      );
+      if (!block) return;
+      const existingCount = state.bars.filter(
+        (bar) => bar.visual_block_id === blockId,
+      ).length;
+      const bar = {
+        ...newTextBar({
+          id: crypto.randomUUID(),
+          text: existingCount === 0 ? "Add a key idea" : "Add supporting text",
+          timing: { start_s: block.start_s, end_s: block.end_s },
+          preset: DEFAULT_TEXT_PRESET,
+        }),
+        visual_block_id: blockId,
+        color: "#FFFFFF",
+        y_frac: Math.min(0.75, 0.45 + existingCount * 0.12),
+        max_width_frac: 0.82,
+        effect: "fade-in",
+      } satisfies TextElementBar;
+      history.record();
+      dispatch({ type: "ADD_TEXT", bar });
+      setTextDirty(true);
+      selectText(bar.id);
+      seekPlaybackTo(block.start_s);
+    },
+    [
+      history,
+      localVisualBlocks,
+      readOnly,
+      seekPlaybackTo,
+      selectText,
+      state.bars,
+      textElementsLocked,
+    ],
+  );
+
+  const patchVisualBlock = useCallback(
+    (id: string, patch: Partial<VisualBlock>) => {
+      if (readOnly) return;
+      const current = localVisualBlocks.find((block) => block.id === id);
+      if (!current) return;
+      history.record();
+      const next = patchVisualBlockConcreteTiming(current, patch);
+      setLocalVisualBlocks((blocks) => blocks.map((block) => (block.id === id ? next : block)));
+      setVisualBlocksDirty(true);
+      if (current.kind === "text_card") {
+        const nextStart = typeof patch.start_s === "number" ? patch.start_s : current.start_s;
+        const nextEnd = typeof patch.end_s === "number" ? patch.end_s : current.end_s;
+        state.bars
+          .filter((bar) => bar.visual_block_id === id)
+          .forEach((bar) =>
+            dispatch({
+              type: "PATCH_BAR",
+              id: bar.id,
+              patch: retimeLinkedTextBar(bar, current, nextStart, nextEnd),
+            }),
+          );
+        setTextDirty(true);
+      }
+    },
+    [history, localVisualBlocks, readOnly, state.bars],
+  );
+
+  const deleteVisualBlock = useCallback(
+    (id: string) => {
+      if (readOnly) return;
+      history.record();
+      setLocalVisualBlocks((blocks) => blocks.filter((block) => block.id !== id));
+      setVisualBlocksDirty(true);
+      state.bars
+        .filter((bar) => bar.visual_block_id === id)
+        .forEach((bar) => dispatch({ type: "DELETE_BAR", id: bar.id }));
+      setTextDirty(true);
+    },
+    [history, readOnly, state.bars],
+  );
+
+  const duplicateVisualBlock = useCallback(
+    (id: string) => {
+      if (readOnly || capabilities?.visual_blocks === false) return;
+      const source = localVisualBlocks.find((block) => block.id === id);
+      if (!source) return;
+      const durationS = source.end_s - source.start_s;
+      const { start, end } = nextVisualBlockWindow(durationS);
+      if (end - start < durationS - 1 / 30) {
+        setToast("There isn't enough open timeline space to duplicate this block.");
+        return;
+      }
+      const newId = crypto.randomUUID();
+      const copied: VisualBlock = source.kind === "montage"
+        ? {
+            ...source,
+            id: newId,
+            start_s: start,
+            end_s: end,
+            timing_mode: "manual",
+            origin: "user",
+            rationale: null,
+            shots: source.shots.map((shot) => ({ ...shot, id: crypto.randomUUID() })),
+          }
+        : {
+            ...source,
+            id: newId,
+            start_s: start,
+            end_s: end,
+            timing_mode: "manual",
+            origin: "user",
+            rationale: null,
+            background:
+              source.background.type === "asset"
+                ? {
+                    ...source.background,
+                    shot: { ...source.background.shot, id: crypto.randomUUID() },
+                  }
+                : { ...source.background },
+          };
+      history.record();
+      setLocalVisualBlocks((blocks) => [...blocks, copied]);
+      setVisualBlocksDirty(true);
+      if (source.kind === "text_card") {
+        const sourceDuration = Math.max(0.001, source.end_s - source.start_s);
+        state.bars
+          .filter((bar) => bar.visual_block_id === source.id)
+          .forEach((bar) => {
+            const relativeStart = (bar.start_s - source.start_s) / sourceDuration;
+            const relativeEnd = (bar.end_s - source.start_s) / sourceDuration;
+            dispatch({
+              type: "ADD_TEXT",
+              bar: {
+                ...bar,
+                id: crypto.randomUUID(),
+                visual_block_id: newId,
+                start_s: start + relativeStart * (end - start),
+                end_s: start + relativeEnd * (end - start),
+              },
+            });
+          });
+        setTextDirty(true);
+      }
+      seekPlaybackTo(start);
+    },
+    [
+      capabilities?.visual_blocks,
+      history,
+      localVisualBlocks,
+      nextVisualBlockWindow,
+      readOnly,
+      seekPlaybackTo,
+      state.bars,
+    ],
+  );
+
+  const retimeBlock = useCallback(
+    (id: string) => {
+      const block = localVisualBlocks.find((candidate) => candidate.id === id);
+      if (!block || block.kind !== "montage" || !variant) return;
+      void retimeVisualBlock(itemId, variant.variant_id, block)
+        .then(({ visual_block }) => {
+          history.record();
+          setLocalVisualBlocks((blocks) =>
+            blocks.map((candidate) => (candidate.id === id ? visual_block : candidate)),
+          );
+          setVisualBlocksDirty(true);
+        })
+        .catch((error) =>
+          setToast(error instanceof Error ? error.message : "Couldn't retime that montage."),
+        );
+    },
+    [history, itemId, localVisualBlocks, variant],
+  );
+
   // Clip-split capability gate (plan §7): missing capabilities → allowed for
   // montage agent_text variants (song_text / original_text), disabled otherwise.
   const splitClipsAllowed =
@@ -1919,10 +2341,11 @@ export default function EditorShell({
   );
 
   const buildCopilotDraftSnapshot = useCallback(() => {
-    const openTools = (["text", "sounds", "overlays", "styles"] as const).filter((tool) => {
+    const openTools = (["text", "visuals", "sounds", "overlays", "styles"] as const).filter((tool) => {
       if (toolDisabledReasons[tool]) return false;
       if (tool === "sounds") return SOUND_EFFECTS_UI_ENABLED;
       if (tool === "overlays") return MEDIA_OVERLAYS_UI_ENABLED;
+      if (tool === "visuals") return VISUAL_BLOCKS_UI_ENABLED;
       return true;
     });
     const captionsPresent =
@@ -2010,6 +2433,7 @@ export default function EditorShell({
     overlaySuggestions.rows,
     poolAssets,
     readOnly,
+    sfxGlossaryEffects,
     slots,
     state.bars,
     title,
@@ -2255,6 +2679,14 @@ export default function EditorShell({
   const deleteSelected = useCallback(() => {
     if (!selection || readOnly) return;
     if (selection.kind === "text") {
+      const selected = state.bars.find((bar) => bar.id === selection.id);
+      if (
+        selected?.visual_block_id &&
+        state.bars.filter((bar) => bar.visual_block_id === selected.visual_block_id).length <= 1
+      ) {
+        setToast("Text cards need at least one linked text element.");
+        return;
+      }
       history.record();
       setTextDirty(true);
       dispatch({ type: "DELETE_BAR", id: selection.id });
@@ -2273,6 +2705,9 @@ export default function EditorShell({
       removeSfx(selection.id);
     } else if (selection.kind === "overlay") {
       removeOverlay(selection.id);
+    } else if (selection.kind === "visual") {
+      deleteVisualBlock(selection.id);
+      clear();
     }
   }, [
     clipLockedToVoiceover,
@@ -2283,6 +2718,8 @@ export default function EditorShell({
     history,
     removeSfx,
     removeOverlay,
+    deleteVisualBlock,
+    state.bars,
   ]);
 
   const splitAtPlayhead = useCallback(() => {
@@ -2379,7 +2816,8 @@ export default function EditorShell({
     selection?.kind === "text" ||
     (selection?.kind === "clip" && !clipLockedToVoiceover && activeSlotCount(slots) > 1) ||
     selection?.kind === "sfx" ||
-    selection?.kind === "overlay";
+    selection?.kind === "overlay" ||
+    selection?.kind === "visual";
 
   // ── Keyboard: Escape ladder + Delete with focus guard (plan §5/§9) ──────────
   useEffect(() => {
@@ -2494,6 +2932,8 @@ export default function EditorShell({
         soundEffects: localSfx,
         overlaysDirty,
         mediaOverlays: localOverlays,
+        visualBlocksDirty,
+        visualBlocks: localVisualBlocks,
         // Filtered against the staged overlay ids inside the builder — an
         // accepted suggestion the user undid must not be resolved.
         acceptedSuggestions,
@@ -2520,6 +2960,7 @@ export default function EditorShell({
       setTextDirty(false);
       setSfxDirty(false);
       setOverlaysDirty(false);
+      setVisualBlocksDirty(false);
       setTitleDirty(false);
       setMixDirty(false);
       setMusicDirty(false);
@@ -2569,6 +3010,8 @@ export default function EditorShell({
     localSfx,
     overlaysDirty,
     localOverlays,
+    visualBlocksDirty,
+    localVisualBlocks,
     acceptedSuggestions,
     titleDirty,
     history,
@@ -2604,6 +3047,7 @@ export default function EditorShell({
     localSlots,
     localSfx,
     localOverlays,
+    localVisualBlocks,
     captionMeta,
     captionMetaDirty,
     captionMetaPatch,
@@ -2776,6 +3220,15 @@ export default function EditorShell({
     readOnly,
     onRecordTimelineEdit: recordTimelineDrag,
     onPreviewTextTiming: previewTextTiming,
+    visualBlocks: localVisualBlocks.map((block) => ({
+      id: block.id,
+      kind: block.kind,
+      start_s: block.start_s,
+      end_s: block.end_s,
+    })),
+    showVisualBlocks:
+      VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
+    onPreviewVisualTiming: previewVisualTiming,
     slots,
     clipReadOnly: clipLockedToVoiceover,
     clipDisabledReason,
@@ -3023,6 +3476,8 @@ export default function EditorShell({
             variant={variant}
             elements={elements}
             bars={state.bars}
+            visualBlocks={localVisualBlocks}
+            visualAssets={poolAssets}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}
@@ -3102,6 +3557,19 @@ export default function EditorShell({
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
+              visualBlocks={localVisualBlocks}
+              visualAssets={poolAssets}
+              visualTextElements={state.bars}
+              visualUploading={pendingPoolUploads.length > 0}
+              onVisualUpload={handlePoolFiles}
+              onAddMontage={addMontageBlock}
+              onAddTextCard={addTextCard}
+              onAddVisualBlockText={addVisualBlockText}
+              onSelectVisualBlockText={selectText}
+              onPatchVisualBlock={patchVisualBlock}
+              onDuplicateVisualBlock={duplicateVisualBlock}
+              onDeleteVisualBlock={deleteVisualBlock}
+              onRetimeVisualBlock={retimeBlock}
               layoutMode={layoutMode}
               copilot={{
                 messages: copilot.messages,
@@ -3149,6 +3617,19 @@ export default function EditorShell({
               overlayUploading={overlayUploading}
 	              onOverlayUpload={handleOverlayUpload}
 	              overlaySuggestions={overlaySuggestionsNode}
+              visualBlocks={localVisualBlocks}
+              visualAssets={poolAssets}
+              visualTextElements={state.bars}
+              visualUploading={pendingPoolUploads.length > 0}
+              onVisualUpload={handlePoolFiles}
+              onAddMontage={addMontageBlock}
+              onAddTextCard={addTextCard}
+              onAddVisualBlockText={addVisualBlockText}
+              onSelectVisualBlockText={selectText}
+              onPatchVisualBlock={patchVisualBlock}
+              onDuplicateVisualBlock={duplicateVisualBlock}
+              onDeleteVisualBlock={deleteVisualBlock}
+              onRetimeVisualBlock={retimeBlock}
               layoutMode={layoutMode}
 	              onClose={() => setActiveTool(null)}
 	            />
@@ -3191,6 +3672,8 @@ export default function EditorShell({
             variant={variant}
             elements={elements}
             bars={state.bars}
+            visualBlocks={localVisualBlocks}
+            visualAssets={poolAssets}
             mediaOverlays={localOverlays}
             overlayPreviewUrls={localOverlayPreviewUrls}
             suggestedOverlayIds={suggestedOverlayIds}

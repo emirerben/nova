@@ -20,13 +20,14 @@ import { useEffect, useMemo, useState } from "react";
  * pointer bonus.
  */
 
-export type EditorTool = "nova" | "text" | "sounds" | "overlays" | "styles";
+export type EditorTool = "nova" | "text" | "visuals" | "sounds" | "overlays" | "styles";
 
 export const NOVA_TOOL_SEEN_KEY = "nova-tool-seen";
 
 const TOOLS: Array<{ id: EditorTool; icon: string; label: string }> = [
   { id: "nova", icon: "✧", label: "Nova" },
   { id: "text", icon: "T", label: "Text" },
+  { id: "visuals", icon: "▦", label: "Visuals" },
   { id: "sounds", icon: "♫", label: "Sounds" },
   { id: "overlays", icon: "▤", label: "Overlays" },
   { id: "styles", icon: "✦", label: "Styles" },
@@ -44,9 +45,16 @@ export default function ToolRail({
 }) {
   const [novaSeen, setNovaSeen] = useState(true);
   const copilotEnabled = process.env.NEXT_PUBLIC_EDIT_COPILOT_ENABLED === "true";
+  const visualBlocksEnabled =
+    process.env.NEXT_PUBLIC_VISUAL_BLOCKS_ENABLED === "true";
   const tools = useMemo(
-    () => TOOLS.filter((tool) => copilotEnabled || tool.id !== "nova"),
-    [copilotEnabled],
+    () =>
+      TOOLS.filter(
+        (tool) =>
+          (copilotEnabled || tool.id !== "nova") &&
+          (visualBlocksEnabled || tool.id !== "visuals"),
+      ),
+    [copilotEnabled, visualBlocksEnabled],
   );
 
   useEffect(() => {

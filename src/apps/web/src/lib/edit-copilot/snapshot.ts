@@ -164,7 +164,7 @@ export interface CopilotSnapshot {
   };
   intro?: CopilotIntroSnapshot;
   title?: string;
-  open_tools?: Array<"text" | "sounds" | "overlays" | "styles">;
+  open_tools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   allowed_op_families: CopilotOpFamily[];
 }
 
@@ -179,7 +179,7 @@ export interface AllowedOpFamilyOptions {
   musicSwappable?: boolean;
   mixAllowed?: boolean;
   titleEditable?: boolean;
-  openTools?: Array<"text" | "sounds" | "overlays" | "styles">;
+  openTools?: Array<"text" | "visuals" | "sounds" | "overlays" | "styles">;
   readOnly?: boolean;
   renderLayoutSwitchable?: boolean;
 }

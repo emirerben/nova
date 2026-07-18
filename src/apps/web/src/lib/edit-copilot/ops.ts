@@ -120,7 +120,10 @@ export type CopilotOp =
   | { op: "set_mix"; music_level: number }
   | { op: "set_intro_layout"; layout: "linear" | "cluster" }
   | { op: "set_title"; title: string }
-  | { op: "open_tool"; tool: "text" | "sounds" | "overlays" | "styles" };
+  | {
+      op: "open_tool";
+      tool: "text" | "visuals" | "sounds" | "overlays" | "styles";
+    };
 
 export type CopilotOpName = CopilotOp["op"];
 

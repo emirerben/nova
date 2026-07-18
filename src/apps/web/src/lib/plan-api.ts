@@ -816,6 +816,7 @@ export interface TextElement {
   start_s: number;
   end_s: number;
   role: "generative_intro" | "generative_sequence";
+  visual_block_id?: string | null;
   position?: "top" | "middle" | "bottom" | "custom";
   x_frac?: number | null;
   y_frac?: number | null;
@@ -864,6 +865,64 @@ export interface TextElement {
   behind_subject?: boolean;
 }
 
+export interface VisualCrop {
+  x_frac: number;
+  y_frac: number;
+  scale: number;
+}
+
+export interface VisualShot {
+  id: string;
+  asset_id: string;
+  src_gcs_path: string;
+  kind: "image" | "video";
+  start_offset_s: number;
+  duration_s: number;
+  trim_start_s?: number | null;
+  crop: VisualCrop;
+  motion: "none" | "zoom_in" | "zoom_out" | "pan_left" | "pan_right";
+  sync_anchor?: {
+    type: "sentence" | "keyword" | "beat" | "manual";
+    time_s: number;
+    label?: string | null;
+  } | null;
+}
+
+export interface VisualBlockBase {
+  version: 1;
+  id: string;
+  start_s: number;
+  end_s: number;
+  timing_mode: "auto" | "manual";
+  origin: "ai" | "user";
+  rationale?: string | null;
+  transition_in: "cut" | "fade";
+  transition_out: "cut" | "fade";
+  audio_policy: {
+    base: "continue" | "mute";
+    sfx: "continue" | "mute";
+  };
+}
+
+export interface MontageVisualBlock extends VisualBlockBase {
+  kind: "montage";
+  shots: VisualShot[];
+}
+
+export type TextCardBackground =
+  | { type: "solid"; color: string }
+  | { type: "gradient"; from: string; to: string; angle_deg: number }
+  | { type: "blur_previous"; blur_px: number }
+  | { type: "asset"; shot: VisualShot };
+
+export interface TextCardVisualBlock extends VisualBlockBase {
+  kind: "text_card";
+  style_preset_id?: string | null;
+  background: TextCardBackground;
+}
+
+export type VisualBlock = MontageVisualBlock | TextCardVisualBlock;
+
 /**
  * Plan 009 ARCH-4: variant-level apply receipt — mirrors the dict written by
  * `overlay_apply.py` / the zero-click autoplace task into
@@ -890,12 +949,14 @@ export interface EditorCapabilities {
   mix?: boolean;
   sfx?: boolean;
   overlays?: boolean;
+  visual_blocks?: boolean;
   /** AI overlay suggestions inside the editor's Overlays drawer (plans/005-010).
    *  Deliberately does NOT check pool assets — the drawer owns the empty-pool state. */
   suggestions?: boolean;
   reason?: string;
   sfx_reason?: string | null;
   overlays_reason?: string | null;
+  visual_blocks_reason?: string | null;
   /** "autoplace_disabled" | "song_or_lyric_variant" | "caption_archetype"
    *  | inherited overlay reasons. */
   suggestions_reason?: string | null;
@@ -914,6 +975,7 @@ export interface TextPlacementCandidate {
 export interface PlanItemVariant {
   variant_id: string;
   output_url: string | null;
+  duration_s?: number | null;
   // Literal union (not bare string) to match EditableVariant — every plan
   // consumer compares against these literals, so this is non-breaking.
   render_status: "ready" | "rendering" | "failed" | null;
@@ -1031,6 +1093,10 @@ export interface PlanItemVariant {
   text_elements_user_edited?: boolean;
   /** Media-overlay cards applied on top of this variant (slice 1). */
   media_overlays?: MediaOverlay[] | null;
+  /** Full-frame replacement blocks rendered below authored text and captions. */
+  visual_blocks?: VisualBlock[] | null;
+  /** Cached text-free visual-block composite used for fast text reburns. */
+  visual_blocks_base_path?: string | null;
   /** GCS key of the clean (un-carded) variant before the first overlay apply-pass. */
   pre_media_overlay_video_path?: string | null;
   /** Fresh-signed playback URL for `pre_media_overlay_video_path`, added by
@@ -1075,6 +1141,20 @@ export interface PlanItemVariant {
   intro_end_s?: number | null;
   /** Editor-shell capability map (see EditorCapabilities). Absent on legacy reads. */
   editor_capabilities?: EditorCapabilities | null;
+}
+
+export function retimeVisualBlock(
+  itemId: string,
+  variantId: string,
+  visualBlock: VisualBlock,
+): Promise<{ visual_block: VisualBlock }> {
+  return request<{ visual_block: VisualBlock }>(
+    `/plan-items/${itemId}/variants/${variantId}/visual-blocks/retime`,
+    {
+      method: "POST",
+      body: JSON.stringify({ visual_block: visualBlock }),
+    },
+  );
 }
 
 export async function getPlanItemVariants(jobId: string): Promise<PlanItemVariant[]> {
@@ -1801,6 +1881,10 @@ export interface PoolAsset {
    *  attach_clips' allowed prefix, so "Use in edit" can promote the asset to a
    *  clip via the existing attach flow (no copy, no new endpoint). */
   gcs_path: string;
+  /** Provenance for AI-extracted source frames; absent on normal uploads. */
+  source_type?: string | null;
+  source_clip_index?: number | null;
+  source_timestamp_s?: number | null;
 }
 
 /** Signed PUT URLs for pool assets (users/{uid}/plan/{itemId}/pool/, persistent). */

@@ -27,6 +27,7 @@ export interface TextElementBar {
   start_s: number;
   end_s: number;
   role: "generative_intro" | "generative_sequence" | "narrated_caption";
+  visual_block_id?: string | null;
   font_family?: string;
   size_px?: number;
   size_class?: string;

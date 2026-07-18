@@ -87,6 +87,13 @@ export interface EditorOverlayBar {
   suggested?: boolean;
 }
 
+export interface EditorVisualBlockBar {
+  id: string;
+  kind: "montage" | "text_card";
+  start_s: number;
+  end_s: number;
+}
+
 export interface EditorTimelineBodyProps {
   durationS: number;
   /** Real rendered player duration, used to calibrate transition overlap. */
@@ -111,6 +118,13 @@ export interface EditorTimelineBodyProps {
   onPreviewTextTiming?: (
     id: string,
     patch: Pick<TextElementBar, "start_s" | "end_s">,
+  ) => void;
+
+  visualBlocks: EditorVisualBlockBar[];
+  showVisualBlocks?: boolean;
+  onPreviewVisualTiming?: (
+    id: string,
+    patch: Pick<EditorVisualBlockBar, "start_s" | "end_s">,
   ) => void;
 
   slots: DraftSlot[];
@@ -195,6 +209,15 @@ type ActiveDrag =
       pxPerSecond: number;
       origin: Pick<EditorOverlayBar, "start_s" | "end_s">;
       active: boolean;
+    }
+  | {
+      kind: "visual";
+      id: string;
+      handle: "left" | "right" | "body";
+      startTimelineX: number;
+      pxPerSecond: number;
+      origin: Pick<EditorVisualBlockBar, "start_s" | "end_s">;
+      active: boolean;
     };
 
 export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
@@ -213,6 +236,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     readOnly = false,
     onRecordTimelineEdit,
     onPreviewTextTiming,
+    visualBlocks,
+    showVisualBlocks = true,
+    onPreviewVisualTiming,
     slots,
     clipReadOnly = false,
     clipDisabledReason,
@@ -394,6 +420,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   const tickInterval = tickIntervalForScale(pps);
   const ticks = rulerTicks(effectiveDurationS, pps);
   const textLane = deriveTextLaneRows(textBars);
+  const visualLane = deriveLaneRows(visualBlocks, {
+    baseHeightPx: TEXT_LANE_BASE_HEIGHT_PX,
+  });
   const sfxLane = deriveLaneRows(sfx, {
     baseHeightPx: SFX_SUB_LANE_BASE_HEIGHT_PX,
   });
@@ -403,6 +432,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
   });
   const laneRows = [
     { label: "Text", heightPx: textLane.totalHeightPx },
+    ...(showVisualBlocks
+      ? [{ label: "Visuals", heightPx: visualLane.totalHeightPx }]
+      : []),
     { label: "Video", heightPx: 48 },
     { label: "Sound", heightPx: soundLaneHeight },
     { label: "Overlays", heightPx: overlayLane.totalHeightPx },
@@ -545,7 +577,11 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           end_s: Math.round(end_s * 10) / 10,
         };
       }
-      onPreviewOverlayTiming?.(active.id, next);
+      if (active.kind === "visual") {
+        onPreviewVisualTiming?.(active.id, next);
+      } else {
+        onPreviewOverlayTiming?.(active.id, next);
+      }
       setDragLabel({
         x: clientX,
         y: window.innerHeight - 118,
@@ -647,6 +683,29 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
     };
   }
 
+  function startVisualDrag(
+    e: React.PointerEvent<HTMLElement>,
+    block: EditorVisualBlockBar,
+  ) {
+    if (readOnly) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      kind: "visual",
+      id: block.id,
+      handle: resolveBarDragHandle({
+        localX: e.clientX - rect.left,
+        width: rect.width,
+      }),
+      startTimelineX: pointerTimelineX(e.clientX),
+      pxPerSecond: pps,
+      origin: { start_s: block.start_s, end_s: block.end_s },
+      active: false,
+    };
+  }
+
   function finishDrag(
     e: React.PointerEvent<HTMLElement>,
     kind: EditorSelectionKind,
@@ -732,6 +791,9 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
           <div className="min-h-0 flex-1 overflow-hidden">
             <div ref={gutterRowsRef} style={{ height: lanesHeight }}>
               <GutterRow label="Text" heightPx={textLane.totalHeightPx} />
+              {showVisualBlocks && (
+                <GutterRow label="Visuals" heightPx={visualLane.totalHeightPx} />
+              )}
               <GutterRow
                 label="Video"
                 heightPx={48}
@@ -796,7 +858,7 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
               style={{ width: trackW, minWidth: trackW, height: lanesHeight }}
             >
               {/* ── Text lane ── */}
-              <LaneTrack
+              {showVisualBlocks && <LaneTrack
                 trackW={trackW}
                 heightPx={textLane.totalHeightPx}
                 testId="editor-text-lane"
@@ -874,6 +936,62 @@ export default function EditorTimelineBody(props: EditorTimelineBodyProps) {
                       },
                     )}
                   </>
+                )}
+              </LaneTrack>}
+
+              {/* ── Visual replacement blocks, below authored text ── */}
+              <LaneTrack
+                trackW={trackW}
+                heightPx={visualLane.totalHeightPx}
+                testId="editor-visuals-lane"
+              >
+                <Playline px={playheadPx} />
+                {visualBlocks.length === 0 ? (
+                  <GhostRow text="Montages and text cards appear here" />
+                ) : (
+                  visualLane.rows.map(
+                    ({ item: block, rowIndex, topPx, heightPx }) => {
+                      const left = secondsToPx(block.start_s, pps);
+                      const width = Math.max(
+                        8,
+                        secondsToPx(block.end_s - block.start_s, pps),
+                      );
+                      const selected = isSel("visual", block.id);
+                      return (
+                        <BarButton
+                          key={block.id}
+                          left={left}
+                          width={width}
+                          top={topPx}
+                          height={heightPx}
+                          selected={selected}
+                          ringCls={ringCls}
+                          ariaLabel={`${block.kind === "montage" ? "Montage" : "Text card"}, ${formatTimecode(block.start_s)}–${formatTimecode(block.end_s)}`}
+                          onSelect={() => onSelect("visual", block.id)}
+                          dataKind="visual"
+                          dataId={block.id}
+                          dataRowIndex={rowIndex}
+                          onPointerDown={(event) =>
+                            startVisualDrag(event, block)
+                          }
+                          onPointerMove={(event) =>
+                            updateDrag(event.clientX)
+                          }
+                          onPointerUp={(event) =>
+                            finishDrag(event, "visual", block.id)
+                          }
+                          onPointerCancel={cancelDrag}
+                          suppressClickRef={suppressClickRef}
+                          showTrimHandles
+                          className="border border-violet-300 bg-violet-100 text-violet-950"
+                        >
+                          <span className="pointer-events-none truncate px-2 text-[10px] font-semibold">
+                            {block.kind === "montage" ? "Montage" : "Text card"}
+                          </span>
+                        </BarButton>
+                      );
+                    },
+                  )
                 )}
               </LaneTrack>
 
