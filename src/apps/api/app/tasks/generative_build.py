@@ -1259,6 +1259,7 @@ def regenerate_generative_variant(
     intro_end_s_override: float | None = None,
     text_behind_subject: bool | None = None,
     orientation_override: str | None = None,
+    force_full_render: bool = False,
 ) -> None:
     """Re-render ONE variant of a generative job (swap-song / retext / restyle / resize / mix).
 
@@ -1319,6 +1320,7 @@ def regenerate_generative_variant(
                 intro_end_s_override=intro_end_s_override,
                 text_behind_subject=text_behind_subject,
                 orientation_override=orientation_override,
+                force_full_render=force_full_render,
             )
         except OperationalError:
             raise
@@ -1413,6 +1415,13 @@ def _resolve_regen_text(
         # Mode unchanged: a "none" variant stays text-free rather than becoming a
         # text-less "agent_text" that would re-trigger intro_writer later.
         return None, None, existing_text_mode or "agent_text"
+
+    if existing_text_mode == "lyrics":
+        # Lyrics variants have no AI intro. Falling through to intro_writer here
+        # would fabricate one AND flip text_mode to "agent_text" — which then
+        # makes the variant fast-reburn eligible, so later lyric-override
+        # dispatches silently skip lyric re-injection (2026-07-18 E2E bug).
+        return None, None, "lyrics"
 
     if persisted_text and existing_text_mode == "agent_text":
         # Reuse persisted text — NO LLM call.
@@ -3438,6 +3447,7 @@ def _run_regenerate_variant(
     intro_end_s_override: float | None = None,
     text_behind_subject: bool | None = None,
     orientation_override: str | None = None,
+    force_full_render: bool = False,
 ) -> None:
     from app.services.pipeline_trace import record_pipeline_event  # noqa: PLC0415
 
@@ -3835,8 +3845,16 @@ def _run_regenerate_variant(
     # An EXPLICIT timeline_override always forces a re-assembly — the cached base
     # was rendered from the previous slot layout. (A merely-persisted user_timeline
     # is fine: the base was re-cached by the override render that persisted it.)
-    if timeline_override is None and _is_fast_reburn_eligible(
-        existing, new_track_id, mix_override, settings, orientation_override=orientation_override
+    if (
+        timeline_override is None
+        and not force_full_render
+        and _is_fast_reburn_eligible(
+            existing,
+            new_track_id,
+            mix_override,
+            settings,
+            orientation_override=orientation_override,
+        )
     ):
         # Resolve text WITHOUT ingest (no LLM needed: persisted text or override).
         # The run_text_agents_fn is never called on the fast path because eligibility
@@ -9210,6 +9228,17 @@ def _finalize_job(job_id: str, results: list[dict[str, Any]]) -> None:
                     # whose authored text is edited through PUT /text-elements.
                     "text_elements": r.get("text_elements"),
                     "text_elements_user_edited": r.get("text_elements_user_edited"),
+                    # Lyrics editor state — MUST survive finalization or the editor
+                    # sees no lyric projections and capabilities report
+                    # no_renderable_lyrics until the first re-render. Pinned by
+                    # test_finalize_job_preserves_lyric_fields.
+                    "lyrics_enabled": r.get("lyrics_enabled"),
+                    "lyrics_available": r.get("lyrics_available"),
+                    "lyric_line_overrides": r.get("lyric_line_overrides"),
+                    "lyric_overlay_snapshot": r.get("lyric_overlay_snapshot"),
+                    # Output orientation — initial renders are portrait today, but
+                    # keep the persisted value authoritative rather than implied.
+                    "orientation": r.get("orientation"),
                     # render fingerprint — the caption editor's remount key reads it, so
                     # stripping it here would silently degrade re-seeding after reburns.
                     "render_finished_at": r.get("render_finished_at"),

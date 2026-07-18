@@ -153,6 +153,9 @@ async def test_dispatch_set_lyrics_happy_path_persists_and_enqueues(monkeypatch)
     assert len(calls) == 1
     assert calls[0]["args"] == [str(job.id), "song_lyrics"]
     assert calls[0]["kwargs"]["render_gen_id"] == variant["render_generation_id"]
+    # REGRESSION (2026-07-18 E2E): without force_full_render the regen picks the
+    # fast-reburn path (no override kwargs present) and skips lyric re-injection.
+    assert calls[0]["kwargs"]["force_full_render"] is True
     assert "queue" not in calls[0]
 
 

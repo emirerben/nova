@@ -2480,9 +2480,12 @@ async def dispatch_set_lyrics(
 
     from app.tasks.generative_build import regenerate_generative_variant  # noqa: PLC0415
 
+    # force_full_render: lyric-state changes carry no override kwargs, so without
+    # it the regen can pick the fast-reburn path and skip lyric re-injection
+    # entirely (2026-07-18 E2E bug — overrides silently dropped).
     regenerate_generative_variant.apply_async(
         args=[str(locked_job.id), variant_id],
-        kwargs={"render_gen_id": render_gen_id},
+        kwargs={"render_gen_id": render_gen_id, "force_full_render": True},
     )
 
 
@@ -3947,7 +3950,10 @@ def enqueue_editor_commit_render(job_id: str, variant_id: str, prep: dict) -> No
     if full_render or has_text_section:
         # Text/timeline/mix full re-renders read the just-persisted variant state.
         # SFX are reapplied by the worker's persisted-SFX hook after the new base lands.
-        pass
+        # Lyric-state commits carry no override kwargs, so the regen's own
+        # fast-reburn check must be pinned off or lyric re-injection is skipped.
+        if sections.get("lyrics") is True or prep.get("text_requires_full_render") is True:
+            kwargs["force_full_render"] = True
     elif prep["media_overlays_override"] is not None:
         # Overlay pass is outer-video, then the worker's terminal hook reapplies the
         # just-persisted SFX if this same commit also changed sound_effects.

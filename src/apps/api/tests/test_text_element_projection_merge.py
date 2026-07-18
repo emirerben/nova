@@ -267,7 +267,9 @@ def test_variants_for_response_lazy_backfills_legacy_heic_preview(monkeypatch) -
     calls: list[str] = []
     monkeypatch.setattr(
         "app.routes.generative_jobs.convert_heif_overlay_preview",
-        lambda path: calls.append(path) or (f"{path}.preview.jpg", f"https://signed/{path}.preview.jpg"),
+        lambda path: (
+            calls.append(path) or (f"{path}.preview.jpg", f"https://signed/{path}.preview.jpg")
+        ),
     )
     monkeypatch.setattr(
         "app.routes.generative_jobs.signed_get_url",
@@ -411,4 +413,9 @@ def test_editor_commit_text_without_base_routes_to_full_render(monkeypatch) -> N
     enqueue_editor_commit_render(str(job.id), "original_text", prep)
     assert len(calls) == 1
     assert "queue" not in calls[0]
-    assert calls[0]["kwargs"] == {"render_gen_id": prep["generation"]}
+    # text_requires_full_render commits pin the regen's fast-reburn check off
+    # (force_full_render) so the full re-assembly actually happens.
+    assert calls[0]["kwargs"] == {
+        "render_gen_id": prep["generation"],
+        "force_full_render": True,
+    }
