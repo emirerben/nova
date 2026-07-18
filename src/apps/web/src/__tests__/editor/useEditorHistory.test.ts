@@ -145,6 +145,7 @@ describe("serializeDraft / deserializeDraft", () => {
       mixLevel: 0.25,
       mixDirty: true,
       title: "My clip",
+      orientation: "landscape",
     });
     const parsed = deserializeDraft(serializeDraft("v1", d));
     expect(parsed).not.toBeNull();
@@ -156,6 +157,8 @@ describe("serializeDraft / deserializeDraft", () => {
       captionMetaPatch: undefined,
       musicTrackId: undefined,
       musicDirty: false,
+      lyricsEnabled: undefined,
+      orientation: "landscape",
     });
   });
 
@@ -184,6 +187,8 @@ describe("serializeDraft / deserializeDraft", () => {
       captionMetaPatch: undefined,
       musicTrackId: undefined,
       musicDirty: false,
+      lyricsEnabled: undefined,
+      orientation: "portrait",
       title: "",
     });
   });

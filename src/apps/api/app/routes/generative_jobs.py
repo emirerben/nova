@@ -2365,6 +2365,10 @@ def _orientation_unsupported_reason(variant: dict) -> str | None:
         variant.get("montage_preset_rendered") or variant.get("montage_preset")
     ):
         return "orientation_unsupported"
+    # Visual blocks (#660) render portrait-sized boards; compositing them onto a
+    # landscape canvas is unsupported until the block renderer is canvas-aware.
+    if variant.get("visual_blocks"):
+        return "orientation_unsupported"
     return None
 
 

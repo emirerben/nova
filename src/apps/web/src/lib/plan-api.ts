@@ -966,6 +966,11 @@ export interface EditorCapabilities {
     can_toggle_on: boolean;
     reason: "disabled" | "no_track" | "no_renderable_lyrics" | null;
   };
+  orientation?: {
+    editable: boolean;
+    value: string;
+    reason: "disabled" | "orientation_unsupported" | string | null;
+  };
 }
 
 export interface TextPlacementCandidate {
@@ -988,6 +993,7 @@ export interface PlanItemVariant {
   // Edit controls: swap-song is hidden when music_track_id is null (the
   // original-audio variant has no song), and the style picker reflects style_set_id.
   text_mode: "lyrics" | "agent_text" | "none";
+  orientation?: "portrait" | "landscape";
   lyrics_enabled?: boolean;
   lyric_line_overrides?: Record<string, unknown> | null;
   music_track_id?: string | null;

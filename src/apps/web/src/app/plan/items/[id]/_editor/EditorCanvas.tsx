@@ -36,7 +36,7 @@ import {
   MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
 import { animationStateAt } from "@/lib/overlay-animation";
-import { MAX_INTRO_S } from "@/lib/overlay-constants";
+import { MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
 import {
@@ -66,6 +66,7 @@ import VisualBlocksLayer from "./VisualBlocksLayer";
  * host non-intro roles whose sizes exceed it; the server clamps regardless. */
 const SCALE_MIN_PX = 24;
 const SCALE_MAX_PX = 250;
+const DEFAULT_CANVAS = { w: CANVAS_W, h: CANVAS_H };
 
 /** Pointer movement (px) under which a pointerdown+up counts as a CLICK
  * (triggers overlap cycling) rather than a drag. */
@@ -146,6 +147,7 @@ export default function EditorCanvas({
   virtualPreview,
   allowManipulation = true,
   stageHeightCss,
+  canvas = DEFAULT_CANVAS,
 }: {
   variant: PlanItemVariant;
   /** Working bars projected to API shape (barsToTextElements) — layout input. */
@@ -191,6 +193,8 @@ export default function EditorCanvas({
   allowManipulation?: boolean;
   /** Shell-specific chrome height for sizing the 9:16 stage. */
   stageHeightCss?: string;
+  /** Output canvas dimensions used for layout projection. Defaults to portrait. */
+  canvas?: OverlayCanvas;
 }) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -223,7 +227,7 @@ export default function EditorCanvas({
     return () => ro.disconnect();
   }, []);
 
-  const layouts = useMemo(() => resolveTextElementsLayout(elements), [elements]);
+  const layouts = useMemo(() => resolveTextElementsLayout(elements, canvas), [elements, canvas]);
   const barById = useMemo(() => new Map(bars.map((b) => [b.id, b])), [bars]);
 
   // Elements visible at the playhead (the working bars' own timing).
@@ -656,14 +660,14 @@ export default function EditorCanvas({
         className="flex min-h-full items-center justify-center p-6"
         style={zoom > 1 ? { minWidth: `${zoom * 100}%`, minHeight: `${zoom * 100}%` } : undefined}
       >
-        {/* height-driven 9:16 stage; zoom scales it up */}
+        {/* height-driven output stage; zoom scales it up */}
         <div
           className="relative"
           style={{
             height: stageHeightCss
               ? `calc(${stageHeightCss} * ${zoom})`
               : `calc((100vh - 56px - 260px - 48px) * ${zoom})`,
-            aspectRatio: `${CANVAS_W} / ${CANVAS_H}`,
+            aspectRatio: `${canvas.w} / ${canvas.h}`,
             maxWidth: "100%",
           }}
         >
@@ -814,11 +818,11 @@ export default function EditorCanvas({
                   const yFrac = override?.y_frac ?? layout.yFrac;
                   const sizePx = override?.size_px ?? layout.sizePx;
                   const maxWidthFrac = override?.max_width_frac ?? layout.maxWidthFrac;
-                  const fontPx = stageSize.h > 0 ? (sizePx / CANVAS_H) * stageSize.h : 0;
+                  const fontPx = stageSize.h > 0 ? (sizePx / canvas.h) * stageSize.h : 0;
                   const strokeCanvasPx = bar?.stroke_width ?? layout.strokeWidth;
                   const strokePx =
                     strokeCanvasPx && stageSize.h > 0
-                      ? (strokeCanvasPx / CANVAS_H) * stageSize.h
+                      ? (strokeCanvasPx / canvas.h) * stageSize.h
                       : 0;
                   const isSelected = selectedTextId === layout.id;
                   const isLyric = bar?.role === "lyric_line";
@@ -860,7 +864,7 @@ export default function EditorCanvas({
                         ...baseStyle,
                         opacity: animation.alpha,
                         transform: `${baseStyle.transform ?? ""} translateY(${
-                          (animation.yTranslate / CANVAS_H) * stageSize.h
+                          (animation.yTranslate / canvas.h) * stageSize.h
                         }px) scale(${animation.scale})`,
                       }}
                       onPointerDown={(e) => onOverlayPointerDown(e, layout.id)}

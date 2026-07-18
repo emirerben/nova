@@ -18,7 +18,13 @@
  * authoritative.
  */
 
-import { CANVAS_H, CANVAS_W, FONT_SIZE_MAP, POSITION_Y_MAP } from "@/lib/overlay-constants";
+import {
+  CANVAS_H,
+  CANVAS_W,
+  FONT_SIZE_MAP,
+  POSITION_Y_MAP,
+  type OverlayCanvas,
+} from "@/lib/overlay-constants";
 import type { TextElement } from "@/lib/plan-api";
 
 // Must match text_overlay_skia.py: _MAX_LINE_W_FRAC / _LINE_SPACING / _MIN_FONT_SIZE
@@ -368,6 +374,10 @@ export interface TextElementLayout {
   xFrac: number;
   /** Fractional Y center [0,1].  Derived from x_frac/y_frac or position preset. */
   yFrac: number;
+  /** X anchor in output-canvas pixels. */
+  xPx: number;
+  /** Y anchor in output-canvas pixels. */
+  yPx: number;
   /** Font size in pixels at 1080×1920 canvas scale. */
   sizePx: number;
   fontFamily: string;
@@ -403,7 +413,10 @@ export interface TextElementLayout {
  * Size precedence:
  *   size_px > size_class bucket > "medium" default (72px)
  */
-export function resolveTextElementsLayout(elements: TextElement[]): TextElementLayout[] {
+export function resolveTextElementsLayout(
+  elements: TextElement[],
+  canvas: OverlayCanvas = { w: CANVAS_W, h: CANVAS_H },
+): TextElementLayout[] {
   return elements.map((el) => {
     const sizePx = el.size_px ?? FONT_SIZE_MAP[el.size_class ?? "medium"] ?? 72;
     const xFrac = el.x_frac ?? 0.5;
@@ -415,6 +428,8 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       text: applyTextCase(el.text, el.text_case),
       xFrac,
       yFrac,
+      xPx: xFrac * canvas.w,
+      yPx: yFrac * canvas.h,
       sizePx,
       fontFamily: el.font_family ?? "PlayfairDisplay-Bold",
       color: el.color ?? "#FFFFFF",
@@ -422,7 +437,7 @@ export function resolveTextElementsLayout(elements: TextElement[]): TextElementL
       letterSpacingEm: resolveLetterSpacingEm(el.letter_spacing),
       lineSpacing: resolveLineSpacing(el.line_spacing),
       maxWidthFrac: resolveMaxWidthFrac(el.max_width_frac),
-      maxWidthPx: CANVAS_W * resolveMaxWidthFrac(el.max_width_frac),
+      maxWidthPx: canvas.w * resolveMaxWidthFrac(el.max_width_frac),
       rotationDeg: Number.isFinite(el.rotation_deg ?? NaN) ? Number(el.rotation_deg) : 0,
       strokeWidth: el.stroke_width ?? 0,
       shadowEnabled: el.shadow_enabled !== false,

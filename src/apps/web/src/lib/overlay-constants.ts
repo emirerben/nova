@@ -15,6 +15,15 @@ import fontRegistryJson from "@/data/font-registry.json";
 export const CANVAS_W = 1080;
 export const CANVAS_H = 1920;
 
+export interface OverlayCanvas {
+  w: number;
+  h: number;
+}
+
+export function canvasForOrientation(orientation?: string | null): OverlayCanvas {
+  return orientation === "landscape" ? { w: 1920, h: 1080 } : { w: CANVAS_W, h: CANVAS_H };
+}
+
 // Must match _POSITION_Y in src/apps/api/app/pipeline/text_overlay.py
 export const POSITION_Y_MAP: Record<string, number> = {
   top: 0.15,

@@ -71,6 +71,7 @@ def test_validate_orientation_rejects_bad_value(monkeypatch, orientation) -> Non
         _variant(resolved_archetype="narrated"),
         _variant(resolved_archetype="talking_head"),
         _variant(montage_preset="masonry"),
+        _variant(visual_blocks=[{"kind": "text_card"}]),
     ],
 )
 def test_validate_orientation_rejects_unsupported_variant(monkeypatch, variant) -> None:

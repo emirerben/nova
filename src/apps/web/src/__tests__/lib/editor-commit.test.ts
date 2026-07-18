@@ -2,6 +2,7 @@ import {
   buildEditorCommitRequest,
   editorCommitBaseGeneration,
   formatEditorCommitError,
+  type EditorCommitResponse,
 } from "@/lib/editor-commit";
 import type { TextElement, VisualBlock } from "@/lib/plan-api";
 
@@ -154,6 +155,44 @@ describe("buildEditorCommitRequest", () => {
       variant: { render_generation_id: "gen-current" },
     });
     expect(dirty.lyrics).toEqual({ enabled: false });
+  });
+
+  it("omits orientation unless dirty and emits the selected orientation when dirty", () => {
+    const clean = buildEditorCommitRequest({
+      elements: [],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      orientationDirty: false,
+      orientation: "landscape",
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(clean.orientation).toBeUndefined();
+
+    const dirty = buildEditorCommitRequest({
+      elements: [],
+      textDirty: false,
+      timelineDirty: false,
+      slots: [],
+      titleDirty: false,
+      title: "",
+      orientationDirty: true,
+      orientation: "landscape",
+      variant: { render_generation_id: "gen-current" },
+    });
+    expect(dirty.orientation).toBe("landscape");
+  });
+
+  it("types orientation as an editor-commit response section", () => {
+    const response: EditorCommitResponse = {
+      ok: true,
+      generation: "gen-next",
+      sections: { orientation: true },
+    };
+
+    expect(response.sections.orientation).toBe(true);
   });
 
   it("builds combined text_elements and lyrics sections", () => {
