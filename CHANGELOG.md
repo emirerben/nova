@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.32.1] — 2026-07-18
+
+### Fixed
+- **Masonry and Polaroid text can now use white pockets that appear later as the collage pans.** Smart place all evaluates each text block at the time it is visible, keeps overlapping blocks in distinct revealed pockets, and stores a board-local layer origin so late text stays unclipped in both the editor and final render. Manual dragging now reaches the full moving board instead of stopping at the initial viewport, while preview and FFmpeg use the same pan math.
+
 ## [0.7.32.0] — 2026-07-18
 
 ### Added

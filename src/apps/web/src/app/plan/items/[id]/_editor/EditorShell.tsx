@@ -88,8 +88,9 @@ import {
   textElementsLockedCopy,
 } from "./editor-capabilities";
 import {
-  allocateSmartPlacementCandidates,
+  resolveSmartPlacementAssignments,
   isMasonryVariant,
+  resolveSmartPlacementCandidate,
   resolveSmartPlacementCandidates,
   smartPlacementCandidateFitsBar,
   splitTextForSmartPlacement,
@@ -1346,13 +1347,15 @@ export default function EditorShell({
     if (readOnly) return;
     if (isMasonryVariant(variant)) {
       const targetBars = state.bars.filter((bar) => bar.role !== "narrated_caption");
-      if (targetBars.length === 0 || smartPlacementCandidates.length === 0) return;
-      const assignments = allocateSmartPlacementCandidates(
+      if (targetBars.length === 0) return;
+      const assignments = resolveSmartPlacementAssignments(
+        variant,
         targetBars,
-        smartPlacementCandidates,
+        previewDuration,
+        currentTime,
       );
       if (!assignments) {
-        setToast("Not enough empty masonry pockets for all overlapping text blocks.");
+        setToast("Not enough empty collage pockets for all overlapping text blocks.");
         return;
       }
       history.record();
@@ -1371,12 +1374,35 @@ export default function EditorShell({
     patchBar(selectedBar.id, smartPlacementPatchForBar(selectedBar, smartPlacementCandidate));
   }, [
     history,
+    currentTime,
     patchBar,
+    previewDuration,
     readOnly,
     selectedBar,
     smartPlacementCandidate,
-    smartPlacementCandidates,
     state.bars,
+    variant,
+  ]);
+
+  const applySelectedSmartPlacement = useCallback(() => {
+    if (readOnly || !selectedBar) return;
+    const candidate = isMasonryVariant(variant)
+      ? resolveSmartPlacementCandidate(variant, selectedBar, previewDuration, currentTime)
+      : smartPlacementCandidate;
+    if (!candidate) {
+      if (isMasonryVariant(variant)) {
+        setToast("No visible collage pocket can fit this text at this time.");
+      }
+      return;
+    }
+    patchBar(selectedBar.id, smartPlacementPatchForBar(selectedBar, candidate));
+  }, [
+    currentTime,
+    patchBar,
+    previewDuration,
+    readOnly,
+    selectedBar,
+    smartPlacementCandidate,
     variant,
   ]);
 
@@ -1767,11 +1793,12 @@ export default function EditorShell({
       }
       const draft = text.trim();
       if (!draft) return false;
+      const timing = textTimingAtPlayhead({ currentTime, previewDuration });
       const candidateSeedBars = Array.from({ length: 4 }, (_unused, index) =>
         newTextBar({
           id: `smart-draft-${index}`,
           text: draft,
-          timing: { start_s: 0, end_s: NEW_TEXT_DURATION_S },
+          timing,
           preset: DEFAULT_TEXT_PRESET,
         }),
       );
@@ -1779,6 +1806,7 @@ export default function EditorShell({
         variant,
         candidateSeedBars,
         previewDuration,
+        currentTime,
       );
       if (candidates.length === 0) {
         setToast("No empty masonry pocket is available for this text.");
@@ -1786,7 +1814,6 @@ export default function EditorShell({
       }
       const chunks = splitTextForSmartPlacement(draft, candidates);
       if (chunks.length === 0) return false;
-      const timing = textTimingAtPlayhead({ currentTime, previewDuration });
       const baseBars = chunks.map((chunk) =>
         newTextBar({
           id: crypto.randomUUID(),
@@ -3266,8 +3293,11 @@ export default function EditorShell({
           musicEditable={musicSwapEditable}
           onPickMusic={pickMusicTrack}
           onPatchMix={patchMixLevel}
-          smartPlaceAvailable={!!smartPlacementCandidate && !!selectedBar && !readOnly}
-          onSmartPlace={applySmartPlacement}
+
+          smartPlaceAvailable={
+            !!selectedBar && !readOnly && (isMasonryVariant(variant) || !!smartPlacementCandidate)
+          }
+          onSmartPlace={applySelectedSmartPlacement}
 	          onClose={clear}
           onPickPreset={pickPreset}
         />

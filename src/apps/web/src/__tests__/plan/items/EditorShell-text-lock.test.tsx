@@ -273,6 +273,23 @@ describe("EditorShell — light-layout empty-state Add-text CTA", () => {
 });
 
 describe("EditorShell — masonry smart placement history", () => {
+  it("anchors selected Smart place to the current playhead", async () => {
+    const variant = makeMasonryVariant();
+    variant.text_elements = variant.text_elements?.map((element) => ({ ...element, end_s: 8 }));
+    await renderShell(variant);
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 8 });
+    fireEvent.loadedMetadata(video);
+    Object.defineProperty(video, "currentTime", { configurable: true, writable: true, value: 6 });
+    fireEvent.timeUpdate(video);
+    fireEvent.click(screen.getByRole("button", { name: /^Text row 1, Title 1,/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Smart place" }));
+
+    const placedText = document.querySelector('[data-text-id="title-1"]') as HTMLElement;
+    expect(Number.parseFloat(placedText.style.left)).toBeGreaterThan(60);
+  });
+
   it("Smart place all becomes clean after Cmd+Z while Redo remains available", async () => {
     await renderShell(makeMasonryVariant());
 
@@ -299,7 +316,7 @@ describe("EditorShell — masonry smart placement history", () => {
 
     expect(save).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Not enough empty masonry pockets for all overlapping text blocks.",
+      "Not enough empty collage pockets for all overlapping text blocks.",
     );
   });
 });
