@@ -998,6 +998,22 @@ export interface EditorCapabilities {
     value: string;
     reason: "disabled" | "orientation_unsupported" | string | null;
   };
+  music_window?: {
+    editable: boolean;
+    preserve_available: boolean;
+    video_duration_s: number;
+    track_duration_s: number;
+    recommended_start_s: number;
+    beat_timestamps_s: number[];
+    reason:
+      | "track_unavailable"
+      | "video_duration_unknown"
+      | "track_duration_unknown"
+      | "song_shorter_than_video"
+      | "timing_metadata_unavailable"
+      | null;
+    preserve_reason: "linear_timeline_unavailable" | null;
+  };
 }
 
 export interface TextPlacementCandidate {

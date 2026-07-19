@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0.0] — 2026-07-19
+
+### Added
+- **Beat-synced song edits can now choose the exact section of a track that plays under the video.** The plan-item editor previews a fixed video-length window immediately, snaps it to the nearest beat, supports pointer and keyboard movement with undo/redo, and lets creators either preserve their existing cuts or rebuild them against the selected beat grid on Save. Song swaps, lyrics, recipes, preview offsets, and final audio now share one generation-safe effective window.
+
 ## [0.9.8.1] — 2026-07-19
 
 ### Fixed

@@ -27,6 +27,8 @@ def _make_track(
     published_at: datetime | None = None,
     archived_at: datetime | None = None,
     analysis_status: str = "ready",
+    duration_s: float | None = 180.0,
+    beat_timestamps_s: list[float] | None = None,
 ) -> MagicMock:
     """Return a MagicMock that looks like a MusicTrack ORM row."""
     t = MagicMock()
@@ -47,6 +49,8 @@ def _make_track(
     t.published_at = published_at or datetime.now(UTC)
     t.archived_at = archived_at
     t.analysis_status = analysis_status
+    t.duration_s = duration_s
+    t.beat_timestamps_s = beat_timestamps_s if beat_timestamps_s is not None else [0.0, 0.5, 1.0]
     return t
 
 
@@ -113,6 +117,8 @@ def test_list_music_tracks_returns_published_tracks(client: TestClient) -> None:
     assert t["section_duration_s"] == 30.0  # 50 - 20
     assert t["required_clips_min"] == 2
     assert t["required_clips_max"] == 5
+    assert t["duration_s"] == 180.0
+    assert t["beat_timestamps_s"] == [0.0, 0.5, 1.0]
 
 
 def test_list_music_tracks_section_duration_calculation(client: TestClient) -> None:
@@ -227,3 +233,20 @@ def test_list_music_tracks_preview_audio_none_without_audio(
         app.dependency_overrides.clear()
 
     assert resp.json()["tracks"][0]["preview_audio_url"] is None
+
+
+def test_list_music_tracks_sanitizes_invalid_duration_and_beats(client: TestClient) -> None:
+    track = _make_track(
+        duration_s=float("nan"),
+        beat_timestamps_s=[2.0, float("nan"), -1.0, "bad", 2.0],
+    )
+    app.dependency_overrides[get_db] = _override_get_db([track])
+    try:
+        resp = client.get("/music-tracks")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200, resp.text
+    summary = resp.json()["tracks"][0]
+    assert summary["duration_s"] is None
+    assert summary["beat_timestamps_s"] == [2.0]

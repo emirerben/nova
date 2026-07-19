@@ -126,7 +126,10 @@ export function computeToolDisabledReasons({
     out.text = reason;
     if (!isLyrics) out.styles = reason;
   }
-  if (capabilities?.sfx === false) {
+  // Sounds also owns the song-window selector. Keep the drawer reachable when
+  // that capability exists, even if SFX are disabled or the selector itself
+  // needs to explain a short-song/timing-metadata disabled state.
+  if (capabilities?.sfx === false && capabilities.music_window == null) {
     out.sounds = editorReasonCopy(
       capabilities.sfx_reason ?? "sound effects aren't available for this edit",
     );
@@ -163,8 +166,9 @@ export function planItemEditorDisabledReason(variant: PlanItemVariant | null): s
     !capabilities.split_clips &&
     !capabilities.mix &&
     !capabilities.sfx &&
-    !capabilities.overlays
-    && !capabilities.visual_blocks
+    !capabilities.overlays &&
+    !capabilities.visual_blocks &&
+    capabilities.music_window == null
   ) {
     return editorReasonCopy(capabilities.reason);
   }

@@ -91,6 +91,10 @@ export interface EditorCommitRequest {
   mix?: EditorCommitMix;
   /** New music track id. Omit when untouched. */
   music_track_id?: string | null;
+  music_window?: {
+    start_s: number;
+    alignment: "preserve_cuts" | "resync_beats";
+  };
   /** Full replacement sound-effect placement list. Omit when untouched. */
   sound_effects?: SoundEffectPlacement[];
   /** Full replacement media-overlay card list. Omit when untouched. */
@@ -152,6 +156,7 @@ export interface EditorCommitDraftSlot {
 export interface EditorCommitVariantBaseline {
   render_generation_id?: string | null;
   render_finished_at?: string | null;
+  music_track_id?: string | null;
   editor_capabilities?: {
     mix?: boolean;
   } | null;
@@ -185,6 +190,7 @@ export function buildEditorCommitRequest({
   mixLevel,
   musicDirty = false,
   musicTrackId,
+  musicWindow,
   sfxDirty = false,
   soundEffects = [],
   overlaysDirty = false,
@@ -212,6 +218,10 @@ export function buildEditorCommitRequest({
   mixLevel?: number | null;
   musicDirty?: boolean;
   musicTrackId?: string | null;
+  musicWindow?: {
+    startS: number;
+    alignment: "preserve_cuts" | "resync_beats";
+  };
   sfxDirty?: boolean;
   soundEffects?: SoundEffectPlacement[];
   overlaysDirty?: boolean;
@@ -256,7 +266,9 @@ export function buildEditorCommitRequest({
     text_elements: textDirty ? elements : undefined,
     caption_cues: captionDirty ? (captionCues ?? []) : undefined,
     caption_meta: captionMetaRequest,
-    timeline_slots: timelineDirty && !musicDirty
+    timeline_slots:
+      timelineDirty &&
+      ((!musicDirty && !musicWindow) || musicWindow?.alignment === "preserve_cuts")
       ? slots.map((s) => ({
           slot_id: s.slotId,
           clip_index: s.clipIndex,
@@ -269,7 +281,13 @@ export function buildEditorCommitRequest({
     mix: mixDirty && mixEditable && normalizedMix != null
       ? { music_level: normalizedMix }
       : undefined,
-    music_track_id: musicDirty ? musicTrackId ?? null : undefined,
+    music_track_id:
+      musicDirty && musicTrackId !== variant.music_track_id
+        ? musicTrackId ?? null
+        : undefined,
+    music_window: musicWindow
+      ? { start_s: musicWindow.startS, alignment: musicWindow.alignment }
+      : undefined,
     sound_effects: sfxDirty ? soundEffects : undefined,
     media_overlays: overlaysDirty ? mediaOverlays : undefined,
     visual_blocks: visualBlocksDirty ? visualBlocks : undefined,
@@ -291,8 +309,8 @@ function formatLoc(loc: unknown): string {
   return typeof loc === "string" ? loc : "detail";
 }
 
-/** Friendly copy for the timeline-validation machine codes the save endpoint
- * can 409/422 with (`_timeline_error` in generative_jobs.py). Codes not
+/** Friendly copy for machine-readable editor validation codes the save endpoint
+ * can return. Codes not
  * listed here fall through to the raw string — better than nothing, but add
  * new codes here as they're discovered surfacing verbatim to users. */
 const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
@@ -307,6 +325,21 @@ const TIMELINE_ERROR_MESSAGES: Record<string, string> = {
   TIMELINE_STALE: "This video changed in another tab — reload to continue.",
   masonry_preset: "Collage presets do not use a clip timeline.",
   sources_expired: "One of the clips has expired and needs to be re-uploaded.",
+  music_window_out_of_range:
+    "That song section is no longer available. Choose another point in the song.",
+  music_window_unsupported_variant:
+    "Song section editing is not available for this version.",
+  music_track_unavailable:
+    "That song is no longer available. Choose another song and try again.",
+  video_duration_unknown:
+    "The video duration is unavailable, so its song section cannot be changed.",
+  track_duration_unknown:
+    "The song duration is unavailable, so its section cannot be changed.",
+  song_shorter_than_video: "This song is shorter than the video.",
+  timing_metadata_unavailable:
+    "Beat timing is unavailable for this song, so its section cannot be changed.",
+  linear_timeline_unavailable:
+    "This older edit cannot preserve its cuts. Choose Re-sync to beats instead.",
 };
 
 function formatDetailValue(detail: unknown, fallback: string): string {

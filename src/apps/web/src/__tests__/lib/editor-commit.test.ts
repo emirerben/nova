@@ -273,7 +273,10 @@ describe("buildEditorCommitRequest", () => {
       slots: [],
       titleDirty: false,
       title: "",
-      variant: { render_generation_id: "gen-current" },
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
     });
 
     expect(body.visual_blocks).toEqual([block]);
@@ -325,6 +328,76 @@ describe("buildEditorCommitRequest", () => {
     expect(body.music_track_id).toBe("track-new");
     expect(body.timeline_slots).toBeUndefined();
     expect(body.base_generation).toBe("gen-current");
+  });
+
+  it("atomically preserves unsaved timeline edits with a song window", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: true,
+      slots: [
+        {
+          slotId: "slot-a",
+          clipIndex: 0,
+          inS: 1,
+          durationS: 2,
+          durationBeats: null,
+          removed: false,
+        },
+      ],
+      musicDirty: true,
+      musicTrackId: "track-current",
+      musicWindow: { startS: 14.25, alignment: "preserve_cuts" },
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
+    });
+
+    expect(body.music_window).toEqual({
+      start_s: 14.25,
+      alignment: "preserve_cuts",
+    });
+    expect(body.timeline_slots).toEqual([
+      {
+        slot_id: "slot-a",
+        clip_index: 0,
+        in_s: 1,
+        duration_s: 2,
+        duration_beats: null,
+        removed: false,
+      },
+    ]);
+    expect(body.music_track_id).toBeUndefined();
+  });
+
+  it("omits unsaved timeline edits when the song window re-syncs cuts", () => {
+    const body = buildEditorCommitRequest({
+      elements: [element],
+      textDirty: false,
+      timelineDirty: true,
+      slots: [
+        {
+          slotId: "slot-a",
+          clipIndex: 0,
+          inS: 1,
+          durationS: 2,
+          durationBeats: null,
+          removed: false,
+        },
+      ],
+      musicWindow: { startS: 14.25, alignment: "resync_beats" },
+      titleDirty: false,
+      title: "",
+      variant: {
+        render_generation_id: "gen-current",
+        music_track_id: "track-current",
+      },
+    });
+
+    expect(body.timeline_slots).toBeUndefined();
   });
 
   it("emits caption_meta only when dirty", () => {
@@ -553,6 +626,16 @@ describe("formatEditorCommitError", () => {
         "out-of-bounds timeline code object",
         { detail: { code: "TIMELINE_OUT_OF_BOUNDS" } },
         "One of the clips ran out of footage for this edit. Try trimming it or picking a different clip.",
+      ],
+      [
+        "unavailable song code object",
+        { detail: { code: "music_track_unavailable" } },
+        "That song is no longer available. Choose another song and try again.",
+      ],
+      [
+        "legacy preserve code object",
+        { detail: { code: "linear_timeline_unavailable" } },
+        "This older edit cannot preserve its cuts. Choose Re-sync to beats instead.",
       ],
     ];
 

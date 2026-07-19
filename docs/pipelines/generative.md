@@ -117,6 +117,38 @@ AI's assembly decisions, not pixels.
   enforces the API's 50-element / 500-character limits before mutating the timeline,
   so rejected drafts never create empty or unsavable bars.
 
+### Video-length song windows
+
+Beat-synced `song_text` and `song_lyrics` variants can move an exact-video-duration
+window across their assigned track. The server-owned
+`editor_capabilities.music_window` contract supplies the authoritative video and
+track durations, recommended start, beat timestamps, editability reason, and whether
+the stored timeline is linear enough to preserve. A missing capability hides the
+control during frontend-first deploy skew.
+
+The atomic editor commit accepts `music_window.start_s` plus one alignment choice:
+
+- `preserve_cuts` freezes the current effective timeline (including clip changes in
+  the same commit) to second-based durations, replaces its relative beat grid, and
+  skips matching.
+- `resync_beats` clears `user_timeline`; the render matches against the selected
+  window and writes a fresh AI timeline and beat grid.
+
+`_effective_music_window` in `generative_build.py` is the single render-time source
+for recipe generation, lyric projection, preview offset, and final mixing. It snaps
+the start to the nearest usable beat, keeps the end at exactly
+`start + video_duration`, and marks validated windows so the legacy near-EOF audio
+clamp cannot silently move them. Synthetic endpoints cover partial first/final beat
+fragments; a sub-minimum final fragment merges into the preceding slot instead of
+shortening output. The effective start persists only on the variant as
+`music_start_s`; track swaps through legacy routes reset it to the new track's
+recommended section.
+
+Lyric windows are rematerialized after a move. Same-track user overrides survive
+only when both their stable line key and original-text fingerprint still match;
+out-of-window lines are removed and newly visible lines are added. A track change
+always clears prior lyric overrides.
+
 ## SFX + media-overlay lanes on caption archetypes (plan 010, v0.7.25.0)
 
 Caption archetypes (`CAPTION_EDIT_ARCHETYPES = {"narrated", "subtitled"}`,

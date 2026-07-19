@@ -5668,6 +5668,7 @@ def _mix_template_audio(
     audio_start_offset_s: float = 0.0,
     *,
     require_audio: bool = False,
+    validated_window_duration_s: float | None = None,
 ) -> None:
     """Replace assembled video's audio with template music track.
 
@@ -5709,7 +5710,7 @@ def _mix_template_audio(
     # Clamp offset: if it would seek past EOF (or close to it), drop back so
     # at least 5s of audio remains before -stream_loop wraps around.
     safe_offset = max(0.0, float(audio_start_offset_s or 0.0))
-    if audio_dur > 0 and safe_offset > 0:
+    if audio_dur > 0 and safe_offset > 0 and validated_window_duration_s is None:
         safe_offset = min(safe_offset, max(0.0, audio_dur - 5.0))
     if safe_offset > 0 and audio_dur > 0:
         # Audio available to play after the seek = audio_dur - safe_offset.

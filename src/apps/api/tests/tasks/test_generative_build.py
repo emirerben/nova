@@ -49,6 +49,79 @@ def _track(track_id="t1", lyrics_cached=None):
     )
 
 
+def test_effective_music_window_snaps_once_and_keeps_exact_video_duration() -> None:
+    track = _track()
+    track.duration_s = 60.0
+    track.beat_timestamps_s = [0.0, 10.0, 20.0, 30.0, 40.0, 55.0, 59.0]
+
+    window = gb._effective_music_window(
+        track,
+        requested_start_s=55.2,
+        requested_duration_s=4.0,
+        fallback_footage_s=20.0,
+    )
+
+    assert window["validated"] is True
+    assert window["start_s"] == pytest.approx(55.0)
+    assert window["end_s"] == pytest.approx(59.0)
+    assert window["duration_s"] == pytest.approx(4.0)
+    assert window["track_config"]["best_start_s"] == pytest.approx(55.0)
+    assert window["track_config"]["best_end_s"] == pytest.approx(59.0)
+    assert window["track_config"]["exact_window"] is True
+
+
+def test_effective_music_window_never_snaps_past_legal_start() -> None:
+    track = _track()
+    track.duration_s = 20.0
+    track.beat_timestamps_s = [14.0, 15.019]
+
+    window = gb._effective_music_window(
+        track,
+        requested_start_s=15.0,
+        requested_duration_s=5.0,
+        fallback_footage_s=5.0,
+    )
+
+    assert window["start_s"] == pytest.approx(14.0)
+    assert window["end_s"] == pytest.approx(19.0)
+
+
+def test_project_recipe_overlays_to_exact_timeline_steps() -> None:
+    recipe = {
+        "slots": [
+            {
+                "target_duration_s": 1.0,
+                "text_overlays": [{"text": "one", "start_s": 0.5, "end_s": 1.0}],
+            },
+            {
+                "target_duration_s": 1.0,
+                "text_overlays": [{"text": "two", "start_s": 0.0, "end_s": 0.8}],
+            },
+        ]
+    }
+    steps = [
+        types.SimpleNamespace(slot={"target_duration_s": 0.75}),
+        types.SimpleNamespace(slot={"target_duration_s": 1.25}),
+    ]
+
+    gb._project_recipe_overlays_to_steps(recipe, steps)
+
+    assert steps[0].slot["text_overlays"] == [{"text": "one", "start_s": 0.5, "end_s": 0.75}]
+    assert steps[1].slot["text_overlays"] == [
+        {"text": "one", "start_s": 0.0, "end_s": 0.25},
+        {"text": "two", "start_s": 0.25, "end_s": 1.05},
+    ]
+
+
+def test_variant_storage_key_scopes_rerenders_without_changing_initial_keys() -> None:
+    assert gb._variant_storage_key("job", "variant_1_song.mp4") == (
+        "generative-jobs/job/variant_1_song.mp4"
+    )
+    assert gb._variant_storage_key("job", "variant_1_song.mp4", "gen-123") == (
+        "generative-jobs/job/variant_1_song_gen123.mp4"
+    )
+
+
 # ── Variant spec ────────────────────────────────────────────────────────────────
 
 
@@ -1014,6 +1087,77 @@ def test_song_variant_calls_mix(monkeypatch, tmp_path):
     assert len(mix_calls) == 1  # song variant DOES mix the track audio
 
 
+def test_selected_music_window_drives_recipe_lyrics_preview_and_mix(monkeypatch, tmp_path):
+    _patch_render_helpers(monkeypatch, [])
+    import app.pipeline.music_recipe as mr
+    import app.tasks.template_orchestrate as to
+
+    captured: dict = {}
+
+    def _recipe(track_data, **_kwargs):
+        captured["recipe_start"] = track_data["track_config"]["best_start_s"]
+        captured["recipe_end"] = track_data["track_config"]["best_end_s"]
+        captured["exact_window"] = track_data["track_config"]["exact_window"]
+        return {
+            "slots": [{"position": 1, "target_duration_s": 4.0, "text_overlays": []}],
+            "beat_timestamps_s": [0.0, 4.0],
+        }
+
+    def _lyrics(recipe, _track, **kwargs):
+        captured["lyrics_start"] = kwargs["music_start_s"]
+        captured["lyrics_end"] = kwargs["music_end_s"]
+        return recipe, []
+
+    def _mix(_video, _audio, output, _tmpdir, **kwargs):
+        captured["mix_start"] = kwargs["audio_start_offset_s"]
+        captured["mix_duration"] = kwargs["validated_window_duration_s"]
+        with open(output, "wb") as file:
+            file.write(b"\x00" * 16)
+
+    monkeypatch.setattr(mr, "generate_music_recipe", _recipe)
+    monkeypatch.setattr(gb, "_inject_lyrics", _lyrics)
+    monkeypatch.setattr(to, "_mix_template_audio", _mix)
+
+    track = _track()
+    track.beat_timestamps_s = [0.0, 10.0, 20.0, 30.0, 40.0, 55.0, 59.0]
+    vdir = tmp_path / "selected-window"
+    vdir.mkdir()
+    result = gb._render_generative_variant(
+        job_id="j",
+        rank=1,
+        spec={
+            "variant_id": "song_lyrics",
+            "rank": 1,
+            "text_mode": "lyrics",
+            "track": track,
+            "music_start_s": 55.2,
+            "music_window_video_duration_s": 4.0,
+        },
+        clip_metas=[_Meta("c1", 5.0)],
+        clip_id_to_local={"c1": "/x.mp4"},
+        clip_id_to_gcs={"c1": "music-uploads/x.mp4"},
+        probe_map={},
+        available_footage_s=12.0,
+        agent_text=None,
+        agent_form={},
+        variant_dir=str(vdir),
+        lyrics_enabled=True,
+    )
+
+    assert result["ok"] is True
+    assert result["music_start_s"] == pytest.approx(55.0)
+    assert result["music_window_video_duration_s"] == pytest.approx(4.0)
+    assert captured == {
+        "recipe_start": 55.0,
+        "recipe_end": 59.0,
+        "exact_window": True,
+        "lyrics_start": 55.0,
+        "lyrics_end": 59.0,
+        "mix_start": 55.0,
+        "mix_duration": 4.0,
+    }
+
+
 def test_voiceover_variant_mixes_voice_and_caps_to_voice_length(monkeypatch, tmp_path):
     """voiceover_only: mixes the user's voice (NOT the template-audio path), persists
     the mix slider value, and caps the edit to min(footage, voice, 60)."""
@@ -1223,6 +1367,37 @@ def test_inject_lyrics_preserves_sync_offset_with_style_set(monkeypatch):
     assert captured["cfg"]["sync_offset_s"] == -0.75
     assert "style" not in captured["cfg"]
     assert "post_dwell_s" not in captured["cfg"]
+
+
+def test_inject_lyrics_snaps_against_effective_relative_recipe_grid(monkeypatch):
+    captured: dict = {}
+
+    def _fake_compute(slots, beats, **kwargs):
+        captured["beats"] = beats
+        return [2.0]
+
+    monkeypatch.setattr(
+        "app.tasks.template_orchestrate.compute_snapped_slot_durations",
+        _fake_compute,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.lyric_injector.inject_lyric_overlays",
+        lambda recipe_dict, *_args, **_kwargs: recipe_dict,
+    )
+    monkeypatch.setattr(
+        "app.pipeline.lyric_injector.build_lyric_overlay_snapshot",
+        lambda *_args, **_kwargs: [],
+    )
+    track = _track()
+    track.beat_timestamps_s = [55.0, 57.0, 59.0]
+    recipe = {
+        "beat_timestamps_s": [0.0, 2.0, 4.0],
+        "slots": [{"target_duration_s": 2.0, "text_overlays": []}],
+    }
+
+    gb._inject_lyrics(recipe, track, music_start_s=55.0, music_end_s=59.0)
+
+    assert captured["beats"] == [0.0, 2.0, 4.0]
 
 
 def test_select_style_set_falls_back_to_default_on_failure(monkeypatch):

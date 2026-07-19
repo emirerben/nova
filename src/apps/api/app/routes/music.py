@@ -3,9 +3,11 @@
 GET /music-tracks  — list published music tracks for the gallery
 """
 
+import math
+
 import structlog
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,12 +40,36 @@ def _preview_audio_url(audio_gcs_path: str | None) -> str | None:
         return None
 
 
+def _public_duration(value: object) -> float | None:
+    try:
+        duration = float(value or 0.0)
+    except (TypeError, ValueError):
+        return None
+    return round(duration, 3) if math.isfinite(duration) and duration > 0 else None
+
+
+def _public_beats(values: object) -> list[float]:
+    if not isinstance(values, list):
+        return []
+    beats: list[float] = []
+    for value in values:
+        try:
+            beat = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(beat) and beat >= 0:
+            beats.append(round(beat, 3))
+    return sorted(set(beats))
+
+
 class MusicTrackSummary(BaseModel):
     id: str
     title: str
     artist: str
     thumbnail_url: str | None
     section_duration_s: float
+    duration_s: float | None = None
+    beat_timestamps_s: list[float] = Field(default_factory=list)
     required_clips_min: int
     required_clips_max: int
     # When the track has a typed-slot recipe (Love-From-Moon style), the
@@ -120,6 +146,8 @@ async def list_music_tracks(
                 artist=t.artist,
                 thumbnail_url=t.thumbnail_url,
                 section_duration_s=section_duration_s,
+                duration_s=_public_duration(t.duration_s),
+                beat_timestamps_s=_public_beats(t.beat_timestamps_s),
                 required_clips_min=req_min,
                 required_clips_max=req_max,
                 template_kind=template_kind,

@@ -16,6 +16,8 @@ export interface MusicTrackSummary {
   artist: string;
   thumbnail_url: string | null;
   section_duration_s: number;
+  duration_s?: number | null;
+  beat_timestamps_s?: number[];
   required_clips_min: number;
   required_clips_max: number;
   /**
