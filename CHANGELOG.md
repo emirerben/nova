@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.9.0] — 2026-07-19
+
+### Fixed
+- **Landscape edits now preview the same centered 16:9 crop users receive after rendering.** Portrait previews keep their existing fit, while every landscape video deck fills the wide canvas without stretching or letterboxing.
+
 ## [0.9.8.1] — 2026-07-19
 
 ### Fixed
