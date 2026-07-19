@@ -2153,10 +2153,10 @@ def validate_text_elements_payload(
                     )
             validated = [e.model_dump() for e in coerced]
             validated = append_ai_text_tombstones(variant, validated)
-        elif variant.get("text_elements_user_edited"):
-            # Explicit empty list = delete all generated AI text. Persist tombstones
-            # so the read adapter does not resurrect projected bars on reload.
-            validated = append_ai_text_tombstones(variant, [])
+    elif variant.get("text_elements_user_edited"):
+        # Explicit empty list = delete all generated AI text. Persist tombstones
+        # so the read adapter does not resurrect projected bars on reload.
+        validated = append_ai_text_tombstones(variant, [])
     return validated, _is_first_sequence_edit
 
 

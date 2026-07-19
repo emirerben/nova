@@ -2995,7 +2995,8 @@ export default function EditorShell({
         selected?.visual_block_id &&
         state.bars.filter((bar) => bar.visual_block_id === selected.visual_block_id).length <= 1
       ) {
-        setToast("Text cards need at least one linked text element.");
+        deleteVisualBlock(selected.visual_block_id);
+        clear();
         return;
       }
       history.record();
