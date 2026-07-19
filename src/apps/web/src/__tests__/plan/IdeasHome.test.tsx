@@ -138,6 +138,39 @@ describe("IdeasHome", () => {
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
+  it("shows the localized production date next to a ready status", () => {
+    const finishedAt = "2026-07-19T12:30:00Z";
+    render(
+      <IdeasHome
+        plan={makePlan([
+          makeItem({ id: "ready", status: "ready", position: 1, finished_at: finishedAt }),
+        ])}
+        onRefresh={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByText(`· ${new Date(finishedAt).toLocaleDateString()}`))
+      .toBeInTheDocument();
+  });
+
+  it.each([null, undefined, "not-a-date"])(
+    "keeps the ready status clean when finished_at is %s",
+    (finishedAt) => {
+      render(
+        <IdeasHome
+          plan={makePlan([
+            makeItem({ id: "ready", status: "ready", position: 1, finished_at: finishedAt }),
+          ])}
+          onRefresh={jest.fn()}
+        />,
+      );
+
+      expect(screen.getByText("Ready to post")).toBeInTheDocument();
+      expect(screen.queryByText(/Invalid Date/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^· /)).not.toBeInTheDocument();
+    },
+  );
+
   it.each<PlanItemStatus>(["ready", "generating", "rerolling"])(
     "shows delete confirmation for %s rows",
     (status) => {

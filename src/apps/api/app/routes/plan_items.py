@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import datetime
 from typing import Annotated, Literal
 
 import structlog
@@ -227,6 +228,7 @@ class PlanItemResponse(BaseModel):
     clip_assignments: list[ClipAssignmentResponse] = []
     status: str
     current_job_id: str | None
+    finished_at: datetime | None = None
     user_edited: bool
     # Creator Agent M4: instruction level from the owning user's style entity.
     # Drives the instructed/uninstructed upload split on the item page:
@@ -332,6 +334,7 @@ def plan_item_response(
         clip_assignments=reconciled_assignments,
         status=derive_item_status(item),
         current_job_id=str(item.current_job_id) if item.current_job_id else None,
+        finished_at=item.current_job.finished_at if item.current_job is not None else None,
         user_edited=item.user_edited,
         instruction_level=instruction_level,
         conformance=item.conformance,
