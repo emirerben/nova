@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.3.0] — 2026-07-19
+
+### Fixed
+- **Behind-subject text now stays visible wherever the subject does not overlap it.** Moving foreground objects occlude only intersecting glyph pixels instead of fading or hiding the entire text layer.
+
 ## [0.9.2.0] — 2026-07-19
 
 ### Added
