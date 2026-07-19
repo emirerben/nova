@@ -75,10 +75,15 @@ async function proxy(
     return NextResponse.json({ detail: "Backend unavailable" }, { status: 502 });
   }
 
-  const resBody = await upstreamRes.arrayBuffer();
+  // Fetch forbids bodies on HEAD responses and 204/205/304 statuses. Even an
+  // empty ArrayBuffer is considered a body and makes NextResponse throw,
+  // turning a successful upstream DELETE into a 500 at the proxy boundary.
+  const bodylessResponse =
+    req.method === "HEAD" || [204, 205, 304].includes(upstreamRes.status);
+  const resBody = bodylessResponse ? null : await upstreamRes.arrayBuffer();
   return new NextResponse(resBody, {
     status: upstreamRes.status,
-    headers: { "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json" },
+    headers: upstreamRes.headers,
   });
 }
 

@@ -203,20 +203,77 @@ describe("IdeasHome", () => {
   it.each<PlanItemStatus>(["idea", "awaiting_clips", "failed"])(
     "deletes %s rows immediately",
     async (status) => {
+      const onPlanChange = jest.fn();
+      const onRefresh = jest.fn().mockResolvedValue(undefined);
       render(
         <IdeasHome
           plan={makePlan([makeItem({ id: status, idea: `${status} idea`, status, position: 1 })])}
-          onRefresh={jest.fn()}
-          onPlanChange={jest.fn()}
+          onRefresh={onRefresh}
+          onPlanChange={onPlanChange}
         />,
       );
 
       fireEvent.click(screen.getByRole("button", { name: `Remove idea: ${status} idea` }));
 
       await waitFor(() => expect(mockDeleteIdea).toHaveBeenCalledWith(status));
+      expect(onPlanChange).toHaveBeenCalledWith(
+        expect.objectContaining({ items: [] }),
+      );
+      expect(onRefresh).toHaveBeenCalledTimes(1);
       expect(screen.queryByText(/Delete idea\? It has a video/)).not.toBeInTheDocument();
     },
   );
+
+  it("does not report a completed delete as failed when refresh fails", async () => {
+    const onPlanChange = jest.fn();
+    const onRefresh = jest.fn().mockRejectedValue(new Error("refresh failed"));
+    render(
+      <IdeasHome
+        plan={makePlan([makeItem({ id: "delete-me", idea: "Delete me", position: 1 })])}
+        onRefresh={onRefresh}
+        onPlanChange={onPlanChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove idea: Delete me" }));
+
+    await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+    expect(onPlanChange).toHaveBeenCalledWith(expect.objectContaining({ items: [] }));
+    expect(screen.queryByText("Couldn't save.")).not.toBeInTheDocument();
+  });
+
+  it("serializes rapid deletes so stale optimistic snapshots cannot restore a row", async () => {
+    let resolveDelete: () => void = () => {};
+    mockDeleteIdea.mockImplementationOnce(
+      () => new Promise<void>((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+    render(
+      <IdeasHome
+        plan={makePlan([
+          makeItem({ id: "first", idea: "First", position: 2 }),
+          makeItem({ id: "second", idea: "Second", position: 1 }),
+        ])}
+        onRefresh={jest.fn().mockResolvedValue(undefined)}
+        onPlanChange={jest.fn()}
+      />,
+    );
+
+    const firstButton = screen.getByRole("button", { name: "Remove idea: First" });
+    const secondButton = screen.getByRole("button", { name: "Remove idea: Second" });
+    fireEvent.click(firstButton);
+
+    expect(secondButton).toBeDisabled();
+    fireEvent.click(secondButton);
+
+    expect(mockDeleteIdea).toHaveBeenCalledTimes(1);
+    expect(mockDeleteIdea).toHaveBeenCalledWith("first");
+
+    await act(async () => resolveDelete());
+    expect(screen.queryByText("Couldn't save.")).not.toBeInTheDocument();
+    await waitFor(() => expect(secondButton).not.toBeDisabled());
+  });
 
   it("renders the empty-state invitation", () => {
     render(

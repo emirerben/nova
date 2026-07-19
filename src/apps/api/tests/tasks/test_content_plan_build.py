@@ -574,6 +574,23 @@ def test_persona_posts_per_week_reaches_plan_input() -> None:
 # ── M1 idea_seeds plumbing: persona.idea_seeds[].text → ContentPlanInput ─────
 
 
+def test_locked_persona_serializes_seed_status_updates() -> None:
+    """Plan builds must join the shared persona lock before mutating idea_seeds."""
+    from app.tasks.content_plan_build import _locked_persona  # noqa: PLC0415
+
+    persona_id = uuid.uuid4()
+    persona_row = MagicMock()
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=persona_row)
+    session = MagicMock()
+    session.execute = MagicMock(return_value=result)
+
+    assert _locked_persona(session, persona_id) is persona_row
+    stmt = session.execute.call_args.args[0]
+    assert "FOR UPDATE" in str(stmt).upper()
+    assert stmt.get_execution_options()["populate_existing"] is True
+
+
 def _gen_session(plan, persona_row) -> MagicMock:
     """sync_session context mock for generate_content_plan."""
     session = MagicMock()

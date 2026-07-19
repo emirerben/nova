@@ -24,7 +24,9 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const generatePendingRef = useRef(false);
+  const deletePendingRef = useRef(false);
   const reconcileTimeoutRef = useRef<number | null>(null);
+  const deleteReconcileTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -33,6 +35,10 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
       if (reconcileTimeoutRef.current !== null) {
         window.clearTimeout(reconcileTimeoutRef.current);
         reconcileTimeoutRef.current = null;
+      }
+      if (deleteReconcileTimeoutRef.current !== null) {
+        window.clearTimeout(deleteReconcileTimeoutRef.current);
+        deleteReconcileTimeoutRef.current = null;
       }
     };
   }, []);
@@ -63,14 +69,42 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
   }
 
   async function handleDelete(itemId: string) {
+    if (deletePendingRef.current) return;
+    deletePendingRef.current = true;
     setMutState("saving");
     try {
       await deleteIdea(itemId);
+      onPlanChange({
+        ...plan,
+        items: (plan.items ?? []).filter((item) => item.id !== itemId),
+      });
       setConfirmingId(null);
-      setMutState("idle");
-      await onRefresh();
     } catch {
       setMutState("error");
+      deletePendingRef.current = false;
+      return;
+    }
+    try {
+      await Promise.race([
+        Promise.resolve(onRefresh()),
+        new Promise<void>((resolve) => {
+          deleteReconcileTimeoutRef.current = window.setTimeout(() => {
+            deleteReconcileTimeoutRef.current = null;
+            resolve();
+          }, RECONCILE_TIMEOUT_MS);
+        }),
+      ]);
+    } catch {
+      // The irreversible DELETE already succeeded and local state is correct.
+      // A later page refresh will retry reconciliation without showing a false
+      // "Couldn't save" error for the completed deletion.
+    } finally {
+      if (deleteReconcileTimeoutRef.current !== null) {
+        window.clearTimeout(deleteReconcileTimeoutRef.current);
+        deleteReconcileTimeoutRef.current = null;
+      }
+      if (mountedRef.current) setMutState("idle");
+      deletePendingRef.current = false;
     }
   }
 
@@ -234,6 +268,7 @@ export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
             item={item}
             ordinal={index + 1}
             confirming={confirmingId === item.id}
+            deleteDisabled={mutState === "saving"}
             onCancelConfirm={() => setConfirmingId(null)}
             onDelete={() => requestDelete(item)}
             onConfirmDelete={() => void handleDelete(item.id)}
@@ -271,6 +306,7 @@ interface IdeaLedgerRowProps {
   item: PlanItem;
   ordinal: number;
   confirming: boolean;
+  deleteDisabled: boolean;
   onCancelConfirm: () => void;
   onDelete: () => void;
   onConfirmDelete: () => void;
@@ -280,6 +316,7 @@ function IdeaLedgerRow({
   item,
   ordinal,
   confirming,
+  deleteDisabled,
   onCancelConfirm,
   onDelete,
   onConfirmDelete,
@@ -315,7 +352,11 @@ function IdeaLedgerRow({
       </Link>
       <div className="flex min-h-[28px] items-start justify-end">
         {confirming ? (
-          <DeleteConfirm onKeep={onCancelConfirm} onDelete={onConfirmDelete} />
+          <DeleteConfirm
+            disabled={deleteDisabled}
+            onKeep={onCancelConfirm}
+            onDelete={onConfirmDelete}
+          />
         ) : (
           <StatusSlot
             status={item.status}
@@ -327,8 +368,9 @@ function IdeaLedgerRow({
       <button
         type="button"
         onClick={onDelete}
+        disabled={deleteDisabled}
         aria-label={`Remove idea: ${item.idea}`}
-        className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded text-[#a1a1aa] opacity-100 transition-opacity hover:text-[#0c0c0e] focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
+        className="flex h-[28px] w-[28px] shrink-0 items-center justify-center rounded text-[#a1a1aa] opacity-100 transition-opacity hover:text-[#0c0c0e] focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-[#0c0c0e] disabled:cursor-wait disabled:opacity-40 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100"
       >
         ×
       </button>
@@ -393,9 +435,11 @@ function formatFinishedDate(value?: string | null): string | null {
 }
 
 function DeleteConfirm({
+  disabled,
   onKeep,
   onDelete,
 }: {
+  disabled: boolean;
   onKeep: () => void;
   onDelete: () => void;
 }) {
@@ -405,6 +449,7 @@ function DeleteConfirm({
       <button
         type="button"
         onClick={onKeep}
+        disabled={disabled}
         className="underline underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
       >
         Keep
@@ -413,6 +458,7 @@ function DeleteConfirm({
       <button
         type="button"
         onClick={onDelete}
+        disabled={disabled}
         className="underline underline-offset-4 hover:text-[#0c0c0e] focus-visible:outline-2 focus-visible:outline-[#0c0c0e]"
       >
         Delete

@@ -8,6 +8,7 @@ T14: POST /plan-items/{id}/expand does NOT write to DB (propose-only)
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections import deque
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -177,16 +178,16 @@ def test_add_idea_creates_plan_item_and_seed_mirror(client: TestClient) -> None:
     db.delete = AsyncMock()
     db.add = MagicMock()
     db.refresh = AsyncMock()
-    db.get = AsyncMock(side_effect=[persona, plan, plan])
-    # First execute: plan lookup. Second execute: reloaded item.
+    db.get = AsyncMock(return_value=plan)
+    # Plan lookup → locked persona seed write → reloaded item.
     db.execute = AsyncMock(
         side_effect=[
             MagicMock(
                 scalar_one_or_none=MagicMock(return_value=plan),
                 scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[plan]))),
             ),
+            MagicMock(scalar_one_or_none=MagicMock(return_value=persona)),
             MagicMock(scalar_one_or_none=MagicMock(return_value=new_item)),
-            MagicMock(scalar_one_or_none=MagicMock(return_value=plan)),
         ]
     )
 
@@ -199,15 +200,22 @@ def test_add_idea_creates_plan_item_and_seed_mirror(client: TestClient) -> None:
     assert resp.status_code == 201
     db.add.assert_called()
     db.commit.assert_awaited()
+    persona_stmt = db.execute.call_args_list[1].args[0]
+    assert "FOR UPDATE" in str(persona_stmt).upper()
 
 
 # ── T12: DELETE refuses with active job or clips ─────────────────────────────
 
 
-def test_delete_idea_refuses_with_active_job(client: TestClient) -> None:
-    """DELETE /plan-items/{id} returns 409 when a job is generating."""
+def test_delete_idea_refuses_with_active_job_and_preserves_seed(client: TestClient) -> None:
+    """A generating job preserves both its PlanItem and persistent idea seed."""
     user = _user()
     item, plan = _idea_item(user.id, item_status="generating")
+    seed_id = uuid.uuid4().hex
+    item.source_idea_seed_id = seed_id
+    original_seeds = [{"id": seed_id, "text": item.idea, "status": "in_plan"}]
+    persona = MagicMock()
+    persona.idea_seeds = list(original_seeds)
     # Simulate a live job.
     job = MagicMock()
     job.status = "processing"
@@ -215,7 +223,9 @@ def test_delete_idea_refuses_with_active_job(client: TestClient) -> None:
     item.current_job_id = uuid.uuid4()
 
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan), _result(item)])
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item)])
     db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
@@ -223,15 +233,26 @@ def test_delete_idea_refuses_with_active_job(client: TestClient) -> None:
 
     resp = client.delete(f"/plan-items/{item.id}")
     assert resp.status_code == 409
+    assert persona.idea_seeds == original_seeds
+    db.delete.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    db.get.assert_awaited_once()
 
 
-def test_delete_idea_refuses_with_clips(client: TestClient) -> None:
-    """DELETE /plan-items/{id} returns 409 when the item has clips."""
+def test_delete_idea_refuses_with_clips_and_preserves_seed(client: TestClient) -> None:
+    """Attached clips preserve both their PlanItem and persistent idea seed."""
     user = _user()
     item, plan = _idea_item(user.id, clips=["users/u1/clip.mp4"])
+    seed_id = uuid.uuid4().hex
+    item.source_idea_seed_id = seed_id
+    original_seeds = [{"id": seed_id, "text": item.idea, "status": "in_plan"}]
+    persona = MagicMock()
+    persona.idea_seeds = list(original_seeds)
 
     db = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item)])
     db.get = AsyncMock(return_value=plan)
 
     app.dependency_overrides[get_current_user] = lambda: user
@@ -239,18 +260,22 @@ def test_delete_idea_refuses_with_clips(client: TestClient) -> None:
 
     resp = client.delete(f"/plan-items/{item.id}")
     assert resp.status_code == 409
+    assert persona.idea_seeds == original_seeds
+    db.delete.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    db.get.assert_awaited_once()
 
 
-def test_delete_idea_succeeds_when_clean(client: TestClient) -> None:
-    """DELETE /plan-items/{id} returns 204 for an un-started idea without clips."""
+def test_delete_unlinked_idea_succeeds_when_clean(client: TestClient) -> None:
+    """An unlinked clean idea deletes without requiring a persona seed."""
     user = _user()
     item, plan = _idea_item(user.id)
 
     db = AsyncMock()
     db.delete = AsyncMock()
     db.commit = AsyncMock()
-    db.execute = AsyncMock(side_effect=[_result(item), _result(plan)])
-    db.get = AsyncMock(return_value=plan)
+    db.execute = AsyncMock(side_effect=[_result(item), _result(item)])
+    db.get = AsyncMock(side_effect=[plan, plan])
 
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -259,6 +284,138 @@ def test_delete_idea_succeeds_when_clean(client: TestClient) -> None:
     assert resp.status_code == 204
     db.delete.assert_awaited_with(item)
     db.commit.assert_awaited()
+    assert db.get.await_count == 2
+
+
+def test_delete_linked_idea_removes_seed_and_item_atomically(client: TestClient) -> None:
+    """A clean linked idea removes its persona seed in the item delete commit."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    seed_id = uuid.uuid4().hex
+    item.source_idea_seed_id = seed_id
+    other_seed = {"id": uuid.uuid4().hex, "text": "keep me", "status": "pending"}
+    persona = MagicMock()
+    persona.idea_seeds = [
+        {"id": seed_id, "text": item.idea, "status": "in_plan"},
+        other_seed,
+    ]
+
+    db = AsyncMock()
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona), _result(item)])
+    db.get = AsyncMock(side_effect=[plan, plan])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.delete(f"/plan-items/{item.id}")
+    assert resp.status_code == 204
+    assert persona.idea_seeds == [other_seed]
+    db.delete.assert_awaited_once_with(item)
+    db.commit.assert_awaited_once()
+    persona_stmt = db.execute.call_args_list[1].args[0]
+    assert "FOR UPDATE" in str(persona_stmt).upper()
+    item_stmt = db.execute.call_args_list[2].args[0]
+    assert "FOR UPDATE" in str(item_stmt).upper()
+    assert item_stmt.get_execution_options()["populate_existing"] is True
+
+
+@pytest.mark.parametrize("seed_state", ["missing_persona", "missing_entry"])
+def test_delete_linked_idea_tolerates_missing_seed_state(
+    client: TestClient, seed_state: str
+) -> None:
+    """Stale provenance never prevents deletion of an otherwise clean item."""
+    user = _user()
+    item, plan = _idea_item(user.id)
+    item.source_idea_seed_id = uuid.uuid4().hex
+
+    persona = None
+    if seed_state == "missing_entry":
+        persona = MagicMock()
+        persona.idea_seeds = [{"id": uuid.uuid4().hex, "text": "keep me", "status": "pending"}]
+        original_seeds = list(persona.idea_seeds)
+
+    db = AsyncMock()
+    db.delete = AsyncMock()
+    db.commit = AsyncMock()
+    db.execute = AsyncMock(side_effect=[_result(item), _result(persona), _result(item)])
+    db.get = AsyncMock(side_effect=[plan, plan])
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.delete(f"/plan-items/{item.id}")
+    assert resp.status_code == 204
+    if persona is not None:
+        assert persona.idea_seeds == original_seeds
+    db.delete.assert_awaited_once_with(item)
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_linked_idea_deletes_preserve_both_removals() -> None:
+    """Persona row locking prevents concurrent JSONB cleanup from losing a delete."""
+    from app.routes.plan_items import delete_idea as delete_idea_endpoint  # noqa: PLC0415
+
+    user = _user()
+    first_item, plan = _idea_item(user.id)
+    second_item, _ = _idea_item(user.id)
+    first_item.content_plan_id = plan.id = uuid.uuid4()
+    second_item.content_plan_id = plan.id
+    first_item.source_idea_seed_id = uuid.uuid4().hex
+    second_item.source_idea_seed_id = uuid.uuid4().hex
+
+    persona = MagicMock()
+    persona.idea_seeds = [
+        {"id": first_item.source_idea_seed_id, "text": "first", "status": "in_plan"},
+        {"id": second_item.source_idea_seed_id, "text": "second", "status": "in_plan"},
+    ]
+
+    row_lock = asyncio.Lock()
+    both_at_persona = asyncio.Event()
+    persona_waiters = 0
+    deleted_ids: set[uuid.UUID] = set()
+
+    class LockedDb:
+        def __init__(self, item: MagicMock) -> None:
+            self.item = item
+            self.holds_lock = False
+
+        async def execute(self, stmt):  # noqa: ANN001, ANN202
+            nonlocal persona_waiters
+            compiled = str(stmt).upper()
+            if "FROM PLAN_ITEMS" in compiled:
+                return _result(self.item)
+
+            assert "FROM PERSONAS" in compiled
+            assert "FOR UPDATE" in compiled
+            persona_waiters += 1
+            if persona_waiters == 2:
+                both_at_persona.set()
+            await both_at_persona.wait()
+            await row_lock.acquire()
+            self.holds_lock = True
+            return _result(persona)
+
+        async def get(self, _model, _row_id):  # noqa: ANN001, ANN202
+            return plan
+
+        async def delete(self, item: MagicMock) -> None:
+            deleted_ids.add(item.id)
+
+        async def commit(self) -> None:
+            if self.holds_lock:
+                self.holds_lock = False
+                row_lock.release()
+
+    await asyncio.gather(
+        delete_idea_endpoint(str(first_item.id), user, LockedDb(first_item)),  # type: ignore[arg-type]
+        delete_idea_endpoint(str(second_item.id), user, LockedDb(second_item)),  # type: ignore[arg-type]
+    )
+
+    assert deleted_ids == {first_item.id, second_item.id}
+    assert persona.idea_seeds == []
 
 
 # ── T13: POST /content-plans/{id}/reorder ────────────────────────────────────

@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import flag_modified
 
 from app import storage
 from app.agents._schemas.edit_format import coerce_edit_format
@@ -596,10 +597,8 @@ async def add_idea(
     Position = max(existing positions) + 1; day_index = None (no calendar slot
     until the item is expanded or explicitly scheduled).
     Also upserts an idea_seed mirror on the persona (status='in_plan') so that
-    the idea persists even if the item is later deleted.
+    the idea persists until its linked plan item is deleted.
     """
-    from sqlalchemy.orm.attributes import flag_modified  # noqa: PLC0415
-
     try:
         pid = uuid.UUID(plan_id)
     except ValueError as exc:
@@ -635,7 +634,8 @@ async def add_idea(
     db.add(item)
 
     # Mirror to idea_seeds on the persona (upsert by id if seed_id supplied).
-    persona = await db.get(Persona, plan.persona_id)
+    persona_stmt = select(Persona).where(Persona.id == plan.persona_id).with_for_update()
+    persona = (await db.execute(persona_stmt)).scalar_one_or_none()
     if persona is not None:
         raw_seeds: list = list(persona.idea_seeds) if isinstance(persona.idea_seeds, list) else []
         if seed_id:
@@ -665,27 +665,62 @@ async def delete_idea(
     user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a plan item.
+    """Permanently delete a plan item and its linked persistent idea seed.
 
     Refuses with 409 if:
     - The item has an active (non-failed/non-done) job attached.
     - The item has clips attached (clips are not automatically cleaned up from GCS).
     """
+    # Preserve the existing fast 404/409 behavior before taking write locks.
     item = await _load_owned_item(item_id, user.id, db)
 
-    if item.current_job_id is not None:
-        derived = derive_item_status(item)
-        if derived == "generating":
+    def ensure_deletable(candidate: PlanItem) -> None:
+        if candidate.current_job_id is not None:
+            derived = derive_item_status(candidate)
+            if derived == "generating":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cannot delete an item with an active job. Cancel the job first.",
+                )
+
+        if candidate.clip_gcs_paths:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Cannot delete an item with an active job. Cancel the job first.",
+                detail="Cannot delete an item that has clips attached. Remove clips first.",
             )
 
-    if item.clip_gcs_paths:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Cannot delete an item that has clips attached. Remove clips first.",
+    ensure_deletable(item)
+
+    seed_id = item.source_idea_seed_id
+    persona = None
+    if seed_id:
+        # Persona → PlanItem is the shared lock order. It matches persona reset's
+        # cascade order and prevents two fast deletes from restoring stale JSONB.
+        persona_stmt = (
+            select(Persona)
+            .join(ContentPlan, ContentPlan.persona_id == Persona.id)
+            .where(ContentPlan.id == item.content_plan_id, ContentPlan.user_id == user.id)
+            .with_for_update(of=Persona)
+            .execution_options(populate_existing=True)
         )
+        persona = (await db.execute(persona_stmt)).scalar_one_or_none()
+
+    # Re-read under a row lock after the persona lock, then repeat the safety
+    # checks so a job or clip attached between the snapshot and lock returns 409.
+    item = await _load_owned_item(item_id, user.id, db, for_update=True)
+    ensure_deletable(item)
+    seed_id = item.source_idea_seed_id
+
+    if seed_id:
+        if persona is not None and isinstance(persona.idea_seeds, list):
+            retained_seeds = [
+                seed
+                for seed in persona.idea_seeds
+                if not (isinstance(seed, dict) and seed.get("id") == seed_id)
+            ]
+            if len(retained_seeds) != len(persona.idea_seeds):
+                persona.idea_seeds = retained_seeds
+                flag_modified(persona, "idea_seeds")
 
     await db.delete(item)
     await db.commit()
@@ -711,7 +746,7 @@ async def _load_owned_item(
     # selectinload in content_plans.py).
     stmt = select(PlanItem).where(PlanItem.id == iid).options(selectinload(PlanItem.current_job))
     if for_update:
-        stmt = stmt.with_for_update()
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     item = (await db.execute(stmt)).scalar_one_or_none()
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Plan item not found")
