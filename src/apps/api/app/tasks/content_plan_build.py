@@ -36,6 +36,17 @@ from app.worker import celery_app
 log = structlog.get_logger()
 
 
+def _locked_persona(session, persona_id: uuid.UUID):  # noqa: ANN001, ANN202
+    """Reload a persona under the shared idea_seeds JSONB writer lock."""
+    stmt = (
+        select(PersonaRow)
+        .where(PersonaRow.id == persona_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return session.execute(stmt).scalar_one_or_none()
+
+
 def _analysis_summary(tiktok_profile: dict | None) -> str:
     """Extract the pre-rendered TikTok analysis summary from a persona's tiktok_profile JSONB.
 
@@ -145,7 +156,7 @@ def generate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
         # Flip matched seeds → in_plan (monotonic: never demote).
         matched_seed_ids = set(seed_by_index.values())
         if matched_seed_ids:
-            persona_row_p = session.get(PersonaRow, persona_id_for_seeds)
+            persona_row_p = _locked_persona(session, persona_id_for_seeds)
             if persona_row_p is not None:
                 raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
                 persona_row_p.idea_seeds = [
@@ -345,7 +356,7 @@ def regenerate_content_plan(self, plan_id: str) -> None:  # noqa: ANN001
                 matched_seed_ids_regen.add(seed_id)
         # Flip matched seeds → in_plan (monotonic: never demote).
         if matched_seed_ids_regen:
-            persona_row_p = session.get(PersonaRow, persona_id_for_seeds_regen)
+            persona_row_p = _locked_persona(session, persona_id_for_seeds_regen)
             if persona_row_p is not None:
                 raw = persona_row_p.idea_seeds if isinstance(persona_row_p.idea_seeds, list) else []
                 persona_row_p.idea_seeds = [

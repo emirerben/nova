@@ -285,11 +285,36 @@ async def edit_persona(
     # idea_seeds lives on the top-level row column, not inside the persona JSONB —
     # handle it before the main merge loop and pop it so it doesn't bleed in.
     if "idea_seeds" in updates:
+        # Coordinate wholesale seed edits with plan-item add/delete and plan-build
+        # status updates. populate_existing discards any pre-lock identity-map
+        # snapshot before the JSONB read-modify-write.
+        locked_stmt = (
+            select(PersonaRow)
+            .where(PersonaRow.id == pid)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        locked_row = (await db.execute(locked_stmt)).scalar_one_or_none()
+        if locked_row is None or locked_row.user_id != user.id:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Persona not found")
+        row = locked_row
+        persona = dict(row.persona or {})
         raw_seeds: list[dict] = updates.pop("idea_seeds")
+        existing_seed_ids = {
+            str(seed.get("id"))
+            for seed in row.idea_seeds
+            if isinstance(seed, dict) and seed.get("id")
+        }
         _VALID_STATUSES = {"pending", "in_plan"}
         stamped: list[dict] = []
         for s in raw_seeds:
-            seed_id = str(s.get("id") or "").strip() or uuid.uuid4().hex
+            submitted_seed_id = str(s.get("id") or "").strip()
+            # Existing IDs are server-issued. Ignoring an unknown non-empty ID
+            # prevents a stale editor payload from resurrecting a deleted seed;
+            # genuinely new seeds are submitted without an ID and stamped here.
+            if submitted_seed_id and submitted_seed_id not in existing_seed_ids:
+                continue
+            seed_id = submitted_seed_id or uuid.uuid4().hex
             seed_text = _sanitize_text(str(s.get("text") or ""))
             if not seed_text:
                 continue  # drop blank seeds

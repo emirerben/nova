@@ -225,7 +225,7 @@ def test_patch_persona_stamps_missing_idea_seed_ids(client: TestClient) -> None:
     user = _fake_user()
     row = _editable_row(user.id)
     row.idea_seeds = []  # start empty, explicit list so or-fallback is predictable
-    db = _async_db()
+    db = _async_db(scalar_result=row)
     db.get = AsyncMock(return_value=row)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -245,6 +245,8 @@ def test_patch_persona_stamps_missing_idea_seed_ids(client: TestClient) -> None:
     # Server must have stamped a non-empty id (uuid4 hex, 32 chars).
     assert isinstance(seed["id"], str)
     assert len(seed["id"]) == 32
+    locked_stmt = db.execute.call_args.args[0]
+    assert "FOR UPDATE" in str(locked_stmt).upper()
 
 
 def test_patch_persona_drops_blank_idea_seeds(client: TestClient) -> None:
@@ -252,7 +254,7 @@ def test_patch_persona_drops_blank_idea_seeds(client: TestClient) -> None:
     user = _fake_user()
     row = _editable_row(user.id)
     row.idea_seeds = []
-    db = _async_db()
+    db = _async_db(scalar_result=row)
     db.get = AsyncMock(return_value=row)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -278,7 +280,7 @@ def test_patch_persona_invalid_status_coerced_to_pending(client: TestClient) -> 
     user = _fake_user()
     row = _editable_row(user.id)
     row.idea_seeds = []
-    db = _async_db()
+    db = _async_db(scalar_result=row)
     db.get = AsyncMock(return_value=row)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -298,7 +300,7 @@ def test_patch_idea_seeds_leaves_persona_dict_untouched(client: TestClient) -> N
     row = _editable_row(user.id)
     row.idea_seeds = []
     original_persona = dict(row.persona)
-    db = _async_db()
+    db = _async_db(scalar_result=row)
     db.get = AsyncMock(return_value=row)
     app.dependency_overrides[get_current_user] = lambda: user
     app.dependency_overrides[get_db] = lambda: db
@@ -313,6 +315,58 @@ def test_patch_idea_seeds_leaves_persona_dict_untouched(client: TestClient) -> N
     assert "idea_seeds" not in row.persona
     # original persona fields must be preserved
     assert row.persona["tone"] == original_persona["tone"]
+
+
+def test_patch_persona_does_not_restore_deleted_seed_id(client: TestClient) -> None:
+    """A stale full-list PATCH cannot resurrect a server-issued ID that is gone."""
+    user = _fake_user()
+    row = _editable_row(user.id)
+    kept_seed_id = uuid.uuid4().hex
+    deleted_seed_id = uuid.uuid4().hex
+    row.idea_seeds = [
+        {"id": kept_seed_id, "text": "keep me", "status": "pending"},
+    ]
+    db = _async_db(scalar_result=row)
+    db.get = AsyncMock(return_value=row)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{row.id}",
+        json={
+            "idea_seeds": [
+                {"id": kept_seed_id, "text": "keep me", "status": "pending"},
+                {"id": deleted_seed_id, "text": "stale delete", "status": "in_plan"},
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    assert [seed["id"] for seed in row.idea_seeds] == [kept_seed_id]
+
+
+def test_seed_patch_rebuilds_persona_from_locked_snapshot(client: TestClient) -> None:
+    """A seed-only PATCH must not overwrite a persona edit committed before its lock."""
+    user = _fake_user()
+    stale_row = _editable_row(user.id)
+    stale_row.persona = {**stale_row.persona, "tone": "stale tone"}
+    locked_row = _editable_row(user.id)
+    locked_row.id = stale_row.id
+    locked_row.persona = {**locked_row.persona, "tone": "newer tone"}
+    locked_row.idea_seeds = []
+
+    db = _async_db(scalar_result=locked_row)
+    db.get = AsyncMock(side_effect=[stale_row, None])
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    resp = client.patch(
+        f"/personas/{stale_row.id}",
+        json={"idea_seeds": [{"text": "fresh seed", "status": "pending"}]},
+    )
+
+    assert resp.status_code == 200
+    assert locked_row.persona["tone"] == "newer tone"
 
 
 # ── PATCH chat_pending guard ─────────────────────────────────────────────────
