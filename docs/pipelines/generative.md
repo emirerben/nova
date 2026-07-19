@@ -35,6 +35,30 @@ Net-new render behavior:
 - `song_text` — matched song + AI hero-intro overlay
 - `original_text` — clips' original audio + AI intro
 
+## Landscape and Smart Captions rollout
+
+Both features ship dark and reuse existing render paths; enabling them is an
+operational rollout, not a code restoration.
+
+**Landscape (dual flag):** set `LANDSCAPE_OUTPUT_ENABLED=true` on Fly and
+restart the API/workers first. Verify the editor capability response and one
+16:9 render while the UI remains hidden. Only then set
+`NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED=true` in Vercel and deploy the web app.
+Unsupported caption, talking-head, collage, and visual-block variants continue
+to report a non-editable orientation capability. Roll back in reverse order:
+Vercel off first, then Fly.
+
+**Smart Captions (server-only flag):** set `SMART_CAPTIONS_ENABLED=true` on Fly
+and restart the API/workers. There is deliberately no `NEXT_PUBLIC` twin. A
+creator is eligible only when `SUBTITLED_ARCHETYPE_ENABLED=true`, the plan item
+uses `edit_format="subtitled"`, and an enabled `CreatorStyleAssignment` pins a
+preset id/version. Verify an already-assigned creator gets
+`smart_captions_available=true`, the job trace records
+`smart_captions.plan_compiled`, and the ready variant persists
+`smart_captions_applied=true`. Unassigned creators must remain unavailable.
+Planner/compiler failures fail open to ordinary corrected captions. Roll back
+by setting the Fly flag false; do not delete or broaden creator assignments.
+
 ## Key files
 
 - `src/apps/api/app/tasks/generative_build.py` — `orchestrate_generative_job` Celery

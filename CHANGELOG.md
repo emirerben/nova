@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.5.0] — 2026-07-19
+
+### Added
+- **Landscape output and Smart Captions now have a tested, documented production rollout path.** Operators can enable the existing capabilities in backend-first order while preserving unsupported-variant guards, assignment eligibility, and fail-open captions.
 ## [0.9.4.0] — 2026-07-19
 
 ### Fixed
