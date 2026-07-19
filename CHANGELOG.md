@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.6.0] — 2026-07-19
+
+### Fixed
+- **The Ideas page now shows “Kria is writing an idea…” only while generation is actually active.** Accepted requests hand off to polling without flicker, and the indicator clears after success, failure, interrupted requests, navigation, exhausted retries, or queue-publish errors instead of getting stuck indefinitely.
+
 ## [0.9.2.0] — 2026-07-19
 
 ### Added
