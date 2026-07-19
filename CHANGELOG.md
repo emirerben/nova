@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Landscape output and Smart Captions now have a tested, documented production rollout path.** Operators can enable the existing capabilities in backend-first order while preserving unsupported-variant guards, assignment eligibility, and fail-open captions.
+## [0.9.4.0] — 2026-07-19
+
+### Fixed
+- **Deleting the final text from a visual text card now removes the whole card and stays deleted after save and reload.** The cascade remains undoable, preserves multi-text cards, and keeps individual lyric-line deletion disabled.
+## [0.9.3.0] — 2026-07-19
+
+### Fixed
+- **Behind-subject text now stays visible wherever the subject does not overlap it.** Moving foreground objects occlude only intersecting glyph pixels instead of fading or hiding the entire text layer.
 
 ## [0.9.2.0] — 2026-07-19
 

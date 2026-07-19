@@ -267,6 +267,22 @@ describe("EditorShell — Lyrics toggle ON (elements model)", () => {
     expect(lyricsSwitch()).toHaveAttribute("aria-checked", "false");
   });
 
+  it("keeps individual lyric-line deletion disabled after insertion", async () => {
+    mockGetLyricSeeds.mockResolvedValue(SEEDS);
+    await renderShell(makeElementsVariant());
+    openTextDrawer();
+
+    await act(async () => {
+      fireEvent.click(lyricsSwitch());
+    });
+
+    const lyric = screen.getByRole("button", { name: /Text row \d+, First line,/ });
+    fireEvent.click(lyric);
+    expect(screen.getByRole("button", { name: "Delete selected" })).toBeDisabled();
+    fireEvent.keyDown(document, { key: "Delete" });
+    expect(screen.getByRole("button", { name: /Text row \d+, First line,/ })).toBeInTheDocument();
+  });
+
   it("shows a loading state while the fetch is in flight and disables the toggle", async () => {
     let resolveSeeds: (v: LyricSeedsResponse) => void = () => {};
     mockGetLyricSeeds.mockReturnValue(

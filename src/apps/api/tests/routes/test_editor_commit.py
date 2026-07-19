@@ -147,6 +147,22 @@ def _montage_block(asset_ids=("a1", "a2", "a3")) -> dict:
     }
 
 
+def _text_card_block() -> dict:
+    return {
+        "version": 1,
+        "id": "card-1",
+        "kind": "text_card",
+        "start_s": 0.0,
+        "end_s": 2.0,
+        "timing_mode": "manual",
+        "origin": "ai",
+        "transition_in": "fade",
+        "transition_out": "fade",
+        "audio_policy": {"base": "continue", "sfx": "continue"},
+        "background": {"type": "solid", "color": "#111111"},
+    }
+
+
 def _visual_assets(asset_ids=("a1", "a2", "a3")) -> dict[str, dict]:
     return {
         asset_id: {
@@ -179,6 +195,86 @@ def test_visual_block_commit_is_atomic_and_invalidates_composite(monkeypatch):
     assert variant["visual_blocks_cache_stale"] is True
     assert prep["sections"]["visual_blocks"] is True
     assert prep["generation"] == variant["render_generation_id"]
+
+
+def test_editor_commit_atomically_deletes_text_card_and_linked_generated_text(monkeypatch):
+    """Regression: the final linked text delete cascades through both sections.
+
+    Both authoritative lists persist empty, so neither section can reappear.
+    """
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    linked = {
+        **_VALID_ELEMENT,
+        "id": "card-title",
+        "visual_block_id": "card-1",
+    }
+    job = _job(
+        text_elements=[linked],
+        text_elements_user_edited=True,
+        visual_blocks=[_text_card_block()],
+    )
+
+    prep = gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(text_elements=[], visual_blocks=[]),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    assert variant["visual_blocks"] is None
+    assert variant["visual_blocks_cache_stale"] is True
+    assert variant["text_elements"] == []
+    from app.agents._schemas.text_element import merge_projected_text_elements_for_variant
+
+    assert merge_projected_text_elements_for_variant(variant) is None
+    assert prep["sections"]["text_elements"] is True
+    assert prep["sections"]["visual_blocks"] is True
+    assert prep["generation"] == variant["render_generation_id"]
+
+
+def test_editor_commit_persists_tombstone_for_deleted_projected_card_text(monkeypatch):
+    """Deleting a generated card title must remain authoritative after reload."""
+    _arm(monkeypatch)
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True, raising=False)
+    linked = {
+        **_VALID_ELEMENT,
+        "id": "card-title",
+        "text": "AI burned intro",
+        "visual_block_id": "card-1",
+        "source_params": {
+            "source": "intro",
+            "key": "intro",
+            "identity": "intro:intro",
+        },
+    }
+    job = _job(
+        intro_text="AI burned intro",
+        text_elements=[linked],
+        text_elements_user_edited=True,
+        visual_blocks=[_text_card_block()],
+    )
+
+    gj.prepare_editor_commit(
+        job,
+        "song_text",
+        _commit_req(text_elements=[], visual_blocks=[]),
+    )
+
+    variant = job.assembly_plan["variants"][0]
+    tombstones = [element for element in variant["text_elements"] if element.get("removed")]
+    assert len(tombstones) == 1
+    from app.agents._schemas.text_element import (
+        merge_projected_text_elements_for_variant,
+        text_element_source_identity,
+    )
+
+    assert text_element_source_identity(tombstones[0]) == "generative_intro:intro:intro"
+    assert merge_projected_text_elements_for_variant(variant) is None
 
 
 def test_visual_block_commit_uses_full_render_queue(monkeypatch):
@@ -1288,7 +1384,11 @@ def test_prod_song_text_empty_text_and_mixed_beat_slots_round_trip(monkeypatch):
     )
     resolved = gj.resolve_timeline_slots_for_edit(job, variant, posted_slots)
 
-    assert text == []
+    assert len(text) == 1
+    assert text[0]["removed"] is True
+    from app.agents._schemas.text_element import text_element_source_identity
+
+    assert text_element_source_identity(text[0]) == "generative_intro:intro:intro"
     assert len(resolved) == 17
     assert [
         (idx, slot.duration_beats)

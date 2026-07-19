@@ -32,11 +32,15 @@ occluded overlay and a matte with a hard, cutout-quality edge. Instead:
   occluded overlay's glyphs as a straight-alpha RGBA frame, then multiplies the
   **alpha channel** by `(1 - mask)` before PNG-encoding it
   (`_apply_subject_mask`). Where the mask says "subject", text alpha drops
-  toward 0; everywhere else it's untouched.
+  toward 0; everywhere else it's untouched. The renderer never derives a
+  whole-layer opacity from the overlap: a partial matte can hide only the
+  glyph pixels it intersects, while a matte that genuinely covers every glyph
+  pixel still produces natural full occlusion.
 - The masked PNG sequence then burns into the video exactly like any other
   Skia overlay sequence — no second overlay pass, no separate subject layer,
   no compositing order to get wrong. The subject was always the top pixel
-  layer (it's the video itself); the text is what fades out under it.
+  layer (it's the video itself); the text is masked away only where the subject
+  intersects it.
 
 This keeps the renderer's existing PNG-sequence → `overlay` FFmpeg filter
 pipeline completely unchanged; `behind_subject` only changes what gets drawn
