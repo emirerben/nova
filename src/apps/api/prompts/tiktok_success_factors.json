@@ -1,5 +1,5 @@
 {
-  "version": "2026-06-14",
+  "version": "2026-07-19",
   "_comment": "Codified 'why short-form videos perform' levers, injected into generate_persona.txt, generate_content_plan.txt and write_intro_text.txt so plan/hook decisions cite real strategy. Two provenances, NEVER conflated: 'corpus' = observed in our own fetched engagement data (view_index = views / account median); 'public' = curated from public TikTok Creator docs. Body fields carry NO @handles/captions verbatim — attribution lives in `source`. Bumping `version` requires bumping PERSONA_PROMPT_VERSION, CONTENT_PLAN_PROMPT_VERSION, and IntroTextWriterAgent.spec.prompt_version (the coupling guard).",
   "factors": [
     {
@@ -136,6 +136,33 @@
       "provenance": "corpus",
       "evidence": "In our fetched founder-lifestyle set, an event-appearance post indexed ~64x the account median at near-zero engagement (0.004) — the spike is discovery-only, not depth; use it to grow reach, then convert via your regular content cadence",
       "source": "tiktok market research 2026-06 (founder account, event sponsorship)"
+    },
+    {
+      "id": "outsider-credibility-hook-corpus-10",
+      "factor": "Position yourself as 'someone who doesn't [credential]' — the outsider label is more relatable than expertise",
+      "why": "Claiming you are NOT the authority makes fashion/lifestyle content feel accessible rather than aspirational; the viewer sees themselves in you, not a gap they can't close",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched professional-lifestyle set, a 7s office-outfit clip prefaced with the outsider label indexed ~3.1x the account median at 14.2% engagement — outperforming all unlabeled outfit posts in the same sample",
+      "source": "tiktok market research 2026-07 (professional-lifestyle account)"
+    },
+    {
+      "id": "long-form-native-language-corpus-11",
+      "factor": "Long-form personal vlogs in a local language reach millions within their niche — do not default to English for global reach if the story is culturally specific",
+      "why": "A hyper-local audience that deeply resonates outperforms a broad one that scrolls past; native-language intimacy signals authenticity and earns the completion the algorithm rewards",
+      "applies_to": ["plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle set, a 179s fully Turkish-language personal vlog indexed 9.3x the account median (585k views); a 129s wardrobe-struggle vlog indexed 12.3x — both outperforming shorter English-captioned posts by the same creator",
+      "source": "tiktok market research 2026-07 (lifestyle account, Turkish-language content)"
+    },
+    {
+      "id": "binary-decision-comment-bait-corpus-12",
+      "factor": "End a post at a genuine decision point and ask the audience to choose — a binary open loop forces a comment before the viewer leaves",
+      "why": "Comments are a high-intent signal; an open, unresolved choice makes the viewer feel their input matters and lowers the friction of engaging compared to open-ended questions",
+      "applies_to": ["hook", "plan"],
+      "provenance": "corpus",
+      "evidence": "In our fetched lifestyle set, a 30s clip ending mid-story with a binary choice prompt indexed 8.2x the account median; comments drove the outlier reach relative to its engagement rate",
+      "source": "tiktok market research 2026-07 (lifestyle account)"
     }
   ]
 }
