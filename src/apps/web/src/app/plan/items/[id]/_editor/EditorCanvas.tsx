@@ -671,6 +671,11 @@ export default function EditorCanvas({
   }
 
   const zoom = zoomPct / 100;
+  // Unsaved orientation changes still display the previously rendered video.
+  // In landscape, cover-crop that source so the canvas previews the same
+  // centered 16:9 composition the server will produce on Save. Portrait keeps
+  // its historical contain behavior.
+  const videoFitClass = canvas.w > canvas.h ? "object-cover" : "object-contain";
 
   return (
     <div
@@ -713,7 +718,7 @@ export default function EditorCanvas({
                   {...virtualVideoAProps}
                   ref={virtualVideoARef}
                   className={[
-                    "pointer-events-none absolute inset-0 h-full w-full object-contain",
+                    `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
                     virtualPreview.activeDeck === "a" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
                   style={{ zIndex: EDITOR_STAGE_Z.video }}
@@ -722,7 +727,7 @@ export default function EditorCanvas({
                   {...virtualVideoBProps}
                   ref={virtualVideoBRef}
                   className={[
-                    "pointer-events-none absolute inset-0 h-full w-full object-contain",
+                    `pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`,
                     virtualPreview.activeDeck === "b" ? "opacity-100" : "opacity-0",
                   ].join(" ")}
                   style={{ zIndex: EDITOR_STAGE_Z.video }}
@@ -742,7 +747,7 @@ export default function EditorCanvas({
                 identity={identity}
                 playsInline
                 preload="auto"
-                className="pointer-events-none absolute inset-0 h-full w-full object-contain"
+                className={`pointer-events-none absolute inset-0 h-full w-full ${videoFitClass}`}
                 style={{ zIndex: EDITOR_STAGE_Z.video }}
                 onTimeUpdate={(e) => onTimeUpdate((e.target as HTMLVideoElement).currentTime)}
                 onLoadedMetadata={(e) => {

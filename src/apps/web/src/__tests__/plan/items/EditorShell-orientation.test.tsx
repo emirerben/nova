@@ -145,18 +145,21 @@ describe("EditorShell orientation", () => {
       "aria-pressed",
       "true",
     );
+    expect(document.querySelector("video")).toHaveClass("object-cover");
 
     fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
     expect(screen.getByRole("button", { name: "Use 9:16 output" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(document.querySelector("video")).toHaveClass("object-contain");
 
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(screen.getByRole("button", { name: "Use 16:9 output" })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
+    expect(document.querySelector("video")).toHaveClass("object-cover");
   });
 
   it("saves orientation through the editor-commit section only after a change", async () => {
