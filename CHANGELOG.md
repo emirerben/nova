@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.8.0] — 2026-07-19
+
+### Fixed
+- **Ideas deleted from the Ideas page now disappear immediately and stay deleted after reload.** Deletion removes the plan item and its persistent idea seed together, preserves safety blocks for active jobs and attached clips, and remains correct during rapid clicks, concurrent plan updates, and temporary refresh failures.
+
 ## [0.9.7.0] — 2026-07-19
 
 ### Fixed
