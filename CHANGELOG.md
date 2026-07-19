@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1.2] — 2026-07-19
+
+### Fixed
+- **The clip timeline now locks in the UI whenever the server says it isn't editable — instead of letting you cut clips and failing the save with `lyrics_sync`.** The clip lane's lock was gated on a whitelist of voiceover reasons only, so lyrics-synced (and any future-reason) variants offered fully interactive clip editing that could only ever end in a 422 at save time. The lock now derives from the capability itself (`timeline === false`), with reason-driven copy ("lyrics are synced to the song" / "locked to your voiceover"). Pinned by a mounted-shell regression test that fails against the old whitelist.
+
 ## [0.9.1.1] — 2026-07-18
 
 ### Fixed
