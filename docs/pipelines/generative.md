@@ -107,6 +107,15 @@ AI's assembly decisions, not pixels.
   GET returns `editable:false reason:"disabled"`, POST 403.
 - **Guards:** window-parity test (`tests/pipeline/test_exact_window_steps.py`) pins that
   an unmodified override render reproduces the original assembly windows AND framing.
+- **Editorial text projection:** `text_elements_for_variant()` projects every
+  independently timed `generative_sequence` burn block into its own editor element
+  with a stable scene/block id. Text, font face/style, placement, size, glow, shadow,
+  effect, and fade-out timing survive editor load and save instead of being collapsed
+  to one scene-level approximation.
+- **Split & Place:** pasted composition copy is split line-first (with a linear
+  fallback for prose), then timed sequentially across the remaining edit. The editor
+  enforces the API's 50-element / 500-character limits before mutating the timeline,
+  so rejected drafts never create empty or unsavable bars.
 
 ## SFX + media-overlay lanes on caption archetypes (plan 010, v0.7.25.0)
 
