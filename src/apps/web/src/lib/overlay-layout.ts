@@ -33,6 +33,10 @@ export const LINE_SPACING = 1.15;
 export const MIN_FONT_SIZE = 24;
 export const MAX_WIDTH_FRAC_MIN = 0.2;
 export const MAX_WIDTH_FRAC_MAX = 1.0;
+export const TEXT_BOX_PRESET_EPSILON = 0.005;
+
+export type TextHorizontalAlignment = "left" | "center" | "right";
+export type TextBoxHorizontalPosition = "left" | "center" | "right";
 
 /** Width of `text` in px at an implicit font size (the factory binds the size). */
 export type MeasureText = (text: string) => number;
@@ -335,6 +339,94 @@ export function resolveMaxWidthFrac(value: number | null | undefined): number {
   return Math.max(MAX_WIDTH_FRAC_MIN, Math.min(MAX_WIDTH_FRAC_MAX, value));
 }
 
+/** Fraction of a text box's width that sits to the left of its renderer anchor. */
+export function textAlignmentAnchorFactor(alignment: TextHorizontalAlignment): number {
+  if (alignment === "left") return 0;
+  if (alignment === "right") return 1;
+  return 0.5;
+}
+
+function clampTextBoxLeftFrac(leftFrac: number, widthFrac: number): number {
+  return Math.max(0, Math.min(1 - widthFrac, leftFrac));
+}
+
+/**
+ * Re-anchor a text box after its internal text alignment changes while keeping
+ * the box itself stationary. Legacy out-of-frame geometry is pulled back into
+ * the frame so the resulting x_frac remains valid for the API schema.
+ */
+export function xFracForTextAlignment({
+  alignment,
+  nextAlignment,
+  xFrac,
+  maxWidthFrac,
+}: {
+  alignment: TextHorizontalAlignment;
+  nextAlignment: TextHorizontalAlignment;
+  xFrac: number | null | undefined;
+  maxWidthFrac: number | null | undefined;
+}): number {
+  const widthFrac = resolveMaxWidthFrac(maxWidthFrac);
+  const currentXFrac = Number.isFinite(xFrac ?? NaN) ? Number(xFrac) : 0.5;
+  const rawLeftFrac =
+    currentXFrac - textAlignmentAnchorFactor(alignment) * widthFrac;
+  const leftFrac = clampTextBoxLeftFrac(rawLeftFrac, widthFrac);
+  return leftFrac + textAlignmentAnchorFactor(nextAlignment) * widthFrac;
+}
+
+/** Place the complete wrap box against the left, center, or right of the frame. */
+export function xFracForTextBoxPosition({
+  alignment,
+  position,
+  maxWidthFrac,
+}: {
+  alignment: TextHorizontalAlignment;
+  position: TextBoxHorizontalPosition;
+  maxWidthFrac: number | null | undefined;
+}): number {
+  const widthFrac = resolveMaxWidthFrac(maxWidthFrac);
+  const leftFrac =
+    position === "left"
+      ? 0
+      : position === "right"
+        ? 1 - widthFrac
+        : (1 - widthFrac) / 2;
+  return leftFrac + textAlignmentAnchorFactor(alignment) * widthFrac;
+}
+
+/** Return a preset only when the current box geometry actually matches it. */
+export function inferTextBoxPosition({
+  alignment,
+  xFrac,
+  maxWidthFrac,
+  epsilon = TEXT_BOX_PRESET_EPSILON,
+}: {
+  alignment: TextHorizontalAlignment;
+  xFrac: number | null | undefined;
+  maxWidthFrac: number | null | undefined;
+  epsilon?: number;
+}): TextBoxHorizontalPosition | null {
+  const widthFrac = resolveMaxWidthFrac(maxWidthFrac);
+  const currentXFrac = Number.isFinite(xFrac ?? NaN) ? Number(xFrac) : 0.5;
+  if (widthFrac >= 1 - epsilon) {
+    const presetXFrac = xFracForTextBoxPosition({
+      alignment,
+      position: "center",
+      maxWidthFrac: widthFrac,
+    });
+    return Math.abs(currentXFrac - presetXFrac) <= epsilon ? "center" : null;
+  }
+  const candidates: TextBoxHorizontalPosition[] = ["center", "left", "right"];
+  const match = candidates.find(
+    (position) =>
+      Math.abs(
+        currentXFrac -
+          xFracForTextBoxPosition({ alignment, position, maxWidthFrac: widthFrac }),
+      ) <= epsilon,
+  );
+  return match ?? null;
+}
+
 /**
  * Apply a text_case transform. EXACT mirror of `apply_text_case` in
  * app/agents/_schemas/text_element.py (parity fixture: text_case.json).
@@ -360,6 +452,14 @@ const _TEXT_ELEMENT_Y: Record<string, number> = {
   middle: 0.45,
   bottom: 0.85,
 };
+
+/** Resolve a text element's vertical anchor before switching it to custom placement. */
+export function resolveTextElementYFrac(
+  position: string | null | undefined,
+  yFrac: number | null | undefined,
+): number {
+  return yFrac ?? _TEXT_ELEMENT_Y[position ?? "middle"] ?? 0.45;
+}
 
 /**
  * Per-element layout data for the N-element DOM preview.
@@ -423,7 +523,7 @@ export function resolveTextElementsLayout(
   return elements.map((el) => {
     const sizePx = el.size_px ?? FONT_SIZE_MAP[el.size_class ?? "medium"] ?? 72;
     const xFrac = el.x_frac ?? 0.5;
-    const yFrac = el.y_frac ?? _TEXT_ELEMENT_Y[el.position ?? "middle"] ?? 0.45;
+    const yFrac = resolveTextElementYFrac(el.position, el.y_frac);
     return {
       id: el.id,
       // text_case resolves at layout time — the same compile-time transform

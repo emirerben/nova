@@ -136,6 +136,16 @@ function makeMasonryVariant(textCount = 2): PlanItemVariant {
       end_s: 4,
       x_frac: 0.5,
       y_frac: 0.5 + index * 0.05,
+      source_params: {
+        masonry_motion: {
+          mode: "masonry_pan_x",
+          duration_s: 8,
+          pan_px: 932,
+          board_width_px: 2012,
+          frame_width_px: 1080,
+          layer_origin_px: 900,
+        },
+      },
     })),
   } as unknown as PlanItemVariant;
 }
@@ -255,6 +265,65 @@ describe("EditorShell — Captions-tab notice (discoverability, plan 010 review)
     expect(
       screen.getByRole("link", { name: "Open the item page Captions tab" }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("EditorShell — text alignment and box placement", () => {
+  it("exposes both controls in the full-screen inspector with atomic undo/redo", async () => {
+    await renderShell(makeMasonryVariant(1));
+
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: /Text row 1, Title 1/i,
+      }),
+    );
+
+    expect(screen.getByRole("group", { name: "Text alignment" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Box position" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Align text left" }));
+    expect(screen.getByRole("button", { name: "Align text left" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Place box right" }));
+    expect(screen.getByRole("button", { name: "Place box right" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      Number.parseFloat(
+        document.querySelector<HTMLElement>("[data-text-id='title-1']")?.style.left ?? "NaN",
+      ),
+    ).toBeCloseTo(10, 8);
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("button", { name: "Place box right" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Align text left" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByRole("button", { name: "Align text center" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(screen.getByRole("button", { name: "Align text left" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Place box right" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
   });
 });
 

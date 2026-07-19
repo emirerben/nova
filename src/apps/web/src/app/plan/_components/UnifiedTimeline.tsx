@@ -25,7 +25,7 @@
  */
 
 import { useEffect, useState } from "react";
-import type { SoundEffectPlacement, MediaOverlay } from "@/lib/plan-api";
+import type { SoundEffectPlacement, MediaOverlay, PlanItemVariant } from "@/lib/plan-api";
 import type { SoundEffectSummary } from "@/lib/sfx-api";
 import { Playhead } from "@/lib/timeline/Playhead";
 import { formatTimecode } from "@/lib/timeline/time-format";
@@ -133,6 +133,8 @@ export interface UnifiedTimelineProps {
    * Defaults to [] (empty state) when not provided.
    */
   textElements?: TextElementBar[];
+  /** Active variant for moving-board text geometry in the item-page editor. */
+  textVariant?: PlanItemVariant | null;
   /**
    * Called after every user edit to text bars (move, trim, add, delete).
    * T6 will wire this to the API persist path.
@@ -222,6 +224,7 @@ export default function UnifiedTimeline({
   externalEditCardId,
   onExternalEditHandled,
   textElements,
+  textVariant,
   onTextElementsChange,
   onTextApply,
   onTextTrimClamped,
@@ -315,6 +318,7 @@ export default function UnifiedTimeline({
           onTrimClamped={onTextTrimClamped}
           isFirstSequenceEdit={isFirstSequenceEdit}
           textPanelPortalTarget={textPanelPortalTarget}
+          variant={textVariant}
         />
       )}
 

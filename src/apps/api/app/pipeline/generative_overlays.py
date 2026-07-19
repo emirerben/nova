@@ -847,6 +847,7 @@ def build_overlays_from_text_elements(
     *,
     video_duration_s: float,
     include_lyric_line: bool = False,
+    independent_box_alignment: bool = False,
 ) -> list[dict]:
     """Compile a list of TextElement objects to burn-dict format.
 
@@ -883,6 +884,10 @@ def build_overlays_from_text_elements(
     the caller (``_text_element_burn_dicts``) passes ``True`` so they burn
     like any other element (the karaoke-line/word_timings handling below is
     already role-agnostic).
+
+    ``independent_box_alignment`` is enabled only for authoritative editor
+    saves. Read-adapter round trips leave it off so legacy burn dictionaries
+    remain byte-identical, including their historical left-anchor y semantics.
     """
     from app.agents._schemas.text_element import apply_text_case  # noqa: PLC0415
 
@@ -927,6 +932,18 @@ def build_overlays_from_text_elements(
             if elem.glow_strength is not None:
                 overlay["glow_strength"] = elem.glow_strength
 
+        def attach_text_element_layout_contract(overlay: dict) -> None:
+            """Keep authored horizontal alignment independent from vertical placement.
+
+            Legacy renderer overlays intentionally couple ``text_anchor=left`` to
+            top-anchoring for cumulative word reveals. TextElements use alignment
+            only for lines inside a movable box, so their y coordinate always
+            remains the block center, matching the CSS editor preview.
+            """
+            if independent_box_alignment:
+                overlay["vertical_anchor"] = "center"
+            attach_glow(overlay)
+
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
         elem_text = apply_text_case(elem.text, elem.text_case)
@@ -966,7 +983,7 @@ def build_overlays_from_text_elements(
                 behind_subject=elem_behind_subject,
             )
             if reveal is not None:
-                attach_glow(reveal)
+                attach_text_element_layout_contract(reveal)
                 reveal["role"] = elem.role
                 if effect == "karaoke-line" and elem_word_timings:
                     reveal["word_timings"] = elem_word_timings
@@ -1003,7 +1020,7 @@ def build_overlays_from_text_elements(
                 behind_subject=elem_behind_subject,
             )
             if hold is not None:
-                attach_glow(hold)
+                attach_text_element_layout_contract(hold)
                 hold["role"] = elem.role
                 if elem.fade_out_ms is not None:
                     hold["fade_out_ms"] = elem.fade_out_ms
@@ -1038,7 +1055,7 @@ def build_overlays_from_text_elements(
         )
         if overlay is None:
             continue
-        attach_glow(overlay)
+        attach_text_element_layout_contract(overlay)
 
         # build_intro_overlay always emits "generative_intro"; override for
         # sequence elements (role="generative_sequence").

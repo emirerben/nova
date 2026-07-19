@@ -633,17 +633,22 @@ def _anchored_left_x(anchor: str, cx: float, width: float) -> float:
     return cx - width / 2.0
 
 
-def _vertical_block_top(anchor: str, cy: float, block_h: float) -> float:
-    """Top y of a `block_h`-tall text block anchored at cy. Mirrors Pillow's
-    _draw_text_png vertical anchoring: left-anchored text treats
-    position_y_frac as the block TOP, so wrapped lines grow DOWNWARD — a
-    cumulative reveal that wraps from 1 line to 2 keeps the earlier line
-    pinned instead of re-centering (the "all previous words re-appear" bug on
-    prod template 89cde014). Center/right keep the block vertically centered on
-    cy (historical default — changing it would shift existing centered
-    templates). Centralized so _draw_centered_text, _draw_pop_in_with_suffix,
-    and _draw_karaoke_line all agree on the vertical origin."""
-    if anchor == "left":
+def _resolve_vertical_anchor(overlay: dict) -> str:
+    """Resolve vertical anchoring without changing legacy overlay semantics.
+
+    Historical left-anchored cumulative reveals grow down from their y value.
+    Authored TextElements explicitly carry ``vertical_anchor=center`` so their
+    horizontal line alignment can change without moving the block vertically.
+    """
+    vertical_anchor = overlay.get("vertical_anchor")
+    if vertical_anchor in ("top", "center"):
+        return vertical_anchor
+    return "top" if _resolve_text_anchor(overlay) == "left" else "center"
+
+
+def _vertical_block_top(vertical_anchor: str, cy: float, block_h: float) -> float:
+    """Top y of a text block for the resolved vertical anchor."""
+    if vertical_anchor == "top":
         return cy
     return cy - block_h / 2.0
 
@@ -929,7 +934,7 @@ def _draw_centered_text(
     cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
 
-    block_top = _vertical_block_top(anchor, cy, block["block_h"])
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
     # Emoji prefix: composite to the left of line 0
@@ -1051,9 +1056,10 @@ def _overlay_for_left_reveal_box(
     cx, cy = _resolve_anchor(overlay, render_canvas)
     anchor = _resolve_text_anchor(overlay)
     box_left = _anchored_left_x(anchor, cx, max_width)
-    box_top = _vertical_block_top(anchor, cy, block["block_h"])
+    box_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     reveal_overlay = dict(overlay)
     reveal_overlay["text_anchor"] = "left"
+    reveal_overlay["vertical_anchor"] = "top"
     reveal_overlay["position_x_frac"] = max(0.0, min(1.0, box_left / render_canvas.width))
     reveal_overlay["position_y_frac"] = max(0.0, min(1.0, box_top / render_canvas.height))
     return reveal_overlay
@@ -1324,7 +1330,7 @@ def _draw_pop_in_with_suffix(
         return
 
     block = _measure_block(full_font, full_lines)
-    block_top = _vertical_block_top(anchor, cy, block["block_h"])
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
     fill_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))
@@ -1452,7 +1458,7 @@ def _draw_karaoke_line(
         line_spacing=resolve_line_spacing(overlay.get("line_spacing")),
         letter_spacing_px=spacing_px,
     )
-    block_top = _vertical_block_top(anchor, cy, block["block_h"])
+    block_top = _vertical_block_top(_resolve_vertical_anchor(overlay), cy, block["block_h"])
     first_baseline = block_top + block["ascent_offset"]
 
     primary_color = _skia_color_from_hex(overlay.get("text_color", "#FFFFFF"))

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.10.0] — 2026-07-19
+
+### Added
+- **Text alignment and box placement can now be controlled independently in the video editor.** Creators can combine left, center, or right line alignment with left, center, or right frame placement; every combination previews accurately, survives undo/reload, and reaches the exported video renderer.
+
 ## [0.9.9.0] — 2026-07-19
 
 ### Fixed

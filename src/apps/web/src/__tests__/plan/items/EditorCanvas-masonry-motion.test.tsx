@@ -172,6 +172,45 @@ describe("EditorCanvas masonry board motion", () => {
     expect(layerOriginPx).toBeGreaterThan(0);
     expect(layerOriginPx + Number(patch.x_frac) * 1080).toBeCloseTo(expectedBoardX, 6);
   });
+
+  it("commits width resizing as one custom-placement patch", () => {
+    const onPatchBar = jest.fn();
+    const view = render(
+      <EditorCanvas
+        variant={variant}
+        elements={[element]}
+        bars={[{ ...bar, position: "top", y_frac: undefined }]}
+        selectedTextId="title"
+        currentTime={1}
+        masonryDurationS={8}
+        zoomPct={100}
+        tool="select"
+        videoRef={React.createRef<HTMLVideoElement>()}
+        onSelectText={jest.fn()}
+        onClearSelection={jest.fn()}
+        onPatchBar={onPatchBar}
+        onFocusContent={jest.fn()}
+        onTimeUpdate={jest.fn()}
+        onDuration={jest.fn()}
+      />,
+    );
+    const overlay = view.container.querySelector<HTMLElement>("[data-text-id='title']");
+    const handle = view.getByRole("button", { name: "Adjust text width (right)" });
+
+    fireEvent.pointerDown(handle, { clientX: 0, pointerId: 1 });
+    fireEvent.pointerMove(overlay as HTMLElement, { clientX: 100, pointerId: 1 });
+    fireEvent.pointerUp(overlay as HTMLElement, { pointerId: 1 });
+
+    expect(onPatchBar).toHaveBeenCalledTimes(1);
+    expect(onPatchBar).toHaveBeenCalledWith(
+      "title",
+      expect.objectContaining({
+        max_width_frac: expect.any(Number),
+        position: "custom",
+        y_frac: 0.15,
+      }),
+    );
+  });
 });
 
 describe("EditorCanvas subtitled preview", () => {

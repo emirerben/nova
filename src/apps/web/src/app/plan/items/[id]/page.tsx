@@ -3604,6 +3604,7 @@ function FocusedVariantControls({
               fullscreenPromoteEnabled={FULLSCREEN_CUTAWAYS_ENABLED}
               showTextLane={textLaneEligible}
               textElements={textElements}
+              textVariant={variant}
               onTextElementsChange={handleTextElementsChange}
               onTextApply={(bars) => {
                 if (bars[0]?.role === "narrated_caption") {

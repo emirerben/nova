@@ -33,6 +33,12 @@ import {
   MAX_LINE_W_FRAC,
   MAX_WIDTH_FRAC_MAX,
   MAX_WIDTH_FRAC_MIN,
+  inferTextBoxPosition,
+  resolveTextElementYFrac,
+  xFracForTextAlignment,
+  xFracForTextBoxPosition,
+  type TextBoxHorizontalPosition,
+  type TextHorizontalAlignment,
 } from "@/lib/overlay-layout";
 import {
   INSPECTOR_INTERNAL_FIELDS,
@@ -74,6 +80,7 @@ const EDITABLE_ROW_FIELDS = new Set([
   "letter_spacing",
   "line_spacing",
   "max_width_frac",
+  "alignment",
   "behind_subject",
 ]);
 
@@ -115,6 +122,8 @@ export default function InspectorPanel({
   contentRef,
   onEditText,
   onPatch,
+  onSetTextBoxPosition,
+  boxPositionXFrac,
   onPatchTextTiming,
   onPatchClipTiming,
   onPreviewClipTiming,
@@ -158,6 +167,8 @@ export default function InspectorPanel({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
+  boxPositionXFrac?: number;
   onPatchTextTiming: (patch: { start_s?: number; end_s?: number }) => void;
   onPatchClipTiming: (patch: { inS?: number; outS?: number; durationS?: number }) => void;
   onPreviewClipTiming: (patch: { inS: number; durationS: number }) => void;
@@ -224,6 +235,8 @@ export default function InspectorPanel({
           contentRef={contentRef}
           onEditText={onEditText}
           onPatch={onPatch}
+          onSetTextBoxPosition={onSetTextBoxPosition}
+          boxPositionXFrac={boxPositionXFrac}
           onPatchTiming={onPatchTextTiming}
           smartPlaceAvailable={smartPlaceAvailable}
           onSmartPlace={onSmartPlace}
@@ -837,6 +850,8 @@ function TextInspector({
   contentRef,
   onEditText,
   onPatch,
+  onSetTextBoxPosition,
+  boxPositionXFrac,
   onPatchTiming,
   smartPlaceAvailable,
   onSmartPlace,
@@ -846,6 +861,8 @@ function TextInspector({
   contentRef: React.RefObject<HTMLTextAreaElement>;
   onEditText: (text: string) => void;
   onPatch: (patch: Partial<Omit<TextElementBar, "id" | "role">>) => void;
+  onSetTextBoxPosition?: (position: TextBoxHorizontalPosition) => void;
+  boxPositionXFrac?: number;
   onPatchTiming: (patch: { start_s?: number; end_s?: number }) => void;
   smartPlaceAvailable: boolean;
   onSmartPlace?: () => void;
@@ -865,6 +882,12 @@ function TextInspector({
   const canEditLineSpacing = isParityVerified("line_spacing");
   const canEditMaxWidth = isParityVerified("max_width_frac");
   const widthPct = Math.round((bar.max_width_frac ?? MAX_LINE_W_FRAC) * 100);
+  const alignment = (bar.alignment ?? "center") as TextHorizontalAlignment;
+  const boxPosition = inferTextBoxPosition({
+    alignment,
+    xFrac: boxPositionXFrac ?? bar.x_frac,
+    maxWidthFrac: bar.max_width_frac,
+  });
 
   // Read-only rows: any bar field carrying a value that has no editable row
   // here and isn't plumbing. Unverified fields (future server data) also land
@@ -1001,6 +1024,86 @@ function TextInspector({
             onChange={(e) => onPatch({ max_width_frac: Number(e.target.value) / 100 })}
             className="h-9 w-[64px] rounded-lg border border-zinc-200 px-2 text-right text-[12px] tabular-nums text-[#0c0c0e] focus:border-lime-500/60 focus:outline-none"
           />
+        </div>
+      )}
+
+      {!isLyric && (
+        <div className="mt-4">
+          <span className="block text-[12px] font-semibold text-[#3f3f46]">
+            Text alignment
+          </span>
+          <div className="mt-1 flex gap-1" role="group" aria-label="Text alignment">
+            {(["left", "center", "right"] as const).map((nextAlignment) => (
+              <button
+                key={nextAlignment}
+                type="button"
+                onClick={() => {
+                  if (nextAlignment === alignment) return;
+                  onPatch({
+                    alignment: nextAlignment,
+                    x_frac: xFracForTextAlignment({
+                      alignment,
+                      nextAlignment,
+                      xFrac: bar.x_frac,
+                      maxWidthFrac: bar.max_width_frac,
+                    }),
+                    position: "custom",
+                    y_frac: resolveTextElementYFrac(bar.position, bar.y_frac),
+                  });
+                }}
+                aria-pressed={alignment === nextAlignment}
+                aria-label={`Align text ${nextAlignment}`}
+                className={`min-h-11 flex-1 rounded-lg px-2 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                  alignment === nextAlignment
+                    ? "bg-[#0c0c0e] font-semibold text-white"
+                    : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                }`}
+              >
+                {nextAlignment[0].toUpperCase() + nextAlignment.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isLyric && (
+        <div className="mt-3">
+          <span className="block text-[12px] font-semibold text-[#3f3f46]">
+            Box position
+          </span>
+          <div className="mt-1 flex gap-1" role="group" aria-label="Box position">
+            {(["left", "center", "right"] as const).map((nextPosition) => (
+              <button
+                key={nextPosition}
+                type="button"
+                onClick={() => {
+                  if (boxPosition === nextPosition) return;
+                  if (onSetTextBoxPosition) {
+                    onSetTextBoxPosition(nextPosition);
+                    return;
+                  }
+                  onPatch({
+                    x_frac: xFracForTextBoxPosition({
+                      alignment,
+                      position: nextPosition,
+                      maxWidthFrac: bar.max_width_frac,
+                    }),
+                    position: "custom",
+                    y_frac: resolveTextElementYFrac(bar.position, bar.y_frac),
+                  });
+                }}
+                aria-pressed={boxPosition === nextPosition}
+                aria-label={`Place box ${nextPosition}`}
+                className={`min-h-11 flex-1 rounded-lg px-2 text-[12px] transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500 ${
+                  boxPosition === nextPosition
+                    ? "bg-[#0c0c0e] font-semibold text-white"
+                    : "border border-zinc-200 bg-white text-[#3f3f46] hover:border-zinc-400"
+                }`}
+              >
+                {nextPosition[0].toUpperCase() + nextPosition.slice(1)}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

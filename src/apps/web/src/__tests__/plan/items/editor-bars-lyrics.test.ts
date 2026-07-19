@@ -155,6 +155,39 @@ describe("editor bar transition metadata", () => {
   });
 });
 
+describe("editor bar horizontal geometry", () => {
+  it("preserves alignment, x position, and box width through save and reload", () => {
+    const element: TextElement = {
+      id: "positioned-text",
+      text: "Right aligned in a left box",
+      start_s: 0,
+      end_s: 2,
+      role: "generative_intro",
+      alignment: "right",
+      position: "custom",
+      x_frac: 0.4,
+      y_frac: 0.45,
+      max_width_frac: 0.4,
+    };
+    const originals = new Map([[element.id, element]]);
+    const saved = barsToTextElements(seedBarsFromVariant(variant([element])), originals);
+    const reloaded = seedBarsFromVariant(variant(saved));
+
+    expect(saved[0]).toMatchObject({
+      alignment: "right",
+      position: "custom",
+      x_frac: 0.4,
+      max_width_frac: 0.4,
+    });
+    expect(reloaded[0]).toMatchObject({
+      alignment: "right",
+      position: "custom",
+      x_frac: 0.4,
+      max_width_frac: 0.4,
+    });
+  });
+});
+
 describe("seedBarsFromLyricSeeds (GET .../lyric-seeds response → working bars)", () => {
   it("converts TextElement-shaped seeds into bars, preserving role/timing/style", () => {
     const seeds: TextElement[] = [

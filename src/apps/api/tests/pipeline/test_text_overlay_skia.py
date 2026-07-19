@@ -1286,6 +1286,39 @@ def test_both_renderers_honor_text_anchor(renderer):
     )
 
 
+@pytest.mark.parametrize("renderer", ["skia", "pillow"])
+@pytest.mark.parametrize("effect", ["none", "pop-in"])
+def test_text_element_horizontal_alignment_preserves_vertical_center(renderer, effect):
+    """Authored TextElements decouple horizontal line alignment from y anchoring.
+
+    Legacy left-anchored reveal overlays remain top-anchored, but the editor's
+    left/center/right choices must all keep the same multiline block center.
+    """
+    base = {
+        "text": "FIRST LINE\nSECOND LINE",
+        "effect": effect,
+        "text_size_px": 72,
+        "position_x_frac": 0.5,
+        "position_y_frac": 0.45,
+        "max_width_frac": 0.6,
+        "text_color": "#FFFFFF",
+        "vertical_anchor": "center",
+        "start_s": 0.0,
+        "end_s": 2.0,
+    }
+    bbox_fn = _frame_bbox if renderer == "skia" else _pillow_bbox
+
+    midpoints = []
+    for anchor in ("left", "center", "right"):
+        bbox, _ = bbox_fn({**base, "text_anchor": anchor})
+        assert bbox is not None
+        midpoints.append((bbox[1] + bbox[3]) / 2.0)
+
+    assert max(midpoints) - min(midpoints) < 20, (
+        f"{renderer}: horizontal alignment moved the text block vertically: {midpoints}"
+    )
+
+
 # ── Renderer parity: text_gradient honored by both Skia and Pillow ───────────
 # Lock the CLAUDE.md renderer-parity invariant for the new `text_gradient`
 # field.  When a gradient is set (red→blue, top→bottom), the top of the text
