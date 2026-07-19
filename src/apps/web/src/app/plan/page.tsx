@@ -2,7 +2,7 @@
 
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useRef, useState, Suspense } from "react";
 import {
   type ContentPlan,
   createContentPlan,
@@ -29,6 +29,7 @@ import { ClipGroupStep, type ClipItem } from "./_components/onboarding/ClipGroup
 import { EditPayoff } from "./_components/onboarding/EditPayoff";
 
 const POLL_MS = 2000;
+const POLL_REQUEST_TIMEOUT_MS = 10000;
 
 export default function PlanPage() {
   return (
@@ -62,6 +63,10 @@ function PlanPageInner() {
   const [needsAuth, setNeedsAuth] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const loadEpochRef = useRef(0);
+  const pollInFlightRef = useRef(false);
+  const pollRequestIdRef = useRef(0);
+  const pollTimeoutRef = useRef<number | null>(null);
 
   // Edits-first onboarding funnel state.
   // uploadedClips: full clip objects (gcsPath + objectUrl) from the upload step.
@@ -79,18 +84,44 @@ function PlanPageInner() {
   const [subStep, setSubStep] = useState<"upload-offer" | "uploading" | null>(null);
 
   const load = useCallback(async () => {
+    const epoch = ++loadEpochRef.current;
     try {
       const [p, pl] = await Promise.all([getPersona(), getContentPlan()]);
+      if (epoch !== loadEpochRef.current) return null;
       setPersona(p);
       setPlan(pl);
       return { p, pl };
     } catch (err) {
+      if (epoch !== loadEpochRef.current) return null;
       if (err instanceof NotAuthenticatedError) setNeedsAuth(true);
       else setError(err instanceof Error ? err.message : "Failed to load your plan");
       return null;
     } finally {
-      setLoading(false);
+      if (epoch === loadEpochRef.current) setLoading(false);
     }
+  }, []);
+
+  useEffect(() => () => {
+    loadEpochRef.current += 1;
+    pollRequestIdRef.current += 1;
+    if (pollTimeoutRef.current !== null) {
+      window.clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const handlePlanChange = useCallback((updatedPlan: ContentPlan) => {
+    loadEpochRef.current += 1;
+    // The accepted POST is newer than any in-flight GET. Release the polling
+    // gate too: a hung older request must not prevent this generation attempt
+    // from being polled.
+    pollRequestIdRef.current += 1;
+    pollInFlightRef.current = false;
+    if (pollTimeoutRef.current !== null) {
+      window.clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+    setPlan(updatedPlan);
   }, []);
 
   // Initial load (once authenticated). Skip the round-trip if we already know
@@ -116,8 +147,37 @@ function PlanPageInner() {
 
   useEffect(() => {
     if (!isGenerating) return;
-    const id = setInterval(() => void load(), POLL_MS);
-    return () => clearInterval(id);
+    const id = setInterval(() => {
+      if (pollInFlightRef.current) return;
+      pollInFlightRef.current = true;
+      const requestId = ++pollRequestIdRef.current;
+      // A fetch can remain pending after a network interruption. Bound only
+      // the single-flight gate (not the request itself); the next poll advances
+      // the epoch so any eventual late response is ignored.
+      pollTimeoutRef.current = window.setTimeout(() => {
+        if (requestId === pollRequestIdRef.current) {
+          pollInFlightRef.current = false;
+          pollTimeoutRef.current = null;
+        }
+      }, POLL_REQUEST_TIMEOUT_MS);
+      void load().finally(() => {
+        if (requestId !== pollRequestIdRef.current) return;
+        pollInFlightRef.current = false;
+        if (pollTimeoutRef.current !== null) {
+          window.clearTimeout(pollTimeoutRef.current);
+          pollTimeoutRef.current = null;
+        }
+      });
+    }, POLL_MS);
+    return () => {
+      clearInterval(id);
+      pollRequestIdRef.current += 1;
+      pollInFlightRef.current = false;
+      if (pollTimeoutRef.current !== null) {
+        window.clearTimeout(pollTimeoutRef.current);
+        pollTimeoutRef.current = null;
+      }
+    };
   }, [isGenerating, load]);
 
   // ── Handlers ────────────────────────────────────────────────────────────
@@ -197,6 +257,7 @@ function PlanPageInner() {
       <WorkspaceHome
         plan={plan!}
         onRefresh={load}
+        onPlanChange={handlePlanChange}
         onError={setError}
       />
     );

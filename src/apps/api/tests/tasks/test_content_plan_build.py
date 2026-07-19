@@ -8,6 +8,7 @@ that makes content-plan hooks persona-coherent (intro_writer threading).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -365,7 +366,10 @@ def test_regenerate_preserves_user_edited_and_in_flight_items() -> None:
 
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
@@ -502,7 +506,10 @@ def test_regenerate_persists_filming_guide() -> None:
 
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
@@ -571,7 +578,10 @@ def _gen_session(plan, persona_row) -> MagicMock:
     """sync_session context mock for generate_content_plan."""
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=session)
@@ -953,6 +963,7 @@ def _plan_for_generate(plan_id: str, items: list[MagicMock]) -> MagicMock:
     plan.persona_id = uuid.uuid4()
     plan.events = {}
     plan.plan_status = "generating"
+    plan.generation_started_at = datetime.now(UTC)
     plan.items = items
     return plan
 
@@ -1002,7 +1013,10 @@ def test_generate_ideas_creates_exactly_one_unscheduled_idea() -> None:
     added = []
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     session.add = MagicMock(side_effect=added.append)
     session.commit = MagicMock()
@@ -1056,7 +1070,10 @@ def test_generate_ideas_passes_existing_ideas_as_exclusions() -> None:
 
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     session.add = MagicMock()
     session.commit = MagicMock()
@@ -1090,7 +1107,10 @@ def test_generate_ideas_ignores_legacy_scheduled_items_except_exclusions_and_pos
     added = []
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     session.add = MagicMock(side_effect=added.append)
     session.commit = MagicMock()
@@ -1124,7 +1144,9 @@ def test_generate_ideas_falls_back_to_user_persona_when_plan_persona_is_dangling
     fallback_persona.persona = _generate_valid_persona("fallback creator")
 
     session = MagicMock()
-    session.get = MagicMock(side_effect=lambda model, _pk: {ContentPlan: plan}.get(model))
+    session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {ContentPlan: plan}.get(model)
+    )
     session.execute.return_value = _fallback_result(fallback_persona)
     session.add = MagicMock()
     session.commit = MagicMock()
@@ -1163,7 +1185,10 @@ def test_generate_ideas_sparse_persona_payload_salvages_to_generic_defaults() ->
 
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: sparse_persona}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: sparse_persona,
+        }.get(model)
     )
     session.add = MagicMock()
     session.commit = MagicMock()
@@ -1192,7 +1217,9 @@ def test_generate_ideas_no_persona_marks_failed_without_writing_item() -> None:
     plan = _plan_for_generate(plan_id, [])
 
     session = MagicMock()
-    session.get = MagicMock(side_effect=lambda model, _pk: {ContentPlan: plan}.get(model))
+    session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {ContentPlan: plan}.get(model)
+    )
     session.execute.return_value = _fallback_result(None)
     session.add = MagicMock()
     session.commit = MagicMock()
@@ -1200,6 +1227,8 @@ def test_generate_ideas_no_persona_marks_failed_without_writing_item() -> None:
     with (
         patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
         patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch.object(generate_ideas_into_plan.request, "retries", 1),
+        pytest.raises(RuntimeError, match="persona is not ready"),
     ):
         generate_ideas_into_plan.run(plan_id)
 
@@ -1209,7 +1238,9 @@ def test_generate_ideas_no_persona_marks_failed_without_writing_item() -> None:
     session.commit.assert_called_once()
 
 
-def test_generate_ideas_agent_failure_marks_failed() -> None:
+def test_generate_ideas_agent_failure_retries_without_terminalizing() -> None:
+    from celery.exceptions import Retry  # noqa: PLC0415
+
     from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
 
     plan_id = str(uuid.uuid4())
@@ -1220,7 +1251,10 @@ def test_generate_ideas_agent_failure_marks_failed() -> None:
 
     session = MagicMock()
     session.get = MagicMock(
-        side_effect=lambda model, _pk: {ContentPlan: plan, PersonaRow: persona_row}.get(model)
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
     )
     session.add = MagicMock()
     session.commit = MagicMock()
@@ -1229,6 +1263,84 @@ def test_generate_ideas_agent_failure_marks_failed() -> None:
         patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
         patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
         patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch.object(generate_ideas_into_plan.request, "retries", 0),
+        patch.object(generate_ideas_into_plan, "retry", side_effect=Retry()) as mock_retry,
+        pytest.raises(Retry),
+    ):
+        mock_trace.return_value = _ctx(MagicMock())
+        mock_agent_cls.return_value.run.side_effect = RuntimeError("agent boom")
+
+        generate_ideas_into_plan.run(plan_id)
+
+    session.add.assert_not_called()
+    assert plan.plan_status == "generating"
+    session.commit.assert_not_called()
+    mock_retry.assert_called_once()
+    assert isinstance(mock_retry.call_args.kwargs["exc"], RuntimeError)
+
+
+def test_generate_ideas_retry_publish_failure_marks_failed() -> None:
+    from celery.exceptions import Reject  # noqa: PLC0415
+
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+    persona_row = MagicMock()
+    persona_row.persona = _generate_valid_persona()
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
+    )
+    session.commit = MagicMock()
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch.object(generate_ideas_into_plan.request, "retries", 0),
+        patch.object(
+            generate_ideas_into_plan,
+            "retry",
+            side_effect=Reject(RuntimeError("retry publish failed"), requeue=False),
+        ),
+        pytest.raises(Reject),
+    ):
+        mock_trace.return_value = _ctx(MagicMock())
+        mock_agent_cls.return_value.run.side_effect = RuntimeError("agent boom")
+        generate_ideas_into_plan.run(plan_id)
+
+    assert plan.plan_status == "failed"
+    session.commit.assert_called_once()
+
+
+def test_generate_ideas_retry_exhaustion_marks_failed() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+
+    persona_row = MagicMock()
+    persona_row.persona = _generate_valid_persona()
+
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
+    )
+    session.add = MagicMock()
+    session.commit = MagicMock()
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch.object(generate_ideas_into_plan.request, "retries", 1),
         pytest.raises(RuntimeError, match="agent boom"),
     ):
         mock_trace.return_value = _ctx(MagicMock())
@@ -1239,6 +1351,182 @@ def test_generate_ideas_agent_failure_marks_failed() -> None:
     session.add.assert_not_called()
     assert plan.plan_status == "failed"
     session.commit.assert_called_once()
+
+
+def test_generate_ideas_setup_failure_after_retry_marks_failed() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+    session = MagicMock()
+    session.get = MagicMock(side_effect=[RuntimeError("setup boom"), plan])
+    session.commit = MagicMock()
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
+        patch.object(generate_ideas_into_plan.request, "retries", 1),
+        pytest.raises(RuntimeError, match="setup boom"),
+    ):
+        generate_ideas_into_plan.run(plan_id)
+
+    assert plan.plan_status == "failed"
+    session.commit.assert_called_once()
+
+
+def test_generate_ideas_stale_delivery_noops_for_terminal_plan() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+    plan.plan_status = "ready"
+    session = MagicMock()
+    session.get = MagicMock(return_value=plan)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+    ):
+        generate_ideas_into_plan.run(plan_id)
+
+    mock_agent_cls.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+
+
+def test_generate_ideas_stale_attempt_token_noops_after_retry() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+    previous_token = (plan.generation_started_at - timedelta(seconds=1)).isoformat()
+    session = MagicMock()
+    session.get = MagicMock(return_value=plan)
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+    ):
+        generate_ideas_into_plan.run(plan_id, previous_token)
+
+    mock_agent_cls.assert_not_called()
+    session.add.assert_not_called()
+    session.commit.assert_not_called()
+
+
+def test_generate_ideas_attempt_token_matches_equivalent_timezone_offset() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+    equivalent_token = plan.generation_started_at.astimezone(
+        timezone(timedelta(hours=1))
+    ).isoformat()
+    persona_row = MagicMock()
+    persona_row.persona = _generate_valid_persona()
+    session = MagicMock()
+    session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
+    )
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", return_value=_ctx(session)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+    ):
+        mock_trace.return_value = _ctx(MagicMock())
+        mock_agent_cls.return_value.run.return_value = _generated_output(_generated_spec())
+        generate_ideas_into_plan.run(plan_id, equivalent_token)
+
+    mock_agent_cls.assert_called_once()
+    assert plan.plan_status == "ready"
+    session.commit.assert_called_once()
+
+
+def test_generate_ideas_stale_success_does_not_write_after_sibling_terminalizes() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+    persona_row = MagicMock()
+    persona_row.persona = _generate_valid_persona()
+
+    setup_session = MagicMock()
+    setup_session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
+    )
+    final_session = MagicMock()
+    final_session.get = MagicMock(return_value=plan)
+    sessions = iter([_ctx(setup_session), _ctx(final_session)])
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", side_effect=lambda: next(sessions)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+    ):
+        mock_trace.return_value = _ctx(MagicMock())
+
+        def succeed_after_sibling(*_args, **_kwargs):
+            plan.plan_status = "ready"
+            return _generated_output(_generated_spec())
+
+        mock_agent_cls.return_value.run.side_effect = succeed_after_sibling
+        generate_ideas_into_plan.run(plan_id)
+
+    final_session.get.assert_called_once_with(ContentPlan, uuid.UUID(plan_id), with_for_update=True)
+    final_session.add.assert_not_called()
+    final_session.commit.assert_not_called()
+
+
+def test_generate_ideas_stale_failure_does_not_overwrite_ready_plan() -> None:
+    from app.tasks.content_plan_build import generate_ideas_into_plan  # noqa: PLC0415
+
+    plan_id = str(uuid.uuid4())
+    plan = _plan_for_generate(plan_id, [])
+
+    persona_row = MagicMock()
+    persona_row.persona = _generate_valid_persona()
+
+    run_session = MagicMock()
+    run_session.get = MagicMock(
+        side_effect=lambda model, _pk, **_kwargs: {
+            ContentPlan: plan,
+            PersonaRow: persona_row,
+        }.get(model)
+    )
+    failed_transition_session = MagicMock()
+    failed_transition_session.get = MagicMock(return_value=plan)
+
+    sessions = iter([_ctx(run_session), _ctx(failed_transition_session)])
+
+    with (
+        patch("app.tasks.content_plan_build.sync_session", side_effect=lambda: next(sessions)),
+        patch("app.tasks.content_plan_build.ContentPlanGeneratorAgent") as mock_agent_cls,
+        patch("app.services.pipeline_trace.pipeline_trace_for") as mock_trace,
+        patch.object(generate_ideas_into_plan.request, "retries", 1),
+        pytest.raises(RuntimeError, match="agent boom"),
+    ):
+        mock_trace.return_value = _ctx(MagicMock())
+
+        def fail_after_sibling_success(*_args, **_kwargs):
+            plan.plan_status = "ready"
+            raise RuntimeError("agent boom")
+
+        mock_agent_cls.return_value.run.side_effect = fail_after_sibling_success
+        generate_ideas_into_plan.run(plan_id)
+
+    assert plan.plan_status == "ready"
+    failed_transition_session.get.assert_called_once_with(
+        ContentPlan,
+        uuid.UUID(plan_id),
+        with_for_update=True,
+    )
+    failed_transition_session.commit.assert_not_called()
 
 
 def test_generate_ideas_plan_gone_returns_cleanly() -> None:

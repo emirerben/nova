@@ -6,8 +6,9 @@ the mock-DB + dependency-override pattern (UUID/JSONB don't map to SQLite).
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -213,6 +214,189 @@ def test_regenerate_404_for_other_users_plan(client: TestClient) -> None:
     app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=None)
     resp = client.post(f"/content-plans/{uuid.uuid4()}/regenerate")
     assert resp.status_code == 404
+
+
+# ── POST /content-plans/{id}/generate-ideas ──────────────────────────────────
+
+
+def test_generate_ideas_locks_plan_and_enqueues(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/content-plans/{plan.id}/generate-ideas")
+
+    assert resp.status_code == 200
+    assert resp.json()["plan_status"] == "generating"
+    task.delay.assert_called_once_with(str(plan.id), plan.generation_started_at.isoformat())
+    first_stmt = db.execute.call_args_list[0].args[0]
+    assert "FOR UPDATE" in str(first_stmt).upper()
+
+
+def test_generate_ideas_409_when_already_generating(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="generating")
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=plan)
+
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock()
+        resp = client.post(f"/content-plans/{plan.id}/generate-ideas")
+
+    assert resp.status_code == 409
+    task.delay.assert_not_called()
+
+
+def test_generate_ideas_publish_failure_terminalizes_plan(client: TestClient) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock(side_effect=ConnectionError("redis unavailable"))
+        resp = client.post(f"/content-plans/{plan.id}/generate-ideas")
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"] == "Couldn't start idea generation. Try again."
+    assert plan.plan_status == "failed"
+    assert db.commit.await_count == 2
+
+
+def test_generate_ideas_ambiguous_publish_failure_preserves_completed_plan(
+    client: TestClient,
+) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    def accepted_then_raised(_plan_id: str, _generation_token: str) -> None:
+        plan.plan_status = "ready"
+        raise ConnectionError("publish confirmation lost")
+
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock(side_effect=accepted_then_raised)
+        resp = client.post(f"/content-plans/{plan.id}/generate-ideas")
+
+    assert resp.status_code == 503
+    assert plan.plan_status == "ready"
+    assert db.commit.await_count == 2
+    failure_stmt = db.execute.call_args_list[1].args[0]
+    assert "FOR UPDATE" in str(failure_stmt).upper()
+    assert failure_stmt.get_execution_options()["populate_existing"] is True
+
+
+def test_generate_ideas_publish_failure_preserves_newer_generating_attempt(
+    client: TestClient,
+) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    def newer_attempt_started(_plan_id: str, _generation_token: str) -> None:
+        plan.plan_status = "generating"
+        plan.generation_started_at = datetime.now(UTC) + timedelta(minutes=1)
+        raise ConnectionError("publish confirmation lost")
+
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock(side_effect=newer_attempt_started)
+        resp = client.post(f"/content-plans/{plan.id}/generate-ideas")
+
+    assert resp.status_code == 503
+    assert plan.plan_status == "generating"
+    assert plan.generation_started_at > datetime.now(UTC)
+
+
+def test_generate_ideas_publish_failure_matches_equivalent_timezone_offset(
+    client: TestClient,
+) -> None:
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    db = _async_db(scalar_result=plan)
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: db
+
+    def same_instant_different_offset(_plan_id: str, generation_token: str) -> None:
+        started_at = datetime.fromisoformat(generation_token)
+        plan.generation_started_at = started_at.astimezone(timezone(timedelta(hours=1)))
+        raise ConnectionError("publish confirmation lost")
+
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock(side_effect=same_instant_different_offset)
+        resp = client.post(f"/content-plans/{plan.id}/generate-ideas")
+
+    assert resp.status_code == 503
+    assert plan.plan_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_generate_ideas_concurrent_requests_enqueue_once() -> None:
+    """Two sessions serialized by the emitted row lock enqueue exactly once."""
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    from app.routes.content_plans import (  # noqa: PLC0415
+        ContentPlanResponse,
+    )
+    from app.routes.content_plans import (
+        generate_ideas_into_plan as generate_ideas_endpoint,
+    )
+
+    user = _fake_user()
+    plan = _plan_mock(user.id, status="ready")
+    row_lock = asyncio.Lock()
+
+    class LockedDb:
+        def __init__(self) -> None:
+            self.holds_lock = False
+
+        async def execute(self, stmt):
+            if "FOR UPDATE" in str(stmt).upper():
+                await row_lock.acquire()
+                self.holds_lock = True
+            return MagicMock(scalar_one_or_none=MagicMock(return_value=plan))
+
+        async def commit(self) -> None:
+            if self.holds_lock:
+                self.holds_lock = False
+                row_lock.release()
+
+        async def rollback(self) -> None:
+            if self.holds_lock:
+                self.holds_lock = False
+                row_lock.release()
+
+    async def submit(db: LockedDb):
+        try:
+            return await generate_ideas_endpoint(str(plan.id), user, db)  # type: ignore[arg-type]
+        except HTTPException as exc:
+            return exc
+        finally:
+            await db.rollback()
+
+    first_db = LockedDb()
+    second_db = LockedDb()
+    with patch("app.tasks.content_plan_build.generate_ideas_into_plan") as task:
+        task.delay = MagicMock()
+        results = await asyncio.gather(submit(first_db), submit(second_db))
+
+    successes = [result for result in results if isinstance(result, ContentPlanResponse)]
+    conflicts = [
+        result
+        for result in results
+        if isinstance(result, HTTPException) and result.status_code == 409
+    ]
+    assert len(successes) == 1
+    assert len(conflicts) == 1
+    task.delay.assert_called_once_with(str(plan.id), plan.generation_started_at.isoformat())
 
 
 # ── start_date activation (T3) ─────────────────────────────────────────────────
