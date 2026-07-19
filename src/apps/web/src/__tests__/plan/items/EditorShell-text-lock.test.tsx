@@ -337,6 +337,18 @@ describe("EditorShell — masonry smart placement history", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
+  it("keeps an empty composition from mutating the editor document", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    const composition = screen.getByLabelText("Composition text");
+    fireEvent.change(composition, { target: { value: "  \n  " } });
+
+    expect(screen.getByRole("button", { name: "Split & place" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).toBeNull();
+  });
+
   it("anchors selected Smart place to the current playhead", async () => {
     const variant = makeMasonryVariant();
     variant.text_elements = variant.text_elements?.map((element) => ({ ...element, end_s: 8 }));

@@ -127,6 +127,24 @@ def test_sequence_projects_each_rendered_block_with_exact_timing_and_style(monke
     assert all(overlay["glow_strength"] == pytest.approx(0.8) for overlay in compiled_glow)
 
 
+def test_sequence_projects_a_single_rendered_block_without_collapsing_scene_text() -> None:
+    variant = {
+        "variant_id": "original_text",
+        "intro_mode": "sequence",
+        "text_mode": "agent_text",
+        "sequence_base_size_px": 66,
+        "scenes": [{"words": ["bicampeón"], "start_s": 0.4, "end_s": 2.4}],
+    }
+
+    [element] = text_elements_for_variant(variant)
+
+    assert element.text == "bicampeón"
+    assert element.start_s == pytest.approx(0.4)
+    assert element.end_s == pytest.approx(2.4)
+    assert element.role == "generative_sequence"
+    assert text_element_source_identity(element) == "generative_sequence:sequence_scene:0:0"
+
+
 def test_legacy_saved_sequence_scene_suppresses_new_block_projections(monkeypatch) -> None:
     import app.pipeline.intro_cluster as ic
 
