@@ -3996,6 +3996,175 @@ def test_finalize_job_preserves_caption_cues(monkeypatch):
     assert job.status == "variants_ready"
 
 
+def _patch_subtitled_smart_render(monkeypatch, tmp_path):
+    """Replace I/O-heavy subtitled dependencies while keeping Smart orchestration real."""
+    import contextlib
+    from pathlib import Path
+    from unittest.mock import Mock
+
+    import app.storage as storage
+    from app.pipeline import caption_correct, captions, narrated_assembler, probe, reframe
+    from app.services import pipeline_trace
+    from app.smart_edit import compiler, planner
+
+    for name in (
+        "silence_cut_enabled",
+        "visual_blocks_enabled",
+        "sound_effects_enabled",
+        "media_overlays_enabled",
+        "subtitled_text_lane_enabled",
+    ):
+        monkeypatch.setattr(gb.settings, name, False, raising=False)
+
+    monkeypatch.setattr(
+        probe,
+        "probe_video",
+        lambda _path: types.SimpleNamespace(
+            duration_s=2.0,
+            aspect_ratio="9:16",
+            has_audio=True,
+        ),
+    )
+    monkeypatch.setattr(reframe, "resolve_output_fit", lambda *_args, **_kwargs: "fill")
+
+    def fake_reframe(*args, **_kwargs):
+        Path(args[5]).write_bytes(b"base-video")
+
+    monkeypatch.setattr(reframe, "reframe_and_export", fake_reframe)
+    monkeypatch.setattr(
+        "app.pipeline.transcribe.transcribe_whisper",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            language="en",
+            words=[types.SimpleNamespace(text="Hello", start_s=0.0, end_s=1.0)],
+        ),
+    )
+    cues = [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}]
+    monkeypatch.setattr(captions, "build_plain_cues", lambda *_args, **_kwargs: list(cues))
+    monkeypatch.setattr(caption_correct, "correct_caption_cues", lambda value, *_a, **_k: value)
+    monkeypatch.setattr(captions, "resplit_cues_into_sentences", lambda value: value)
+
+    def fake_ass(_cues, path, **_kwargs):
+        Path(path).write_text("ass", encoding="utf-8")
+
+    monkeypatch.setattr(captions, "generate_ass_from_cues", fake_ass)
+    monkeypatch.setattr(captions, "generate_word_pop_ass", fake_ass)
+    monkeypatch.setattr(narrated_assembler, "resolve_caption_font", lambda _font: "Inter")
+
+    def fake_burn(_base, _ass, _fonts, output):
+        Path(output).write_bytes(b"captioned-video")
+
+    monkeypatch.setattr(narrated_assembler, "burn_captions_on_video", fake_burn)
+
+    def fake_compose(_base, _variant, variant_dir):
+        output = Path(variant_dir) / "smart-final.mp4"
+        output.write_bytes(b"smart-captioned-video")
+        return str(output)
+
+    monkeypatch.setattr(gb, "_compose_subtitled_final", fake_compose)
+    monkeypatch.setattr(
+        storage,
+        "upload_public_read",
+        lambda _local, gcs_path: f"https://signed/{gcs_path}",
+    )
+    monkeypatch.setattr(pipeline_trace, "record_pipeline_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        gb,
+        "_sync_session",
+        lambda: contextlib.nullcontext(types.SimpleNamespace(get=lambda *_args: None)),
+    )
+
+    smart_plan = types.SimpleNamespace(
+        document=types.SimpleNamespace(model_dump=lambda **_kwargs: {"version": "1", "events": []}),
+        caption_cues=list(cues),
+        planner_versions={"planner": "test-planner"},
+        validation_receipt={"valid": True},
+    )
+    compiled = types.SimpleNamespace(
+        caption_cues=list(cues),
+        compiled_patch={"compiler_version": "test-compiler"},
+        validation_receipt={"styled_caption_count": 1},
+        media_overlays=[],
+        boundary_effects=[],
+        text_elements=[
+            {
+                "id": "smart-title",
+                "text": "Hello",
+                "role": "generative_intro",
+                "start_s": 0.0,
+                "end_s": 1.0,
+            }
+        ],
+        sfx_intents=[],
+    )
+    plan_mock = Mock(return_value=smart_plan)
+    compile_mock = Mock(return_value=compiled)
+    monkeypatch.setattr(planner, "plan_smart_captions", plan_mock)
+    monkeypatch.setattr(compiler, "compile_smart_plan", compile_mock)
+    return plan_mock, compile_mock
+
+
+def test_subtitled_render_invokes_and_persists_smart_captions(monkeypatch, tmp_path):
+    import uuid
+
+    plan_mock, compile_mock = _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    job_id = str(uuid.uuid4())
+
+    result = gb._render_subtitled_variant(
+        job_id=job_id,
+        rank=1,
+        spec={"variant_id": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"clip-1": str(tmp_path / "source.mp4")},
+        variant_dir=str(tmp_path),
+        smart_captions={"preset_id": "cigdem", "preset_version": "v1"},
+    )
+
+    assert result["ok"] is True
+    assert plan_mock.call_count == 1
+    assert compile_mock.call_count == 1
+    assert result["smart_captions_applied"] is True
+    assert result["smart_planner_versions"] == {
+        "planner": "test-planner",
+        "compiler": "test-compiler",
+    }
+    assert result["text_elements_materialized_from"] == "smart_captions"
+    assert plan_mock.call_args.kwargs["preset_id"] == "cigdem"
+    assert plan_mock.call_args.kwargs["preset_version"] == "v1"
+    assert compile_mock.call_args.args[0] is plan_mock.return_value.document
+
+    job = _FakeJob(assembly_plan={})
+    _patch_job_session(monkeypatch, job)
+    gb._upsert_variant_entry(job_id, result)
+    persisted = job.assembly_plan["variants"][0]
+    assert persisted["smart_captions_applied"] is True
+    assert persisted["smart_planner_versions"] == {
+        "planner": "test-planner",
+        "compiler": "test-compiler",
+    }
+
+
+def test_subtitled_render_smart_planner_failure_fails_open(monkeypatch, tmp_path):
+    import uuid
+
+    plan_mock, compile_mock = _patch_subtitled_smart_render(monkeypatch, tmp_path)
+    plan_mock.side_effect = RuntimeError("planner unavailable")
+
+    result = gb._render_subtitled_variant(
+        job_id=str(uuid.uuid4()),
+        rank=1,
+        spec={"variant_id": "subtitled", "caption_style": "sentence"},
+        clip_id_to_local={"clip-1": str(tmp_path / "source.mp4")},
+        variant_dir=str(tmp_path),
+        smart_captions={"preset_id": "cigdem", "preset_version": "v1"},
+    )
+
+    assert plan_mock.call_count == 1
+    assert compile_mock.call_count == 0
+    assert result["ok"] is True
+    assert result["render_status"] == "ready"
+    assert result["smart_captions_applied"] is False
+    assert result["caption_cues"] == [{"text": "Hello.", "start_s": 0.0, "end_s": 1.0}]
+
+
 def test_finalize_job_preserves_smart_caption_plan_and_authoritative_titles(monkeypatch):
     """Smart output must survive the finalizer's explicit variant whitelist."""
     import uuid
