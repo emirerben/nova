@@ -8,18 +8,34 @@ import { addIdea, deleteIdea, generateIdeasWithAI } from "@/lib/plan-api";
 interface IdeasHomeProps {
   plan: ContentPlan;
   onRefresh: () => void | Promise<unknown>;
+  onPlanChange: (plan: ContentPlan) => void;
 }
 
 type MutState = "idle" | "saving" | "error";
 
 const CONFIRM_DELETE_STATUSES = new Set<PlanItemStatus>(["ready", "generating", "rerolling"]);
+const RECONCILE_TIMEOUT_MS = 3000;
 
-export function IdeasHome({ plan, onRefresh }: IdeasHomeProps) {
+export function IdeasHome({ plan, onRefresh, onPlanChange }: IdeasHomeProps) {
   const [buffer, setBuffer] = useState("");
   const [mutState, setMutState] = useState<MutState>("idle");
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const generatePendingRef = useRef(false);
+  const reconcileTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (reconcileTimeoutRef.current !== null) {
+        window.clearTimeout(reconcileTimeoutRef.current);
+        reconcileTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   const items = [...(plan.items ?? [])].sort((a, b) => b.position - a.position);
   const readyCount = items.filter((item) => item.status === "ready").length;
@@ -59,16 +75,43 @@ export function IdeasHome({ plan, onRefresh }: IdeasHomeProps) {
   }
 
   async function handleGenerate() {
-    if (generateDisabled) return;
+    if (generateDisabled || generatePendingRef.current) return;
+    generatePendingRef.current = true;
     setAiError(null);
     setAiGenerating(true);
     try {
-      await generateIdeasWithAI(plan.id);
-      await onRefresh();
+      const updatedPlan = await generateIdeasWithAI(plan.id);
+      if (!mountedRef.current) return;
+      // Hand the persisted generating state to the page before clearing the
+      // local request state. The page's existing poll starts on the same render,
+      // so the ledger row never blinks off between POST and GET.
+      onPlanChange(updatedPlan);
     } catch (err) {
+      if (!mountedRef.current) return;
       setAiError(err instanceof Error ? err.message : "Couldn't generate ideas");
+      // A dropped response may still have reached the API, and a 409 means
+      // another request already did. Reconcile with the server either way.
+      try {
+        await Promise.race([
+          Promise.resolve(onRefresh()),
+          new Promise<void>((resolve) => {
+            reconcileTimeoutRef.current = window.setTimeout(() => {
+              reconcileTimeoutRef.current = null;
+              resolve();
+            }, RECONCILE_TIMEOUT_MS);
+          }),
+        ]);
+      } catch {
+        // The local error remains actionable; the next page load retries GET.
+      } finally {
+        if (reconcileTimeoutRef.current !== null) {
+          window.clearTimeout(reconcileTimeoutRef.current);
+          reconcileTimeoutRef.current = null;
+        }
+      }
     } finally {
-      setAiGenerating(false);
+      generatePendingRef.current = false;
+      if (mountedRef.current) setAiGenerating(false);
     }
   }
 

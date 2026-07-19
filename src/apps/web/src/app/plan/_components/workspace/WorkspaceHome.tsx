@@ -6,12 +6,14 @@ import SeedUploadCard from "../SeedUploadCard";
 interface WorkspaceHomeProps {
   plan: ContentPlan;
   onRefresh: () => void | Promise<unknown>;
+  onPlanChange: (plan: ContentPlan) => void;
   onError: (msg: string) => void;
 }
 
 export function WorkspaceHome({
   plan,
   onRefresh,
+  onPlanChange,
   onError,
 }: WorkspaceHomeProps) {
   const activating = ["seeding", "activating"].includes(plan.activation_status ?? "");
@@ -22,7 +24,7 @@ export function WorkspaceHome({
         {activating && (
           <SeedUploadCard plan={plan} onError={onError} onRefresh={onRefresh} />
         )}
-        <IdeasHome plan={plan} onRefresh={onRefresh} />
+        <IdeasHome plan={plan} onRefresh={onRefresh} onPlanChange={onPlanChange} />
       </div>
     </div>
   );

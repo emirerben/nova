@@ -1,6 +1,6 @@
 // @ts-nocheck
 import React from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import type { ContentPlan, PlanItem, PlanItemStatus } from "@/lib/plan-api";
 import { addIdea, deleteIdea, generateIdeasWithAI } from "@/lib/plan-api";
@@ -68,7 +68,7 @@ describe("IdeasHome", () => {
       makeItem({ id: "mid", idea: "Middle idea", position: 2 }),
     ]);
 
-    render(<IdeasHome plan={plan} onRefresh={jest.fn()} />);
+    render(<IdeasHome plan={plan} onRefresh={jest.fn()} onPlanChange={jest.fn()} />);
 
     const ledger = screen.getByRole("list", { name: "Ideas ledger" });
     expect(within(ledger).getAllByRole("link").map((link) => link.textContent)).toEqual([
@@ -85,12 +85,15 @@ describe("IdeasHome", () => {
         resolveGenerate = resolve;
       }),
     );
-    render(<IdeasHome plan={makePlan()} onRefresh={jest.fn()} />);
+    render(
+      <IdeasHome plan={makePlan()} onRefresh={jest.fn()} onPlanChange={jest.fn()} />,
+    );
 
     const button = screen.getByRole("button", { name: /generate with ai/i });
     fireEvent.click(button);
 
     expect(button).toBeDisabled();
+    expect(screen.getByText("Kria is writing an idea…")).toBeInTheDocument();
     fireEvent.click(button);
     expect(mockGenerateIdeasWithAI).toHaveBeenCalledTimes(1);
 
@@ -99,7 +102,13 @@ describe("IdeasHome", () => {
   });
 
   it("hides the stat line when ready and rendering counts are both zero", () => {
-    render(<IdeasHome plan={makePlan([makeItem({ status: "idea" })])} onRefresh={jest.fn()} />);
+    render(
+      <IdeasHome
+        plan={makePlan([makeItem({ status: "idea" })])}
+        onRefresh={jest.fn()}
+        onPlanChange={jest.fn()}
+      />,
+    );
 
     expect(screen.queryByText(/ready/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/rendering/i)).not.toBeInTheDocument();
@@ -111,6 +120,7 @@ describe("IdeasHome", () => {
       <IdeasHome
         plan={makePlan([makeItem({ id: "ready", status: "ready", position: 1 })])}
         onRefresh={jest.fn()}
+        onPlanChange={jest.fn()}
       />,
     );
 
@@ -132,6 +142,7 @@ describe("IdeasHome", () => {
       <IdeasHome
         plan={makePlan([makeItem({ id: status, status, position: 1 })])}
         onRefresh={jest.fn()}
+        onPlanChange={jest.fn()}
       />,
     );
 
@@ -178,6 +189,7 @@ describe("IdeasHome", () => {
         <IdeasHome
           plan={makePlan([makeItem({ id: status, idea: `${status} idea`, status, position: 1 })])}
           onRefresh={jest.fn()}
+          onPlanChange={jest.fn()}
         />,
       );
 
@@ -195,6 +207,7 @@ describe("IdeasHome", () => {
         <IdeasHome
           plan={makePlan([makeItem({ id: status, idea: `${status} idea`, status, position: 1 })])}
           onRefresh={jest.fn()}
+          onPlanChange={jest.fn()}
         />,
       );
 
@@ -206,26 +219,163 @@ describe("IdeasHome", () => {
   );
 
   it("renders the empty-state invitation", () => {
-    render(<IdeasHome plan={makePlan()} onRefresh={jest.fn()} />);
+    render(
+      <IdeasHome plan={makePlan()} onRefresh={jest.fn()} onPlanChange={jest.fn()} />,
+    );
 
     expect(screen.getByText("Pitch your first idea.")).toBeInTheDocument();
   });
 
   it("renders an aria-live shimmer row while the plan is generating", () => {
-    render(<IdeasHome plan={makePlan([], { plan_status: "generating" })} onRefresh={jest.fn()} />);
+    render(
+      <IdeasHome
+        plan={makePlan([], { plan_status: "generating" })}
+        onRefresh={jest.fn()}
+        onPlanChange={jest.fn()}
+      />,
+    );
 
     const status = screen.getByRole("status");
     expect(status).toHaveAttribute("aria-live", "polite");
     expect(within(status).getByText("Kria is writing an idea…")).toBeInTheDocument();
   });
 
+  it.each(["ready", "failed"] as const)(
+    "does not render the generation indicator on an initial %s plan",
+    (planStatus) => {
+      render(
+        <IdeasHome
+          plan={makePlan([], { plan_status: planStatus })}
+          onRefresh={jest.fn()}
+          onPlanChange={jest.fn()}
+        />,
+      );
+
+      expect(screen.queryByText("Kria is writing an idea…")).not.toBeInTheDocument();
+    },
+  );
+
   it("renders Generate with AI failures under the composer", async () => {
     mockGenerateIdeasWithAI.mockRejectedValueOnce(new Error("409 already generating"));
+    const onRefresh = jest.fn().mockResolvedValue(undefined);
 
-    render(<IdeasHome plan={makePlan()} onRefresh={jest.fn()} />);
+    render(
+      <IdeasHome plan={makePlan()} onRefresh={onRefresh} onPlanChange={jest.fn()} />,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: /generate with ai/i }));
+    const button = screen.getByRole("button", { name: /generate with ai/i });
+    fireEvent.click(button);
 
     expect(await screen.findByRole("alert")).toHaveTextContent("409 already generating");
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Kria is writing an idea…")).not.toBeInTheDocument();
+    expect(button).not.toBeDisabled();
+  });
+
+  it("clears local pending state when reconciliation never settles", async () => {
+    jest.useFakeTimers();
+    mockGenerateIdeasWithAI.mockRejectedValueOnce(new Error("response interrupted"));
+    const onRefresh = jest.fn(() => new Promise(() => {}));
+
+    render(
+      <IdeasHome plan={makePlan()} onRefresh={onRefresh} onPlanChange={jest.fn()} />,
+    );
+    const button = screen.getByRole("button", { name: /generate with ai/i });
+    fireEvent.click(button);
+
+    await act(async () => Promise.resolve());
+    expect(screen.getByText("Kria is writing an idea…")).toBeInTheDocument();
+    expect(button).toBeDisabled();
+
+    await act(async () => {
+      jest.advanceTimersByTime(3000);
+    });
+    expect(screen.queryByText("Kria is writing an idea…")).not.toBeInTheDocument();
+    expect(button).not.toBeDisabled();
+    jest.useRealTimers();
+  });
+
+  it("keeps the indicator active when an interrupted POST reconciles to generating", async () => {
+    mockGenerateIdeasWithAI.mockRejectedValueOnce(new Error("response interrupted"));
+    const refreshObserved = jest.fn();
+
+    function Harness() {
+      const [plan, setPlan] = React.useState(makePlan());
+      return (
+        <IdeasHome
+          plan={plan}
+          onPlanChange={setPlan}
+          onRefresh={async () => {
+            refreshObserved();
+            setPlan(makePlan([], { plan_status: "generating" }));
+          }}
+        />
+      );
+    }
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: /generate with ai/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("response interrupted");
+    expect(refreshObserved).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Kria is writing an idea…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate with ai/i })).toBeDisabled();
+  });
+
+  it("hands the accepted server state to polling without hiding the indicator", async () => {
+    mockGenerateIdeasWithAI.mockResolvedValueOnce(
+      makePlan([], { plan_status: "generating" }),
+    );
+
+    function Harness() {
+      const [plan, setPlan] = React.useState(makePlan());
+      return <IdeasHome plan={plan} onRefresh={jest.fn()} onPlanChange={setPlan} />;
+    }
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: /generate with ai/i }));
+
+    await waitFor(() => expect(mockGenerateIdeasWithAI).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Kria is writing an idea…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /generate with ai/i })).toBeDisabled();
+  });
+
+  it.each(["ready", "failed"] as const)(
+    "removes the indicator when the server transitions to %s",
+    (planStatus) => {
+      const props = { onRefresh: jest.fn(), onPlanChange: jest.fn() };
+      const { rerender } = render(
+        <IdeasHome plan={makePlan([], { plan_status: "generating" })} {...props} />,
+      );
+
+      expect(screen.getByText("Kria is writing an idea…")).toBeInTheDocument();
+      rerender(<IdeasHome plan={makePlan([], { plan_status: planStatus })} {...props} />);
+
+      expect(screen.queryByText("Kria is writing an idea…")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /generate with ai/i })).not.toBeDisabled();
+    },
+  );
+
+  it("ignores a generation response that settles after unmount", async () => {
+    let resolveGenerate: (plan: ContentPlan) => void = () => {};
+    mockGenerateIdeasWithAI.mockImplementationOnce(
+      () => new Promise((resolve) => {
+        resolveGenerate = resolve;
+      }),
+    );
+    const onPlanChange = jest.fn();
+    const view = render(
+      <IdeasHome
+        plan={makePlan()}
+        onRefresh={jest.fn()}
+        onPlanChange={onPlanChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /generate with ai/i }));
+    view.unmount();
+    await act(async () => resolveGenerate(makePlan([], { plan_status: "generating" })));
+
+    expect(onPlanChange).not.toHaveBeenCalled();
   });
 });

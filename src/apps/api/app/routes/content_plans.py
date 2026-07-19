@@ -354,7 +354,13 @@ async def generate_ideas_into_plan(
     Each click enqueues exactly one new bare idea for user curation. 409 if
     already generating.
     """
-    plan = await _load_owned_plan(plan_id, user.id, db, with_items=True)
+    plan = await _load_owned_plan(
+        plan_id,
+        user.id,
+        db,
+        with_items=True,
+        for_update=True,
+    )
     if plan.plan_status == "generating":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -364,11 +370,40 @@ async def generate_ideas_into_plan(
     plan.generation_started_at = datetime.now(UTC)
     await db.commit()
 
-    from app.tasks.content_plan_build import (
-        generate_ideas_into_plan as _gen_ideas_task,  # noqa: PLC0415
-    )
+    generation_started_at = plan.generation_started_at
+    generation_token = generation_started_at.isoformat()
+    try:
+        from app.tasks.content_plan_build import (  # noqa: PLC0415
+            generate_ideas_into_plan as _gen_ideas_task,
+        )
 
-    _gen_ideas_task.delay(str(plan.id))
+        _gen_ideas_task.delay(str(plan.id), generation_token)
+    except Exception as exc:  # noqa: BLE001 — broker/publish failures must terminalize the row
+        log.warning(
+            "generate_ideas_into_plan.enqueue_failed",
+            plan_id=str(plan.id),
+            error=str(exc),
+        )
+        # Publishing can fail ambiguously after the broker accepted the message.
+        # Re-lock and recheck so a fast accepted task cannot have its terminal
+        # success overwritten by this request's stale ORM instance.
+        plan = await _load_owned_plan(
+            plan_id,
+            user.id,
+            db,
+            for_update=True,
+        )
+        if (
+            plan.plan_status == "generating"
+            and plan.generation_started_at is not None
+            and plan.generation_started_at == generation_started_at
+        ):
+            plan.plan_status = "failed"
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Couldn't start idea generation. Try again.",
+        ) from exc
     return _plan_response(await _load_owned_plan(plan_id, user.id, db, with_items=True))
 
 
@@ -463,13 +498,20 @@ async def reorder_items(
 
 
 async def _load_owned_plan(
-    plan_id: str, user_id: uuid.UUID, db: AsyncSession, *, with_items: bool = False
+    plan_id: str,
+    user_id: uuid.UUID,
+    db: AsyncSession,
+    *,
+    with_items: bool = False,
+    for_update: bool = False,
 ) -> ContentPlan:
     try:
         pid = uuid.UUID(plan_id)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad id") from exc
     stmt = select(ContentPlan).where(ContentPlan.id == pid, ContentPlan.user_id == user_id)
+    if for_update:
+        stmt = stmt.with_for_update().execution_options(populate_existing=True)
     if with_items:
         stmt = stmt.options(selectinload(ContentPlan.items).selectinload(PlanItem.current_job))
     plan = (await db.execute(stmt)).scalar_one_or_none()

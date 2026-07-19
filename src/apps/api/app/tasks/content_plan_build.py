@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, date, datetime
 
 import structlog
+from celery.exceptions import Retry
 from sqlalchemy import select
 
 from app.agents._model_client import default_client
@@ -463,9 +464,7 @@ def _dispatch_item_render(
         user_id=plan.user_id,
         edit_format=str(item.edit_format or "montage"),
         requested=getattr(item, "smart_captions_enabled", False) is True,
-        sound_design_enabled=(
-            getattr(item, "smart_sound_design_enabled", None) is not False
-        ),
+        sound_design_enabled=(getattr(item, "smart_sound_design_enabled", None) is not False),
         db=session,
     )
     try:
@@ -1082,68 +1081,89 @@ _GENERIC_PERSONA_DEFAULTS: dict = {
     soft_time_limit=120,
     time_limit=180,
 )
-def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
+def generate_ideas_into_plan(
+    self,
+    plan_id: str,
+    generation_token: str | None = None,
+) -> None:  # noqa: ANN001
     """Generate exactly one fresh unscheduled AI idea for a content plan."""
     from app.services.pipeline_trace import pipeline_trace_for  # noqa: PLC0415
 
     pid = uuid.UUID(str(plan_id))
+    generation_started_at = (
+        datetime.fromisoformat(generation_token) if generation_token is not None else None
+    )
+
+    def _is_current_attempt(plan: ContentPlan) -> bool:
+        if plan.plan_status != "generating":
+            return False
+        if generation_token is None:
+            return True
+        started_at = plan.generation_started_at
+        return started_at is not None and started_at == generation_started_at
 
     def _mark_failed() -> None:
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
-            if plan is not None:
+            plan = session.get(ContentPlan, pid, with_for_update=True)
+            if plan is not None and _is_current_attempt(plan):
                 plan.plan_status = "failed"
                 session.commit()
 
-    with sync_session() as session:
-        plan = session.get(ContentPlan, pid)
-        if plan is None:
-            return
-
-        def _persona_from_row(row: PersonaRow | None) -> Persona | None:
-            # Sparse payloads are a legitimate mid-onboarding state (the
-            # interview PATCHes e.g. footage_type_bias before generation fills
-            # the rest) and fail Persona's min-length validators. Salvage what
-            # validates by overlaying the payload on generic defaults —
-            # personas is UNIQUE(user_id), so there is no other row to try.
-            if row is None or not row.persona:
-                return None
-            payload = dict(row.persona)
-            try:
-                return Persona(**payload)
-            except Exception:  # noqa: BLE001 — pydantic ValidationError et al.
-                pass
-            try:
-                return Persona(**{**_GENERIC_PERSONA_DEFAULTS, **payload})
-            except Exception:  # noqa: BLE001 — a provided field itself is invalid
-                return Persona(**_GENERIC_PERSONA_DEFAULTS)
-
-        persona = _persona_from_row(session.get(PersonaRow, plan.persona_id))
-        if persona is None:
-            persona_row = (
-                session.execute(
-                    select(PersonaRow)
-                    .where(PersonaRow.user_id == plan.user_id)
-                    .order_by(PersonaRow.created_at.desc())
-                    .limit(1)
-                )
-                .scalars()
-                .first()
-            )
-            persona = _persona_from_row(persona_row)
-        if persona is None:
-            plan.plan_status = "failed"
-            session.commit()
-            return
-
-        existing_items = list(plan.items or [])
-        events_text = str((plan.events or {}).get("text", "") or "")
-        exclude_ideas = [it.idea for it in existing_items if it.idea]
-        next_position = (
-            max((it.position for it in existing_items if it.position is not None), default=0) + 1
-        )
-
     try:
+        with sync_session() as session:
+            plan = session.get(ContentPlan, pid)
+            if plan is None:
+                return
+            if not _is_current_attempt(plan):
+                log.info(
+                    "generate_ideas_into_plan.stale_delivery",
+                    plan_id=plan_id,
+                    plan_status=plan.plan_status,
+                )
+                return
+
+            def _persona_from_row(row: PersonaRow | None) -> Persona | None:
+                # Sparse payloads are a legitimate mid-onboarding state (the
+                # interview PATCHes e.g. footage_type_bias before generation fills
+                # the rest) and fail Persona's min-length validators. Salvage what
+                # validates by overlaying the payload on generic defaults —
+                # personas is UNIQUE(user_id), so there is no other row to try.
+                if row is None or not row.persona:
+                    return None
+                payload = dict(row.persona)
+                try:
+                    return Persona(**payload)
+                except Exception:  # noqa: BLE001 — pydantic ValidationError et al.
+                    pass
+                try:
+                    return Persona(**{**_GENERIC_PERSONA_DEFAULTS, **payload})
+                except Exception:  # noqa: BLE001 — a provided field itself is invalid
+                    return Persona(**_GENERIC_PERSONA_DEFAULTS)
+
+            persona = _persona_from_row(session.get(PersonaRow, plan.persona_id))
+            if persona is None:
+                persona_row = (
+                    session.execute(
+                        select(PersonaRow)
+                        .where(PersonaRow.user_id == plan.user_id)
+                        .order_by(PersonaRow.created_at.desc())
+                        .limit(1)
+                    )
+                    .scalars()
+                    .first()
+                )
+                persona = _persona_from_row(persona_row)
+            if persona is None:
+                raise RuntimeError("persona is not ready")
+
+            existing_items = list(plan.items or [])
+            events_text = str((plan.events or {}).get("text", "") or "")
+            exclude_ideas = [it.idea for it in existing_items if it.idea]
+            next_position = (
+                max((it.position for it in existing_items if it.position is not None), default=0)
+                + 1
+            )
+
         agent_input = ContentPlanInput(
             persona=persona,
             events=events_text,
@@ -1160,8 +1180,15 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
             raise RuntimeError("fresh idea generation returned no items")
 
         with sync_session() as session:
-            plan = session.get(ContentPlan, pid)
+            plan = session.get(ContentPlan, pid, with_for_update=True)
             if plan is None:
+                return
+            if not _is_current_attempt(plan):
+                log.info(
+                    "generate_ideas_into_plan.stale_result",
+                    plan_id=plan_id,
+                    plan_status=plan.plan_status,
+                )
                 return
             spec = new_specs[0]
             session.add(
@@ -1189,9 +1216,27 @@ def generate_ideas_into_plan(self, plan_id: str) -> None:  # noqa: ANN001
             added=len(new_specs),
         )
     except Exception as exc:  # noqa: BLE001
+        retries = int(getattr(self.request, "retries", 0) or 0)
+        max_retries = int(self.max_retries or 0)
+        if retries < max_retries:
+            log.warning(
+                "generate_ideas_into_plan.fresh_retry",
+                plan_id=plan_id,
+                retry=retries + 1,
+                max_retries=max_retries,
+                error=str(exc),
+            )
+            try:
+                raise self.retry(exc=exc) from exc
+            except Retry:
+                raise
+            except Exception:  # noqa: BLE001 — retry publish itself failed
+                _mark_failed()
+                raise
         log.warning(
             "generate_ideas_into_plan.fresh_failed",
             plan_id=plan_id,
+            retries=retries,
             error=str(exc),
         )
         _mark_failed()
