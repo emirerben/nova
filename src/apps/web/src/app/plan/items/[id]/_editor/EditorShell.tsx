@@ -905,14 +905,17 @@ export default function EditorShell({
   // gate would silently drop the Captions signpost for the exact archetype that
   // needs it. See isCaptionArchetype / DECISIONS (caption-edit discoverability).
   const isCaptionEdit = !!variant && isCaptionArchetype(variant);
-  const clipLockedToVoiceover =
-    capabilities?.timeline === false &&
-    (capabilities?.reason === "voiceover_bed_fit" ||
-      capabilities?.reason === "locked_to_voiceover" ||
-      variant?.resolved_archetype === "narrated");
-  const clipDisabledReason = clipLockedToVoiceover
-    ? "locked to your voiceover"
-    : editorReasonCopy(capabilities?.reason);
+  // ANY server timeline ineligibility locks the clip lane — a reason-whitelist
+  // here let lyrics_sync (and any future reason) edit clips freely in the UI
+  // only to 422 at save time.
+  const clipEditingLocked =
+    capabilities?.timeline === false || variant?.resolved_archetype === "narrated";
+  const clipDisabledReason =
+    capabilities?.reason === "voiceover_bed_fit" ||
+    capabilities?.reason === "locked_to_voiceover" ||
+    variant?.resolved_archetype === "narrated"
+      ? "locked to your voiceover"
+      : editorReasonCopy(capabilities?.reason);
 
   // ── Unified undo/redo (plan §7, task T8) ────────────────────────────────────
   const getCurrent = useCallback(
@@ -1791,18 +1794,18 @@ export default function EditorShell({
       key: string,
       patch: Pick<DraftSlot, "inS" | "durationS" | "durationBeats">,
     ) => {
-      if (readOnly || clipLockedToVoiceover) return;
+      if (readOnly || clipEditingLocked) return;
       setLocalSlots((cur) =>
         (cur ?? slots).map((s) => (s.key === key ? { ...s, ...patch } : s)),
       );
       setTimelineDirty(true);
     },
-    [clipLockedToVoiceover, readOnly, slots],
+    [clipEditingLocked, readOnly, slots],
   );
 
   const patchSelectedClipTiming = useCallback(
     (patch: { inS?: number; outS?: number; durationS?: number }) => {
-      if (!selectedClip || readOnly || clipLockedToVoiceover) return;
+      if (!selectedClip || readOnly || clipEditingLocked) return;
       const current = selectedClip.slot;
       const currentDuration = selectedClip.durationS;
       const next = applyClipTimingInput({
@@ -1823,12 +1826,12 @@ export default function EditorShell({
       history.record();
       previewClipTiming(current.key, next);
     },
-    [clipLockedToVoiceover, history, previewClipTiming, readOnly, selectedClip],
+    [clipEditingLocked, history, previewClipTiming, readOnly, selectedClip],
   );
 
   const previewSelectedClipTiming = useCallback(
     (patch: { inS: number; durationS: number }) => {
-      if (!selectedClip || readOnly || clipLockedToVoiceover) return;
+      if (!selectedClip || readOnly || clipEditingLocked) return;
       previewClipTiming(selectedClip.slot.key, {
         inS: patch.inS,
         durationS: patch.durationS,
@@ -1845,7 +1848,7 @@ export default function EditorShell({
       }
     },
     [
-      clipLockedToVoiceover,
+      clipEditingLocked,
       previewClipTiming,
       readOnly,
       seekPlaybackTo,
@@ -2999,7 +3002,7 @@ export default function EditorShell({
       setTextDirty(true);
       dispatch({ type: "DELETE_BAR", id: selection.id });
       clear();
-    } else if (selection.kind === "clip" && !clipLockedToVoiceover) {
+    } else if (selection.kind === "clip" && !clipEditingLocked) {
       const res = deleteSlotEnforceFloor(slots, selection.id);
       if (res.didDelete) {
         history.record();
@@ -3018,7 +3021,7 @@ export default function EditorShell({
       clear();
     }
   }, [
-    clipLockedToVoiceover,
+    clipEditingLocked,
     selection,
     clear,
     slots,
@@ -3116,20 +3119,20 @@ export default function EditorShell({
   // Transport enablement (plan §6).
   const canSplit =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
-    (selection?.kind === "clip" && splitClipsAllowed && !clipLockedToVoiceover);
+    (selection?.kind === "clip" && splitClipsAllowed && !clipEditingLocked);
   const splitReason =
     selection?.kind === "music"
       ? "Music fits the cut automatically"
       : selection?.kind === "text" && selectedBar && isLyricBar(selectedBar)
         ? "Lyric timing is locked to the vocal."
-      : selection?.kind === "clip" && clipLockedToVoiceover
+      : selection?.kind === "clip" && clipEditingLocked
         ? "locked to your voiceover"
       : selection?.kind === "clip" && !splitClipsAllowed
         ? "This variant's clips can't be split"
         : undefined;
   const canDelete =
     (selection?.kind === "text" && !!selectedBar && !isLyricBar(selectedBar)) ||
-    (selection?.kind === "clip" && !clipLockedToVoiceover && activeSlotCount(slots) > 1) ||
+    (selection?.kind === "clip" && !clipEditingLocked && activeSlotCount(slots) > 1) ||
     selection?.kind === "sfx" ||
     selection?.kind === "overlay" ||
     selection?.kind === "visual";
@@ -3615,7 +3618,7 @@ export default function EditorShell({
       VISUAL_BLOCKS_UI_ENABLED && capabilities?.visual_blocks !== false,
     onPreviewVisualTiming: previewVisualTiming,
     slots,
-    clipReadOnly: clipLockedToVoiceover,
+    clipReadOnly: clipEditingLocked,
     clipDisabledReason,
     clipSourceDurations,
     onPreviewClipTiming: previewClipTiming,
