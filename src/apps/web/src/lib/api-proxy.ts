@@ -83,7 +83,13 @@ async function proxy(
   const resBody = bodylessResponse ? null : await upstreamRes.arrayBuffer();
   return new NextResponse(resBody, {
     status: upstreamRes.status,
-    headers: upstreamRes.headers,
+    // `fetch` decodes compressed upstream bodies but keeps their original
+    // Content-Encoding/Content-Length headers. Forwarding those transport
+    // headers makes the browser try to decode the already-decoded bytes again
+    // (Fly currently serves JSON with zstd), so keep this boundary allowlisted.
+    headers: {
+      "Content-Type": upstreamRes.headers.get("content-type") ?? "application/json",
+    },
   });
 }
 

@@ -51,7 +51,7 @@ afterEach(() => {
   process.env = originalEnv;
 });
 
-describe("idea deletion transport", () => {
+describe("authenticated proxy response transport", () => {
   it("accepts a successful 204 without trying to parse JSON", async () => {
     const json = jest.fn().mockRejectedValue(new SyntaxError("Unexpected end of JSON input"));
     mockFetch.mockResolvedValueOnce({ ok: true, status: 204, json });
@@ -68,7 +68,11 @@ describe("idea deletion transport", () => {
 
   it.each([204, 205, 304])("proxies status %s with a null body", async (status) => {
     const arrayBuffer = jest.fn().mockResolvedValue(new ArrayBuffer(0));
-    const headers = new Headers({ etag: '"idea-delete-v1"', "x-request-id": "req-1" });
+    const headers = new Headers({
+      "content-type": "application/json",
+      etag: '"idea-delete-v1"',
+      "x-request-id": "req-1",
+    });
     mockFetch.mockResolvedValueOnce({
       status,
       arrayBuffer,
@@ -91,13 +95,65 @@ describe("idea deletion transport", () => {
 
     expect(response.status).toBe(status);
     expect((response as unknown as { body: unknown }).body).toBeNull();
-    expect((response as unknown as { headers: Headers }).headers).toBe(headers);
+    expect((response as unknown as { headers: HeadersInit }).headers).toEqual({
+      "Content-Type": "application/json",
+    });
     expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("strips stale compression metadata from a decoded 200 response", async () => {
+    const decodedBody = new Uint8Array(Buffer.from('{"ok":true}', "utf8")).buffer;
+    const arrayBuffer = jest.fn().mockResolvedValue(decodedBody);
+    const headers = new Headers({
+      "cache-control": "private, max-age=0",
+      "content-encoding": "zstd",
+      "content-length": "4096",
+      "content-type": "application/json",
+      "set-cookie": "internal=value",
+      "transfer-encoding": "chunked",
+    });
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      arrayBuffer,
+      headers,
+    });
+    mockGetServerSession.mockResolvedValueOnce({ user: { id: "user-1" } });
+
+    const { makeProxyHandlers } = await import("@/lib/api-proxy");
+    const request = {
+      method: "GET",
+      nextUrl: { search: "" },
+      headers: { get: () => null },
+      arrayBuffer: jest.fn(),
+    };
+
+    const response = await makeProxyHandlers().GET(
+      request as never,
+      { params: Promise.resolve({ path: ["personas"] }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect((response as unknown as { body: unknown }).body).toBe(decodedBody);
+    const forwardedHeaders = new Headers(
+      (response as unknown as { headers: HeadersInit }).headers,
+    );
+    expect(Object.fromEntries(forwardedHeaders.entries())).toEqual({
+      "content-type": "application/json",
+    });
+    expect(forwardedHeaders.get("content-encoding")).toBeNull();
+    expect(forwardedHeaders.get("content-length")).toBeNull();
+    expect(forwardedHeaders.get("transfer-encoding")).toBeNull();
+    expect(forwardedHeaders.get("set-cookie")).toBeNull();
+    expect(forwardedHeaders.get("cache-control")).toBeNull();
+    expect(arrayBuffer).toHaveBeenCalledTimes(1);
   });
 
   it("proxies HEAD responses with a null body", async () => {
     const arrayBuffer = jest.fn().mockResolvedValue(new ArrayBuffer(0));
-    const headers = new Headers({ "cache-control": "private, max-age=0" });
+    const headers = new Headers({
+      "cache-control": "private, max-age=0",
+      "content-type": "application/json",
+    });
     mockFetch.mockResolvedValueOnce({
       status: 200,
       arrayBuffer,
@@ -120,7 +176,9 @@ describe("idea deletion transport", () => {
 
     expect(response.status).toBe(200);
     expect((response as unknown as { body: unknown }).body).toBeNull();
-    expect((response as unknown as { headers: Headers }).headers).toBe(headers);
+    expect((response as unknown as { headers: HeadersInit }).headers).toEqual({
+      "Content-Type": "application/json",
+    });
     expect(arrayBuffer).not.toHaveBeenCalled();
   });
 });
