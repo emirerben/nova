@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.8.1] — 2026-07-19
+
+### Fixed
+- **Signed-in users can load their existing persona, plan, and interview responses again without “Failed to fetch” or being sent back through onboarding.** The authenticated web proxy now returns decoded API bodies with only their real content type, avoiding stale compression metadata while preserving successful empty DELETE and HEAD responses.
+
 ## [0.9.8.0] — 2026-07-19
 
 ### Fixed
