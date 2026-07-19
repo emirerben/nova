@@ -161,6 +161,9 @@ describe("seedBarsFromVariant", () => {
           size_px: 122,
           font_family: "Great Vibes",
           color: "#FFFFFF",
+          fade_out_ms: 350,
+          glow_color: "#7CFF8A",
+          glow_strength: 0.8,
         },
       ],
     } as unknown as PlanItemVariant;
@@ -173,6 +176,9 @@ describe("seedBarsFromVariant", () => {
         y_frac: 0.44,
         size_px: 122,
         font_family: "Great Vibes",
+        fade_out_ms: 350,
+        glow_color: "#7CFF8A",
+        glow_strength: 0.8,
       }),
     ]);
   });

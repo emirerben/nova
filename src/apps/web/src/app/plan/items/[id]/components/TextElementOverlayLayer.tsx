@@ -7,7 +7,7 @@ import {
   resolveTextElementsLayout,
   type TextElementLayout,
 } from "@/lib/overlay-layout";
-import { resolveCssFont } from "@/lib/overlay-constants";
+import { resolveClusterCssFont } from "@/lib/overlay-constants";
 import { FONT_FACES } from "@/lib/font-faces";
 
 export function textElementAnchorTransform(alignment: TextElementLayout["alignment"]): string {
@@ -44,6 +44,7 @@ export function TextElementOverlayContent({
   layout,
   fontSize,
   strokeWidth,
+  canvasPixelCssSize = `${100 / CANVAS_H}cqh`,
   textAlignOverride,
   reserveText,
   children,
@@ -51,17 +52,33 @@ export function TextElementOverlayContent({
   layout: TextElementLayout;
   fontSize: string;
   strokeWidth?: string | null;
+  /** CSS length occupied by one 1080x1920 renderer-canvas pixel. */
+  canvasPixelCssSize?: string;
   textAlignOverride?: TextElementLayout["alignment"] | null;
   reserveText?: string | null;
   children?: ReactNode;
 }) {
-  const { family, weight } = resolveCssFont(layout.fontFamily);
+  const { family, weight, style } = resolveClusterCssFont(layout.fontFamily);
   const textAlign = textAlignOverride ?? layout.alignment;
   const content = children ?? layout.text;
+  const canvasPx = (pixels: number) => `calc(${pixels} * ${canvasPixelCssSize})`;
+  const glowRgb = layout.glowColor?.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+  const glowShadows =
+    glowRgb && layout.glowStrength > 0
+      ? [
+          `0 0 ${canvasPx(8)} rgba(${Number.parseInt(glowRgb[1], 16)}, ${Number.parseInt(glowRgb[2], 16)}, ${Number.parseInt(glowRgb[3], 16)}, ${(120 / 255) * layout.glowStrength})`,
+          `0 0 ${canvasPx(20)} rgba(${Number.parseInt(glowRgb[1], 16)}, ${Number.parseInt(glowRgb[2], 16)}, ${Number.parseInt(glowRgb[3], 16)}, ${(220 / 255) * layout.glowStrength})`,
+        ]
+      : [];
+  const softShadow =
+    !strokeWidth && layout.shadowEnabled
+      ? `0 ${canvasPx(6)} ${canvasPx(12)} rgba(0, 0, 0, ${160 / 255})`
+      : null;
   const sharedStyle: CSSProperties = {
     fontSize,
     fontFamily: family,
     fontWeight: weight,
+    fontStyle: style,
     color: layout.color,
     textAlign,
     letterSpacing: layout.letterSpacingEm !== 0 ? `${layout.letterSpacingEm}em` : undefined,
@@ -69,10 +86,11 @@ export function TextElementOverlayContent({
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     WebkitTextStroke: strokeWidth ? `${strokeWidth} #000000` : undefined,
-    textShadow:
-      !strokeWidth && layout.shadowEnabled
-        ? "0 2px 8px rgba(0,0,0,0.55)"
-        : undefined,
+    // Mirrors `_draw_line_with_layers`: two Skia halo passes followed by the
+    // default 6px-down, 12px-blur black shadow, all at renderer-canvas scale.
+    textShadow: [...glowShadows, softShadow]
+      .filter(Boolean)
+      .join(", ") || undefined,
     padding: "0.08em 0.18em",
   };
 

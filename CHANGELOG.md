@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.7.0] — 2026-07-19
+
+### Fixed
+- **The editor now shows the same generated editorial text as the rendered video.** Each independently timed block keeps its exact words, font face, placement, size, glow, shadow, and fade-out transition when the edit opens, while saved edits preserve those renderer details instead of flattening or dropping them.
+- **Split & Place now turns pasted composition copy into real timed text beats on any editable video.** Explicit lines stay intact and play sequentially across the remaining video, including the requested seven-line Argentina composition; empty timeline rows, oversized beats, and unsavable over-capacity edits are rejected without losing the draft.
+
 ## [0.9.6.0] — 2026-07-19
 
 ### Fixed

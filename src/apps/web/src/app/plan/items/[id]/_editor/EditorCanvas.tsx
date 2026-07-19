@@ -35,7 +35,7 @@ import {
   MAX_WIDTH_FRAC_MAX,
   MAX_WIDTH_FRAC_MIN,
 } from "@/lib/overlay-layout";
-import { animationStateAt } from "@/lib/overlay-animation";
+import { animationStateAt, sequenceOverlayFadeOutAlphaAt } from "@/lib/overlay-animation";
 import { INTRO_FONTS, MAX_INTRO_S, type OverlayCanvas } from "@/lib/overlay-constants";
 import { StableVideo } from "@/components/StableVideo";
 import { useSfxPreview } from "@/app/plan/_components/useSfxPreview";
@@ -896,6 +896,13 @@ export default function EditorCanvas({
                     Math.min(MAX_INTRO_S, Math.max(0.01, layout.end_s - layout.start_s)),
                     layout.text,
                   );
+                  const fadeOutAlpha = sequenceOverlayFadeOutAlphaAt(
+                    bar?.role,
+                    effect,
+                    Math.max(0, currentTime - layout.start_s),
+                    Math.max(0.01, layout.end_s - layout.start_s),
+                    bar?.fade_out_ms,
+                  );
                   const revealGrowsFromLeft =
                     effect === "typewriter" || effect === "stream-in";
                   const baseStyle = textElementWrapperStyle({
@@ -919,7 +926,7 @@ export default function EditorCanvas({
                       }`}
                       style={{
                         ...baseStyle,
-                        opacity: animation.alpha,
+                        opacity: animation.alpha * fadeOutAlpha,
                         transform: `${baseStyle.transform ?? ""} translateY(${
                           (animation.yTranslate / canvas.h) * stageSize.h
                         }px) scale(${animation.scale})`,
@@ -939,6 +946,7 @@ export default function EditorCanvas({
                         layout={layout}
                         fontSize={`${fontPx}px`}
                         strokeWidth={strokePx > 0 ? `${strokePx}px` : null}
+                        canvasPixelCssSize={`${stageSize.h / canvas.h}px`}
                         textAlignOverride={revealGrowsFromLeft ? "left" : null}
                         reserveText={revealGrowsFromLeft ? layout.text : null}
                       >

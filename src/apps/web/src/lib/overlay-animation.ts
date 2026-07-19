@@ -108,3 +108,38 @@ export function animationStateAt(
 
   return { scale, alpha, yTranslate, visibleText };
 }
+
+/** Mirror of `_sequence_fade_out_alpha` in text_overlay_skia.py.
+ * Sequence blocks hold at full opacity until the final `fadeOutMs`, then use
+ * libass/Skia's lingering accel=2 curve: `1 - progress²`. */
+export function sequenceFadeOutAlphaAt(
+  tLocal: number,
+  durationS: number,
+  fadeOutMs: number | null | undefined,
+): number {
+  if (durationS <= 0 || !fadeOutMs || fadeOutMs <= 0) return 1;
+  const fadeOutS = Math.min(durationS, fadeOutMs / 1000);
+  const fadeStartS = durationS - fadeOutS;
+  const clampedT = Math.max(0, Math.min(tLocal, durationS));
+  if (clampedT < fadeStartS) return 1;
+  const progress = (clampedT - fadeStartS) / fadeOutS;
+  return Math.max(0, 1 - progress * progress);
+}
+
+const SEQUENCE_FADE_EFFECTS = new Set(["fade-in", "static", "none"]);
+
+/** Apply the sequence tail only to the same role/effect matrix as Skia's
+ * `_is_sequence_overlay`. Lyric lines carry the same field name but use their
+ * own fade-in/out curve and must never pass through this multiplier. */
+export function sequenceOverlayFadeOutAlphaAt(
+  role: string | null | undefined,
+  effect: string | null | undefined,
+  tLocal: number,
+  durationS: number,
+  fadeOutMs: number | null | undefined,
+): number {
+  if (role !== "generative_sequence" || !SEQUENCE_FADE_EFFECTS.has(effect ?? "none")) {
+    return 1;
+  }
+  return sequenceFadeOutAlphaAt(tLocal, durationS, fadeOutMs);
+}

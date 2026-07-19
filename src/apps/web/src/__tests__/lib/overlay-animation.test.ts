@@ -2,6 +2,8 @@ import {
   animationStateAt,
   easeOutCubic,
   popInScaleAt,
+  sequenceFadeOutAlphaAt,
+  sequenceOverlayFadeOutAlphaAt,
 } from "@/lib/overlay-animation";
 
 describe("easeOutCubic", () => {
@@ -24,6 +26,35 @@ describe("easeOutCubic", () => {
 
   it("t > 1 clamps to 1", () => {
     expect(easeOutCubic(2)).toBeCloseTo(1);
+  });
+});
+
+describe("sequenceFadeOutAlphaAt", () => {
+  it("stays opaque when the renderer emitted no fade tail", () => {
+    expect(sequenceFadeOutAlphaAt(5.9, 6, null)).toBe(1);
+  });
+
+  it("matches the Skia quadratic fade over the final window", () => {
+    expect(sequenceFadeOutAlphaAt(5.49, 6, 500)).toBe(1);
+    expect(sequenceFadeOutAlphaAt(5.75, 6, 500)).toBeCloseTo(0.75);
+    expect(sequenceFadeOutAlphaAt(6, 6, 500)).toBe(0);
+  });
+
+  it("clamps a fade longer than the whole block", () => {
+    expect(sequenceFadeOutAlphaAt(0.5, 1, 10_000)).toBeCloseTo(0.75);
+  });
+});
+
+describe("sequenceOverlayFadeOutAlphaAt", () => {
+  it("matches the renderer role/effect matrix", () => {
+    expect(sequenceOverlayFadeOutAlphaAt("generative_sequence", "static", 5.75, 6, 500)).toBeCloseTo(
+      0.75,
+    );
+    expect(sequenceOverlayFadeOutAlphaAt("lyric_line", "static", 5.75, 6, 500)).toBe(1);
+    expect(sequenceOverlayFadeOutAlphaAt("generative_intro", "static", 5.75, 6, 500)).toBe(1);
+    expect(sequenceOverlayFadeOutAlphaAt("generative_sequence", "typewriter", 5.75, 6, 500)).toBe(
+      1,
+    );
   });
 });
 

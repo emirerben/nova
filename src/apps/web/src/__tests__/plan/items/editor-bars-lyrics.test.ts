@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 import {
+  barsToPreviewTextElements,
   barsToTextElements,
   buildLyricLineOverrides,
   seedBarsFromLyricSeeds,
@@ -108,6 +109,49 @@ describe("barsToTextElements includeLyrics option (lyrics-optional elements mode
     const elements = barsToTextElements(bars, originals, { includeLyrics: true });
     expect(elements.map((el) => el.id).sort()).toEqual(["lyric_L0", "txt-1"]);
     expect(elements.find((el) => el.id === "lyric_L0")).toMatchObject({ role: "lyric_line" });
+  });
+});
+
+describe("editor bar transition metadata", () => {
+  it("preserves sequence fade tails through both save and preview serialization", () => {
+    const sequence: TextElement = {
+      id: "sequence-1",
+      text: "Fade exactly",
+      start_s: 1,
+      end_s: 3,
+      role: "generative_sequence",
+      effect: "static",
+      fade_out_ms: 350,
+      glow_color: "#7CFF8A",
+      glow_strength: 0.8,
+    };
+    const bars = seedBarsFromVariant(variant([sequence]));
+    const originals = new Map([[sequence.id, sequence]]);
+
+    expect(barsToTextElements(bars, originals)[0].fade_out_ms).toBe(350);
+    expect(barsToPreviewTextElements(bars, originals)[0].fade_out_ms).toBe(350);
+    expect(barsToTextElements(bars, originals)[0]).toMatchObject({
+      glow_color: "#7CFF8A",
+      glow_strength: 0.8,
+    });
+    expect(barsToPreviewTextElements(bars, originals)[0]).toMatchObject({
+      glow_color: "#7CFF8A",
+      glow_strength: 0.8,
+    });
+  });
+
+  it("serializes a new bar without a fade tail as null", () => {
+    const sequence: TextElement = {
+      id: "sequence-new",
+      text: "Hard cut",
+      start_s: 0,
+      end_s: 1,
+      role: "generative_sequence",
+    };
+
+    expect(
+      barsToTextElements(seedBarsFromVariant(variant([sequence])), new Map())?.[0].fade_out_ms,
+    ).toBeNull();
   });
 });
 

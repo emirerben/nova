@@ -11,6 +11,7 @@ from app.agents._schemas.text_element import (
     text_element_source_identity,
     text_elements_for_variant,
 )
+from app.pipeline.generative_overlays import build_overlays_from_text_elements
 from app.routes.generative_jobs import (
     _HEIF_PREVIEW_BACKFILL_ATTEMPTED,
     EditorCommitRequest,
@@ -49,23 +50,35 @@ def test_linear_intro_projects_one_grouped_bar_with_burn_style() -> None:
     assert intro.source_params["burn_dicts"]
 
 
-def test_sequence_projects_one_bar_per_scene_with_timing_and_style(monkeypatch) -> None:
+def test_sequence_projects_each_rendered_block_with_exact_timing_and_style(monkeypatch) -> None:
     import app.pipeline.intro_cluster as ic
 
-    def _one_block(text, *, base_size_px, reveal_window_s, **kwargs):
+    def _two_blocks(text, *, base_size_px, reveal_window_s, **kwargs):
+        first, *rest = text.split()
         return [
             {
-                "text": text,
+                "text": first,
                 "text_size_px": base_size_px,
                 "font_family": "PlayfairDisplay-Bold",
                 "position_x_frac": 0.4,
                 "position_y_frac": 0.44,
                 "start_offset_s": 0.0,
                 "reveal_s": reveal_window_s,
-            }
+            },
+            {
+                "text": " ".join(rest),
+                "text_size_px": base_size_px - 8,
+                "font_family": "Playfair Display Italic",
+                "position_x_frac": 0.62,
+                "position_y_frac": 0.56,
+                "start_offset_s": 0.0,
+                "reveal_s": reveal_window_s,
+                "glow_color": "#7CFF8A",
+                "glow_strength": 0.8,
+            },
         ]
 
-    monkeypatch.setattr(ic, "compute_cluster_blocks", _one_block)
+    monkeypatch.setattr(ic, "compute_cluster_blocks", _two_blocks)
     variant = {
         "variant_id": "original_text",
         "intro_mode": "sequence",
@@ -80,14 +93,106 @@ def test_sequence_projects_one_bar_per_scene_with_timing_and_style(monkeypatch) 
 
     elements = text_elements_for_variant(variant)
 
-    assert [e.text for e in elements] == ["open here", "land there"]
-    assert [e.start_s for e in elements] == [pytest.approx(0.2), pytest.approx(2.0)]
-    assert [e.end_s for e in elements] == [pytest.approx(2.0), pytest.approx(4.5)]
+    assert [e.text for e in elements] == ["open", "here", "land", "there"]
+    assert [e.start_s for e in elements] == [
+        pytest.approx(0.2),
+        pytest.approx(1.0),
+        pytest.approx(2.0),
+        pytest.approx(2.8),
+    ]
+    assert [e.end_s for e in elements] == [
+        pytest.approx(2.0),
+        pytest.approx(2.0),
+        pytest.approx(4.5),
+        pytest.approx(4.5),
+    ]
     assert all(e.role == "generative_sequence" for e in elements)
     assert elements[0].font_family == "PlayfairDisplay-Bold"
     assert elements[0].size_px == pytest.approx(66)
-    assert text_element_source_identity(elements[0]) == "generative_sequence:sequence_scene:0"
-    assert text_element_source_identity(elements[1]) == "generative_sequence:sequence_scene:1"
+    assert elements[1].font_family == "Playfair Display Italic"
+    assert elements[1].size_px == pytest.approx(58)
+    assert elements[1].x_frac == pytest.approx(0.62)
+    assert elements[1].y_frac is not None
+    assert elements[1].glow_color == "#7CFF8A"
+    assert elements[1].glow_strength == pytest.approx(0.8)
+    assert text_element_source_identity(elements[0]) == "generative_sequence:sequence_scene:0:0"
+    assert text_element_source_identity(elements[1]) == "generative_sequence:sequence_scene:0:1"
+    assert elements[2].fade_out_ms == 350
+    assert elements[3].fade_out_ms == 350
+
+    compiled = build_overlays_from_text_elements(elements, video_duration_s=4.5)
+    compiled_glow = [overlay for overlay in compiled if overlay["text"] in {"here", "there"}]
+    assert compiled_glow
+    assert all(overlay["glow_color"] == "#7CFF8A" for overlay in compiled_glow)
+    assert all(overlay["glow_strength"] == pytest.approx(0.8) for overlay in compiled_glow)
+
+
+def test_sequence_projects_a_single_rendered_block_without_collapsing_scene_text() -> None:
+    variant = {
+        "variant_id": "original_text",
+        "intro_mode": "sequence",
+        "text_mode": "agent_text",
+        "sequence_base_size_px": 66,
+        "scenes": [{"words": ["bicampeón"], "start_s": 0.4, "end_s": 2.4}],
+    }
+
+    [element] = text_elements_for_variant(variant)
+
+    assert element.text == "bicampeón"
+    assert element.start_s == pytest.approx(0.4)
+    assert element.end_s == pytest.approx(2.4)
+    assert element.role == "generative_sequence"
+    assert text_element_source_identity(element) == "generative_sequence:sequence_scene:0:0"
+
+
+def test_legacy_saved_sequence_scene_suppresses_new_block_projections(monkeypatch) -> None:
+    import app.pipeline.intro_cluster as ic
+
+    monkeypatch.setattr(
+        ic,
+        "compute_cluster_blocks",
+        lambda text, **kwargs: [
+            {
+                "text": "first",
+                "text_size_px": 70,
+                "font_family": "PlayfairDisplay-Bold",
+                "position_x_frac": 0.4,
+                "position_y_frac": 0.44,
+            },
+            {
+                "text": "second",
+                "text_size_px": 54,
+                "font_family": "PlayfairDisplay-Regular",
+                "position_x_frac": 0.6,
+                "position_y_frac": 0.56,
+            },
+        ],
+    )
+    variant = {
+        "intro_mode": "sequence",
+        "text_mode": "agent_text",
+        "scenes": [{"words": ["first", "second"], "start_s": 0.0, "end_s": 2.0}],
+        "text_elements_user_edited": True,
+        "text_elements": [
+            {
+                "id": "legacy-scene",
+                "text": "My saved rewrite",
+                "start_s": 0.0,
+                "end_s": 2.0,
+                "role": "generative_sequence",
+                "source_params": {
+                    "source": "sequence_scene",
+                    "key": "0",
+                    "identity": "sequence_scene:0",
+                },
+            }
+        ],
+    }
+
+    merged = merge_projected_text_elements_for_variant(variant)
+
+    assert merged is not None
+    assert [element["text"] for element in merged] == ["My saved rewrite"]
 
 
 def test_caption_cues_project_one_bar_per_cue() -> None:

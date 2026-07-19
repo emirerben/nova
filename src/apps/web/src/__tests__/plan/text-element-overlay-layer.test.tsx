@@ -138,4 +138,31 @@ describe("TextElementOverlayLayer", () => {
       false,
     );
   });
+
+  it("matches renderer-authored italic font style and editorial glow", () => {
+    render(
+      <TextElementOverlayLayer
+        elements={[
+          {
+            ...element,
+            font_family: "Playfair Display Italic",
+            stroke_width: 0,
+            shadow_enabled: false,
+            glow_color: "#7CFF8A",
+            glow_strength: 0.8,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("READY NOW")).toHaveStyle({
+      fontStyle: "italic",
+    });
+    expect(screen.getByText("READY NOW").style.textShadow).toContain(
+      "calc(8 * 0.052083333333333336cqh)",
+    );
+    expect(screen.getByText("READY NOW").style.textShadow).toContain(
+      "calc(20 * 0.052083333333333336cqh)",
+    );
+  });
 });

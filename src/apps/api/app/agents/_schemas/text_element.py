@@ -273,6 +273,14 @@ class TextElement(BaseModel):
         default=None,
         description="Explicit soft-shadow toggle. None preserves legacy renderer defaults.",
     )
+    glow_color: str | None = Field(
+        default=None,
+        description="Optional editorial glow color '#RRGGBB'.",
+    )
+    glow_strength: float | None = Field(
+        default=None,
+        description="Optional editorial glow intensity, clamped to [0, 1].",
+    )
     alignment: Literal["left", "center", "right"] | None = Field(
         default="center",
         description="Text alignment (maps to text_anchor in the burn dict).",
@@ -465,7 +473,7 @@ class TextElement(BaseModel):
         except (TypeError, ValueError):
             return None
 
-    @field_validator("color", "highlight_color", mode="before")
+    @field_validator("color", "highlight_color", "glow_color", mode="before")
     @classmethod
     def _coerce_color(cls, v: object) -> str | None:
         """Coerce invalid hex color strings to None."""
@@ -475,6 +483,16 @@ class TextElement(BaseModel):
         if _HEX_COLOR_RE.match(s):
             return s
         return None
+
+    @field_validator("glow_strength", mode="before")
+    @classmethod
+    def _clamp_glow_strength(cls, v: object) -> float | None:
+        if v is None:
+            return None
+        try:
+            return max(0.0, min(1.0, float(v)))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
 
     @field_validator("font_family", mode="before")
     @classmethod
@@ -638,6 +656,14 @@ def _burn_dict_to_text_element(
     shadow_enabled: bool | None = (
         bool(shadow_enabled_raw) if shadow_enabled_raw is not None else None
     )
+    glow_color_raw = burn_dict.get("glow_color")
+    glow_color: str | None = (
+        glow_color_raw if (glow_color_raw and _HEX_COLOR_RE.match(str(glow_color_raw))) else None
+    )
+    glow_strength_raw = burn_dict.get("glow_strength")
+    glow_strength: float | None = (
+        float(glow_strength_raw) if glow_strength_raw is not None else None
+    )
 
     # Parity-gated spacing fields (already clamped by TextElement validators).
     letter_spacing_raw = burn_dict.get("letter_spacing")
@@ -692,6 +718,8 @@ def _burn_dict_to_text_element(
             highlight_color=highlight_color,
             stroke_width=stroke_width,
             shadow_enabled=shadow_enabled,
+            glow_color=glow_color,
+            glow_strength=glow_strength,
             letter_spacing=letter_spacing,
             line_spacing=line_spacing,
             max_width_frac=max_width_frac,
@@ -726,6 +754,33 @@ def _text_window(v: dict, *, default_end: float = _ADAPTER_HOLD_TO_END_S) -> tup
 
 def _identity_for_source(source: str, key: str) -> str:
     return f"{source}:{key}"
+
+
+def _legacy_sequence_scene_key(raw: TextElement | dict) -> str | None:
+    """Return the scene index owned by a legacy scene-level projection.
+
+    Sequence projections used to collapse every rendered block in a scene into
+    one ``sequence_scene:{index}`` element. New projections are block-exact and
+    use ``sequence_scene:{index}:{block}``. A saved legacy element therefore
+    owns (and suppresses) every new block for that scene so old user edits never
+    duplicate after the projection shape changes.
+    """
+    params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
+    if not isinstance(params, dict) or params.get("source") != "sequence_scene":
+        return None
+    key = str(params.get("key") or "")
+    if not key or ":" in key:
+        return None
+    return key
+
+
+def _sequence_block_scene_key(raw: TextElement | dict) -> str | None:
+    params = raw.source_params if isinstance(raw, TextElement) else raw.get("source_params")
+    if not isinstance(params, dict) or params.get("source") != "sequence_scene":
+        return None
+    key = str(params.get("key") or "")
+    scene_key, separator, _block_key = key.partition(":")
+    return scene_key if separator and scene_key else None
 
 
 def text_element_source_identity(raw: TextElement | dict) -> str | None:
@@ -807,6 +862,9 @@ def merge_projected_text_elements_for_variant(
         return visible_saved or None
 
     seen: set[str] = set()
+    legacy_sequence_scenes = {
+        scene_key for elem in saved if (scene_key := _legacy_sequence_scene_key(elem)) is not None
+    }
     tombstoned: set[str] = set()
     out: list[dict] = []
     for elem in saved:
@@ -820,6 +878,9 @@ def merge_projected_text_elements_for_variant(
 
     for elem in projected:
         ident = text_element_source_identity(elem)
+        block_scene_key = _sequence_block_scene_key(elem)
+        if block_scene_key is not None and block_scene_key in legacy_sequence_scenes:
+            continue
         if ident and ident not in seen and ident not in tombstoned:
             out.append(elem.model_dump())
             seen.add(ident)
@@ -1089,21 +1150,27 @@ def _base_text_elements_for_variant(v: dict) -> list[TextElement]:
             if not scene_burns:
                 continue
             remaining = [bd for bd in remaining if bd not in scene_burns]
-            scene_text = (scene.get("text") or " ".join(scene.get("words") or [])).strip()
-            elem = _element_from_burn_group(
-                scene_burns,
-                text=scene_text or str(scene_burns[0].get("text") or "").strip(),
-                start_s=scene_start,
-                end_s=scene_end,
-                source="sequence_scene",
-                key=str(i),
-                intro_mode="sequence",
-                intro_layout=intro_layout,
-                intro_text_size_px=intro_text_size_px,
-            )
-            if elem is not None:
-                elem.role = "generative_sequence"
-                result.append(elem)
+            # The renderer emits one independently timed/styled burn dict per
+            # visible editorial block. Project that exact shape. The previous
+            # scene-level grouping replaced every block with the whole phrase
+            # and the first block's font/position, so the editor could never be
+            # WYSIWYG even though source_params retained the real burn dicts.
+            for block_index, burn_dict in enumerate(scene_burns):
+                block_text = str(burn_dict.get("text") or "").strip()
+                elem = _element_from_burn_group(
+                    [burn_dict],
+                    text=block_text,
+                    start_s=float(burn_dict.get("start_s") or scene_start),
+                    end_s=float(burn_dict.get("end_s") or scene_end),
+                    source="sequence_scene",
+                    key=f"{i}:{block_index}",
+                    intro_mode="sequence",
+                    intro_layout=intro_layout,
+                    intro_text_size_px=intro_text_size_px,
+                )
+                if elem is not None:
+                    elem.role = "generative_sequence"
+                    result.append(elem)
         return result
 
     # ------------------------------------------------------------------

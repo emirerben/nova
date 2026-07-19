@@ -273,6 +273,82 @@ describe("EditorShell — light-layout empty-state Add-text CTA", () => {
 });
 
 describe("EditorShell — masonry smart placement history", () => {
+  it("turns the supplied Spanish composition into seven visible timed bars", async () => {
+    const lines = [
+      "Quiero ver la cuarta estrella",
+      "Brillar en la camiseta",
+      "Soy argento de la cuna",
+      "Hasta el cajón",
+      "Por Malvinas, por el Diego",
+      "Por la última de Leo",
+      "Argentina, quiero verte bicampeón",
+    ];
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    const video = document.querySelector("video") as HTMLVideoElement;
+    Object.defineProperty(video, "duration", { configurable: true, value: 14 });
+    fireEvent.loadedMetadata(video);
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    fireEvent.change(screen.getByLabelText("Composition text"), {
+      target: { value: lines.join("\n") },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Split & place" }));
+
+    await act(async () => {});
+    const rawDraft = window.sessionStorage.getItem("nova-editor-draft:var-sub");
+    expect(rawDraft).not.toBeNull();
+    const bars = (JSON.parse(rawDraft as string) as { doc: { bars: Array<Record<string, unknown>> } })
+      .doc.bars;
+    const sequenceBars = bars.filter((bar) => bar.role === "generative_sequence");
+    expect(sequenceBars.map((bar) => bar.text)).toEqual(lines);
+    expect(
+      sequenceBars.every(
+        (bar) =>
+          typeof bar.start_s === "number" &&
+          typeof bar.end_s === "number" &&
+          bar.end_s > bar.start_s,
+      ),
+    ).toBe(true);
+    expect(sequenceBars.at(-1)?.end_s).toBe(14);
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("preserves the draft when existing bars leave too little API capacity", async () => {
+    const variant = makeVariant(EDITABLE_CAPABILITIES);
+    variant.text_elements = Array.from({ length: 10 }, (_unused, index) => ({
+      id: `existing-${index}`,
+      text: `Existing ${index}`,
+      start_s: 0,
+      end_s: 2,
+      role: "generative_intro",
+    }));
+    const draft = Array.from({ length: 41 }, (_unused, index) => `Beat ${index + 1}`).join("\n");
+    await renderShell(variant);
+
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    const composition = screen.getByLabelText("Composition text");
+    fireEvent.change(composition, { target: { value: draft } });
+    fireEvent.click(screen.getByRole("button", { name: "Split & place" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "This edit has room for 40 more text beats.",
+    );
+    expect(composition).toHaveValue(draft);
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("keeps an empty composition from mutating the editor document", async () => {
+    await renderShell(makeVariant(EDITABLE_CAPABILITIES));
+
+    fireEvent.click(screen.getByRole("button", { name: "Text tool" }));
+    const composition = screen.getByLabelText("Composition text");
+    fireEvent.change(composition, { target: { value: "  \n  " } });
+
+    expect(screen.getByRole("button", { name: "Split & place" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(window.sessionStorage.getItem("nova-editor-draft:var-sub")).toBeNull();
+  });
+
   it("anchors selected Smart place to the current playhead", async () => {
     const variant = makeMasonryVariant();
     variant.text_elements = variant.text_elements?.map((element) => ({ ...element, end_s: 8 }));
