@@ -524,6 +524,7 @@ def generate_text_overlay_png(
                 position_x_frac=overlay.get("position_x_frac"),
                 position_y_frac=overlay.get("position_y_frac"),
                 text_anchor=overlay.get("text_anchor", "center"),
+                vertical_anchor=overlay.get("vertical_anchor"),
                 stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
                 shadow_enabled=overlay.get("shadow_enabled") is not False,
                 emoji_prefix=overlay.get("emoji_prefix", ""),
@@ -829,6 +830,7 @@ def _render_static_overlay_layer(
         position_x_frac=overlay.get("position_x_frac"),
         position_y_frac=overlay.get("position_y_frac"),
         text_anchor=overlay.get("text_anchor", "center"),
+        vertical_anchor=overlay.get("vertical_anchor"),
         stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
         shadow_enabled=overlay.get("shadow_enabled") is not False,
         emoji_prefix=overlay.get("emoji_prefix", ""),
@@ -1459,6 +1461,7 @@ def _draw_frame(
             position_x_frac=position_x_frac,
             position_y_frac=position_y_frac,
             text_anchor=overlay.get("text_anchor", "center"),
+            vertical_anchor=overlay.get("vertical_anchor"),
             stroke_width=int(overlay.get("outline_px") or overlay.get("stroke_width") or 0),
             shadow_enabled=overlay.get("shadow_enabled") is not False,
             emoji_prefix=overlay.get("emoji_prefix", ""),
@@ -2125,6 +2128,7 @@ def _draw_text_png(
     position_x_frac: float | None = None,
     position_y_frac: float | None = None,
     text_anchor: str = "center",
+    vertical_anchor: str | None = None,
     stroke_width: int = 0,
     stroke_color: tuple[int, int, int, int] = (0, 0, 0, 230),
     shadow_enabled: bool = True,
@@ -2223,7 +2227,12 @@ def _draw_text_png(
     # Center-anchor mode keeps the historical bbox-based line_step — changing
     # it could regress existing centered templates and the drift isn't visible
     # there (the block center stays at position_y_frac).
-    if text_anchor == "left" and line_heights:
+    resolved_vertical_anchor = (
+        vertical_anchor
+        if vertical_anchor in ("top", "center")
+        else ("top" if text_anchor == "left" else "center")
+    )
+    if resolved_vertical_anchor == "top" and line_heights:
         try:
             ascent, descent = font.getmetrics()
             line_step = int((ascent + descent) * _TEXT_LINE_SPACING)
@@ -2253,7 +2262,7 @@ def _draw_text_png(
     # Without the left-branch, a progressive reveal that wraps mid-sequence
     # moves the earlier (already-visible) line upward — visually wrong since
     # the eye expects revealed text to stay anchored as new words append.
-    if text_anchor == "left":
+    if resolved_vertical_anchor == "top":
         block_top = int(CANVAS_H * y_frac)
     else:
         block_top = int(CANVAS_H * y_frac - block_h / 2)

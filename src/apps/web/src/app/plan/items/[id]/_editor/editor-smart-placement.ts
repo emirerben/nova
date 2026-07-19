@@ -1,4 +1,10 @@
 import type { PlanItemVariant, TextPlacementCandidate } from "@/lib/plan-api";
+import {
+  resolveTextElementYFrac,
+  xFracForTextBoxPosition,
+  type TextBoxHorizontalPosition,
+  type TextHorizontalAlignment,
+} from "@/lib/overlay-layout";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 const DEFAULT_SMART_PLACE: TextPlacementCandidate = {
@@ -646,16 +652,20 @@ export function masonryBoardXFrac(
 export function masonryLayerPositionForBoardX(
   motion: Record<string, unknown> | null | undefined,
   boardXFrac: number,
+  edgeInsetFrac = 0.02,
 ): { xFrac: number; layerOriginPx: number } {
   const parsed = parseMasonryMotion(motion);
   if (!parsed || !Number.isFinite(boardXFrac)) {
-    return { xFrac: Math.max(0.02, Math.min(0.98, boardXFrac || 0.5)), layerOriginPx: 0 };
+    return {
+      xFrac: Math.max(edgeInsetFrac, Math.min(1 - edgeInsetFrac, boardXFrac || 0.5)),
+      layerOriginPx: 0,
+    };
   }
   const boardXpx = Math.max(
-    parsed.frameWidthPx * 0.02,
+    parsed.frameWidthPx * edgeInsetFrac,
     Math.min(
       boardXFrac * parsed.frameWidthPx,
-      parsed.boardWidthPx - parsed.frameWidthPx * 0.02,
+      parsed.boardWidthPx - parsed.frameWidthPx * edgeInsetFrac,
     ),
   );
   const layerOriginPx = Math.max(
@@ -669,6 +679,61 @@ export function masonryLayerPositionForBoardX(
     xFrac: (boardXpx - layerOriginPx) / parsed.frameWidthPx,
     layerOriginPx,
   };
+}
+
+export function textBoxScreenXFrac(
+  motion: Record<string, unknown> | null | undefined,
+  currentTimeS: number,
+  localXFrac: number,
+): number {
+  return (
+    masonryBoardXFrac(motion, localXFrac) -
+    masonryMotionOffsetFrac(motion, currentTimeS)
+  );
+}
+
+export function textBoxPositionPatchForBar({
+  motion,
+  currentTimeS,
+  bar,
+  position,
+}: {
+  motion: Record<string, unknown> | null | undefined;
+  currentTimeS: number;
+  bar: TextElementBar;
+  position: TextBoxHorizontalPosition;
+}): Partial<Omit<TextElementBar, "id" | "role">> {
+  const alignment = (bar.alignment ?? "center") as TextHorizontalAlignment;
+  const screenXFrac = xFracForTextBoxPosition({
+    alignment,
+    position,
+    maxWidthFrac: bar.max_width_frac,
+  });
+  const patch: Partial<Omit<TextElementBar, "id" | "role">> = {
+    x_frac: screenXFrac,
+    position: "custom",
+    y_frac: resolveTextElementYFrac(bar.position, bar.y_frac),
+  };
+  if (!parseMasonryMotion(motion)) return patch;
+
+  const parsed = parseMasonryMotion(motion);
+  if (!parsed) return patch;
+  const timeS = Number.isFinite(currentTimeS) ? Math.max(0, currentTimeS) : 0;
+  const layerOriginPx =
+    (parsed.panPx * Math.min(timeS, parsed.durationS)) / parsed.durationS;
+  const nextMotion = {
+    ...motion,
+    layer_origin_px: layerOriginPx,
+  } as Record<string, unknown>;
+  delete nextMotion.pocket_left_px;
+  delete nextMotion.pocket_top_px;
+  delete nextMotion.pocket_right_px;
+  delete nextMotion.pocket_bottom_px;
+  patch.source_params = {
+    ...(bar.source_params ?? {}),
+    masonry_motion: nextMotion,
+  };
+  return patch;
 }
 
 export function collageMotionForTextBar(

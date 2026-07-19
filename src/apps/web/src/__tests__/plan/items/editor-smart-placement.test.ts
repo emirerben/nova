@@ -3,6 +3,8 @@ import {
   masonryBoardXFrac,
   masonryLayerPositionForBoardX,
   masonryMotionOffsetFrac,
+  textBoxPositionPatchForBar,
+  textBoxScreenXFrac,
   reflowTextForSmartPlacement,
   resolveSmartPlacementAssignments,
   resolveSmartPlacementCandidate,
@@ -12,6 +14,7 @@ import {
   smartPlacementPatchForBar,
 } from "@/app/plan/items/[id]/_editor/editor-smart-placement";
 import type { PlanItemVariant, TextPlacementCandidate } from "@/lib/plan-api";
+import { textAlignmentAnchorFactor } from "@/lib/overlay-layout";
 import type { TextElementBar } from "@/lib/timeline/text-timeline-reducer";
 
 const bar: TextElementBar = {
@@ -382,6 +385,74 @@ describe("resolveSmartPlacementCandidate", () => {
     expect(localized.xFrac).toBeLessThan(1);
     expect(masonryBoardXFrac(localizedMotion, localized.xFrac)).toBeCloseTo(1.4, 8);
   });
+
+  it("places a box against the visible frame while preserving masonry motion", () => {
+    const motion = {
+      mode: "masonry_pan_x",
+      duration_s: 8,
+      pan_px: 932,
+      board_width_px: 2012,
+      frame_width_px: 1080,
+      layer_origin_px: 900,
+    };
+    const movingBar: TextElementBar = {
+      ...bar,
+      alignment: "right",
+      max_width_frac: 0.4,
+      source_params: { masonry_motion: motion, marker: "preserved" },
+    };
+    const patch = textBoxPositionPatchForBar({
+      motion,
+      currentTimeS: 4,
+      bar: movingBar,
+      position: "right",
+    });
+    const nextMotion = patch.source_params?.masonry_motion as Record<string, unknown>;
+
+    expect(patch.position).toBe("custom");
+    expect(patch.source_params?.marker).toBe("preserved");
+    expect(
+      textBoxScreenXFrac(nextMotion, 4, Number(patch.x_frac)),
+    ).toBeCloseTo(1, 8);
+  });
+
+  it.each(["left", "center", "right"] as const)(
+    "keeps every %s-aligned preset box inside its masonry layer",
+    (alignment) => {
+      const motion = {
+        mode: "masonry_pan_x",
+        duration_s: 8,
+        pan_px: 932,
+        board_width_px: 2012,
+        frame_width_px: 1080,
+        layer_origin_px: 900,
+      };
+      for (const position of ["left", "center", "right"] as const) {
+        const movingBar: TextElementBar = {
+          ...bar,
+          alignment,
+          max_width_frac: 0.9,
+          source_params: { masonry_motion: motion },
+        };
+        const patch = textBoxPositionPatchForBar({
+          motion,
+          currentTimeS: 4,
+          bar: movingBar,
+          position,
+        });
+        const nextMotion = patch.source_params?.masonry_motion as Record<string, unknown>;
+        const width = Number(patch.max_width_frac ?? movingBar.max_width_frac);
+        const left = Number(patch.x_frac) - textAlignmentAnchorFactor(alignment) * width;
+
+        expect(left).toBeGreaterThanOrEqual(0);
+        expect(left + width).toBeLessThanOrEqual(1);
+        expect(textBoxScreenXFrac(nextMotion, 4, Number(patch.x_frac))).toBeCloseTo(
+          Number(patch.x_frac),
+          8,
+        );
+      }
+    },
+  );
 
   it("rejects malformed or impossible masonry motion metadata", () => {
     expect(

@@ -58,6 +58,22 @@ def test_vertical_clamp_into_safe_zone() -> None:
     assert out["position_y_frac"] < 0.99
 
 
+def test_explicit_center_vertical_anchor_overrides_legacy_left_top_anchor() -> None:
+    centered = _ov(
+        "First line\nSecond line",
+        text_size_px=120,
+        position_y_frac=0.99,
+        text_anchor="left",
+        vertical_anchor="center",
+    )
+    legacy_top = {key: value for key, value in centered.items() if key != "vertical_anchor"}
+
+    [centered_out] = apply_overlay_constraints([centered])
+    [legacy_out] = apply_overlay_constraints([legacy_top])
+
+    assert centered_out["position_y_frac"] > legacy_out["position_y_frac"]
+
+
 def test_idempotent() -> None:
     ov = _ov(
         "This is a very long hook line that absolutely will not fit at 250px", text_size_px=250

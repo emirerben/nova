@@ -61,7 +61,9 @@ def _load_fixture(field: str) -> dict:
 
 def _compile_one(element: dict) -> dict:
     elem = TextElement.model_validate(element)
-    overlays = build_overlays_from_text_elements([elem], video_duration_s=10.0)
+    overlays = build_overlays_from_text_elements(
+        [elem], video_duration_s=10.0, independent_box_alignment=True
+    )
     assert overlays, f"element {element.get('id')} compiled to no overlays"
     return overlays[0]
 
@@ -175,6 +177,44 @@ def test_masonry_layer_origin_reaches_the_burn_dict() -> None:
     overlay = build_overlays_from_text_elements([elem], video_duration_s=8.0)[0]
 
     assert overlay["masonry_layer_origin_x_px"] == 600.0
+
+
+@pytest.mark.parametrize(
+    ("alignment", "placement", "x_frac"),
+    [
+        ("left", "left", 0.0),
+        ("left", "center", 0.3),
+        ("left", "right", 0.6),
+        ("center", "left", 0.2),
+        ("center", "center", 0.5),
+        ("center", "right", 0.8),
+        ("right", "left", 0.4),
+        ("right", "center", 0.7),
+        ("right", "right", 1.0),
+    ],
+)
+def test_horizontal_box_geometry_reaches_the_burn_dict(
+    alignment: str, placement: str, x_frac: float
+) -> None:
+    """The editor's derived anchor stays intact through the renderer bridge."""
+    overlay = _compile_one(
+        {
+            "id": f"{alignment}-{placement}-box",
+            "text": "two\nlines",
+            "start_s": 0,
+            "end_s": 2,
+            "position": "custom",
+            "x_frac": x_frac,
+            "y_frac": 0.45,
+            "alignment": alignment,
+            "max_width_frac": 0.4,
+        }
+    )
+
+    assert overlay["text_anchor"] == alignment
+    assert overlay["position_x_frac"] == pytest.approx(x_frac)
+    assert overlay["max_width_frac"] == pytest.approx(0.4)
+    assert overlay["vertical_anchor"] == "center"
 
 
 # ── letter_spacing ────────────────────────────────────────────────────────────

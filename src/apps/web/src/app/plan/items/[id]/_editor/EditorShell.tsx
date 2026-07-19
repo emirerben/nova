@@ -49,6 +49,7 @@ import {
 import { getSoundEffects, type SoundEffectSummary } from "@/lib/sfx-api";
 import { getMusicTracks, type MusicTrackSummary } from "@/lib/music-api";
 import { canvasForOrientation } from "@/lib/overlay-constants";
+import { type TextBoxHorizontalPosition } from "@/lib/overlay-layout";
 import {
   buildEditorCommitRequest,
   commitEditorSession,
@@ -109,6 +110,9 @@ import {
   resolveSmartPlacementCandidate,
   resolveSmartPlacementCandidates,
   smartPlacementPatchForBar,
+  collageMotionForTextBar,
+  textBoxPositionPatchForBar,
+  textBoxScreenXFrac,
 } from "./editor-smart-placement";
 import {
   buildTimedTextSequence,
@@ -1635,6 +1639,29 @@ export default function EditorShell({
       dispatch({ type: "PATCH_BAR", id, patch });
     },
     [readOnly, state.bars, lyricsOptionalActive, history],
+  );
+
+  const selectedTextMotion = useMemo(
+    () => collageMotionForTextBar(variant, previewDuration, selectedBar),
+    [previewDuration, selectedBar, variant],
+  );
+  const selectedTextBoxScreenXFrac = selectedBar
+    ? textBoxScreenXFrac(selectedTextMotion, currentTime, selectedBar.x_frac ?? 0.5)
+    : undefined;
+  const setSelectedTextBoxPosition = useCallback(
+    (position: TextBoxHorizontalPosition) => {
+      if (!selectedBar) return;
+      patchBar(
+        selectedBar.id,
+        textBoxPositionPatchForBar({
+          motion: selectedTextMotion,
+          currentTimeS: currentTime,
+          bar: selectedBar,
+          position,
+        }),
+      );
+    },
+    [currentTime, patchBar, selectedBar, selectedTextMotion],
   );
 
   // Elements-model Lyrics toggle: ON fetches (or reuses the cached) seed bars
@@ -4124,6 +4151,8 @@ export default function EditorShell({
           onPatch={(patch) => {
             if (selectedBar) patchBar(selectedBar.id, patch);
           }}
+          onSetTextBoxPosition={setSelectedTextBoxPosition}
+          boxPositionXFrac={selectedTextBoxScreenXFrac}
           onPatchTextTiming={patchSelectedTextTiming}
 	          onPatchClipTiming={patchSelectedClipTiming}
 	          onPreviewClipTiming={previewSelectedClipTiming}

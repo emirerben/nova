@@ -16,10 +16,15 @@ import {
   layoutIntroHold,
   resolveAnchorFrac,
   resolveFontSizePx,
+  inferTextBoxPosition,
+  resolveTextElementYFrac,
   resolveTextElementsLayout,
   settledColor,
   shrinkToFit,
+  textAlignmentAnchorFactor,
   verticalBlockTop,
+  xFracForTextAlignment,
+  xFracForTextBoxPosition,
   LINE_SPACING,
   MAX_LINE_W_FRAC,
   MIN_FONT_SIZE,
@@ -51,6 +56,112 @@ const baseParams: IntroOverlayParams = {
   textAnchor: "center",
   strokeWidth: 0,
 };
+
+describe("text box horizontal geometry", () => {
+  const alignments = ["left", "center", "right"] as const;
+  const positions = ["left", "center", "right"] as const;
+
+  it("uses renderer-compatible alignment anchor factors", () => {
+    expect(alignments.map(textAlignmentAnchorFactor)).toEqual([0, 0.5, 1]);
+  });
+
+  it("places every alignment at each box preset without changing box bounds", () => {
+    const width = 0.4;
+    const expectedLeft = { left: 0, center: 0.3, right: 0.6 } as const;
+
+    for (const alignment of alignments) {
+      for (const position of positions) {
+        const xFrac = xFracForTextBoxPosition({
+          alignment,
+          position,
+          maxWidthFrac: width,
+        });
+        const actualLeft = xFrac - textAlignmentAnchorFactor(alignment) * width;
+        expect(actualLeft).toBeCloseTo(expectedLeft[position]);
+        expect(
+          inferTextBoxPosition({ alignment, xFrac, maxWidthFrac: width }),
+        ).toBe(position);
+      }
+    }
+  });
+
+  it("preserves box bounds when text alignment changes", () => {
+    const width = 0.4;
+    const originalLeft = 0.3;
+    const originalCenterX = originalLeft + width / 2;
+
+    expect(
+      xFracForTextAlignment({
+        alignment: "center",
+        nextAlignment: "left",
+        xFrac: originalCenterX,
+        maxWidthFrac: width,
+      }),
+    ).toBeCloseTo(originalLeft);
+    expect(
+      xFracForTextAlignment({
+        alignment: "center",
+        nextAlignment: "right",
+        xFrac: originalCenterX,
+        maxWidthFrac: width,
+      }),
+    ).toBeCloseTo(originalLeft + width);
+  });
+
+  it("uses legacy defaults and clamps out-of-frame boxes during re-anchoring", () => {
+    expect(
+      xFracForTextAlignment({
+        alignment: "center",
+        nextAlignment: "left",
+        xFrac: undefined,
+        maxWidthFrac: undefined,
+      }),
+    ).toBeCloseTo(0.05);
+    expect(
+      xFracForTextAlignment({
+        alignment: "center",
+        nextAlignment: "left",
+        xFrac: Number.NaN,
+        maxWidthFrac: undefined,
+      }),
+    ).toBeCloseTo(0.05);
+    expect(
+      xFracForTextAlignment({
+        alignment: "right",
+        nextAlignment: "left",
+        xFrac: 0.2,
+        maxWidthFrac: 0.9,
+      }),
+    ).toBe(0);
+    expect(
+      xFracForTextAlignment({
+        alignment: "left",
+        nextAlignment: "right",
+        xFrac: 0.95,
+        maxWidthFrac: 0.9,
+      }),
+    ).toBe(1);
+  });
+
+  it("leaves custom placement unselected and resolves a full-width box to center", () => {
+    expect(
+      inferTextBoxPosition({ alignment: "center", xFrac: 0.37, maxWidthFrac: 0.4 }),
+    ).toBeNull();
+    expect(
+      inferTextBoxPosition({ alignment: "left", xFrac: 0, maxWidthFrac: 1 }),
+    ).toBe("center");
+    expect(
+      inferTextBoxPosition({ alignment: "left", xFrac: 0.3, maxWidthFrac: 1 }),
+    ).toBeNull();
+  });
+
+  it("resolves named vertical presets before horizontal controls switch to custom", () => {
+    expect(resolveTextElementYFrac("top", undefined)).toBe(0.15);
+    expect(resolveTextElementYFrac("middle", undefined)).toBe(0.45);
+    expect(resolveTextElementYFrac("bottom", undefined)).toBe(0.85);
+    expect(resolveTextElementYFrac("custom", 0.63)).toBe(0.63);
+  });
+});
 
 describe("greedyWrapLines", () => {
   it("keeps text on one line when it fits", () => {
