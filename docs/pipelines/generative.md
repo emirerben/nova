@@ -149,6 +149,11 @@ only when both their stable line key and original-text fingerprint still match;
 out-of-window lines are removed and newly visible lines are added. A track change
 always clears prior lyric overrides.
 
+Failure handling keeps the editor recoverable: a removed or unavailable track
+rejects the commit without discarding the local draft, an expired preview URL is
+retried once without blocking Save, and a downstream render failure leaves the
+committed song window in place for the existing retry flow.
+
 ## SFX + media-overlay lanes on caption archetypes (plan 010, v0.7.25.0)
 
 Caption archetypes (`CAPTION_EDIT_ARCHETYPES = {"narrated", "subtitled"}`,
