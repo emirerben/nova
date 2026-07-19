@@ -4,7 +4,10 @@ from app.agents.visual_treatment_planner import (
     RawVisualTreatment,
     VisualTreatmentPlannerInput,
 )
-from app.services.visual_treatment_planner import build_visual_treatments
+from app.services.visual_treatment_planner import (
+    build_visual_treatments,
+    infer_structured_section_treatments,
+)
 
 
 def _assets(count: int = 5) -> dict[str, dict]:
@@ -584,3 +587,170 @@ def test_section_item_longer_than_four_seconds_is_rejected() -> None:
     )
 
     assert blocks == []
+
+
+def test_unannounced_numbered_hook_is_not_inferred_as_sections() -> None:
+    words = [
+        {"word": "1.", "start_s": 0.0, "end_s": 0.2},
+        {"word": "Selocanlar", "start_s": 0.2, "end_s": 0.8},
+        {"word": "2.", "start_s": 1.5, "end_s": 1.7},
+        {"word": "Çelik", "start_s": 1.7, "end_s": 2.0},
+        {"word": "Çelik", "start_s": 2.0, "end_s": 2.3},
+        {"word": "3.", "start_s": 3.0, "end_s": 3.2},
+        {"word": "Naz", "start_s": 3.2, "end_s": 3.5},
+    ]
+
+    assert infer_structured_section_treatments(words) == []
+
+
+def test_inferred_turkish_titles_use_locale_correct_dotted_i() -> None:
+    words = [
+        {"word": "Üç", "start_s": 0.0, "end_s": 0.2},
+        {"word": "ana", "start_s": 0.2, "end_s": 0.4},
+        {"word": "başlık", "start_s": 0.4, "end_s": 0.8},
+        {"word": "Birinci", "start_s": 2.0, "end_s": 2.2},
+        {"word": "iletişim", "start_s": 2.2, "end_s": 2.6},
+        {"word": "İkinci", "start_s": 3.5, "end_s": 3.7},
+        {"word": "içerik", "start_s": 3.7, "end_s": 4.1},
+        {"word": "Üçüncü", "start_s": 5.0, "end_s": 5.2},
+        {"word": "işbirliği", "start_s": 5.2, "end_s": 5.7},
+    ]
+
+    treatments = infer_structured_section_treatments(words)
+
+    assert [treatment.text for treatment in treatments] == [
+        "1. İletişim",
+        "2. İçerik",
+        "3. İşbirliği",
+    ]
+
+
+def test_inferred_english_titles_keep_ascii_i() -> None:
+    words = [
+        {"word": "Üç", "start_s": 0.0, "end_s": 0.2},
+        {"word": "ana", "start_s": 0.2, "end_s": 0.4},
+        {"word": "başlık", "start_s": 0.4, "end_s": 0.8},
+        {"word": "First", "start_s": 2.0, "end_s": 2.2},
+        {"word": "impact", "start_s": 2.2, "end_s": 2.6},
+        {"word": "Second", "start_s": 3.5, "end_s": 3.7},
+        {"word": "insight", "start_s": 3.7, "end_s": 4.1},
+        {"word": "Third", "start_s": 5.0, "end_s": 5.2},
+        {"word": "intent", "start_s": 5.2, "end_s": 5.7},
+    ]
+
+    treatments = infer_structured_section_treatments(words)
+
+    assert [treatment.text for treatment in treatments] == [
+        "1. Impact",
+        "2. Insight",
+        "3. Intent",
+    ]
+
+
+def test_empty_model_fallback_stops_before_english_definitions() -> None:
+    words = [
+        {"word": "Three main reasons.", "start_s": 0.0, "end_s": 1.0},
+        {"word": "First", "start_s": 3.0, "end_s": 3.3},
+        {"word": "personalization", "start_s": 3.3, "end_s": 3.8},
+        {"word": "is when brands adapt.", "start_s": 3.8, "end_s": 5.2},
+        {"word": "Second", "start_s": 7.0, "end_s": 7.3},
+        {"word": "trust", "start_s": 7.3, "end_s": 7.7},
+        {"word": "means customers believe you.", "start_s": 7.7, "end_s": 9.0},
+        {"word": "Third", "start_s": 11.0, "end_s": 11.3},
+        {"word": "memory", "start_s": 11.3, "end_s": 11.8},
+        {"word": "is what makes it last.", "start_s": 11.8, "end_s": 13.0},
+    ]
+
+    treatments = infer_structured_section_treatments(words)
+
+    assert [treatment.text for treatment in treatments] == [
+        "1. Personalization",
+        "2. Trust",
+        "3. Memory",
+    ]
+
+
+def test_sentence_sized_transcript_rows_keep_distinct_card_timings() -> None:
+    words = [
+        {
+            "word": (
+                "Three main points. First focus. Explanation here. "
+                "Second trust. Explanation here. Third memory."
+            ),
+            "start_s": 0.0,
+            "end_s": 18.0,
+        }
+    ]
+
+    blocks, elements = build_visual_treatments(
+        [], assets_by_id={}, duration_s=40.0, transcript_words=words
+    )
+
+    assert [element["text"] for element in elements] == [
+        "1. Focus",
+        "2. Trust",
+        "3. Memory",
+    ]
+    assert len({(block["start_s"], block["end_s"]) for block in blocks}) == 3
+
+
+def test_complete_grounded_model_sections_are_not_replaced_by_broader_inference() -> None:
+    words = [
+        {"word": "There are three reasons.", "start_s": 0.0, "end_s": 1.0},
+        {"word": "First", "start_s": 3.0, "end_s": 3.3},
+        {"word": "personalization", "start_s": 3.3, "end_s": 3.8},
+        {"word": "is when brands adapt.", "start_s": 3.8, "end_s": 5.2},
+        {"word": "Second", "start_s": 7.0, "end_s": 7.3},
+        {"word": "trust", "start_s": 7.3, "end_s": 7.7},
+        {"word": "is built slowly.", "start_s": 7.7, "end_s": 9.0},
+        {"word": "Third", "start_s": 11.0, "end_s": 11.3},
+        {"word": "memory", "start_s": 11.3, "end_s": 11.8},
+        {"word": "makes it last.", "start_s": 11.8, "end_s": 13.0},
+    ]
+    model = [
+        RawVisualTreatment(
+            kind="text_card",
+            purpose="section_item",
+            start_s=start,
+            end_s=end,
+            text=text,
+            confidence="high",
+        )
+        for start, end, text in [
+            (3.0, 3.8, "1. Personalization"),
+            (7.0, 7.7, "2. Trust"),
+            (11.0, 11.8, "3. Memory"),
+        ]
+    ]
+
+    _blocks, elements = build_visual_treatments(
+        model, assets_by_id={}, duration_s=30.0, transcript_words=words
+    )
+
+    assert [element["text"] for element in elements] == [
+        "1. Personalization",
+        "2. Trust",
+        "3. Memory",
+    ]
+
+
+def test_announced_ten_item_list_degrades_to_first_eight_cards() -> None:
+    words = [
+        {"word": "Ten", "start_s": 0.0, "end_s": 0.2},
+        {"word": "main", "start_s": 0.2, "end_s": 0.4},
+        {"word": "items", "start_s": 0.4, "end_s": 0.8},
+    ]
+    for ordinal in range(1, 11):
+        start = 2.0 + (ordinal - 1) * 1.5
+        words.extend(
+            [
+                {"word": f"{ordinal}.", "start_s": start, "end_s": start + 0.2},
+                {"word": f"item{ordinal}", "start_s": start + 0.2, "end_s": start + 0.6},
+            ]
+        )
+
+    treatments = infer_structured_section_treatments(words)
+
+    assert [treatment.text for treatment in treatments] == [
+        f"{ordinal}. Item{ordinal}" for ordinal in range(1, 9)
+    ]

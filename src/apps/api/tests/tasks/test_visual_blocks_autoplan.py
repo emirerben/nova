@@ -159,6 +159,114 @@ def test_real_planner_branch_persists_long_video_card_transcript_and_dispatches(
     assert dispatched[0][2] == "overlay-jobs"
 
 
+def test_empty_model_result_recovers_and_dispatches_all_explicit_sections(monkeypatch) -> None:
+    from app.agents.visual_treatment_planner import VisualTreatmentPlannerOutput
+
+    job = _Job()
+    job.assembly_plan["variants"][0]["visual_blocks_autoplan_attempted"] = True
+    monkeypatch.setattr(settings, "visual_blocks_enabled", True)
+    monkeypatch.setattr(settings, "visual_block_autoplan_enabled", True)
+    monkeypatch.setattr(settings, "gemini_api_key", "gemini-test")
+    monkeypatch.setattr(autoplace, "_sync_session", lambda: _Session(job, []))
+    monkeypatch.setattr(
+        "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
+    )
+    monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
+    words = [
+        {"word": "Dört", "start_s": 23.1, "end_s": 23.98},
+        {"word": "ana", "start_s": 23.98, "end_s": 24.22},
+        {"word": "başlıkta", "start_s": 24.22, "end_s": 24.68},
+        {"word": "anlatayım", "start_s": 24.68, "end_s": 25.14},
+        {"word": "Birinci", "start_s": 26.9, "end_s": 27.62},
+        {"word": "somutlaştırma", "start_s": 27.62, "end_s": 28.34},
+        {"word": "Markalar", "start_s": 28.5, "end_s": 29.0},
+        {"word": "gelir", "start_s": 55.7, "end_s": 55.96},
+        {"word": "İki", "start_s": 57.08, "end_s": 57.32},
+        {"word": "pester", "start_s": 58.32, "end_s": 58.38},
+        {"word": "power", "start_s": 58.38, "end_s": 58.84},
+        {"word": "yani", "start_s": 58.84, "end_s": 59.4},
+        {"word": "yoluydu", "start_s": 79.04, "end_s": 79.44},
+        {"word": "Üç", "start_s": 79.44, "end_s": 80.56},
+        {"word": "hatırlanabilirlik", "start_s": 81.52, "end_s": 82.46},
+        {"word": "Reklam", "start_s": 83.24, "end_s": 83.48},
+        {"word": "olur", "start_s": 101.04, "end_s": 101.22},
+        {"word": "Dört", "start_s": 102.16, "end_s": 102.3},
+        {"word": "storytelling", "start_s": 102.86, "end_s": 103.22},
+        {"word": "yani", "start_s": 103.22, "end_s": 104.02},
+    ]
+    monkeypatch.setattr(
+        "app.services.transcript_source.transcript_source",
+        lambda _variant, **_kwargs: (words, "transcript-hash"),
+    )
+    monkeypatch.setattr("app.agents._model_client.default_client", lambda: object())
+    monkeypatch.setattr(
+        "app.agents.visual_treatment_planner.VisualTreatmentPlannerAgent.run",
+        lambda _self, _input, **_kwargs: VisualTreatmentPlannerOutput(treatments=[]),
+    )
+    dispatched: list[tuple[list, dict, str]] = []
+    monkeypatch.setattr(
+        "app.tasks.generative_build.regenerate_generative_variant.apply_async",
+        lambda *, args, kwargs, queue: dispatched.append((args, kwargs, queue)),
+    )
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        autoplace,
+        "_record",
+        lambda event, **fields: events.append((event, fields)),
+    )
+
+    autoplace.plan_visual_blocks.run(JOB_ID, "subtitled")
+
+    variant = job.assembly_plan["variants"][0]
+    assert [element["text"] for element in variant["text_elements"]] == [
+        "1. Somutlaştırma",
+        "2. Pester Power",
+        "3. Hatırlanabilirlik",
+        "4. Storytelling",
+    ]
+    assert [(block["start_s"], block["end_s"]) for block in variant["visual_blocks"]] == [
+        (26.9, 28.34),
+        (57.08, 58.84),
+        (79.44, 82.46),
+        (102.16, 103.22),
+    ]
+    assert [event for event, _fields in events] == ["visual_blocks_planned"]
+    assert dispatched == [
+        (
+            [JOB_ID, "subtitled"],
+            {"render_gen_id": variant["render_generation_id"]},
+            "overlay-jobs",
+        )
+    ]
+
+
+def test_autoplanned_subtitled_cards_keep_captions_with_public_text_lane_off(
+    monkeypatch,
+) -> None:
+    from app.tasks import generative_build
+
+    monkeypatch.setattr(
+        generative_build.settings,
+        "subtitled_text_lane_enabled",
+        False,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        generative_build.settings,
+        "visual_blocks_enabled",
+        True,
+        raising=False,
+    )
+
+    assert generative_build._should_compose_subtitled_final(
+        {
+            "resolved_archetype": "subtitled",
+            "text_elements_user_edited": True,
+            "visual_blocks": [{"kind": "text_card"}],
+        }
+    )
+
+
 @pytest.mark.parametrize(
     ("planner_error", "expected_events"),
     [
@@ -288,7 +396,13 @@ def test_successful_zero_treatments_do_not_trigger_fallback_montage(monkeypatch)
         "app.services.pipeline_trace.pipeline_trace_for", lambda _job_id: nullcontext()
     )
     monkeypatch.setattr("sqlalchemy.orm.attributes.flag_modified", lambda *_args: None)
-    words = [{"word": "Ordinary explanation", "start_s": 1.0, "end_s": 2.0}]
+    words = [
+        {
+            "word": "Four main points explain the result, but no list follows.",
+            "start_s": 1.0,
+            "end_s": 3.0,
+        }
+    ]
     monkeypatch.setattr(
         "app.services.transcript_source.transcript_source",
         lambda _v, **_kwargs: (words, "transcript-hash"),

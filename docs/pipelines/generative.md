@@ -165,12 +165,19 @@ captions → media overlays → sound effects.
 - Announced sections, rankings, steps, and numbered lists use the internal
   `section_item` purpose. The planner emits only the spoken ordinal and item
   title, then returns to the talking head for its definition or explanation.
+  If the model misses the structure, a deterministic transcript fallback
+  recovers only a complete, explicitly announced sequence; complete grounded
+  model titles remain authoritative. Bare numbered hooks are never promoted.
   Card timing is deterministically aligned to the local contiguous transcript
   occurrence (including Turkish/English cardinal and ordinal forms), lasts at
   most four seconds, and requires at least 0.75 seconds of uncovered speaker
   footage before the next structured card. Long lists keep the first eight
   valid items. Generic card limits remain independent, and the 35% global
   treatment ceiling still applies.
+- On subtitled variants, autoplanned card text always uses the text-then-caption
+  compositor when visual blocks are active, even if the public subtitled text
+  lane is disabled. The full editor previews persisted cues only over the
+  caption-free base; an already-burned output is never captioned a second time.
 - Planner input supports Nova's five-minute source ceiling. Whisper-derived
   `overlay_transcript` words persist even when the correct answer is zero
   cards. Source-revision checks prevent stale planning from overwriting newer
