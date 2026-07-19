@@ -31,20 +31,20 @@ describe("ToolDrawer smart text composition", () => {
   });
 
   it("splits a drafted title and clears it after the shell accepts it", () => {
-    const onSplitSmartPlaceText = jest.fn(() => true);
-    renderTextDrawer({ onSplitSmartPlaceText, splitSmartPlaceAvailable: true });
+    const onSplitPlaceText = jest.fn(() => true);
+    renderTextDrawer({ onSplitPlaceText, splitSmartPlaceAvailable: true });
 
     const draft = screen.getByLabelText("Composition text");
     fireEvent.change(draft, { target: { value: "take the scenic route home" } });
     fireEvent.click(screen.getByRole("button", { name: "Split & place" }));
 
-    expect(onSplitSmartPlaceText).toHaveBeenCalledWith("take the scenic route home");
+    expect(onSplitPlaceText).toHaveBeenCalledWith("take the scenic route home");
     expect(draft).toHaveValue("");
   });
 
   it("keeps the draft when the shell rejects the split", () => {
-    const onSplitSmartPlaceText = jest.fn(() => false);
-    renderTextDrawer({ onSplitSmartPlaceText, splitSmartPlaceAvailable: true });
+    const onSplitPlaceText = jest.fn(() => false);
+    renderTextDrawer({ onSplitPlaceText, splitSmartPlaceAvailable: true });
 
     const draft = screen.getByLabelText("Composition text");
     fireEvent.change(draft, { target: { value: "keep this" } });

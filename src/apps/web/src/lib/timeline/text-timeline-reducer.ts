@@ -38,7 +38,14 @@ export interface TextElementBar {
   stroke_width?: number;
   /** Explicit soft-shadow toggle. undefined preserves legacy/generated defaults. */
   shadow_enabled?: boolean | null;
+  /** Optional renderer-authored editorial glow. */
+  glow_color?: string | null;
+  glow_strength?: number | null;
   effect?: string;
+  /** Optional renderer fade tail in milliseconds. Editorial sequence blocks
+   * stay fully opaque until this final window, then use the Skia quadratic
+   * fade curve. */
+  fade_out_ms?: number | null;
   alignment?: string;
   /** Display-case transform ("none" | "upper" | "lower" | "title") — resolved
    * at compile/layout time on both renderers (T11, parity-gated). */

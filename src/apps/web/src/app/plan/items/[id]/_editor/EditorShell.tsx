@@ -108,10 +108,12 @@ import {
   isMasonryVariant,
   resolveSmartPlacementCandidate,
   resolveSmartPlacementCandidates,
-  smartPlacementCandidateFitsBar,
-  splitTextForSmartPlacement,
   smartPlacementPatchForBar,
 } from "./editor-smart-placement";
+import {
+  buildTimedTextSequence,
+  TEXT_ELEMENTS_API_MAX,
+} from "./editor-text-composition";
 import { splitSlotAt, deleteSlotEnforceFloor, activeSlotCount } from "./slot-split";
 import {
   applyClipTimingInput,
@@ -161,6 +163,9 @@ const NEW_TEXT_DURATION_S = 2.0;
 const NEW_TEXT_CONTENT = "Add a title";
 const NEW_TEXT_Y_FRAC = 0.4;
 const NEW_TEXT_SIZE_PX = 64;
+const COMPOSITION_TEXT_PRESET =
+  TEXT_PRESETS.find((preset) => preset.id === "editorial-italic") ?? DEFAULT_TEXT_PRESET;
+const COMPOSITION_Y_FRACS = [0.36, 0.44, 0.52] as const;
 const COPILOT_SAVE_NOTICE_KEY = "nova-copilot-save-expectation-dismissed";
 const MEDIA_OVERLAYS_RAW = (process.env.NEXT_PUBLIC_MEDIA_OVERLAYS_ENABLED ?? "").trim();
 const MEDIA_OVERLAYS_UI_ENABLED =
@@ -2166,7 +2171,7 @@ export default function EditorShell({
     ],
   );
 
-  const splitAndSmartPlaceText = useCallback(
+  const splitAndPlaceText = useCallback(
     (text: string): boolean => {
       if (readOnly) return false;
       if (textElementsLocked) {
@@ -2175,48 +2180,35 @@ export default function EditorShell({
       }
       const draft = text.trim();
       if (!draft) return false;
-      const timing = textTimingAtPlayhead({ currentTime, previewDuration });
-      const candidateSeedBars = Array.from({ length: 4 }, (_unused, index) =>
-        newTextBar({
-          id: `smart-draft-${index}`,
-          text: draft,
-          timing,
-          preset: DEFAULT_TEXT_PRESET,
-        }),
-      );
-      const candidates = resolveSmartPlacementCandidates(
-        variant,
-        candidateSeedBars,
-        previewDuration,
+      const existingElementCount = barsToTextElements(state.bars, originalsRef.current, {
+        includeLyrics: lyricsOptionalActive,
+      }).length;
+      const remainingElementCount = Math.max(0, TEXT_ELEMENTS_API_MAX - existingElementCount);
+      const sequence = buildTimedTextSequence(
+        draft,
         currentTime,
+        previewDuration,
+        0.5,
+        remainingElementCount,
       );
-      if (candidates.length === 0) {
-        setToast("No empty masonry pocket is available for this text.");
+      if (sequence === null) {
+        setToast(
+          `This edit has room for ${remainingElementCount} more text beat${remainingElementCount === 1 ? "" : "s"}.`,
+        );
         return false;
       }
-      const chunks = splitTextForSmartPlacement(draft, candidates);
-      if (chunks.length === 0) return false;
-      const baseBars = chunks.map((chunk) =>
-        newTextBar({
+      if (sequence.length === 0) return false;
+      const bars = sequence.map((item, index) => ({
+        ...newTextBar({
           id: crypto.randomUUID(),
-          text: chunk,
-          timing,
-          preset: DEFAULT_TEXT_PRESET,
+          text: item.text,
+          timing: item,
+          preset: COMPOSITION_TEXT_PRESET,
         }),
-      );
-      if (
-        baseBars.some(
-          (bar, index) =>
-            !candidates[index] || !smartPlacementCandidateFitsBar(bar, candidates[index]),
-        )
-      ) {
-        setToast("The available masonry pockets are too small for readable text.");
-        return false;
-      }
-      const bars = baseBars.map((bar, index) => {
-        const candidate = candidates[index];
-        return candidate ? { ...bar, ...smartPlacementPatchForBar(bar, candidate) } : bar;
-      });
+        role: "generative_sequence" as const,
+        effect: "static",
+        y_frac: COMPOSITION_Y_FRACS[index % COMPOSITION_Y_FRACS.length],
+      }));
       history.record();
       setTextDirty(true);
       bars.forEach((bar) => dispatch({ type: "ADD_TEXT", bar }));
@@ -2231,8 +2223,9 @@ export default function EditorShell({
       previewDuration,
       readOnly,
       selectText,
+      state.bars,
       textElementsLocked,
-      variant,
+      lyricsOptionalActive,
     ],
   );
 
@@ -3937,7 +3930,7 @@ export default function EditorShell({
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
               lyricsToggle={lyricsToggle}
-              onSplitSmartPlaceText={splitAndSmartPlaceText}
+              onSplitPlaceText={splitAndPlaceText}
               splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
               onSmartPlaceAll={applySmartPlacement}
               smartPlaceAllAvailable={smartPlaceAllAvailable}
@@ -3998,7 +3991,7 @@ export default function EditorShell({
               appliedPresetId={appliedPresetId}
               onAddText={() => addTextAtPlayhead()}
               lyricsToggle={lyricsToggle}
-              onSplitSmartPlaceText={splitAndSmartPlaceText}
+              onSplitPlaceText={splitAndPlaceText}
               splitSmartPlaceAvailable={!readOnly && !textElementsLocked}
               onSmartPlaceAll={applySmartPlacement}
               smartPlaceAllAvailable={smartPlaceAllAvailable}

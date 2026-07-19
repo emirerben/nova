@@ -842,6 +842,8 @@ export interface TextElement {
   highlight_color?: string | null;
   stroke_width?: number | null;
   shadow_enabled?: boolean | null;
+  glow_color?: string | null;
+  glow_strength?: number | null;
   alignment?: "left" | "center" | "right" | null;
   effect?:
     | "static"

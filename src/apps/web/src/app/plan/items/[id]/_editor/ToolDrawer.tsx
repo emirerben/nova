@@ -46,7 +46,7 @@ export default function ToolDrawer({
   appliedPresetId,
   onAddText,
   lyricsToggle,
-  onSplitSmartPlaceText,
+  onSplitPlaceText,
   splitSmartPlaceAvailable = false,
   onSmartPlaceAll,
   smartPlaceAllAvailable = false,
@@ -92,7 +92,7 @@ export default function ToolDrawer({
     hint: string | null;
     onToggle: (enabled: boolean) => void;
   };
-  onSplitSmartPlaceText?: (text: string) => boolean;
+  onSplitPlaceText?: (text: string) => boolean;
   splitSmartPlaceAvailable?: boolean;
   onSmartPlaceAll?: () => void;
   smartPlaceAllAvailable?: boolean;
@@ -280,21 +280,22 @@ export default function ToolDrawer({
             <textarea
               value={smartTextDraft}
               onChange={(event) => setSmartTextDraft(event.target.value)}
+              maxLength={5000}
               rows={3}
               aria-label="Composition text"
-              placeholder="One full title"
+              placeholder="Paste lines or a paragraph"
               className="w-full resize-none rounded-lg border border-zinc-200 px-3 py-2 text-[13px] text-[#0c0c0e] placeholder:text-[#a1a1aa] focus:border-lime-500/60 focus:outline-none"
             />
             <button
               type="button"
               onClick={() => {
-                if (onSplitSmartPlaceText?.(smartTextDraft)) {
+                if (onSplitPlaceText?.(smartTextDraft)) {
                   setSmartTextDraft("");
                 }
               }}
               disabled={
                 !splitSmartPlaceAvailable ||
-                !onSplitSmartPlaceText ||
+                !onSplitPlaceText ||
                 smartTextDraft.trim().length === 0
               }
               className="mt-2 min-h-10 w-full rounded-lg bg-[#0c0c0e] px-3 text-[12px] font-semibold text-white hover:bg-[#27272a] disabled:cursor-not-allowed disabled:bg-zinc-100 disabled:text-[#a1a1aa] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-lime-500"

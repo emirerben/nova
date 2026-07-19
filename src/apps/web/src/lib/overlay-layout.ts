@@ -400,6 +400,9 @@ export interface TextElementLayout {
   strokeWidth: number;
   /** Soft-shadow toggle. Undefined/null defaults to legacy enabled. */
   shadowEnabled: boolean;
+  /** Optional renderer-authored editorial glow. */
+  glowColor: string | null;
+  glowStrength: number;
   start_s: number;
   end_s: number;
 }
@@ -441,6 +444,8 @@ export function resolveTextElementsLayout(
       rotationDeg: Number.isFinite(el.rotation_deg ?? NaN) ? Number(el.rotation_deg) : 0,
       strokeWidth: el.stroke_width ?? 0,
       shadowEnabled: el.shadow_enabled !== false,
+      glowColor: el.glow_color ?? null,
+      glowStrength: Math.max(0, Math.min(1, el.glow_strength ?? 0)),
       start_s: el.start_s,
       end_s: el.end_s,
     };

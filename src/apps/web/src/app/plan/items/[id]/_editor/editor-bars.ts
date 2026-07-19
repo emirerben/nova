@@ -11,7 +11,7 @@
  * overlay text from these LOCAL working bars, so every renderer-honored
  * placement field must survive the round-trip).
  *
- * Fields the bar type doesn't model (reveal_s, fade_out_ms, z, word_timings)
+ * Fields the bar type doesn't model (reveal_s, z, word_timings)
  * are preserved by merging bars back over the ORIGINAL API element on Save
  * (`barsToTextElements`) — the editor never destroys state it doesn't edit.
  */
@@ -106,7 +106,10 @@ export function convertApiTextElements(
     highlight_color: el.highlight_color ?? undefined,
     stroke_width: el.stroke_width ?? undefined,
     shadow_enabled: el.shadow_enabled ?? undefined,
+    glow_color: el.glow_color ?? undefined,
+    glow_strength: el.glow_strength ?? undefined,
     effect: el.effect ?? undefined,
+    fade_out_ms: el.fade_out_ms ?? undefined,
     alignment: el.alignment ?? undefined,
     text_case: el.text_case ?? undefined,
     letter_spacing: el.letter_spacing ?? undefined,
@@ -268,7 +271,7 @@ export function buildLyricLineOverrides(
  * Working bars → API TextElement[] for preview layout + Save.
  *
  * Each bar merges OVER its original API element (when one exists) so fields
- * the editor doesn't model (reveal_s, fade_out_ms, z, word_timings) pass
+ * the editor doesn't model (reveal_s, z, word_timings) pass
  * through untouched. narrated_caption bars are excluded — captions persist
  * via their own endpoint, not text_elements (same rule as the item page).
  *
@@ -322,7 +325,10 @@ function barsToTextElementsInternal(
         highlight_color: bar.highlight_color ?? null,
         stroke_width: bar.stroke_width ?? null,
         shadow_enabled: bar.shadow_enabled ?? null,
+        glow_color: bar.glow_color ?? original?.glow_color ?? null,
+        glow_strength: bar.glow_strength ?? original?.glow_strength ?? null,
         effect: (bar.effect as TextElement["effect"]) ?? null,
+        fade_out_ms: bar.fade_out_ms ?? original?.fade_out_ms ?? null,
         alignment: (bar.alignment as TextElement["alignment"]) ?? null,
         text_case: (bar.text_case as TextElement["text_case"]) ?? null,
         letter_spacing: bar.letter_spacing ?? null,
