@@ -1845,60 +1845,6 @@ def _write_rgba_array_png(arr: np.ndarray, out_path: str) -> None:
     Image.fromarray(arr, "RGBA").save(out_path, "PNG", compress_level=3)
 
 
-# -- behind_subject visibility policy -----------------------------------------
-#
-# Per-pixel occlusion alone reads as glitching when a crowd or a large object
-# covers MOST of the text: what survives is a strobe of shredded fragments
-# peeking through gaps that open and close every frame (prod Argentina montage,
-# crowd scene 10.9-12.2s). The policy: once the subject occludes more than
-# BEHIND_HIDE_OCCLUSION_FRAC of the text's own alpha, hide the text entirely;
-# reveal it again only when occlusion drops below BEHIND_SHOW_OCCLUSION_FRAC.
-# The hysteresis gap means confidence jitter around a single threshold can't
-# flap the state, and _BEHIND_VISIBILITY_FADE_FRAMES ramps alpha over a few
-# frames so state changes read as the subject wiping the text away, not a pop.
-BEHIND_HIDE_OCCLUSION_FRAC = 0.70
-BEHIND_SHOW_OCCLUSION_FRAC = 0.50
-_BEHIND_VISIBILITY_FADE_FRAMES = 3
-
-
-def _behind_visibility_scales(
-    matte: SubjectMatteProvider,
-    text_alpha: np.ndarray,
-    start_s: float,
-    n_render: int,
-    frame_dur: float,
-) -> np.ndarray | None:
-    """Per-frame [0,1] alpha scale for a behind_subject overlay, or None when
-    the policy never engages (all-visible — render path can skip scaling).
-
-    `text_alpha` is the overlay's own straight alpha (H, W) float32 [0,1] from
-    its settled frame — the region the occlusion fraction is measured against.
-    Sequential by design: hysteresis needs frame order, so this runs as a
-    pre-pass before the (unordered) thread-pool render.
-    """
-    alpha_sum = float(text_alpha.sum())
-    if alpha_sum <= 0.0:
-        return None
-
-    scales = np.empty(n_render, dtype=np.float32)
-    hidden = False
-    current = 1.0
-    step = 1.0 / _BEHIND_VISIBILITY_FADE_FRAMES
-    engaged = False
-    for i in range(n_render):
-        mask = matte.mask_at(start_s + i * frame_dur)
-        occ = 0.0 if mask is None else float((mask * text_alpha).sum()) / alpha_sum
-        if not hidden and occ > BEHIND_HIDE_OCCLUSION_FRAC:
-            hidden = True
-        elif hidden and occ < BEHIND_SHOW_OCCLUSION_FRAC:
-            hidden = False
-        target = 0.0 if hidden else 1.0
-        current = min(current + step, target) if target > current else max(current - step, target)
-        scales[i] = current
-        engaged = engaged or current < 1.0
-    return scales if engaged else None
-
-
 # -- Public API: render overlays to FFmpeg-ready PNG sequences ---------------
 
 
@@ -2058,34 +2004,6 @@ def _generate_overlay_sequence(
         else None
     )
 
-    # Visibility policy pre-pass (sequential — hysteresis needs frame order).
-    # Measured against the settled frame's own alpha; animated overlays use
-    # their settled state, which is what the text occupies for the vast
-    # majority of a behind_subject window.
-    vis_scales: np.ndarray | None = None
-    if behind:
-        settled_arr = (
-            static_behind_arr
-            if static_behind_arr is not None
-            else _skia_image_to_rgba_array(
-                _draw_frame(overlay, duration_s, duration_s, render_canvas=render_canvas)
-            )
-        )
-        vis_scales = _behind_visibility_scales(
-            matte,
-            settled_arr[..., 3].astype(np.float32) / 255.0,
-            start_s,
-            n_render,
-            frame_dur,
-        )
-        if vis_scales is not None:
-            log.info(
-                "text_behind_subject_visibility_policy_engaged",
-                hidden_frames=int((vis_scales <= 0.0).sum()),
-                n_render=n_render,
-                text=_overlay_text(overlay)[:40],
-            )
-
     def _render_one(i: int) -> None:
         t_local = i * frame_dur
         out_path = os.path.join(work_dir, f"{pattern_prefix}{i:04d}.png")
@@ -2097,20 +2015,9 @@ def _generate_overlay_sequence(
                     _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
                 )
             )
-            scale = 1.0 if vis_scales is None else float(vis_scales[i])
-            if scale <= 0.0:
-                # Fully behind the subject — write a transparent frame instead
-                # of a strobe of shredded fragments through mask gaps.
-                arr = arr.copy()
-                arr[..., 3] = 0
-                _write_rgba_array_png(arr, out_path)
-                return
             mask = matte.mask_at(start_s + t_local)
             if mask is not None:
                 arr = _apply_subject_mask(arr, mask)
-            if scale < 1.0:
-                arr = arr.copy()
-                arr[..., 3] = (arr[..., 3].astype(np.float32) * scale).astype(np.uint8)
             _write_rgba_array_png(arr, out_path)
         else:
             img = _draw_frame(overlay, t_local, duration_s, render_canvas=render_canvas)
