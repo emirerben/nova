@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.2.0] — 2026-07-19
+
+### Added
+- **Ready-to-post videos now show their production date on the homepage.** The date comes from the render job's true completion timestamp, follows the viewer's locale, and stays hidden when that timestamp is missing or invalid.
+
 ## [0.9.1.2] — 2026-07-19
 
 ### Fixed
