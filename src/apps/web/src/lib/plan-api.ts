@@ -321,6 +321,8 @@ export interface PlanItem {
   clip_assignments?: ClipAssignment[];
   status: PlanItemStatus;
   current_job_id: string | null;
+  /** True pipeline completion time for the current render job. */
+  finished_at?: string | null;
   user_edited: boolean;
   /** Render archetype assigned at plan-gen time (e.g. "montage", "talking_head"). Null for legacy items. */
   edit_format?: string | null;

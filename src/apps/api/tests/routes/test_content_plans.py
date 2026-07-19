@@ -7,6 +7,8 @@ the mock-DB + dependency-override pattern (UUID/JSONB don't map to SQLite).
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -427,6 +429,30 @@ def _item_mock(item_id: uuid.UUID, clip_gcs_paths: list[str]) -> MagicMock:
     it.user_edited = False
     it.current_job_id = None
     return it
+
+
+def test_get_plan_exposes_current_job_finished_at(client: TestClient) -> None:
+    user = _fake_user()
+    item = _item_mock(uuid.uuid4(), [])
+    finished_at = datetime(2026, 7, 19, 12, 30, tzinfo=UTC)
+    item.current_job_id = uuid.uuid4()
+    item.current_job = SimpleNamespace(status="variants_ready", finished_at=finished_at)
+    plan = _pool_plan(user.id, {}, [item])
+    plan.persona_id = uuid.uuid4()
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_db] = lambda: _async_db(scalar_result=plan)
+
+    resp = client.get("/content-plans")
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["finished_at"] == "2026-07-19T12:30:00Z"
+
+    item.current_job.finished_at = None
+    assert client.get("/content-plans").json()["items"][0]["finished_at"] is None
+
+    item.current_job_id = None
+    item.current_job = None
+    assert client.get("/content-plans").json()["items"][0]["finished_at"] is None
 
 
 def test_pool_matched_count_resets_stale_match() -> None:

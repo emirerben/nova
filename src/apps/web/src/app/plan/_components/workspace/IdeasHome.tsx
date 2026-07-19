@@ -274,7 +274,11 @@ function IdeaLedgerRow({
         {confirming ? (
           <DeleteConfirm onKeep={onCancelConfirm} onDelete={onConfirmDelete} />
         ) : (
-          <StatusSlot status={item.status} pulseReady={pulseReady} />
+          <StatusSlot
+            status={item.status}
+            pulseReady={pulseReady}
+            finishedAt={item.finished_at}
+          />
         )}
       </div>
       <button
@@ -292,16 +296,26 @@ function IdeaLedgerRow({
 function StatusSlot({
   status,
   pulseReady,
+  finishedAt,
 }: {
   status: PlanItemStatus;
   pulseReady: boolean;
+  finishedAt?: string | null;
 }) {
   if (status === "ready") {
+    const finishedDate = formatFinishedDate(finishedAt);
     return (
-      <span
-        className={`whitespace-nowrap rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-[11px] font-medium text-lime-800 ${pulseReady ? "motion-safe:animate-pulse" : ""}`}
-      >
-        Ready to post
+      <span className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1">
+        <span
+          className={`whitespace-nowrap rounded-full border border-lime-200 bg-lime-50 px-2 py-0.5 text-[11px] font-medium text-lime-800 ${pulseReady ? "motion-safe:animate-pulse" : ""}`}
+        >
+          Ready to post
+        </span>
+        {finishedDate && (
+          <span className="whitespace-nowrap text-[11px] text-[#71717a]">
+            · {finishedDate}
+          </span>
+        )}
       </span>
     );
   }
@@ -327,6 +341,12 @@ function StatusSlot({
     return <span className="whitespace-nowrap text-[12px] text-[#71717a]">Needs footage</span>;
   }
   return <span className="whitespace-nowrap text-[12px] text-[#a1a1aa]">Plan this →</span>;
+}
+
+function formatFinishedDate(value?: string | null): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toLocaleDateString();
 }
 
 function DeleteConfirm({
