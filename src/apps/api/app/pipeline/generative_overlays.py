@@ -921,6 +921,12 @@ def build_overlays_from_text_elements(
         # yet (concurrent lane) — absent field reads as False, byte-identical.
         elem_behind_subject = bool(getattr(elem, "behind_subject", False))
 
+        def attach_glow(overlay: dict) -> None:
+            if elem.glow_color is not None:
+                overlay["glow_color"] = elem.glow_color
+            if elem.glow_strength is not None:
+                overlay["glow_strength"] = elem.glow_strength
+
         # text_case: transform the display text AND any stored karaoke word
         # timings (their `text` keys are what _draw_karaoke_line burns).
         elem_text = apply_text_case(elem.text, elem.text_case)
@@ -960,6 +966,7 @@ def build_overlays_from_text_elements(
                 behind_subject=elem_behind_subject,
             )
             if reveal is not None:
+                attach_glow(reveal)
                 reveal["role"] = elem.role
                 if effect == "karaoke-line" and elem_word_timings:
                     reveal["word_timings"] = elem_word_timings
@@ -996,6 +1003,7 @@ def build_overlays_from_text_elements(
                 behind_subject=elem_behind_subject,
             )
             if hold is not None:
+                attach_glow(hold)
                 hold["role"] = elem.role
                 if elem.fade_out_ms is not None:
                     hold["fade_out_ms"] = elem.fade_out_ms
@@ -1030,6 +1038,7 @@ def build_overlays_from_text_elements(
         )
         if overlay is None:
             continue
+        attach_glow(overlay)
 
         # build_intro_overlay always emits "generative_intro"; override for
         # sequence elements (role="generative_sequence").
