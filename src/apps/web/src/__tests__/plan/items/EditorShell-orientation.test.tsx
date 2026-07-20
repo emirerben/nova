@@ -2,6 +2,7 @@ process.env.NEXT_PUBLIC_LANDSCAPE_OUTPUT_ENABLED = "true";
 
 import "@testing-library/jest-dom";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { EditorCommitConflictError } from "@/lib/editor-commit";
 import type {
   EditorCapabilities,
   PlanItem,
@@ -162,17 +163,99 @@ describe("EditorShell orientation", () => {
     expect(document.querySelector("video")).toHaveClass("object-cover");
   });
 
-  it("saves orientation through the editor-commit section only after a change", async () => {
+  it("forgets the recovery draft after a successful orientation save", async () => {
     await renderShell();
 
     fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
+    await waitFor(() => {
+      expect(
+        window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+      ).not.toBeNull();
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
 
-    await waitFor(() => expect(mockCommitEditorSession).toHaveBeenCalled());
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalled());
     expect(mockCommitEditorSession.mock.calls[0][2]).toMatchObject({
       orientation: "portrait",
     });
+    expect(
+      window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+    ).toBeNull();
+    expect(screen.queryByText("Resume your unsaved edits?")).toBeNull();
+  });
+
+  it("keeps the recovery draft when persistence succeeds but rendering does not start", async () => {
+    await renderShell();
+    mockCommitEditorSession.mockResolvedValueOnce({
+      ok: false,
+      generation: "gen-next",
+      sections: { orientation: true },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
+    await waitFor(() => {
+      expect(
+        window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+      ).not.toBeNull();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(
+      await screen.findByText("Saved, but rendering didn't start."),
+    ).toBeInTheDocument();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(
+      window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+    ).not.toBeNull();
+  });
+
+  it("keeps the recovery draft when the save request reports an error", async () => {
+    await renderShell();
+    mockCommitEditorSession.mockRejectedValueOnce(new Error("Render queue unavailable"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
+    await waitFor(() => {
+      expect(
+        window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+      ).not.toBeNull();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(await screen.findByText("Render queue unavailable")).toBeInTheDocument();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(
+      window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+    ).not.toBeNull();
+  });
+
+  it("keeps the recovery draft when the save conflicts", async () => {
+    await renderShell();
+    mockCommitEditorSession.mockRejectedValueOnce(
+      new EditorCommitConflictError("This video changed in another tab"),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Use 9:16 output" }));
+    await waitFor(() => {
+      expect(
+        window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+      ).not.toBeNull();
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(
+      await screen.findByText("This video changed in another tab — reload to continue."),
+    ).toBeInTheDocument();
+    expect(mockRouterPush).not.toHaveBeenCalled();
+    expect(
+      window.sessionStorage.getItem("nova-editor-draft:item-1:song_text"),
+    ).not.toBeNull();
   });
 });
